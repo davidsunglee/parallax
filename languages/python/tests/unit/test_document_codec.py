@@ -26,17 +26,21 @@ from parallax.core.base import (
     INT32,
     INT64,
     JSON,
+    SQL_NULL,
     STRING,
     TIME,
     TIMESTAMP,
     UUID,
     Decimal,
     NeutralType,
+    PresentDocument,
     decode_neutral_literal,
 )
 from parallax.core.document_codec import (
     MISSING,
     NULL,
+    UNAVAILABLE,
+    DecodedMember,
     DocumentShape,
     Leaf,
     LeafEncodingError,
@@ -47,7 +51,10 @@ from parallax.core.document_codec import (
     SetOccurrence,
     apply_patches,
     comparison_text,
+    decode_located_member_classified,
+    decode_occurrence_classified,
     decode_path,
+    decode_path_classified,
     encode_candidate,
     encode_document,
     encode_leaf,
@@ -56,6 +63,7 @@ from parallax.core.document_codec import (
     is_text_compared,
     occurrence_shape,
     reduce_declared_members,
+    reduce_declared_members_classified,
     shape_of_declaration,
 )
 from parallax.core.entity import Attr, DomainModel, Entity, ValueObject, attr
@@ -181,6 +189,94 @@ def test_decode_reads_a_float32_leaf_at_its_declared_width() -> None:
 
 def _one_leaf(neutral_type: NeutralType) -> DocumentShape:
     return DocumentShape(members=(Leaf(name="leaf", type=neutral_type, nullable=True),))
+
+
+def test_classified_member_variants_report_each_detection_without_inventing_values() -> None:
+    nested = DocumentShape(members=(Leaf("required", INT32, False),))
+    shape = DocumentShape(
+        members=(
+            Leaf("leaf", INT32, False),
+            Occurrence("one", Multiplicity.ONE, False, nested),
+            Occurrence("many", Multiplicity.MANY, False, nested),
+        )
+    )
+
+    assert decode_located_member_classified(shape, SQL_NULL, "leaf").findings[0].code == (
+        "required-member-absent"
+    )
+    assert (
+        decode_located_member_classified(shape, PresentDocument(None), "leaf").findings[0].code
+        == "required-member-null"
+    )
+    assert decode_path_classified(shape, {"one": []}, ("one",)).findings[0].code == (
+        "one-wrong-kind"
+    )
+    assert decode_path_classified(shape, {"many": {}}, ("many",)).findings[0].code == (
+        "many-wrong-kind"
+    )
+    undecodable = decode_path_classified(shape, {"leaf": "wrong"}, ("leaf",))
+    assert undecodable.presence is UNAVAILABLE
+    assert undecodable.findings[0].code == "leaf-undecodable"
+
+    with pytest.raises(KeyError, match="names no member"):
+        decode_located_member_classified(shape, SQL_NULL, "unknown")
+
+
+def test_classified_paths_cover_non_object_and_nested_occurrence_states() -> None:
+    nested = DocumentShape(members=(Leaf("required", INT32, False),))
+    shape = DocumentShape(
+        members=(
+            Occurrence("one", Multiplicity.ONE, True, nested),
+            Occurrence("many", Multiplicity.MANY, False, nested),
+        )
+    )
+
+    non_object = decode_path_classified(shape, [], ("one",))
+    assert non_object.presence is MISSING
+    assert decode_path_classified(shape, {"one": None}, ("one", "required")).presence is NULL
+    nested_value = decode_path_classified(shape, {"one": {"required": 7}}, ("one", "required"))
+    assert nested_value == DecodedMember(Present(7))
+    with pytest.raises(KeyError, match="array position"):
+        decode_path_classified(shape, {"many": []}, ("many", "required"))
+
+    reduced, findings = reduce_declared_members_classified(shape, "not-an-object")
+    assert reduced is None
+    assert findings[0].code == "one-wrong-kind"
+
+
+def test_classified_reduction_preserves_member_names_and_integer_array_positions() -> None:
+    shape = DocumentShape(
+        members=(
+            Leaf("0", INT32, True),
+            Occurrence(
+                "many",
+                Multiplicity.MANY,
+                False,
+                DocumentShape(members=(Leaf("12", INT32, False),)),
+            ),
+        )
+    )
+    reduced, findings = reduce_declared_members_classified(
+        shape, {"0": "wrong", "many": [{"12": "wrong"}]}
+    )
+    assert cast("dict[str, object]", reduced)["0"] is UNAVAILABLE
+    assert [finding.path for finding in findings] == [("0",), ("many", 0, "12")]
+
+
+def test_top_level_occurrence_classification_uses_the_sql_null_aware_carrier() -> None:
+    shape = DocumentShape(members=(Leaf("required", INT32, False),))
+    absent = decode_occurrence_classified(
+        shape, SQL_NULL, multiplicity=Multiplicity.ONE, nullable=False
+    )
+    wrong_many = decode_occurrence_classified(
+        shape,
+        PresentDocument([{"required": 1}, "wrong"]),
+        multiplicity=Multiplicity.MANY,
+        nullable=False,
+    )
+    assert absent.findings[0].code == "required-member-absent"
+    assert wrong_many.findings[0].code == "many-wrong-kind"
+    assert cast("Present", wrong_many.presence).value == []
 
 
 @pytest.mark.parametrize(

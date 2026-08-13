@@ -22,11 +22,11 @@
 # Steps (one resolving read PLUS one independent managed find, then the write):
 #   0  find (managed, Baltic Traders) : INSTANCE-FORM — the developer find materializes
 #      the owner, so the projection carries the whole `address` document last
-#      (sup_id, name, in_z, out_z, address). The Document slot is present.
+#      (sup_id, name, in_z, out_z, address-presence, address). The Document slot is present.
 #   1  find (Nordic Foods)            : the materialized-predicate-write RESOLVING read —
 #      ROW-FORM. It observes each matched row to plan the per-row close (ADR 0014) and
 #      constructs no instance, yet its projection carries `address` last
-#      (sup_id, name, in_z, out_z, address) because the Temporal Observation it records
+#      (sup_id, name, in_z, out_z, address-presence, address) because the Temporal Observation it records
 #      retains the whole predecessor row — the point of the witness.
 #      A close-only `terminate` writes no document, so `address` never rides the
 #      close's own binds; it rides the observation the close is planned from.
@@ -84,8 +84,8 @@ when:
       note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM
       statements:
         - sql:
-            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
-            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
+            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
+            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
           binds: [Baltic Traders, infinity]
       expectRows:
         - sup_id: 2
@@ -111,8 +111,8 @@ when:
       note: the predicate-write resolving read is ROW-FORM (no instance constructed) and still projects the address Document slot — the Temporal Observation it records is a complete Predecessor Row
       statements:
         - sql:
-            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
-            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
+            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
+            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
           binds: [Nordic Foods, infinity]
       referenceSql: select sup_id, name, in_z, out_z, address from supplier where name = 'Nordic Foods' and out_z > '9000-01-01'
       expectRows:
@@ -162,8 +162,8 @@ when:
         exercises the instance-form address Document projection with real data.
       statements:
         - sql:
-            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.in_z <= ? and t0.out_z > ?
-            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.in_z <= ? and t0.out_z > ?
+            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.name = ? and t0.in_z <= ? and t0.out_z > ?
+            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.name = ? and t0.in_z <= ? and t0.out_z > ?
           binds: [Nordic Foods, "2024-08-01T00:00:00+00:00", "2024-08-01T00:00:00+00:00"]
       referenceSql: select sup_id, name, in_z, out_z, address from supplier where name = 'Nordic Foods' and in_z <= '2024-08-01T00:00:00+00:00' and out_z > '2024-08-01T00:00:00+00:00'
       expectRows:

@@ -69,6 +69,7 @@ from .value_object_resolve import (
     NAVIGATE_VALUE_OBJECT_TARGET,
     NESTED_LITERAL_TYPE_MISMATCH,
     NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
+    NULL_CHECK_NON_NULLABLE_MEMBER,
     RejectionError,
     bounds_inverted,
     find_top_value_object,
@@ -147,7 +148,7 @@ def _walk(entity: Entity, node: Any) -> None:
             resolve_nested_ref(entity, body["path"]), body, subject=body["path"]
         )
     elif tag in ("nestedIsNull", "nestedIsNotNull"):
-        resolve_nested_ref(entity, body["path"])
+        _check_null_check(resolve_nested_ref(entity, body["path"]), body["path"])
     elif tag in ("nestedExists", "nestedNotExists"):
         _check_nested_exists(entity, body)
     elif tag == "between":
@@ -156,6 +157,10 @@ def _walk(entity: Entity, node: Any) -> None:
         _check_navigation(entity, body)
     elif tag in ATTRIBUTE_REFERENCE_TAGS:
         _check_find_root(entity, body.get("attr"))
+        if tag in ("isNull", "isNotNull"):
+            attr = body.get("attr", "")
+            _class, _, member = attr.rpartition(".")
+            _check_null_check(entity.attribute_by_name(member), attr)
     elif tag in ("and", "or"):
         for operand in body.get("operands", []):
             _walk(entity, operand)
@@ -187,6 +192,14 @@ def _check_nested_comparison(entity: Entity, body: dict[str, Any]) -> None:
             NESTED_LITERAL_TYPE_MISMATCH,
             f"{body['path']!r}: literal {value!r} does not match declared type "
             f"{attribute.get('type')!r}",
+        )
+
+
+def _check_null_check(attribute: dict[str, Any], subject: str) -> None:
+    if not attribute.get("nullable", False):
+        raise RejectionError(
+            NULL_CHECK_NON_NULLABLE_MEMBER,
+            f"{subject!r}: isNull/isNotNull is invalid for a non-nullable member",
         )
 
 
@@ -290,7 +303,7 @@ def _walk_element(value_object: dict[str, Any], node: Any) -> None:
             subject=f"element {body['path']}",
         )
     elif tag in ("nestedIsNull", "nestedIsNotNull"):
-        resolve_element_ref(value_object, body["path"])
+        _check_null_check(resolve_element_ref(value_object, body["path"]), body["path"])
     elif tag in ("and", "or"):
         for operand in body.get("operands", []):
             _walk_element(value_object, operand)

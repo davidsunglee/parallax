@@ -65,12 +65,14 @@ entities:
             type: string
           - name: city
             type: string
+            nullable: true
         valueObjects:
           - name: geo
             nullable: true
             attributes:
               - name: country
                 type: string
+                nullable: true
               - name: elevation
                 type: float64
                 nullable: true
@@ -147,12 +149,14 @@ entities:
             type: string
           - name: city
             type: string
+            nullable: true
         valueObjects:
           - name: geo
             nullable: true
             attributes:
               - name: country
                 type: string
+                nullable: true
               - name: elevation
                 type: float64
                 nullable: true

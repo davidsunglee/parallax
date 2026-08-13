@@ -42,12 +42,15 @@ from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize._input import (
+    InvalidRootInput,
     LogicalKey,
     RelationshipViewKey,
     SnapshotGraphInput,
     SnapshotNodeInput,
     SnapshotNodeRef,
     SnapshotRelationshipViewInput,
+    StoredDataIssueInput,
+    has_invalid_key,
     logical_key,
     validate_graph_input,
     view_refs,
@@ -77,6 +80,7 @@ class MergedNode:
     attributes: tuple[EntityAttributeInput, ...]
     value_objects: tuple[ValueObjectOccurrenceInput, ...]
     views: tuple[MergedRelationshipView, ...]
+    issues: tuple[StoredDataIssueInput, ...]
 
 
 type _Winner = tuple[int, int]
@@ -92,6 +96,8 @@ class GraphMerge:
     __slots__ = (
         "_attributes",
         "_graph",
+        "_invalid_roots",
+        "_issues",
         "_logical",
         "_model",
         "_order",
@@ -112,10 +118,18 @@ class GraphMerge:
         self._resolved = [_UNREACHED] * len(graph.nodes)
         self._attributes: list[dict[object, _Winner]] = []
         self._value_objects: list[dict[object, _Winner]] = []
+        self._issues: list[tuple[StoredDataIssueInput, ...]] = []
         self._views: list[dict[RelationshipViewKey, _Winner]] = []
+        self._invalid_roots: list[InvalidRootInput] = []
+        root_indices: list[int | None] = []
         for root in graph.roots:
-            self._walk(root)
-        self._roots = tuple(self._resolved[root.node_index] for root in graph.roots)
+            if isinstance(root, InvalidRootInput):
+                self._invalid_roots.append(root)
+                root_indices.append(None)
+            else:
+                self._walk(root)
+                root_indices.append(self._resolved[root.node_index])
+        self._roots = tuple(root_indices)
 
     @property
     def order(self) -> tuple[EntityIdentity, ...]:
@@ -123,9 +137,19 @@ class GraphMerge:
         return tuple(self._order)
 
     @property
-    def roots(self) -> tuple[int, ...]:
-        """The allocation indices of this graph's roots, in result order."""
+    def roots(self) -> tuple[int | None, ...]:
+        """Constructible allocation indices and invalid-root holes, in result order."""
         return self._roots
+
+    @property
+    def invalid_roots(self) -> tuple[InvalidRootInput, ...]:
+        """Non-hydrating roots in result order."""
+        return tuple(self._invalid_roots)
+
+    @property
+    def has_issues(self) -> bool:
+        """Whether conversion classified any issue in the reachable graph."""
+        return bool(self._invalid_roots) or any(self._issues)
 
     @property
     def pin(self) -> Pin:
@@ -152,6 +176,7 @@ class GraphMerge:
                 MergedRelationshipView(view, self._allocation(nodes[node], entry))
                 for view, (node, entry) in self._ordered_winners(index)
             ),
+            issues=self._issues[index],
         )
 
     # ----------------------------------------------------------------------- #
@@ -162,7 +187,7 @@ class GraphMerge:
         if self._resolved[ref.node_index] != _UNREACHED:
             return
         node = self._graph.nodes[ref.node_index]
-        key = logical_key(self._model, node)
+        key = None if has_invalid_key(node) else logical_key(self._model, node)
         index = self._logical.get(ref.node_index if key is None else key)
         if index is None:
             index = len(self._order)
@@ -171,6 +196,9 @@ class GraphMerge:
             self._attributes.append({})
             self._value_objects.append({})
             self._views.append({})
+            self._issues.append(node.issues)
+        elif node.issues:
+            self._issues[index] = (*self._issues[index], *node.issues)
         self._resolved[ref.node_index] = index
         for position, entry in enumerate(node.attributes):
             self._attributes[index].setdefault(entry.identity, (ref.node_index, position))

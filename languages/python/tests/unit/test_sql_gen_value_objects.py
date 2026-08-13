@@ -331,7 +331,7 @@ def test_document_slots_stay_atomic_and_follow_every_scalar_tier() -> None:
     meta = formed(Metamodel(entities=(site,)))
     instance = compile_read(oa.All(), meta, POSTGRES, target(meta, "Site"), result_form="instance")
     assert instance.statement.sql == (
-        "select t0.id, t0.label, t0.in_z, t0.out_z, t0.address from site t0"
+        "select t0.id, t0.label, t0.in_z, t0.out_z, not t0.address is null, t0.address from site t0"
     )
     row_form = compile_read(oa.All(), meta, POSTGRES, target(meta, "Site"))
     assert row_form.statement.sql == "select t0.id, t0.label, t0.in_z, t0.out_z from site t0"

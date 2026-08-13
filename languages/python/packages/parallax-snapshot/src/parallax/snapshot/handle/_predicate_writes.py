@@ -66,6 +66,7 @@ from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 from parallax.core.predicate import PredicateNode, QueryDefinitionError
 from parallax.core.sql_gen import compile_read
 from parallax.core.storage_layout import DocumentPath
+from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     ChunkedColumnBuilder,
     MaterializedWriteGroup,
@@ -96,9 +97,18 @@ from parallax.snapshot.handle._read import execute_read
 from parallax.snapshot.handle._write_inputs import (
     is_no_op_assignment,
     key_column_values,
+    normalize_assignment_values,
     predecessor_payload,
     validate_until,
     validate_valid_from,
+)
+from parallax.snapshot.materialize import (
+    LevelContext,
+    MergeScope,
+    convert_row,
+    merge_graph_input,
+    observable_columns,
+    require_publishable,
 )
 
 # The predicate mutations that carry Assignments; the rest take none at all and
@@ -468,7 +478,8 @@ def _materialize_predicate_write(
     # elimination (below, `is_no_op_assignment`)
     # compares each assigned member's new value against the resolved
     # row's own — a value-object member's comparison can only ever see
-    # the STORED document when this read actually projected its column
+    # the managed occurrence decoded from storage when this read actually
+    # projected its column
     # (`m-opt-lock` "when all assignments already equal that row's values,
     # it issues no DML, advances no version"). A VERSIONED NON-TEMPORAL
     # target reaches this need ALONE: it retains only the observed version,
@@ -482,6 +493,7 @@ def _materialize_predicate_write(
     occurrences = {
         occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
     }
+    comparison_assignments = normalize_assignment_values(assignments, occurrences)
     needs_documents: bool | frozenset[str]
     if predecessor_need:
         needs_documents = True
@@ -515,11 +527,47 @@ def _materialize_predicate_write(
     with attempt.read_trace() as recorder:
         resolved = [
             compiled.materialize_row(row)
-            for row in uow.read(lambda: execute_read(conn, dialect, compiled.statement, recorder))
+            for row in uow.read(
+                lambda: execute_read(
+                    conn,
+                    dialect,
+                    compiled.statement,
+                    recorder,
+                    document_reads=compiled.document_reads,
+                )
+            )
         ]
     if not resolved:
         return
-    rows = [materialized.values for materialized in resolved]
+    validation_scope = MergeScope(meta)
+    contexts = tuple(
+        LevelContext(
+            materialized.resolved_entity,
+            compiled.projected_documents,
+            compiled.attribute_reads(materialized.resolved_entity),
+        )
+        for materialized in resolved
+    )
+    validation_roots = tuple(
+        convert_row(
+            materialized.values,
+            context,
+            validation_scope,
+            findings=materialized.findings,
+            family_tag_unknown=materialized.family_tag_unknown,
+            classified_members=materialized.classified_members,
+        )
+        for materialized, context in zip(resolved, contexts, strict=True)
+    )
+    require_publishable(merge_graph_input(validation_scope.build(validation_roots, Pin()), meta))
+    rows = [
+        observable_columns(
+            materialized.values,
+            context,
+            classified_members=materialized.classified_members,
+        )
+        for materialized, context in zip(resolved, contexts, strict=True)
+    ]
     pk_attrs = family_primary_key(meta, entity)
     key_attributes = tuple(attr.identity.name for attr in pk_attrs)
     key_builders = tuple(ChunkedColumnBuilder[object]() for _ in pk_attrs)
@@ -535,7 +583,7 @@ def _materialize_predicate_write(
         version_builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
         for row in rows:
             if assignment_bearing and is_no_op_assignment(
-                member_columns, assignments, row, occurrences
+                member_columns, comparison_assignments, row, occurrences
             ):
                 continue  # per-row no-op elimination (assignment-bearing verbs only)
             append_key(row)
@@ -558,10 +606,9 @@ def _materialize_predicate_write(
     attribute_builders = {name: ChunkedColumnBuilder[object]() for name in attribute_names}
     value_object_builders = {name: ChunkedColumnBuilder[object]() for name in value_object_names}
     document_builder: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    for materialized in resolved:
-        row = materialized.values
+    for materialized, row in zip(resolved, rows, strict=True):
         if assignment_bearing and is_no_op_assignment(
-            member_columns, assignments, row, occurrences
+            member_columns, comparison_assignments, row, occurrences
         ):
             continue  # per-row no-op elimination (assignment-bearing verbs only)
         append_key(row)

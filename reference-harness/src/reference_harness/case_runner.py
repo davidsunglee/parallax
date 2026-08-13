@@ -81,7 +81,7 @@ from .predicate_write_validate import (
     validate_predicate_write,
 )
 from .providers import DatabaseProvider
-from .sql_normalize import is_union_all, normalize, sqlglot_dialect
+from .sql_normalize import _detach_read_lock, is_union_all, normalize, sqlglot_dialect
 from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )
@@ -1191,8 +1191,248 @@ def _hop_tag_binds(family: Family, effective_set: list[str]) -> list[Any]:
 # --- assertions -------------------------------------------------------------
 
 
-def _query_rows(db: DatabaseProvider, sql: str, binds: list[Any]) -> list[dict[str, Any]]:
-    return db.query(sql, binds) if binds else db.query(sql)
+def _query_rows(
+    case: Case, db: DatabaseProvider, sql: str, binds: list[Any]
+) -> list[dict[str, Any]]:
+    executable, presence_keys = _alias_document_presence_projections(sql, db.dialect, case.model)
+    rows = db.query(executable, binds) if binds else db.query(executable)
+    if not presence_keys:
+        return rows
+    return [{key: value for key, value in row.items() if key not in presence_keys} for row in rows]
+
+
+def _document_presence_projection(projection: Any) -> bool:
+    """Whether an expression has the physical document-presence syntax."""
+    return (
+        isinstance(projection, exp.Not)
+        and isinstance(projection.this, exp.Is)
+        and isinstance(projection.this.this, exp.Column)
+        and isinstance(projection.this.expression, exp.Null)
+    )
+
+
+def _same_projected_document(
+    presence: Any,
+    document: Any,
+    select: Any,
+    document_columns: Mapping[str, frozenset[str]],
+    dialect: str,
+) -> bool:
+    if not _document_presence_projection(presence):
+        return False
+    candidate = _projection_expr(document)
+    if not isinstance(candidate, exp.Column):
+        return False
+    source = presence.this.this
+    if source.name != candidate.name or source.table != candidate.table:
+        return False
+    physical = _physical_column_source(select, source, dialect)
+    return physical is not None and physical[1] in document_columns.get(physical[0], frozenset())
+
+
+def _containing_select(expression: Any) -> Any | None:
+    parent = expression.parent
+    while parent is not None and not isinstance(parent, exp.Select):
+        parent = parent.parent
+    return parent
+
+
+def _source_relations(select: Any) -> dict[str, Any]:
+    """Immediate FROM/JOIN relations in ``select``, keyed by their visible alias."""
+    from_clause = select.args.get("from_")
+    relations = ([] if from_clause is None else [from_clause.this, *from_clause.expressions]) + [
+        join.this for join in select.args.get("joins") or ()
+    ]
+    return {
+        relation.alias_or_name: relation
+        for relation in relations
+        if isinstance(relation, (exp.Table, exp.Subquery)) and relation.alias_or_name
+    }
+
+
+def _column_identity(column: Any, dialect: str) -> str:
+    identifier = column.this
+    return _identifier_identity(
+        column.name,
+        dialect,
+        quoted=isinstance(identifier, exp.Identifier) and bool(identifier.args.get("quoted")),
+    )
+
+
+def _passthrough_projection(select: Any, column: Any, dialect: str) -> tuple[int, Any] | None:
+    identity = _column_identity(column, dialect)
+    matches = [
+        (ordinal, projection)
+        for ordinal, projection in enumerate(select.expressions)
+        if _projection_identity(projection, dialect) == identity
+    ]
+    if len(matches) == 1:
+        ordinal, projection = matches[0]
+        candidate = _projection_expr(projection)
+        if isinstance(candidate, exp.Column) and not candidate.is_star:
+            return ordinal, candidate
+    return None
+
+
+def _passthrough_column(select: Any, column: Any, dialect: str) -> Any | None:
+    if (matched := _passthrough_projection(select, column, dialect)) is not None:
+        return matched[1]
+    stars = [
+        projection
+        for projection in select.expressions
+        if isinstance(projection, exp.Star)
+        or isinstance(projection, exp.Column)
+        and projection.is_star
+    ]
+    if len(stars) != 1:
+        return None
+    relations = _source_relations(select)
+    star = stars[0]
+    qualifier = star.table if isinstance(star, exp.Column) else ""
+    identifier = column.this
+    quoted = isinstance(identifier, exp.Identifier) and bool(identifier.args.get("quoted"))
+    if qualifier:
+        return exp.column(column.name, table=qualifier, quoted=quoted)
+    if len(relations) == 1:
+        return exp.column(column.name, table=next(iter(relations)), quoted=quoted)
+    return None
+
+
+def _ordinal_passthrough_column(select: Any, ordinal: int) -> Any | None:
+    if ordinal >= len(select.expressions):
+        return None
+    projection = select.expressions[ordinal]
+    candidate = _projection_expr(projection)
+    return candidate if isinstance(candidate, exp.Column) and not candidate.is_star else None
+
+
+def _physical_column_source(select: Any, column: Any, dialect: str) -> tuple[str, str] | None:
+    """Trace one selected Column through aliases to its physical Table and Column."""
+    relations = _source_relations(select)
+    relation = relations.get(column.table)
+    if relation is None and not column.table and len(relations) == 1:
+        relation = next(iter(relations.values()))
+    if isinstance(relation, exp.Table):
+        return relation.name, column.name
+    if not isinstance(relation, exp.Subquery):
+        return None
+    branches = _select_branches(relation.this)
+    if isinstance(relation.this, exp.SetOperation):
+        if not branches:
+            return None
+        matched = _passthrough_projection(branches[0], column, dialect)
+        if matched is None:
+            return None
+        ordinal = matched[0]
+        passthroughs = [_ordinal_passthrough_column(branch, ordinal) for branch in branches]
+    else:
+        passthroughs = [_passthrough_column(branch, column, dialect) for branch in branches]
+    sources = [
+        source
+        for branch, passthrough in zip(branches, passthroughs, strict=True)
+        if passthrough is not None
+        if (source := _physical_column_source(branch, passthrough, dialect)) is not None
+    ]
+    unique = set(sources)
+    return next(iter(unique)) if len(sources) == len(branches) and len(unique) == 1 else None
+
+
+def _identifier_identity(name: str, dialect: str, *, quoted: bool) -> str:
+    """Database identity used when allocating unquoted execution aliases."""
+    if quoted:
+        return name
+    if dialect in {"postgres", "mariadb"}:
+        return name.casefold()
+    return name
+
+
+def _projection_identity(projection: Any, dialect: str) -> str | None:
+    output = projection.args.get("alias") if isinstance(projection, exp.Alias) else None
+    if not isinstance(output, exp.Identifier) and isinstance(projection, exp.Column):
+        output = projection.this
+    if isinstance(output, exp.Identifier):
+        return _identifier_identity(output.name, dialect, quoted=bool(output.args.get("quoted")))
+    return (
+        _identifier_identity(projection.output_name, dialect, quoted=False)
+        if projection.output_name
+        else None
+    )
+
+
+def _false_presence_padding(projection: Any) -> bool:
+    return isinstance(projection, exp.Boolean) and projection.this is False
+
+
+def _document_presence_ordinals(selects: list[Any], model: Model, dialect: str) -> tuple[int, ...]:
+    """Presence ordinals proved by layout metadata and adjacency across branches."""
+    if not selects:
+        return ()
+    width = len(selects[0].expressions)
+    if any(len(select.expressions) != width for select in selects):
+        return ()
+    document_columns = {
+        table.table: frozenset(
+            slot.column for slot in table.columns if slot.tier is ColumnTier.DOCUMENT
+        )
+        for table in model.storage_layout.tables
+    }
+    ordinals: list[int] = []
+    for ordinal in range(width - 1):
+        arms = [select.expressions[ordinal] for select in selects]
+        next_arms = [select.expressions[ordinal + 1] for select in selects]
+        structural = [
+            _same_projected_document(arm, next_arm, select, document_columns, dialect)
+            for arm, next_arm, select in zip(arms, next_arms, selects, strict=True)
+        ]
+        if any(structural) and all(
+            proved or _false_presence_padding(arm)
+            for proved, arm in zip(structural, arms, strict=True)
+        ):
+            ordinals.append(ordinal)
+    return tuple(ordinals)
+
+
+def _select_branches(tree: Any) -> list[Any]:
+    branches = _union_branch_selects(tree)
+    if branches:
+        return branches
+    select = tree if isinstance(tree, exp.Select) else tree.find(exp.Select)
+    return [] if select is None else [select]
+
+
+def _alias_document_presence_projections(
+    sql: str, dialect: str, model: Model
+) -> tuple[str, frozenset[str]]:
+    """Give only proven physical presence cells collision-safe execution aliases."""
+    tree = sqlglot.parse_one(sql, read=sqlglot_dialect(dialect))
+    selects = _select_branches(tree)
+    ordinals = _document_presence_ordinals(selects, model, dialect)
+    reserved = {
+        identity
+        for select in selects
+        for projection in select.expressions
+        if (identity := _projection_identity(projection, dialect)) is not None
+    }
+    aliases: dict[int, str] = {}
+    for ordinal in ordinals:
+        base = f"__parallax_document_presence_{ordinal}"
+        alias = base
+        suffix = 1
+        while _identifier_identity(alias, dialect, quoted=False) in reserved:
+            alias = f"{base}_{suffix}"
+            suffix += 1
+        aliases[ordinal] = alias
+        reserved.add(_identifier_identity(alias, dialect, quoted=False))
+    keys = frozenset(aliases.values())
+    for select in selects:
+        projections = list(select.expressions)
+        for ordinal in ordinals:
+            projections[ordinal] = exp.alias_(projections[ordinal], aliases[ordinal])
+        select.set("expressions", projections)
+    if not ordinals:
+        return sql, keys
+    lock_suffix = _detach_read_lock(tree, dialect)
+    return tree.sql(dialect=sqlglot_dialect(dialect)) + lock_suffix, keys
 
 
 def _provision(case: Case, db: DatabaseProvider) -> None:
@@ -1240,7 +1480,7 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     # contribution, while history contributes no predicate or bind.
     _assert_temporal_only_union_binds(case, dialect)
 
-    golden_rows = _query_rows(db, golden, case.statement_binds(0, dialect))
+    golden_rows = _query_rows(case, db, golden, case.statement_binds(0, dialect))
     # Relational Document Layout (m-storage-layout / m-sql): the golden projects the
     # shared Structured Column once and the row-form result is the scalars it
     # carries, under the names a Column of each would have had.
@@ -1472,12 +1712,16 @@ def _golden_projection_columns(case: Case) -> set[str]:
     statements = case.golden_statements(dialect)
     if not statements:
         return set()
-    select = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect)).find(exp.Select)
-    if select is None:
+    tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
+    branches = _select_branches(tree)
+    if not branches:
         return set()
+    select = branches[0]
+    presence_ordinals = set(_document_presence_ordinals(branches, case.model, dialect))
     return {
         name
-        for projection in select.expressions
+        for ordinal, projection in enumerate(select.expressions)
+        if ordinal not in presence_ordinals
         if (name := projection.output_name) and name != "*"
     }
 
@@ -2025,7 +2269,13 @@ def _assert_tpcs_union_shape(
                     f"{table!r} (the alphabetical-order concrete subtype {name!r}), got "
                     f"{branch_tables[0] if branch_tables else None!r}."
                 )
-            out_columns = [projection.output_name for projection in branch.expressions]
+            presence_ordinals = set(_document_presence_ordinals(branches, case.model, dialect))
+            logical_projections = [
+                projection
+                for ordinal, projection in enumerate(branch.expressions)
+                if ordinal not in presence_ordinals
+            ]
+            out_columns = [projection.output_name for projection in logical_projections]
             if out_columns != expected_columns:
                 raise CaseFailure(
                     f"{case.path.name}: `union all` branch {position} ({name!r}) projects "
@@ -2033,9 +2283,11 @@ def _assert_tpcs_union_shape(
                     f"{expected_columns} (the position's one contributor sequence, then "
                     f"familyVariant; m-sql)."
                 )
+            logical_branch = branch.copy()
+            logical_branch.set("expressions", logical_projections)
             _assert_branch_projection_shape(
                 case,
-                branch,
+                logical_branch,
                 position,
                 name,
                 superset,
@@ -2043,7 +2295,7 @@ def _assert_tpcs_union_shape(
                 placeholder_types,
                 dialect,
             )
-            literal = _string_literal_value(branch.expressions[-1])
+            literal = _string_literal_value(logical_projections[-1])
             if literal != name:
                 raise CaseFailure(
                     f"{case.path.name}: `union all` branch {position} projects familyVariant "
@@ -2296,7 +2548,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     # a node CARRIES and never how the levels are matched up.
     root_rows = _materialize_target_tph_document_layout(
         case,
-        _query_rows(db, statements[0], root_binds),
+        _query_rows(case, db, statements[0], root_binds),
         include_value_objects=True,
     )
     root_rows = _materialize_family_variant(case, root_rows)
@@ -2370,6 +2622,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
             )
 
         child_rows = _query_rows(
+            case,
             db,
             statements[statement_index],
             list(parent_keys) + list(step.tag_binds) + expected_suffix,
@@ -2479,7 +2732,7 @@ def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
     root_entity = _graphs_root_entity(case)
 
     # Level 0: the single history / asOfRange query — every milestone in one round trip.
-    root_rows = _query_rows(db, statements[0], case.statement_binds(0, dialect))
+    root_rows = _query_rows(case, db, statements[0], case.statement_binds(0, dialect))
 
     # referenceSql (an independent naive statement) cross-checks the whole milestone set.
     reference_sql = case.reference_sql_for(dialect)
@@ -2936,7 +3189,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     # layout would have given it and the node assembly below is layout-blind.
     projected = _materialize_target_tph_document_layout(
         case,
-        _query_rows(db, golden, case.statement_binds(0, dialect)),
+        _query_rows(case, db, golden, case.statement_binds(0, dialect)),
         include_value_objects=True,
     )
     rows: list[dict[str, Any]] = [
@@ -5546,7 +5799,7 @@ def _assert_scenario_reference_sql(
     reference_sql = _scenario_reference_sql_for(step, reader.dialect)
     if reference_sql is None:
         return
-    reference_rows = _query_rows(reader, reference_sql, [])
+    reference_rows = _query_rows(case, reader, reference_sql, [])
     if not _rows_equal(reference_rows, golden_rows, case.tolerance):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] referenceSql rows != golden rows.\n"
@@ -5958,7 +6211,7 @@ def _run_scenario_action(
             return _reuse_prior_rows(case, step, index, results)
         rows: list[dict[str, Any]] = []
         for statement, stmt_binds in pairs:
-            rows.extend(_query_rows(db, statement, stmt_binds))
+            rows.extend(_query_rows(case, db, statement, stmt_binds))
         return rows
     for statement, stmt_binds in pairs:
         db.execute(statement, stmt_binds)
@@ -6222,7 +6475,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # it reads on the provider's autocommit connection, exactly as before.
                 statement, stmt_binds = pairs[0]
                 reader: Any = session if session is not None else db
-                rows = _query_rows(reader, statement, stmt_binds)
+                rows = _query_rows(case, reader, statement, stmt_binds)
                 # GROUPED, the oracle runs on the SAME held session as the golden read
                 # above (`reader`) rather than the top-level `db`: after an uncommitted
                 # grouped write the two connections would otherwise observe DIFFERENT
@@ -6953,7 +7206,7 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
                 )
             rows: list[dict[str, Any]] = []
             for statement, binds in pairs:
-                rows = _query_rows(node, statement, binds)
+                rows = _query_rows(case, node, statement, binds)
             results.append(rows)
 
             observe = step.get("observeRows")

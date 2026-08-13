@@ -8,10 +8,8 @@
 # iff SOME element's number lies in the inclusive range. Ada's first element
 # ('555-1234') sits exactly on the upper bound and Nils's only element ('555-0000')
 # exactly on the lower, so both inclusive edges are witnessed; Linus ('555-9999') is
-# above. The trap is Omar (id 9): his `phones` is the JSON scalar STRING "555-0000",
-# the exact lower bound, and it must NOT match, because a non-array `phones` has no
-# elements — the array-type guard collapses it, along with the JSON-null (8) and the
-# object (10), exactly as m-value-object-021 pins for equality.
+# above. Omar and Priya (9, 10) have empty arrays and Iris (8) has a JSON-null
+# occurrence, so none contributes an element.
 #
 # The range rides ONE element predicate on ONE unnested alias, which is what makes
 # `nestedBetween` a canonical node rather than a lowered pair: two independent flat

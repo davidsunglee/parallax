@@ -37,8 +37,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.payload from traveler t0 where exists (select 1 from trip t1 where t1.traveler_id = t0.id and jsonb_extract_path_text(t1.payload, ?) = ?)
-        mariadb: select t0.id, t0.payload from traveler t0 where exists (select 1 from trip t1 where t1.traveler_id = t0.id and json_value(t1.payload, ?) = ?)
+        postgres: select t0.id, not t0.payload is null, t0.payload from traveler t0 where exists (select 1 from trip t1 where t1.traveler_id = t0.id and jsonb_extract_path_text(t1.payload, ?) = ?)
+        mariadb: select t0.id, not t0.payload is null, t0.payload from traveler t0 where exists (select 1 from trip t1 where t1.traveler_id = t0.id and json_value(t1.payload, ?) = ?)
       binds:
         postgres: [destination, Oslo]
         mariadb: ['$.destination', Oslo]

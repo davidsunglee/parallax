@@ -5,8 +5,10 @@
 # Two statements, roundTrips = 2 — the same 1 + (levels) accounting a `Columns` model
 # gets, because the layout changes what a level SELECTS and never how many levels
 # there are. Each level is instance-form, so each needs members inside its own
-# document and projects that one column: `t0.payload` at the root beside `t0.id`, and
-# `t0.payload` at the child beside `t0.id` and `t0.traveler_id`. Neither level
+# document and projects that slot's adjacent presence/value pair: `not t0.payload
+# is null, t0.payload` at the root beside `t0.id`, and
+# `not t0.payload is null, t0.payload` at the child beside `t0.id` and
+# `t0.traveler_id`. Neither level
 # projects a member column, because under this layout there are none to project, and
 # neither projects the column twice however many members it decodes from it.
 #
@@ -42,11 +44,11 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.payload from traveler t0
-        mariadb: select t0.id, t0.payload from traveler t0
+        postgres: select t0.id, not t0.payload is null, t0.payload from traveler t0
+        mariadb: select t0.id, not t0.payload is null, t0.payload from traveler t0
     - sql:
-        postgres: select t0.id, t0.traveler_id, t0.payload from trip t0 where t0.traveler_id in (?, ?, ?) order by t0.id asc
-        mariadb: select t0.id, t0.traveler_id, t0.payload from trip t0 where t0.traveler_id in (?, ?, ?) order by t0.id asc
+        postgres: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 where t0.traveler_id in (?, ?, ?) order by t0.id asc
+        mariadb: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 where t0.traveler_id in (?, ?, ?) order by t0.id asc
       binds: [1, 2, 3]
   graph:
     Traveler:

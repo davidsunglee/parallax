@@ -12,8 +12,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.payload, 'Book' family_variant from publication_book t0 union all select t0.id, t0.payload, 'Film' family_variant from publication_film t0
-        mariadb: select t0.id, t0.payload, 'Book' family_variant from publication_book t0 union all select t0.id, t0.payload, 'Film' family_variant from publication_film t0
+        postgres: select t0.id, not t0.payload is null, t0.payload, 'Book' family_variant from publication_book t0 union all select t0.id, not t0.payload is null, t0.payload, 'Film' family_variant from publication_film t0
+        mariadb: select t0.id, not t0.payload is null, t0.payload, 'Book' family_variant from publication_book t0 union all select t0.id, not t0.payload is null, t0.payload, 'Film' family_variant from publication_film t0
   graph:
     Publication:
       - { id: 10, title: Systems, detail: ISBN-10, pages: 320, familyVariant: Book }

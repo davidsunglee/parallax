@@ -257,13 +257,11 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> None:
     match op:
         case All() | NoneOp():
             return
-        case (
-            Comparison(attr=attr)
-            | NullCheck(attr=attr)
-            | StringMatch(attr=attr)
-            | Membership(attr=attr)
-        ):
+        case Comparison(attr=attr) | StringMatch(attr=attr) | Membership(attr=attr):
             check_attribute_reference(attr, model, scope)
+        case NullCheck(attr=attr):
+            check_attribute_reference(attr, model, scope)
+            _check_attribute_null_check(attr, model)
         case Between(attr=attr, lower=lower, upper=upper):
             check_attribute_reference(attr, model, scope)
             _check_bound_ordering(attr, lower, upper)
@@ -533,6 +531,23 @@ def check_attribute_reference(attr_ref: str, model: Metamodel, scope: PositionSc
     _check_attribute_position(model, entity, scope)
 
 
+def _check_attribute_null_check(attr_ref: str, model: Metamodel) -> None:
+    class_name, _, attr_name = attr_ref.rpartition(".")
+    entity = _lookup_entity(model, class_name)
+    if entity is None:  # pragma: no cover - check_attribute_reference resolves this first
+        raise AssertionError("a null-checked attribute reference has no resolved Entity")
+    position = inheritance.view(model).entity(entity.identity)
+    attribute = (
+        None if position is None else position.applicable_attribute(attr_name)
+    ) or entity.attribute(attr_name)
+    if attribute is not None and not attribute.nullable:
+        raise ModelRejectedError(
+            "null-check-non-nullable-member",
+            f"{attr_ref!r}: isNull/isNotNull is invalid for a non-nullable member "
+            "(m-predicate null-check validity)",
+        )
+
+
 def _check_attribute_position(
     model: Metamodel, entity: EntityMetadata, scope: PositionScope
 ) -> None:
@@ -647,7 +662,10 @@ def _resolve_nested_leaf(path: str, model: Metamodel) -> ValueObjectAttributeMet
     entity = _lookup_entity(model, class_name)
     if entity is None:
         raise _unresolved_reference(model, path, class_name)
-    vo = entity.value_object(vo_name)
+    position = inheritance.view(model).entity(entity.identity)
+    vo = (
+        None if position is None else position.applicable_value_object(vo_name)
+    ) or entity.value_object(vo_name)
     if vo is None:
         raise ModelRejectedError(
             "nested-path-first-segment-not-value-object",
@@ -682,7 +700,10 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
     entity = _lookup_entity(model, class_name)
     if entity is None:
         raise _unresolved_reference(model, path, class_name)
-    vo = entity.value_object(vo_name)
+    position = inheritance.view(model).entity(entity.identity)
+    vo = (
+        None if position is None else position.applicable_value_object(vo_name)
+    ) or entity.value_object(vo_name)
     if vo is None:
         raise ModelRejectedError(
             "nested-path-first-segment-not-value-object",
@@ -794,7 +815,8 @@ def _check_nested_string(node: NestedStringMatch, model: Metamodel) -> None:
 
 
 def _check_nested_null_check(node: NestedNullCheck, model: Metamodel) -> None:
-    _resolve_nested_leaf(node.path, model)
+    leaf = _resolve_nested_leaf(node.path, model)
+    _require_nullable_null_check(node.path, leaf.nullable)
 
 
 # --------------------------------------------------------------------------- #
@@ -843,7 +865,8 @@ def _check_element_predicate(op: PredicateNode, container: _VoContainer) -> None
         case NestedStringMatch():
             _check_element_string(op, container)
         case NestedNullCheck(path=path):
-            _resolve_element_leaf(container, path)
+            leaf = _resolve_element_leaf(container, path)
+            _require_nullable_null_check(path, leaf.nullable)
         case And(operands=operands) | Or(operands=operands):
             for operand in operands:
                 _check_element_predicate(operand, container)
@@ -854,3 +877,12 @@ def _check_element_predicate(op: PredicateNode, container: _VoContainer) -> None
                 f"{op!r} is not a legal nestedExists/nestedNotExists element predicate "
                 "(m-predicate elementPredicate)"
             )
+
+
+def _require_nullable_null_check(path: str, nullable: bool) -> None:
+    if not nullable:
+        raise ModelRejectedError(
+            "null-check-non-nullable-member",
+            f"{path!r}: isNull/isNotNull is invalid for a non-nullable member "
+            "(m-predicate null-check validity)",
+        )

@@ -677,7 +677,13 @@ def test_a_zero_row_shortfall_names_the_completed_call_the_enforcement_rejected(
 
 def test_a_read_that_failed_still_records_the_call_it_made() -> None:
     class _ReadFaultPort(RecordingPort):
-        def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+        def execute(
+            self,
+            sql: str,
+            binds: Sequence[Bind],
+            document_reads: Sequence[tuple[int, int]] = (),
+        ) -> list[Row]:
+            del sql, binds, document_reads
             raise deadlock()
 
         def transaction[T](self, body: Callable[[DbPort], T]) -> T:

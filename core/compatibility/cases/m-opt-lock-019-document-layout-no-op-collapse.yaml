@@ -50,8 +50,8 @@ when:
       note: the materialize read — both ledgers resolve, and `label` is decoded out of the Structured Column
       statements:
         - sql:
-            postgres: select t0.id, t0.version, t0.payload from ledger t0 where t0.id > ?
-            mariadb: select t0.id, t0.version, t0.payload from ledger t0 where t0.id > ?
+            postgres: select t0.id, t0.version, not t0.payload is null, t0.payload from ledger t0 where t0.id > ?
+            mariadb: select t0.id, t0.version, not t0.payload is null, t0.payload from ledger t0 where t0.id > ?
           binds: [0]
       expectRows:
         - { id: 100, version: 1, label: opening, balance: 250.00, details: { code: opening } }
@@ -83,8 +83,8 @@ when:
       note: an explicit JSON null on 100 and a missing key on 200 read back as one absence; only 100's version moved
       statements:
         - sql:
-            postgres: select t0.id, t0.version, t0.payload from ledger t0 where t0.id > ?
-            mariadb: select t0.id, t0.version, t0.payload from ledger t0 where t0.id > ?
+            postgres: select t0.id, t0.version, not t0.payload is null, t0.payload from ledger t0 where t0.id > ?
+            mariadb: select t0.id, t0.version, not t0.payload is null, t0.payload from ledger t0 where t0.id > ?
           binds: [0]
       expectRows:
         - { id: 100, version: 2, label: null, balance: 250.00, details: { code: opening } }

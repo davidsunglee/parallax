@@ -20,11 +20,14 @@ from psycopg.rows import TupleRow
 from psycopg.types.json import Jsonb
 
 import parallax.postgres
+import parallax.postgres.adapter as adapter_module
+from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JsonDocument
 from parallax.postgres import PostgresAdapter
 from parallax.postgres.adapter import (
     adapt_binds,
+    fold_document_reads,
     translate_driver_error,
     translating_driver_errors,
 )
@@ -193,12 +196,64 @@ def _adapter(connection: _FakeConnection) -> PostgresAdapter:
     return PostgresAdapter(cast("psycopg.Connection[TupleRow]", connection))
 
 
-def test_adapter_registers_the_infinity_timestamptz_loader() -> None:
+def test_adapter_registers_boundary_value_loaders() -> None:
     # The port normalizes native `timestamptz` infinity to the m-core sentinel by
     # registering a custom loader on the connection at construction.
     connection = _FakeConnection()
     _adapter(connection)
-    assert [name for name, _loader in connection.adapters.registered] == ["timestamptz"]
+    assert [name for name, _loader in connection.adapters.registered] == [
+        "timestamptz",
+        "jsonb",
+        "jsonb",
+    ]
+
+
+def test_fold_document_reads_distinguishes_sql_null_from_present_json_null() -> None:
+    rows = fold_document_reads(
+        ("id", "doc_present", "doc"),
+        (
+            (1, False, None),
+            (2, True, adapter_module._PRESENT_JSON_NULL),  # pyright: ignore[reportPrivateUsage]
+        ),
+        ((1, 2),),
+    )
+    assert rows == [
+        {"id": 1, "doc": SQL_NULL},
+        {"id": 2, "doc": PresentDocument(None)},
+    ]
+
+
+def test_json_loader_preserves_only_present_json_null() -> None:
+    load = adapter_module._load_json_preserving_null  # pyright: ignore[reportPrivateUsage]
+    assert load("null") is adapter_module._PRESENT_JSON_NULL  # pyright: ignore[reportPrivateUsage]
+    assert load(b'{"answer": 42}') == {"answer": 42}
+
+
+def test_fold_document_reads_rejects_invalid_projection_metadata_and_row_width() -> None:
+    with pytest.raises(ValueError, match="adjacent, zero-based"):
+        fold_document_reads(("presence", "gap", "document"), (), ((0, 2),))
+    with pytest.raises(ValueError, match="must not overlap"):
+        fold_document_reads(("first", "shared", "second"), (), ((0, 1), (1, 2)))
+    with pytest.raises(ValueError, match="does not match"):
+        fold_document_reads(("id", "presence", "document"), ((1, True),), ((1, 2),))
+
+
+class _JsonNullCursor(_FakeCursor):
+    def __init__(self) -> None:
+        super().__init__(None)
+        self.description = object()
+
+    def fetchall(self) -> list[object]:
+        return [{"id": 1, "doc": adapter_module._PRESENT_JSON_NULL}]  # pyright: ignore[reportPrivateUsage]
+
+
+class _JsonNullConnection(_FakeConnection):
+    def cursor(self, **_: object) -> _JsonNullCursor:
+        return _JsonNullCursor()
+
+
+def test_ordinary_execute_normalizes_present_json_null_to_none() -> None:
+    assert _adapter(_JsonNullConnection()).execute("select 1", []) == [{"id": 1, "doc": None}]
 
 
 def test_execute_reraises_a_driver_error_at_the_boundary() -> None:

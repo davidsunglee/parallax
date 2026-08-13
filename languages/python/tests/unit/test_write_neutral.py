@@ -58,7 +58,7 @@ from parallax.snapshot.handle import (
 
 ACCOUNT_META = model_of(ACCOUNT)
 UPDATE_SQL = "update account set balance = %s, version = %s where id = %s"
-ACCOUNT_ROW: Row = {"id": 3, "owner": "Grace", "balance": 10, "version": 1}
+ACCOUNT_ROW: Row = {"id": 3, "owner": "Grace", "balance": Decimal("10"), "version": 1}
 
 
 def _account() -> EntityIdentity:

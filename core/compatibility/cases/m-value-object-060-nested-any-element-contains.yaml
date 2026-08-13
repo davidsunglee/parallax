@@ -6,10 +6,7 @@
 #
 # nestedContains(Customer.address.phones.number, '-00') binds '%-00%' and matches only
 # Nils (7), whose 555-0000 carries the infix. Ada's 555-1234 / 555-9999 and Linus's
-# 555-9999 do not. Omar (9) is the trap: his non-array scalar `phones` is the STRING
-# "555-0000", which carries the same infix and would match an unguarded traversal; the
-# array-type guard reads him as zero elements, with the JSON null (8) and the object
-# (10).
+# 555-9999 do not; the remaining rows carry no matching element.
 #
 # The oracle uses `position(... in ...)` rather than a pattern, so a mis-derived affix
 # pattern is a row difference rather than the same mistake spelled twice.

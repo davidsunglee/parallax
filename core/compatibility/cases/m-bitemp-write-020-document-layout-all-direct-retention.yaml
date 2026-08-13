@@ -59,8 +59,8 @@ when:
       note: the materializing read — `t0.payload` is projected for the observation, not for any member
       statements:
         - sql:
-            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from mooring t0 where t0.id = ? and t0.thru_z = ? and t0.out_z = ?
-            mariadb: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from mooring t0 where t0.id = ? and t0.thru_z = ? and t0.out_z = ?
+            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from mooring t0 where t0.id = ? and t0.thru_z = ? and t0.out_z = ?
+            mariadb: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from mooring t0 where t0.id = ? and t0.thru_z = ? and t0.out_z = ?
           binds: [1, infinity, infinity]
       expectRows:
         - { id: 1, from_z: "2026-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2026-01-01T00:00:00+00:00", out_z: infinity }
@@ -115,8 +115,8 @@ when:
       note: no rectangle covers the excised window, and this read projects the Structured Column too
       statements:
         - sql:
-            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from mooring t0 where t0.id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-            mariadb: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from mooring t0 where t0.id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from mooring t0 where t0.id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+            mariadb: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from mooring t0 where t0.id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
           binds: [1, "2026-05-01T00:00:00+00:00", "2026-05-01T00:00:00+00:00", infinity]
       expectRows: []
 then:

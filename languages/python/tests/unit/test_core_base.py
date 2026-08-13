@@ -68,6 +68,12 @@ def test_infinity_is_the_native_upper_bound_sentinel() -> None:
     assert base.INFINITY.value == base.INFINITY_LITERAL == "infinity"
 
 
+def test_document_values_are_finite_portable_json_trees() -> None:
+    assert base.is_document_value({"ratio": 1.5, "items": [True, None]})
+    assert not base.is_document_value(float("nan"))
+    assert not base.is_document_value(object())
+
+
 def test_normalize_instant_converts_aware_to_utc_microsecond() -> None:
     eastern = dt.timezone(dt.timedelta(hours=-5))
     aware = dt.datetime(2026, 7, 12, 8, 30, 0, 123456, tzinfo=eastern)

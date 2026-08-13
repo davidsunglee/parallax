@@ -8,14 +8,16 @@
 # Step 0 constructs `findMany(all Depot)` lazily — no SQL (m-op-list). Step 1's first
 # access resolves the list in ONE query (the scenario's only round trip), projecting
 # Depot's OWN instance-form list — scalar layout slots followed by the `address`
-# Document slot — materialized with DEPOT's descriptor; step 2 re-accesses with NO SQL,
+# Document slot's presence/value pair — materialized with DEPOT's descriptor;
+# step 2 re-accesses with NO SQL,
 # returning the SAME resolved objects. Depot's `address` is a FLAT { line, postcode },
 # DIVERGENT from the recursive Customer / Location composite (models/customer.yaml):
 # a runner materializing with the scenario ROOT's descriptor drops `line`/`postcode`
 # and injects `street`/`city`/`geo`/`phones`, failing expectRows observably — the
 # wrong-entity failure a verbatim-composite child cannot surface. The all-Depot read
 # returns exactly the two fixture depots; 201's SQL-NULL document materializes a null
-# address (the absence collapse). Golden SQL is dialect-identical (bare projection); a
+# address (the absence collapse). Golden SQL is dialect-identical
+# (presence-plus-document projection); a
 # bare `all(Depot)` read carries no `order by`, and expectRows compares
 # order-insensitively.
 model: models/customer.yaml
@@ -32,11 +34,11 @@ when:
     - action: access
       "on": 0
       roundTrips: 1
-      note: first access resolves the list once — INSTANCE-FORM, projects Depot's own list (id, customer_id, label, address); each row's flat address decodes with DEPOT's descriptor
+      note: first access resolves the list once — INSTANCE-FORM, projects Depot's own list (id, customer_id, label, then address presence/value pair); each row's flat address decodes with DEPOT's descriptor
       statements:
         - sql:
-            postgres: select t0.id, t0.customer_id, t0.label, t0.address from depot t0
-            mariadb: select t0.id, t0.customer_id, t0.label, t0.address from depot t0
+            postgres: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from depot t0
+            mariadb: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from depot t0
       expectRows:
         - id: 200
           customer_id: 1

@@ -1527,6 +1527,9 @@ rules:
 - `between-bounds-inverted` — a `between`'s `lower` bound is strictly greater than
   its `upper`, comparing same-kind literals only (both numbers, or both strings),
   so the range is empty by construction (`m-predicate` bound ordering).
+- `null-check-non-nullable-member` — an `isNull` / `isNotNull`, nested null
+  check, or element-relative null check resolves to a leaf whose declaration is
+  non-nullable, so the model-aware resolver rejects the predicate before SQL.
 - `nested-path-first-segment-not-value-object` — a nested path's first segment names
   no value object declared on the queried entity (`m-predicate`).
 - `nested-path-unknown-member` — an intermediate segment names no declared nested

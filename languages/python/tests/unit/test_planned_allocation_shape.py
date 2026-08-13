@@ -37,7 +37,7 @@ from parallax.snapshot.handle import Transaction
 
 def _resolved_rows(count: int) -> list[dict[str, object]]:
     return [
-        {"id": index, "owner": f"Owner{index}", "balance": 100.00, "version": 1}
+        {"id": index, "owner": f"Owner{index}", "balance": Decimal("100.00"), "version": 1}
         for index in range(count)
     ]
 

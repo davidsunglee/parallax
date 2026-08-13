@@ -27,6 +27,7 @@ import pytest
 from reference_harness.case import load_case, load_model
 from reference_harness.case_runner import (
     CaseFailure,
+    _alias_document_presence_projections,
     _assert_single_statement_graph,
     _graphs_equal,
     _MaterializedRow,
@@ -97,6 +98,139 @@ def test_filtered_materialization_matches_the_authored_graph(dialect: str) -> No
     # A filtered read still materializes the matched owners' full composite in one
     # round trip (case 024: Oslo -> ids 1, 2).
     _assert_single_statement_graph(_load(_CASE_024), _CustomerDocDb(dialect, [1, 2]))
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_document_presence_projection_gets_a_collision_safe_execution_alias(
+    dialect: str,
+) -> None:
+    sql = (
+        "select t0.name as __parallax_document_presence_1, "
+        "not t0.address is null, t0.address from customer t0"
+    )
+    executable, keys = _alias_document_presence_projections(sql, dialect, _customer_model())
+    assert keys == frozenset({"__parallax_document_presence_1_1"})
+    assert "__parallax_document_presence_1" in executable
+    assert "__parallax_document_presence_1_1" in executable
+
+
+@pytest.mark.parametrize(
+    ("dialect", "lock"),
+    [("postgres", "for share of t0"), ("mariadb", "lock in share mode")],
+)
+def test_document_presence_aliasing_preserves_an_outer_lock_around_a_nested_union(
+    dialect: str, lock: str
+) -> None:
+    sql = (
+        "select t0.id, not t0.address is null, t0.address from customer t0 join ("
+        "select t1.id from customer t1 union all select t2.id from customer t2"
+        f") u on u.id = t0.id {lock}"
+    )
+    executable, keys = _alias_document_presence_projections(sql, dialect, _customer_model())
+    assert keys == frozenset({"__parallax_document_presence_1"})
+    assert executable.lower().endswith(lock)
+    if dialect == "mariadb":
+        assert "for share" not in executable.lower()
+
+
+def test_unquoted_projection_alias_collisions_use_database_identifier_folding() -> None:
+    sql = (
+        "select t0.name as __PARALLAX_DOCUMENT_PRESENCE_1, "
+        "not t0.address is null, t0.address from customer t0"
+    )
+    executable, keys = _alias_document_presence_projections(sql, "postgres", _customer_model())
+    assert keys == frozenset({"__parallax_document_presence_1_1"})
+    assert "__parallax_document_presence_1_1" in executable
+
+
+def test_document_presence_metadata_resolves_a_derived_table_alias() -> None:
+    sql = (
+        "select not p1.address is null, p1.address "
+        "from (select * from customer t0 where t0.id > 0 offset 0) p1"
+    )
+    executable, keys = _alias_document_presence_projections(sql, "postgres", _customer_model())
+    assert keys == frozenset({"__parallax_document_presence_0"})
+    assert "__parallax_document_presence_0" in executable
+
+
+def test_document_presence_metadata_resolves_an_explicit_derived_passthrough() -> None:
+    sql = (
+        "select not p1.address is null, p1.address "
+        "from (select t0.address as address from customer t0) p1"
+    )
+    executable, keys = _alias_document_presence_projections(sql, "postgres", _customer_model())
+    assert keys == frozenset({"__parallax_document_presence_0"})
+    assert "__parallax_document_presence_0" in executable
+
+
+def test_derived_alias_over_a_scalar_column_is_not_document_presence_metadata() -> None:
+    sql = (
+        "select not p1.address is null, p1.address "
+        "from (select t0.id as address from customer t0) p1"
+    )
+    executable, keys = _alias_document_presence_projections(sql, "postgres", _customer_model())
+    assert executable == sql
+    assert keys == frozenset()
+
+
+def test_quoted_derived_scalar_alias_does_not_collide_with_unquoted_document_alias() -> None:
+    sql = (
+        'select not p1."Address" is null, p1."Address" '
+        'from (select t0.address as address, t0.id as "Address" from customer t0) p1'
+    )
+    executable, keys = _alias_document_presence_projections(sql, "postgres", _customer_model())
+    assert executable == sql
+    assert keys == frozenset()
+
+
+def test_quoted_derived_document_alias_retains_its_distinct_identity() -> None:
+    sql = (
+        'select not p1."Address" is null, p1."Address" '
+        'from (select t0.id as address, t0.address as "Address" from customer t0) p1'
+    )
+    executable, keys = _alias_document_presence_projections(sql, "postgres", _customer_model())
+    assert keys == frozenset({"__parallax_document_presence_0"})
+    assert executable.count("__parallax_document_presence_0") == 1
+
+
+def test_set_operation_lineage_rejects_a_later_arms_swapped_ordinal() -> None:
+    sql = (
+        "select not p1.address is null, p1.address from ("
+        "select t0.address as address, t0.id as id from customer t0 "
+        "union all select t0.id as id, t0.address as address from customer t0) p1"
+    )
+    executable, keys = _alias_document_presence_projections(sql, "postgres", _customer_model())
+    assert executable == sql
+    assert keys == frozenset()
+
+
+def test_set_operation_lineage_keeps_the_first_arms_output_ordinal() -> None:
+    sql = (
+        "select not p1.address is null, p1.address from ("
+        "select t0.address as address, t0.id as id from customer t0 "
+        "union all select t0.address as payload, t0.id as customer_id from customer t0) p1"
+    )
+    executable, keys = _alias_document_presence_projections(sql, "postgres", _customer_model())
+    assert keys == frozenset({"__parallax_document_presence_0"})
+    assert executable.count("__parallax_document_presence_0") == 1
+
+
+def test_a_syntactic_pair_over_a_scalar_column_is_not_presence_metadata() -> None:
+    sql = "select not t0.id is null, t0.id from customer t0"
+    executable, keys = _alias_document_presence_projections(sql, "postgres", _customer_model())
+    assert executable == sql
+    assert keys == frozenset()
+
+
+def test_tpcs_false_padding_is_presence_only_when_a_sibling_branch_proves_the_ordinal() -> None:
+    sql = (
+        "select false, cast(null as jsonb), 'A' as family_variant "
+        "union all select not t0.address is null, t0.address, "
+        "'B' as family_variant from customer t0"
+    )
+    executable, keys = _alias_document_presence_projections(sql, "postgres", _customer_model())
+    assert keys == frozenset({"__parallax_document_presence_0"})
+    assert executable.count("__parallax_document_presence_0") == 2
 
 
 def test_a_mismatched_document_fails_the_graph() -> None:

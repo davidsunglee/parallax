@@ -51,7 +51,9 @@ class _RecordingPort:
         self._rows = [dict(row) for row in rows]
         self._write_faults = list(write_faults)
 
-    def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return [dict(row) for row in self._rows]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:

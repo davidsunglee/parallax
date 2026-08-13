@@ -28,68 +28,6 @@ carried in full by one is not an entry here.
 
 Entry numbering is continuous and never reused. The next new number is **D-70**.
 
-## Standing notes
-
-Not deferrals — decisions already made that a future session is likely to try to
-undo.
-
-### `python.md` §3's document-resident nullability bullet is settled. Do not "tighten" it
-
-The bullet states that no layer enforces declared nullability at a
-document-resident position, what Entity Graph Construction still validates
-there, and the judged boundary under Relational Document Layout stated by stored
-state.
-
-It reads like something that wants fixing. It does not. The behavior it
-describes is corpus-mandated: `m-value-object-023` grades `city: null` for a leaf
-`core/compatibility/models/customer.yaml` declares without `nullable: true`, and
-core specifications plus the compatibility corpus outrank the language spec.
-Enforcing nullability at construction was implemented once and reverted — it
-fails five database-backed reads with `entity-graph-invalid-value:
-parallax.compatibility.Customer.address.city is not nullable and admits no null`.
-
-The bullet took five external review rounds to state correctly, because the
-truth is a matrix over layout × depth × multiplicity × nullability × stored
-state and earlier drafts quantified over positions rather than states. Rewriting
-it casually will reintroduce a falsehood.
-
-The behavior is owned onward by
-[COR-85](https://linear.app/flimflam/issue/COR-85/report-nodes-whose-stored-state-violates-the-declared-model-instead-of).
-Reopen the bullet only if a change to conversion alters the behavior it
-describes — and read COR-85 first, since its first phase reconciles the
-underlying core-spec contradiction.
-
-### `SnapshotDecodingError` keeps its chained cause. The stored value is meant to be reachable
-
-The refusal's own message names only the Entity and the member at fault. The
-value that provoked it survives on the chained `LeafEncodingError`, which quotes
-it. A review will read `python.md`'s "exposes no raw database value" as covering
-the whole exception chain and call this a violation; it has been raised twice and
-answered by decision.
-
-Two facts make keeping the cause the right call. `core/spec/m-db-port.md:56` uses
-"raw database value" for a driver-native value *before* normalization, so nothing
-above the adapter seam holds one under the term of art. More importantly,
-`decode_leaf` enforces **canonical spelling**, not type: a decimal short of its
-declared scale, uppercase hexadecimal, a non-UTC timestamp, an uppercase or
-hyphenless UUID, and a non-shortest float are all the right kind and the right
-type and still wrong. `'12.5' is not the document encoding of any
-Decimal(precision=10, scale=2) value` is diagnosable; the same sentence with the
-value removed reads "a `str` is not the document encoding of a decimal", which is
-both false and unactionable. Suppressing the value deletes exactly what
-distinguishes these failures from one another.
-
-The accepted cost is that a caller who logs the exception chain writes stored
-data into a log. `python.md` §3 states the boundary the code implements —
-message clean, cause carrying — rather than an absolute that contradicts the same
-sentence's requirement to carry a cause.
-
-Considered and not taken: carrying the value as a structured field while making
-every rendered message value-free. It is a genuine improvement and would let both
-readings hold at once, but it changes a shared core refusal's text for the
-write-lowering and conformance-assembly lanes. Revisit it there, not by
-re-litigating this bullet.
-
 ## Entries
 
 ### D-53 — Three off-path bare-name reductions remain, each with a reproduced defect and a non-determinate repair

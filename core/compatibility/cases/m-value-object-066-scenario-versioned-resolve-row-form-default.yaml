@@ -20,14 +20,14 @@
 # The predicate is `all` deliberately. Subscriber's only members are its key, the
 # framework-owned version, and the document, so there is no domain scalar to filter on
 # and an unfiltered set delete is the honest set-based shape here — and it leaves steps
-# 0 and 1 issuing the IDENTICAL query, so their goldens differ in exactly one token,
-# `, t0.address`. That one token is the whole observable content of the row-form
+# 0 and 1 issuing the IDENTICAL query, so their goldens differ only by the adjacent
+# `not t0.address is null, t0.address` pair. That pair is the whole observable content of the row-form
 # default: nothing else about the two reads varies. Subscriber's fixture holds a single
 # row (the model's own optimistic-conflict case, m-value-object-046, owns it), so the
 # set resolves to exactly one match; resolved cardinality is not what this case pins.
 #   0  find (managed, all) : INSTANCE-FORM — the developer find materializes the owner,
 #      so its projection carries the whole `address` document last (id, version,
-#      address), which the harness decodes into its declared composite on both
+#      address-presence, address), which the harness decodes into its declared composite on both
 #      dialects.
 #   1  find (the SAME query) : the materialized-predicate-write RESOLVING read —
 #      ROW-FORM. It observes each matched row's pk + version to plan the per-row delete
@@ -71,8 +71,8 @@ when:
       note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM
       statements:
         - sql:
-            postgres: select t0.id, t0.version, t0.address from subscriber t0
-            mariadb: select t0.id, t0.version, t0.address from subscriber t0
+            postgres: select t0.id, t0.version, not t0.address is null, t0.address from subscriber t0
+            mariadb: select t0.id, t0.version, not t0.address is null, t0.address from subscriber t0
       referenceSql: select id, version, address from subscriber
       expectRows:
         - id: 1
@@ -116,8 +116,8 @@ when:
       note: verify (INSTANCE-FORM, the same golden as step 0) — the gated delete removed the row, so the read returns nothing
       statements:
         - sql:
-            postgres: select t0.id, t0.version, t0.address from subscriber t0
-            mariadb: select t0.id, t0.version, t0.address from subscriber t0
+            postgres: select t0.id, t0.version, not t0.address is null, t0.address from subscriber t0
+            mariadb: select t0.id, t0.version, not t0.address is null, t0.address from subscriber t0
       referenceSql: select id, version, address from subscriber
       expectRows: []
 then:

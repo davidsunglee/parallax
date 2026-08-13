@@ -26,9 +26,10 @@ from _document_layout_support import columns_model, document_model, entity
 from _support.sql import compile_read
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
+from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata
-from parallax.core.sql_gen import CompiledRead, compile_write_predicate
+from parallax.core.sql_gen import CompiledRead, SqlGenError, compile_write_predicate
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -36,23 +37,24 @@ COLUMNS = columns_model()
 # One person, spelled the two ways the two layouts store it. Every leaf inside
 # the document carries the codec's own portable spelling, which is what a
 # document-resident member reads back as before it is decoded.
+_DOCUMENT_VALUE: DocumentValue = {
+    "displayName": "Ada",
+    "score": 7,
+    "joinedOn": "2026-01-15",
+    "address": {"city": "Oslo", "geo": {"country": "NO"}},
+    "tags": [{"label": "founder"}],
+}
 _DOCUMENT_ROW = {
     "id": 1,
-    "payload": {
-        "displayName": "Ada",
-        "score": 7,
-        "joinedOn": "2026-01-15",
-        "address": {"city": "Oslo", "geo": {"country": "NO"}},
-        "tags": [{"label": "founder"}],
-    },
+    "payload": PresentDocument(_DOCUMENT_VALUE),
 }
 _COLUMNS_ROW = {
     "id": 1,
     "display_name": "Ada",
     "score": 7,
     "joined_on": dt.date(2026, 1, 15),
-    "address": {"city": "Oslo", "geo": {"country": "NO"}},
-    "tags": [{"label": "founder"}],
+    "address": PresentDocument({"city": "Oslo", "geo": {"country": "NO"}}),
+    "tags": PresentDocument([{"label": "founder"}]),
 }
 
 
@@ -62,13 +64,18 @@ def _where(sql: str) -> str:
 
 def test_a_read_projects_the_structured_column_once_and_never_a_member_column() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    assert compiled.statement.sql == "select t0.id, t0.payload from person t0"
+    assert compiled.statement.sql == (
+        "select t0.id, not t0.payload is null, t0.payload from person t0"
+    )
+    assert compiled.document_reads == ((1, 2),)
     # Instance form needs the same one column: the document already carries the
     # Value Object occurrences an instance additionally materializes.
     instance = compile_read(
         oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
     )
-    assert instance.statement.sql == "select t0.id, t0.payload from person t0"
+    assert instance.statement.sql == (
+        "select t0.id, not t0.payload is null, t0.payload from person t0"
+    )
 
 
 def test_a_row_form_read_needing_no_document_member_projects_no_document_at_all() -> None:
@@ -98,13 +105,16 @@ def test_an_observing_read_of_the_same_shape_projects_the_structured_column(
     # stored document itself — which a Predecessor Row retains — so each projects the
     # Structured Column wherever the Table has one, however few members live inside.
     compiled = lane(entity(DOCUMENT, "Marker"))
-    assert compiled.statement.sql == "select t0.id, t0.payload from marker t0"
+    assert compiled.statement.sql == (
+        "select t0.id, not t0.payload is null, t0.payload from marker t0"
+    )
     assert compiled.structured_column == "payload"
     # The column is still never a result field: it fans out no member here and the
     # raw value leaves the row all the same.
-    materialized = compiled.materialize_row({"id": 1, "payload": {"berthCode": "NB-118"}})
+    document: DocumentValue = {"berthCode": "NB-118"}
+    materialized = compiled.materialize_row({"id": 1, "payload": PresentDocument(document)})
     assert materialized.values == {"id": 1}
-    assert materialized.document == {"berthCode": "NB-118"}
+    assert materialized.document == document
 
 
 def test_a_versioned_targets_narrowed_widening_still_projects_only_what_it_needs() -> None:
@@ -139,6 +149,90 @@ def test_an_instance_form_read_fans_out_the_occurrences_too() -> None:
     assert document.transform_row(_DOCUMENT_ROW) == columns.transform_row(_COLUMNS_ROW)
 
 
+def test_a_direct_document_carrier_is_classified_before_flat_publication() -> None:
+    # Under Columns layout the adapter still folds every adjacent document pair.
+    # An occurrence stored with the wrong container kind is classified at the compiled-read
+    # seam, retained as provenance for graph publication, and refused by the flat lane.
+    compiled = compile_read(
+        oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
+    )
+    row = {**_COLUMNS_ROW, "tags": PresentDocument({})}
+    materialized = compiled.materialize_row(row)
+    assert materialized.values["tags"] == []
+    assert materialized.classified_members.issuperset({"address", "tags"})
+    assert [(finding.code, finding.path) for finding in materialized.findings] == [
+        ("many-wrong-kind", ("tags",))
+    ]
+    with pytest.raises(SqlGenError, match="invalid stored data"):
+        compiled.transform_row(row)
+
+
+@pytest.mark.parametrize(
+    ("address", "expected"),
+    [
+        (
+            PresentDocument({"city": []}),
+            ("leaf-undecodable", ("address", "city")),
+        ),
+    ],
+    ids=["undecodable-leaf"],
+)
+def test_a_direct_document_classifies_nested_invalid_state(
+    address: PresentDocument, expected: tuple[str, tuple[str, ...]]
+) -> None:
+    compiled = compile_read(
+        oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
+    )
+    row = {**_COLUMNS_ROW, "address": address}
+    materialized = compiled.materialize_row(row)
+    assert [(finding.code, finding.path) for finding in materialized.findings] == [expected]
+    with pytest.raises(SqlGenError, match="invalid stored data"):
+        compiled.transform_row(row)
+
+
+def test_a_required_direct_document_member_is_classified_before_publication() -> None:
+    from _corpus_model_support import formed
+
+    from parallax.descriptor._records import (
+        Attribute,
+        Entity,
+        Metamodel,
+        ValueObject,
+        ValueObjectAttribute,
+    )
+
+    required = Entity(
+        name="Required",
+        table="required",
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        value_objects=(
+            ValueObject(
+                name="address",
+                attributes=(ValueObjectAttribute(name="city", type="string"),),
+            ),
+        ),
+    )
+    model = formed(Metamodel(entities=(required,)))
+    compiled = compile_read(
+        oa.All(), model, POSTGRES, entity(model, "Required"), result_form="instance"
+    )
+    row = {"id": 1, "address": PresentDocument({})}
+    materialized = compiled.materialize_row(row)
+    assert [(finding.code, finding.path) for finding in materialized.findings] == [
+        ("required-member-absent", ("address", "city"))
+    ]
+    with pytest.raises(SqlGenError, match="invalid stored data"):
+        compiled.transform_row(row)
+
+
+def test_a_direct_document_column_requires_a_folded_document_read() -> None:
+    compiled = compile_read(
+        oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
+    )
+    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+        compiled.materialize_row({**_COLUMNS_ROW, "address": {"city": "Oslo"}})
+
+
 def test_the_fan_out_decodes_by_declared_type_rather_than_by_the_json_values_shape() -> None:
     # A `date` is an ISO-8601 string inside the document and a driver `date` in a
     # column of its own; the fan-out returns the MANAGED value, so one logical
@@ -152,8 +246,10 @@ def test_a_missing_and_an_explicitly_null_document_key_both_read_as_one_absence(
     # Column has one not-present state and the document has two, and a result row
     # must not be able to tell them apart.
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    missing = compiled.transform_row({"id": 1, "payload": {}})
-    explicit = compiled.transform_row({"id": 1, "payload": {"displayName": None, "score": None}})
+    missing = compiled.transform_row({"id": 1, "payload": PresentDocument({})})
+    explicit = compiled.transform_row(
+        {"id": 1, "payload": PresentDocument({"displayName": None, "score": None})}
+    )
     assert missing == explicit
     assert missing["display_name"] is None
 
@@ -173,11 +269,78 @@ def test_the_compiled_read_names_the_occurrences_a_row_can_carry_under_either_la
     assert [member.storage.name for member in document.documents] == [
         member.storage.name for member in columns.documents
     ]
+    assert [member.storage.name for member in document.projected_documents] == [
+        "address",
+        "tags",
+    ]
+
+
+def test_row_form_keeps_position_documents_separate_from_selected_occurrences() -> None:
+    compiled = compile_read(oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"))
+    assert [member.storage.name for member in compiled.documents] == ["address", "tags"]
+    assert compiled.projected_documents == ()
+
+
+def test_a_flat_transform_refuses_an_invalid_direct_scalar() -> None:
+    compiled = compile_read(oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"))
+    with pytest.raises(SqlGenError, match="invalid stored data"):
+        compiled.transform_row({"id": None})
 
 
 def test_the_raw_document_is_never_a_result_field() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
     assert "payload" not in compiled.transform_row(_DOCUMENT_ROW)
+
+
+def test_a_row_transform_refuses_a_raw_document_outside_the_database_port_contract() -> None:
+    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
+    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+        compiled.transform_row({"id": 1, "payload": _DOCUMENT_VALUE})
+
+
+def test_an_sql_null_entity_document_classifies_each_requested_member() -> None:
+    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
+    materialized = compiled.materialize_row({"id": 1, "payload": SQL_NULL})
+    assert materialized.values["display_name"] is None
+    assert materialized.classified_members == frozenset({"display_name", "score", "joined_on"})
+
+
+def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() -> None:
+    from _corpus_model_support import formed
+
+    from parallax.descriptor._records import (
+        Attribute,
+        DocumentLayout,
+        Entity,
+        Metamodel,
+        ValueObject,
+        ValueObjectAttribute,
+    )
+
+    holder = Entity(
+        name="Holder",
+        table="holder",
+        layout=DocumentLayout(column="payload"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        value_objects=(
+            ValueObject(
+                name="profile",
+                attributes=(ValueObjectAttribute(name="label", type="string"),),
+            ),
+        ),
+    )
+    model = formed(Metamodel(entities=(holder,)))
+    compiled = compile_read(
+        oa.All(), model, POSTGRES, entity(model, "Holder"), result_form="instance"
+    )
+    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+        compiled.materialize_row({"id": 1, "payload": {"profile": {"label": "x"}}})
+
+
+def test_predecessor_document_retention_requires_a_folded_carrier() -> None:
+    compiled = _instance_form(entity(DOCUMENT, "Marker"))
+    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+        compiled.materialize_row({"id": 1, "payload": {}})
 
 
 @pytest.mark.parametrize(

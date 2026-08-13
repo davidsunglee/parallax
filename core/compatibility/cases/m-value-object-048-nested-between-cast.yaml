@@ -8,8 +8,8 @@
 # JSON path first, then `lower`, then `upper`. Both bounds are inclusive: Ada (10.5)
 # sits inside and Grace (5.0) sits exactly on the lower bound, so a strict `>` would
 # drop her; Linus (20.0) is above the upper bound. Every not-present row casts SQL
-# NULL and is excluded — the null column (4), the missing key (5), the non-object
-# intermediate (6), and the explicit JSON `null` leaf (7), plus 8/9/10 which carry
+# NULL and is excluded — the null column (4), the missing key (5), the JSON-null
+# occurrence (6), and the explicit JSON-null leaf (7), plus 8/9/10 which carry
 # no `geo` at all.
 #
 # Postgres binds one path segment per hop (['geo','elevation']) then the two bounds;

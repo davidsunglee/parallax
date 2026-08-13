@@ -133,7 +133,9 @@ class _FakeSession:
         self._raises_on = raises_on
         self._error = error
 
-    def execute(self, sql: str, binds: Sequence[Any]) -> list[dict[str, Any]]:
+    def execute(
+        self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[dict[str, Any]]:
         self.calls.append(("execute", sql, tuple(binds)))
         if self._raises_on is not None and self._raises_on in sql:
             assert self._error is not None
@@ -319,7 +321,9 @@ def test_run_rounds_raises_the_originating_failure_not_a_partners_barrier_break(
     # masking barrier break (the join/inspect-order bug this remediation
     # fixes) — with the secondary chained as its own `__cause__`.
     class _Broken:
-        def execute(self, sql: str, binds: Sequence[Any]) -> list[dict[str, Any]]:
+        def execute(
+            self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
+        ) -> list[dict[str, Any]]:
             if _is_session_setup(sql):
                 return []
             raise RuntimeError("B's own genuine defect")
@@ -348,7 +352,9 @@ def test_run_rounds_reraises_an_unexpected_non_database_error() -> None:
     # the OTHER thread's own `barrier.wait()` never hangs) and re-raises on
     # the caller's thread once both workers join.
     class _Broken:
-        def execute(self, sql: str, binds: Sequence[Any]) -> list[dict[str, Any]]:
+        def execute(
+            self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
+        ) -> list[dict[str, Any]]:
             if _is_session_setup(sql):
                 return []
             raise RuntimeError("a worker thread's own unexpected defect")
@@ -393,7 +399,9 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
     started = threading.Event()
 
     class _NoOpA:
-        def execute(self, sql: str, binds: Sequence[Any]) -> list[dict[str, Any]]:
+        def execute(
+            self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
+        ) -> list[dict[str, Any]]:
             if not _is_session_setup(sql):
                 with order_lock:
                     order.append("A")
@@ -406,7 +414,9 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
             pass
 
     class _SlowB:
-        def execute(self, sql: str, binds: Sequence[Any]) -> list[dict[str, Any]]:
+        def execute(
+            self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
+        ) -> list[dict[str, Any]]:
             if _is_session_setup(sql):
                 return []
             with order_lock:

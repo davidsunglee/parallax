@@ -40,7 +40,7 @@ from typing import Any, Final, cast
 from parallax.conformance import case_format, sweep
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot.handle import Database, Transaction
 
@@ -280,8 +280,13 @@ class FaultInjectingPort:
         self._persistent = persistent
         self._state = state if state is not None else _FaultState()
 
-    def execute(self, sql: str, binds: Any) -> list[Row]:
-        return self._inner.execute(sql, binds)
+    def execute(
+        self,
+        sql: str,
+        binds: Any,
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        return self._inner.execute(sql, binds, document_reads)
 
     def execute_write(self, sql: str, binds: Any) -> int:
         if self._fault is not None and (self._persistent or not self._state.fired):

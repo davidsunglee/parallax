@@ -34,6 +34,7 @@ from _support.clock_probes import CountingClock, inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import predicate as predicate_algebra
+from parallax.core.base import INFINITY
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
@@ -879,11 +880,11 @@ def _position_row(row_id: int) -> dict[str, object]:
     return {
         "id": row_id,
         "acct_num": "A",
-        "value": 200.00,
-        "from_z": "2024-01-01T00:00:00+00:00",
-        "thru_z": "infinity",
-        "in_z": "2024-01-01T00:00:00+00:00",
-        "out_z": "infinity",
+        "value": Decimal("200.00"),
+        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "thru_z": INFINITY,
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": INFINITY,
     }
 
 
@@ -925,18 +926,18 @@ def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_p
 # Columns) branch, not only the versioned one — the per-row equality filter   #
 # never retains a comparison-only column for either shape.                    #
 # --------------------------------------------------------------------------- #
-def _balance_row(row_id: int, value: float) -> dict[str, object]:
+def _balance_row(row_id: int, value: Decimal) -> dict[str, object]:
     return {
         "bal_id": row_id,
         "acct_num": "A",
         "val": value,
-        "in_z": "2024-01-01T00:00:00+00:00",
-        "out_z": "infinity",
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": INFINITY,
     }
 
 
 def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_rest() -> None:
-    port = RecordingPort(rows=[_balance_row(1, 5.00), _balance_row(2, 10.00)])
+    port = RecordingPort(rows=[_balance_row(1, Decimal("5.00")), _balance_row(2, Decimal("10.00"))])
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -952,7 +953,7 @@ def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_r
 
 
 def test_a_temporal_materializing_update_with_every_row_a_no_op_buffers_nothing() -> None:
-    port = RecordingPort(rows=[_balance_row(1, 5.00)])
+    port = RecordingPort(rows=[_balance_row(1, Decimal("5.00"))])
 
     def fn(tx: Transaction) -> None:
         tx.update_where(

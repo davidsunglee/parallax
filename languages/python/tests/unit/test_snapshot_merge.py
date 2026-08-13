@@ -39,17 +39,21 @@ from parallax.core import (
 )
 from parallax.core.entity import GraphConstructionError, RelationshipPath
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, RelationshipIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.materialize import (
+    InvalidRootInput,
     RelationshipViewKey,
+    SnapshotDecodingError,
     SnapshotGraphInput,
     SnapshotNodeInput,
     SnapshotNodeRef,
     SnapshotRelationshipViewInput,
+    StoredDataIssueInput,
     merge_graph_input,
+    validate_graph_input,
 )
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
@@ -147,6 +151,53 @@ def test_roots_publish_in_the_order_they_were_given() -> None:
     assert [root.id for root in roots] == [2, 1]
 
 
+def test_an_invalid_root_preserves_its_result_position_without_allocating_a_node() -> None:
+    builder = GraphBuilder(_ORDERS)
+    first = builder.node("SnapOrder", {**_ORDER_ROW, "id": 1})
+    second = builder.node("SnapOrder", {**_ORDER_ROW, "id": 2, "name": "Linus"})
+    issue = StoredDataIssueInput(
+        "stored-data-primary-key-null",
+        EntityIdentity(_NAMESPACE, "SnapOrder"),
+        AttributeIdentity(EntityIdentity(_NAMESPACE, "SnapOrder"), "id"),
+    )
+    source = builder.graph(first, second)
+    graph = SnapshotGraphInput(
+        nodes=source.nodes,
+        roots=(first, InvalidRootInput(1, (issue,)), second),
+        pin=source.pin,
+        has_issues=True,
+    )
+
+    merge = merge_graph_input(graph, model_of(_ORDERS))
+    assert merge.roots == (0, None, 1)
+    assert merge.invalid_roots == (InvalidRootInput(1, (issue,)),)
+    assert merge.order == (
+        EntityIdentity(_NAMESPACE, "SnapOrder"),
+        EntityIdentity(_NAMESPACE, "SnapOrder"),
+    )
+
+
+def test_invalid_root_carriers_require_a_position_and_an_issue() -> None:
+    issue = StoredDataIssueInput(
+        "stored-data-primary-key-null",
+        EntityIdentity(_NAMESPACE, "SnapOrder"),
+    )
+    with pytest.raises(ValueError, match="nonnegative"):
+        InvalidRootInput(-1, (issue,))
+    with pytest.raises(ValueError, match="at least one"):
+        InvalidRootInput(0, ())
+
+
+def test_graph_validation_rejects_an_invalid_root_with_the_wrong_position() -> None:
+    issue = StoredDataIssueInput(
+        "stored-data-primary-key-null",
+        EntityIdentity(_NAMESPACE, "SnapOrder"),
+    )
+    graph = SnapshotGraphInput((), (InvalidRootInput(1, (issue,)),), Pin(), has_issues=True)
+    with pytest.raises(ValueError, match="result position 0 carries ordinal 1"):
+        validate_graph_input(graph)
+
+
 # --------------------------------------------------------------------------- #
 # Diamond projection merge: two SIBLING include paths reach the SAME logical    #
 # row through two DIFFERENT projections (a driver never dedupes across sibling  #
@@ -226,6 +277,70 @@ def test_a_scalar_the_first_projection_carries_wins_without_comparison() -> None
     (root,) = builder.materialize(order)
     assert isinstance(root, _soOrder)
     assert root.items[0].sku == "x"
+
+
+def test_duplicate_projections_preserve_each_physical_stored_data_issue() -> None:
+    # Two sibling levels can project one invalid row twice. Merge retains both
+    # physical findings; per-root classification owns any later deduplication.
+    builder = GraphBuilder(_STORY_ORDERS)
+    order = builder.node("Order", _ORDER_ROW)
+    invalid_row = {**_ITEM_ROW, "shipped_on": "not-a-date"}
+    via_items = builder.node("OrderItem", invalid_row)
+    via_ship_date = builder.node("OrderItem", invalid_row)
+    builder.attach(order, "parallax.compatibility.Order.items", (via_items,))
+    builder.attach(
+        order,
+        "parallax.compatibility.Order.itemsByShipDate",
+        (via_ship_date,),
+    )
+
+    merge = merge_graph_input(builder.graph(order), model_of(_STORY_ORDERS))
+    item = next(
+        merge.node(index) for index, entity in enumerate(merge.order) if entity.name == "OrderItem"
+    )
+    assert len(item.issues) == 2
+    assert item.issues[0].code == "stored-data-leaf-undecodable"
+
+
+def test_an_invalid_descendant_refuses_the_reachable_root() -> None:
+    # Publication is graph-atomic: a clean root cannot hide an invalid included
+    # child merely because the root's own members are constructible.
+    builder = GraphBuilder(_STORY_ORDERS)
+    order = builder.node("Order", _ORDER_ROW)
+    invalid = builder.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
+    builder.attach(order, "parallax.compatibility.Order.items", (invalid,))
+
+    with pytest.raises(SnapshotDecodingError) as refusal:
+        builder.materialize(order)
+    assert refusal.value.member == AttributeIdentity(
+        EntityIdentity(_NAMESPACE, "OrderItem"), "shippedOn"
+    )
+
+
+def test_an_unrequested_invalid_projection_does_not_refuse_a_clean_root() -> None:
+    builder = GraphBuilder(_STORY_ORDERS)
+    order = builder.node("Order", _ORDER_ROW)
+    builder.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
+
+    (root,) = builder.materialize(order)
+    assert isinstance(root, _soOrder)
+
+
+def test_an_invalid_descendant_key_never_enters_logical_identity() -> None:
+    # A child with no usable primary key remains a classified projection rather
+    # than being merged under a synthetic `(None,)` logical key.
+    builder = GraphBuilder(_STORY_ORDERS)
+    order = builder.node("Order", _ORDER_ROW)
+    invalid = builder.node("OrderItem", {**_ITEM_ROW, "id": None})
+    builder.attach(order, "parallax.compatibility.Order.items", (invalid,))
+
+    merge = merge_graph_input(builder.graph(order), model_of(_STORY_ORDERS))
+    item = next(
+        merge.node(index) for index, entity in enumerate(merge.order) if entity.name == "OrderItem"
+    )
+    assert [issue.code for issue in item.issues] == ["stored-data-primary-key-null"]
+    with pytest.raises(SnapshotDecodingError):
+        builder.materialize(order)
 
 
 # --------------------------------------------------------------------------- #
@@ -346,9 +461,8 @@ def test_entity_level_value_object_members_construct_into_their_declared_classes
             "code": "shipped",
             "primary_tag": None,
             "tags": [
-                {"label": "a", "detail": {"note": "x"}, "details": [{"note": "y"}, None]},
+                {"label": "a", "detail": {"note": "x"}, "details": [{"note": "y"}]},
                 {"label": "b"},
-                None,
             ],
         },
     )

@@ -60,6 +60,7 @@ module from importing this package root.
 from __future__ import annotations
 
 from parallax.core.sql_gen._compile import (
+    AttributeReadContract,
     CompiledPredicate,
     CompiledRead,
     LoweredStatement,
@@ -70,6 +71,7 @@ from parallax.core.sql_gen._compile import (
 )
 
 __all__ = [
+    "AttributeReadContract",
     "CompiledPredicate",
     "CompiledRead",
     "LoweredStatement",

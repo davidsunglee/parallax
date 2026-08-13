@@ -37,7 +37,9 @@ _ENGINE_GAP_CASE = (
 class _FakePort:
     """An in-memory ``m-db-port`` returning canned rows (no Docker)."""
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return [{"id": 1, "name": "Ada"}]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
@@ -174,7 +176,9 @@ def test_run_case_ok_through_a_fake_port() -> None:
 class _WritePort:
     """A port that commits writes and returns canned find rows (no Docker)."""
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return [{"id": 7}]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
@@ -241,7 +245,9 @@ def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
 class _ManagedPort:
     """A port returning the managed values psycopg decodes for the m-core-001 row."""
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return [
             {
                 "id": 1,
@@ -314,7 +320,9 @@ class _PositionPort:
     """A port returning the superseded position milestone the pin-read-only
     contrast's find step selects (no Docker)."""
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return [
             {
                 "pos_id": 1,
@@ -375,7 +383,9 @@ class _BalancePort:
     """A port returning the superseded balance milestone the finite
     Transaction-Time pin selects (no Docker)."""
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return [
             {
                 "bal_id": 1,
@@ -501,7 +511,9 @@ class _TriggerPort:
         self._failure = failure
         self.writes = 0
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:  # pragma: no cover
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:  # pragma: no cover
         raise NotImplementedError
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
@@ -602,7 +614,9 @@ _REJECTED_WRITE_CASE = (
 class _NeverCalledPort:
     """An `m-db-port` that fails loudly if a rejected run ever touches it."""
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         raise AssertionError("a rejected-case run must not execute SQL")
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
@@ -668,7 +682,9 @@ class _QueuePort:
     def __init__(self, responses: Sequence[list[Row]]) -> None:
         self._responses = list(responses)
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return self._responses.pop(0)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
@@ -816,7 +832,9 @@ class _WriteAndReadBackPort:
         self.writes = 0
         self._affected = list(affected)
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return []
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
@@ -868,7 +886,9 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> No
 class _AccountPort:
     """Returns the one `account.yaml` row `m-execution-log-001` reads."""
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover

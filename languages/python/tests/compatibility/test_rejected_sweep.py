@@ -37,7 +37,9 @@ _REACHABLE_REJECTED = [c for c in sweep.reachable_cases() if c.shape == "rejecte
 class _RefusingPort:
     """An `m-db-port` that fails loudly if the rejected lane ever touches it."""
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:

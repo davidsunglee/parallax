@@ -20,8 +20,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.target_id, t0.details from profile_owner t0
-        mariadb: select t0.id, t0.target_id, t0.details from profile_owner t0
+        postgres: select t0.id, t0.target_id, not t0.details is null, t0.details from profile_owner t0
+        mariadb: select t0.id, t0.target_id, not t0.details is null, t0.details from profile_owner t0
     - sql:
         postgres: select t0.id from profile_target t0 where t0.id in (?)
         mariadb: select t0.id from profile_target t0 where t0.id in (?)

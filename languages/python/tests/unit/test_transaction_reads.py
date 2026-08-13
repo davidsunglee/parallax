@@ -52,7 +52,7 @@ from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
 )
-from parallax.snapshot import DeferredFeatureError, QueryTargetError
+from parallax.snapshot import DeferredFeatureError, QueryTargetError, SnapshotDecodingError
 from parallax.snapshot.handle import (
     Database,
     FindResult,
@@ -125,6 +125,28 @@ def test_a_participating_find_hands_the_executor_a_collector() -> None:
         db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     assert len(calls) == 1
     assert calls[0] is not None
+
+
+def test_an_invalid_participating_find_records_no_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A classified graph is refused before publication, so none of the rows that
+    # contributed to it may license a later write in this unit of work.
+    recorded: list[ReadObservations] = []
+
+    def recording(*args: object) -> None:
+        observations = cast("ReadObservations", args[2])
+        recorded.append(observations)
+
+    monkeypatch.setattr(transaction_module, "record_observations", recording)
+    port = RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}])
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(SnapshotDecodingError):
+            tx.find(mm.Account.where(mm.Account.id == 1))
+
+    account_db(port).transact(fn)
+    assert recorded == []
 
 
 def test_the_collector_takes_every_attached_level_row_as_that_level_lands() -> None:
@@ -335,11 +357,11 @@ def _branch_row(*, address: dict[str, object] | None) -> Row:
     return {
         "br_id": 1,
         "name": "Central Branch",
-        "address": address,
         "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "thru_z": INFINITY_INSTANT,
         "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "out_z": INFINITY_INSTANT,
+        "address": address,
     }
 
 

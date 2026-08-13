@@ -27,8 +27,8 @@ when:
       note: the resolving read retains the raw subtree and materializes its declared members
       statements:
         - sql:
-            postgres: select t0.id, t0.version, t0.payload from ledger t0 where t0.id = ?
-            mariadb: select t0.id, t0.version, t0.payload from ledger t0 where t0.id = ?
+            postgres: select t0.id, t0.version, not t0.payload is null, t0.payload from ledger t0 where t0.id = ?
+            mariadb: select t0.id, t0.version, not t0.payload is null, t0.payload from ledger t0 where t0.id = ?
           binds: [200]
       expectRows:
         - { id: 200, version: 1, label: null, balance: 40.00, details: { code: settled } }
@@ -52,8 +52,8 @@ when:
       note: the row remains version 1 and the declared occurrence still reads identically
       statements:
         - sql:
-            postgres: select t0.id, t0.version, t0.payload from ledger t0 where t0.id = ?
-            mariadb: select t0.id, t0.version, t0.payload from ledger t0 where t0.id = ?
+            postgres: select t0.id, t0.version, not t0.payload is null, t0.payload from ledger t0 where t0.id = ?
+            mariadb: select t0.id, t0.version, not t0.payload is null, t0.payload from ledger t0 where t0.id = ?
           binds: [200]
       expectRows:
         - { id: 200, version: 1, label: null, balance: 40.00, details: { code: settled } }

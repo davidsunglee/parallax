@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Final
 
 from parallax.conformance import adapter, case_format
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row
 
 __all__ = ["main"]
 
@@ -33,7 +33,13 @@ class _NoProvisioningPort:
     than silently starting a container.
     """
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:  # pragma: no cover
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:  # pragma: no cover
+        del binds, document_reads
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover

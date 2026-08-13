@@ -23,11 +23,12 @@ from typing import Any, cast
 import pytest
 from _metamodel_support import Declaration, attribute, key, source
 
+from _support.document_reads import fold_mapping_rows
 from _support.sql import compile_read
 from parallax.conformance import case_format, engine, sweep
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, STRING, InstantError
+from parallax.core.base import INFINITY, STRING, InstantError, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import dialect_for
@@ -85,9 +86,11 @@ class FakeDbPort:
         self.rows = rows
         self.executed: list[tuple[str, list[object]]] = []
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         self.executed.append((sql, list(binds)))
-        return self.rows
+        return fold_mapping_rows(self.rows, document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
@@ -363,7 +366,9 @@ class FakeWritePort:
         self.commits = 0
         self.rollbacks = 0
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         self.reads.append((sql, list(binds)))
         return list(self.find_rows)
 
@@ -820,7 +825,9 @@ class _ScriptedPort:
         self.writes: list[tuple[str, tuple[object, ...]]] = []
         self.closed = False
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         if self._raise_on_read is not None:
             raise self._raise_on_read
         self.reads.append((sql, tuple(binds)))
@@ -856,7 +863,12 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     # buffered insert (account 9) is discarded with it. The trailing
     # ungrouped verify find (step 4) observes no rows for it.
     case = _load_case("m-opt-lock-012")
-    row_v1: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
+    row_v1: Row = {
+        "id": 2,
+        "owner": "Linus",
+        "balance": decimal.Decimal("250.00"),
+        "version": 1,
+    }
     main_port = _ScriptedPort(read_rows=[[row_v1], []], write_affected=[1, 0])
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
 
@@ -899,7 +911,12 @@ def test_run_interleaved_scenario_case_applies_out_of_band_statements_before_the
             "given": {"fixtures": True, "apply": [{"sql": "update account set balance = ?"}]},
         },
     )
-    row_v1: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
+    row_v1: Row = {
+        "id": 2,
+        "owner": "Linus",
+        "balance": decimal.Decimal("250.00"),
+        "version": 1,
+    }
     main_port = _ScriptedPort(read_rows=[[row_v1], []], write_affected=[1, 0, 0])
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
 
@@ -964,7 +981,12 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
             "then": {"roundTrips": 4},
         },
     )
-    row_v1: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
+    row_v1: Row = {
+        "id": 2,
+        "owner": "Linus",
+        "balance": decimal.Decimal("250.00"),
+        "version": 1,
+    }
     main_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[0])
 
@@ -1028,8 +1050,18 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
             "then": {"roundTrips": 4},
         },
     )
-    row_v1: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
-    row3: Row = {"id": 3, "owner": "Ada", "balance": 10.00, "version": 1}
+    row_v1: Row = {
+        "id": 2,
+        "owner": "Linus",
+        "balance": decimal.Decimal("250.00"),
+        "version": 1,
+    }
+    row3: Row = {
+        "id": 3,
+        "owner": "Ada",
+        "balance": decimal.Decimal("10.00"),
+        "version": 1,
+    }
     main_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 1])
     peer_port = _ScriptedPort(read_rows=[[row3]])
 
@@ -1127,7 +1159,9 @@ class _CancellableBlockingConnection:
         self._released = threading.Event()
         self.cancel_calls = 0
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         self._released.wait(timeout=5.0)  # self-bounded even if `cancel` is never called
         return []
 
@@ -1203,7 +1237,9 @@ class _TerminableBlockingConnection:
         self.close_calls = 0
         self.closed = False
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         self._closed.wait(timeout=5.0)  # self-bounded even if `close` is never called
         raise RuntimeError("connection is closed")
 
@@ -1306,7 +1342,9 @@ class _TerminableOnlyViaUnderlyingSeamConnection:
         self.close_calls = 0
         self.connection = _UnderlyingConnectionSeam(self._released)
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         self._released.wait(timeout=5.0)  # self-bounded even if the ladder never reaches it
         raise RuntimeError("connection is closed")
 
@@ -1459,7 +1497,9 @@ class _CapabilityLessConnection:
     def __init__(self) -> None:
         self.execute_calls = 0
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:  # pragma: no cover
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:  # pragma: no cover
         self.execute_calls += 1
         return []
 
@@ -1560,7 +1600,9 @@ class _AllRungsRaiseConnection:
         self.calls.append("cancel")
         raise RuntimeError("cancel raises")
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:  # pragma: no cover
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:  # pragma: no cover
         self.calls.append("execute")
         return []
 
@@ -4496,7 +4538,9 @@ class QueueDbPort:
     def __init__(self, responses: Sequence[list[Row]]) -> None:
         self._responses = list(responses)
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return self._responses.pop(0)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
@@ -4767,10 +4811,10 @@ def test_namespaced_duplicate_variants_flow_from_sql_plan_through_production_to_
         {
             "id": 1,
             "kind": "archive-shared",
-            "familyVariant": {"label": "mail"},
+            "familyVariant": PresentDocument({"label": "mail"}),
             "named_profile": None,
             "catalog_profile": None,
-            "archive_profile": {"label": "archive"},
+            "archive_profile": PresentDocument({"label": "archive"}),
         }
     )
     assert materialized.resolved_entity == _SECOND_SHARED_VARIANT
@@ -5046,7 +5090,7 @@ def test_render_value_recurses_into_a_nested_value_object_document() -> None:
             {
                 "id": 1,
                 "name": "Ada",
-                "address": {"street": "x", "geo": {"country": "NO"}},
+                "address": {"street": "x", "city": "Oslo", "geo": {"country": "NO"}},
             }
         ]
     )
@@ -5056,7 +5100,7 @@ def test_render_value_recurses_into_a_nested_value_object_document() -> None:
     rendered = graph["Customer"][0]
     assert rendered["address"] == {
         "street": "x",
-        "city": None,
+        "city": "Oslo",
         "geo": {"country": "NO", "elevation": None, "point": None},
         "phones": [],
     }

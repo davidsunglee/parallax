@@ -8,9 +8,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Final, Literal, cast
 
-from parallax.core.base import NeutralType, detach_json_container
+from parallax.core.base import (
+    DocumentValue,
+    NeutralType,
+    PresentDocument,
+    SqlNull,
+    detach_json_container,
+)
 from parallax.core.document_codec._leaf import (
     LeafEncodingError,
     decode_leaf,
@@ -32,18 +38,234 @@ from parallax.core.document_codec._shape import (
 from parallax.core.metamodel import Multiplicity
 
 __all__ = [
+    "UNAVAILABLE",
+    "DecodedMember",
+    "DocumentFinding",
+    "DocumentFindingCode",
     "DocumentPatch",
+    "DocumentPathSegment",
+    "LocatedMemberInput",
     "SetLeaf",
     "SetMany",
     "SetOccurrence",
+    "Unavailable",
     "apply_patches",
     "comparison_text",
+    "decode_located_member_classified",
+    "decode_occurrence_classified",
     "decode_path",
+    "decode_path_classified",
     "encode_candidate",
     "encode_document",
     "encode_many",
+    "locate_entity_member",
+    "mask_managed_members",
     "reduce_declared_members",
+    "reduce_declared_members_classified",
 ]
+
+
+type DocumentFindingCode = Literal[
+    "required-member-absent",
+    "required-member-null",
+    "one-wrong-kind",
+    "many-wrong-kind",
+    "leaf-undecodable",
+]
+"""The closed document-codec-local stored-shape finding vocabulary."""
+
+type DocumentPathSegment = str | int
+"""A declared member name or an array position in a classified document path."""
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentFinding:
+    """One stored-shape contradiction at a logical document member path."""
+
+    code: DocumentFindingCode
+    path: tuple[DocumentPathSegment, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Unavailable:
+    """A classified member for which hydration would require invention."""
+
+
+UNAVAILABLE: Final[Unavailable] = Unavailable()
+
+
+@dataclass(frozen=True, slots=True)
+class DecodedMember:
+    """One classified member presence and its codec-local findings."""
+
+    presence: Presence | Unavailable
+    findings: tuple[DocumentFinding, ...] = ()
+
+
+type LocatedMemberInput = SqlNull | Missing | PresentDocument
+"""A direct member carrier after physical location but before classification."""
+
+
+def locate_entity_member(document: DocumentValue, member: str) -> Missing | PresentDocument:
+    """Locate one direct Entity member in a raw Entity document carrier."""
+    if isinstance(document, dict) and member in document:
+        return PresentDocument(document[member])
+    return MISSING
+
+
+def decode_located_member_classified(
+    shape: DocumentShape,
+    located: LocatedMemberInput,
+    member_name: str,
+) -> DecodedMember:
+    """Classify one direct member independently of its physical carrier."""
+    member = shape.member(member_name)
+    if member is None:
+        raise KeyError(f"{member_name!r} names no member of the shape")
+    if isinstance(located, (SqlNull, Missing)):
+        return _classify_member(member, MISSING, (member_name,))
+    return _classify_member(member, located.document, (member_name,))
+
+
+def decode_occurrence_classified(
+    shape: DocumentShape,
+    located: SqlNull | PresentDocument,
+    *,
+    multiplicity: Multiplicity,
+    nullable: bool,
+) -> DecodedMember:
+    """Classify one top-level occurrence from its SQL-null-aware carrier."""
+    member = Occurrence("", multiplicity, nullable, shape)
+    raw = MISSING if isinstance(located, SqlNull) else located.document
+    return _classify_member(member, raw, ())
+
+
+def decode_path_classified(
+    shape: DocumentShape, document: DocumentValue, path: Sequence[str]
+) -> DecodedMember:
+    """Classify one requested path without raising for contradictory stored state."""
+    resolve(shape, path)
+    if not isinstance(document, dict):
+        first = shape.member(path[0])
+        if first is None:  # pragma: no cover - resolve proved the first segment
+            raise KeyError(f"{path[0]!r} names no member of the shape")
+        return _classify_member(first, MISSING, (path[0],))
+    current: dict[str, DocumentValue] = document
+    scope = shape
+    for depth, name in enumerate(path):
+        member = scope.member(name)
+        if member is None:  # pragma: no cover - resolve proved every segment
+            raise KeyError(f"{'.'.join(path)!r}: {name!r} names no member of the shape")
+        classified = _classify_member(member, current.get(name, MISSING), tuple(path[: depth + 1]))
+        if depth == len(path) - 1:
+            return classified
+        if not isinstance(member, Occurrence):  # pragma: no cover - resolve proved the path
+            raise KeyError(f"{'.'.join(path)!r}: the path continues past the leaf {name!r}")
+        if member.multiplicity is Multiplicity.MANY:
+            raise KeyError(
+                f"{'.'.join(path)!r}: {name!r} is a `many` occurrence, and a path never "
+                "addresses an array position — decode an element against its own shape"
+            )
+        if not isinstance(classified.presence, Present):
+            return DecodedMember(classified.presence, classified.findings)
+        value = classified.presence.value
+        if not isinstance(value, dict):  # pragma: no cover - a present One is an object
+            return DecodedMember(UNAVAILABLE, classified.findings)
+        current = cast("dict[str, DocumentValue]", value)
+        scope = member.shape
+    raise AssertionError("a classified document path is nonempty")  # pragma: no cover
+
+
+def _classify_member(
+    member: Leaf | Occurrence,
+    raw: object | Missing,
+    path: tuple[DocumentPathSegment, ...],
+) -> DecodedMember:
+    if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
+        if isinstance(raw, Missing) or raw is None:
+            return DecodedMember(Present([]))
+        if not isinstance(raw, list) or not all(
+            isinstance(item, dict) for item in cast("list[object]", raw)
+        ):
+            return DecodedMember(Present([]), (DocumentFinding("many-wrong-kind", path),))
+        return DecodedMember(Present(detach_json_container(cast("list[DocumentValue]", raw))))
+    if isinstance(raw, Missing):
+        findings = (DocumentFinding("required-member-absent", path),) if not member.nullable else ()
+        return DecodedMember(MISSING, findings)
+    if raw is None:
+        findings = (DocumentFinding("required-member-null", path),) if not member.nullable else ()
+        return DecodedMember(NULL, findings)
+    if isinstance(member, Occurrence):
+        if not isinstance(raw, dict):
+            return DecodedMember(MISSING, (DocumentFinding("one-wrong-kind", path),))
+        return DecodedMember(Present(detach_json_container(cast("dict[str, DocumentValue]", raw))))
+    try:
+        return DecodedMember(Present(decode_leaf(member.type, raw)))
+    except LeafEncodingError:
+        return DecodedMember(UNAVAILABLE, (DocumentFinding("leaf-undecodable", path),))
+
+
+def reduce_declared_members_classified(
+    shape: DocumentShape,
+    document: object,
+    *,
+    preserve_presence: bool = False,
+) -> tuple[object, tuple[DocumentFinding, ...]]:
+    """Reduce one requested occurrence while returning every shape finding as data."""
+    if document is None:
+        return None, ()
+    if not isinstance(document, Mapping):
+        return None, (DocumentFinding("one-wrong-kind", ()),)
+    source = cast("Mapping[str, object]", document)
+    reduced: dict[str, object] = {}
+    findings: list[DocumentFinding] = []
+    for member in shape.members:
+        held = member.name in source
+        classified = _classify_member(member, source.get(member.name, MISSING), (member.name,))
+        findings.extend(classified.findings)
+        if preserve_presence and not held and not classified.findings:
+            continue
+        if isinstance(classified.presence, Unavailable):
+            reduced[member.name] = UNAVAILABLE
+            continue
+        if isinstance(member, Leaf):
+            if isinstance(classified.presence, Present):
+                reduced[member.name] = classified.presence.value
+            elif isinstance(classified.presence, ExplicitNull):
+                reduced[member.name] = None
+            continue
+        if member.multiplicity is Multiplicity.MANY:
+            documents = (
+                cast("list[object]", classified.presence.value)
+                if isinstance(classified.presence, Present)
+                else []
+            )
+            elements: list[object] = []
+            for index, item in enumerate(documents):
+                nested, nested_findings = reduce_declared_members_classified(
+                    member.shape, item, preserve_presence=preserve_presence
+                )
+                elements.append(nested)
+                findings.extend(
+                    DocumentFinding(finding.code, (member.name, index, *finding.path))
+                    for finding in nested_findings
+                )
+            reduced[member.name] = elements
+            continue
+        if isinstance(classified.presence, Present):
+            nested, nested_findings = reduce_declared_members_classified(
+                member.shape,
+                classified.presence.value,
+                preserve_presence=preserve_presence,
+            )
+            reduced[member.name] = nested
+            findings.extend(
+                DocumentFinding(finding.code, (member.name, *finding.path))
+                for finding in nested_findings
+            )
+        elif held or classified.findings:
+            reduced[member.name] = None
+    return reduced, tuple(findings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,3 +729,21 @@ def reduce_declared_members(
             except LeafEncodingError as exc:
                 raise exc.under(member.name) from exc
     return reduced
+
+
+def mask_managed_members(managed: object, named_by: object) -> object:
+    """Apply an authored-member mask to an already-decoded document value.
+
+    The mask is normally the managed result of :func:`reduce_declared_members`
+    over an encoded assignment. Mapping keys select recursively through ``one``
+    occurrences; every other value, including a ``many`` array, is selected whole.
+    No leaf is decoded again.
+    """
+    if not isinstance(managed, Mapping) or not isinstance(named_by, Mapping):
+        return cast("object", managed)
+    managed_members = cast("Mapping[str, object]", managed)
+    named_members = cast("Mapping[str, object]", named_by)
+    return {
+        member: mask_managed_members(managed_members.get(member), nested_names)
+        for member, nested_names in named_members.items()
+    }

@@ -18,20 +18,25 @@ from dataclasses import dataclass
 from typing import Final, Literal, cast
 
 from parallax.core.base import (
+    SQL_NULL,
     Boolean,
     Bytes,
     Date,
     Decimal,
+    DocumentRead,
     Float32,
     Float64,
     Int32,
     Int64,
     Json,
     NeutralType,
+    PresentDocument,
     String,
     Time,
     Timestamp,
     Uuid,
+    detach_json_container,
+    is_document_value,
 )
 
 __all__ = [
@@ -44,9 +49,15 @@ __all__ = [
     "DocumentOneAssignment",
     "LockMode",
     "dialect_for",
+    "projection_result_key",
 ]
 
 LockMode = Literal["locking", "optimistic"]
+
+
+def projection_result_key(column: str, neutral_type: NeutralType) -> str:
+    """The driver-row key produced by the canonical projection of one Column."""
+    return f"{column}_hex" if isinstance(neutral_type, Bytes) else column
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +146,12 @@ class Dialect:
 
     # -- projections ------------------------------------------------------- #
     def project(
-        self, alias: str, column: str, neutral_type: NeutralType
+        self,
+        alias: str,
+        column: str,
+        neutral_type: NeutralType,
+        *,
+        result_key: str | None = None,
     ) -> tuple[str, list[object]]:
         """The select-list expression (and any projection-introduced binds) for a column.
 
@@ -143,9 +159,40 @@ class Dialect:
         (`encode(t0.col, ?) col_hex`, bind `hex`); every other column projects the
         plain alias-qualified reference with no bind.
         """
+        output = projection_result_key(column, neutral_type) if result_key is None else result_key
         if isinstance(neutral_type, Bytes):
-            return f"encode({self.qualified(alias, column)}, ?) {column}_hex", ["hex"]
-        return self.qualified(alias, column), []
+            return f"encode({self.qualified(alias, column)}, ?) {output}", ["hex"]
+        expression = self.qualified(alias, column)
+        return (expression if output == column else f"{expression} {output}"), []
+
+    def projection_result_key(self, column: str, neutral_type: NeutralType) -> str:
+        """The driver-row key produced by :meth:`project` for one Column."""
+        return projection_result_key(column, neutral_type)
+
+    def project_document_read(self, expression: str) -> tuple[str, str]:
+        """The adjacent SQL presence/document cells for ``expression``."""
+        return f"not {expression} is null", expression
+
+    def parse_document_read(self, presence: object, document: object) -> DocumentRead:
+        """Parse one adjacent SQL presence/document pair into its neutral tag.
+
+        The discriminator is consulted first, so the same driver sentinel can
+        denote SQL NULL in the false arm and JSON null in the true arm.
+        """
+        if type(presence) is not bool:
+            raise ValueError(
+                "a document-read presence projection must be a SQL boolean, "
+                f"got {type(presence).__name__}"
+            )
+        if not presence:
+            return SQL_NULL
+        detached = detach_json_container(document)
+        if not is_document_value(detached):
+            raise ValueError(
+                "a present structured-document result must be a portable JSON value, "
+                f"got {type(document).__name__}"
+            )
+        return PresentDocument(detached)
 
     # -- result shaping ---------------------------------------------------- #
     def limit_clause(self) -> str:

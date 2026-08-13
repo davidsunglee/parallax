@@ -13,7 +13,7 @@ gated; a skip is reported, never silent (spec §6).
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, Final, cast
 
 import jsonschema
@@ -39,9 +39,18 @@ from _support.sweep_goldens import (
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
 from parallax.core import predicate as predicate_algebra
 from parallax.core import storage_layout
+from parallax.core.base import DocumentValue, PresentDocument, SqlNull
 from parallax.core.db_port import Row
 from parallax.core.dialect import dialect_for
 from parallax.core.metamodel import Metamodel
+from parallax.core.temporal_read import Pin
+from parallax.snapshot.materialize import (
+    LevelContext,
+    MergeScope,
+    convert_row,
+    merge_graph_input,
+    require_publishable,
+)
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
 # level's nodes PER PROJECTION — the unnarrowed concrete superset with a sibling
@@ -332,8 +341,10 @@ class _ReadCapturePort:
         self._inner = inner
         self.reads: list[list[dict[str, Any]]] = reads if reads is not None else []
 
-    def execute(self, sql: str, binds: Any) -> list[dict[str, Any]]:
-        rows = self._inner.execute(sql, binds)
+    def execute(
+        self, sql: str, binds: Any, document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[dict[str, Any]]:
+        rows = self._inner.execute(sql, binds, document_reads)
         self.reads.append(rows)
         return rows
 
@@ -361,16 +372,11 @@ def _scenario_find_row_transforms(
     """Each FIND step's own row transform, in step order.
 
     The port seam these rows are captured at sits BELOW the read's own transform,
-    so under Relational Document Layout a captured row still carries the raw
-    Structured Column while ``expectRows`` states the logical row. The transform
-    is what turns one into the other, and it is a function of the target Entity
-    and its Table Layout rather than of the predicate — so compiling a bare
-    ``all()`` read of the same target recovers exactly the one the executed read
-    carried. A document-mapped read projects that one column in either result
-    form, so the instance form :func:`engine._compile_find` compiles a scenario
-    find as is the fan-out that answers here too. Under `Columns` layout every
-    transform is the identity, which is what makes this inert for every other
-    case in this lane.
+    so a captured document is still a provider-neutral ``DocumentRead``. The
+    compiled transform fans out a Relational Document Layout's Structured Column;
+    direct Columns documents are then unwrapped to the logical value authored by
+    ``expectRows``. Compiling a bare ``all()`` read of the same target recovers
+    exactly the projection metadata the executed read carried.
     """
     transforms: list[Callable[[Row], Row]] = []
     for step in cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"]):
@@ -380,8 +386,63 @@ def _scenario_find_row_transforms(
         compiled = compile_read(
             predicate_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
         )
-        transforms.append(compiled.transform_row)
+        transforms.append(_logical_row_transform(compiled, model))
     return transforms
+
+
+def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], Row]:
+    document_columns = frozenset(document.storage.name for document in compiled.documents)
+
+    def transform(row: Row) -> Row:
+        materialized = compiled.materialize_row(row)
+        scope = MergeScope(model)
+        ref = convert_row(
+            materialized.values,
+            LevelContext(
+                materialized.resolved_entity,
+                compiled.projected_documents,
+                compiled.attribute_reads(materialized.resolved_entity),
+            ),
+            scope,
+            findings=materialized.findings,
+            family_tag_unknown=materialized.family_tag_unknown,
+            classified_members=materialized.classified_members,
+        )
+        require_publishable(merge_graph_input(scope.build((ref,), Pin()), model))
+        values = materialized.values
+        if materialized.family_variant is not None:
+            values["familyVariant"] = materialized.family_variant
+        for column in document_columns & row.keys() & values.keys():
+            document_read = row[column]
+            if isinstance(document_read, SqlNull):
+                values[column] = None
+            elif isinstance(document_read, PresentDocument):
+                values[column] = document_read.document
+            else:
+                raise AssertionError(f"captured document column {column!r} is not a DocumentRead")
+        return values
+
+    return transform
+
+
+def test_logical_row_transform_unwraps_a_direct_document_from_its_source_carrier() -> None:
+    case = next(case for case in _WRITE_CASES if case.case_id == "m-value-object-066")
+    model = engine.load_case_metamodel(case)
+    entity = engine.case_entity(model, "parallax.compatibility.Subscriber")
+    compiled = compile_read(
+        predicate_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
+    )
+    document: DocumentValue = {
+        "street": "1 Elm St",
+        "city": "Rome",
+        "geo": {"country": "IT"},
+    }
+
+    transformed = _logical_row_transform(compiled, model)(
+        {"id": 1, "version": 1, "address": PresentDocument(document)}
+    )
+
+    assert transformed["address"] == document
 
 
 @pytest.mark.parametrize("case", _WRITE_CASES, ids=[c.case_id for c in _WRITE_CASES])

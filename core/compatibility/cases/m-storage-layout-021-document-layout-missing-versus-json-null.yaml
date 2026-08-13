@@ -28,8 +28,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.payload from traveler t0 where jsonb_extract_path_text(t0.payload, ?) is null
-        mariadb: select t0.id, t0.payload from traveler t0 where json_value(t0.payload, ?) is null
+        postgres: select t0.id, not t0.payload is null, t0.payload from traveler t0 where jsonb_extract_path_text(t0.payload, ?) is null
+        mariadb: select t0.id, not t0.payload is null, t0.payload from traveler t0 where json_value(t0.payload, ?) is null
       binds:
         postgres: [note]
         mariadb: ['$.note']

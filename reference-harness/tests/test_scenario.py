@@ -607,7 +607,15 @@ def _interleaved_synthetic_case() -> Case:
                 "predicate": {"eq": {"attr": "Account.id", "value": value}},
             },
             "roundTrips": 1,
-            "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [value]}],
+            "statements": [
+                {
+                    "sql": {
+                        "postgres": "select t0.id, t0.owner, t0.balance, t0.version "
+                        "from account t0 where t0.id = ?"
+                    },
+                    "binds": [value],
+                }
+            ],
         }
 
     def write_step(uow: str, *, rollback: bool = False) -> dict[str, Any]:
@@ -641,7 +649,13 @@ def _interleaved_synthetic_case() -> Case:
                     },
                     "roundTrips": 1,
                     "statements": [
-                        {"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [9]}
+                        {
+                            "sql": {
+                                "postgres": "select t0.id, t0.owner, t0.balance, t0.version "
+                                "from account t0 where t0.id = ?"
+                            },
+                            "binds": [9],
+                        }
                     ],
                     "expectRows": [],
                 },
@@ -709,7 +723,13 @@ def _uncommitted_write_then_reference_sql_synthetic_case() -> Case:
                     },
                     "roundTrips": 1,
                     "statements": [
-                        {"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [2]}
+                        {
+                            "sql": {
+                                "postgres": "select t0.id, t0.owner, t0.balance, t0.version "
+                                "from account t0 where t0.id = ?"
+                            },
+                            "binds": [2],
+                        }
                     ],
                     "referenceSql": "select * from account where id = 2",
                 },
@@ -904,7 +924,15 @@ def _balance_find(pk: int, tx_start: str, tx_end: Any, value: float) -> dict[str
             "predicate": {"eq": {"attr": "Balance.id", "value": pk}},
         },
         "roundTrips": 1,
-        "statements": [{"sql": {"postgres": "select ... where t0.bal_id = ?"}, "binds": [pk]}],
+        "statements": [
+            {
+                "sql": {
+                    "postgres": "select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z "
+                    "from balance t0 where t0.bal_id = ?"
+                },
+                "binds": [pk],
+            }
+        ],
         "expectRows": [
             {
                 "bal_id": pk,

@@ -17,8 +17,8 @@ whose target the connected model does not declare;
 implementation has deferred; :class:`SnapshotConnectionError`, of a model that
 cannot materialize rows; :class:`TransactionOwnershipError`, the demarcation's
 own refusal of a nested ``transact`` through a handle that did not open it;
-:class:`SnapshotDecodingError`, of stored data a read cannot convert into the
-graph-input algebra; and
+:class:`SnapshotDecodingError`, of classified stored data that prevents atomic
+result publication; and
 :class:`SnapshotMaterializationError`, the one translation of a failure to build
 the Entity graph a successful read's rows describe; and
 :class:`KeyedWriteValueError`, of a value whose provenance the keyed write verb
