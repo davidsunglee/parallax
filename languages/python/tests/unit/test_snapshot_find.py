@@ -823,6 +823,18 @@ def test_the_invalid_data_report_is_the_errors_sole_machine_readable_surface() -
         InvalidDataError(())
 
 
+def test_the_report_cannot_be_replaced_after_the_message_is_derived() -> None:
+    # The count and issue-code summary are derived from the report during
+    # construction, so a writable report would let a caller leave the refusal's
+    # wording describing results the report no longer carries.
+    record = _invalid(0)
+    error = InvalidDataError((record,))
+    with pytest.raises(AttributeError):
+        cast("Any", error).invalid_data = ()
+    assert error.invalid_data == (record,)
+    error.add_note("an ordinary exception still takes notes")
+
+
 def test_the_checked_view_returns_the_union_in_band_over_the_same_storage() -> None:
     record = _invalid(0)
     snapshot = _snapshot((record, "valid"))

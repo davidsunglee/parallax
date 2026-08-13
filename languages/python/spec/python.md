@@ -2674,10 +2674,12 @@ or descriptor authoring form and performs no audit stamping.
   some stored state contradicted is delivered as its record. Stored-data
   violations are always reported; there is no ignore posture, connection
   setting, or Object Query clause.
-- **The published shapes**, exported from `parallax.snapshot`. Both records are
-  frozen and slotted; `InvalidDataError` is an ordinary exception whose report is
-  assembled in its constructor, because `__slots__` restricts nothing on a
-  `BaseException` subclass — the base always carries an instance dictionary:
+- **The published shapes**, exported from `parallax.snapshot`. None of the three
+  can be mutated after construction: the two records are frozen and slotted, and
+  `InvalidDataError` settles its report in its constructor and exposes it
+  read-only. The error is not itself a frozen dataclass, because that spelling
+  refuses `add_note` on a `BaseException` subclass and `__slots__` restricts
+  nothing there — the base always carries an instance dictionary:
 
   ```python
   class StoredDataIssue:

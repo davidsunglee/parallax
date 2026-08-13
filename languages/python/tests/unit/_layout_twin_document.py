@@ -29,6 +29,13 @@ _NAMESPACE = "parallax.compatibility"
 
 
 class TwinProfile(ValueObject):
+    """The occurrence both Entities embed, pairing a required scalar with a nullable one.
+
+    ``street`` is required, so stored state that omits it is a violation;
+    ``city`` is nullable, so a stored NULL beside it is a value the verdict must
+    preserve. One occurrence therefore carries both halves of a classification.
+    """
+
     street: Attr[str]
     city: Attr[str | None]
 
@@ -39,6 +46,12 @@ class LayoutTwinChild(
     namespace=_NAMESPACE,
     layout=Document(column="payload"),
 ):
+    """The included Entity a twin read reaches through :attr:`LayoutTwinItem.children`.
+
+    Both members declare this Entity name, namespace, table, and member set
+    identically; only the root-owned layout differs.
+    """
+
     id: Attr[int] = attr(primary_key=True)
     item_id: Attr[int]
     profile: Attr[TwinProfile | None]
@@ -50,6 +63,12 @@ class LayoutTwinItem(
     namespace=_NAMESPACE,
     layout=Document(column="payload"),
 ):
+    """The queried root of a twin read, whose ``children`` is the requested include.
+
+    Both members declare this Entity name, namespace, table, and member set
+    identically; only the root-owned layout differs.
+    """
+
     id: Attr[int] = attr(primary_key=True)
     profile: Attr[TwinProfile | None]
     children: Rel[tuple[LayoutTwinChild, ...]] = rel(
@@ -58,3 +77,5 @@ class LayoutTwinItem(
 
 
 DOCUMENT_TWIN = DomainModel(LayoutTwinItem, LayoutTwinChild)
+"""This member's model. Both members declare the same Entity names, so a read
+must be issued through the classes of the model it connects."""
