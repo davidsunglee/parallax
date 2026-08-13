@@ -78,8 +78,10 @@ behavior. The carrier itself is never substituted into the result graph.
 Detection is demand-driven over `m-document-codec` Logical Judging Roots. The
 Entity and each top-level Value Object occurrence supply the same roots under
 both layouts. Member Placement locates each requested Entity member, but the
-Entity-root classifier accepts either the direct column's SQL presence and parsed
-document or `locateEntityMember`'s result over the raw Entity document. Both
+Entity-root classifier accepts either the direct column's already-tagged `m-core`
+`DocumentRead` or `locateEntityMember`'s result over the raw Entity document. A
+direct `SqlNull` remains distinct from `PresentDocument(document: JSON null)`;
+materialization does not inspect a driver or host null sentinel. Both
 occurrence placement arms pass that `LocatedMemberInput` to
 `decodeLocatedMemberClassified` and emit one logical verdict before entering the
 occurrence root. A requested occurrence descendant advances a Logical Judging

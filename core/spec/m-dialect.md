@@ -19,7 +19,7 @@ dialect-specific parse rule — SQL-fragment production (SELECT shape, identifie
 quoting, row-limit clause, read-lock application, temp-table DDL), the
 neutral-type → column-type mapping, the typed-bind normalization rules, and the
 type-parse functions that turn a driver's raw column value into a core managed
-value.
+value, including the paired parse that forms an `m-core` `DocumentRead`.
 
 ## The `Dialect` interface
 
@@ -33,6 +33,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 |---|---|---|
 | `dialect` identifier | `postgres` | `mariadb` |
 | type mapping (neutral type → column type) | per the `m-core` Postgres column | per the `m-core` MariaDB column (see below) |
+| **document-read parsing** | SQL-false presence → `SqlNull`; SQL-true presence + parsed `jsonb` datum → `PresentDocument`, including JSON null | SQL-false presence → `SqlNull`; SQL-true presence + parsed `json` datum → `PresentDocument`, including JSON null |
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six text-compared types compare as the canonical document text on both dialects |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
@@ -428,11 +429,17 @@ slot's `effectiveNullable` answer (`m-storage-layout`), rendered here.
 
 A conventional Value Object Structured Column keeps its existing derivation: the
 `json` neutral type through the mapping table above, with the occurrence's own
-declared nullability. A read preserves SQL `NULL` as a distinct presence fact and
-parses every non-null stored JSON value without requiring an object or array kind;
-materialization passes both facts to `m-document-codec`'s located-member
-classifier. The dialect does not pre-classify JSON null, an object, a scalar, an
-array, or an array containing a non-object element.
+declared nullability. A read projects `m-sql`'s adjacent SQL presence and raw-value
+cells. The concrete adapter supplies both raw cells to the dialect's paired
+document-read parser and returns its provider-neutral `m-core` `DocumentRead`.
+The parser returns `SqlNull` when the SQL discriminator is false and MUST NOT
+attempt document parsing. When it is true, the parser returns
+`PresentDocument` containing the parsed `DocumentValue`, without requiring an
+object or array kind. In particular, a driver null sentinel in the true arm is
+JSON null, even when the same sentinel in the false arm denotes SQL `NULL`.
+Materialization passes the tag to `m-document-codec`'s located-member classifier.
+The dialect does not pre-classify JSON null, an object, a scalar, an array, or an
+array containing a non-object element.
 
 The initial contract adds no generated deep `CHECK` constraint over document
 contents on either dialect. The structured-document type therefore admits JSON
@@ -500,9 +507,16 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
   `datetime(6)` and the max-sentinel without guessing whether an arbitrary string
   is text or time. Non-timestamp values render to canonical `m-core` wire values
   unless a future dialect documents a different typed carrier.
+- **Document-read parsing.** The adapter supplies one SQL boolean presence cell
+  and its adjacent raw structured-document cell together. The dialect parses
+  them as exactly one `m-core` `DocumentRead`: false produces `SqlNull`; true
+  produces `PresentDocument` with a portable `DocumentValue`, including JSON
+  null. The parser MUST use the discriminator before interpreting a driver null
+  sentinel and MUST NOT return a driver document object above the adapter seam.
 - **SELECT shape.** The canonical SELECT projects explicit, table-aliased columns
-  (`t0.id, t0.name`) from a single aliased table (`from orders t0`). The alias
-  scheme is `t0, t1, …` (see `m-sql` normalization). No `SELECT *`.
+  (`t0.id, t0.name`) from a single aliased table (`from orders t0`), with each
+  selected Structured Column expanded to `m-sql`'s adjacent presence/value pair.
+  The alias scheme is `t0, t1, …` (see `m-sql` normalization). No `SELECT *`.
 - **Identifier quoting.** Simple lowercase identifiers are unquoted on both
   dialects. A reserved word or otherwise non-simple name MUST be quoted, and the
   quote **character diverges** — Postgres double-quotes (`"order"`), MariaDB

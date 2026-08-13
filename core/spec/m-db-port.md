@@ -11,20 +11,36 @@ maps to it; the port is proven by each language's
 ## The port contract
 
 The port names an
-`execute(sql, binds) → rows` /
+`execute(sql, binds, documentReads) → rows` /
 `executeWrite(sql, binds) → affected-row count` /
 `transaction(body)` contract and nothing more. `execute` is row/result oriented;
 DML that needs write-outcome classification uses `executeWrite` and **MUST NOT**
 append dialect-specific row-returning clauses merely to infer an affected count.
+`documentReads` is the compiled read's ordered sequence of adjacent zero-based
+projection ordinal pairs `(presence, document)`; it is empty for a result with no
+selected Structured Column. It carries no model, member, layout, or driver type.
 
 The port **depends on nothing application-specific** (beyond the neutral `m-core`
 types its contract names) — no driver, no concrete database, no harness — so any
 layer may hold the port without acquiring a database dependency. It carries the
-**normalize-at-boundary contract**: an adapter behind it returns rows whose scalars
+**normalize-at-boundary contract**: an adapter behind it returns rows whose cells
 are already **managed values** (produced by the `m-dialect` layer's parse
 functions), never raw driver representations. Nothing above the seam ever sees a
-driver's `Date`, a binary-float `numeric`, or a raw byte buffer. `executeWrite`
+driver's `Date`, a binary-float `numeric`, a raw byte buffer, or a raw
+structured-document value. `executeWrite`
 returns the concrete driver's native affected-row count and no rows.
+
+For each `documentReads` pair, the adapter reads both cells before building the
+managed row. The presence ordinal MUST immediately precede the document ordinal
+and MUST hold the SQL boolean projected by `m-sql`; malformed or overlapping
+pairs are an implementation-contract violation, not stored-data classification.
+The adapter passes the pair to its dialect's document-read parser, omits the
+presence cell from the managed row, and stores the resulting provider-neutral
+`m-core` `DocumentRead` under the document cell's ordinary result key. Thus one
+managed row value is either `SqlNull` or `PresentDocument(document)`, and SQL
+`NULL` remains distinct from `PresentDocument(document: JSON null)` even when the
+driver used one host sentinel for both raw values. No consumer may reconstruct
+the tag from the raw document cell after the adapter boundary.
 
 ## One error instance per failed invocation
 
@@ -109,6 +125,12 @@ instants as canonical UTC strings, and so on) so grading is cross-language-consi
 and independent of any one language's managed representation. **The wire rendering
 is a grader concern, never an adapter concern:** a concrete adapter emits managed
 types only and contains **no** wire or grading logic.
+
+`DocumentRead` is likewise a managed transport value, but never a developer or
+grader result cell. The compiled row transform consumes it to preserve or
+classify the document carrier before ordinary row/graph serialization. A harness
+that observes a logical row therefore renders the classified logical member, not
+the `DocumentRead` tag or its SQL presence discriminator.
 
 ## Deployable packaging contract
 

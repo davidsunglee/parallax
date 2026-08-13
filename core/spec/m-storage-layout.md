@@ -111,7 +111,8 @@ Column boundary nor the depth of a derived Document Path is a judging boundary.
 
 Placement only determines how materialization reaches a requested position. The
 Entity-root classifier accepts one located member input rather than one physical
-carrier kind: a `DirectColumn` supplies its parsed value or SQL-null fact, while a
+carrier kind: a document-valued `DirectColumn` supplies the database port's
+already-tagged `m-core` `DocumentRead`, while a
 `DocumentPath` supplies `m-document-codec`'s `locateEntityMember` result over the
 raw Entity document. Document-valued members in either arm then pass through
 `decodeLocatedMemberClassified`; direct scalar Attributes retain row conversion.
@@ -134,7 +135,8 @@ stored-data issue or recursive validation work.
 For a top-level occurrence under `Columns`, its own Structured Column is the
 occurrence carrier. Under `Document`, classified Entity-member decoding obtains
 the occurrence carrier by passing the Entity's shared Structured Column to
-`locateEntityMember`. The Columns arm supplies `SqlNull` or `PresentDocument`;
+`locateEntityMember`. The Columns arm supplies the database port's already-tagged
+`m-core` `DocumentRead` as `SqlNull` or `PresentDocument`;
 the Document arm supplies `Missing` or `PresentDocument`. Both pass that located
 input to `decodeLocatedMemberClassified`, so SQL null, JSON null, object, scalar,
 array, and malformed-array carriers receive the occurrence's same presence and
@@ -867,12 +869,12 @@ their spellings equals a physical Column.
 - Read materialization derives Logical Judging Roots from accepted Metadata
   before using Member Placement to locate member inputs. It normalizes direct and
   document-resident Entity members at that carrier-independent seam. It passes a
-  direct document's SQL presence or `m-document-codec`'s Entity-member location
-  result to the same located-member classifier, then advances Logical Judging
-  Cursors only along requested occurrence branches. It cannot inspect or project
-  an Entity carrier itself, interpret a direct occurrence carrier outside the
-  codec, or use a Structured Column boundary to add, remove, or recursively
-  expand classification work.
+  direct document's provider-neutral `DocumentRead` or `m-document-codec`'s
+  Entity-member location result to the same located-member classifier, then
+  advances Logical Judging Cursors only along requested occurrence branches. It
+  cannot inspect or project an Entity carrier itself, interpret a direct
+  occurrence carrier outside the codec, or use a Structured Column boundary to
+  add, remove, or recursively expand classification work.
 
 No consumer may infer a declaration from a duplicate raw Column spelling,
 rebuild a whole-family table projection, retain a competing canonical physical
