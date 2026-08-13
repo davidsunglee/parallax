@@ -141,7 +141,7 @@ def test_an_absent_and_a_json_null_document_leaf_convert_alike(
     assert members["tags"] == ()
 
 
-def test_entity_document_findings_are_translated_without_rejudging_collapsed_values() -> None:
+def test_unavailable_entity_document_members_are_not_hydrated_while_retaining_findings() -> None:
     node = _converted(
         _CORPUS,
         "Traveler",
