@@ -57,6 +57,17 @@ def _case(arm: str, *, rows: list[dict[str, object]] | None = None) -> dict:
 
 
 def _complete_corpus(root: Path) -> None:
+    modules = """# Modules
+
+## The module catalog
+
+| Module | Summary | Status | Coverage |
+| --- | --- | --- | --- |
+| `m-storage-layout` | Storage layout | active | cases |
+"""
+    spec = root.parent / "spec"
+    spec.mkdir(parents=True, exist_ok=True)
+    (spec / "modules.md").write_text(modules, encoding="utf-8")
     fixtures = {"example.TwinItem": [{"id": 1, "label": "Ada"}]}
     for number, arm in ((900, "columns"), (901, "document")):
         _write(
@@ -105,6 +116,54 @@ def test_layout_invariant_observations_must_match(tmp_path: Path) -> None:
 
     errors = twin_layout_errors(tmp_path)
     assert any("differs in layout-invariant authored behavior" in error for error in errors)
+
+
+def test_domain_members_named_like_physical_observations_must_match(tmp_path: Path) -> None:
+    _complete_corpus(tmp_path)
+    path = tmp_path / "cases" / "m-storage-layout-901-valid-read-layout-twin-document.yaml"
+    changed = _case("document")
+    rows = changed["then"]["rows"]
+    assert isinstance(rows, list)
+    rows[0]["execution"] = {"statements": "logical value", "apply": "logical value"}
+    _write(path, changed)
+
+    errors = twin_layout_errors(tmp_path)
+    assert any("differs in layout-invariant authored behavior" in error for error in errors)
+
+
+def test_numeric_proof_slug_pairs_at_the_canonical_case_id_boundary(tmp_path: Path) -> None:
+    _complete_corpus(tmp_path)
+    cases = tmp_path / "cases"
+    for number, arm in ((900, "columns"), (901, "document")):
+        original = cases / f"m-storage-layout-{number:03d}-valid-read-layout-twin-{arm}.yaml"
+        original.rename(
+            cases / f"m-storage-layout-{number:03d}-valid-123-read-layout-twin-{arm}.yaml"
+        )
+
+    assert twin_layout_errors(tmp_path) == []
+
+
+def test_every_document_mapping_owner_must_select_document_layout(tmp_path: Path) -> None:
+    _complete_corpus(tmp_path)
+    for arm in ("columns", "document"):
+        path = tmp_path / "models" / f"item-layout-twin-{arm}.yaml"
+        changed = _model(document_layout=arm == "document")
+        entities = changed["entities"]
+        assert isinstance(entities, list)
+        entities.append(
+            {
+                "name": "TwinAudit",
+                "namespace": "example",
+                "table": "twin_audit",
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            }
+        )
+        _write(path, changed)
+
+    errors = twin_layout_errors(tmp_path)
+    assert any(
+        "TwinAudit mapping owner must declare layout.document.column" in error for error in errors
+    )
 
 
 def test_unpaired_case_is_refused(tmp_path: Path) -> None:

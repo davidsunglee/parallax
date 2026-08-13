@@ -15,14 +15,22 @@ from pathlib import Path
 from typing import Any
 
 from reference_harness.corpus_yaml import read_corpus_yaml
+from reference_harness.dep_graph_check import DepGraphFailure, parse_catalog
 
 _ARM = r"columns|document"
 _MODEL_RE = re.compile(rf"^(?P<proof>.+)-layout-twin-(?P<arm>{_ARM})\.ya?ml$")
-_CASE_RE = re.compile(
-    rf"^(?P<module>m-.+)-(?P<number>[0-9]{{3}})-(?P<proof>.+)"
-    rf"-layout-twin-(?P<arm>{_ARM})\.ya?ml$"
+_CASE_TWIN_RE = re.compile(rf"^(?P<prefix>.+)-layout-twin-(?P<arm>{_ARM})\.ya?ml$")
+_CASE_BODY_RE = re.compile(r"^(?P<number>[0-9]{3})-(?P<proof>.+)$")
+_TOP_LEVEL_PHYSICAL_KEYS = frozenset({"statements", "referenceSql", "tableState", "execution"})
+_STEP_STATEMENT_PATHS = frozenset(
+    {
+        ("when", "scenario", "[]"),
+        ("when", "coherence", "[]"),
+        ("when", "attempts", "[]"),
+        ("when", "concurrency", "rounds", "[]", "A"),
+        ("when", "concurrency", "rounds", "[]", "B"),
+    }
 )
-_PHYSICAL_KEYS = frozenset({"statements", "referenceSql", "tableState", "execution"})
 _ARMS = ("columns", "document")
 
 
@@ -52,6 +60,11 @@ def _entity_declarations(document: Mapping[str, Any]) -> list[Mapping[str, Any]]
     return [entry for entry in several if isinstance(entry, Mapping)]
 
 
+def _is_layout_owner(entity: Mapping[str, Any]) -> bool:
+    inheritance = entity.get("inheritance")
+    return not isinstance(inheritance, Mapping) or inheritance.get("role") == "root"
+
+
 def _logical_descriptor(document: Mapping[str, Any]) -> dict[str, Any]:
     normalized = dict(document)
     single = normalized.get("entity")
@@ -74,7 +87,8 @@ def _logical_descriptor(document: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _layout_errors(path: Path, arm: str, document: Mapping[str, Any]) -> list[str]:
-    layouts = [entity.get("layout") for entity in _entity_declarations(document)]
+    entities = _entity_declarations(document)
+    layouts = [entity.get("layout") for entity in entities]
     present = [layout for layout in layouts if layout is not None]
     if arm == "columns":
         return (
@@ -82,14 +96,18 @@ def _layout_errors(path: Path, arm: str, document: Mapping[str, Any]) -> list[st
             if present
             else []
         )
-    if not present:
-        return [f"{path.name}: Document twin declares no layout.document block"]
     errors: list[str] = []
-    for layout in present:
+    for entity in entities:
+        layout = entity.get("layout")
+        name = entity.get("name", "<unnamed>")
+        if not _is_layout_owner(entity):
+            if layout is not None:
+                errors.append(f"{path.name}: descendant {name} must omit its inherited layout")
+            continue
         document_arm = layout.get("document") if isinstance(layout, Mapping) else None
         column = document_arm.get("column") if isinstance(document_arm, Mapping) else None
         if not isinstance(column, str) or not column:
-            errors.append(f"{path.name}: every Document twin layout must be layout.document.column")
+            errors.append(f"{path.name}: {name} mapping owner must declare layout.document.column")
     return errors
 
 
@@ -126,6 +144,56 @@ def _descriptor_pairs(compatibility_root: Path, errors: list[str]) -> dict[str, 
     return {key[0]: members for key, members in raw.items()}
 
 
+def _module_ids(compatibility_root: Path, errors: list[str]) -> frozenset[str]:
+    modules_path = compatibility_root.parent / "spec" / "modules.md"
+    try:
+        markdown = modules_path.read_text(encoding="utf-8")
+        return frozenset(parse_catalog(markdown))
+    except (OSError, DepGraphFailure) as exc:
+        errors.append(f"cannot read the canonical module catalog {modules_path}: {exc}")
+        return frozenset()
+
+
+def _case_pairs(
+    paths: list[Path], modules: frozenset[str], errors: list[str]
+) -> dict[tuple[str, str], dict[str, Path]]:
+    pairs: dict[tuple[str, str], dict[str, Path]] = {}
+    for path in paths:
+        twin = _CASE_TWIN_RE.match(path.name)
+        if twin is None:
+            continue
+        prefix = twin.group("prefix")
+        parsed: tuple[str, str] | None = None
+        for module in sorted(modules, key=len, reverse=True):
+            module_prefix = f"{module}-"
+            if not prefix.startswith(module_prefix):
+                continue
+            body = _CASE_BODY_RE.match(prefix.removeprefix(module_prefix))
+            if body is not None:
+                parsed = (module, body.group("proof"))
+                break
+        if parsed is None:
+            errors.append(
+                f"{path.name}: twin case name must begin with a catalog module and "
+                "three-digit case sequence"
+            )
+            continue
+        arm = twin.group("arm")
+        members = pairs.setdefault(parsed, {})
+        previous = members.get(arm)
+        if previous is not None:
+            errors.append(
+                f"case twin {parsed!r} has two {arm} members: {previous.name}, {path.name}"
+            )
+        else:
+            members[arm] = path
+    for key, members in pairs.items():
+        missing = [arm for arm in _ARMS if arm not in members]
+        if missing:
+            errors.append(f"case twin {key!r} is missing {', '.join(missing)} member(s)")
+    return pairs
+
+
 def _normalize_model_reference(value: Any) -> Any:
     if not isinstance(value, str):
         return value
@@ -136,23 +204,31 @@ def _normalize_model_reference(value: Any) -> Any:
     return str(path.with_name(f"{match.group('proof')}-layout-twin-<arm>.yaml"))
 
 
-def _logical_case(value: Any, *, at_root: bool = True) -> Any:
+def _is_physical_case_member(path: tuple[str, ...], key: str) -> bool:
+    if not path:
+        return key == "tags"
+    if path == ("given",):
+        return key == "apply"
+    if path == ("then",):
+        return key in _TOP_LEVEL_PHYSICAL_KEYS
+    if path == ("when", "scenario", "[]"):
+        return key in {"statements", "referenceSql"}
+    return key == "statements" and path in _STEP_STATEMENT_PATHS
+
+
+def _logical_case(value: Any, *, path: tuple[str, ...] = ()) -> Any:
     if isinstance(value, list):
-        return [_logical_case(item, at_root=False) for item in value]
+        return [_logical_case(item, path=(*path, "[]")) for item in value]
     if not isinstance(value, Mapping):
         return value
     normalized: dict[str, Any] = {}
     for key, item in value.items():
-        if at_root and key == "tags":
-            continue
-        if key in _PHYSICAL_KEYS:
-            continue
-        if key == "apply" and not at_root:
+        if _is_physical_case_member(path, key):
             continue
         normalized[key] = (
             _normalize_model_reference(item)
-            if at_root and key == "model"
-            else _logical_case(item, at_root=False)
+            if not path and key == "model"
+            else _logical_case(item, path=(*path, key))
         )
     return normalized
 
@@ -198,7 +274,7 @@ def twin_layout_errors(compatibility_root: Path) -> list[str]:
                 errors.append(f"fixture twin {proof!r} does not author equal logical rows")
 
     cases = compatibility_root / "cases"
-    case_pairs = _pairs(_yaml_paths(cases), _CASE_RE, "case", errors)
+    case_pairs = _case_pairs(_yaml_paths(cases), _module_ids(compatibility_root, errors), errors)
     used_descriptors: set[str] = set()
     for key, members in case_pairs.items():
         if any(arm not in members for arm in _ARMS):

@@ -38,11 +38,11 @@ The hydration rule is equally closed:
 
 | Stored state | Root hydration |
 |---|---|
-| required document member absent | hydrate with the normative absence collapse |
-| required document member JSON null | hydrate with the normative null collapse |
-| wrong-kind `One` occurrence | hydrate with the normative occurrence collapse |
-| wrong-kind `Many` occurrence | hydrate with the normative occurrence collapse |
-| undecodable document leaf | unavailable |
+| non-nullable, non-`Many` document member absent | hydrate with the normative absence collapse |
+| non-nullable, non-`Many` document member JSON null | hydrate with the normative null collapse |
+| non-null wrong-kind `One` occurrence | hydrate with the normative occurrence collapse |
+| non-null wrong-kind `Many` occurrence | hydrate with the normative occurrence collapse |
+| non-null undecodable document leaf | unavailable |
 | non-nullable Entity Attribute holding SQL `NULL` | unavailable |
 | family tag matching no concrete subtype | unavailable |
 | null primary key | unavailable |

@@ -83,19 +83,23 @@ Twin model descriptors are named
 `<name>-layout-twin-columns.yaml` and
 `<name>-layout-twin-document.yaml`. The `columns` descriptor uses the ordinary
 production spelling for `Columns` — omission of `layout`. The `document`
-descriptor uses ordinary root-owned `layout.document` declarations. Removing
-those `layout` blocks MUST leave canonically equal descriptor documents. Both
-descriptors are independently schema-validated, formed, provisioned, and consumed
-exactly like every other model in the corpus. Their fixture files use the same
-stems and MUST author equal logical fixture documents.
+descriptor uses ordinary root-owned `layout.document` declarations on every
+standalone Entity and inheritance root; descendants omit the declaration they
+inherit. Removing those `layout` blocks MUST leave canonically equal descriptor
+documents. Both descriptors are independently schema-validated, formed,
+provisioned, and consumed exactly like every other model in the corpus. Their
+fixture files use the same stems and MUST author equal logical fixture documents.
 
 Twin cases are named
 `<module>-NNN-<proof>-layout-twin-columns.yaml` and
 `<module>-NNN-<proof>-layout-twin-document.yaml`. The sequence numbers remain
 ordinary unique case numbers and need not match; the pair identity is
-`<module>-<proof>`. Each case MUST reference the matching descriptor arm, and
-every twin descriptor pair MUST be used by at least one complete case pair.
-An unpaired descriptor or case is invalid corpus state.
+`<module>-<proof>`. The leading module is resolved against the closed module
+catalog before the three-digit sequence and proof are separated, so a proof slug
+may itself contain numeric segments without changing pair identity. Each case MUST
+reference the matching descriptor arm, and every twin descriptor pair MUST be used
+by at least one complete case pair. An unpaired descriptor or case is invalid
+corpus state.
 
 The two case documents MUST be canonically equal after normalizing their model
 references, omitting routing tags, and removing physical observations. Physical
