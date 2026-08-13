@@ -825,14 +825,39 @@ def test_the_invalid_data_report_is_the_errors_sole_machine_readable_surface() -
 
 def test_the_report_cannot_be_replaced_after_the_message_is_derived() -> None:
     # The count and issue-code summary are derived from the report during
-    # construction, so a writable report would let a caller leave the refusal's
-    # wording describing results the report no longer carries.
+    # construction, so any writable route into the report or into the inherited
+    # `args` the message lives in would let a caller leave the refusal's wording
+    # describing results the report no longer carries.
     record = _invalid(0)
     error = InvalidDataError((record,))
-    with pytest.raises(AttributeError):
-        cast("Any", error).invalid_data = ()
+    message = str(error)
+    writable = cast("Any", error)
+    for name, replacement in (
+        ("invalid_data", ()),
+        ("_invalid_data", ()),
+        ("args", ("nothing is wrong",)),
+    ):
+        with pytest.raises(AttributeError):
+            setattr(writable, name, replacement)
+        with pytest.raises(AttributeError):
+            delattr(writable, name)
     assert error.invalid_data == (record,)
+    assert str(error) == message
+
+
+def test_the_frozen_refusal_still_carries_the_state_the_interpreter_owns() -> None:
+    # Freezing by hand rather than as a frozen dataclass is what keeps notes and
+    # chaining working on a refusal whose report is settled.
+    error = InvalidDataError((_invalid(0),))
     error.add_note("an ordinary exception still takes notes")
+    assert error.__notes__ == ["an ordinary exception still takes notes"]
+    del error.__notes__
+    assert not hasattr(error, "__notes__")
+    cause = ValueError("the read that produced it")
+    with pytest.raises(InvalidDataError) as refusal:
+        raise error from cause
+    assert refusal.value.__cause__ is cause
+    assert refusal.value.__traceback__ is not None
 
 
 def test_the_checked_view_returns_the_union_in_band_over_the_same_storage() -> None:
