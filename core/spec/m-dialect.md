@@ -428,14 +428,18 @@ slot's `effectiveNullable` answer (`m-storage-layout`), rendered here.
 
 A conventional Value Object Structured Column keeps its existing derivation: the
 `json` neutral type through the mapping table above, with the occurrence's own
-declared nullability.
+declared nullability. A read preserves SQL `NULL` as a distinct presence fact and
+parses every non-null stored JSON value without requiring an object or array kind;
+materialization passes both facts to `m-document-codec`'s located-member
+classifier. The dialect does not pre-classify JSON null, an object, a scalar, an
+array, or an array containing a non-object element.
 
 The initial contract adds no generated deep `CHECK` constraint over document
 contents on either dialect. The structured-document type therefore admits JSON
 null, arrays, and scalars as well as objects. If external state contains one of
 those non-object Entity carriers, read materialization passes it to
-`m-document-codec`'s `decodeEntityMemberClassified` operation for member-local
-classification; the dialect neither rejects the row nor invents a
+`m-document-codec`'s `locateEntityMember` operation and then its shared
+located-member classifier; the dialect neither rejects the row nor invents a
 provider-specific corruption result.
 
 ### `NULL` ordering

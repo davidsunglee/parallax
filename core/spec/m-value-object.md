@@ -103,6 +103,17 @@ provenance-bearing values until both render. Collisions among the keys that
 actually render on one node are formation errors under
 `m-inheritance`'s `inheritance-materialization-key-collision` rule.
 
+On read, that Structured Column is raw occurrence input rather than an already
+valid occurrence root. SQL `NULL` and every parsed document kind can reach
+materialization: JSON null, an object, an array, or a scalar, with an array
+possibly containing a non-object element. The materializer supplies the column's
+SQL presence and parsed value as `m-document-codec` `LocatedMemberInput`; it does
+not create a root cursor or interpret the document itself. The codec classifies
+the top-level occurrence's declared nullability and multiplicity first, and only
+a conforming `One` object or `Many` array of objects opens the occurrence root.
+This is the same operation used when Relational Document Layout locates the
+occurrence inside its shared Entity document.
+
 ## Inherited temporality
 
 A value object has **no independent temporality**. It declares no As-Of Axes —
