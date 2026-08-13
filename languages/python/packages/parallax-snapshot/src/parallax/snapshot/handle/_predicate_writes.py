@@ -23,10 +23,12 @@ predicate instruction here from ``write_neutral``, so this module buffers throug
 Depends on :mod:`parallax.snapshot.handle._family` (the declaring root, version
 attribute, and the layout member-to-column map),
 :mod:`parallax.snapshot.handle._write_inputs` (window validation and the per-row
-column contributions), and :mod:`parallax.snapshot.handle._read` for
-:func:`~parallax.snapshot.handle._read.execute_read` alone — the resolving read
-is a read, so it records its Database Call through the package's one read-call
-seam instead of restating the timing and failed-call rules here.
+column contributions), and :mod:`parallax.snapshot.handle._read` for both
+:func:`~parallax.snapshot.handle._read.execute_read` and
+:func:`~parallax.snapshot.handle._read.stage_publishable_rows` — the resolving
+read records its Database Call through the package's one read-call seam, then
+passes its materialized rows through the shared publication gate before this
+lane derives observations or writes.
 
 Names crossing a module boundary are spelled bare; a helper whose every caller
 lives here keeps its underscore. Privacy is carried by this MODULE's leading
