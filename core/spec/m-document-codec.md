@@ -88,9 +88,9 @@ top-level root and records the logical prefix used for findings. A `One` has one
 cursor over its object; a `Many` has one cursor over each visited element object.
 Creating a cursor neither inspects nor judges any sibling member.
 
-A `Document` is a portable JSON value — object, array, string, number, boolean,
-or null — and nothing else. It is not a driver value, a rendered text, or a
-provider-native document handle.
+A `Document` is `m-core`'s portable `DocumentValue` — object, array, string,
+number, boolean, or null — and nothing else. It is not a driver value, rendered
+text, or provider-native document handle.
 
 The raw Entity document read from a Relational Document Layout Structured Column
 is a physical carrier, not itself a logical member. Its database type guarantees
@@ -229,9 +229,12 @@ input, not a caller error.
 
 `decodeLocatedMemberClassified` is the Entity-root form of classified decoding.
 It accepts the carrier-independent input for one located document-valued Entity
-member: `SqlNull` when a direct Structured Column is SQL `NULL`, `Missing` after
-codec-owned Entity-document location found no member, or `PresentDocument` with
-the raw parsed document value from either placement arm. `member` MUST name that
+member. For a direct Structured Column, `SqlNull` and `PresentDocument` are the
+two arms of the `m-core` `DocumentRead` already formed at the database boundary;
+the materializer MUST NOT infer either arm from its payload. `Missing` arises
+after codec-owned Entity-document location found no member. A
+`PresentDocument` from either placement arm carries the raw parsed document
+value. `member` MUST name that
 direct member in the Entity root. `SqlNull` has the same member presence as an
 absent key; `PresentDocument` preserves JSON null and every other document kind
 for classification. The operation applies the member's declared nullability,
@@ -270,8 +273,9 @@ creates no cursor. The requested descendant therefore never reaches strict
 `decode` after a malformed ancestor.
 
 Materialization obtains a requested top-level occurrence carrier before using its
-root. Under `Columns`, the occurrence's Structured Column supplies `SqlNull` or
-`PresentDocument` without interpreting the document value. Under `Document`,
+root. Under `Columns`, the occurrence's Structured Column supplies the port's
+`DocumentRead` as `SqlNull` or `PresentDocument` without the materializer
+interpreting the document value. Under `Document`,
 `locateEntityMember` supplies `Missing` or `PresentDocument` from the raw Entity
 document. Both arms pass that input to `decodeLocatedMemberClassified` before
 entering the occurrence root. The materializer then classifies only the requested
@@ -688,12 +692,13 @@ neither outcome changes this shape-aware verdict.
 - Write composition encodes an insert's complete document here and derives each
   update's patches here, then lowers them through `m-dialect`.
 - Read materialization obtains `LocatedMemberInput` from the direct Structured
-  Column's SQL presence or from `locateEntityMember`, passes either arm to
-  `decodeLocatedMemberClassified`, then uses `decodeClassified` after entering a
-  conforming occurrence. The classified operations decode by declared Neutral
-  Type and drop unknown keys. Materialization never inspects an Entity carrier's
-  JSON shape, projects `Missing` itself, interprets a direct document carrier, or
-  falls back to strict decoding for requested stored state below a logical root.
+  Column's already-tagged `DocumentRead` or from `locateEntityMember`, passes
+  either arm to `decodeLocatedMemberClassified`, then uses `decodeClassified`
+  after entering a conforming occurrence. The classified operations decode by
+  declared Neutral Type and drop unknown keys. Materialization never inspects an
+  Entity carrier's JSON shape, projects `Missing` itself, interprets a direct
+  document carrier, or falls back to strict decoding for requested stored state
+  below a logical root.
 - Temporal observation retains the raw predecessor document unchanged and patches
   it here to build a successor.
 - Fixture provisioning and conformance table read-back build and compare

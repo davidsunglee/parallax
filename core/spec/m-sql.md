@@ -166,10 +166,11 @@ For each physical branch, SQL selects from the layout values as follows:
    **instance-form** read. A row-form read omits those slots by default; the
    internal materialized-predicate-write resolving read is the one row-form read
    that widens the default, projecting the slots the write it serves needs
-   (*Result form*, below). Projection preserves SQL `NULL` as distinct from a
-   non-null parsed document. Before any occurrence cursor exists, instance
-   materialization passes that presence and raw value to `m-document-codec` as a
-   `LocatedMemberInput` for the top-level occurrence.
+   (*Result form*, below). Each selected slot expands to the document read pair
+   defined below; it is never projected as one ambiguous raw value. Before any
+   occurrence cursor exists, instance materialization passes the resulting
+   `m-core` `DocumentRead` to `m-document-codec` as a `LocatedMemberInput` for
+   the top-level occurrence.
 4. A table-per-concrete-subtype abstract read appends the SQL-owned
    `familyVariant` literal to each branch. It is not a layout slot. Typed `NULL`
    placeholders and collision-safe aliases are likewise SQL renderings over a
@@ -187,8 +188,9 @@ For each physical branch, SQL selects from the layout values as follows:
    application version wrote. Outside that lane a row-form read projects it only
    for a requested document-resident member, so a row-form read of direct members
    alone emits no document extraction and no document projection at all. The
-   Structured Column is never a result field: the row transform passes its raw
-   value to `m-document-codec`'s Entity-member locator, then fans the classified
+   Structured Column is never a result field: the row transform unwraps a
+   `PresentDocument` and passes its document to `m-document-codec`'s
+   Entity-member locator, then fans the classified
    inputs out into the requested logical members — none, where the read requested
    none — and the raw value is not among them. A document-resident top-level Value
    Object and the direct slot in step 3 therefore reach the same located-member
@@ -203,6 +205,39 @@ Duplicate removal is by structural contributor identity, never by a Column or
 result-key spelling. Per-type rendering seams — the `bytes`
 `encode(t0.payload, ?) payload_hex` form or reserved-word quoting
 `t0."order"` — render a selected slot without changing its position.
+
+### Document read pair
+
+Every selected `Document` slot expands in place to two adjacent projected cells,
+in this order:
+
+```text
+not <slot expression> is null, <slot expression>
+```
+
+The first cell is the explicit **SQL presence discriminator**: `false` means the
+slot is SQL `NULL`; `true` means it is not SQL `NULL`. The second is the raw
+structured-document cell. The discriminator introduces no bind. Its `not … is
+null` spelling is the canonical normalizer form of `is not null` on both current
+dialects. Repeating the slot expression is required: no driver-decoded value may
+stand in for the SQL-level discriminator.
+
+The compiled read records each pair as adjacent zero-based projection ordinals
+`(presence, document)` in slot order. Those ordinals are execution metadata, not
+result aliases or observable result fields. A branch that has no applicable
+Document contributor projects `false` at the presence ordinal and the existing
+typed `NULL` placeholder at the document ordinal. The pair occupies the
+Document contributor's one position in layout ordering; the presence cell does
+not become a second logical contributor.
+
+The database port consumes those ordinal pairs and replaces each pair with one
+`m-core` `DocumentRead` under the document cell's ordinary result key, removing
+the discriminator cell. Consequently no row transform sees a provider value for
+a document slot, and neither SQL `NULL` nor JSON null is inferred from a
+host-language null sentinel. The row transform receives `SqlNull` or
+`PresentDocument(document)`, retains the latter's document unchanged when it is
+an observation carrier, and sends the same tagged input to classified
+materialization when the slot is a logical occurrence carrier.
 
 ### Result form — row-form vs instance-form
 
@@ -1175,7 +1210,8 @@ per-branch `familyVariant` literal; a column not applicable to a branch is the
 A `valueObject` is stored in **one structured-document column** (`m-core` /
 `m-value-object`), not column-flattened. Reading the whole value object — an
 **instance-form** read selecting its layout `Document` slot — projects that backing
-column directly (`t0.address`). Reading or filtering an **inner
+column through its presence/value pair (`not t0.address is null, t0.address`).
+Reading or filtering an **inner
 attribute** uses the `m-predicate` nested-attribute access form and lowers through
 the `m-dialect` **nested-extraction** seam to a per-dialect extraction. The JSON
 path is always carried as `?` bind(s) (rule 4 — never inlined, which keeps the
@@ -1184,7 +1220,7 @@ differ per dialect (`m-dialect`):
 
 | Predicate | Postgres canonical fragment | MariaDB canonical fragment |
 |---|---|---|
-| project the whole object | `t0.address` (in the `select` list) | `t0.address` (identical) |
+| project the whole object | `not t0.address is null, t0.address` (the adjacent document read pair) | identical |
 | `nestedEq(Class.vo.field, v)` | `jsonb_extract_path_text(t0.address, ?) = ?` | `json_value(t0.address, ?) = ?` |
 | `nestedNotEq(Class.vo.field, v)` | `not jsonb_extract_path_text(t0.address, ?) = ?` | `not json_value(t0.address, ?) = ?` |
 | nested deeper (`vo.a.b`) | `jsonb_extract_path_text(t0.address, ?, ?) = ?` | `json_value(t0.address, ?) = ?` |
@@ -1647,7 +1683,8 @@ finer granularity.
 
 A **broad polymorphic read** resolves the variant tag first and decodes only that
 variant's applicable document shape, so projection needs no partitioning: the
-Structured Column is projected raw and the row transform chooses the shape.
+Structured Column is projected as its document read pair and the row transform
+chooses the shape from the resulting `PresentDocument`.
 Under table-per-concrete-subtype each branch projects its own Structured Column
 and decodes against its own applicable shape before the union result is
 normalized.

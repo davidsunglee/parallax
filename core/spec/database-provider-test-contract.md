@@ -30,6 +30,9 @@ Each row proves the database's answers for the `m-dialect` decision catalog:
 - placeholder translation at the adapter boundary
 - typed bind normalization for managed values
 - parser behavior for precision-sensitive managed values
+- paired document-read parsing, including distinct `SqlNull` and
+  `PresentDocument(document: JSON null)` results when the raw driver values use
+  the same host-language null sentinel
 - native error-code classification and call-site predicates
 
 The dialect suite must remain Docker-free. It should fail quickly when a new
@@ -45,6 +48,9 @@ For every supported adapter, the smoke suite covers:
 
 - construction from the language's documented connection configuration
 - a managed scalar read returning adapter-boundary values, not driver defaults
+- a Structured Column read whose SQL presence/value pair becomes one managed
+  `DocumentRead`, with the presence cell absent from the returned row and SQL
+  `NULL` distinct from JSON null
 - a transaction callback that commits on success and returns the callback value
 - a bytes write round trip through the dialect bind seam
 - affected-row semantics for matched and unmatched DML

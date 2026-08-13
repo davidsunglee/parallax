@@ -13,6 +13,31 @@ normalizes no leaf spelling, consults no model shape or path, and shares no
 container with its input. Modules use it when an immutable observation or pure
 document operation must break aliases without acquiring document-codec semantics.
 
+## Provider-neutral document reads
+
+A `DocumentValue` is any value in the JSON data model, including a bare JSON
+null. It is a portable tree of object, array, string, number, boolean, and null
+values, never rendered JSON text, a driver object, or a provider-native document
+handle. This carrier space is deliberately wider than the conforming `Json`
+`NeutralValue` below: reads must preserve invalid stored JSON kinds so the
+document codec can classify them instead of losing them at the database seam.
+
+A structured-document result cell crosses that seam as this closed tagged value:
+
+```text
+DocumentRead =
+    SqlNull
+  | PresentDocument(document: DocumentValue)
+```
+
+`SqlNull` means the SQL column itself was `NULL`. `PresentDocument` means the SQL
+column was not `NULL` and preserves every parsed document kind, including
+`PresentDocument(document: JSON null)`. The tag is therefore semantically
+required even when a driver represents SQL `NULL` and JSON null with the same
+host-language sentinel. A `DocumentRead` is a transport value rather than a
+`NeutralValue`; the no-wrapper rule below applies only where a declaration has
+already fixed one neutral value space.
+
 ## The `NeutralType` algebra
 
 `NeutralType` is the closed structured type algebra every typed model fact

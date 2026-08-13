@@ -106,8 +106,10 @@ actually render on one node are formation errors under
 On read, that Structured Column is raw occurrence input rather than an already
 valid occurrence root. SQL `NULL` and every parsed document kind can reach
 materialization: JSON null, an object, an array, or a scalar, with an array
-possibly containing a non-object element. The materializer supplies the column's
-SQL presence and parsed value as `m-document-codec` `LocatedMemberInput`; it does
+possibly containing a non-object element. SQL projects the column's adjacent
+presence/value pair, and the database port returns one provider-neutral `m-core`
+`DocumentRead`. The materializer supplies that already-tagged value as an
+`m-document-codec` `LocatedMemberInput`; it does
 not create a root cursor or interpret the document itself. The codec classifies
 the top-level occurrence's declared nullability and multiplicity first, and only
 a conforming `One` object or `Many` array of objects opens the occurrence root.
