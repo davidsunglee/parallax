@@ -158,8 +158,22 @@ def test_twin_filename_module_must_match_primary_module_tag(tmp_path: Path) -> N
 
     errors = twin_layout_errors(tmp_path)
     assert any(
-        "filename module 'm-storage-layout' does not match first catalog module tag "
+        "filename module 'm-storage-layout' does not match first module tag "
         "'m-snapshot-read'" in error
+        for error in errors
+    )
+
+
+def test_unknown_first_module_tag_is_not_skipped(tmp_path: Path) -> None:
+    _complete_corpus(tmp_path)
+    path = tmp_path / "cases" / "m-storage-layout-901-valid-read-layout-twin-document.yaml"
+    changed = _case("document")
+    changed["tags"] = ["m-not-catalogued", "m-storage-layout", "layout-twin"]
+    _write(path, changed)
+
+    errors = twin_layout_errors(tmp_path)
+    assert any(
+        "first module tag 'm-not-catalogued' is not in the canonical module catalog" in error
         for error in errors
     )
 

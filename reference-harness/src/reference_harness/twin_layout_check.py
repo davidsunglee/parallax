@@ -21,6 +21,7 @@ _ARM = r"columns|document"
 _MODEL_RE = re.compile(rf"^(?P<proof>.+)-layout-twin-(?P<arm>{_ARM})\.ya?ml$")
 _CASE_TWIN_RE = re.compile(rf"^(?P<prefix>.+)-layout-twin-(?P<arm>{_ARM})\.ya?ml$")
 _CASE_BODY_RE = re.compile(r"^(?P<number>[0-9]{3})-(?P<proof>.+)$")
+_MODULE_TAG_RE = re.compile(r"^m-[a-z0-9]+(?:-[a-z0-9]+)*$")
 _TOP_LEVEL_PHYSICAL_KEYS = frozenset({"statements", "referenceSql", "tableState", "execution"})
 _STEP_STATEMENT_PATHS = frozenset(
     {
@@ -195,11 +196,14 @@ def _case_pairs(
     }
 
 
-def _primary_module(document: Mapping[str, Any], modules: frozenset[str]) -> str | None:
+def _primary_module(document: Mapping[str, Any]) -> str | None:
     tags = document.get("tags")
     if not isinstance(tags, list):
         return None
-    return next((tag for tag in tags if isinstance(tag, str) and tag in modules), None)
+    return next(
+        (tag for tag in tags if isinstance(tag, str) and _MODULE_TAG_RE.fullmatch(tag) is not None),
+        None,
+    )
 
 
 def _normalize_model_reference(value: Any) -> Any:
@@ -296,11 +300,16 @@ def twin_layout_errors(compatibility_root: Path) -> list[str]:
             if case is None:
                 continue
             documents[arm] = case
-            primary_module = _primary_module(case, modules)
-            if primary_module != key[0]:
+            primary_module = _primary_module(case)
+            if primary_module is not None and primary_module not in modules:
+                errors.append(
+                    f"{path.name}: first module tag {primary_module!r} is not in the "
+                    "canonical module catalog"
+                )
+            elif primary_module != key[0]:
                 errors.append(
                     f"{path.name}: filename module {key[0]!r} does not match first "
-                    f"catalog module tag {primary_module!r}"
+                    f"module tag {primary_module!r}"
                 )
             model = case.get("model")
             model_name = Path(model).name if isinstance(model, str) else ""

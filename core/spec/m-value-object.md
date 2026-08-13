@@ -75,7 +75,9 @@ MUST NOT carry a `column`, and MUST NOT introduce extra columns,
 extra rows, joins, or identity-bearing objects. A `one` member is a single
 embedded document and a `many` member is an ordered JSON array of documents —
 both within the one column. A `many` member MUST NOT be nullable; its empty array
-is the sole zero-element representation. The harness derives the concrete column type through `m-dialect`
+is the sole canonical representation an encoder produces for zero elements.
+Decoders also accept the non-canonical stored aliases defined by
+`m-document-codec`. The harness derives the concrete column type through `m-dialect`
 exactly as it does for a scalar attribute, and it MUST NOT emit a column for any
 nested value object or inner attribute. The column is part of the entity's column
 layout as one `Document`-tier slot, positioned after every scalar tier
