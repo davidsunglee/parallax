@@ -56,6 +56,14 @@ may determine which codec or row-conversion seam first detects the fact, but it
 cannot change the public code, turn an issue into valid data, or select a value
 that another layout could not produce.
 
+Detection is demand-driven over `m-document-codec` Logical Judging Roots. The
+Entity and each top-level Value Object occurrence supply the same roots under
+both layouts. Only a requested direct member is classified; obtaining an
+occurrence carrier, classifying a nested-occurrence member, or reaching a deeper
+predicate path does not recursively judge unrequested descendants. Layout parity
+therefore fixes *where* the same requested logical member is judged without
+turning classification into whole-subtree validation.
+
 An issue anywhere in a root's requested include tree classifies that result root.
 Shared affected nodes repeat the issue for every result root that reaches them,
 while duplicate diagnoses within one root collapse. Classification preserves the
