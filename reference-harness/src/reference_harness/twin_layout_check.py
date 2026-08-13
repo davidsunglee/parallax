@@ -114,7 +114,7 @@ def _layout_errors(path: Path, arm: str, document: Mapping[str, Any]) -> list[st
 def _pairs(
     paths: list[Path], pattern: re.Pattern[str], kind: str, errors: list[str]
 ) -> dict[tuple[str, ...], dict[str, Path]]:
-    pairs: dict[tuple[str, ...], dict[str, Path]] = {}
+    candidates: list[tuple[tuple[str, ...], str, Path]] = []
     for path in paths:
         match = pattern.match(path.name)
         if match is None:
@@ -123,6 +123,15 @@ def _pairs(
         arm = groups.pop("arm")
         groups.pop("number", None)
         key = tuple(groups[name] for name in sorted(groups))
+        candidates.append((key, arm, path))
+    return _collect_pairs(candidates, kind, errors)
+
+
+def _collect_pairs(
+    candidates: list[tuple[tuple[str, ...], str, Path]], kind: str, errors: list[str]
+) -> dict[tuple[str, ...], dict[str, Path]]:
+    pairs: dict[tuple[str, ...], dict[str, Path]] = {}
+    for key, arm, path in candidates:
         members = pairs.setdefault(key, {})
         previous = members.get(arm)
         if previous is not None:
@@ -157,7 +166,7 @@ def _module_ids(compatibility_root: Path, errors: list[str]) -> frozenset[str]:
 def _case_pairs(
     paths: list[Path], modules: frozenset[str], errors: list[str]
 ) -> dict[tuple[str, str], dict[str, Path]]:
-    pairs: dict[tuple[str, str], dict[str, Path]] = {}
+    candidates: list[tuple[tuple[str, ...], str, Path]] = []
     for path in paths:
         twin = _CASE_TWIN_RE.match(path.name)
         if twin is None:
@@ -179,19 +188,18 @@ def _case_pairs(
             )
             continue
         arm = twin.group("arm")
-        members = pairs.setdefault(parsed, {})
-        previous = members.get(arm)
-        if previous is not None:
-            errors.append(
-                f"case twin {parsed!r} has two {arm} members: {previous.name}, {path.name}"
-            )
-        else:
-            members[arm] = path
-    for key, members in pairs.items():
-        missing = [arm for arm in _ARMS if arm not in members]
-        if missing:
-            errors.append(f"case twin {key!r} is missing {', '.join(missing)} member(s)")
-    return pairs
+        candidates.append((parsed, arm, path))
+    return {
+        (key[0], key[1]): members
+        for key, members in _collect_pairs(candidates, "case", errors).items()
+    }
+
+
+def _primary_module(document: Mapping[str, Any], modules: frozenset[str]) -> str | None:
+    tags = document.get("tags")
+    if not isinstance(tags, list):
+        return None
+    return next((tag for tag in tags if isinstance(tag, str) and tag in modules), None)
 
 
 def _normalize_model_reference(value: Any) -> Any:
@@ -274,7 +282,8 @@ def twin_layout_errors(compatibility_root: Path) -> list[str]:
                 errors.append(f"fixture twin {proof!r} does not author equal logical rows")
 
     cases = compatibility_root / "cases"
-    case_pairs = _case_pairs(_yaml_paths(cases), _module_ids(compatibility_root, errors), errors)
+    modules = _module_ids(compatibility_root, errors)
+    case_pairs = _case_pairs(_yaml_paths(cases), modules, errors)
     used_descriptors: set[str] = set()
     for key, members in case_pairs.items():
         if any(arm not in members for arm in _ARMS):
@@ -287,6 +296,12 @@ def twin_layout_errors(compatibility_root: Path) -> list[str]:
             if case is None:
                 continue
             documents[arm] = case
+            primary_module = _primary_module(case, modules)
+            if primary_module != key[0]:
+                errors.append(
+                    f"{path.name}: filename module {key[0]!r} does not match first "
+                    f"catalog module tag {primary_module!r}"
+                )
             model = case.get("model")
             model_name = Path(model).name if isinstance(model, str) else ""
             model_match = _MODEL_RE.match(model_name)

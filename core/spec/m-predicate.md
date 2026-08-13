@@ -344,16 +344,16 @@ the same in either case.
 
 The distinction also fixes the judging boundary. SQL extraction never judges a
 document's declared shape: it follows the requested path and applies this collapse
-at any depth. Shape-aware decoding judges a member only when a consumer asks the
-codec to decode that declared position. A Structured Column projection initially
-asks only about the declared members at that document's root. Materialization may
-traverse an occurrence returned from one of those positions, but it does not create
-additional stored-shape judging positions below the Structured Column's top-level
-keys. A multi-segment placement used only to lower a predicate likewise creates no
-judged materialization position. Consequently path depth and physical placement
-never select a second validity rule: every top-level position that is judged has
-the `m-document-codec` verdict, while every predicate extraction retains the
-collapse defined here.
+at any depth. Classified decoding is not available at an arbitrary declared
+position: it accepts exactly one direct member of the selected Structured Column's
+root shape. Materialization may traverse an occurrence returned from one of those
+positions through presence-only decoding, but it does not create additional
+stored-shape judging positions below the Structured Column's top-level keys. A
+multi-segment placement used only to lower a predicate likewise creates no judged
+materialization position. Consequently path depth and physical placement never
+select a second validity rule: every top-level position that is judged has the
+`m-document-codec` verdict, while every predicate extraction retains the collapse
+defined here.
 
 #### To-many members — any-element and same-element semantics
 
