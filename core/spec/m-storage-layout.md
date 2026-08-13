@@ -112,29 +112,31 @@ Column boundary nor the depth of a derived Document Path is a judging boundary.
 Placement only determines how materialization reaches a requested position. The
 Entity-root classifier accepts one located member input rather than one physical
 carrier kind: a `DirectColumn` supplies its parsed value or SQL-null fact, while a
-`DocumentPath` supplies the codec's classified result from the Entity document.
-It then normalizes by logical member identity. In particular, an absent or
-JSON-null non-nullable top-level Entity Attribute under `Document` and an SQL-null
-value for that Attribute under `Columns` both produce
+`DocumentPath` supplies the result of the codec's
+`decodeEntityMemberClassified` over the raw Entity document. It then normalizes
+by logical member identity. In particular, an absent or JSON-null non-nullable
+top-level Entity Attribute under `Document` and an SQL-null value for that
+Attribute under `Columns` both produce
 `stored-data-attribute-null` with unavailable hydration. The document-local
 `RequiredMemberAbsent` or `RequiredMemberNull` is detection evidence, not a
 layout-selected public verdict.
 
 The shared Structured Column's database type guarantees a non-SQL-null document,
 not an object-shaped document. When its raw value is JSON null, an array, or a
-scalar, it supplies no Entity-root cursor. Each requested document-resident
-Entity member instead enters the same classifier as a missing located member,
-using `m-document-codec`'s existing member verdict and hydration rule. The raw
-carrier has no logical member identity and therefore creates no independent
-stored-data issue or recursive validation work.
+scalar, `decodeEntityMemberClassified` supplies no Entity-root cursor and returns
+the requested document-resident Entity member's existing missing verdict and
+hydration. The materializer passes the raw carrier to that operation without
+inspecting its JSON shape. The raw carrier has no logical member identity and
+therefore creates no independent stored-data issue or recursive validation work.
 
 For a top-level occurrence under `Columns`, its own Structured Column is the
 occurrence carrier. Under `Document`, classified Entity-member decoding obtains
-the occurrence carrier from the Entity's shared Structured Column. In both arms
-the same occurrence kind and presence rules run before the materializer enters
-the occurrence root. The occurrence carrier remains a direct member of the Entity
-root in both arms, even though one arm stores that member as a Column and the
-other as an Entity-document key.
+the occurrence carrier by passing the Entity's shared Structured Column to
+`decodeEntityMemberClassified`. In both arms the same occurrence kind and
+presence rules run before the materializer enters the occurrence root. The
+occurrence carrier remains a direct member of the Entity root in both arms, even
+though one arm stores that member as a Column and the other as an Entity-document
+key.
 
 Logical roots do not authorize subtree validation. Classification remains one
 requested branch at a time. A nested occurrence supplies no additional root, but
@@ -527,8 +529,9 @@ object explicitly.
 
 This physical non-null guarantee does not assert that externally written stored
 JSON is object-shaped. The DDL deliberately has no deep shape constraint. Read
-materialization handles a JSON-null, array, or scalar carrier through the
-member-local missing projection above rather than passing it to a codec cursor.
+materialization passes a JSON-null, array, or scalar carrier to
+`decodeEntityMemberClassified`, which performs the member-local missing
+projection without creating a codec cursor.
 
 The fourth rule makes a required subtype-only member nullable in a shared
 table-per-hierarchy Table, because rows of a sibling subtype have no value for
@@ -859,11 +862,11 @@ their spellings equals a physical Column.
   a Column spelling or a stored document's own keys.
 - Read materialization derives Logical Judging Roots from accepted Metadata
   before using Member Placement to locate member inputs. It normalizes direct and
-  document-resident Entity members at that carrier-independent seam, projecting a
-  non-object raw Entity document to missing inputs only for requested members,
-  then advances Logical Judging Cursors only along requested occurrence branches.
-  It cannot use a Structured Column boundary to add, remove, or recursively
-  expand classification work.
+  document-resident Entity members at that carrier-independent seam, passing each
+  raw Entity document and requested member to `m-document-codec` rather than
+  inspecting or projecting the carrier itself, then advances Logical Judging
+  Cursors only along requested occurrence branches. It cannot use a Structured
+  Column boundary to add, remove, or recursively expand classification work.
 
 No consumer may infer a declaration from a duplicate raw Column spelling,
 rebuild a whole-family table projection, retain a competing canonical physical
