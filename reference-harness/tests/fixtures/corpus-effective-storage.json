@@ -1041,6 +1041,31 @@
       }
     }
   },
+  "models/storage-layout-transparency-layout-twin-columns.yaml": {
+    "parallax.compatibility.LayoutTwinItem": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "rank": "rank"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/storage-layout-transparency-layout-twin-document.yaml": {
+    "parallax.compatibility.LayoutTwinItem": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "rank": "rank"
+      },
+      "documentPath": {
+        "label": "payload:label",
+        "rank": "payload:rank"
+      },
+      "valueObject": {}
+    }
+  },
   "models/storage-layout.yaml": {
     "parallax.compatibility.LayoutAudit": {
       "attribute": {

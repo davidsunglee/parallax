@@ -73,6 +73,33 @@ Migrating an existing mapping between `Columns` and `Document` is an external
 database schema change: this module defines no dual layout, no fallback from a
 missing Document Path to a legacy Column, and no mixed accepted state.
 
+## Storage Layout transparency
+
+Storage Layout is a physical policy and is not observable as domain behavior.
+For two accepted descriptors that declare one equal logical model and differ only
+by root-owned `layout` blocks, the same logical stored state and the same authored
+operation MUST produce equal logical observations under `Columns` and `Document`.
+In particular:
+
+- read result membership, ordering, declared member values, graph shape, and
+  stored-data classification MUST NOT depend on the layout;
+- a write MUST leave the same declared member values and the same occurrence
+  replacement or preservation effects under either layout; and
+- round-trip behavior promised by the operation's owning module MUST NOT change
+  merely because several logical members share one Structured Column.
+
+Physical observations are deliberately outside this equality. Tables, Columns,
+Structured Column documents, SQL text, bind grouping, and physical table-state
+rows may differ because expressing those differences is this module's purpose.
+The invariant is that no module consuming Member Placement may branch on its arm
+to choose a different logical verdict or write meaning. It may branch only to
+locate, encode, decode, project, or mutate the same logical member.
+
+The invariant does not make a migration transparent: changing an already
+deployed mapping still requires an external schema and data migration. It says
+that once either accepted mapping represents the same logical stored state,
+callers above the physical seam cannot tell which mapping was selected.
+
 ## Direct roles and document residency
 
 Under `Document`, the direct-column role set is closed:

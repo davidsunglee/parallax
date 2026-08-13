@@ -333,6 +333,28 @@ NOT** distinguish JSON `null` from a missing key or a null column at the predica
 level — the states stay distinguishable in the stored data but are indistinguishable
 to the algebra.
 
+This collapse is a **predicate observation**, not a stored-data-validity verdict.
+It decides whether a nested predicate matches and nothing else. In particular, it
+does not make a missing or JSON-null required member valid, authorize a result
+materializer to discard the contradiction, or turn a wrong-kind occurrence into
+conforming stored data. A read may therefore both exclude a row from an ordinary
+comparison for the reason above and report that the stored member violates its
+declared shape when that row is otherwise materialized. The predicate answer stays
+the same in either case.
+
+The distinction also fixes the judging boundary. SQL extraction never judges a
+document's declared shape: it follows the requested path and applies this collapse
+at any depth. Shape-aware decoding judges a member only when a consumer asks the
+codec to decode that declared position. A Structured Column projection initially
+asks about the declared members at that document's root; an occurrence returned
+from one of those positions is judged below that root only when materialization
+recurses with the occurrence's own declared shape. A multi-segment placement used
+only to lower a predicate does not, by itself, make every segment a judged
+materialization position. Consequently path depth and physical placement never
+select a second validity rule: every position that is judged has the
+`m-document-codec` verdict, while every predicate extraction retains the collapse
+defined here.
+
 #### To-many members — any-element and same-element semantics
 
 A value object declared `multiplicity: many` is an ordered **JSON array** of documents in the

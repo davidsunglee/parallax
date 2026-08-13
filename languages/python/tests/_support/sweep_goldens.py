@@ -214,7 +214,7 @@ _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
 # endpoints hold a direct-column role, and the interior predicate through the
 # extraction because that member is document-resident.
 _DOCUMENT_LAYOUT_READS: Final[frozenset[str]] = frozenset(
-    {f"m-storage-layout-{n:03d}" for n in range(17, 22)}
+    {f"m-storage-layout-{n:03d}" for n in (*range(17, 22), 25, 26)}
     | {
         "m-inheritance-123",
         "m-inheritance-124",

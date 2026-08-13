@@ -15,6 +15,54 @@ changes are persisted through the explicit write modules (`m-batch-write`,
 `m-txtime-write`, `m-bitemp-write`, `m-cascade-delete`), never by diffing a
 graph.
 
+## Invalid stored data
+
+Snapshot Read owns the one public stored-data issue vocabulary. Detecting modules
+report facts in their own local terms; this module translates those facts without
+re-judging them and classifies the affected result root. The initial vocabulary
+is closed:
+
+```text
+stored-data-required-member-absent
+stored-data-required-member-null
+stored-data-one-wrong-kind
+stored-data-many-wrong-kind
+stored-data-leaf-undecodable
+stored-data-attribute-null
+stored-data-family-tag-unknown
+stored-data-primary-key-null
+stored-data-primary-key-undecodable
+```
+
+The hydration rule is equally closed:
+
+| Stored state | Root hydration |
+|---|---|
+| required document member absent | hydrate with the normative absence collapse |
+| required document member JSON null | hydrate with the normative null collapse |
+| wrong-kind `One` occurrence | hydrate with the normative occurrence collapse |
+| wrong-kind `Many` occurrence | hydrate with the normative occurrence collapse |
+| undecodable document leaf | unavailable |
+| non-nullable Entity Attribute holding SQL `NULL` | unavailable |
+| family tag matching no concrete subtype | unavailable |
+| null primary key | unavailable |
+| undecodable primary key | unavailable |
+
+Classification never repairs, defaults, substitutes, or fabricates. A root is
+hydrated only when every requested value can be produced by an already-normative
+collapse; otherwise its data is unavailable. The same stored state yields the
+same issue and hydration answer under every Storage Layout. A physical placement
+may determine which codec or row-conversion seam first detects the fact, but it
+cannot change the public code, turn an issue into valid data, or select a value
+that another layout could not produce.
+
+An issue anywhere in a root's requested include tree classifies that result root.
+Shared affected nodes repeat the issue for every result root that reaches them,
+while duplicate diagnoses within one root collapse. Classification preserves the
+root's result position; it never prunes the node, silently drops the root, or
+publishes a node-level invalid union. The public result and accessor shapes that
+carry this classification are language-surface concerns built over this contract.
+
 ## Graph-local identity resolution
 
 Within **one materialized graph**, one row is **one node**:

@@ -1,0 +1,17 @@
+# Columns member of the Storage Layout transparency twin. This descriptor is a
+# production model descriptor: omission is the only Columns spelling, and its
+# Document twin differs only by the root-owned layout block. The fixture and case
+# twins author the same logical rows and read; only physical projection changes.
+entity:
+  name: LayoutTwinItem
+  namespace: parallax.compatibility
+  table: storage_layout_transparency
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: label
+      type: string
+      maxLength: 64
+    - name: rank
+      type: int32

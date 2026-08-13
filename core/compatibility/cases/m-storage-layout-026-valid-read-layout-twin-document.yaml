@@ -1,0 +1,25 @@
+# Relational Document Layout half of the first cross-layout proof: the same
+# production Object Query materializes the same two logical rows in the same order.
+# Only the physical projection differs: `label` and `rank` arrive through `payload`.
+# The ordinary sweep therefore exercises production descriptor formation, fixture
+# provisioning, row transformation, and result grading without an adapter override.
+model: models/storage-layout-transparency-layout-twin-document.yaml
+tags: [m-storage-layout, m-sql, m-document-codec, read, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.LayoutTwinItem
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.LayoutTwinItem.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.payload from storage_layout_transparency t0 order by t0.id asc
+        mariadb: select t0.id, t0.payload from storage_layout_transparency t0 order by t0.id asc
+  rows:
+    - { id: 1, label: alpha, rank: 20 }
+    - { id: 2, label: beta, rank: 10 }
+  roundTrips: 1

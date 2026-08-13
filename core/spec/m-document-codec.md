@@ -91,6 +91,21 @@ decode(shape: DocumentShape,
        document: Document,
        path: nonempty sequence<MemberName>)          -> Presence
 
+decodeClassified(shape: DocumentShape,
+                 document: Document,
+                 path: nonempty sequence<MemberName>) -> DecodedMember
+
+DecodedMember
+  presence: Presence | Unavailable
+  findings: immutable sequence<StoredShapeFinding>
+
+StoredShapeFinding =
+    RequiredMemberAbsent
+  | RequiredMemberNull
+  | OneWrongKind
+  | ManyWrongKind
+  | LeafUndecodable
+
 comparisonText(type: NeutralType,
                value: NeutralValue)                  -> string
 
@@ -148,6 +163,28 @@ shape**: the elements are decoded one at a time, in order, by passing an element
 back to `decode` with the occurrence's shape. That is what makes a `many`
 traversable without an element index — a `path` stays a sequence of member names
 and never addresses an array position.
+
+`decodeClassified` is the read-facing form of the same operation. A conforming
+member has the same `Presence` as `decode` and no finding. Stored data that
+contradicts the member's declared shape produces one or more `StoredShapeFinding`
+values and is therefore the third semantic answer beside *present* and *not
+present*. Where the ordinary read collapse can produce a value without invention,
+`presence` carries that collapsed value: an absent or JSON-null required member
+retains its absence, a wrong-kind `One` is absent, and a wrong-kind `Many` is the
+empty array. An undecodable leaf carries `Unavailable`, because no value of its
+declared Neutral Type can be produced. The strict `decode` operation may surface
+the same invalid verdict as a failure; refusing and classifying are two surfaces
+over one verdict, not two definitions of valid storage.
+
+Judgement is demand-driven rather than a scan of an opaque subtree. One invocation
+judges the addressed member and every ancestor occurrence whose kind must be known
+to reach it. Returning an occurrence's document does not recursively judge every
+member below it; a materializing consumer does that by invoking the classified
+operation against the occurrence's own shape. The read projection begins with the
+declared top-level keys of the Structured Column document it selected. A
+multi-segment placement used only for SQL predicate extraction performs no codec
+judgement. This boundary is expressed in terms of the active `DocumentShape`, not
+in terms of whether a physical layout happened to make a path one segment long.
 
 `comparisonText` answers the exact characters a dialect's text extraction returns
 for the encoding of `value` — the literal SQL binds when the member's declared
@@ -491,15 +528,31 @@ fixtures, and `m-unit-work` fixes it for whole-occurrence observed equality.
 
 ## Invalid stored data
 
-A stored document whose content contradicts its shape is **invalid stored
-data**: a required path that is missing, a nested structure that is not the
-declared kind, or a value that does not decode into its declared Neutral Type.
+A stored document whose content contradicts its shape is **invalid stored data**.
+At a judged member position, the verdict is closed:
+
+| Stored state | Verdict | Read hydration |
+|---|---|---|
+| required member key absent | `RequiredMemberAbsent` | retain the normative absence collapse |
+| required member key present with JSON null | `RequiredMemberNull` | retain the normative null collapse |
+| `One` occurrence present with a non-object value | `OneWrongKind` | collapse the occurrence to absent |
+| `Many` occurrence present with a non-array value | `ManyWrongKind` | collapse the occurrence to the empty array |
+| leaf not decodable as its declared Neutral Type | `LeafUndecodable` | `Unavailable` |
+
+The complementary states remain conforming: an absent or JSON-null nullable
+`One` preserves its exact `Missing` or `ExplicitNull` presence; an absent,
+JSON-null, or empty `Many` decodes to `Present([])`; a correctly shaped occurrence
+and a decodable leaf are present; and unknown keys remain valid carrier state.
+There is no implementation-selected middle category.
 
 This module defines no repair, no defaulting, and no cross-dialect corruption
-error normalization. A decode of such a value fails, and a predicate over it may
-instead surface the underlying database's own cast failure, which is a different
-observable outcome on different engines. Parallax does not promise to make those
-two paths agree; it promises never to invent a value for one.
+error normalization. Classification records the contradiction; it does not make
+the stored value conforming. Hydration is permitted only for the four rows whose
+collapse already has a normative value. `Unavailable` is mandatory for an
+undecodable leaf because substituting a null, zero, empty string, or any other
+value would invent domain state. Predicate extraction retains `m-predicate`'s
+own absence-collapse truth table and may still surface a database cast failure;
+neither outcome changes this shape-aware verdict.
 
 ## Consumer contract
 
