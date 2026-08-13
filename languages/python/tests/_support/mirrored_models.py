@@ -650,7 +650,7 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
 """Corpus model stem -> why the class frontend does not mirror it.
 
 Every reason here is either a redundant declaration shape or an unwritten
-mirror. **No corpus model is unmirrorable:** the class grammar can author all 39,
+mirror. **No corpus model is unmirrorable:** the class grammar can author all 44,
 so this mapping records the guard's chosen breadth, not a grammar limit. A reason
 that ever becomes a real limit belongs in the grammar's own specification instead.
 """

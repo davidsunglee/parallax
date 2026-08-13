@@ -200,20 +200,23 @@ _STORAGE_LAYOUT_READS: Final[frozenset[str]] = frozenset(
 _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
     f"m-document-codec-{n:03d}" for n in range(3, 14)
 )
-# Relational Document Layout reads (`m-storage-layout`): the whole read surface the
-# layout opens. `-017` grades the projection rule and the fan-out (one Structured
-# Column projected, never a result field, every member under the result name a Column
-# of its own would have carried); `-018` is its instance-form sibling, whose nested
-# predicate additionally walks the occurrence's containment path from the document
-# root; `-019` is the contrast that projects NO document because no member the read
-# asked for lives inside one; `-020` puts a path predicate and an ordering key through
-# the typed-cast seam under a `limit`, which is what makes the ordering observable;
-# `-021` collapses a missing key and an explicit JSON null to one absence.
+# Storage Layout document-residency reads and cross-layout twins
+# (`m-storage-layout`). `-017` grades the Document projection rule and the fan-out:
+# one Structured Column is projected, never a result field, rather than the separate
+# Column every member under the result name would otherwise have carried. `-018` is
+# its instance-form sibling, whose nested predicate additionally walks the occurrence's
+# containment path from the document root; `-019` is the contrast that projects NO
+# document because no member the read asked for lives inside one; `-020` puts a path
+# predicate and an ordering key through the typed-cast seam under a `limit`, which is
+# what makes the ordering observable; `-021` collapses a missing key and an explicit
+# JSON null to one absence.
 # `m-navigate-025` joins them: a hop between two document-mapped Entities, whose one
 # statement carries both forms — the correlation on plain Columns because both join
 # endpoints hold a direct-column role, and the interior predicate through the
-# extraction because that member is document-resident.
-_DOCUMENT_LAYOUT_READS: Final[frozenset[str]] = frozenset(
+# extraction because that member is document-resident. `m-storage-layout-025` and
+# `-026` are respectively the Columns and Document arms of the valid-read transparency
+# proof, so the compile sweep grades each arm's physical projection independently.
+_STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS: Final[frozenset[str]] = frozenset(
     {f"m-storage-layout-{n:03d}" for n in (*range(17, 22), 25, 26)}
     | {
         "m-inheritance-123",
@@ -255,7 +258,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _DESCRIPTOR_DEFAULT_COLUMN_READS
     | _MATERIALIZATION_KEY_COMPATIBILITY_READS
     | _STORAGE_LAYOUT_READS
-    | _DOCUMENT_LAYOUT_READS
+    | _STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS
     | _CANONICAL_ENTITY_SPELLING_READS
     | _EXECUTION_LOG_READS
 )

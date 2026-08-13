@@ -169,22 +169,23 @@ member has the same `Presence` as `decode` and no finding. Stored data that
 contradicts the member's declared shape produces one or more `StoredShapeFinding`
 values and is therefore the third semantic answer beside *present* and *not
 present*. Where the ordinary read collapse can produce a value without invention,
-`presence` carries that collapsed value: an absent or JSON-null required member
-retains its absence, a wrong-kind `One` is absent, and a wrong-kind `Many` is the
-empty array. An undecodable leaf carries `Unavailable`, because no value of its
-declared Neutral Type can be produced. The strict `decode` operation may surface
-the same invalid verdict as a failure; refusing and classifying are two surfaces
-over one verdict, not two definitions of valid storage.
+`presence` carries that collapsed value: an absent or JSON-null required non-`Many`
+member retains its absence, a non-null wrong-kind `One` is absent, and a non-null
+wrong-kind `Many` is the empty array. A non-null undecodable leaf carries
+`Unavailable`, because no value of its declared Neutral Type can be produced. The
+strict `decode` operation may surface the same invalid verdict as a failure;
+refusing and classifying are two surfaces over one verdict, not two definitions of
+valid storage.
 
 Judgement is demand-driven rather than a scan of an opaque subtree. One invocation
 judges the addressed member and every ancestor occurrence whose kind must be known
 to reach it. Returning an occurrence's document does not recursively judge every
-member below it; a materializing consumer does that by invoking the classified
-operation against the occurrence's own shape. The read projection begins with the
-declared top-level keys of the Structured Column document it selected. A
-multi-segment placement used only for SQL predicate extraction performs no codec
-judgement. This boundary is expressed in terms of the active `DocumentShape`, not
-in terms of whether a physical layout happened to make a path one segment long.
+member below it. A read projection invokes classified decoding only for the declared
+top-level keys of the Structured Column document it selected. Materialization may
+traverse a returned occurrence to hydrate its nested values, but those positions are
+not additional stored-shape judging positions. A multi-segment placement used only
+for SQL predicate extraction performs no codec judgement. The boundary belongs to
+the Structured Column root, not to the depth of a derived physical path.
 
 `comparisonText` answers the exact characters a dialect's text extraction returns
 for the encoding of `value` — the literal SQL binds when the member's declared
@@ -533,17 +534,17 @@ At a judged member position, the verdict is closed:
 
 | Stored state | Verdict | Read hydration |
 |---|---|---|
-| required member key absent | `RequiredMemberAbsent` | retain the normative absence collapse |
-| required member key present with JSON null | `RequiredMemberNull` | retain the normative null collapse |
-| `One` occurrence present with a non-object value | `OneWrongKind` | collapse the occurrence to absent |
-| `Many` occurrence present with a non-array value | `ManyWrongKind` | collapse the occurrence to the empty array |
-| leaf not decodable as its declared Neutral Type | `LeafUndecodable` | `Unavailable` |
+| non-nullable, non-`Many` member key absent | `RequiredMemberAbsent` | retain the normative absence collapse |
+| non-nullable, non-`Many` member key present with JSON null | `RequiredMemberNull` | retain the normative null collapse |
+| `One` occurrence present with a non-null, non-object value | `OneWrongKind` | collapse the occurrence to absent |
+| `Many` occurrence present with a non-null, non-array value | `ManyWrongKind` | collapse the occurrence to the empty array |
+| non-null leaf value not decodable as its declared Neutral Type | `LeafUndecodable` | `Unavailable` |
 
-The complementary states remain conforming: an absent or JSON-null nullable
-`One` preserves its exact `Missing` or `ExplicitNull` presence; an absent,
-JSON-null, or empty `Many` decodes to `Present([])`; a correctly shaped occurrence
-and a decodable leaf are present; and unknown keys remain valid carrier state.
-There is no implementation-selected middle category.
+The complementary states remain conforming: an absent or JSON-null nullable leaf
+or nullable `One` preserves its exact `Missing` or `ExplicitNull` presence; an
+absent, JSON-null, or empty `Many` decodes to `Present([])`; a correctly shaped
+occurrence and a decodable leaf are present; and unknown keys remain valid carrier
+state. There is no implementation-selected middle category.
 
 This module defines no repair, no defaulting, and no cross-dialect corruption
 error normalization. Classification records the contradiction; it does not make

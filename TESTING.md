@@ -55,7 +55,7 @@ compatibility corpus; `harness`, the reference harness's own health; and
 
 | Command | Runs |
 |---|---|
-| `just core-check` | The module graph, slice profiles, schemas, the language-contract diagnostics, and every completed language spec |
+| `just core-check` | The module graph, slice profiles, schemas, language-contract diagnostics, cross-layout twin parity, and every completed language spec |
 | `just harness-check-dbfree` | The harness's format, lint, typecheck, database-access guard, and database-free tests |
 | `just harness-check-db` | The compatibility corpus against every selected provider |
 | `just python-check-dbfree` | Every Python gate that needs no database, including coverage and diff coverage |
