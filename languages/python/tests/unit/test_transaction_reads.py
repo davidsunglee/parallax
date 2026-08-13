@@ -130,9 +130,9 @@ def test_a_participating_find_hands_the_executor_a_collector() -> None:
 def test_an_invalid_participating_find_records_no_observation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The read now publishes its classified root in band rather than refusing,
-    # and the row behind that root still licenses no later write: a classified
-    # projection is never observed, so the unit of work is handed nothing for it.
+    # The read publishes its classified root in band, and the row behind that
+    # root licenses no later write: a classified projection is never observed,
+    # so the unit of work is handed nothing for it.
     recorded: list[ReadObservations] = []
 
     def recording(*args: object) -> None:

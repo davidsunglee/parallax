@@ -353,9 +353,38 @@ def _twin_records(
     )
 
 
+def _profile_values(profile: Any) -> tuple[object, ...] | None:
+    return None if profile is None else (profile.street, profile.city)
+
+
+def _hydrated(data: object) -> tuple[object, ...] | None:
+    """A hydrated twin root as declared member values and graph shape alone.
+
+    The two members declare distinct classes, so their roots are never equal to
+    each other however faithfully both hydrated. This is the projection of a root
+    that carries exactly what Storage Layout may not change — every declared
+    value, and the children the requested include tree reached.
+    """
+    if data is None:
+        return None
+    root = cast("Any", data)
+    return (
+        root.id,
+        _profile_values(root.profile),
+        tuple((child.id, child.item_id, _profile_values(child.profile)) for child in root.children),
+    )
+
+
 def _comparable(record: InvalidData[Any]) -> tuple[object, ...]:
     """Everything about a record that Storage Layout may not change."""
-    return (record.issues, record.object_key, record.version, record.edge, record.ordinal)
+    return (
+        record.issues,
+        _hydrated(record.data),
+        record.object_key,
+        record.version,
+        record.edge,
+        record.ordinal,
+    )
 
 
 _TWIN_ITEM = EntityIdentity(_NAMESPACE, "LayoutTwinItem")
@@ -419,9 +448,10 @@ _CHILD_KEY = ObjectKey(_TWIN_CHILD, (("id", 11),))
 def test_a_layout_twin_classifies_one_stored_state_identically(
     profile: object, child_profile: object, expected: StoredDataIssue
 ) -> None:
-    # The invariant the twin exists for: the diagnosis, the object it names, and
-    # whether the root hydrated are the same whether that state lived in its own
-    # column or inside a Structured Column. Only the physical SQL differs.
+    # The invariant the twin exists for: the diagnosis, the object it names,
+    # whether the root hydrated, and every declared value and child it hydrated
+    # are the same whether that state lived in its own column or inside a
+    # Structured Column. Only the physical SQL differs.
     hydrates = expected.code != "stored-data-leaf-undecodable"
     columns, document = _twin_records(profile, child_profile)
     assert _comparable(columns) == _comparable(document)
@@ -430,4 +460,3 @@ def test_a_layout_twin_classifies_one_stored_state_identically(
     # object the violation was found on — the child, where the child carried it.
     assert columns.object_key == _ROOT_KEY
     assert (columns.data is not None) is hydrates
-    assert (document.data is not None) is hydrates

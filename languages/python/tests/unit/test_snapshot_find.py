@@ -646,8 +646,9 @@ def test_every_execution_reads_the_querys_own_canonical_node(
 
 
 # --------------------------------------------------------------------------- #
-# The materialization boundary translates a graph-construction or lifecycle    #
-# failure exactly once, and publishes nothing.                                 #
+# The materialization boundary classifies a stored-data finding in band and   #
+# translates a graph-construction or lifecycle failure exactly once,          #
+# publishing nothing.                                                         #
 # --------------------------------------------------------------------------- #
 def test_an_undecodable_columns_leaf_is_a_non_hydrating_root() -> None:
     # The read itself succeeded, but `balance` lies outside its declared Decimal
