@@ -93,7 +93,7 @@ from parallax.snapshot.handle._family import (
     slot_column,
     version_attribute,
 )
-from parallax.snapshot.handle._read import execute_read
+from parallax.snapshot.handle._read import execute_read, stage_publishable_rows
 from parallax.snapshot.handle._write_inputs import (
     is_no_op_assignment,
     key_column_values,
@@ -102,14 +102,7 @@ from parallax.snapshot.handle._write_inputs import (
     validate_until,
     validate_valid_from,
 )
-from parallax.snapshot.materialize import (
-    LevelContext,
-    MergeScope,
-    convert_row,
-    merge_graph_input,
-    observable_columns,
-    require_publishable,
-)
+from parallax.snapshot.materialize import observable_columns
 
 # The predicate mutations that carry Assignments; the rest take none at all and
 # their verbs' signatures say so.
@@ -525,41 +518,20 @@ def _materialize_predicate_write(
     # like any other read (`m-execution-log`) — through the package's one
     # read-call seam, never a second copy of its rules.
     with attempt.read_trace() as recorder:
-        resolved = [
-            compiled.materialize_row(row)
-            for row in uow.read(
-                lambda: execute_read(
-                    conn,
-                    dialect,
-                    compiled.statement,
-                    recorder,
-                    document_reads=compiled.document_reads,
-                )
+        driver_rows = uow.read(
+            lambda: execute_read(
+                conn,
+                dialect,
+                compiled.statement,
+                recorder,
+                document_reads=compiled.document_reads,
             )
-        ]
+        )
+    stage = stage_publishable_rows(meta, compiled, driver_rows, pin=Pin())
+    resolved = stage.rows
     if not resolved:
         return
-    validation_scope = MergeScope(meta)
-    contexts = tuple(
-        LevelContext(
-            materialized.resolved_entity,
-            compiled.projected_documents,
-            compiled.attribute_reads(materialized.resolved_entity),
-        )
-        for materialized in resolved
-    )
-    validation_roots = tuple(
-        convert_row(
-            materialized.values,
-            context,
-            validation_scope,
-            findings=materialized.findings,
-            family_tag_unknown=materialized.family_tag_unknown,
-            classified_members=materialized.classified_members,
-        )
-        for materialized, context in zip(resolved, contexts, strict=True)
-    )
-    require_publishable(merge_graph_input(validation_scope.build(validation_roots, Pin()), meta))
+    contexts = stage.contexts
     rows = [
         observable_columns(
             materialized.values,

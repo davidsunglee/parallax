@@ -1,15 +1,17 @@
 """Per-row conversion: the one place a physical column becomes a member identity.
 
-One driver row plus its level context yields one :class:`SnapshotNodeInput`, and
-nothing below this seam sees a physical column, a storage key, or a Document Path
-again. Any bulk path is a thin loop over :func:`convert_row`, and the graph-local
-identity scope it registers into is an explicit argument rather than a
-whole-result index — a milestone-set read gives each milestone its own scope, and
-a future incremental read can scope identity however it needs without a second
-conversion.
+One SQL-materialized row's transformed values plus its level context and
+classified provenance yield one :class:`SnapshotNodeInput`. Nothing below this
+seam sees a physical column, a storage key, or a Document Path again. Any bulk
+path is a thin loop over :func:`convert_row`, and the graph-local identity scope
+it registers into is an explicit argument rather than a whole-result index — a
+milestone-set read gives each milestone its own scope, and a future incremental
+read can scope identity however it needs without a second conversion.
 
-Conversion owns document-resident occurrences end to end: stored-document
-presence, container shape, and leaf decoding resolve here into
+SQL row transforms classify and decode projected Entity-document members first,
+then pass their findings, classified-member set, and transformed values here.
+Conversion owns Value Object occurrence reduction after that boundary:
+stored-document presence, container shape, and leaf decoding resolve into
 :class:`~parallax.core.entity._graph_input.ValueObjectOccurrenceInput` /
 :class:`~parallax.core.entity._graph_input.ValueObjectAttributeInput` keyed by
 structured identity. An undeclared stored key never contributes; a member the
@@ -241,11 +243,16 @@ def convert_row(
     family_tag_unknown: bool = False,
     classified_members: frozenset[str] = frozenset(),
 ) -> SnapshotNodeRef:
-    """Convert one driver row into ``scope``'s next :class:`SnapshotNodeInput`.
+    """Convert one SQL-materialized row into ``scope``'s next
+    :class:`SnapshotNodeInput`.
 
     Answers the reference the scope assigned rather than the record itself: the
     scope retains the record, and a caller that held its own copy would be the
     second place a projection lives.
+
+    ``findings``, ``family_tag_unknown``, and ``classified_members`` are the
+    compiled row transform's provenance. Conversion translates those findings
+    and does not re-judge members the transform already classified.
 
     Scalars are keyed by the compiled projection contract. A disjoint sibling's
     null-padded result — and the synthetic family tag — therefore contributes

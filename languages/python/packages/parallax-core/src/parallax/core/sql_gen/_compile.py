@@ -45,7 +45,7 @@ from parallax.core.base import (
     admits_stored_scalar,
     decode_neutral_literal,
 )
-from parallax.core.dialect import Dialect, LockMode
+from parallax.core.dialect import Dialect, LockMode, projection_result_key
 from parallax.core.document_codec import DocumentFinding
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as _inheritance_view
@@ -423,7 +423,7 @@ def _scalar_read_contracts(
         entity_contracts: list[AttributeReadContract] = []
         for attribute in view.applicable_attributes:
             direct = isinstance(layout.placement(attribute.identity), _DirectColumn)
-            projected_key = dialect.projection_result_key(attribute.storage.name, attribute.type)
+            projected_key = projection_result_key(attribute.storage.name, attribute.type)
             entity_contracts.append(
                 AttributeReadContract(
                     attribute.identity,
