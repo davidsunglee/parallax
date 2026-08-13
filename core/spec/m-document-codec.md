@@ -91,9 +91,9 @@ decode(shape: DocumentShape,
        document: Document,
        path: nonempty sequence<MemberName>)          -> Presence
 
-decodeClassified(shape: DocumentShape,
+decodeClassified(rootShape: DocumentShape,
                  document: Document,
-                 path: nonempty sequence<MemberName>) -> DecodedMember
+                 member: MemberName)                  -> DecodedMember
 
 DecodedMember
   presence: Presence | Unavailable
@@ -164,28 +164,33 @@ back to `decode` with the occurrence's shape. That is what makes a `many`
 traversable without an element index — a `path` stays a sequence of member names
 and never addresses an array position.
 
-`decodeClassified` is the read-facing form of the same operation. A conforming
-member has the same `Presence` as `decode` and no finding. Stored data that
+`decodeClassified` is the read-facing, root-member form of decoding. `rootShape`
+MUST be the selected Structured Column's root shape, and `member` MUST name one
+of its direct members. Passing an occurrence's nested shape, a returned subtree,
+or a multi-segment path is a caller error; ordinary `decode` remains the
+presence-only operation for those paths. A conforming member has the same
+`Presence` as `decode` and no finding. Stored data that
 contradicts the member's declared shape produces one or more `StoredShapeFinding`
 values and is therefore the third semantic answer beside *present* and *not
 present*. Where the ordinary read collapse can produce a value without invention,
 `presence` carries that collapsed value: an absent or JSON-null required non-`Many`
 member retains its absence, a non-null wrong-kind `One` is absent, and a non-null
 wrong-kind `Many` is the empty array. A non-null undecodable leaf carries
-`Unavailable`, because no value of its declared Neutral Type can be produced. The
-strict `decode` operation may surface the same invalid verdict as a failure;
-refusing and classifying are two surfaces over one verdict, not two definitions of
-valid storage.
+`Unavailable`, because no value of its declared Neutral Type can be produced. At
+the root-key boundary, strict `decode` may surface the same invalid state as a
+failure; refusing and classifying are two surfaces over one verdict there. Away
+from that boundary, ordinary `decode` may still fail because it cannot produce the
+requested declared value, but it emits no `StoredShapeFinding` and does not create
+another stored-shape judging position.
 
-Judgement is demand-driven rather than a scan of an opaque subtree. One invocation
-judges the addressed member and every ancestor occurrence whose kind must be known
-to reach it. Returning an occurrence's document does not recursively judge every
-member below it. A read projection invokes classified decoding only for the declared
-top-level keys of the Structured Column document it selected. Materialization may
-traverse a returned occurrence to hydrate its nested values, but those positions are
-not additional stored-shape judging positions. A multi-segment placement used only
-for SQL predicate extraction performs no codec judgement. The boundary belongs to
-the Structured Column root, not to the depth of a derived physical path.
+Judgement is demand-driven rather than a scan of an opaque subtree, but its domain
+is exactly the declared top-level keys of the selected Structured Column document.
+One invocation judges one such key. Returning an occurrence's document does not
+recursively judge every member below it. Materialization may traverse that document
+to hydrate nested values through ordinary `decode`, but those positions are not
+additional stored-shape judging positions. A multi-segment placement used only for
+SQL predicate extraction likewise performs no codec judgement. The boundary belongs
+to the Structured Column root, not to the depth of a derived physical path.
 
 `comparisonText` answers the exact characters a dialect's text extraction returns
 for the encoding of `value` — the literal SQL binds when the member's declared
@@ -421,24 +426,25 @@ decision — adding a cast for that type — rather than alone.
 
 ## Presence
 
-Presence has exactly these canonical meanings, in a document of either kind:
+Encoding writes exactly these canonical presence forms, in a document of either
+kind:
 
 | Presence | Document form |
 |---|---|
-| an omitted nullable member | the key is absent |
-| an explicit null value | the key is present with JSON null |
+| an omitted nullable non-`Many` member | the key is absent |
+| an explicit null nullable leaf or `One` | the key is present with JSON null |
 | a required member | the key is present with a non-null valid encoding |
 | a member not applicable to this row's concrete subtype | the key is absent |
 | an empty `Many` occurrence | the key is present with `[]` |
 
-A `Many` occurrence is an ordered JSON array of documents and is never null: its
-empty array is the only representation of no contained values, so `Missing` and
-`[]` are the same logical zero state on decode and `[]` is what `encode` writes.
-`encode` therefore writes `[]` for a `Many` member given `Missing`,
-`ExplicitNull`, or `Present` with an empty array alike — the same document
-`encodeMany` returns for an empty sequence — and `decode` of a `Many` path
-answers `Present` with `[]` for a key that is absent, JSON null, or an empty
-array.
+A `Many` occurrence's canonical encoded form is an ordered JSON array of
+documents and is never null: its empty array is the only form an encoder produces
+for no contained values. `encode` therefore writes `[]` for a `Many` member given
+`Missing`, `ExplicitNull`, or `Present` with an empty array alike — the same
+document `encodeMany` returns for an empty sequence. On decode, an absent key and
+JSON null are accepted non-canonical stored aliases for that same logical zero
+state, and both answer `Present` with `[]`. They are conforming inputs but are
+normalized to `[]` by any subsequent encode.
 
 A `One` occurrence is one nested object, `ExplicitNull`, or `Missing`. Each of
 the three is expressible on both sides of the interface: `encode` omits the key
@@ -541,10 +547,11 @@ At a judged member position, the verdict is closed:
 | non-null leaf value not decodable as its declared Neutral Type | `LeafUndecodable` | `Unavailable` |
 
 The complementary states remain conforming: an absent or JSON-null nullable leaf
-or nullable `One` preserves its exact `Missing` or `ExplicitNull` presence; an
-absent, JSON-null, or empty `Many` decodes to `Present([])`; a correctly shaped
-occurrence and a decodable leaf are present; and unknown keys remain valid carrier
-state. There is no implementation-selected middle category.
+or nullable `One` preserves its exact `Missing` or `ExplicitNull` presence; the
+accepted non-canonical absent and JSON-null `Many` forms and the canonical empty
+array all decode to `Present([])`; a correctly shaped occurrence and a decodable
+leaf are present; and unknown keys remain valid carrier state. There is no
+implementation-selected middle category.
 
 This module defines no repair, no defaulting, and no cross-dialect corruption
 error normalization. Classification records the contradiction; it does not make

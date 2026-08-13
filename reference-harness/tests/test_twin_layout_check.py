@@ -143,6 +143,27 @@ def test_numeric_proof_slug_pairs_at_the_canonical_case_id_boundary(tmp_path: Pa
     assert twin_layout_errors(tmp_path) == []
 
 
+def test_twin_filename_module_must_match_primary_module_tag(tmp_path: Path) -> None:
+    _complete_corpus(tmp_path)
+    modules = tmp_path.parent / "spec" / "modules.md"
+    modules.write_text(
+        modules.read_text(encoding="utf-8")
+        + "| `m-snapshot-read` | Snapshot read | active | cases |\n",
+        encoding="utf-8",
+    )
+    path = tmp_path / "cases" / "m-storage-layout-901-valid-read-layout-twin-document.yaml"
+    changed = _case("document")
+    changed["tags"] = ["m-snapshot-read", "m-storage-layout", "layout-twin"]
+    _write(path, changed)
+
+    errors = twin_layout_errors(tmp_path)
+    assert any(
+        "filename module 'm-storage-layout' does not match first catalog module tag "
+        "'m-snapshot-read'" in error
+        for error in errors
+    )
+
+
 def test_every_document_mapping_owner_must_select_document_layout(tmp_path: Path) -> None:
     _complete_corpus(tmp_path)
     for arm in ("columns", "document"):
