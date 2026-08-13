@@ -2101,10 +2101,10 @@ or descriptor authoring form and performs no audit stamping.
   with that sentinel.
 
   The typed graph materializer classifies those findings in band (§4). Every
-  other lane — the values lane, milestone-set staging, and the neutral graph
-  materializer — still calls one publication gate over the reachable merged graph
-  before allocating objects, deriving Object Keys, or invoking observation
-  keying. The gate raises exported `SnapshotDecodingError(ValueError)` with
+  other lane — the values lane, milestone-set staging, predicate-write staging,
+  and the neutral graph materializer — still calls one publication gate over the
+  reachable merged graph before allocating objects, deriving Object Keys, or
+  invoking observation keying. The gate raises exported `SnapshotDecodingError(ValueError)` with
   stable code `snapshot-decoding-failed`, the concrete `EntityIdentity`, and the
   applicable `AttributeIdentity | ValueObjectIdentity |
   ValueObjectAttributeIdentity | None`. It exposes no raw stored value and
@@ -2674,8 +2674,10 @@ or descriptor authoring form and performs no audit stamping.
   some stored state contradicted is delivered as its record. Stored-data
   violations are always reported; there is no ignore posture, connection
   setting, or Object Query clause.
-- **The published shapes**, all frozen and slotted, exported from
-  `parallax.snapshot`:
+- **The published shapes**, exported from `parallax.snapshot`. Both records are
+  frozen and slotted; `InvalidDataError` is an ordinary exception whose report is
+  assembled in its constructor, because `__slots__` restricts nothing on a
+  `BaseException` subclass — the base always carries an instance dictionary:
 
   ```python
   class StoredDataIssue:

@@ -83,8 +83,8 @@ class InvalidDataError(RuntimeError):
     :attr:`invalid_data` is nonempty, in result order, and is the exception's
     sole machine-readable report: there is no singular code, no flattened issue
     collection, no cause, and no second name for the same tuple. The message
-    derives a count and an issue-code summary from it, so the two can never
-    disagree.
+    derives its count and issue-code summary from that tuple rather than being
+    supplied beside it, so there is no second authority to keep in step.
     """
 
     invalid_data: tuple[InvalidData[object], ...]
