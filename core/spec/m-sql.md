@@ -166,7 +166,10 @@ For each physical branch, SQL selects from the layout values as follows:
    **instance-form** read. A row-form read omits those slots by default; the
    internal materialized-predicate-write resolving read is the one row-form read
    that widens the default, projecting the slots the write it serves needs
-   (*Result form*, below).
+   (*Result form*, below). Projection preserves SQL `NULL` as distinct from a
+   non-null parsed document. Before any occurrence cursor exists, instance
+   materialization passes that presence and raw value to `m-document-codec` as a
+   `LocatedMemberInput` for the top-level occurrence.
 4. A table-per-concrete-subtype abstract read appends the SQL-owned
    `familyVariant` literal to each branch. It is not a layout slot. Typed `NULL`
    placeholders and collision-safe aliases are likewise SQL renderings over a
@@ -184,9 +187,12 @@ For each physical branch, SQL selects from the layout values as follows:
    application version wrote. Outside that lane a row-form read projects it only
    for a requested document-resident member, so a row-form read of direct members
    alone emits no document extraction and no document projection at all. The
-   Structured Column is never a result field: the row transform fans it out into
-   the requested logical members — none, where the read requested none — and the
-   raw value is not among them.
+   Structured Column is never a result field: the row transform passes its raw
+   value to `m-document-codec`'s Entity-member locator, then fans the classified
+   inputs out into the requested logical members — none, where the read requested
+   none — and the raw value is not among them. A document-resident top-level Value
+   Object and the direct slot in step 3 therefore reach the same located-member
+   classifier before either can create its occurrence cursor.
 
 Within one Table, selected physical slots retain `TableLayout.columns` order:
 `Identity`, `Discriminator`, `Domain`, `Temporal`, `Audit`, then `Document`, with

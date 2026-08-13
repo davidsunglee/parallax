@@ -36,12 +36,12 @@ stored-data-primary-key-undecodable
 
 A raw non-object Entity document under Relational Document Layout does not add a
 tenth issue code. The Structured Column is a physical carrier with no logical
-member identity, so `m-document-codec`'s `decodeEntityMemberClassified` accepts
-it and returns the `Missing` classification independently for each requested
-document-resident Entity member. Translation then uses the existing member code,
-if any; nullable missing members and accepted absent `Many` values remain
-conforming. An unrequested member never acquires an issue merely because it
-shared that carrier.
+member identity, so `m-document-codec`'s `locateEntityMember` accepts it and
+returns `Missing` independently for each requested document-resident Entity
+member. `decodeLocatedMemberClassified` then applies that member's existing
+classification. Translation uses the existing member code, if any; nullable
+missing members and accepted absent `Many` values remain conforming. An
+unrequested member never acquires an issue merely because it shared that carrier.
 
 The hydration rule is equally closed:
 
@@ -68,23 +68,25 @@ required-member finding remains evidence for the latter route; public translatio
 is fixed by the logical Entity member, not by its placement. No layout may instead
 publish `stored-data-required-member-absent` or
 `stored-data-required-member-null` with hydratable absence for that Attribute.
-For a non-object Entity document, the member-local result returned by
-`decodeEntityMemberClassified` follows this same translation and hydration rule:
-a requested non-nullable Entity Attribute makes hydration unavailable as
-`stored-data-attribute-null`, while requested occurrences and nullable members
-retain their existing absence behavior. The carrier itself is never substituted
-into the result graph.
+For a non-object Entity document, the member-local input returned by
+`locateEntityMember` and classified by `decodeLocatedMemberClassified` follows
+this same translation and hydration rule: a requested non-nullable Entity
+Attribute makes hydration unavailable as `stored-data-attribute-null`, while
+requested occurrences and nullable members retain their existing absence
+behavior. The carrier itself is never substituted into the result graph.
 
 Detection is demand-driven over `m-document-codec` Logical Judging Roots. The
 Entity and each top-level Value Object occurrence supply the same roots under
 both layouts. Member Placement locates each requested Entity member, but the
-Entity-root classifier accepts either the parsed direct-column result or the
-result of `decodeEntityMemberClassified` over the raw Entity document and emits
-one logical verdict. A requested occurrence descendant advances a Logical
-Judging Cursor only after its carrier is classified; deeper wrong-kind or
-undecodable stored state therefore returns a finding rather than escaping through
-strict decoding. No cursor judges an unrequested sibling or descendant. Layout
-parity fixes *where* the same requested logical member is judged without turning
+Entity-root classifier accepts either the direct column's SQL presence and parsed
+document or `locateEntityMember`'s result over the raw Entity document. Both
+occurrence placement arms pass that `LocatedMemberInput` to
+`decodeLocatedMemberClassified` and emit one logical verdict before entering the
+occurrence root. A requested occurrence descendant advances a Logical Judging
+Cursor only after its carrier is classified; deeper wrong-kind or undecodable
+stored state therefore returns a finding rather than escaping through strict
+decoding. No cursor judges an unrequested sibling or descendant. Layout parity
+fixes *where* the same requested logical member is judged without turning
 classification into whole-subtree validation.
 
 An issue anywhere in a root's requested include tree classifies that result root.
