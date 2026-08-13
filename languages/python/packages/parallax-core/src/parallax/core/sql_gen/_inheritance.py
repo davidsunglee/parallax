@@ -71,6 +71,7 @@ from parallax.core.base import (
 )
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
 from parallax.core.document_codec import (
+    UNAVAILABLE,
     DecodedMember,
     DocumentFinding,
     DocumentShape,
@@ -164,11 +165,12 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 #                                                                              #
 # A UNION of frozen forms rather than one class with a `kind` tag and          #
 # optional fields: every field of every form is required, so there is no       #
-# illegal state to assert against at apply time, and each form's `apply` is    #
-# total — which is what lets `CompiledRead.transform_row` be a single          #
-# structural delegation with no dispatch. This is the module's own documented  #
-# style (the `m-predicate` node union), and each form pickles, compares, and  #
-# reprs as a plain dataclass with no `__reduce__` and no stored callable.      #
+# illegal state to assert against at materialization time, and each form's     #
+# `materialize` is total — which is what lets `CompiledRead.materialize_row`   #
+# be a single structural delegation with no dispatch. This is the module's own  #
+# documented style (the `m-predicate` node union), and each form pickles,       #
+# compares, and reprs as a plain dataclass with no `__reduce__` and no stored  #
+# callable.                                                                    #
 #                                                                              #
 # The forms keep their module-private spelling: no sibling names them —        #
 # `_compile` reaches them only through :data:`RowTransform` (the declared type #
@@ -334,7 +336,12 @@ def _materialize_document_members(
     for key, path in members:
         decoded = _classified_entity_member(shape, document_read, path)
         findings.extend(decoded.findings)
-        values[key] = decoded.presence.value if isinstance(decoded.presence, Present) else None
+        if isinstance(decoded.presence, Present):
+            values[key] = decoded.presence.value
+        elif decoded.presence is UNAVAILABLE:
+            values[key] = UNAVAILABLE
+        else:
+            values[key] = None
     return _MaterializedDocumentMembers(
         values,
         tuple(findings),

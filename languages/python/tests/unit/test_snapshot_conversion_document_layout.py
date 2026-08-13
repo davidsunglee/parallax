@@ -148,6 +148,7 @@ def test_entity_document_findings_are_translated_without_rejudging_collapsed_val
         {"id": 2, "payload": PresentDocument({"displayName": 7})},
     )
     assert [issue.code for issue in node.issues] == ["stored-data-leaf-undecodable"]
+    assert "displayName" not in _members(node)
 
 
 def test_the_layout_is_unobservable_across_a_member_for_member_twin() -> None:

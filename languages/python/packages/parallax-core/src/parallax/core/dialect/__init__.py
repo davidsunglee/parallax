@@ -165,10 +165,6 @@ class Dialect:
         expression = self.qualified(alias, column)
         return (expression if output == column else f"{expression} {output}"), []
 
-    def projection_result_key(self, column: str, neutral_type: NeutralType) -> str:
-        """The driver-row key produced by :meth:`project` for one Column."""
-        return projection_result_key(column, neutral_type)
-
     def project_document_read(self, expression: str) -> tuple[str, str]:
         """The adjacent SQL presence/document cells for ``expression``."""
         return f"not {expression} is null", expression

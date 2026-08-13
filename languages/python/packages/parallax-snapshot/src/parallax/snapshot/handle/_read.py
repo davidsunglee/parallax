@@ -11,14 +11,14 @@ and build the SAME
 :class:`~parallax.snapshot.materialize.SnapshotGraphInput`, so the per-level
 loop exists exactly once on the developer-facing path.
 
-Each level's rows are materialized and converted one at a time: a converted node
-names its correlation members, so the next level gathers its keys off the
-converted parent rather than off a retained row. The port answers one statement
-with its whole `list[Row]` (`m-db-port`), so that raw result set is the level's
-own lifetime; what this module never does is build a second collection over it —
-a materialized row is reachable only until its conversion, and no level
-accumulates them. Nothing below this module holds a row, and no row survives into
-the graph input, the Snapshot, or the observation record.
+Graph levels materialize and convert rows one at a time: a converted node names
+its correlation members, so the next level gathers keys from the converted
+parent rather than a retained row. Flat-row, history, and predicate-write lanes
+instead stage one tuple of SQL-materialized rows while they run the shared
+publication gate before any consumer-specific derivation. The port's raw
+`list[Row]` remains one statement's own lifetime, and neither raw nor
+SQL-materialized rows survive into graph input, a Snapshot, or an observation
+record.
 
 The executor's own results (:class:`FindResult`, :class:`HistoryFindResult`) are
 `m-snapshot-read`'s own carriers — a graph input paired with the Read Trace that
@@ -108,12 +108,14 @@ __all__ = [
     "NoResultFound",
     "ObservationCollector",
     "Snapshot",
+    "StagedRows",
     "TooManyResultsFound",
     "execute_neutral",
     "find",
     "find_history",
     "find_rows",
     "read_neutral",
+    "stage_publishable_rows",
 ]
 
 
@@ -367,6 +369,61 @@ class NeutralReadRequest:
         return cls(query=query, form="graph")
 
 
+@dataclass(frozen=True, slots=True)
+class StagedRows:
+    """One flat batch after SQL row materialization and publication validation.
+
+    ``rows`` and their aligned ``contexts`` remain available for the lane-specific
+    work that follows validation. ``scope`` and ``roots`` retain the converted
+    projections for the history lane, which repartitions clean nodes by milestone
+    without converting them a second time.
+    """
+
+    rows: tuple[MaterializedReadRow, ...]
+    contexts: tuple[LevelContext, ...]
+    scope: MergeScope
+    roots: tuple[SnapshotNodeRef, ...]
+
+
+def stage_publishable_rows(
+    meta: Metamodel,
+    compiled: CompiledRead,
+    rows: Sequence[Mapping[str, object]],
+    *,
+    pin: Pin,
+) -> StagedRows:
+    """Materialize and validate one flat row batch before lane-specific use.
+
+    Every caller forwards the compiled transform's findings, family-tag verdict,
+    and classified-member provenance through :func:`convert_row`, then applies
+    the publication gate to the staging graph before deriving rows, milestones,
+    observations, or writes.
+    """
+    materialized = tuple(compiled.materialize_row(row) for row in rows)
+    contexts = tuple(
+        LevelContext(
+            row.resolved_entity,
+            compiled.projected_documents,
+            compiled.attribute_reads(row.resolved_entity),
+        )
+        for row in materialized
+    )
+    scope = MergeScope(meta)
+    roots = tuple(
+        convert_row(
+            row.values,
+            context,
+            scope,
+            findings=row.findings,
+            family_tag_unknown=row.family_tag_unknown,
+            classified_members=row.classified_members,
+        )
+        for row, context in zip(materialized, contexts, strict=True)
+    )
+    require_publishable(merge_graph_input(scope.build(roots, pin), meta))
+    return StagedRows(materialized, contexts, scope, roots)
+
+
 def find_rows(
     query: ObjectQueryNode,
     meta: Metamodel,
@@ -378,12 +435,12 @@ def find_rows(
 ) -> NeutralReadResult:
     """The row-form read: one statement, its rows transformed, no graph.
 
-    The values lane has no representation-neutral graph stage to publish, because
-    the transformed ROW is already the representation — so this returns the
-    neutral result directly rather than a graph input a materializer converts.
-    What it shares with :func:`find` is everything that decides behavior: the
-    same canonical root query (`deep_fetch.plan` injects the as-of predicate
-    and canonicalizes navigation for both lanes), the same
+    The transformed row is the returned representation, so the values lane builds
+    no result graph. It does build a staging graph solely to apply the shared
+    publication gate before returning any row. What it shares with :func:`find`
+    is everything that decides behavior: the same canonical root query
+    (`deep_fetch.plan` injects the as-of predicate and canonicalizes navigation
+    for both lanes), the same
     :func:`~parallax.core.sql_gen.compile_read` with the lane selected by
     ``result_form``, and the same recorded Database Call.
 
@@ -404,34 +461,17 @@ def find_rows(
         calls,
         document_reads=compiled.document_reads,
     )
-    materialized = [compiled.materialize_row(row) for row in rows]
-    scope = MergeScope(meta)
-    refs = tuple(
-        convert_row(
-            item.values,
-            LevelContext(
-                item.resolved_entity,
-                compiled.projected_documents,
-                compiled.attribute_reads(item.resolved_entity),
-            ),
-            scope,
-            findings=item.findings,
-            family_tag_unknown=item.family_tag_unknown,
-            classified_members=item.classified_members,
-        )
-        for item in materialized
+    stage = stage_publishable_rows(
+        meta,
+        compiled,
+        rows,
+        pin=query_pin(query, declaring_metadata(meta, root_entity.identity)),
     )
-    require_publishable(
-        merge_graph_input(
-            scope.build(refs, query_pin(query, declaring_metadata(meta, root_entity.identity))),
-            meta,
-        )
-    )
-    for item in materialized:
+    for item in stage.rows:
         if item.family_variant is not None:
             item.values["familyVariant"] = item.family_variant
     return NeutralReadResult(
-        output=neutral_rows(item.values for item in materialized), execution=calls.read_trace()
+        output=neutral_rows(item.values for item in stage.rows), execution=calls.read_trace()
     )
 
 
@@ -450,14 +490,13 @@ def find_history(
     root-only graph per milestone, each with its OWN merge scope — graph-local
     identity never promises reuse across milestones.
 
-    Each row is converted into its own milestone's scope as it materializes, so
-    the partition holds converted nodes rather than a second copy of the result
-    set; ordering is by the edge that OPENED each milestone,
-    which is why the chronological rank is taken off the row while it is still
-    live. The graphs come out in chronological edge order (Valid Time first,
-    matching the corpus's own authored `then.graphs` order) rather than in the
-    database's unspecified natural row order, and rows within one milestone keep
-    that natural order.
+    The flat batch first passes the same staged publication gate as row-form and
+    predicate-write reads. Clean converted projections are then repartitioned
+    into milestone-local scopes without converting their retained member carriers
+    a second time. The graphs come out in chronological edge order (Valid Time
+    first, matching the corpus's own authored `then.graphs` order) rather than in
+    the database's unspecified natural row order, and rows within one milestone
+    keep that natural order.
     """
     metadata = _metadata(meta, query.target.canonical)
     plan_ = deep_fetch.plan(metadata, query, meta)
@@ -473,33 +512,27 @@ def find_history(
     entity = declaring_metadata(meta, metadata.identity)
     compiled = compile_read(plan_.root, meta, dialect, result_form="instance")
     calls = recorder if recorder is not None else TraceRecorder()
-    materialized_rows = list(_execute_compiled(port, dialect, compiled, calls))
-    staging = MergeScope(meta)
-    staged = tuple(
-        convert_row(
-            row.values,
-            LevelContext(
-                row.resolved_entity,
-                compiled.projected_documents,
-                compiled.attribute_reads(row.resolved_entity),
-            ),
-            staging,
-            findings=row.findings,
-            family_tag_unknown=row.family_tag_unknown,
-            classified_members=row.classified_members,
-        )
-        for row in materialized_rows
+    stage = stage_publishable_rows(
+        meta,
+        compiled,
+        execute_read(
+            port,
+            dialect,
+            compiled.statement,
+            calls,
+            document_reads=compiled.document_reads,
+        ),
+        pin=Pin(),
     )
-    require_publishable(merge_graph_input(staging.build(staged, Pin()), meta))
 
     milestones: dict[Edge, _Milestone] = {}
-    for row, staged_ref in zip(materialized_rows, staged, strict=True):
+    for row, staged_ref in zip(stage.rows, stage.roots, strict=True):
         edge = milestone_edge(entity, row.values)
         milestone = milestones.get(edge)
         if milestone is None:
             milestone = _Milestone(MergeScope(meta), _edge_sort_key(entity, row.values))
             milestones[edge] = milestone
-        milestone.roots.append(milestone.scope.add(staging.node(staged_ref)))
+        milestone.roots.append(milestone.scope.add(stage.scope.node(staged_ref)))
     graphs = tuple(
         milestone.scope.build(tuple(milestone.roots), _edge_pin(edge))
         for edge, milestone in sorted(milestones.items(), key=lambda entry: entry[1].rank)
