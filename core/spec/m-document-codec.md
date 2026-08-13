@@ -92,6 +92,19 @@ A `Document` is a portable JSON value — object, array, string, number, boolean
 or null — and nothing else. It is not a driver value, a rendered text, or a
 provider-native document handle.
 
+The raw Entity document read from a Relational Document Layout Structured Column
+is a physical carrier, not itself a logical member. Its database type guarantees
+only a non-SQL-null `Document`, so JSON null, an array, or a scalar can reach read
+materialization even though every codec-produced Entity document is an object.
+Such a value cannot create a root cursor. Materialization instead presents each
+requested document-resident Entity member to the Entity-root classifier as
+`Missing`. The member's existing rules then decide the result: a required member
+produces its existing absent finding, a nullable member remains missing, and a
+`Many` uses its accepted absent-to-empty collapse. There is no separate
+root-carrier finding. This is a demand-driven projection onto requested logical
+member positions, not a replacement of the stored document; the raw carrier
+remains unchanged for observation and writing.
+
 A `Presence` is always classified against one member of a shape, and the member's
 own kind fixes what a `Present` carries. A `Leaf` member carries a `NeutralValue`
 of its declared Neutral Type. An `Occurrence` member carries that occurrence's
@@ -191,10 +204,13 @@ and never addresses an array position.
 
 `decodeClassified` is the read-facing form of decoding. `member` MUST name one
 direct member of `cursor`, and `document` MUST be that cursor's carrier object.
-An unknown member or a cursor not derived from accepted Metadata is a caller
-error. Stored state is not: the operation returns findings as values for every
-shape contradiction it encounters on the requested branch and never raises for
-one. A conforming member has the same `Presence` as `decode` and no finding.
+An unknown member, a cursor not derived from accepted Metadata, or a non-object
+supplied as an occurrence cursor's carrier is a caller error. A raw non-object
+Entity document is stored state rather than such a call: materialization applies
+the member-local `Missing` projection above before invoking this operation.
+Stored state on a requested branch is not a caller error: the operation returns
+findings as values for every shape contradiction it encounters and never raises
+for one. A conforming member has the same `Presence` as `decode` and no finding.
 Stored data that contradicts the member's declared shape produces one or more
 `StoredShapeFinding` values and is therefore the third semantic answer beside
 *present* and *not present*. Where the ordinary read collapse can produce a value
@@ -217,10 +233,11 @@ creates no cursor. The requested descendant therefore never reaches strict
 Materialization obtains a requested top-level occurrence carrier before using its
 root. Under `Columns`, the occurrence's Structured Column supplies that carrier.
 Under `Document`, classified Entity-member decoding obtains the same carrier from
-the Entity document. The materializer then classifies only the requested branch,
-advancing a cursor after each conforming occurrence. Thus `address.city` and
-`address.geo.lat` are judged from the `address` root under both layouts even
-though their physical paths differ.
+an object Entity document, or obtains the member-local `Missing` projection when
+the raw Entity document is not an object. The materializer then classifies only
+the requested branch, advancing a cursor after each conforming occurrence. Thus
+`address.city` and `address.geo.lat` are judged from the `address` root under both
+layouts even though their physical paths differ.
 
 Judgement remains demand-driven rather than a scan of an opaque subtree. One
 invocation judges one requested direct member of one cursor. Advancing through an
@@ -593,6 +610,14 @@ every element is an object document; every other correctly shaped occurrence and
 a decodable leaf are present; and unknown keys remain valid carrier state. There
 is no implementation-selected middle category.
 
+A non-object raw Entity document is outside this member-position table because
+the shared Structured Column is a physical carrier rather than a declared
+member. It is mapped to the existing rows member by member: every requested
+document-resident Entity member is classified as `Missing`, after which the
+member's nullability and multiplicity determine whether an existing finding and
+collapse apply. The carrier creates neither a sixth local finding nor an
+unrequested-member scan.
+
 This module defines no repair, no defaulting, and no cross-dialect corruption
 error normalization. Classification records the contradiction; it does not make
 the stored value conforming. Hydration is permitted only for the four rows whose
@@ -622,9 +647,11 @@ neither outcome changes this shape-aware verdict.
   text.
 - Write composition encodes an insert's complete document here and derives each
   update's patches here, then lowers them through `m-dialect`.
-- Read materialization uses classified decoding on every requested path, by
-  declared Neutral Type, and drops unknown keys. It never falls back to strict
-  decoding for requested stored state below a logical root.
+- Read materialization projects a non-object raw Entity document to `Missing` for
+  each requested document-resident Entity member, then uses classified decoding
+  on every requested path, by declared Neutral Type, and drops unknown keys. It
+  never falls back to strict decoding for requested stored state below a logical
+  root.
 - Temporal observation retains the raw predecessor document unchanged and patches
   it here to build a successor.
 - Fixture provisioning and conformance table read-back build and compare

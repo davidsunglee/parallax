@@ -34,6 +34,14 @@ stored-data-primary-key-null
 stored-data-primary-key-undecodable
 ```
 
+A raw non-object Entity document under Relational Document Layout does not add a
+tenth issue code. The Structured Column is a physical carrier with no logical
+member identity, so `m-document-codec` projects it to `Missing` independently for
+each requested document-resident Entity member. Translation then uses the
+existing member code, if any; nullable missing members and accepted absent
+`Many` values remain conforming. An unrequested member never acquires an issue
+merely because it shared that carrier.
+
 The hydration rule is equally closed:
 
 | Stored state | Root hydration |
@@ -59,6 +67,11 @@ required-member finding remains evidence for the latter route; public translatio
 is fixed by the logical Entity member, not by its placement. No layout may instead
 publish `stored-data-required-member-absent` or
 `stored-data-required-member-null` with hydratable absence for that Attribute.
+For a non-object Entity document, the member-local projection follows this same
+translation and hydration rule: a requested non-nullable Entity Attribute makes
+hydration unavailable as `stored-data-attribute-null`, while requested
+occurrences and nullable members retain their existing absence behavior. The
+carrier itself is never substituted into the result graph.
 
 Detection is demand-driven over `m-document-codec` Logical Judging Roots. The
 Entity and each top-level Value Object occurrence supply the same roots under
