@@ -82,12 +82,15 @@ class InvalidDataError(RuntimeError):
 
     :attr:`invalid_data` is nonempty, in result order, and is the exception's
     sole machine-readable report: there is no singular code, no flattened issue
-    collection, no cause, and no second name for the same tuple. The message
-    derives its count and issue-code summary from that tuple rather than being
-    supplied beside it, so there is no second authority to keep in step.
-    """
+    collection, no cause, and no second name for the same tuple. It is settled
+    in the constructor and read-only afterwards, alongside a message derived
+    from it, so the two can never disagree.
 
-    invalid_data: tuple[InvalidData[object], ...]
+    The immutability the two records get from ``frozen=True`` is spelled that
+    way here because a dataclass cannot spell it on an exception: a frozen
+    ``__setattr__`` also refuses :meth:`add_note`, and ``__slots__`` restricts
+    nothing while :class:`BaseException` carries an instance dictionary.
+    """
 
     def __init__(self, invalid_data: Iterable[InvalidData[object]]) -> None:
         records = tuple(invalid_data)
@@ -97,4 +100,9 @@ class InvalidDataError(RuntimeError):
         super().__init__(
             f"{len(records)} result root(s) hold invalid stored data ({', '.join(codes)})"
         )
-        self.invalid_data = records
+        self._invalid_data = records
+
+    @property
+    def invalid_data(self) -> tuple[InvalidData[object], ...]:
+        """The invalid result roots this refusal reports, in result order."""
+        return self._invalid_data
