@@ -41,9 +41,9 @@ The hydration rule is equally closed:
 | non-nullable, non-`Many` document member absent | hydrate with the normative absence collapse |
 | non-nullable, non-`Many` document member JSON null | hydrate with the normative null collapse |
 | non-null wrong-kind `One` occurrence | hydrate with the normative occurrence collapse |
-| non-null wrong-kind `Many` occurrence | hydrate with the normative occurrence collapse |
+| non-null wrong-kind `Many` occurrence, including an array with a non-object element | hydrate with the normative whole-occurrence collapse |
 | non-null undecodable document leaf | unavailable |
-| non-nullable Entity Attribute holding SQL `NULL` | unavailable |
+| non-nullable top-level Entity Attribute absent or null in either physical representation | unavailable |
 | family tag matching no concrete subtype | unavailable |
 | null primary key | unavailable |
 | undecodable primary key | unavailable |
@@ -51,18 +51,26 @@ The hydration rule is equally closed:
 Classification never repairs, defaults, substitutes, or fabricates. A root is
 hydrated only when every requested value can be produced by an already-normative
 collapse; otherwise its data is unavailable. The same stored state yields the
-same issue and hydration answer under every Storage Layout. A physical placement
-may determine which codec or row-conversion seam first detects the fact, but it
-cannot change the public code, turn an issue into valid data, or select a value
-that another layout could not produce.
+same issue and hydration answer under every Storage Layout. For a non-nullable
+top-level Entity Attribute, SQL `NULL` under `Columns` and an absent or JSON-null
+Entity-document member under `Document` all translate to
+`stored-data-attribute-null` and make hydration unavailable. The codec's local
+required-member finding remains evidence for the latter route; public translation
+is fixed by the logical Entity member, not by its placement. No layout may instead
+publish `stored-data-required-member-absent` or
+`stored-data-required-member-null` with hydratable absence for that Attribute.
 
 Detection is demand-driven over `m-document-codec` Logical Judging Roots. The
 Entity and each top-level Value Object occurrence supply the same roots under
-both layouts. Only a requested direct member is classified; obtaining an
-occurrence carrier, classifying a nested-occurrence member, or reaching a deeper
-predicate path does not recursively judge unrequested descendants. Layout parity
-therefore fixes *where* the same requested logical member is judged without
-turning classification into whole-subtree validation.
+both layouts. Member Placement locates each requested Entity member, but the
+Entity-root classifier accepts either the parsed direct-column result or the
+codec-classified document result and emits one logical verdict. A requested
+occurrence descendant advances a Logical Judging Cursor only after its carrier is
+classified; deeper wrong-kind or undecodable stored state therefore returns a
+finding rather than escaping through strict decoding. No cursor judges an
+unrequested sibling or descendant. Layout parity fixes *where* the same requested
+logical member is judged without turning classification into whole-subtree
+validation.
 
 An issue anywhere in a root's requested include tree classifies that result root.
 Shared affected nodes repeat the issue for every result root that reaches them,

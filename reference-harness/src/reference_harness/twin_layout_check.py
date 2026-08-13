@@ -15,13 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from reference_harness.corpus_yaml import read_corpus_yaml
-from reference_harness.dep_graph_check import DepGraphFailure, parse_catalog
+from reference_harness.dep_graph_check import MODULE_SLUG, DepGraphFailure, parse_catalog
 
 _ARM = r"columns|document"
 _MODEL_RE = re.compile(rf"^(?P<proof>.+)-layout-twin-(?P<arm>{_ARM})\.ya?ml$")
 _CASE_TWIN_RE = re.compile(rf"^(?P<prefix>.+)-layout-twin-(?P<arm>{_ARM})\.ya?ml$")
 _CASE_BODY_RE = re.compile(r"^(?P<number>[0-9]{3})-(?P<proof>.+)$")
-_MODULE_TAG_RE = re.compile(r"^m-[a-z0-9]+(?:-[a-z0-9]+)*$")
+_MODULE_TAG_RE = re.compile(rf"^{MODULE_SLUG}$")
 _TOP_LEVEL_PHYSICAL_KEYS = frozenset({"statements", "referenceSql", "tableState", "execution"})
 _STEP_STATEMENT_PATHS = frozenset(
     {
