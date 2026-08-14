@@ -39,9 +39,9 @@ __all__ = [
 ]
 
 type WriteIntentKind = Literal["assignment", "destructive", "selection"]
-"""What a buffered write means to do to the state it claimed.
+"""What a buffered write means to do to what it claimed.
 
-``assignment`` writes member values against a state that survives the write;
+``assignment`` writes member values against a row that survives the write;
 ``destructive`` removes the row or closes the milestone; ``selection`` is a
 Materialized Write Group's own claim over every state its predicate resolved,
 which is a whole compact unit rather than a per-object intent a later write
@@ -56,8 +56,8 @@ _ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil
 
 @dataclass(frozen=True, slots=True)
 class WriteIntent:
-    """One buffered write's claim on one observed state: what it does, over
-    which temporal region.
+    """One buffered write's claim at one scope: what it does, over which
+    temporal region.
 
     The region is the authored Valid-Time window exactly as the instruction
     carries it — absent on both ends for a non-temporal or Transaction-Time-Only
@@ -151,22 +151,22 @@ def claimed_object(scope: ClaimScope) -> ObjectKey:
 type ClaimVerdict = Literal["admit", "coalesce", "supersede", "deduplicate", "incompatible"]
 """What an arriving intent becomes against the intent a buffer already holds.
 
-``admit`` — nothing claimed this state yet. ``coalesce`` — the two assignments
+``admit`` — nothing claimed this scope yet. ``coalesce`` — the two assignments
 merge in authored order into one surviving write. ``supersede`` — a destructive
 intent replaces the assignments buffered before it, so an update followed by a
-delete of one state emits one delete. ``deduplicate`` — an identical destructive
+delete at one scope emits one delete. ``deduplicate`` — an identical destructive
 intent is already buffered and the second adds nothing. ``incompatible`` — the
 two cannot be combined, and the arriving verb refuses.
 """
 
 
 def keyed_intent(instruction: KeyedWrite) -> WriteIntent | None:
-    """What ``instruction`` intends for the state it settles against, or
-    ``None`` when it settles against no state at all.
+    """What ``instruction`` intends for what it settles against, or ``None``
+    when it settles against nothing at all.
 
-    An insert opens a row rather than writing against one, so it observes
-    nothing and claims nothing; every other keyed mutation is an assignment or a
-    destruction of the state its source observed.
+    An insert opens a row rather than writing against one, so it claims nothing;
+    every other keyed mutation is an assignment or a destruction of the existing
+    row it addresses, whichever scope that row's claim is taken at.
     """
     if instruction.mutation in INSERT_MUTATIONS:
         return None

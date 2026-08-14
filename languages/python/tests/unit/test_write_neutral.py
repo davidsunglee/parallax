@@ -49,6 +49,7 @@ from parallax.core.unit_work import (
     VersionedStateKey,
     VersionObservation,
     WriteInstruction,
+    WritePlanningError,
     WriteRejectedError,
     instructions,
 )
@@ -68,6 +69,7 @@ UPDATE_SQL = "update account set balance = %s, version = %s where id = %s and ve
 ACCOUNT_ROW: Row = {"id": 3, "owner": "Grace", "balance": Decimal("10"), "version": 1}
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _INFINITY = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
+_OBSERVED_VERSION = VersionObservation(observed_version=1)
 _TEMPORAL_BOUNDS: Row = {
     "from_z": _TX_START,
     "thru_z": _INFINITY,
@@ -256,6 +258,42 @@ def test_an_unversioned_instruction_claims_its_object_through_this_ingress_too()
 
     db_for(PERSON, port).transact(fn)
     assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
+
+
+def test_an_observation_supplied_for_an_insert_is_refused_not_dropped() -> None:
+    # Evidence the caller holds is used as given, so a write that settles against
+    # none refuses it: an opening row has no prior state for an observation to be
+    # about, and dropping it would let the call claim to have settled against a
+    # milestone that does not yet exist.
+    port = RecordingPort()
+    insert = instructions.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "parallax.compatibility.Account",
+            "rows": [{"id": 7, "owner": "Newton", "balance": 5}],
+        }
+    )
+    with pytest.raises(ValueError, match="an insert carries no Write Observation"):
+        _run(port, lambda tx: tx.write_neutral(insert, observation=_OBSERVED_VERSION))
+
+
+def test_an_observation_supplied_for_an_unversioned_target_is_refused_not_dropped() -> None:
+    # The object arm is what a write against an unversioned Non-Temporal row
+    # settles against when its caller holds nothing — never a place to put
+    # evidence such a row cannot carry. The refusal is the model-aware one every
+    # settled carrier crosses, rather than a silently unobserved write.
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+    update = instructions.deserialize(
+        {
+            "mutation": "update",
+            "entity": "parallax.compatibility.Person",
+            "rows": [{"id": 1, "name": "Grace"}],
+        }
+    )
+    with pytest.raises(WritePlanningError, match="carries no Write Observation"):
+        db_for(PERSON, port).transact(
+            lambda tx: tx.write_neutral(update, observation=_OBSERVED_VERSION)
+        )
 
 
 def test_an_explicit_observation_licenses_the_version_advance() -> None:

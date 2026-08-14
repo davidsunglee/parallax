@@ -3,8 +3,9 @@
 :class:`WritePlanner` turns one flush's boundary-captured Subject Identity,
 lazy Transaction Instant, concurrency mode, and buffered writes into a
 :class:`~parallax.core.unit_work.plan.WritePlan`. A write that settles against
-existing state arrives carrying the observation its verb resolved for it, so the
-planner resolves no evidence of its own. It is model-scoped,
+existing state arrives carrying the claim its verb took for it — the observation
+it settles against, or the object an unversioned Non-Temporal write claims — so
+the planner resolves no evidence of its own. It is model-scoped,
 constructed once per accepted Metamodel with its batching, concurrency,
 temporal, and audit strategies already wired, and it exposes exactly one
 planning pipeline in two shapes: :meth:`WritePlanner.finalize`, which answers
@@ -36,8 +37,8 @@ is settled and before the Write Plan freezes. :meth:`plan` therefore runs
 coalesce, eliminate no-ops, form batches, order, settle, in that order —
 eliminating a no-op ahead of batching is what lets two writes a no-op
 separates in the buffer still merge into one batch, and combining writes of one
-observed state ahead of that elimination is what lets a restored member cancel
-an assignment an earlier verb buffered for the same state.
+claim scope ahead of that elimination is what lets a restored member cancel
+an assignment an earlier verb buffered at the same scope.
 """
 
 from __future__ import annotations
@@ -165,9 +166,8 @@ type _CoalescedItem = WriteInstruction | ObservedKeyedWrite | MaterializedWriteG
 
 An object-claimed write is absent by construction rather than by convention:
 coalescing is the only stage that reads one, and it hands the survivor on as the
-ordinary instruction it always was, so batching, ordering, and settlement are
-written against exactly the shapes they were written against before object claims
-existed.
+ordinary instruction it always was, so batching, ordering, and settlement see an
+unversioned write as the bare instruction they measure every other one by.
 """
 
 # The predicate-selected verbs a readless template exists for. A `terminate`
@@ -1703,18 +1703,19 @@ def _coalesced_item(item: BufferItem | None) -> _CoalescedItem | None:
     if not isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite):
         return item
     if not item.restorations:
-        return _unclaimed(item)
+        return _without_object_claim(item)
     row = {
         name: value
         for name, value in item.instruction.rows[0].items()
         if name not in item.restorations
     }
-    return _unclaimed(_rewritten(item, row, frozenset()))
+    return _without_object_claim(_rewritten(item, row, frozenset()))
 
 
-def _unclaimed(item: ClaimedKeyedWrite) -> _CoalescedItem:
-    """``item`` as the buffer item planning's later stages consume: an
-    observation carrier whole, an object claim as its own instruction."""
+def _without_object_claim(item: ClaimedKeyedWrite) -> _CoalescedItem:
+    """``item`` as the buffer item planning's later stages consume: an object
+    claim as its own instruction, and an observation carrier whole — claim
+    included, because what a later stage settles and spends rides there."""
     return item.instruction if isinstance(item, ObjectClaimedWrite) else item
 
 

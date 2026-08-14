@@ -395,16 +395,15 @@ def test_a_participating_read_flushes_the_first_intent_and_frees_the_state() -> 
         (opt_lock.TransactionTimeDerived(_START_ATTRIBUTE), "terminate", _RETAINED),
         (opt_lock.UNVERSIONED, "update", _OBJECT),
         (opt_lock.UNVERSIONED, "delete", _OBJECT),
-        (None, "delete", _OBJECT),
     ],
 )
 def test_the_claim_scope_derivation_is_total_over_the_write_kind(
-    key: opt_lock.OptimisticKey | None, mutation: str, expected: object
+    key: opt_lock.OptimisticKey, mutation: str, expected: object
 ) -> None:
     # Two declared facts decide every arm — the target's Optimistic Key and the
-    # mutation — so no arm is reached because something was absent. An Entity the
-    # facet does not name takes the object arm for the reason it takes the Locking
-    # fallback: its lock is all it has.
+    # mutation — and each of the three Optimistic Key variants names its own, so
+    # no arm is reached because something was absent or because the tests above
+    # it did not match.
     assert (
         opt_lock.settled_evidence(
             key,

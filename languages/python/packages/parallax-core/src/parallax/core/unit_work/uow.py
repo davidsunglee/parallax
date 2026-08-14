@@ -3,7 +3,7 @@
 The transaction scope's stateful machinery around the pure :class:`~parallax.
 core.unit_work.write_planner.WritePlanner`: the frame stack (a nested scope
 joins the active transaction), the write buffer and the claims its writes have
-taken on the states they settle against, the weak index of the observed states
+taken at the scopes they settle against, the weak index of the observed states
 its reads have seen, call-time reads that force-flush pending writes so a
 dependent read observes them (read-your-own-writes), and abort — which discards
 buffered effects and **withholds** the callback value.
@@ -236,9 +236,9 @@ class UnitOfWork:
         return self._participation
 
     def buffer(self, instruction: BufferItem) -> None:
-        """Buffer a write instruction — bare, travelling with the evidence its
-        verb resolved for it
-        (:class:`~parallax.core.unit_work.materialized.ObservedKeyedWrite`), or as
+        """Buffer a write instruction — bare, travelling with the claim its verb
+        took for it
+        (:data:`~parallax.core.unit_work.materialized.ClaimedKeyedWrite`), or as
         a materializing predicate write's
         :class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup` —
         for flush at the unit-of-work boundary.
