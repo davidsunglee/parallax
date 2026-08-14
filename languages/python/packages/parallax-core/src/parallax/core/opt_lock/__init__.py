@@ -49,8 +49,11 @@ m-opt-lock.md`; `python.md` §5; ADR 0013):
    write against existing state settles against and therefore claims — the exact
    observed state for a family with a version source, and the OBJECT for an
    unversioned Non-Temporal one, whose shared row lock is its evidence and is
-   held on the object rather than on any state of it (`m-unit-work`
-   "Observed-State Coalescing").
+   held on the object rather than on any state of it. Both answers address ONE
+   object, so an instruction naming several rows settles against neither and
+   claims nothing (`m-unit-work` "Observed-State Coalescing"). A caller holding
+   the instruction rather than the value it came from reads the whole ingress
+   rule from :func:`instruction_evidence`.
 6. **Conflict classification policy**: this module decides only which shortfall
    tag a write's settled gate earns — a GATED write's shortfall is the
    retriable-when-opted-in optimistic conflict, an UNGATED
@@ -72,7 +75,7 @@ from __future__ import annotations
 
 from typing import Final, assert_never
 
-from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.metamodel import EntityIdentity, Metamodel, entity_by_name
 from parallax.core.opt_lock._compile import (
     MODEL_COMPILER,
     OptimisticLockModelCompiler,
@@ -101,12 +104,14 @@ from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     Concurrency,
     KeyedMutation,
+    KeyedWrite,
     ObjectKey,
     RetainedObservation,
     SettledEvidence,
     TemporalObservation,
     VersionObservation,
     WriteObservation,
+    object_key,
 )
 
 __all__ = [
@@ -132,6 +137,7 @@ __all__ = [
     "advance",
     "compile_facet",
     "effective_strategy",
+    "instruction_evidence",
     "optimistic_key",
     "reject_caller_authored_version",
     "require_observed",
@@ -267,20 +273,30 @@ def effective_strategy(preference: Concurrency, key: OptimisticKey | None) -> Co
 
 
 def optimistic_key(model: Metamodel, entity: EntityIdentity) -> OptimisticKey:
-    """``entity``'s Optimistic Key under ``model``, total over any Identity.
+    """``entity``'s Optimistic Key under ``model`` — one of the three variants,
+    never their absence.
 
-    The Optimistic Lock Facet answers every accepted Entity and nothing else, so
-    a spelling this model does not carry reaches no key of its own; it reads as
-    :class:`Unversioned` here, which is the answer :func:`effective_strategy`
-    already gives it — an unrecognized Entity is never granted a gate it cannot
-    supply, so its shared lock is all it has.
+    The Optimistic Lock Facet carries a key for every accepted Entity and for
+    nothing else, so an Identity ``model`` does not name reaches no key of its
+    own — a caller that skipped resolving its target rather than a family without
+    a version source. It RAISES here, because the consumer this exists for
+    (:func:`settled_evidence`) has exactly one arm per variant: reading a miss as
+    :class:`Unversioned` would let an unrecognized Entity's write claim an object
+    on the strength of what was missing.
 
-    A consumer whose domain is the three variants themselves
-    (:func:`settled_evidence`) resolves the key through this rather than widening
-    itself to an absence that would then need an arm.
+    :func:`effective_strategy` takes the facet's own answer instead, absence
+    included, because what follows from absence there is the shared lock a write
+    it cannot gate would get anyway — safe for a lock, and a different question
+    from which state a write claims.
     """
     key = view(model).key(entity)
-    return UNVERSIONED if key is None else key
+    if key is None:
+        raise KeyError(
+            f"{entity.canonical!r} names no Entity this model declares, so it carries no "
+            "Optimistic Key; resolve a write's target against the model before deriving "
+            "what that write settles against"
+        )
+    return key
 
 
 def settled_evidence(
@@ -313,9 +329,11 @@ def settled_evidence(
     and the write's own mutation — exactly as :func:`effective_strategy` derives a
     strategy from a preference and that same key. Each is named by the fact that
     selects it and none is reached by falling through the others; absence is not
-    among the inputs, and every Identity has a key (:func:`optimistic_key`).
-    Deriving the object arm from a missing observation instead would sweep in the
-    insert, which observes no state either and has no prior row to claim at all.
+    among the inputs, because ``key`` is a variant an accepted Entity's family
+    declares and the target is resolved before the derivation runs
+    (:func:`optimistic_key`). Deriving the object arm from a missing observation
+    instead would sweep in the insert, which observes no state either and has no
+    prior row to claim at all.
 
     ``observation`` is what the producer resolved for the write, and reaches the
     answer only on the state-keyed arm; a state-keyed write handed none settles
@@ -335,6 +353,53 @@ def settled_evidence(
             return object_key
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(key)
+
+
+def instruction_evidence(
+    model: Metamodel,
+    instruction: KeyedWrite,
+    *,
+    supplied: WriteObservation | RetainedObservation | None,
+) -> SettledEvidence | None:
+    """What a keyed write settles against, for a caller holding the INSTRUCTION
+    rather than the value it was derived from.
+
+    Evidence the caller supplied is what the write settles against, used as
+    given: it is the one licensed way a keyed write settles against a row no read
+    of the writing unit of work materialized, so a target that can hold none
+    REFUSES it — an insert at its carrier, an unversioned Non-Temporal row where
+    the write is settled — rather than having it dropped for a claim the call
+    never stated. A caller who supplied none reaches :func:`settled_evidence`
+    over the instruction's own target and mutation, which is everything that
+    derivation needs and exactly what a typed verb reads off a source value's
+    hint.
+
+    The rule is stated here, once, because every caller that holds an instruction
+    must decide identically: a runtime's neutral write ingress buffers into a
+    real unit of work while a conformance oracle re-lowers the same instruction
+    purely, and an oracle settling a write differently from the ingress would
+    grade a coalescing no program gets. Nothing here reads a database, so the
+    pure caller keeps that property.
+
+    The target is resolved against ``model`` first, so the derivation is handed
+    the Optimistic Key of an Entity this model carries; a spelling it does not
+    carry is a lookup that found nothing and raises, rather than settling the
+    write on an arm reached because the target was unrecognized.
+    """
+    if supplied is not None:
+        return supplied
+    entity = entity_by_name(model, instruction.entity)
+    if entity is None:
+        raise KeyError(
+            f"{instruction.entity!r} names no Entity this model declares, so there is no "
+            "target to derive what its write settles against"
+        )
+    return settled_evidence(
+        optimistic_key(model, entity.identity),
+        instruction.mutation,
+        object_key=object_key(instruction, model),
+        observation=None,
+    )
 
 
 def reject_caller_authored_version(entity: str, version_attr: str) -> None:

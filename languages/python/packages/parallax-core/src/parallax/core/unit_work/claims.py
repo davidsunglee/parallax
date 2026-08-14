@@ -99,6 +99,12 @@ can be in — two such writes can never have observed two different states, so t
 state-keyed rule's own reason does not apply and the object is the correct grain.
 An insert claims nothing at all and reaches no scope.
 
+Both keyed arms address ONE object, so an instruction naming SEVERAL rows reaches
+no scope either: it has no single object and no single observed state, so it
+claims nothing and buffers bare. Only a caller holding a pre-formed multi-row
+instruction can author one — a keyed developer verb writes the one row the value
+it was handed names.
+
 Which arm a write takes is derived from declared facts — the target Entity's
 Optimistic Key and the write's own mutation — never from an absent observation:
 an insert observes no state either, so an absence-triggered object claim would
@@ -120,6 +126,11 @@ becomes and the claim it takes:
   Its evidence is the shared row lock, which is held on the object rather than on
   a state, so the object is what it claims and there is nothing for a flush to
   spend.
+
+A write against existing state that addresses no single object holds none of the
+three and settles against nothing: an instruction naming several rows, or a row
+naming no complete primary key, has neither a state nor an object for evidence to
+be about.
 """
 
 
@@ -161,12 +172,16 @@ two cannot be combined, and the arriving verb refuses.
 
 
 def keyed_intent(instruction: KeyedWrite) -> WriteIntent | None:
-    """What ``instruction`` intends for what it settles against, or ``None``
-    when it settles against nothing at all.
+    """What ``instruction`` intends against existing state, or ``None`` for an
+    insert, which intends nothing against any.
 
     An insert opens a row rather than writing against one, so it claims nothing;
     every other keyed mutation is an assignment or a destruction of the existing
     row it addresses, whichever scope that row's claim is taken at.
+
+    An intent is not itself a claim: a write takes one only where it also reaches
+    a scope, so an instruction naming several rows carries the intent its mutation
+    states and still claims nothing, having no single scope to claim at.
     """
     if instruction.mutation in INSERT_MUTATIONS:
         return None

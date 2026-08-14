@@ -2875,8 +2875,9 @@ or descriptor authoring form and performs no audit stamping.
   refused rather than having it dropped. `None` states that the caller holds
   none, and what the write then settles against is the claim-scope derivation's
   answer for its target and mutation — nothing for an insert, its `ObjectKey`
-  for an unversioned non-temporal existing-row write — so this ingress claims
-  what the typed verb for the same write would claim. A
+  for an unversioned non-temporal existing-row write naming ONE row, and nothing
+  for an instruction naming several, which addresses no single object — so this
+  ingress claims what the typed verb for the same write would claim. A
   `PredicateWrite` resolves its own per-row evidence, so supplying any
   observation with one raises `TypeError` rather than silently dropping it.
   `Database(port, accepted_metamodel)` is the advanced connection these seams are
@@ -3065,13 +3066,19 @@ or descriptor authoring form and performs no audit stamping.
   source retained, and an unversioned non-temporal existing-row write claims its
   `ObjectKey`, whose shared row lock is the evidence its `locking` arm just
   required. Its `key` is the three variants themselves and never their absence:
-  an Identity the Optimistic Lock Facet does not name reads as `Unversioned`
-  before the derivation runs (`opt_lock.optimistic_key`), so no arm is reached
-  because something was missing — an insert observes no state either. Both write
-  ingresses run the derivation for a write whose caller holds no evidence of its
-  own, so what a `tx.update` claims and what the conformance bridge's
-  `write_neutral` claims for the same instruction cannot differ. The write
-  travels to planning as the
+  a write's target is resolved against the model before the derivation runs, and
+  `opt_lock.optimistic_key` refuses an Identity the Optimistic Lock Facet does
+  not name rather than reading it as `Unversioned`, so no arm is reached because
+  something was missing — an insert observes no state either. The three arms
+  answer for a write addressing ONE object; a keyed instruction naming several
+  rows has no single `ObjectKey` and no single observed state, claims nothing,
+  and buffers bare. Both write ingresses run the derivation for a write whose
+  caller holds no evidence of its own, so what a `tx.update` claims and what the
+  conformance bridge's `write_neutral` claims for the same instruction cannot
+  differ; and every caller holding the instruction rather than the value it came
+  from — `write_neutral` and the pure re-lowering oracle — reads the whole
+  ingress rule, supplied evidence used as given and the derivation otherwise,
+  from one `opt_lock.instruction_evidence`. The write travels to planning as the
   carrier its answer implies: `ObservedKeyedWrite` with the retained observation,
   `ObjectClaimedWrite` with the members its author restored, or the bare
   instruction.

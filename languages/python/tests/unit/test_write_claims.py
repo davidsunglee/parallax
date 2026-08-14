@@ -34,6 +34,7 @@ from _support import mirrored_models as mm
 from parallax.conformance.read_models import Person
 from parallax.core import LATEST, opt_lock
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.unit_work import (
     SELECTION_INTENT,
@@ -47,6 +48,7 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteIntent,
     admits,
+    instructions,
     keyed_intent,
 )
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
@@ -73,6 +75,20 @@ _START_ATTRIBUTE = AttributeIdentity(EntityIdentity("parallax.compatibility", "B
 _RETAINED = RetainedObservation(
     VersionedStateKey(_OBJECT, 4), VersionObservation(observed_version=4), None
 )
+_PERSON = EntityIdentity("parallax.compatibility", "Person")
+_PERSON_META = model_of(PERSON)
+
+
+def _person_delete(*ids: int) -> KeyedWrite:
+    instruction = instructions.deserialize(
+        {
+            "mutation": "delete",
+            "entity": "parallax.compatibility.Person",
+            "rows": [{"id": value} for value in ids],
+        }
+    )
+    assert isinstance(instruction, KeyedWrite)
+    return instruction
 
 
 def _account_port(rows: list[dict[str, object]] | None = None) -> RecordingPort:
@@ -429,6 +445,43 @@ def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:
         )
         is None
     )
+
+
+def test_a_caller_supplied_observation_is_what_an_instruction_settles_against() -> None:
+    # The one licensed way a keyed write settles against a row no read of this
+    # unit of work materialized: the value is answered untouched, so a target
+    # entitled to none refuses it later rather than having it dropped here.
+    observation = VersionObservation(observed_version=4)
+    assert (
+        opt_lock.instruction_evidence(_PERSON_META, _person_delete(1), supplied=observation)
+        is observation
+    )
+
+
+def test_an_instruction_holding_no_evidence_reaches_its_targets_own_arm() -> None:
+    # What the ingress rule answers a caller who supplied none: the same arm the
+    # typed verb for this write reads off its source value's hint.
+    assert opt_lock.instruction_evidence(
+        _PERSON_META, _person_delete(1), supplied=None
+    ) == ObjectKey(_PERSON, (("id", 1),))
+
+
+def test_an_instruction_naming_several_rows_settles_against_nothing() -> None:
+    # A claim addresses one object and an observation is evidence about one row,
+    # so a plural instruction — the one shape no keyed verb can author — reaches
+    # neither grain and buffers bare.
+    assert opt_lock.instruction_evidence(_PERSON_META, _person_delete(1, 2), supplied=None) is None
+
+
+def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:
+    # Absence is never an input to the derivation: an unresolved target is a
+    # caller that skipped resolving it, not a family without a version source.
+    foreign = instructions.deserialize(
+        {"mutation": "delete", "entity": "parallax.compatibility.Account", "rows": [{"id": 1}]}
+    )
+    assert isinstance(foreign, KeyedWrite)
+    with pytest.raises(KeyError, match="names no Entity"):
+        opt_lock.instruction_evidence(_PERSON_META, foreign, supplied=None)
 
 
 def test_an_unversioned_update_then_delete_of_one_object_is_one_delete() -> None:
