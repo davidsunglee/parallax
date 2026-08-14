@@ -70,6 +70,7 @@ from parallax.core.execution_log import (
     WriteCompleted,
 )
 from parallax.core.metamodel import Metamodel
+from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
@@ -102,8 +103,11 @@ from parallax.snapshot.handle._read import (
     read_neutral,
     snapshot_from_find_result,
     snapshot_from_history_result,
+    wire_from_find_result,
+    wire_from_history_result,
 )
 from parallax.snapshot.handle._transaction import Transaction
+from parallax.snapshot.handle._wire import WireDatabaseView
 from parallax.snapshot.handle._write_lowering import stream_lowered
 
 __all__ = [
@@ -279,21 +283,22 @@ class Database:
         defaults to the sole adapter's; ``clock`` defaults to the system clock
         (inject a fixed clock in tests).
 
-        ``model`` narrows to a class-backed Domain Model statically and at run
-        time alike, and the runtime narrowing answers both ways it can fail with
-        one refusal: a descriptor-backed Domain Model composes no Entity Class,
-        and a bare accepted Metamodel — the neutral write-lane form
-        :meth:`__init__` still admits — has no class index to ask for at all.
-        Both raise
-        :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError` here,
-        before the adapter is inspected. One model connects to any number of
-        Databases, and one Entity Class participates in any number of models.
+        ``model`` is a Domain Model of either provenance, and WHICH provenance
+        decides capability rather than which constructor ran: a class-backed
+        model supports both public read interfaces, and a descriptor-backed one
+        supports Wire and refuses Typed materialization at the read call, before
+        any I/O. Only a bare accepted Metamodel — the first-party form
+        :meth:`__init__` still admits — is refused here with
+        :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError`,
+        before the adapter is inspected: it is a model no descriptor produced and
+        no application holds. One model connects to any number of Databases, and
+        one Entity Class participates in any number of models.
         """
-        if not isinstance(model, DomainModel) or class_index(model) is None:  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing: an untyped caller reaches this with the bare Metamodel `__init__` admits
+        if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing: an untyped caller reaches this with the bare Metamodel `__init__` admits
             raise SnapshotConnectionError(
-                "a Snapshot materializes Entity Class instances, so connect() takes a "
-                "class-backed DomainModel (snapshot-class-backed-model-required); the model "
-                "given composed no Entity Class"
+                "connect() takes a Domain Model — one composed from Entity Classes, or one "
+                "a descriptor produced (snapshot-class-backed-model-required); a bare "
+                "accepted Metamodel is a first-party form no application holds"
             )
         return cls(adapter, model, dialect=dialect, clock=clock)
 
@@ -329,6 +334,30 @@ class Database:
             return snapshot_from_history_result(history_result, self._meta, construction)
         find_result = find(node, self._meta, self._dialect, self._port)
         return snapshot_from_find_result(find_result, self._meta, construction)
+
+    @property
+    def wire(self) -> WireDatabaseView:
+        """This connection's Wire read interface (spec §3).
+
+        A lightweight view over the SAME connected model, adapter, and dialect —
+        not a second connection and not a format switch. It needs no Entity
+        Class, which is why a descriptor-backed connection answers this and
+        refuses :meth:`find`.
+        """
+        return WireDatabaseView(self._wire_find)
+
+    def _wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
+        """One Wire read, composed exactly as :meth:`find` composes a Typed one.
+
+        Same gate, same executor entry, same milestone-set dispatch; only the
+        materializer differs, and it is chosen after execution has finished.
+        """
+        preflight(node, model=self._meta, form="graph")
+        if scans_an_axis(node):
+            return wire_from_history_result(
+                find_history(node, self._meta, self._dialect, self._port), self._meta
+            )
+        return wire_from_find_result(find(node, self._meta, self._dialect, self._port), self._meta)
 
     def read_neutral(self, request: NeutralReadRequest) -> NeutralReadResult:
         """Execute ``request`` exactly once outside any transaction, materializing

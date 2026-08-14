@@ -46,6 +46,7 @@ _EXPECTED_MODULE_UNIONS = {
         "m-txtime-write",
         "m-unit-work",
         "m-value-object",
+        "m-wire",
     ],
     "slice-managed-1": [
         "m-api-conformance",
@@ -79,6 +80,7 @@ _EXPECTED_MODULE_UNIONS = {
         "m-txtime-write",
         "m-unit-work",
         "m-value-object",
+        "m-wire",
     ],
 }
 

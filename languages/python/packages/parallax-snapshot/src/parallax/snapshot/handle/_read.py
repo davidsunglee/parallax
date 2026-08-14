@@ -88,6 +88,7 @@ from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMateriali
 from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import (
+    EMPTY_UNWIND,
     InvalidData,
     InvalidDataError,
     LevelContext,
@@ -97,6 +98,9 @@ from parallax.snapshot.materialize import (
     RelationshipViewKey,
     SnapshotGraphInput,
     SnapshotNodeRef,
+    UnwindTree,
+    WireEntity,
+    WireRoot,
     attribute_value,
     convert_row,
     merge_graph_input,
@@ -105,6 +109,8 @@ from parallax.snapshot.materialize import (
     neutral_rows,
     observable_columns,
     require_publishable,
+    unwind_tree,
+    wire_roots,
 )
 
 __all__ = [
@@ -124,6 +130,8 @@ __all__ = [
     "find_rows",
     "read_neutral",
     "stage_publishable_rows",
+    "wire_from_find_result",
+    "wire_from_history_result",
 ]
 
 
@@ -451,7 +459,11 @@ def find(
         level_refs.append(child_refs)
 
     pin = query_pin(query, declaring_metadata(meta, root_entity.identity))
-    return FindResult(graph=scope.build(root_refs, pin), execution=calls.read_trace())
+    return FindResult(
+        graph=scope.build(root_refs, pin),
+        execution=calls.read_trace(),
+        includes=_include_tree(plan_.levels),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -713,6 +725,26 @@ def _convert_level(
                 row.document,
             )
     return tuple(refs)
+
+
+def _include_tree(levels: Sequence[deep_fetch.FetchLevel]) -> UnwindTree:
+    """The planned levels as the include tree a wire unwind descends.
+
+    A level's own parent reference is what the tree is built from, so the tree
+    and the fan-out below attach through one derivation of the view key rather
+    than two spellings of it.
+    """
+    if not levels:
+        return EMPTY_UNWIND
+    return unwind_tree(
+        [
+            (
+                _view_key(level),
+                None if isinstance(level.parent, deep_fetch.RootRef) else level.parent.index,
+            )
+            for level in levels
+        ]
+    )
 
 
 def _view_key(level: deep_fetch.FetchLevel) -> RelationshipViewKey:
@@ -1118,6 +1150,35 @@ def neutral_from_history_result(result: HistoryFindResult, meta: Metamodel) -> N
         neutral_graph(merge_graph_input(graph, meta), meta) for graph in result.graphs
     ]
     return NeutralReadResult(output=neutral_graphs(graphs), execution=result.execution)
+
+
+def wire_from_find_result(result: FindResult, meta: Metamodel) -> Snapshot[WireEntity]:
+    """``result``'s graph as a Wire Snapshot — the PEER of
+    :func:`snapshot_from_find_result`, not a wrapper of it.
+
+    Both run the same :func:`~parallax.snapshot.materialize.merge_graph_input`
+    over the same executor's own graph input and the same root classification
+    over that merge, and neither calls the other: which materializer runs is
+    decided after execution has already finished, so a typed read builds no
+    frozen mapping and a wire read constructs no Entity.
+    """
+    roots = wire_roots(merge_graph_input(result.graph, meta), meta, result.includes)
+    return Snapshot(roots, result.graph.pin, result.execution)
+
+
+def wire_from_history_result(result: HistoryFindResult, meta: Metamodel) -> Snapshot[WireEntity]:
+    """Every milestone's roots as ONE ordered Wire result.
+
+    Each milestone graph is classified on its own — graph-local identity never
+    promises reuse across milestones — while a classified root's ordinal names
+    its position in the published result rather than in the graph it came from,
+    so the offset advances by what each graph contributed. A milestone-set read
+    carries no Include Path (`m-case-format`), so every graph unwinds root-only.
+    """
+    roots: list[WireRoot] = []
+    for graph in result.graphs:
+        roots.extend(wire_roots(merge_graph_input(graph, meta), meta, ordinal_offset=len(roots)))
+    return Snapshot(tuple(roots), Pin(), result.execution)
 
 
 def snapshot_from_find_result(

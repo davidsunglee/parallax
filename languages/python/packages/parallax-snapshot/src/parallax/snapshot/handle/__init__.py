@@ -48,6 +48,10 @@ public-surface check promises. Where the exported names live:
   recognizer that matches a canonical Object Query against them.
 - :mod:`~parallax.snapshot.handle._preflight` — :func:`preflight`, the one read
   gate every entry point crosses before any I/O.
+- :mod:`~parallax.snapshot.handle._wire` — :class:`WireDatabaseView` and
+  :class:`WireTransactionView`, the ``db.wire`` / ``tx.wire`` views, and
+  :data:`WireQuery`, the three spellings a Wire read accepts for one canonical
+  Object Query.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, plus the result surface they build
   (:class:`Snapshot`, :class:`CheckedSnapshot`, :class:`FindResult`,
@@ -56,6 +60,12 @@ public-surface check promises. Where the exported names live:
   :class:`ObservationCollector`, the optional seam a participating read hands its
   materialized rows to. :class:`NeutralReadRequest` is what the model-neutral
   entry points take, and :class:`NeutralReadResult` what they answer.
+
+The Wire result vocabulary — :class:`WireEntity`, the frozen Entity node every
+Wire read publishes, and :data:`WireValue`, the recursive plain-value shape its
+positions carry — is :mod:`parallax.snapshot.materialize`'s, built by the wire
+materializer beside the merge every materializer consumes, and re-exported here
+beside the views that answer it.
 
 The model-neutral read vocabulary — :class:`NeutralRows`, :class:`NeutralGraph`,
 :class:`NeutralGraphs`, :class:`NeutralNode`, :class:`NeutralNodeView` — is
@@ -144,6 +154,11 @@ from parallax.snapshot.handle._read import (
 )
 from parallax.snapshot.handle._step_lowering import lower_step
 from parallax.snapshot.handle._transaction import Transaction
+from parallax.snapshot.handle._wire import (
+    WireDatabaseView,
+    WireQuery,
+    WireTransactionView,
+)
 from parallax.snapshot.handle._write_inputs import (
     KEYED_WRITE_VALUE_CODES,
     KeyedWriteValueError,
@@ -162,6 +177,8 @@ from parallax.snapshot.materialize import (
     NeutralReadOutput,
     NeutralRows,
     StoredDataIssue,
+    WireEntity,
+    WireValue,
 )
 
 __all__ = [
@@ -204,6 +221,11 @@ __all__ = [
     "TransactionResult",
     "TransactionTimePinReadOnlyError",
     "UnobservedWriteError",
+    "WireDatabaseView",
+    "WireEntity",
+    "WireQuery",
+    "WireTransactionView",
+    "WireValue",
     "WriteLoweringError",
     "build_write_planner",
     "connect",

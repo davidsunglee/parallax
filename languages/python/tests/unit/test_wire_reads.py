@@ -1,0 +1,569 @@
+"""The Wire read interface: ``db.wire.find`` / ``tx.wire.find`` and what they publish.
+
+Drives the real seam end to end — the production executor against a canned
+`m-db-port`, then the wire materializer — so what these assert is what a Wire
+read answers. The typed materializer runs over the same merge in the graph
+suites, which is what makes "peers over one merge" checkable rather than
+asserted.
+
+Three claims carry the phase: keys are declared member names and leaves are
+canonical Wire Values (`m-wire`); a back-reference unwinds finitely along the
+requested Include Paths rather than truncating to a primary-key stub; and every
+returned mapping and list is deeply frozen while staying an ordinary built-in
+subclass.
+"""
+
+from __future__ import annotations
+
+import copy
+import datetime as dt
+import json
+import pickle
+from collections.abc import Callable, Mapping, Sequence
+from decimal import Decimal
+from typing import Any, cast
+
+import pytest
+from _transact_support import NoIoPort
+
+from _support.document_reads import fold_mapping_rows
+from parallax.conformance import models
+from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core.base import INFINITY
+from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row
+from parallax.core.dialect import POSTGRES
+from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.object_query._fluent import object_query_node
+from parallax.snapshot import InvalidData, WireEntity, handle
+from parallax.snapshot.handle._wire import WireDatabaseView, wire_query_node
+
+_MODELS = models.load_models()
+ORDERS = _MODELS["orders"]
+CUSTOMER = _MODELS["customer"]
+
+
+class QueuePort:
+    """A fake `m-db-port` returning one canned response per ``execute()`` call,
+    in call order — enough to drive the executor's own per-level loop without a
+    real database."""
+
+    def __init__(self, responses: Sequence[list[Row]]) -> None:
+        self._responses = list(responses)
+        self.executed: list[tuple[str, list[object]]] = []
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        self.executed.append((sql, list(binds)))
+        return fold_mapping_rows(self._responses.pop(0), document_reads)
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        return body(cast("DbPort", self))
+
+
+def _order_row(order_id: int = 1) -> Row:
+    return {
+        "id": order_id,
+        "name": "Ada",
+        "sku": "A-100",
+        "qty": 5,
+        "price": Decimal("10.50"),
+        "active": True,
+        "ordered_on": dt.date(2024, 1, 5),
+    }
+
+
+def _wire_database(port: QueuePort) -> handle.Database:
+    return handle.Database(port, ORDERS, dialect=POSTGRES)
+
+
+def _entity(published: object) -> WireEntity:
+    assert isinstance(published, WireEntity), published
+    return published
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    assert isinstance(value, Mapping), value
+    return cast("Mapping[str, object]", value)
+
+
+def _sequence(value: object) -> Sequence[object]:
+    assert isinstance(value, list), value
+    return cast("Sequence[object]", value)
+
+
+# --------------------------------------------------------------------------- #
+# Declared names and canonical values.                                         #
+# --------------------------------------------------------------------------- #
+
+
+def test_wire_keys_are_declared_member_names_and_leaves_are_canonical() -> None:
+    port = QueuePort([[_order_row()]])
+    query = deserialize_query(
+        {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+    )
+    root = _entity(_wire_database(port).wire.find(query).result())
+    # `ordered_on` is the physical column; `orderedOn` is the declared member.
+    assert set(root) == {"id", "name", "sku", "qty", "price", "active", "orderedOn"}
+    assert root["price"] == "10.50"
+    assert root["orderedOn"] == "2024-01-05"
+    assert root["active"] is True
+
+
+def test_a_document_occurrence_fills_every_declared_member() -> None:
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1,
+                    "name": "Ada",
+                    "address": {
+                        "street": "1 Park Ave",
+                        "city": "Oslo",
+                        "geo": {"country": "NO", "elevation": 10.5},
+                        "phones": [{"type": "home", "number": "555-1234"}],
+                    },
+                }
+            ]
+        ]
+    )
+    query = deserialize_query(
+        {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
+    )
+    root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
+    address = _mapping(root["address"])
+    geo = _mapping(address["geo"])
+    # The declared walk fills what the stored document omitted: `geo.point` is a
+    # declared `one` the row never carried, and it reads null rather than absent.
+    assert geo["point"] is None
+    assert _sequence(address["phones"])[0] == {"type": "home", "number": "555-1234"}
+
+
+def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty() -> None:
+    port = QueuePort([[{"id": 4, "name": "Mary", "address": None}]])
+    query = deserialize_query(
+        {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 4}}}
+    )
+    root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
+    assert root["address"] is None
+
+    port = QueuePort([[{"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}}]])
+    query = deserialize_query(
+        {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 3}}}
+    )
+    root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
+    assert _mapping(root["address"])["phones"] == []
+
+
+# --------------------------------------------------------------------------- #
+# The include tree, not the identity graph, bounds the walk.                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_an_unrequested_relationship_is_absent_rather_than_null() -> None:
+    port = QueuePort([[_order_row()]])
+    query = deserialize_query(
+        {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+    )
+    root = _entity(_wire_database(port).wire.find(query).result())
+    assert "items" not in root
+
+
+def test_a_requested_relationship_unwinds_in_result_order() -> None:
+    port = QueuePort(
+        [
+            [_order_row()],
+            [
+                {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1, "shipped_on": None},
+                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+            ],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [{"segments": [{"rel": "Order.items"}]}],
+        }
+    )
+    root = _entity(_wire_database(port).wire.find(query).result())
+    items = _sequence(root["items"])
+    assert [_mapping(item)["id"] for item in items] == [12, 11]
+    # The child's own foreign key is a declared member and keeps its declared name.
+    assert _mapping(items[0])["orderId"] == 1
+
+
+def test_a_back_reference_unwinds_finitely_instead_of_stubbing() -> None:
+    port = QueuePort(
+        [
+            [_order_row()],
+            [
+                {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1, "shipped_on": None},
+                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+            ],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [
+                {"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]},
+            ],
+        }
+    )
+    snapshot = _wire_database(port).wire.find(query)
+    root = _entity(snapshot.result())
+    items = _sequence(root["items"])
+    back = _mapping(_mapping(items[0])["order"])
+    # The whole Order renders — not a primary-key stub — and the walk stops
+    # because the include tree has no child under `items.order`, not because a
+    # cycle detector fired.
+    assert back["name"] == "Ada"
+    assert "items" not in back
+    # Two positions reaching one merged node under one subtree share one object.
+    assert _mapping(items[1])["order"] is back
+    # The root is a different position: its subtree still carries `items`.
+    assert back is not root
+    assert snapshot.execution.round_trips == 2
+
+
+# --------------------------------------------------------------------------- #
+# Frozen values.                                                               #
+# --------------------------------------------------------------------------- #
+
+
+def _frozen_root() -> WireEntity:
+    port = QueuePort(
+        [
+            [_order_row()],
+            [{"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None}],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [{"segments": [{"rel": "Order.items"}]}],
+        }
+    )
+    return _entity(_wire_database(port).wire.find(query).result())
+
+
+def test_a_wire_mapping_is_a_dict_that_refuses_every_mutation() -> None:
+    root = _frozen_root()
+    assert isinstance(root, dict)
+    assert type(root) is not dict
+    mutable = cast("Any", root)
+    for mutate in (
+        lambda: mutable.__setitem__("id", 2),
+        lambda: mutable.__delitem__("id"),
+        mutable.clear,
+        lambda: mutable.pop("id"),
+        mutable.popitem,
+        lambda: mutable.setdefault("id", 2),
+        lambda: mutable.update({"id": 2}),
+        lambda: mutable.__ior__({"id": 2}),
+    ):
+        with pytest.raises(TypeError, match="immutable"):
+            mutate()
+    assert root["id"] == 1
+
+
+def test_a_wire_sequence_is_a_list_that_refuses_every_mutation() -> None:
+    items = _sequence(_frozen_root()["items"])
+    assert isinstance(items, list)
+    assert type(items) is not list
+    mutable = cast("Any", items)
+    for mutate in (
+        lambda: mutable.__setitem__(0, {}),
+        lambda: mutable.__delitem__(0),
+        lambda: mutable.append({}),
+        lambda: mutable.extend([{}]),
+        lambda: mutable.insert(0, {}),
+        lambda: mutable.remove(items[0]),
+        mutable.pop,
+        mutable.clear,
+        mutable.sort,
+        mutable.reverse,
+        lambda: mutable.__iadd__([{}]),
+        lambda: mutable.__imul__(2),
+    ):
+        with pytest.raises(TypeError, match="immutable"):
+            mutate()
+    assert len(items) == 1
+
+
+def test_a_wire_value_compares_structurally_and_is_unhashable() -> None:
+    root = _frozen_root()
+    assert root == dict(root)
+    assert _sequence(root["items"]) == list(_sequence(root["items"]))
+    with pytest.raises(TypeError):
+        hash(root)
+    with pytest.raises(TypeError):
+        hash(_sequence(root["items"]))
+
+
+def test_a_wire_value_serializes_as_json_directly() -> None:
+    root = _frozen_root()
+    assert json.loads(json.dumps(root))["orderedOn"] == "2024-01-05"
+
+
+def test_plain_conversion_yields_an_ordinary_mapping() -> None:
+    root = _frozen_root()
+    plain = dict(root)
+    assert type(plain) is dict
+    plain["id"] = 2
+    assert root["id"] == 1
+
+
+def test_copying_answers_the_same_immutable_value() -> None:
+    root = _frozen_root()
+    items = _sequence(root["items"])
+    assert cast("Any", root).copy() is root
+    assert copy.copy(root) is root
+    assert copy.deepcopy(root) is root
+    assert cast("Any", items).copy() is items
+    assert copy.copy(items) is items
+    assert copy.deepcopy(items) is items
+
+
+def test_pickling_a_wire_value_yields_ordinary_domain_data() -> None:
+    root = _frozen_root()
+    restored = pickle.loads(pickle.dumps(root))
+    assert type(restored) is dict
+    assert restored["id"] == 1
+    items = pickle.loads(pickle.dumps(_sequence(root["items"])))
+    assert type(items) is list
+
+
+def test_the_wire_entity_interface_is_not_constructible() -> None:
+    with pytest.raises(TypeError):
+        cast("Any", WireEntity)()
+
+
+# --------------------------------------------------------------------------- #
+# Query spellings, capability, and classification.                             #
+# --------------------------------------------------------------------------- #
+
+
+def test_every_accepted_query_spelling_lowers_to_one_canonical_node() -> None:
+    document = {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+    node = deserialize_query(document)
+    assert wire_query_node(node) is node
+    assert wire_query_node(document) == node
+
+    typed = Gadget.where(Gadget.id == 1)
+    assert wire_query_node(typed) == object_query_node(typed)
+
+
+class Gadget(Entity, table="gadget", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str]
+
+
+GADGETS = DomainModel(Gadget)
+
+
+def test_a_wire_view_reports_itself_without_leaking_its_owner() -> None:
+    database = _wire_database(QueuePort([]))
+    assert repr(database.wire) == "WireDatabaseView()"
+    assert isinstance(database.wire, WireDatabaseView)
+
+
+def test_a_wire_read_participates_in_the_transaction_that_owns_it() -> None:
+    port = QueuePort([[_order_row()]])
+    database = _wire_database(port)
+    result = database.transact(
+        lambda tx: _entity(
+            tx.wire.find(
+                {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+            ).result()
+        )
+    )
+    assert result.value["id"] == 1
+    # The participating read renders the transaction's own shared-lock suffix.
+    assert " for share of " in port.executed[0][0]
+
+
+def test_a_wire_read_classifies_a_root_the_typed_lane_would_have_classified() -> None:
+    port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": "Oslo"}}]])
+    query = deserialize_query(
+        {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
+    )
+    published = (
+        handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).checked().result()
+    )
+    assert isinstance(published, InvalidData)
+    record = cast("InvalidData[object]", published)
+    assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
+    assert _mapping(cast("Mapping[str, object]", record.data)["address"])["street"] is None
+
+
+def test_a_non_hydrating_root_publishes_no_wire_value() -> None:
+    port = QueuePort([[{"id": None, "name": "Ada", "address": None}]])
+    query = deserialize_query({"target": "Customer", "predicate": {"all": {}}})
+    published = (
+        handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).checked().results()
+    )
+    record = published[0]
+    assert isinstance(record, InvalidData)
+    assert cast("InvalidData[object]", record).data is None
+
+
+def test_a_classless_connection_serves_wire_and_refuses_typed_before_any_io() -> None:
+    port = NoIoPort()
+    database = handle.Database(port, ORDERS, dialect=POSTGRES)
+    with pytest.raises(handle.SnapshotConnectionError):
+        database.find(cast("Any", Gadget.where(Gadget.id == 1)))
+    assert isinstance(database.wire, WireDatabaseView)
+
+
+# --------------------------------------------------------------------------- #
+# Inheritance, guarded paths, temporal ends, and milestone sets.               #
+# --------------------------------------------------------------------------- #
+
+
+ANIMAL = _MODELS["animal"]
+INVOICE = _MODELS["invoice"]
+_UTC = dt.UTC
+
+
+def test_an_inheritance_participant_publishes_its_family_variant() -> None:
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1,
+                    "kind": "dog",
+                    "name": "Rex",
+                    "owner_id": None,
+                    "license_id": "L",
+                    "bark_volume": 3,
+                }
+            ]
+        ]
+    )
+    query = deserialize_query({"target": "Animal", "predicate": {"all": {}}})
+    root = _entity(handle.Database(port, ANIMAL, dialect=POSTGRES).wire.find(query).result())
+    assert root["familyVariant"] == "Dog"
+    assert root["barkVolume"] == 3
+
+
+def test_a_loaded_null_to_one_view_publishes_null_and_a_guarded_parent_publishes_nothing() -> None:
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1,
+                    "kind": "dog",
+                    "name": "Rex",
+                    "owner_id": None,
+                    "license_id": "L",
+                    "bark_volume": 3,
+                },
+                {
+                    "id": 2,
+                    "kind": "cat",
+                    "name": "Mia",
+                    "owner_id": None,
+                    "license_id": "L",
+                    "indoor": True,
+                },
+            ]
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Animal",
+            "predicate": {"all": {}},
+            "includes": [
+                {
+                    "segments": [{"rel": "Animal.owner"}],
+                    "appliesTo": ["parallax.compatibility.Dog"],
+                }
+            ],
+        }
+    )
+    roots = handle.Database(port, ANIMAL, dialect=POSTGRES).wire.find(query).results()
+    dog, cat = (_entity(root) for root in roots)
+    # The guard admits only the Dog, so the Cat never sees the view at all — an
+    # absent key, which is what unloaded means — while the admitted Dog's own
+    # null correlation key publishes a loaded-null view.
+    assert dog["owner"] is None
+    assert "owner" not in cat
+
+
+def test_a_temporal_end_publishes_the_canonical_infinity_literal() -> None:
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": Decimal("75.00"),
+                    "in_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                    "out_z": INFINITY,
+                }
+            ]
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "InvoiceLine",
+            "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+            "temporal": {"transaction-time": {"asOf": "latest"}},
+        }
+    )
+    root = _entity(handle.Database(port, INVOICE, dialect=POSTGRES).wire.find(query).result())
+    assert root["txStart"] == "2024-04-01T00:00:00.000000Z"
+    assert root["txEnd"] == "infinity"
+
+
+def _history_port() -> QueuePort:
+    return QueuePort(
+        [
+            [
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": Decimal("75.00"),
+                    "in_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                    "out_z": INFINITY,
+                },
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": Decimal("50.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
+                    "out_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                },
+            ]
+        ]
+    )
+
+
+_HISTORY_QUERY: Mapping[str, object] = {
+    "target": "InvoiceLine",
+    "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+    "temporal": {"transaction-time": {"history": {}}},
+}
+
+
+def test_a_milestone_set_wire_read_publishes_every_milestone_in_one_ordered_result() -> None:
+    port = _history_port()
+    roots = handle.Database(port, INVOICE, dialect=POSTGRES).wire.find(_HISTORY_QUERY).results()
+    assert [_entity(root)["amount"] for root in roots] == ["50.00", "75.00"]
+
+
+def test_a_participating_milestone_set_wire_read_runs_inside_the_transaction() -> None:
+    port = _history_port()
+    database = handle.Database(port, INVOICE, dialect=POSTGRES)
+    result = database.transact(lambda tx: tx.wire.find(_HISTORY_QUERY).results())
+    assert [_entity(root)["amount"] for root in result.value] == ["50.00", "75.00"]

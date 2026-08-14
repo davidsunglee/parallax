@@ -65,6 +65,7 @@ _END = "# <<< check_dag_sync.py: END GENERATED IMPORT-LINTER CONTRACTS <<<"
 # enforced by the pytest collection boundary, not import-linter, so it is absent.
 MODULE_SCOPE: Mapping[str, str] = {
     "m-core": "parallax.core.base",
+    "m-wire": "parallax.core.wire",
     "m-metamodel": "parallax.core.metamodel",
     "m-model-formation": "parallax.core.model_formation",
     "m-descriptor": "parallax.descriptor",
@@ -263,6 +264,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.inheritance",
             "parallax.core.relationship",
             "parallax.core.temporal_read",
+            "parallax.core.wire",
         }
     ),
     # The read gate is scoped apart from its own package so the generated

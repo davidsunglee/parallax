@@ -26,7 +26,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.core.execution_log import ReadTrace
-from parallax.snapshot.materialize import NeutralReadOutput, SnapshotGraphInput
+from parallax.snapshot.materialize import (
+    EMPTY_UNWIND,
+    NeutralReadOutput,
+    SnapshotGraphInput,
+    UnwindTree,
+)
 
 __all__ = [
     "FindResult",
@@ -37,10 +42,17 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class FindResult:
-    """A single-graph find's Snapshot Graph Input plus its Read Trace."""
+    """A single-graph find's Snapshot Graph Input plus its Read Trace.
+
+    ``includes`` is the query's own Include Paths as the relationship views a
+    wire unwind follows. The merged graph alone cannot supply them: it keeps
+    every view any level loaded onto a node, so a back-reference would revisit
+    its target forever. The executor knows the plan, so it hands the tree on.
+    """
 
     graph: SnapshotGraphInput
     execution: ReadTrace
+    includes: UnwindTree = EMPTY_UNWIND
 
 
 @dataclass(frozen=True, slots=True)

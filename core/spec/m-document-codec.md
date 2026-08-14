@@ -2,7 +2,8 @@
 
 `m-document-codec` owns the portable representation of every neutral value
 stored inside a structured document, and the in-memory operations that build,
-read, and patch such a document. It depends on `m-core` and `m-metamodel`.
+read, and patch such a document. It depends on `m-core`, `m-metamodel`, and
+`m-wire`, which owns the one canonical spelling every stored leaf carries.
 
 The module is **pure**. It performs no I/O, holds no connection, imports no
 driver, and emits no SQL. It contains no dialect or database-adapter seam:
@@ -372,137 +373,18 @@ document, and a returned document shares no mutable state with one passed in.
 
 ## Portable leaf encodings
 
-Every Neutral Type has exactly one document spelling:
+A document leaf's spelling is the value's canonical **Wire Value** (`m-wire`):
+one spelling per Neutral Type, total over the type algebra, unique per value, and
+inverse under decoding. This module states no table of its own and admits no
+second spelling — the characters a Wire read renders are the characters a
+document stores, so storage and transport cannot drift apart.
 
-| Neutral type | Document representation |
-|---|---|
-| `boolean` | JSON boolean |
-| `int32`, `int64` | JSON number, integral, no exponent or fraction |
-| `float32`, `float64` | JSON number, finite, the shortest number that decodes back to the value (below) |
-| `string` | JSON string |
-| `decimal(p, s)` | JSON string, the exact decimal spelling: a `-` only for a value below zero, the integer digits with no leading zero (a single `0` when the integer part is zero), and — when `s > 0` — `.` and exactly `s` fraction digits |
-| `bytes` | JSON string, lowercase hexadecimal, two digits per byte, no prefix or separator |
-| `date` | JSON string, ISO-8601 `YYYY-MM-DD` |
-| `time` | JSON string, ISO-8601 `hh:mm:ss`, with `.ffffff` when the value carries sub-second precision |
-| `timestamp` | JSON string, ISO-8601 UTC at microsecond precision: `YYYY-MM-DDThh:mm:ss.ffffffZ` |
-| `uuid` | JSON string, canonical lowercase 8-4-4-4-12 form |
-| `json` | the JSON value itself |
+A member whose declared type has no Wire Value is not storable in a document, and
+`json` is never a leaf spelling: no Attribute and no Value Object field may
+declare it (`m-core`), so the codec never faces free-form structured content
+where a declared shape should be.
 
-Seven rules make the table total rather than illustrative.
-
-**Every type is here.** A member whose declared type has no row above is not
-storable in a document. There is no fallback to a host language's default
-serializer, and no consumer may invent a spelling for a type this table does not
-cover.
-
-**`json` is not a leaf spelling.** `Json` is the one variant no member declares —
-neither an Attribute nor a Value Object field may name it (`m-core`) — so no
-`Leaf` ever carries it and the codec never faces free-form structured content
-where a declared shape should be. Its row keeps the table total over the type
-algebra: `Json` is the storage type a whole occurrence maps to, and where such a
-value is what is being stored, its document form is that value itself, whose
-object-member order is the stored value's own and is not observable state.
-
-**Exactness over convenience.** `decimal` and `timestamp` are strings precisely
-because JSON numbers cannot carry their contracts: a JSON number has no declared
-scale and no guaranteed precision, and a naive round trip through a binary float
-silently changes a value the database would have preserved. `float32`/`float64`
-are numbers because they *are* binary floats; a non-finite float is not a
-`m-core` value and never reaches the codec.
-
-**A float's JSON number is the shortest one that decodes back to it.** "A JSON
-number" alone does not pin a binary float down: `0.1` and `0.10000000000000001`
-decode to the same binary64, so two conforming implementations could write two
-*different* JSON numbers for one value — and two different numbers are two
-different documents, so a `then.tableState` authored as `0.1` would pass against
-one implementation and fail against the other, and a whole-occurrence comparison
-(`m-unit-work`) against a subtree some other writer stored would report a change
-where the value never changed. The encoding is therefore the number with the
-**fewest significant digits** that decodes back to the value under the member's
-declared format — binary32 for `float32`, binary64 for `float64` — and, where
-several equally short numbers decode to it, the one **nearest** the value, and
-where two of those are equally near, the one whose **last significant digit is
-even**. All three levels are load-bearing: binary64 `562949953421312.25` is
-decoded from both `562949953421312.2` and `562949953421312.3` — sixteen
-significant digits each, `0.05` from the value each, with no fifteen-digit
-candidate in range — so the first two levels alone still admit two numbers, and
-the third selects `562949953421312.2`. (`1048576.2` / `1048576.3` is the same tie
-for binary32 `1048576.25`.) This fixes the *number*, not its spelling: `20` and
-`20.0` are one JSON number and either may be written, while `0.1` and
-`0.10000000000000001` are two numbers and only `0.1` is admissible. It is what a
-shortest-round-trip float formatter produces, the even-digit tie-break included;
-a fixed-width `17`-significant-digit rendering is not admissible, even though it
-also round-trips.
-
-**A JSON number names the float of the declared width nearest it.** The encoding
-rule above is stated in terms of what a number *decodes back to*, so that decode
-belongs to this table too: a number at a `float32` names the binary32 value
-nearest it and a number at a `float64` the nearest binary64, under IEEE
-round-to-nearest-even, and only a magnitude that would round to an infinity —
-`1e39` at a `float32` — names no value at all. It is the *number* that is read,
-never its spelling or the carrier a host parser put it in: `20` and `20.0` are
-one JSON number, and so are `16777217` and `16777217.0`, so a consumer whose
-parser hands the first of each pair back as an integer and the second as a float
-MUST still answer the same value for both. The one distinction this rule does
-draw is the width, and it is the same one the encoding draws: `1048576.2` names
-binary32 `1048576.25` at a `float32` and a different, exactly-representable
-binary64 at a `float64`.
-
-**Rounding happens once, from the digits.** The number a document carries is the
-one its digits name, so the declared width is applied to *that* number and to
-nothing else. A consumer whose parser first rounds the digits into a wider
-carrier — a binary64, say — and then narrows that carrier to the declared width
-has rounded twice, and two roundings are not one: `1.0000000596046448` lies above
-the midpoint between binary32 `1.0` and `1.00000011920928955078125`, so rounding
-it once at binary32 names the upper value, while binary64-then-binary32 lands
-exactly on the midpoint and its tie-to-even names `1.0`. Both consumers used
-round-to-nearest-even at every step and answered different values, so a consumer
-that parses into a wider carrier MUST keep enough of the authored number to round
-from it. `float64` is unaffected only because its carrier is already the declared
-width.
-
-*What nearest-value decoding gives up, deliberately.* It is not exact. A number
-no float of the declared width represents exactly is still admitted, and it names
-a **different** value than the one written: `16777217` at a `float32` names
-`16777216`, and `9007199254740993` at a `float64` names `9007199254740992`.
-Refusing it instead cannot be spelled "the number must be exact", because a
-canonical spelling is routinely inexact — `1e30` is the number this table gives
-the binary32 value `1.0000000150474662e30` — so the honest refusing rule is
-"exact **or** already the canonical spelling of the value it rounds to", which
-narrows what a `float32` member may hold rather than how a number is read.
-
-**Reading a number and validating a stored document are two questions.** The rule
-above answers the first for every number wherever it appears — a case literal, a
-predicate literal, a member of a document being decoded — and it never refuses on
-canonicality, because what a number names cannot depend on who wrote it.
-
-Canonicality is a separate, *writer* obligation, and the seam that reads a
-document back **out of storage** is where it is enforced: that seam MUST reject a
-stored number that is not the canonical rendering of the value it names, when its
-carrier preserves enough information to tell the two apart. When parsing has
-already collapsed both numbers to the same carrier value, as a binary64 carrier
-does for `float64`, the seam cannot recover the distinction and MUST materialize
-the declared value; that does not weaken the obligation on the writer. A case
-literal is not a stored document and is not subject to this check — it is an
-input a case authored, graded for membership alone (`m-case-format` "In-space").
-
-**Encoding and decoding are inverse.** For every value of a declared type,
-decoding its encoding yields an equal value, and the encoding is the unique
-document value this table admits. So a value's document form does not depend on
-which consumer wrote it, and a predicate literal binds the same value the writer
-stored — an equality comparison over a `date` or a `decimal` compares like with
-like without any consumer normalizing first. Uniqueness is uniqueness of the JSON
-*value*: a string encoding is unique character for character, while a JSON number
-is a number, so `1` and `1.0` are one document value and neither a serializer's
-rendering nor an engine's numeric normalization can make two encodings of one
-value differ. For a binary float that uniqueness is what the shortest-number rule
-above delivers — without it the table would admit many JSON numbers per value,
-which is a different document each time.
-
-**Decoding is by declared type, never by inspection.** A JSON string is decoded
-as a `uuid`, a `date`, or a `string` because the member declares which. The
-codec never guesses a type from a value's shape, so a `string` member holding
-`"2026-01-01"` stays that string.
+Three obligations belong to the document position rather than to the spelling.
 
 **The string spellings are comparison-significant, not house style.** SQL compares
 a document-resident member of the numeric family — and a `boolean`, whose extracted
@@ -510,19 +392,44 @@ characters the concrete dialects do not agree on — through a dialect cast, and
 six **text-compared** types — `string`, `bytes`, `date`, `time`, `timestamp`, and
 `uuid` — **by comparing the extracted text directly**, with no cast on either
 dialect (`m-dialect`, `m-sql`). The split is by comparison behavior, not by
-document form: `decimal(p, s)` is a JSON string above and still casts, because its
+document form: `decimal(p, s)` is a JSON string and still casts, because its
 integer part has no fixed width, so `10.00` sorts below `9.00` as text and a range
 predicate over it would answer with the wrong rows. Each of those six spellings is
-therefore chosen so that, for two values of one declared type, the encodings are
-equal exactly when the values are equal, and — for an ordered type — the encodings
+chosen so that, for two values of one declared type, the encodings are equal
+exactly when the values are equal, and — for an ordered type — the encodings
 compare in the values' own order. Zero-padded fixed-width fields with the most
 significant first, a `Z`-normalized UTC instant, lowercase hexadecimal, and the
-canonical lowercase UUID form are what deliver that, so they are normative here for
-a reason that lives outside this module. The literal such a comparison binds is the
-type's `comparisonText` — the string's own characters — never the JSON text that
-carries them. A change to any of these spellings changes predicate and ordering
-results, and MUST therefore be made together with `m-dialect`'s corresponding
-decision — adding a cast for that type — rather than alone.
+canonical lowercase UUID form are what deliver that, so `m-wire`'s choice of them
+is load-bearing here for a reason that lives outside that module. The literal such
+a comparison binds is the type's `comparisonText` — the string's own characters —
+never the JSON text that carries them. A change to any of these spellings changes
+predicate and ordering results, and MUST therefore be made together with
+`m-dialect`'s corresponding decision — adding a cast for that type — rather than
+alone.
+
+**Reading a value and validating a stored document are two questions.** `m-wire`
+answers the first for every value wherever it appears — a case literal, a
+predicate literal, a member of a document being decoded — and never refuses on
+canonicality, because what a value names cannot depend on who wrote it.
+
+Canonicality is a separate, *writer* obligation, and the seam that reads a
+document back **out of storage** is where it is enforced: that seam MUST reject a
+stored value that is not the canonical spelling of the value it names, when its
+carrier preserves enough information to tell the two apart. A `decimal(p, s)`
+short of its declared scale, uppercase hexadecimal, a `timestamp` at a non-UTC
+offset, an uppercase or hyphenless UUID, and a float number that is not the
+shortest one for the value it names all decode into their declared type and are
+still a DIFFERENT document from the one a writer of that value would have stored.
+When parsing has already collapsed two spellings to the same carrier value, as a
+binary64 carrier does for `float64`, the seam cannot recover the distinction and
+MUST materialize the declared value; that does not weaken the obligation on the
+writer. A case literal is not a stored document and is not subject to this check —
+it is an input a case authored, graded for membership alone (`m-case-format`
+"In-space").
+
+**Rejection is not repair.** A stored leaf that is the encoding of nothing is
+invalid stored data ("Invalid stored data", below): the codec reports it and
+never substitutes, defaults, or re-spells it.
 
 ## Presence
 

@@ -1,43 +1,29 @@
-"""The portable leaf encoding table (m-document-codec, "Portable leaf encodings").
+"""The document leaf seam over the canonical Wire Value table (m-document-codec,
+"Portable leaf encodings").
 
-One function answers "how is this leaf spelled inside a document", for both document
-kinds and at every depth, and :func:`decode_leaf` inverts it over exactly that
-function's own codomain. Neither restates the table: the portable literal inverse is
-:func:`~parallax.core.base.decode_neutral_literal`, which the float rule below also
-measures its own round trip through, and the encoding question is then settled by
-re-encoding, so the two legs cannot drift.
+A document leaf's spelling IS the value's canonical Wire Value, so the table lives
+in :mod:`parallax.core.wire` and this module states none of its own. What it adds
+is the document POSITION: a failure here names the failing member, so the caller
+resolves it by name at each containment step.
 
-The string spellings are comparison-significant, not house style. SQL compares the six
-text-compared types by comparing the extracted text directly, so changing one changes
-predicate and ordering results and MUST move `m-dialect`'s corresponding decision with
-it rather than travel alone.
+The string spellings are comparison-significant, not house style. SQL compares the
+six text-compared types by comparing the extracted text directly, so changing one
+changes predicate and ordering results and MUST move `m-dialect`'s corresponding
+decision with it rather than travel alone.
 """
 
 from __future__ import annotations
 
-import datetime as _dt
-import decimal as _decimal
-import uuid as _uuid
-from typing import cast
-
 from parallax.core.base import (
-    Boolean,
     Bytes,
     Date,
-    Decimal,
-    Float32,
-    Float64,
-    Int32,
-    Int64,
-    Json,
     NeutralType,
     String,
     Time,
     Timestamp,
     Uuid,
-    decode_neutral_literal,
-    matches_neutral_type,
 )
+from parallax.core.wire import WireEncodingError, decode_wire, encode_wire
 
 __all__ = ["LeafEncodingError", "decode_leaf", "encode_leaf", "is_text_compared"]
 
@@ -47,19 +33,15 @@ __all__ = ["LeafEncodingError", "decode_leaf", "encode_leaf", "is_text_compared"
 # integer part has no fixed width, so `10.00` sorts below `9.00` as text.
 _TEXT_COMPARED: tuple[type, ...] = (String, Bytes, Date, Time, Timestamp, Uuid)
 
-# The widest decimal rendering `%.{p}g` can need to round-trip a binary64, and so the
-# upper bound of the shortest-number search below.
-_MAX_SIGNIFICANT_DIGITS = 17
-
 
 class LeafEncodingError(Exception):
-    """A value and the Neutral Type its leaf declares do not pair through this table.
+    """A stored leaf and the Neutral Type its member declares do not pair.
 
-    Raised rather than encoded or decoded, in both directions: a value outside the
-    declared value space has no spelling here, and a stored leaf that is not the one
-    spelling the table gives some value of that space is the encoding of nothing here.
-    The table is total over the type algebra and says nothing about either, and
-    inventing an answer for one is exactly what this module exists to prevent.
+    The document-positioned reading of `m-wire`'s refusal: a value outside the
+    declared value space has no spelling, and a stored leaf that is not the one
+    canonical spelling of some value of that space is the encoding of nothing. The
+    table is total over the type algebra and says nothing about either, and
+    inventing an answer for one is exactly what the codec exists to prevent.
 
     ``path`` names the failing member as a SEQUENCE of declared names relative to
     whatever the caller reduced, so a consumer resolves the member by name at each
@@ -89,98 +71,27 @@ def is_text_compared(neutral_type: NeutralType) -> bool:
 def encode_leaf(neutral_type: NeutralType, value: object) -> object:
     """``value``'s one document spelling under ``neutral_type``.
 
-    Every Neutral Type has exactly one, so two writers of one value produce one
-    document. The result is a portable JSON value — never a driver value, a rendered
-    text, or a provider-native document handle.
+    The canonical Wire Value (`m-wire`), reported at this document position: every
+    Neutral Type has exactly one spelling, so two writers of one value produce one
+    document, and the result is a portable JSON value — never a driver value, a
+    rendered text, or a provider-native document handle.
     """
-    if not matches_neutral_type(value, neutral_type):
-        raise LeafEncodingError(
-            f"{value!r} is not a member of the declared value space {neutral_type!r}"
-        )
-    match neutral_type:
-        case Boolean() | Int32() | Int64() | String() | Json():
-            return value
-        case Float32() | Float64():
-            return _shortest_float(cast("float", value), neutral_type)
-        case Decimal(_precision, scale):
-            return _exact_decimal(cast("_decimal.Decimal", value), scale)
-        case Bytes():
-            return cast("bytes", value).hex()
-        case Date():
-            return cast("_dt.date", value).isoformat()
-        case Time():
-            return cast("_dt.time", value).isoformat()
-        case Timestamp():
-            dt = cast("_dt.datetime", value).astimezone(_dt.UTC)
-            return dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
-        case Uuid():
-            return str(cast("_uuid.UUID", value))
+    try:
+        return encode_wire(neutral_type, value)
+    except WireEncodingError as exc:
+        raise LeafEncodingError(str(exc)) from exc
 
 
 def decode_leaf(neutral_type: NeutralType, value: object) -> object:
     """The neutral value ``value`` is the document encoding of.
 
-    :func:`encode_leaf`'s inverse, and its domain is that function's own codomain: a
-    stored leaf must both name a member of the declared value space and be the ONE
-    spelling this table gives that member. The second condition is what a parse alone
-    does not ask. A ``decimal(p, s)`` short of its declared scale, uppercase
-    hexadecimal, a ``timestamp`` at a non-UTC offset, an uppercase or hyphenless UUID,
-    and a float number that is not the shortest one for the value it names all decode
-    into their declared type and are still a DIFFERENT document from the one a writer
-    of that value would have stored — and the six text-compared spellings are the
-    characters SQL compares and orders by, so reading one back as an ordinary value
-    would answer with a row that no predicate over the same member finds.
-
-    Raised rather than repaired: this module defines no defaulting and never invents a
-    value for stored data that contradicts its shape.
+    :func:`encode_leaf`'s inverse, over the canonical Wire Value table's own
+    codomain: a stored leaf must both name a member of the declared value space and
+    be the ONE spelling that table gives that member. The second condition is what a
+    parse alone does not ask, and enforcing it here is the storage-read seam's
+    canonicality obligation (`m-document-codec` "Portable leaf encodings").
     """
-    decoded = decode_neutral_literal(value, neutral_type)
-    if matches_neutral_type(decoded, neutral_type) and encode_leaf(neutral_type, decoded) == value:
-        return decoded
-    raise LeafEncodingError(f"{value!r} is not the document encoding of any {neutral_type!r} value")
-
-
-def _exact_decimal(value: _decimal.Decimal, scale: int) -> str:
-    """The exact decimal spelling: a ``-`` only for a value below zero, the integer
-    digits with no leading zero (a single ``0`` when the integer part is zero), and —
-    when ``scale > 0`` — ``.`` and exactly ``scale`` fraction digits.
-
-    Rescaling is exact by construction rather than by a rounding context: membership
-    already established the value needs no more fraction digits than ``scale`` admits,
-    so the shift below only ever pads with zeros, at any precision.
-    """
-    sign, digits, exponent = value.as_tuple()
-    unscaled = 0
-    for digit in digits:
-        unscaled = unscaled * 10 + digit
-    unscaled *= 10 ** (cast("int", exponent) + scale)
-    padded = str(unscaled).rjust(scale + 1, "0")
-    body = f"{padded[:-scale]}.{padded[-scale:]}" if scale else padded
-    return f"-{body}" if sign and unscaled else body
-
-
-def _shortest_float(value: float, neutral_type: Float32 | Float64) -> float:
-    """The number with the fewest significant digits that decodes back to ``value``
-    under the declared width, nearest among equally short ones, and — where two are
-    equally near — the one whose last significant digit is even.
-
-    All three levels are load-bearing: binary64 ``562949953421312.25`` is decoded from
-    both ``562949953421312.2`` and ``562949953421312.3``, so the first two alone still
-    admit two numbers. ``%.{p}g`` supplies all three at once, because it renders the
-    correctly-rounded ``p``-digit decimal and breaks its own tie to even.
-
-    "Decodes back to" is measured through the decode leg itself, so the phrase cannot
-    mean one thing while encoding and another while reading: a ``float32``'s decode
-    reads a number at binary32, which is why ``1048576.2`` is admissible for
-    ``1048576.25`` at that width and for nothing at binary64.
-
-    The answer is the float, not its rendering: ``20`` and ``20.0`` are one JSON
-    number, while ``0.1`` and ``0.10000000000000001`` are two and only the first is
-    admissible.
-    """
-    target = cast("float", decode_neutral_literal(value, neutral_type))
-    for precision in range(1, _MAX_SIGNIFICANT_DIGITS + 1):
-        candidate = float(f"{target:.{precision}g}")
-        if decode_neutral_literal(candidate, neutral_type) == target:
-            return candidate
-    return target  # pragma: no cover - 17 significant digits always round-trip
+    try:
+        return decode_wire(neutral_type, value)
+    except WireEncodingError as exc:
+        raise LeafEncodingError(str(exc)) from exc

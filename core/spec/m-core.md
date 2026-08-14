@@ -96,9 +96,10 @@ value space. There is no tagged wrapper type: every position that carries a
 neutral row cell —
 is already typed by its declaration, so the declared type identifies the value
 space and a stored tag could never carry information the declaration does not.
-Wire encodings of these values belong to the serde seam that carries them
-(the `m-predicate` node encoding, the `m-case-format` fixture forms),
-never to a behavioral algorithm.
+How such a value is WRITTEN OUT — its one canonical spelling per type, for
+stored documents and for transport alike — belongs to `m-wire`, never to a
+behavioral algorithm. What a serde seam ACCEPTS on the way in remains that
+seam's own (the `m-predicate` node encoding, the `m-case-format` fixture forms).
 
 | `NeutralType` | Logical value space | Equality / normalization laws |
 |---|---|---|

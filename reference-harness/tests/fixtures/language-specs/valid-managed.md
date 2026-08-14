@@ -15,7 +15,7 @@ The implementation selects `slice-managed-1` and the managed-object lifecycle.
     "version": "1.0.0"
   },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-detach", "m-dialect", "m-document-codec", "m-identity-map", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-op-list", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-detach", "m-dialect", "m-document-codec", "m-identity-map", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-op-list", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-managed-1"] },
@@ -61,7 +61,7 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 | `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel`, `m-inheritance` | depcheck.toml |
 | `m-detach` | src/detach | detach | `m-unit-work`, `m-identity-map` | depcheck.toml |
 | `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |
-| `m-document-codec` | src/document-codec | document-codec | `m-core`, `m-metamodel` | depcheck.toml |
+| `m-document-codec` | src/document-codec | document-codec | `m-core`, `m-metamodel`, `m-wire` | depcheck.toml |
 | `m-identity-map` | src/identity-map | identity-map | `m-unit-work`, `m-temporal-read` | depcheck.toml |
 | `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-storage-layout` | src/storage-layout | storage-layout | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | depcheck.toml |
@@ -79,6 +79,7 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 | `m-temporal-read` | src/temporal-read | temporal-read | `m-predicate`, `m-object-query`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-unit-work` | src/unit-work | unit-work | `m-predicate`, `m-db-port`, `m-temporal-read` | depcheck.toml |
 | `m-value-object` | src/value-object | value-object | `m-metamodel`, `m-model-formation` | depcheck.toml |
+| `m-wire` | src/wire | wire | `m-core` | depcheck.toml |
 | adapter composition | tests/composition | composition | postgres adapter | depcheck.toml |
 
 ## 8. Deployable artifact topology

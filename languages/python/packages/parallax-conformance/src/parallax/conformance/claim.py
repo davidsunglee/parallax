@@ -93,6 +93,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-txtime-write",
         "m-unit-work",
         "m-value-object",
+        "m-wire",
     ),
     dialects=("postgres",),
     case_shapes=(
