@@ -6341,14 +6341,18 @@ def _settled_observed_row(
     table-per-hierarchy family shares one, so a discriminated-union read over
     table-per-concrete-subtype legitimately returns sibling rows of one key from
     different tables. Two rows the write's own subtype claims are two observed states,
-    which is what the write would have to choose between.
+    which is what the write would have to choose between. Which of a row's fields
+    STATES a variant is the ORIGIN read's own question, so it is asked of that read
+    once (:func:`_origin_variant_columns`) rather than guessed per row.
     """
     key_column = _pk_column(entity)
     observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []
+    variant_columns = _origin_variant_columns(case, origin)
     matched = [
         row
         for row in observed_rows
-        if _write_value_equal(row.get(key_column), pk) and _row_is_variant_of(case, entity, row)
+        if _write_value_equal(row.get(key_column), pk)
+        and _row_is_variant_of(case, entity, row, variant_columns)
     ]
     if len(matched) != 1:
         raise CaseFailure(
@@ -6359,22 +6363,68 @@ def _settled_observed_row(
     return matched[0]
 
 
-def _row_is_variant_of(case: Case, entity: Entity, row: dict[str, Any]) -> bool:
+def _origin_variant_columns(case: Case, origin: dict[str, Any]) -> tuple[str, ...]:
+    """The fields of *origin*'s observed rows that state a row's variant SPELLING, in
+    precedence order — empty when that read states no variant at all.
+
+    Only a read whose queried position is ABSTRACT is discriminated: it resolves over
+    more than one concrete subtype, so `m-sql` gives its result a variant tag —
+    materialized as ``familyVariant`` in the compatibility rows (`m-case-format`),
+    and, under table-per-concrete-subtype before that materialization, carried by the
+    projected per-branch ``family_variant`` literal. The materialized spelling leads,
+    because a materialized row carries BOTH: alias remapping restores an authored
+    physical column its own spelling, so `family_variant` beside `familyVariant` is
+    the model's own column beside the read's answer.
+
+    A **concrete-target** read carries no variant tag whatsoever (`m-sql`: the caller
+    already queried a known variant), so neither spelling means anything there. Both
+    are legal physical spellings a model may author — the compatibility corpus maps
+    `catalog.Record.variantMarker` to the column ``family_variant`` and
+    `compatibility.overlap.VariantRecord`'s value-object document to the column
+    ``familyVariant`` — and reading one of those as a discriminator would refuse a
+    settled write whose find observed exactly the row it names.
+
+    Abstractness is the same gate materialization itself asks
+    (:func:`_materialize_family_variant`), so one rule in this harness decides
+    whether a read's rows carry a variant.
+    """
+    query = origin.get("objectQuery")
+    target = query.get("target") if isinstance(query, dict) else None
+    if not isinstance(target, str):
+        return ()
+    family = Family(case.model.entity_defs)
+    if target not in family.defs:
+        return ()
+    definition = family.defs[target]
+    if inheritance_of(definition) is None or not is_abstract(definition):
+        return ()
+    if family.strategy_of(target) == STRATEGY_TPCS:
+        return ("familyVariant", _TPCS_VARIANT_COLUMN)
+    return ("familyVariant",)
+
+
+def _row_is_variant_of(
+    case: Case, entity: Entity, row: dict[str, Any], variant_columns: tuple[str, ...]
+) -> bool:
     """Whether an observed row is a row of *entity*'s own concrete subtype.
 
     A discriminated-union read tags every returned row with the concrete variant it
     resolved to (`m-inheritance` *Abstract-position reads*), and that tag is what
     separates two sibling rows a key alone cannot: the raw tag column under
-    table-per-hierarchy, the per-branch ``family_variant`` literal under
-    table-per-concrete-subtype, and the ``familyVariant`` the compatibility rows spell
-    once either has been materialized (`m-sql`). A row carrying none states no variant
-    to contradict — a concrete-target read projects no discriminator, because every
-    row it returns is already the queried subtype's — so it answers for its key alone.
+    table-per-hierarchy, and otherwise whichever field the ORIGIN read states its
+    variant in (*variant_columns*, from :func:`_origin_variant_columns`). The tag
+    column is read first and needs no such licence: it is a real column of the shared
+    table carrying that row's own ``tagValue``, so it says the same thing wherever it
+    appears.
+
+    A row stating no variant answers for its key alone — a concrete-target read
+    projects no discriminator, because every row it returns is already the queried
+    subtype's.
     """
     tag = _tag(entity)
     if tag is not None and tag[0] in row:
         return _write_value_equal(row[tag[0]], tag[1])
-    for column in (_TPCS_VARIANT_COLUMN, "familyVariant"):
+    for column in variant_columns:
         if column in row:
             return row[column] == Family(case.model.entity_defs).variant_spelling(
                 entity.canonical_name
