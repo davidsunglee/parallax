@@ -5,27 +5,33 @@ policy modules are wired into a Write Planner, so a lane that built a planner of
 its own would plan under a second set of strategies free to drift from
 production's. This grades that as behavior: the factory is made to hand back
 planners this module can recognize, a real write is driven through each lane, and
-the drive is then held to two things at once — every planning it performed ran on
-one of those planners, and every Write Plan that reached ``stream_lowered``, the
-seam a plan passes through to become statements, is by identity a plan one of
-those plannings returned.
+the drive is then followed all the way to the statements it emits.
 
-Watching the lowering seam is what closes the escape watching ``WritePlanner``
-alone leaves open. An unrelated implementation of the same interface inherits
-nothing, so it performs no planning this module records and appears in no
-subclass registry — but its plan has to reach the lowering seam to become SQL,
-and there it is a plan no recorded planning produced. The two directions are
-graded together, so a plan the factory produced and the lane then discarded is
-caught as well.
+The chain is closed link by link. Every planning the drive performed ran on a
+planner the factory built. Every Write Plan that was streamed through
+``stream_lowered`` is by identity a plan one of those plannings returned, and the
+plans streamed are the plans planned, in order, so a factory plan the lane
+discarded is named too. Every step rendered by ``lower_step`` — the one function
+that turns a settled step into a statement — is by identity a step of one of
+those streamed plans. An unrelated implementation of the planner interface
+inherits nothing, so it performs no planning this module records and appears in
+no subclass registry; but its plan still has to become SQL, and every route from
+a plan to SQL runs through those two functions under a name this module replaced.
 
-What remains uncovered is stated exactly: a lane that produced statements without
-handing a plan to ``stream_lowered`` — rendering settled steps one at a time, as
-``handle.lower_step`` allows — and a write lane this module does not drive. The
-lanes it drives are ENUMERATED — the `Database` lane, and the
-conformance engine's writeSequence, readless predicate write, and conflict
-entries. On an undriven lane, `test_source_enforcement_topology.py` still finds a
-second ``WritePlanner`` construction and a second planner class, but a planner
-constructed through an alias is caught by neither module.
+Both functions are replaced on every imported ``parallax`` module holding them,
+the modules defining them included, so a caller reaching the seam under a second
+name — or binding it while the watch is installed, since every route to it reads
+one of the replaced attributes — is watched rather than missed. A plan handed to
+a stream nobody consumed renders nothing and is recorded nowhere.
+
+What remains uncovered is stated exactly: a lane that emitted DML without
+rendering a step at all, assembling a statement from the SQL layer directly, and
+a write lane this module does not drive. The lanes it drives are ENUMERATED — the
+`Database` lane, and the conformance engine's writeSequence, readless predicate
+write, and conflict entries. On an undriven lane,
+`test_source_enforcement_topology.py` still finds a second ``WritePlanner``
+construction and a second planner class, but a planner constructed through an
+alias is caught by neither module.
 
 The `Database` lane is graded on identity as well as provenance. One planner
 serves the whole transaction, so a typed verb and ``tx.write_neutral`` are held
@@ -41,9 +47,11 @@ injects is the neutral one, so no planner a write path reaches can decorate.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from _transact_support import NEW_ROW, RecordingPort, account_db, new_account
@@ -68,7 +76,8 @@ from parallax.core.unit_work import (
     WritePlanner,
     instructions,
 )
-from parallax.snapshot.handle import Transaction, _database, _planning, stream_lowered
+from parallax.snapshot import handle
+from parallax.snapshot.handle import Transaction, _planning
 
 type _CompileCase = Callable[[case_format.Case, str], tuple[list[engine.Emission], int]]
 
@@ -99,13 +108,14 @@ class _Planning:
 @dataclass(slots=True)
 class _Composition:
     """One drive's planning provenance: the planners the composition root built
-    while it ran, every planning that ran, and every plan that reached the
-    write-lowering seam."""
+    while it ran, every planning that ran, every plan whose lowering was streamed,
+    and every step rendered into a statement."""
 
     lane: str
     built: list[_Built]
     planned: list[_Planning]
     lowered: list[WritePlan]
+    rendered: list[PlannedWrite]
 
     def escaped(self) -> list[PlanningRequest]:
         """The plannings whose receiver the composition root did not build."""
@@ -119,28 +129,52 @@ class _Composition:
         """The lowered plans no planning recorded here produced."""
         return [plan for plan in self.lowered if not any(plan is one.plan for one in self.planned)]
 
+    def steps_of_lowered_plans(self) -> list[PlannedWrite]:
+        """Every step the streamed plans hold, in the order streaming reaches them."""
+        return [step for plan in self.lowered for step in plan.steps]
+
+
+def _bindings_of(name: str) -> list[ModuleType]:
+    """Every imported ``parallax`` module holding the handle's ``name``.
+
+    A module that imported the function keeps a binding of its own, which
+    replacing the name in the module that defines it leaves untouched. Asking
+    which modules hold the object is what makes the watch complete without
+    anyone having had to list the callers.
+    """
+    original = getattr(handle, name)
+    return [
+        module
+        for module in list(sys.modules.values())
+        if getattr(module, "__name__", "").startswith("parallax.")
+        and getattr(module, name, None) is original
+    ]
+
 
 def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     """Make the composition root hand back recognizable planners for ``lane``, and
-    record every planning any planner performs and every plan the write-lowering
-    seam is handed while it is installed.
+    record every planning any planner performs, every plan whose lowering is
+    streamed, and every step rendered into a statement while it is installed.
 
     What is replaced is the factory's own name for the planner CLASS, not the
     factory: both consumers bind ``build_write_planner`` at import time, so a
     patch of that name would intercept neither, while the class name is read
-    inside the factory body on every call. ``stream_lowered`` is the mirror image
-    — both consumers DO bind it at import time, so it is replaced on each of
-    them. ``raising`` is left on throughout, so the day a name moves this fails
-    rather than silently watching nothing.
+    inside the factory body on every call. ``raising`` is left on throughout and a
+    lowering function nothing holds fails the watch outright, so the day a name
+    moves this fails rather than silently watching nothing.
 
     ``plan`` is watched on the class rather than on the built planners, so a
     planning that ran on some OTHER ``WritePlanner`` is visible instead of merely
-    absent; the lowering seam is watched because a plan an unrelated
-    implementation produced runs no watched ``plan`` at all and would otherwise
-    be invisible right up to the statements it emits.
+    absent. The lowering functions are watched because a plan an unrelated
+    implementation produced runs no watched ``plan`` at all and would otherwise be
+    invisible right up to the statements it emits; the plan is recorded when its
+    stream is STARTED rather than when the seam is called, so a stream nobody
+    consumed accounts for nothing.
     """
-    seen = _Composition(lane=lane, built=[], planned=[], lowered=[])
+    seen = _Composition(lane=lane, built=[], planned=[], lowered=[], rendered=[])
     planning = WritePlanner.plan
+    streaming = handle.stream_lowered
+    rendering = handle.lower_step
 
     def construct(
         model: Metamodel,
@@ -165,12 +199,19 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         plan: WritePlan, meta: Metamodel, dialect: Dialect
     ) -> Iterator[tuple[PlannedWrite, LoweredStatement]]:
         seen.lowered.append(plan)
-        return stream_lowered(plan, meta, dialect)
+        yield from streaming(plan, meta, dialect)
+
+    def render(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
+        seen.rendered.append(step)
+        return rendering(step, meta, dialect)
 
     monkeypatch.setattr(_planning, "WritePlanner", construct)
     monkeypatch.setattr(WritePlanner, "plan", plan)
-    monkeypatch.setattr(_database, "stream_lowered", lower)
-    monkeypatch.setattr(engine, "stream_lowered", lower)
+    for replacement, name in ((lower, "stream_lowered"), (render, "lower_step")):
+        holders = _bindings_of(name)
+        assert holders, f"nothing imported holds {name}, so watching it grades nothing"
+        for module in holders:
+            monkeypatch.setattr(module, name, replacement)
     return seen
 
 
@@ -191,6 +232,14 @@ def _assert_planned_only_through_the_factory(seen: _Composition, plannings: int)
         f"{seen.lane}: {len(seen.planned)} plannings produced plans but {len(seen.lowered)} "
         f"reached the write-lowering seam — a plan this factory produced was discarded, or one "
         f"was lowered twice"
+    )
+    assert [id(step) for step in seen.rendered] == [
+        id(step) for step in seen.steps_of_lowered_plans()
+    ], (
+        f"{seen.lane}: {len(seen.rendered)} steps became statements against "
+        f"{len(seen.steps_of_lowered_plans())} held by the plans lowered here — a statement was "
+        f"rendered from a step no plan this factory produced holds, or a lowered plan's step never "
+        f"became one"
     )
     assert len(seen.planned) == plannings, (
         f"{seen.lane}: {len(seen.planned)} plannings ran on a planner this factory built, "

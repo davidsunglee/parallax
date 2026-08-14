@@ -6,10 +6,13 @@ the import statements out of the parse. A caller gets paths, ``path:line`` sites
 parse trees, and `Import` records, and decides for itself what any of it means.
 `synthetic_sources` hands it source to read in place of this tree's, which is how
 a guard is shown to fail for the shape it forbids and to pass source that merely
-resembles it.
+resembles it. Two readers ask Python instead of the text — importing every module
+and walking the subclass registry — because ancestry is a runtime fact that no
+spelling settles.
 
-Nothing here resolves a name to what it denotes. A claim about what a name MEANS
-rather than about how the source spells it is one behavior grades directly, and
+Nothing here resolves a name to what it denotes. A relative import's source
+module is completed from the importing file's own position, which the file system
+settles outright; what a name MEANS is a claim behavior grades directly, and
 approximating an interpreter to grade it here would be both weaker than that and
 a second implementation to maintain.
 
@@ -40,6 +43,7 @@ __all__ = [
     "Import",
     "all_sources",
     "declared_imports",
+    "first_party_descendants",
     "hits",
     "import_every_module",
     "parsed",
@@ -149,6 +153,26 @@ def import_every_module(over: Iterator[tuple[Path, str]]) -> None:
         importlib.import_module(_dotted(path))
 
 
+def _descendants(root: type) -> Iterator[type]:
+    yield root
+    for child in root.__subclasses__():
+        yield from _descendants(child)
+
+
+def first_party_descendants(root: type) -> list[type]:
+    """Every shipped class that is, or descends from, ``root``.
+
+    Python's own subclass registry answers this once every module is imported, so
+    no alias, qualified base spelling, or class name evades it — and a class
+    merely named like ``root`` is not in it. A class a test defines is not shipped
+    and is left out.
+    """
+    return sorted(
+        (kind for kind in _descendants(root) if kind.__module__.startswith("parallax.")),
+        key=lambda kind: (kind.__module__, kind.__qualname__),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Import:
     """One name one module imports, at the site the import statement stands.
@@ -161,7 +185,8 @@ class Import:
     importer: str
     """The dotted module doing the importing."""
     source: str
-    """The dotted module imported FROM; empty for a plain ``import x``."""
+    """The dotted module imported FROM, absolute however it was spelled; empty for
+    a plain ``import x``."""
     name: str
     """The imported attribute, or the dotted module for a plain ``import x``."""
     local: str
@@ -173,11 +198,25 @@ class Import:
         return (self.source or self.name).partition(".")[0]
 
 
+def _absolute(importer: str, path: Path, level: int, module: str) -> str:
+    """The module a ``from`` import reads from, with a relative spelling completed.
+
+    ``level`` counts directories up from the importing file's own package, which
+    is the file's parent module unless the file IS the package's ``__init__``.
+    """
+    if not level:
+        return module
+    package = importer if path.name == "__init__.py" else importer.rpartition(".")[0]
+    parts = package.split(".")
+    base = ".".join(parts[: len(parts) - (level - 1)])
+    return f"{base}.{module}" if module else base
+
+
 def _module_imports(path: Path, tree: ast.Module) -> Iterator[Import]:
     importer = _dotted(path)
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            source = "." * node.level + (node.module or "")
+            source = _absolute(importer, path, node.level, node.module or "")
             for alias in node.names:
                 yield Import(
                     site_of(path, node.lineno),
