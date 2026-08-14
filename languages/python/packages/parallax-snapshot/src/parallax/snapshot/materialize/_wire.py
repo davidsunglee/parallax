@@ -74,9 +74,13 @@ mapping, an included Entity node, or an ordered collection of either.
 
 Structural rather than nominal, deliberately: a runtime Wire value is a frozen
 built-in subclass, so it satisfies this alias while remaining directly
-JSON-serializable and structurally equal to the plain value it mirrors. Deep
-immutability is a runtime guarantee, not a static one — adding public frozen
-list and mapping types solely to spell it would make every ordinary mapping
+JSON-serializable and structurally equal to the plain value it mirrors. That
+freezing is a runtime property rather than a static one, and it holds at every
+depth against every mutation reaching a value through the instance; the base
+descriptors a caller can reach around the instance for
+(``dict.__setitem__(value, ...)``, ``list.append(value, ...)``) stay open, for
+the reason :class:`WireEntity` gives. Spelling immutability statically instead,
+through public frozen list and mapping types, would make every ordinary mapping
 statically unusable as Parallax input."""
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
