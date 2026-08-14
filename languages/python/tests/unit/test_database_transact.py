@@ -178,12 +178,13 @@ def _raise_inner(_tx: Transaction) -> None:
     raise RuntimeError("inner failure")
 
 
-def test_a_non_transactional_find_opens_no_unit_of_work_to_observe_into() -> None:
+def test_a_non_transactional_find_opens_no_unit_of_work_to_participate_in() -> None:
     # `Database.find` is outside demarcation entirely: no `begin`, no `commit`,
-    # and so no unit of work an observation could be recorded against. That is
+    # and so no unit of work whose participation its values could carry. That is
     # the demarcation fact behind the read executor's own rule — a read with no
-    # unit of work behind it is handed no observation collector and builds no
-    # observation record at all (`test_transaction_reads.py` pins that half).
+    # unit of work behind it stamps no participation and files into no index,
+    # while the values it publishes still retain the state each row observed
+    # (`test_transaction_reads.py` pins that half).
     port = RecordingPort(rows=[NEW_ROW])
     assert account_db(port).find(mm.Account.where(mm.Account.id == 7)).results() == [read_account()]
     assert [op[0] for op in port.ops] == ["read"]

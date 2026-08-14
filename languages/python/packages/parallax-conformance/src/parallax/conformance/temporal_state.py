@@ -28,8 +28,8 @@ target is not merely incomplete but no longer current
 Non-normative engine-internal bookkeeping: never serialized, never a
 :class:`~parallax.core.unit_work.WriteInstruction` field, never consulted by
 production code (:mod:`parallax.snapshot.handle`) — the conformance family's own
-translation-layer state, mirroring how a real caller would have read the current
-milestone via an earlier transaction-scoped find.
+translation-layer state, standing in for the current milestone a real caller
+would hold on the source value an earlier find returned.
 """
 
 from __future__ import annotations

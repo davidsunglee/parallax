@@ -369,7 +369,9 @@ def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None
 # --------------------------------------------------------------------------- #
 def test_versioned_update_without_a_row_carried_version_requires_observation() -> None:
     update = KeyedWrite("update", "Account", ({"id": 1, "balance": 50.00},))
-    with pytest.raises(opt_lock.UnobservedVersionError, match="prior transaction-scoped"):
+    with pytest.raises(
+        opt_lock.UnobservedVersionError, match="requires the version its source value observed"
+    ):
         _lower(update, ACCOUNT)
 
 
@@ -460,19 +462,23 @@ def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None
 
 
 def test_versioned_delete_without_an_observation_requires_observation() -> None:
-    # A keyed DELETE of a versioned row this unit of work never observed raises
-    # in EITHER mode, exactly as a keyed UPDATE does (m-opt-lock; python.md §5
-    # "A keyed update or delete of a versioned row this unit of work never
-    # observed raises in either mode") — the framework never issues an implicit
-    # resolving read on behalf of a keyed write.
+    # A keyed DELETE settled with no observed version raises in EITHER mode,
+    # exactly as a keyed UPDATE does (m-opt-lock; python.md §5): the framework
+    # never issues an implicit resolving read on behalf of a keyed write, so a
+    # write that reached settlement without the version its source observed has
+    # nothing to advance from.
     delete = KeyedWrite("delete", "Account", ({"id": 3},))
-    with pytest.raises(opt_lock.UnobservedVersionError, match="prior transaction-scoped"):
+    with pytest.raises(
+        opt_lock.UnobservedVersionError, match="requires the version its source value observed"
+    ):
         _lower(delete, ACCOUNT, concurrency="optimistic")
 
 
 def test_versioned_delete_without_an_observation_raises_in_locking_mode_too() -> None:
     delete = KeyedWrite("delete", "Account", ({"id": 3},))
-    with pytest.raises(opt_lock.UnobservedVersionError, match="prior transaction-scoped"):
+    with pytest.raises(
+        opt_lock.UnobservedVersionError, match="requires the version its source value observed"
+    ):
         _lower(delete, ACCOUNT, concurrency="locking")
 
 
@@ -654,8 +660,8 @@ def test_insert_then_update_coalesces_to_one_final_value_insert() -> None:
 def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
     # m-unit-work-009's canonical combined order: three objects, one flush. BOTH
     # the update's and the delete's version (m-opt-lock's own prior-observation
-    # requirement) come from THIS unit of work's own recorded observation —
-    # never a row-carried value. `_flush_and_lower`'s own `locking` preference
+    # requirement) come from the observation each write carries — never a
+    # row-carried value. `_flush_and_lower`'s own `locking` preference
     # resolves Account to the Locking strategy, under which neither renders a
     # gate.
     statements = _flush_and_lower(

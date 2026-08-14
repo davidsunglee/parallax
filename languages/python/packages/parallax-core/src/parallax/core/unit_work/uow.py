@@ -40,10 +40,9 @@ from weakref import WeakValueDictionary
 
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work.clock import Clock, TransactionInstant
-from parallax.core.unit_work.instructions import WriteInstruction
-from parallax.core.unit_work.materialized import MaterializedWriteGroup, ObservedKeyedWrite
+from parallax.core.unit_work.materialized import BufferItem
 from parallax.core.unit_work.plan import WritePlan
-from parallax.core.unit_work.planner import BufferItem, ObservedStateKey
+from parallax.core.unit_work.planner import ObservedStateKey
 from parallax.core.unit_work.retain import ParticipationToken, RetainedObservation
 from parallax.core.unit_work.strategy import Concurrency
 from parallax.core.unit_work.write_planner import PlanningRequest, SubjectIdentity, WritePlanner
@@ -141,7 +140,6 @@ class UnitOfWork:
 
     __slots__ = (
         "_buffer",
-        "_claims",
         "_closed",
         "_frame_depth",
         "_observations",
@@ -193,6 +191,9 @@ class UnitOfWork:
         # no cleanup of its own: it is reachable only through the per-thread
         # active binding, which `run_outermost` already clears on every exit.
         self.companion: object | None = None
+        # The buffered writes, each carrying the claim its verb resolved for it —
+        # the strong reference that keeps a write's evidence alive after its
+        # source value is released, and what a successful flush spends through.
         self._buffer: list[BufferItem] = []
         # The ledger is an INDEX, not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
@@ -203,10 +204,6 @@ class UnitOfWork:
         self._observations: WeakValueDictionary[ObservedStateKey, RetainedObservation] = (
             WeakValueDictionary()
         )
-        # The claims the buffered writes carry, in buffer order — the strong
-        # reference that keeps a write's evidence alive after its source value is
-        # released, and what a successful flush spends.
-        self._claims: list[RetainedObservation] = []
         # This scope's participation identity: what a read of THIS unit of work
         # stamps on the values it produces, and what an effective-Locking write
         # tests its source against.
@@ -230,28 +227,23 @@ class UnitOfWork:
         self._ensure_open()
         return self._participation
 
-    def buffer(
-        self,
-        instruction: WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup,
-        *,
-        claim: RetainedObservation | None = None,
-    ) -> None:
-        """Buffer a write instruction — bare, travelling with the observation its
+    def buffer(self, instruction: BufferItem) -> None:
+        """Buffer a write instruction — bare, travelling with the evidence its
         verb resolved for it
         (:class:`~parallax.core.unit_work.materialized.ObservedKeyedWrite`), or as
         a materializing predicate write's
         :class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup` —
         for flush at the unit-of-work boundary.
 
-        ``claim`` is the retained observation this write settles against, held
-        here for as long as the write is buffered. That is what keeps a write's
-        evidence alive once the caller releases the source value it came from,
-        and what a successful flush spends.
+        A carrier built from a read's retained claim brings that claim with it
+        (:func:`~parallax.core.unit_work.materialized.buffered_write`), so the
+        buffer is what keeps a write's evidence alive once the caller releases
+        the source value it came from, and what a successful flush spends it
+        through. A write the flush's earlier stages retire takes its claim out
+        of that flush with it.
         """
         self._ensure_open()
         self._buffer.append(instruction)
-        if claim is not None:
-            self._claims.append(claim)
 
     def retain(self, observation: RetainedObservation) -> RetainedObservation:
         """Index ``observation`` under the state it observed, answering the
@@ -305,11 +297,13 @@ class UnitOfWork:
         :class:`WriteBatchStarting` notification first and the executor second,
         so the batch is announced before planning can fail it.
 
-        Evidence is spent AFTER the executor returns, and only by a flush that
-        emitted DML: a plan finalization eliminated entirely leaves the buffered
-        intent's evidence eligible, because no write of it survived to the
-        database. A flush that fails aborts the transaction, so evidence needs no
-        restoring.
+        Evidence is spent AFTER the executor returns, and only by the writes that
+        survived finalization: a buffered intent coalesced away or eliminated as
+        a no-op leaves its evidence eligible, because no write of it reached the
+        database — even where a sibling write in the same batch did. Finalization
+        is what names those survivors' claims, since it alone knows which items
+        it retired. A flush that fails aborts the transaction, so evidence needs
+        no restoring.
         """
         self._ensure_open()
         if not self._buffer:
@@ -322,14 +316,11 @@ class UnitOfWork:
             concurrency=self.settings.concurrency,
             buffered_writes=tuple(self._buffer),
         )
-        plan = self._planner.plan(request)
-        claims = tuple(self._claims)
+        finalized = self._planner.finalize(request)
         self._buffer.clear()
-        self._claims.clear()
-        self.flush_executor(plan, trigger=trigger)
-        if plan.steps:
-            for claim in claims:
-                claim.consume()
+        self.flush_executor(finalized.plan, trigger=trigger)
+        for claim in finalized.claims:
+            claim.consume()
 
     def mark_rollback_only(self, cause: BaseException) -> None:
         """Doom the transaction: commit will be refused. The first cause is kept."""
@@ -360,7 +351,6 @@ class UnitOfWork:
         # Buffered claims are released rather than spent: nothing this scope wrote
         # survives, so evidence a later scope is handed is still about stored state.
         self._buffer.clear()
-        self._claims.clear()
         self._observations.clear()
 
     def run_outermost[T](self, body: Callable[[UnitOfWork], T]) -> T:

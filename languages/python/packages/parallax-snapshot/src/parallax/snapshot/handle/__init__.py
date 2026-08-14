@@ -42,7 +42,7 @@ public-surface check promises. Where the exported names live:
   no Entity Class to materialize into, :class:`SnapshotMaterializationError`,
   the one translation of a graph-construction or lifecycle failure at the
   materialization boundary, and :class:`UnobservedWriteError`, the refusal of an
-  Observation Key naming nothing this unit of work recorded. All four are
+  Observed State Key naming no evidence this unit of work can reach. All four are
   defined in a dependency-free leaf so every raiser can name them.
 - :mod:`~parallax.snapshot.handle._features` — :class:`DeferredFeatureError`,
   beside the fixed inventory of Deferred Execution Features it reports and the

@@ -61,7 +61,8 @@ class WireDatabaseView:
     """``db.wire`` — the Wire read interface outside any transaction.
 
     Non-transactional exactly as ``db.find`` is: no read lock, no Concurrency
-    Preference, and no observation record.
+    Preference, and no participation stamped on the values it publishes — whose
+    own retained evidence an effective-Optimistic write may still settle against.
     """
 
     __slots__ = ("_find",)

@@ -23,10 +23,14 @@ m-opt-lock.md`; `python.md` §5; ADR 0013):
    update before it is ever settled. This module has nothing to add to an
    ordering its two callers already establish structurally.
 2. **Prior-observation rule** (:func:`require_observed`): the version driving a
-   keyed update/delete of a versioned row must already have been observed by
-   this unit of work; unobserved raises before any DML. Caller-authored version
-   values are never accepted as gate or new version — the observed value is the
-   only legitimate source, and the new version is always ``observed + 1``.
+   keyed update/delete of a versioned row must be one a read actually observed
+   and the write's own source carries; unobserved raises before any DML. Which
+   reads qualify is the write-evidence rule's answer, under the target Entity's
+   Effective Concurrency Strategy — a read of the writing transaction under
+   Locking, any authentic source's retained observation under Optimistic — and
+   is settled before a write is ever buffered. Caller-authored version values are
+   never accepted as gate or new version: the observed value is the only
+   legitimate source, and the new version is always ``observed + 1``.
 3. **Gate/advance** (:data:`INITIAL_VERSION`, :func:`advance`): every versioned
    UPDATE sets ``version = observed + 1`` under BOTH strategies; the Optimistic
    strategy additionally gates ``and <version> = ?`` binding the observed value
@@ -133,8 +137,8 @@ class CallerAuthoredVersionError(RuntimeError):
     framework-owned"; ADR 0013).
 
     The version is framework-owned end to end: the new version is always
-    runtime-computed (``observed + 1``) from this unit of work's own recorded
-    observation, never a value the row carries. A row that still authors the
+    runtime-computed (``observed + 1``) from the observation the write's own
+    source retained, never a value the row carries. A row that still authors the
     version attribute is refused loudly here — never silently double-assigned
     against whichever of the two (the row's value, or the derived advance)
     happened to win.
@@ -142,7 +146,8 @@ class CallerAuthoredVersionError(RuntimeError):
 
 
 class UnobservedVersionError(RuntimeError):
-    """A keyed update/delete of a versioned row this unit of work never observed.
+    """A keyed update/delete of a versioned row reached settlement carrying no
+    observed version.
 
     The new version is always computed from the observed one (``observed + 1``),
     so with no observed version there is nothing to advance from — and, in
@@ -154,14 +159,15 @@ class UnobservedVersionError(RuntimeError):
 
 
 class UnobservedMilestoneError(RuntimeError):
-    """A keyed temporal update/terminate of a milestone this unit of work never
-    observed.
+    """A keyed temporal update/terminate reached the verb carrying no observed
+    milestone.
 
     Temporal ``update``/``terminate`` (and their ``*Until`` window forms)
     follow the SAME prior-observation rule as versioned writes (`python.md` §5):
-    the close targets — and, under optimistic mode, gates on — the milestone
-    this unit of work observed via a transaction-scoped read, and in locking
-    mode that read's shared lock is the ungated close's only protection. The
+    the close targets — and, under optimistic mode, gates on — the milestone its
+    source value observed, and in locking mode that read is the writing
+    transaction's own, whose shared lock is the ungated close's only protection.
+    The
     framework never issues an implicit resolving ``SELECT`` on behalf of a
     keyed write: this is a read-before-write programming error, raised before
     any DML runs, in EITHER concurrency mode. (The neutral conformance lane is
@@ -173,28 +179,28 @@ class UnobservedMilestoneError(RuntimeError):
 def require_observed(entity: str, observation: WriteObservation | None) -> int:
     """The version a keyed update/delete of a versioned row advances from.
 
-    Raises :class:`UnobservedVersionError` when this unit of work recorded no
-    Version Observation for the row (`m-opt-lock` "Version values are
+    Raises :class:`UnobservedVersionError` when the write reached settlement
+    carrying no Version Observation (`m-opt-lock` "Version values are
     framework-owned"). A row that itself carries an explicit version value is
     refused earlier, by :func:`reject_caller_authored_version` — this function's
     own row is always the framework-derived one, never a caller-authored version.
     """
     if not isinstance(observation, VersionObservation):
         raise UnobservedVersionError(
-            f"{entity}: a keyed update/delete of a versioned row requires a version this "
-            "unit of work already observed (a prior transaction-scoped find) — the "
-            "framework never issues an implicit resolving read on behalf of a keyed write"
+            f"{entity}: a keyed update/delete of a versioned row requires the version its "
+            "source value observed (a prior find) — the framework never issues an implicit "
+            "resolving read on behalf of a keyed write"
         )
     return observation.observed_version
 
 
 def require_observed_milestone(entity: str, observation: WriteObservation | None) -> None:
-    """The transaction-scoped-observation license for a keyed temporal
-    update/terminate (`python.md` §5 "Temporal `update`/`terminate` follow the
-    same prior-observation rule as versioned writes").
+    """The observed-milestone license for a keyed temporal update/terminate
+    (`python.md` §5 "Temporal `update`/`terminate` follow the same
+    prior-observation rule as versioned writes").
 
-    Raises :class:`UnobservedMilestoneError` when this unit of work never
-    observed the row's milestone via a transaction-scoped find — the temporal
+    Raises :class:`UnobservedMilestoneError` when the value the verb was handed
+    carries no observed milestone — the temporal
     sibling of :func:`require_observed`, enforced at the DEVELOPER verb
     (`parallax.snapshot.handle.Transaction`'s keyed temporal writes), never at
     the shared lowering: the neutral conformance engine legitimately lowers
@@ -204,9 +210,9 @@ def require_observed_milestone(entity: str, observation: WriteObservation | None
     """
     if not isinstance(observation, TemporalObservation):
         raise UnobservedMilestoneError(
-            f"{entity}: a keyed temporal update/terminate requires a milestone this "
-            "unit of work already observed (a prior transaction-scoped find) — the "
-            "framework never issues an implicit resolving read on behalf of a keyed write"
+            f"{entity}: a keyed temporal update/terminate requires the milestone its "
+            "source value observed (a prior find) — the framework never issues an implicit "
+            "resolving read on behalf of a keyed write"
         )
 
 
@@ -254,12 +260,11 @@ def reject_caller_authored_version(entity: str, version_attr: str) -> None:
     even runs: the version is framework-owned end to end, so a row-carried
     value is never a legitimate alternative source, observed or not — it is
     refused outright, never silently preferred over (or overridden by) the
-    unit of work's own recorded observation.
+    observation the write's source retained.
     """
     raise CallerAuthoredVersionError(
         f"{entity}: a keyed update's row carries an explicit value for {version_attr!r} — "
         "the optimistic-lock version is framework-owned end to end and is never caller "
-        "data; the advance is always derived from this unit of work's own recorded "
-        "observation (a prior transaction-scoped find), never a row-carried value "
-        "(m-opt-lock)"
+        "data; the advance is always derived from the observation the write's source "
+        "retained (a prior find), never a row-carried value (m-opt-lock)"
     )

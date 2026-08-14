@@ -92,7 +92,7 @@ from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, MaterializedReadRow, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, query_pin
-from parallax.core.unit_work import Concurrency
+from parallax.core.unit_work import Concurrency, RetainedObservation
 from parallax.snapshot._read_result import (
     FindResult,
     HistoryFindResult,
@@ -128,6 +128,7 @@ from parallax.snapshot.materialize import (
     merge_graph_input,
     observable_columns,
     require_publishable,
+    source_hint_of,
     unwind_tree,
     wire_roots,
 )
@@ -147,6 +148,7 @@ __all__ = [
     "find",
     "find_history",
     "find_rows",
+    "published_claims",
     "read_rows",
     "stage_publishable_rows",
     "typed_publication",
@@ -1124,6 +1126,49 @@ def _edge_pin(edge: Edge) -> Pin:
     rendering needs no per-entity axis list of its own.
     """
     return Pin(tx_time=edge.tx_time_or_none, valid_time=edge.valid_time_or_none)
+
+
+def published_claims(snapshot: Snapshot[Any]) -> tuple[RetainedObservation, ...]:
+    """The retained claims the Entity nodes ``snapshot`` PUBLISHED carry, each
+    once, in the order the walk reaches them.
+
+    Read off the published values rather than off the read's own retained
+    sources, because publication is what settles ownership: a claim belongs to an
+    Entity node a caller was handed (`m-unit-work` "Observation ownership"), and
+    a projection no published root reaches is a value that does not exist. A
+    non-hydrating root excludes its whole tree — its hydratable ancestors and
+    siblings with it — so reading the sources instead would leave a first-party
+    holder with write authority for a row nothing published, addressable by its
+    observed state alone.
+
+    The Wire result's own, which is the one a first-party caller collects: the
+    typed lane publishes each node's claim into that node's lifecycle state,
+    where the value itself is what holds it. Graph aliases are one node and
+    therefore one claim, and a frozen Wire node is a ``dict`` and so unhashable,
+    which is why the visited set is identity-keyed over objects the Snapshot
+    holds for the walk's whole duration.
+    """
+    claims: dict[RetainedObservation, None] = {}
+    visited: set[int] = set()
+    frontier: list[object] = [
+        cast("InvalidData[object]", root).data if isinstance(root, InvalidData) else root
+        for root in snapshot._roots  # pyright: ignore[reportPrivateUsage] - this module owns Snapshot
+    ]
+    cursor = 0
+    while cursor < len(frontier):
+        value = frontier[cursor]
+        cursor += 1
+        if isinstance(value, list):
+            frontier.extend(cast("list[object]", value))
+            continue
+        if not isinstance(value, WireEntity) or id(value) in visited:
+            continue
+        visited.add(id(value))
+        hint = source_hint_of(value)
+        if hint is not None and hint.observation is not None:
+            claims[hint.observation] = None
+        frontier.extend(cast("Mapping[str, object]", value).values())
+    return tuple(claims)
 
 
 def wire_from_find_result(result: FindResult, meta: Metamodel) -> Snapshot[WireEntity]:
