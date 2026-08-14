@@ -207,8 +207,9 @@ Retain the branch matching the lifecycle profile; do not answer both.
   Show commit-on-success and rollback-on-exception, and state how callback
   results are withheld when rollback or commit fails.
 - **(decide and record — All slices)** Nested/re-entrant transaction behavior,
-  owner/concurrency rules, and the selected per-transaction locking or optimistic
-  participation mode.
+  owner/concurrency rules, the per-transaction `locking` or `optimistic`
+  Concurrency Preference and its default, and how each participating Entity's
+  Effective Concurrency Strategy is derived from that preference.
 - **(decide and record — All slices)** Buffered/batched write surfacing, flush
   controls, foreign-key ordering, and read-your-own-writes behavior.
 - **(decide and record — All slices)** Developer-facing Transaction-Time-Only

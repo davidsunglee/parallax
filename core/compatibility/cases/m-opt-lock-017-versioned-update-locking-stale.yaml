@@ -3,7 +3,8 @@
 #
 # The update arm of the rule m-opt-lock-016 pins for the delete, and the
 # locking-mode counterpart of m-opt-lock-005's gated update conflict. The
-# concurrency mode alone decides whether an observation-requiring write renders a
+# target Entity's Effective Concurrency Strategy alone decides whether an
+# observation-requiring write renders a
 # gate — uniformly across update, delete, and close — so this locking-mode keyed
 # UPDATE emits `update account set balance = ?, version = ? where id = ?`: it
 # still ADVANCES the version (the advance is unconditional, m-opt-lock-002), but

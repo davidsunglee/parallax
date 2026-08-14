@@ -244,10 +244,12 @@ modules build on. `readOnly` marks an attribute that is immutable after insert
 (an implementation **MUST NOT** emit it in an `UPDATE` `set`).
 `optimisticLocking: true` **names** the entity's **version attribute**
 (`m-opt-lock`): at most one per entity, an integer that **every** issued `UPDATE`
-**advances**, and that a write **gates on** only when the unit of work runs in
-optimistic mode (`m-unit-work` strategy selection) — turning a stale-version write
-into a detectable conflict. The flag names the column; it does not by itself
-decide the strategy — that is the unit of work's per-transaction choice. The flag
+**advances**, and that a write **gates on** only when that entity's Effective
+Concurrency Strategy is Optimistic (`m-unit-work` strategy selection) — turning a
+stale-version write into a detectable conflict. The flag names the column; it
+does not by itself decide the strategy — the unit of work's one Concurrency
+Preference and the Optimistic Lock Facet this flag feeds derive that strategy per
+entity. The flag
 is purely metamodel here; its conflict-detection semantics are `m-opt-lock`, and
 the object-lifecycle states that decide *when* an attribute is written (in-memory
 vs. persisted vs. detached) are `m-detach`.

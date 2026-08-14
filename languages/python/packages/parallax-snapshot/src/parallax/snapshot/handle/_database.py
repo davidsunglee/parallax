@@ -302,7 +302,7 @@ class Database:
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         """Execute ``query`` exactly once, materializing fully, and return
         ``Snapshot[S]`` (spec §3). Non-transactional: no read lock, no
-        participation mode. ``.history()`` / ``.as_of_range()`` return one root
+        Concurrency Preference. ``.history()`` / ``.as_of_range()`` return one root
         per milestone, each edge-pinned at its own milestone's from-instant.
 
         Target resolution and query validation are the shared
@@ -349,7 +349,7 @@ class Database:
         The gate, the milestone-set dispatch, and the executor entry are the
         read; which materializer publishes its result is decided only after
         execution has finished. Non-transactional in the same three ways for
-        both: no read lock, no participation mode, no observation record.
+        both: no read lock, no Concurrency Preference, no observation record.
         """
         preflight(node, model=self._meta, form="graph")
         if scans_an_axis(node):
@@ -371,7 +371,7 @@ class Database:
         itself, exactly as a graph-form root does.
 
         Non-transactional, exactly as :meth:`find` is: no read lock, no
-        participation mode, and no observation record.
+        Concurrency Preference, and no observation record.
         """
         return read_rows(query, self._meta, self._dialect, self._port)
 

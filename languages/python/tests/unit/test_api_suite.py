@@ -253,7 +253,7 @@ def test_read_and_graph_story_snippets_render_no_private_name() -> None:
 def test_read_story_snippet_single_sources_the_concurrency_mode() -> None:
     # Review remediation finding 2: `m-read-lock-002` (locking) and `-005`
     # (optimistic) run the SAME `db.find` expression under DIFFERENT
-    # participation modes — the entire point of the pair. The rendered
+    # Concurrency Preferences — the entire point of the pair. The rendered
     # snippet must show the mode (never render the two identically), and it
     # must be the SAME mode the story's own `concurrency` field drives
     # execution with (`test_story_run.py`'s generic runner branches on that

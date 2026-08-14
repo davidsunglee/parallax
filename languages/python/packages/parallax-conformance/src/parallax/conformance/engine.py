@@ -2011,7 +2011,7 @@ def _compile_find(
     step: Mapping[str, object],
     model: AcceptedMetamodel,
     dialect: Dialect,
-    concurrency: Concurrency | None,
+    concurrency: Concurrency,
     *,
     result_form: Literal["row", "instance"] = "instance",
 ) -> CompiledRead:
@@ -2023,18 +2023,17 @@ def _compile_find(
     statement production actually ran, so this function answers the compile lane
     alone.
 
-    A scenario find is an in-transaction object find; ``concurrency`` (the case's
-    own ``when.uow.concurrency``) is the unit of work's Concurrency PREFERENCE,
-    which resolves against the step's own target Entity into the Effective
+    A scenario find is an in-transaction object find, so ``concurrency`` is the
+    scenario's RESOLVED Concurrency Preference (:func:`_concurrency` — declared
+    ``when.uow.concurrency`` or the `optimistic` default), never absent. It
+    resolves against the step's own target Entity into the Effective
     Concurrency Strategy that decides the ``m-sql`` shared-row-lock suffix
     (``for share of t0``) — through
     :func:`~parallax.snapshot.handle.entity_read_lock`, the same seam the
     production `Transaction.find` derives every level's lock through. The
     Locking strategy renders the suffix after every clause; the Optimistic one
     renders none (the `m-txtime-write-008` / `m-bitemp-write-014` coalescing
-    witnesses exercise that branch). ``None`` ALSO renders none — a read case
-    declaring no `when.uow` at all, which models the plain, non-transactional
-    `db.find` surface.
+    witnesses exercise that branch).
 
     ``result_form`` defaults to ``instance`` — an ORDINARY (managed) scenario
     find mirrors production ``Transaction.find`` (`m-sql` *Read projection*,
@@ -2098,7 +2097,7 @@ def _run_standalone_find(
     port: DbPort,
     model: AcceptedMetamodel,
     dialect: Dialect,
-    concurrency: Concurrency | None,
+    concurrency: Concurrency,
     step: Mapping[str, object],
 ) -> handle.Snapshot[handle.WireEntity]:
     """Run one UNGROUPED scenario find step through the production Wire read.
@@ -2112,8 +2111,6 @@ def _run_standalone_find(
     """
     query = _step_query(step)
     db = handle.Database(port, model, dialect=dialect)
-    if concurrency is None:
-        return db.wire.find(query)
     return db.transact(lambda tx: tx.wire.find(query), concurrency=concurrency).value
 
 
@@ -2161,7 +2158,6 @@ def _lower_scenario_step(
     context: _GroupContext,
     step: Mapping[str, object],
     index: int,
-    find_lock: Concurrency | None,
     group_observations: GroupObservations,
 ) -> _LoweredStep:
     """One scenario step's pointer + DML, PURE — the compile lane's own per-step
@@ -2173,7 +2169,9 @@ def _lower_scenario_step(
     known.
     """
     if "write" not in step:
-        statement = _compile_find(step, context.model, context.dialect, find_lock).statement
+        statement = _compile_find(
+            step, context.model, context.dialect, context.concurrency
+        ).statement
         return _LoweredStep(f"/scenario/{index}/objectQuery", (statement,), False, False)
     raw_write = step["write"]
     rollback = step.get("rollback") is True
@@ -2250,7 +2248,6 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     lowered: list[_LoweredStep] = []
     try:
         steps = _scenario_steps(case)
-        find_lock = concurrency
         doomed_spans = _doomed_group_spans(case.path.name, steps)
         index = 0
         while index < len(steps):
@@ -2260,16 +2257,14 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
                     for grouped in range(index, end + 1):
                         lowered.append(
                             _lower_scenario_step(
-                                context, steps[grouped], grouped, find_lock, group_observations
+                                context, steps[grouped], grouped, group_observations
                             )
                         )
                 index = end + 1
                 continue
             step = steps[index]
             with context.shadow.staged(doomed=step.get("rollback") is True):
-                lowered.append(
-                    _lower_scenario_step(context, step, index, find_lock, group_observations)
-                )
+                lowered.append(_lower_scenario_step(context, step, index, group_observations))
             index += 1
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -3060,8 +3055,9 @@ def _run_group_step(
     executes anything, and buffers each resolved write through
     ``tx.write_neutral`` carrying the evidence production itself issued. A FIND
     step runs through ``tx.observed_read`` — the participating Wire read, which
-    force-flushes any pending buffered write, takes the transaction's own read
-    lock, records what a later write settles against, and brackets its own Read
+    force-flushes any pending buffered write, takes the read lock its target
+    Entity's own Effective Concurrency Strategy calls for, records what a later
+    write settles against, and brackets its own Read
     Trace, exactly as a real ``Transaction.find`` does — and publishes the records
     that recording filed into both halves of ``state``, which this function
     extends in place.
@@ -3953,7 +3949,6 @@ def run_scenario_case(
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
-    find_lock = concurrency
     shadow = TemporalShadow()
     spans = _scenario_uow_spans(case.path.name, steps)
     if spans is None:
@@ -4004,7 +3999,7 @@ def run_scenario_case(
                     round_trips += pair_log.round_trips if pair_log is not None else 0
                     index += 2
                     continue
-                read = _run_standalone_find(port, model, dialect, find_lock, step)
+                read = _run_standalone_find(port, model, dialect, concurrency, step)
                 round_trips += read.execution.round_trips
                 lowered.append(
                     _LoweredStep(
@@ -4300,7 +4295,8 @@ def _resolve_conflict_writes(
     reserved ``observedVersion`` into a Version Observation (`m-opt-lock`;
     ADR 0013) and validate the durable instruction it leaves. ``mutation`` is the
     case's own ``when.mutation`` verb — a keyed UPDATE or DELETE, the two
-    non-temporal shapes whose gate the concurrency mode decides uniformly; a
+    non-temporal shapes whose gate the target Entity's Effective Concurrency
+    Strategy decides uniformly; a
     temporal close's own conflict form (`handle.plan_temporal_close`) is a
     distinct shape.
 
@@ -4718,10 +4714,13 @@ def _refuse_unentitled_observed_edge(
       The two authoring locations are alternatives, not a default and an
       override;
     * ``observedTxStart`` standing ALONE is the address form's gate candidate,
-      and a ``locking`` close renders no gate, so it is entitled only under
-      ``optimistic``. Beside ``observedValidStart`` it is instead the edge's
-      Transaction-Time half, which selects the milestone in either mode. Locking
-      is the default, so an unstated mode is refused with an explicit one.
+      and a close under the Locking strategy renders no gate, so it is entitled
+      only where the preference resolves to ``optimistic`` — which a temporal
+      target's Transaction-Time-derived key then carries into the Optimistic
+      strategy. Beside ``observedValidStart`` it is instead the edge's
+      Transaction-Time half, which selects the milestone under either strategy.
+      The preference defaults to ``optimistic``, so only an explicitly
+      ``locking`` case is refused.
 
     The Transaction-Time-Only arm of the first entitlement lives where the edge
     is built (:func:`temporal_state.observed_edge`), which refuses a coordinate

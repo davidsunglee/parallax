@@ -1,5 +1,5 @@
 # A locking-mode milestone close staged after an AUDIT read of the same key commits
-# UNGATED (m-opt-lock "Concurrency mode determines the gate uniformly" + m-read-lock
+# UNGATED (m-opt-lock "Effective Concurrency Strategy determines the gate uniformly" + m-read-lock
 # "Automatic read-lock correctness", composed inside one `uow` group).
 #
 # One unit of work reads Balance id 1 at Latest (the current milestone, value 150),
@@ -13,7 +13,8 @@
 # the superseded milestone the audit read returned untouched.
 #
 # The semantic distinction is that the gate decision and the address are properties of
-# the unit's mode and of the milestone the close observes, not of the transaction's
+# Balance's own Effective Concurrency Strategy and of the milestone the close observes,
+# not of the transaction's
 # reading history: staging a second, historical read of the same key between the first
 # find and the write changes neither. An implementation that emitted an `and in_z = ?`
 # gate here, or that took no shared lock on either find, fails the case.

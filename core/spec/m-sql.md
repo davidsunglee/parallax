@@ -732,8 +732,9 @@ state, not SQL — but it executes two dialect-specific SQL fragments through th
 
 ### Read-lock suffix
 
-An in-transaction **object find** that intends to write carries the dialect's
-shared-row-lock suffix (`m-read-lock`, `m-dialect`). The read-lock is an
+An in-transaction **object find** whose target Entity's Effective Concurrency
+Strategy is Locking carries the dialect's shared-row-lock suffix (`m-read-lock`,
+`m-dialect`); one under the Optimistic strategy carries none. The read-lock is an
 **object-find property**, and the `m-dialect` layer **owns applying** the lock
 (whether and where to append it — see `m-dialect`'s *Read-lock application*).
 For Postgres the suffix is `for share of t0` — `for share` qualified by the root
