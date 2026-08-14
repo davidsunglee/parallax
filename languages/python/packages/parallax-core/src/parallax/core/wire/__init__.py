@@ -125,19 +125,34 @@ def _is_canonical(neutral_type: NeutralType, decoded: object, written: object) -
     Every spelling but a float's is settled by comparing it to the encoding, because
     the written value carries exactly what the value it names does. A float's does not:
     many JSON numbers name one binary float, so ``0.1`` and ``0.10000000000000001`` are
-    two spellings of one value and only the first is this table's. The digits are
-    therefore what is compared, as the exact numbers they name — ``20`` and ``20.0``
-    stay one number — and they are compared against the digits a writer of this table's
-    own output stores, which is the encoded float's shortest rendering.
-
-    A float that reached here carrying no digits is a native carrier a caller chose
-    rather than a spelling some writer produced, so the carrier IS the number it means
-    and there is no second spelling to distinguish it from.
+    two spellings of one value and only the first is this table's. What a float compares
+    is therefore the NUMBER each side spells rather than either side's carrier — the
+    binary float carrying a number is routinely a different number than the digits name,
+    and it is the digits a writer of this table's output stores.
     """
     canonical = encode_wire(neutral_type, decoded)
-    if isinstance(neutral_type, Float32 | Float64) and isinstance(written, AuthoredNumber):
-        return _decimal.Decimal(written.literal) == _decimal.Decimal(repr(canonical))
+    if isinstance(neutral_type, Float32 | Float64) and isinstance(written, int | float):
+        return _spelled_number(written) == _spelled_number(cast("float", canonical))
     return canonical == written
+
+
+def _spelled_number(value: int | float) -> _decimal.Decimal:
+    """The exact number a JSON number carrier spells.
+
+    A JSON number is a number, so the carrier a writer chose or a parser answered with
+    decides nothing: an integer spells itself, and a float spells the shortest digits
+    that name it — what a serializer writes for it — so ``20`` and ``20.0`` are one
+    number and so are ``1e30`` and the integer ``10**30``, though the binary float
+    holding either is a third number equal to neither.
+
+    An :class:`AuthoredNumber` is the one carrier that keeps its own digits, which is
+    what leaves ``0.10000000000000001`` distinguishable from the ``0.1`` it parses to.
+    """
+    if isinstance(value, AuthoredNumber):
+        return _decimal.Decimal(value.literal)
+    if isinstance(value, float):
+        return _decimal.Decimal(repr(value))
+    return _decimal.Decimal(value)
 
 
 def _exact_decimal(value: _decimal.Decimal, scale: int) -> str:

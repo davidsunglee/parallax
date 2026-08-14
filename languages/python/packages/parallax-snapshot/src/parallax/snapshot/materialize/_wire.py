@@ -98,7 +98,12 @@ class WireEntity(Mapping[str, "WireValue"]):
     read-only and non-constructible: the runtime value is a private frozen
     ``dict`` subclass, so ordinary indexing, iteration, ``get``, ``items``, and
     the rest of the mapping protocol work while ``isinstance(value, dict)``
-    stays true and mutation raises :class:`TypeError`.
+    stays true and every mutation reaching the value — each named mutator, the
+    operators, and ``value.__init__(...)`` — raises :class:`TypeError`. Being a
+    ``dict`` is the bound on that: a caller going around the instance to the
+    base descriptor (``dict.__setitem__(value, ...)``) reaches the layout that
+    makes the value a ``dict`` at all, and no ``dict`` subclass in the language
+    refuses it.
 
     Nominal identity states provenance, never authority. It cannot prove which
     concurrency evidence a write may use, so a keyed verb still resolves that

@@ -203,18 +203,33 @@ def _encoded_member(type_spelling: str, value: Any) -> Any:
     if member is _NOT_ENCODED:
         return _NOT_ENCODED
     encoded = encode_leaf(type_spelling, member)
-    if type_spelling in ("float32", "float64") and isinstance(value, AuthoredNumber):
+    if type_spelling in ("float32", "float64"):
         # A float is the one row whose stored value carries more than the value it
-        # names: many JSON numbers name one binary float, so the comparison is of the
-        # authored DIGITS against the digits a writer of this table stores — as the
-        # exact numbers they name, so `20` and `20.0` stay one number while
-        # `0.10000000000000001` and `0.1` stay two.
-        return (
-            member
-            if decimal.Decimal(value.literal) == decimal.Decimal(repr(encoded))
-            else _NOT_ENCODED
-        )
+        # names: many JSON numbers name one binary float, so what is compared is the
+        # NUMBER each side spells rather than either side's carrier, which is
+        # routinely a different number than the digits name.
+        return member if _spelled_number(value) == _spelled_number(encoded) else _NOT_ENCODED
     return member if encoded == value else _NOT_ENCODED
+
+
+def _spelled_number(value: Any) -> decimal.Decimal:
+    """The exact number a JSON number carrier spells.
+
+    A JSON number is a number, so the carrier a writer chose or a parser answered with
+    decides nothing: an integer spells itself, and a float spells the shortest digits
+    that name it — what a serializer writes for it — so `20` and `20.0` are one number
+    and so are `1e30` and the integer `10**30`, though the binary float holding either
+    is a third number equal to neither.
+
+    An :class:`~reference_harness.portable_literal.AuthoredNumber` is the one carrier
+    that keeps its own digits, which is what leaves `0.10000000000000001`
+    distinguishable from the `0.1` it parses to.
+    """
+    if isinstance(value, AuthoredNumber):
+        return decimal.Decimal(value.literal)
+    if isinstance(value, float):
+        return decimal.Decimal(repr(value))
+    return decimal.Decimal(value)
 
 
 def _value_space_member(type_spelling: str, value: Any) -> Any:
