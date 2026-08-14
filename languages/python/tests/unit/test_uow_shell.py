@@ -31,11 +31,13 @@ from parallax.core.unit_work import (
     ObservedKeyedWrite,
     PlannedInsert,
     PlannedUpdate,
+    PlanningRequest,
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
     RollbackOnlyError,
     SystemClock,
+    TransactionInstant,
     TransactionSettings,
     UnitOfWork,
     VersionedStateKey,
@@ -318,6 +320,31 @@ def test_a_carrier_refuses_a_claim_naming_other_evidence() -> None:
             observation=VersionObservation(observed_version=7),
             claim=other,
         )
+
+
+def test_two_surviving_writes_of_one_claim_answer_it_once() -> None:
+    # Consumption records a fact about an OBSERVED STATE, so a flush spends one
+    # claim once however many of its surviving writes settled against it. Two
+    # edits of a single source value are exactly that shape: both carriers hold
+    # the identical retained observation, both survive coalescing, and both
+    # settle — so a per-carrier answer would hand the caller the same evidence
+    # twice and spend it twice.
+    state = VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7)
+    retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
+    carriers = [
+        buffered_write(KeyedWrite("update", "Account", ({"id": 1, "balance": balance},)), retained)
+        for balance in (125.00, 150.00)
+    ]
+    finalized = build_write_planner(_ACCOUNT).finalize(
+        PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=TransactionInstant(FixedClock(_FIXED)),
+            concurrency="locking",
+            buffered_writes=carriers,
+        )
+    )
+    assert len(finalized.plan.steps) == 2
+    assert finalized.claims == (retained,)
 
 
 def test_a_predicate_write_cannot_be_buffered_with_one_observation() -> None:

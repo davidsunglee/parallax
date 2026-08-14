@@ -3036,8 +3036,10 @@ or descriptor authoring form and performs no audit stamping.
   Buffered work finalization retires — folded into a pending insert, cancelled
   against one, or eliminated as a known no-op — spends none, and that holds
   per write rather than per batch: a retired write's claim stays eligible even
-  when a sibling write of the same flush executed. An aborted flush spends none
-  and needs no restoration. A keyed verb refuses a source whose evidence the
+  when a sibling write of the same flush executed. One claim that several
+  surviving writes of a flush carried is spent **once**, because what
+  consumption records is a fact about the observed state rather than about a
+  statement. An aborted flush spends none and needs no restoration. A keyed verb refuses a source whose evidence the
   target Entity's
   Effective Concurrency Strategy cannot use with `WriteEvidenceError`
   (`LookupError`), carrying its `code` and the visible `object_key` the write

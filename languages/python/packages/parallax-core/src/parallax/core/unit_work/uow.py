@@ -302,8 +302,9 @@ class UnitOfWork:
         a no-op leaves its evidence eligible, because no write of it reached the
         database — even where a sibling write in the same batch did. Finalization
         is what names those survivors' claims, since it alone knows which items
-        it retired. A flush that fails aborts the transaction, so evidence needs
-        no restoring.
+        it retired, and it names each one once however many surviving writes
+        settled against it. A flush that fails aborts the transaction, so
+        evidence needs no restoring.
         """
         self._ensure_open()
         if not self._buffer:
