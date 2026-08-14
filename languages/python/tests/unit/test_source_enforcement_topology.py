@@ -15,37 +15,27 @@ makes that true rather than merely intended: an inventory that tolerates extras
 reports a number that moved, while an exact set names the site of whatever is
 new and stays red until someone has decided about it.
 
-Most of this is stated over what the source says outright — which module an
-import reads from, which files spell a construction. One assertion instead
-imports every distribution and asks Python, because a class's ancestry is a
-runtime fact that source text only approximates.
+Every inventory stated over source is a function of the source handed to it, and
+is shown on both sides: run over synthetic source carrying the shape it forbids
+it names that site, and run over source that merely resembles it it names
+nothing. `_first_party_descendants` is the one that is not — a class's ancestry
+is a runtime fact rather than a spelling, so it consumes imported classes and is
+demonstrated over classes a test defines.
 
-Each inventory is a function of the source handed to it, and each is shown on
-both sides: run over synthetic source carrying the shape it forbids, it names
-that site, and run over source that merely resembles it, it names nothing. A
-guard exercised only against a tree that has nothing to report cannot be told
-apart from one that reports nothing.
-
-The construction half of the planner guard is stated over a SPELLING alone and
-is the weaker kind: an alias constructs the same class under a name no text
-search finds. It says so where it stands and names the behavioral evidence that
-covers what it admits, rather than leaving a reader to infer coverage it does not
-have.
-
-One prohibition the planner contraction also carries is not decidable from the
-source at all, and nothing here is to be read as covering it: an audit value
-stamped by hand onto a row, under a name of its own, reaches no audit strategy
-and so survives every assertion about how the composition root is wired. It asks
-what a value IS rather than how the source spells it, and it is named again with
-the evidence that bears on it in `tests/unit/test_planner_composition.py`, where
-the audit strategy the composition root wires is graded — behavioral evidence,
-which lives with the behavior rather than here. Behavior narrows it rather than
-closing it: a stamp that never varies survives every comparison of two writes to
-each other.
+Two prohibitions the planner contraction carries are decidable neither from the
+source nor from Python's own registries, and nothing here is to be read as
+covering them: a planner constructed through an alias, which no inventory of a
+name finds and no subclass registry lists; and an audit value stamped by hand
+onto a row, under a name of its own, which reaches no audit strategy at all.
+`tests/unit/test_planner_composition.py` narrows both by driving real writes — on
+each lane it drives, every plan reaching the shared write-lowering seam came from
+a planner the composition root built, and the audit port those planners hold is
+the neutral one. A write lane it does not drive is covered by neither module.
 """
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
@@ -56,22 +46,21 @@ from _source_inventory_support import (
     Import,
     all_sources,
     declared_imports,
-    hits,
     import_every_module,
+    parsed,
     production_sources,
+    site_of,
     snapshot_imports,
     sources,
     synthetic_site,
     synthetic_sources,
-    word,
 )
 
 from _support.repo import PY_ROOT
 from parallax.core.unit_work import WritePlanner
 
-# --------------------------------------------------------------------------- #
-# Snapshot's reaches into `parallax.core.entity`.                             #
-# --------------------------------------------------------------------------- #
+# Snapshot's reaches into `parallax.core.entity`.
+#
 # The enforcement unit is the scope, not a package's `__all__`, so a granted
 # `parallax.core.entity` edge reaches its private modules too (`python.md` §7).
 # The accepted set is therefore an inventory rather than a gate, and the
@@ -158,30 +147,28 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
     ]
 
 
-# --------------------------------------------------------------------------- #
-# The conformance adapter's reaches into shipped-distribution privates.        #
-# --------------------------------------------------------------------------- #
-# The adapter drives production through supported entry points; what remains
-# below is the residue that has no supported entry point to drive, and each
-# entry is a `python.md` §7 decision rather than an import someone wrote.
+# The conformance adapter's reaches into shipped-distribution privates.
 #
-# Two reasons, both `python.md` §7 decisions. `model_of` is an accepted private
-# seam of production's own (`ACCEPTED_PRIVATE_ENTITY_REACHES` above names it for
-# the composition root), and its own contract calls it a first-party runtime seam
-# rather than developer surface — it exists so a separately distributed frontend
-# can read the accepted model out of a Domain Model, which is exactly what these
-# two modules do. `parallax.core.object_query._fluent` is the typed Object Query
-# surface, deliberately absent from its own package interface so no execution
-# module can reach the Entity frontend through it; a caller that WANTS the typed
-# surface names the module, exactly as the snapshot handle does.
+# The adapter drives production through supported entry points; what remains
+# below is the residue that has no supported entry point to drive, and each entry
+# is a `python.md` §7 decision rather than an import someone wrote.
+#
+# `model_of` is an accepted private seam of production's own
+# (`ACCEPTED_PRIVATE_ENTITY_REACHES` above names it for the composition root),
+# whose contract calls it a first-party runtime seam rather than developer
+# surface: it exists so a separately distributed frontend can read the accepted
+# model out of a Domain Model, which is what these two modules do.
+# `parallax.core.object_query._fluent` is the typed Object Query surface,
+# deliberately absent from its own package interface so no execution module can
+# reach the Entity frontend through it; a caller that WANTS the typed surface
+# names the module, exactly as the snapshot handle does.
 #
 # The descriptor record graph is NOT here: the adapter composes corpus models
 # through the public `domain_model_from_*` doors and reads the accepted model's
 # own vocabulary, so no `parallax.descriptor` private module is reached at all.
 #
-# Keyed by REACHING module for the same reason the snapshot inventory is: a
-# second module importing an already-accepted name is a new reach — which is why
-# `model_of` appears twice rather than once.
+# Keyed by REACHING module for the same reason the snapshot inventory is, which
+# is why `model_of` appears twice rather than once.
 ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.another_source", "parallax.core.entity._model"): frozenset({"model_of"}),
     ("parallax.conformance.another_source", "parallax.core.object_query._fluent"): frozenset(
@@ -237,18 +224,32 @@ def test_the_conformance_reach_inventory_names_a_new_reach_and_passes_the_suppor
     }
 
 
-# --------------------------------------------------------------------------- #
-# One planner class, constructed in one module.                               #
-# --------------------------------------------------------------------------- #
-# A construction and not a mention: the class name has to stand as the callee of
-# a call, so an annotation, a documentation reference, and a longer class name
-# ending in it are all left alone.
-WRITE_PLANNER_CONSTRUCTION = rf"{word('WritePlanner')}\("
+# One planner class, constructed in one module.
+def _callee(node: ast.expr) -> str:
+    """The name a call names its callee by, bare or as the tail of a path."""
+    match node:
+        case ast.Name(id=name):
+            return name
+        case ast.Attribute(attr=name):
+            return name
+        case _:
+            return ""
 
 
-def _write_planner_construction_files(over: Iterator[tuple[Path, str]]) -> set[str]:
-    """Every file spelling a Write Planner construction."""
-    return {hit.rpartition(":")[0] for hit in hits(WRITE_PLANNER_CONSTRUCTION, over)}
+def _write_planner_constructions(over: Iterator[tuple[Path, str]]) -> list[str]:
+    """Every site calling the Write Planner class by name.
+
+    A construction and not a mention: the name has to stand as the callee of a
+    call in the parse, so an annotation, a longer class name ending in it, and
+    any spelling inside a comment or a docstring are all left alone.
+    """
+    found = [
+        (path, node.lineno)
+        for path, tree in parsed(over)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _callee(node.func) == "WritePlanner"
+    ]
+    return [site_of(path, line) for path, line in sorted(found)]
 
 
 def _descendants(root: type) -> Iterator[type]:
@@ -275,50 +276,42 @@ def _first_party_descendants(root: type) -> list[str]:
 def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
     # `build_write_planner` is the one place the optional policy modules are
     # wired in, so a second construction anywhere is a second set of strategies
-    # free to drift from production's. That a lane actually REACHES this factory
-    # is a different claim, graded by behavior and not asserted here.
+    # free to drift from production's — including a second one inside
+    # `_planning.py`, which is why the constructions are counted rather than the
+    # files holding them. Their line numbers are not asserted: which statement of
+    # `_planning.py` constructs the planner is that module's own business.
     #
-    # The first assertion is stated over the SPELLING `WritePlanner(`, and that
-    # is its limit: `_P = WritePlanner` followed by `_P(...)` constructs the
-    # same class under a name no text search finds. What covers that is
-    # behavioral and lives in `test_planner_composition.py`, which drives a real
-    # write down each lane and requires every planning the drive performed to
-    # have run on a planner this factory built — which a planner constructed
-    # under any spelling at all is not. File granularity for the same reason a
-    # line number would be noise: which statement of `_planning.py` constructs
-    # the planner is that module's own business.
-    #
-    # The subclass registry answers a second question exactly, and no spelling
-    # bears on it: no shipped class descends from `WritePlanner`. It is not a
-    # proof that no second planner exists, because an independent implementation
-    # of the same interface inherits nothing and appears in no registry. What
-    # forecloses one is again the drive: every write leaves through this
-    # factory's planner, which is a property of the write path's behavior rather
-    # than of any inventory here.
-    assert _write_planner_construction_files(production_sources()) == {
+    # The subclass registry answers a second question, and no spelling bears on
+    # it: no shipped class descends from `WritePlanner`.
+    constructed = _write_planner_constructions(production_sources())
+    assert [site.rpartition(":")[0] for site in constructed] == [
         str((SNAPSHOT_SRC / "handle" / "_planning.py").relative_to(PY_ROOT))
-    }
+    ]
     import_every_module(all_sources())
     assert _first_party_descendants(WritePlanner) == [
         "parallax.core.unit_work.write_planner.WritePlanner"
     ]
 
 
-def test_the_construction_guard_names_a_construction_and_passes_a_mention() -> None:
-    constructed = _write_planner_construction_files(
+def test_the_construction_guard_names_every_construction_and_passes_a_mention() -> None:
+    holding = "parallax.snapshot.handle._holding"
+    assert _write_planner_constructions(
         synthetic_sources(
             {
-                "parallax.snapshot.handle._second": "planner = WritePlanner(model)\n",
+                holding: (
+                    "planner = WritePlanner(model)\n"
+                    "second = unit_work.WritePlanner(model)\n"
+                    "# a second WritePlanner(model) would be a second wiring\n"
+                    '"""See :class:`WritePlanner` — built as WritePlanner(model)."""\n'
+                ),
                 "parallax.snapshot.handle._resembling": (
                     "def take(planner: WritePlanner) -> None: ...\n"
                     "build_write_planner(model)\n"
                     "RecordingWritePlanner(model)\n"
-                    "#: :class:`WritePlanner` is what this wraps\n"
                 ),
             }
         )
-    )
-    assert constructed == {synthetic_site("parallax.snapshot.handle._second", 1).rpartition(":")[0]}
+    ) == [synthetic_site(holding, 1), synthetic_site(holding, 2)]
 
 
 def test_the_descendant_registry_names_a_shipped_subclass_and_passes_a_test_one() -> None:
