@@ -297,7 +297,7 @@ def test_a_wire_mapping_is_a_dict_that_refuses_mutation_through_the_instance() -
         lambda: mutable.update({"id": 2}),
         lambda: mutable.__ior__({"id": 2}),
     ):
-        with pytest.raises(TypeError, match="immutable"):
+        with pytest.raises(TypeError, match="refuses mutation"):
             mutate()
     assert root["id"] == 1
 
@@ -321,7 +321,7 @@ def test_a_wire_sequence_is_a_list_that_refuses_mutation_through_the_instance() 
         lambda: mutable.__iadd__([{}]),
         lambda: mutable.__imul__(2),
     ):
-        with pytest.raises(TypeError, match="immutable"):
+        with pytest.raises(TypeError, match="refuses mutation"):
             mutate()
     assert len(items) == 1
 
@@ -349,7 +349,7 @@ def test_plain_conversion_yields_an_ordinary_mapping() -> None:
     assert root["id"] == 1
 
 
-def test_copying_answers_the_same_immutable_value() -> None:
+def test_copying_a_wire_value_answers_the_same_object() -> None:
     root = _frozen_root()
     items = _sequence(root["items"])
     assert cast("Any", root).copy() is root
@@ -385,7 +385,7 @@ def test_a_published_value_refuses_the_repopulating_initializer() -> None:
         lambda: cast("Any", items).__init__([{"id": 2}]),
         lambda: cast("Any", items[0]).__init__({"id": 2}),
     ):
-        with pytest.raises(TypeError, match="immutable"):
+        with pytest.raises(TypeError, match="refuses mutation"):
             mutate()
     assert root["id"] == 1
     assert len(items) == 1
@@ -397,7 +397,7 @@ def test_a_published_value_is_the_type_its_construction_could_not_have_faked() -
     # — the one spelling a caller holding a published value can reach the class
     # through — cannot produce a second one.
     root = _frozen_root()
-    with pytest.raises(TypeError, match="immutable"):
+    with pytest.raises(TypeError, match="refuses mutation"):
         cast("Any", type(root))({"id": 2})
 
 

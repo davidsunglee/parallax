@@ -90,7 +90,7 @@ FAMILY_VARIANT_KEY = "familyVariant"
 under. It names no declared member, which is why it is fixed here rather than
 resolved from the model."""
 
-_FROZEN = "a Wire read result is immutable"
+_FROZEN = "a Wire read result refuses mutation through the instance"
 
 
 class WireEntity(Mapping[str, "WireValue"]):
@@ -137,8 +137,8 @@ class _FrozenMapping(dict[str, Any]):
     subclass in the language and closing it means not being a ``dict``, which is
     the property this value is chosen for.
 
-    Copying answers the same object. An immutable value's copy can differ from it
-    in identity alone, so allocating one buys a caller nothing and costs it the
+    Copying answers the same object. A copy could differ from this value in
+    identity alone, so allocating one buys a caller nothing and costs it the
     identity two positions of one read share.
     """
 
@@ -345,7 +345,8 @@ class _Unwind:
 
     The memo is per pass rather than per root deliberately: two roots reaching
     one merged node under one subtree share the merged node in the typed lane
-    too, and an immutable value is safely shared. It dies when the pass returns.
+    too, and a value that refuses mutation through the instance is safely
+    shared. It dies when the pass returns.
     """
 
     __slots__ = ("_cache", "_merge", "_model")
