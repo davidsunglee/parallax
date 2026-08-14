@@ -1886,32 +1886,24 @@ def _buffered(
 ) -> WriteInstruction | ClaimedKeyedWrite:
     """One resolved entry as the buffer item a unit of work would hold for it.
 
-    What the entry settles against is decided exactly as production's own write
-    ingress decides it (``Transaction.write_neutral``): an entry whose case
-    document (or this group's own prior find) supplied an observation settles
-    against it as given, and an entry that supplied none reaches
-    :func:`~parallax.core.opt_lock.settled_evidence`'s derivation over the same
-    two declared facts a developer verb reads — so an existing-row entry against
-    an unversioned Non-Temporal target claims its object and an insert claims
-    nothing. Running the derivation rather than buffering such an entry bare is
-    what keeps this PURE re-lowering oracle answering the plan the real flush
-    produces, coalescing included. Whether an observation may exist at all is
-    decided BEFORE this point, by :func:`_durable_row` — the one seam every
-    producer's rows pass through — and by the carriers' own structural refusals;
-    this function only forwards what they left.
+    What the entry settles against is the rule
+    :func:`~parallax.core.opt_lock.instruction_evidence` states for every caller
+    holding an instruction, which is the rule production's own write ingress
+    reads (``Transaction.write_neutral``): an entry whose case document (or this
+    group's own prior find) supplied an observation settles against it as given,
+    and an entry that supplied none reaches the claim-scope derivation over the
+    same two declared facts a developer verb reads. Sharing the rule rather than
+    restating it is what keeps this PURE re-lowering oracle answering the plan
+    the real flush produces, coalescing included; the shared resolver reads
+    nothing but the model, so the oracle stays readless. Whether an observation
+    may exist at all is decided BEFORE this point, by :func:`_durable_row` — the
+    one seam every producer's rows pass through — and by the carriers' own
+    structural refusals; this function only forwards what they left.
     """
     assert isinstance(instruction, KeyedWrite)  # every producer of this seam resolves keyed writes
-    settled = (
-        observation
-        if observation is not None
-        else opt_lock.settled_evidence(
-            opt_lock.optimistic_key(model, case_entity(model, instruction.entity).identity),
-            instruction.mutation,
-            object_key=object_key(instruction, model),
-            observation=None,
-        )
+    return buffered_write(
+        instruction, opt_lock.instruction_evidence(model, instruction, supplied=observation)
     )
-    return buffered_write(instruction, settled)
 
 
 def _lower_resolved(

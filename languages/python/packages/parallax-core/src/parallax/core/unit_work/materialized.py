@@ -3,9 +3,11 @@
 
 A write against existing state settles against evidence a prior read retained,
 or — where its target observes no state — against the object whose shared row
-lock licenses it. The observation-bearing shapes here pair one buffered mutation
-with the evidence resolved for it, so the address a write takes, the gate it
-binds, and the license it holds are all read off one object rather than looked up
+lock licenses it. Both address one row, so an instruction naming several settles
+against neither and travels as the bare instruction it is. The
+observation-bearing shapes here pair one buffered mutation with the evidence
+resolved for it, so the address a write takes, the gate it binds, and the license
+it holds are all read off one object rather than looked up
 separately. Each shape is an input to planning, never a member of a Write Plan,
 and each disappears before the plan is frozen; the two observation-bearing ones
 additionally stay indivisible through batching and dependency ordering, because
@@ -140,13 +142,15 @@ class ObservedKeyedWrite:
     its own from a transaction-wide map. That is what makes a close's address,
     its gate, and its license derive from a single object.
 
-    The observation is always present. A write that has none takes one of the two
-    shapes that hold no observation field at all — an insert a bare
-    ``KeyedWrite``, an unversioned Non-Temporal write an
-    :class:`ObjectClaimedWrite` — so absence stays structural (`m-unit-work`)
-    rather than becoming a null field that flows downstream. A write that
-    REQUIRES one and arrives without this carrier is refused while it is settled,
-    exactly where it is today.
+    The observation is always present. A write that has none takes a shape with
+    no observation field at all — a bare ``KeyedWrite`` for an insert, or for an
+    instruction naming several rows, which no claim can address; an
+    :class:`ObjectClaimedWrite` for a single-row unversioned Non-Temporal
+    write — so absence stays structural (`m-unit-work`) rather than becoming a
+    null field that flows downstream. A write that REQUIRES one and arrives
+    without this carrier is refused where every buffered write is settled: the
+    settlement stage finds no observed version or milestone to advance from, and
+    `m-opt-lock`'s prior-observation rule raises there.
 
     Absence being structural cuts both ways, so construction REFUSES an insert:
     an opening row observes nothing, and a carrier around one would be evidence
@@ -296,9 +300,10 @@ def buffered_write(
     caller holds directly, and claims nothing for a flush to spend; an
     :class:`~parallax.core.unit_work.ObjectKey` is what an unversioned
     Non-Temporal row's write settles against, and it claims that object rather
-    than any state of it. ``None`` is an insert, or a write against an object
-    this transaction has already buffered an insert of — neither settles against
-    anything a second intent could compete for.
+    than any state of it. ``None`` is an insert, a write against an object this
+    transaction has already buffered an insert of, or an instruction addressing
+    no single object — none of them settles against anything a second intent
+    could compete for.
 
     ``restorations`` is what the producer's author touched and put back, empty
     for a producer holding no such record. A write with no claim at all carries

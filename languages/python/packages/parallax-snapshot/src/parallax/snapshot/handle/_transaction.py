@@ -72,7 +72,6 @@ from parallax.core.unit_work import (
     claim_scope,
     instructions,
     keyed_intent,
-    object_key,
     validate_write,
 )
 
@@ -803,8 +802,13 @@ class Transaction:
         what an insert and an unversioned Non-Temporal write supply, which is not
         the same answer: what each of them settles against is derived from the
         target Entity's own Optimistic Key here, exactly as a typed verb derives
-        it, so an unversioned existing-row write claims its object through this
-        ingress too and an insert claims nothing through either.
+        it (:func:`~parallax.core.opt_lock.instruction_evidence`, the rule this
+        ingress shares with every other caller holding an instruction), so an
+        unversioned existing-row write naming ONE row claims its object through
+        this ingress too and an insert claims nothing through either. An
+        instruction naming SEVERAL rows addresses no single object and no single
+        observed state, so it claims nothing on any arm and buffers bare — the
+        one write shape no typed verb can author.
 
         A predicate-selected instruction carries no observation of its own — it
         materializes to a Materialized Write Group with its own observation
@@ -842,7 +846,10 @@ class Transaction:
             if isinstance(observation, VersionedStateKey | TemporalStateKey)
             else observation
         )
-        self._admit_and_buffer(instruction, self._settled_evidence(instruction, resolved))
+        self._admit_and_buffer(
+            instruction,
+            opt_lock.instruction_evidence(self._meta, instruction, supplied=resolved),
+        )
 
     def _validate_keyed(self, instruction: KeyedWrite) -> None:
         """The whole judgment a keyed write instruction is measured by, in the one
@@ -875,36 +882,6 @@ class Transaction:
             for row in instruction.rows:
                 validate_write(entity, row, self._meta, mutation=instruction.mutation)
         instructions.validate_instruction(instruction, self._meta)
-
-    def _settled_evidence(
-        self, instruction: KeyedWrite, observation: RetainedObservation | WriteObservation | None
-    ) -> SettledEvidence | None:
-        """What ``instruction`` settles against, for a caller holding an
-        instruction rather than the value it was derived from.
-
-        Evidence the caller supplied is what the write settles against, used as
-        given: it is the one licensed way a keyed write settles against a row no
-        read of this unit of work materialized, so a target that can hold none
-        REFUSES it — an insert at the carrier, an unversioned Non-Temporal row
-        where the write is settled — rather than having it dropped for a claim
-        the caller never stated.
-
-        A caller who supplied none reaches the derivation the typed verbs read
-        off a source value's hint (:meth:`_resolve_evidence`), taken here from
-        the instruction's own target and mutation, which is everything it needs.
-        A bridge caller therefore cannot buffer an unversioned Non-Temporal write
-        that claims nothing where a developer's own verb would have claimed its
-        object, and the coalescing a case witnesses is the coalescing a program
-        gets.
-        """
-        if observation is not None:
-            return observation
-        return opt_lock.settled_evidence(
-            opt_lock.optimistic_key(self._meta, _instruction_identity(self._meta, instruction)),
-            instruction.mutation,
-            object_key=object_key(instruction, self._meta),
-            observation=None,
-        )
 
     def _resolved_claim(self, key: ObservedStateKey) -> RetainedObservation:
         """The retained evidence a neutral write claims, resolving a KEY here.
@@ -1128,11 +1105,10 @@ class Transaction:
 def _instruction_identity(meta: Metamodel, instruction: KeyedWrite) -> EntityIdentity:
     """The Entity Identity ``instruction``'s own spelling names.
 
-    Read by a refusal message and by the claim-scope derivation, both of which
-    run after validation has already resolved the spelling; the fallback keeps
-    the message honest — and leaves the derivation on the arm an unrecognized
-    Entity takes everywhere else — for a spelling this model somehow does not
-    carry, rather than raising a second failure while reporting the first.
+    Read by a claim refusal's message, which runs after validation has already
+    resolved the spelling; the fallback keeps that message honest for a spelling
+    this model somehow does not carry, rather than raising a second failure while
+    reporting the first.
     """
     entity = entity_by_name(meta, instruction.entity)
     if entity is None:  # pragma: no cover - validation resolved the spelling already

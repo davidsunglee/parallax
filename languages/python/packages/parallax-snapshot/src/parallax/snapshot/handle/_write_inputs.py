@@ -386,12 +386,14 @@ def admit_write_claim(
     """Take this write's claim at the scope it settles against, refusing an
     intent the buffer's existing claim cannot absorb.
 
-    A write with neither claims nothing, and the two are absent together: an
-    insert has no intent against existing state and no scope to take one at
+    A write missing either claims nothing. An insert has neither: it makes no
+    intent against existing state and reaches no scope to take one at
     (:func:`~parallax.core.unit_work.keyed_intent`,
-    :func:`~parallax.core.opt_lock.settled_evidence`), and a caller-held Write
-    Observation is a value rather than a reference into this ledger, so there is
-    nothing for a second intent to compete for.
+    :func:`~parallax.core.opt_lock.settled_evidence`). A caller-held Write
+    Observation and an instruction addressing several rows each carry an intent
+    and reach no scope — the first because it is a value rather than a reference
+    into this ledger, the second because a claim addresses one object — so
+    neither leaves anything for a second intent to compete for.
 
     The verdict comes from the one algebra finalization also reads
     (:func:`~parallax.core.unit_work.admits`), so a refusal here is exactly the

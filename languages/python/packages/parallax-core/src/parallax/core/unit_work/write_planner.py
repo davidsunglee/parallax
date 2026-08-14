@@ -5,8 +5,9 @@ lazy Transaction Instant, concurrency mode, and buffered writes into a
 :class:`~parallax.core.unit_work.plan.WritePlan`. A write that settles against
 existing state arrives carrying the claim its verb took for it — the observation
 it settles against, or the object an unversioned Non-Temporal write claims — so
-the planner resolves no evidence of its own. It is model-scoped,
-constructed once per accepted Metamodel with its batching, concurrency,
+the planner resolves no evidence of its own; a write addressing several rows
+claims at neither grain and arrives bare. It is model-scoped, constructed once
+per accepted Metamodel with its batching, concurrency,
 temporal, and audit strategies already wired, and it exposes exactly one
 planning pipeline in two shapes: :meth:`WritePlanner.finalize`, which answers
 the plan together with the retained claims its surviving writes settled against,

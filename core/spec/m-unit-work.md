@@ -551,7 +551,9 @@ never a key with an empty coordinate. The two differ in what follows from that
 absence: an insert opens a row and has no prior state for anything to be about,
 while an unversioned Non-Temporal existing-row write does write against a stored
 row and is claimed at that row's **Object Key** (*Observed-State Coalescing*
-below), whose shared row lock is its evidence.
+below), whose shared row lock is its evidence. Both keys address **one** object,
+so a write instruction naming **several** rows has neither and is claimed
+nowhere.
 
 An implementation **MUST NOT** address observations by identity alone. Two reads
 of one primary key may observe two different states — two generations of one
@@ -805,9 +807,10 @@ scope** each of them takes.
 
 Claim scope is a **total derivation over the write kind**, from two declared
 facts: the target Entity's Optimistic Key (`m-opt-lock`) and the write's own
-mutation. It has exactly three arms, and an implementation **MUST NOT** reach one
-of them because something was absent — an insert observes no state either, so a
-default taken on a missing observation would sweep it in:
+mutation. It answers for a write addressing **one** object, which is every write
+a keyed verb authors. It has exactly three arms, and an implementation **MUST
+NOT** reach one of them because something was absent — an insert observes no
+state either, so a default taken on a missing observation would sweep it in:
 
 - an **insert** claims nothing: it opens a row rather than writing against one, so
   there is no prior row for a second intent to conflict over;
@@ -820,6 +823,14 @@ default taken on a missing observation would sweep it in:
   object and covers every state the row can be in. Two such writes can never have
   observed two different states, so the state-keyed arm's own reason does not
   apply and the object is the correct grain.
+
+A claim addresses one object, so a keyed instruction naming **several** rows
+reaches no arm's scope: it has no single Object Key and no single observed state,
+and an implementation **MUST NOT** claim it at either grain. Such a write is
+buffered **bare** — neither coalesced with another write nor refused for a claim.
+Only a caller holding a pre-formed multi-row instruction can author one; a keyed
+verb writes the one row the value it was handed names, and a target entitled to
+evidence still fails the required-observation rule when the write is settled.
 
 Each buffered write against existing state carries a **Write Intent** — what it
 does (an **assignment** that writes member values against a surviving row, or a
