@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from reference_harness.case import Case, discover_cases, load_model
+from reference_harness.case import Case, Entity, discover_cases, load_model
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_action_on,
@@ -29,6 +29,7 @@ from reference_harness.case_runner import (
     _assert_scenario_settled_write,
     _assert_scenario_source_finds,
     _assert_scenario_sql_bookkeeping,
+    _assert_settled_version_binds,
     _relationship_path_target,
     _reuse_prior_rows,
     _scenario_step_read_entity,
@@ -893,17 +894,157 @@ def test_a_settled_versioned_write_resolves_the_generation_of_its_own_key() -> N
         _assert_scenario_settled_write(case, "postgres")
 
 
+def test_a_settled_step_grades_each_object_against_its_own_statement() -> None:
+    # The buffer that expresses a coalescing pair equally expresses a mixed
+    # multi-object flush (`m-unit-work`), whose objects emit one statement each.
+    # Each is graded against the generation the named find observed of ITS OWN
+    # key, so a golden gating one object on the other's version is refused.
+    _assert_scenario_settled_write(_multi_object_settled_case(), "postgres")
+
+    stale = _multi_object_settled_case(second_version=2)
+    with pytest.raises(CaseFailure, match="observed version 5"):
+        _assert_scenario_settled_write(stale, "postgres")
+
+
+def test_a_settled_steps_goldens_follow_the_order_its_entries_name_their_objects() -> None:
+    # Alignment is the author's to state and this check's to verify: the aligned
+    # statement must bind the object's own key, so a golden list in another order
+    # is refused rather than grading one object against another's statement.
+    case = _multi_object_settled_case()
+    case.when["scenario"][1]["statements"].reverse()
+    with pytest.raises(CaseFailure, match="binds no such key"):
+        _assert_scenario_settled_write(case, "postgres")
+
+
+def test_a_settled_step_carries_one_existing_row_golden_per_object() -> None:
+    case = _multi_object_settled_case()
+    del case.when["scenario"][1]["statements"][1]
+    with pytest.raises(CaseFailure, match="no existing-row statement"):
+        _assert_scenario_settled_write(case, "postgres")
+
+    extra = _multi_object_settled_case()
+    extra.when["scenario"][1]["write"] = extra.when["scenario"][1]["write"][:1]
+    with pytest.raises(CaseFailure, match="existing-row statement"):
+        _assert_scenario_settled_write(extra, "postgres")
+
+
+def test_a_settled_writes_binds_are_read_for_the_executing_dialect() -> None:
+    # `binds` carries the same dialect-keyed polymorphism `sql` does, so a golden
+    # whose hole structure diverges answers with the executing dialect's own array
+    # rather than with the keys of the map (m-case-format).
+    _assert_scenario_settled_write(
+        _versioned_settled_case(version=2, dialect_keyed_binds=True), "postgres"
+    )
+
+    stale = _versioned_settled_case(version=1, dialect_keyed_binds=True)
+    with pytest.raises(CaseFailure, match="observed version 2"):
+        _assert_scenario_settled_write(stale, "postgres")
+
+
+def test_a_settled_versioned_writes_version_column_is_located_by_its_rendered_spelling() -> None:
+    # A `column=` override may name a reserved physical column, which every
+    # rendering quotes (python.md, m-dialect). Locating the advance by the model's
+    # own unquoted name would report the framework version absent from a golden
+    # that assigns it.
+    entity = _entity_with_version_column("order")
+    origin = {"expectRows": [{"id": 1, "order": 2}]}
+    statement = 'update ledger set balance = ?, "order" = ? where id = ? and "order" = ?'
+    _assert_settled_version_binds(
+        _settled_case(), entity, 1, origin, 1, ["175.00", 3, 1, 2], statement, "postgres"
+    )
+
+    with pytest.raises(CaseFailure, match="advances the version to 9"):
+        _assert_settled_version_binds(
+            _settled_case(), entity, 1, origin, 1, ["175.00", 9, 1, 2], statement, "postgres"
+        )
+
+
+def _entity_with_version_column(column: str) -> Entity:
+    """A versioned entity whose optimistic-lock Attribute is stored in *column*."""
+    return Entity(
+        definition={
+            "name": "Ledger",
+            "table": "ledger",
+            "attributes": [
+                {"name": "id", "column": "id", "type": "int", "primaryKey": True},
+                {"name": "balance", "column": "balance", "type": "decimal(12,2)"},
+                {"name": "revision", "column": column, "type": "int", "optimisticLocking": True},
+            ],
+        }
+    )
+
+
+def _multi_object_settled_case(*, second_version: int = 5) -> Case:
+    """A `uow` group whose one find observes Accounts 1 and 2, and whose write
+    step buffers an update of each — the mixed multi-object flush the buffered
+    keyed form equally expresses, settling both against that one find."""
+    update = "update account set balance = ?, version = ? where id = ? and version = ?"
+    raw: dict[str, Any] = {
+        "model": "models/account.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "when": {
+            "uow": {"concurrency": "optimistic"},
+            "scenario": [
+                {
+                    "uow": "two-objects",
+                    "objectQuery": {"target": "parallax.compatibility.Account"},
+                    "roundTrips": 1,
+                    "expectRows": [
+                        {"id": 1, "owner": "Ada", "balance": "100.00", "version": 2},
+                        {"id": 2, "owner": "Grace", "balance": "50.00", "version": 5},
+                    ],
+                },
+                {
+                    "uow": "two-objects",
+                    "on": 0,
+                    "write": [
+                        {
+                            "mutation": "update",
+                            "entity": "Account",
+                            "rows": [{"id": 1, "balance": "175.00"}],
+                        },
+                        {
+                            "mutation": "update",
+                            "entity": "Account",
+                            "rows": [{"id": 2, "balance": "60.00"}],
+                        },
+                    ],
+                    "roundTrips": 2,
+                    "statements": [
+                        {"sql": {"postgres": update}, "binds": ["175.00", 3, 1, 2]},
+                        {
+                            "sql": {"postgres": update},
+                            "binds": ["60.00", second_version + 1, 2, second_version],
+                        },
+                    ],
+                },
+            ],
+        },
+        "then": {"roundTrips": 3},
+    }
+    return Case(
+        path=COMPATIBILITY_ROOT / "cases" / "m-unit-work-995-synthetic.yaml",
+        raw=raw,
+        model=load_model(COMPATIBILITY_ROOT, "models/account.yaml"),
+    )
+
+
 def _versioned_settled_case(
     *,
     version: int,
     concurrency: str = "optimistic",
     observed: list[dict[str, Any]] | None = None,
+    dialect_keyed_binds: bool = False,
 ) -> Case:
     """A `uow` group that observes Account 1 at version 2 and then updates it,
     with the golden advancing from — and, under optimistic concurrency, gating
     on — *version*."""
     gated = concurrency == "optimistic"
     sql = "update account set balance = ?, version = ? where id = ?"
+    binds: Any = ["175.00", version + 1, 1, version] if gated else ["175.00", version + 1, 1]
+    if dialect_keyed_binds:
+        binds = {"postgres": binds, "mariadb": binds}
     raw: dict[str, Any] = {
         "model": "models/account.yaml",
         "tags": ["m-unit-work"],
@@ -940,11 +1081,7 @@ def _versioned_settled_case(
                     "statements": [
                         {
                             "sql": {"postgres": f"{sql} and version = ?" if gated else sql},
-                            "binds": (
-                                ["175.00", version + 1, 1, version]
-                                if gated
-                                else ["175.00", version + 1, 1]
-                            ),
+                            "binds": binds,
                         }
                     ],
                 },

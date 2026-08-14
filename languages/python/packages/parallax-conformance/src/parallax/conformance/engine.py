@@ -1867,10 +1867,11 @@ def _resolve_entries(
     this unit ran — never a store spanning the whole scenario.
 
     ``source`` is what the step's own ``on`` named (`m-case-format` *Settling
-    against a grouped find*): the milestones ONE earlier find of this same group
-    observed, which every temporal entry of this step settles against instead of
-    against tracked case state. It defaults to absence, which is every lane but a
-    grouped scenario write step naming a find."""
+    against a grouped find*): the observed states ONE earlier find of this same
+    group recorded, which every entry of this step settles against instead of
+    against tracked case state — a milestone on a temporal target, a generation on
+    a versioned Non-Temporal one. It defaults to absence, which is every lane but
+    a grouped scenario write step naming a find."""
     resolved: list[_ResolvedWrite] = []
     unit_inserted: set[ObjectKey] = set()
     for entry in entries:
@@ -2961,13 +2962,18 @@ def _group_is_doomed(steps: Sequence[Mapping[str, object]], start: int, end: int
     )
 
 
-def _source_find_milestones(
+def _source_find_observations(
     step: Mapping[str, object], index: int, group_finds: Mapping[int, ObservedNodes]
 ) -> ObservedNodes | None:
     """What the find step this WRITE step names with ``on`` observed
     (`m-case-format` *Settling against a grouped find*) — ``None`` when it names
     no source, which is every write step but one settling against its group's own
     read.
+
+    The nodes are the find's observed states whatever profile the write targets:
+    a temporal entry settles against the milestone one of them recorded and a
+    versioned Non-Temporal entry against the generation one of them recorded, so
+    nothing here is temporal-branch-local.
 
     ``group_finds`` holds one entry per find step of THIS group that has
     already run, so a reference it cannot satisfy names a step outside the group,
@@ -2983,14 +2989,14 @@ def _source_find_milestones(
             f"scenario[{index}]: a write step settles against ONE find step, named by its "
             f"index — {source!r} is not one (m-case-format 'Settling against a grouped find')"
         )
-    milestones = group_finds.get(source)
-    if milestones is None:
+    observed = group_finds.get(source)
+    if observed is None:
         raise EngineError(
             f"scenario[{index}]: settles against step {source}, which is not an EARLIER find "
             "step of its own `uow` group — the evidence a write consumes is transaction-scoped "
             "(m-case-format 'Settling against a grouped find')"
         )
-    return milestones
+    return observed
 
 
 @dataclass(frozen=True, slots=True)
@@ -3071,7 +3077,7 @@ def _run_group_step(
     model = context.model
     if "write" in step:
         entries = _write_entries(step["write"])
-        source = _source_find_milestones(step, index, state.finds)
+        source = _source_find_observations(step, index, state.finds)
         resolved = _resolve_entries(entries, model, context.shadow, state.observations, source)
         statements = _lower_resolved(
             resolved,
