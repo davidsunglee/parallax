@@ -906,13 +906,32 @@ def test_a_settled_step_grades_each_object_against_its_own_statement() -> None:
         _assert_scenario_settled_write(stale, "postgres")
 
 
-def test_a_settled_steps_goldens_follow_the_order_its_entries_name_their_objects() -> None:
-    # Alignment is the author's to state and this check's to verify: the aligned
-    # statement must bind the object's own key, so a golden list in another order
-    # is refused rather than grading one object against another's statement.
+def test_a_settled_steps_goldens_need_not_follow_its_entries_own_order() -> None:
+    # A flush dependency-orders its surviving writes (`m-unit-work`), so the
+    # statement order a legal buffer produces is the object graph's rather than
+    # the author's — a parent's write may precede or follow the child's whichever
+    # order the entries were written in. Each object is still graded against its
+    # own statement, so reversing the golden list changes no verdict.
     case = _multi_object_settled_case()
     case.when["scenario"][1]["statements"].reverse()
-    with pytest.raises(CaseFailure, match="binds no such key"):
+    _assert_scenario_settled_write(case, "postgres")
+
+    stale = _multi_object_settled_case(second_version=2)
+    stale.when["scenario"][1]["statements"].reverse()
+    with pytest.raises(CaseFailure, match="observed version 5"):
+        _assert_scenario_settled_write(stale, "postgres")
+
+
+def test_a_settled_steps_object_is_the_key_its_golden_addresses() -> None:
+    # The object a statement settles is the key its identity predicate binds, not
+    # any bind that happens to equal one: here the second UPDATE addresses account
+    # 1 — which the first already settles — while carrying account 2's observed
+    # generation, so it advances the version to the very 2 a search over its whole
+    # bind row would take for account 2's key.
+    case = _multi_object_settled_case()
+    case.when["scenario"][0]["expectRows"][1]["version"] = 1
+    case.when["scenario"][1]["statements"][1]["binds"] = ["60.00", 2, 1, 1]
+    with pytest.raises(CaseFailure, match="2 existing-row statements addressing"):
         _assert_scenario_settled_write(case, "postgres")
 
 
@@ -924,8 +943,23 @@ def test_a_settled_step_carries_one_existing_row_golden_per_object() -> None:
 
     extra = _multi_object_settled_case()
     extra.when["scenario"][1]["write"] = extra.when["scenario"][1]["write"][:1]
-    with pytest.raises(CaseFailure, match="existing-row statement"):
+    with pytest.raises(CaseFailure, match="addressing an object no entry"):
         _assert_scenario_settled_write(extra, "postgres")
+
+
+def test_a_settled_steps_golden_must_open_its_predicate_with_a_bound_key() -> None:
+    # The address is read at a POSITION — the predicate's first placeholder — so a
+    # golden that opens with anything else states no object for its binds to be
+    # read against, and is refused rather than silently offering some other bind
+    # as its key. Here the key is inlined as a literal, so the leading predicate
+    # binds nothing at all.
+    case = _multi_object_settled_case()
+    case.when["scenario"][1]["statements"][1]["sql"]["postgres"] = (
+        "update account set balance = ?, version = ? where id = 2 and version = ?"
+    )
+    case.when["scenario"][1]["statements"][1]["binds"] = ["60.00", 6, 5]
+    with pytest.raises(CaseFailure, match="does not open with a bound key equality"):
+        _assert_scenario_settled_write(case, "postgres")
 
 
 def test_a_settled_writes_binds_are_read_for_the_executing_dialect() -> None:
