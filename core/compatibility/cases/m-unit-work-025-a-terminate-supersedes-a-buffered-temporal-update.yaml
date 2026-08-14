@@ -1,0 +1,96 @@
+# Observed-State Coalescing over a TEMPORAL target (m-unit-work): an update
+# followed by a terminate of ONE observed milestone, over the same region, is one
+# terminate — the close alone, with no chained successor.
+#
+# The temporal reading of m-unit-work-022's non-temporal rule, and the shape that
+# shows what superseding actually saves. A buffered `update` of a
+# Transaction-Time-Only milestone is a close PLUS a chained successor carrying the
+# new value; a `terminate` of the same milestone is the close alone. Left
+# uncoalesced the two would emit close + chain + a second close of a milestone the
+# first close had already ended — a milestone this unit of work opened and then
+# immediately closed, recorded as history no application state ever had. The
+# surviving intent is the terminate, so ONE close reaches the wire and the value the
+# update authored is never stored.
+#   step 0 find  : observe balance 1's current milestone (150.00, in_z 2024-06-01).
+#   step 1 write : buffer `value = 175.00`, then a terminate of the same milestone,
+#                  both naming step 0 as the read they settle against; the flush
+#                  emits ONE close, 1 round trip.
+#   step 2 find  : the dependent find MUST observe NO current milestone for id 1 —
+#                  the key is terminated, and no 175.00 milestone was ever opened.
+# `then.tableState` is the whole claim on the storage side: id 1 holds its two
+# historical milestones with the current one now closed at 2024-10-01, and nothing
+# else. The case is `run-only` (query-result-dependent): the close's address and
+# gate are read off a milestone a query returned.
+model: models/balance.yaml
+tags: [m-unit-work, m-txtime-write, m-opt-lock, m-sql, coalescing, temporal, audit-only, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the surviving close addresses and gates on the milestone the group's own find observed — a query result (m-case-format 'Settling against a grouped find')"
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: superseded-chain
+      objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: latest
+      roundTrips: 1
+      note: observe balance 1's current milestone (150.00, known from 2024-06-01) — the ONE state both buffered writes settle against
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+          binds: [1, infinity]
+      expectRows:
+        - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+    - uow: superseded-chain
+      "on": 0
+      write:
+        - mutation: update
+          entity: parallax.compatibility.Balance
+          rows:
+            - { id: 1, acctNum: A, value: 175.00 }
+          at: "2024-10-01T00:00:00+00:00"
+        - mutation: terminate
+          entity: parallax.compatibility.Balance
+          rows:
+            - { id: 1 }
+          at: "2024-10-01T00:00:00+00:00"
+      roundTrips: 1
+      note: the terminate supersedes the buffered update, so the close is emitted alone and no successor milestone is chained
+      statements:
+        - sql:
+            postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00"]
+    - uow: superseded-chain
+      objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: latest
+      roundTrips: 1
+      note: the dependent find MUST observe no current milestone; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+          binds: [1, infinity]
+      expectRows: []
+then:
+  roundTrips: 3
+  tableState:
+    balance:
+      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: "2024-10-01T00:00:00+00:00" }
+      - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
+      - { bal_id: 3, acct_num: C, val: 50.00, in_z: "2024-03-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }

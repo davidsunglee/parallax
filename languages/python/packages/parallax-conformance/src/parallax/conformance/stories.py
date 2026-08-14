@@ -36,10 +36,13 @@ fetch.
 `m-unit-work-005/006/009/012` author the SAME observing find(s) before their
 versioned keyed write(s), so every story here grades byte-exact against
 its own mirrored case (`test_write_no_drift.py`) as the plain graded idiom —
-no story is guide-only. The one `tx.delete` story that never observes,
-`create_then_delete_a_parent_child_pair`, targets a non-versioned entity
-(Order/OrderItem) never re-observed anywhere in that transaction's own
-choreography — no observation is required there.
+no story is guide-only. A keyed verb needs that evidence for EVERY Entity, an
+unversioned one included: the shared row lock its participating read holds is
+the whole of an unversioned row's evidence, so there is nothing a constructed
+instance could offer in its place. Unconditional intent is therefore said
+outright, and `create_then_delete_a_parent_child_pair` tears its pair down
+through `tx.delete_where(...)` rather than through keyed deletes of freshly
+built values.
 
 **Instance-native grading:** a story returning rows returns the typed instances
 a `Snapshot[T]` itself
@@ -229,18 +232,8 @@ def create_then_delete_a_parent_child_pair(db: Database) -> None:
         tx.insert(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))
 
     def teardown(tx: Transaction) -> None:
-        tx.delete(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))  # child first
-        tx.delete(
-            Order(
-                id=100,
-                name="Hopper",
-                sku="X-1",
-                qty=1,
-                price=Decimal("9.99"),
-                active=True,
-                ordered_on=dt.date(2024, 7, 1),
-            )
-        )
+        tx.delete_where(OrderItem.where(OrderItem.id == 200))  # child first
+        tx.delete_where(Order.where(Order.id == 100))
 
     db.transact(create)
     db.transact(teardown)

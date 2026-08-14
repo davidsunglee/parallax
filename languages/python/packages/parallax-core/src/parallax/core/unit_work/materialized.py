@@ -18,7 +18,9 @@ aligned version column or complete Predecessor Columns.
 A keyed write's evidence is resolved once, at the developer verb that holds the
 value being written, and rides beside the instruction from there — the retained
 claim included, so which write spends which evidence is a fact about the buffered
-item rather than a list kept beside it.
+item rather than a list kept beside it. What the author touched and then put back
+rides there too, because several writes of one observed state merge and the last
+word on a member decides whether it is written at all.
 
 :data:`BufferItem` and :func:`buffered_instruction` live here for that reason:
 the envelopes ARE the buffer's shapes, so the alias naming them and the unwrap
@@ -170,11 +172,21 @@ class ObservedKeyedWrite:
     with it, and only a carrier that reaches settlement can spend one. Its
     evidence IS this carrier's observation, so the two can never name different
     states.
+
+    ``restorations`` names the members this write's author touched and put back,
+    which the instruction itself cannot carry: a row states assignments, and a
+    restoration is the absence of one. It matters because several writes of one
+    observed state coalesce, and the later word on a member wins — so a write
+    that restored a member cancels an earlier write's assignment to it, and a
+    write that restored every member it touched cancels itself. Finalization
+    drops each restored member from the merged row before weighing what is left,
+    which is what makes a net-zero chain emit no DML however many verbs it took.
     """
 
     instruction: KeyedWrite
     observation: WriteObservation
     claim: RetainedObservation | None = None
+    restorations: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:
@@ -199,7 +211,10 @@ class ObservedKeyedWrite:
 
 
 def buffered_write(
-    instruction: WriteInstruction, evidence: WriteObservation | RetainedObservation | None
+    instruction: WriteInstruction,
+    evidence: WriteObservation | RetainedObservation | None,
+    *,
+    restorations: frozenset[str] = frozenset(),
 ) -> WriteInstruction | ObservedKeyedWrite:
     """``instruction`` as the buffer item it travels to planning as: wrapped in
     its carrier when its verb resolved evidence for it, bare when it resolved
@@ -216,6 +231,11 @@ def buffered_write(
     and travels whole so the flush that emits its write can spend it; a bare
     :class:`~parallax.core.unit_work.observe.WriteObservation` is a value the
     caller holds directly, and claims nothing for a flush to spend.
+
+    ``restorations`` is what the producer's author touched and put back, empty
+    for a producer holding no such record. A write with no evidence at all
+    carries none either: nothing coalesces with it, so there is no earlier
+    assignment for a restoration to cancel.
     """
     if evidence is None:
         return instruction
@@ -226,9 +246,14 @@ def buffered_write(
         )
     if isinstance(evidence, RetainedObservation):
         return ObservedKeyedWrite(
-            instruction=instruction, observation=evidence.evidence, claim=evidence
+            instruction=instruction,
+            observation=evidence.evidence,
+            claim=evidence,
+            restorations=restorations,
         )
-    return ObservedKeyedWrite(instruction=instruction, observation=evidence)
+    return ObservedKeyedWrite(
+        instruction=instruction, observation=evidence, restorations=restorations
+    )
 
 
 # One buffer item: an ordinary write instruction, a keyed write travelling with

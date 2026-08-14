@@ -581,6 +581,23 @@ _COALESCING_WITNESS_REASON: Final[str] = (
     "same-transaction coalescing shape, for the m-batch-write bucket's own reason above"
 )
 
+_OBSERVED_STATE_COALESCING_REASON: Final[str] = (
+    "an Observed-State Coalescing witness: several buffered writes settle against ONE "
+    "observed state, and what the case grades is which single statement the flush emits "
+    "for them. The developer spelling is ordinary — two `tx.update` calls, or an update "
+    "then a delete — so an idiomatic story would narrate the verbs rather than the "
+    "collapse, which is a planner property the compile/run conformance lanes already "
+    "grade end to end and `tests/unit/test_write_claims.py` pins per rule"
+)
+
+_OBSERVED_GENERATION_REASON: Final[str] = (
+    "an observed-state KEYING witness: it grades which of a unit of work's several "
+    "observed generations of one key a write settles against, which a case states by "
+    "naming the find its value came from. A developer names it by holding the value that "
+    "read returned, so there is nothing for an idiomatic story to spell — the reference "
+    "exists because the corpus holds instructions rather than values"
+)
+
 # The classifications a write earns when the rows it addressed are not the rows
 # it found. Every one of them needs a second writer to reach, so the spelling a
 # story could show is the ordinary keyed verb it already shows; what these add
@@ -1248,6 +1265,11 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-execution-log-006": _EXECUTION_LOG_SWEEP_GRADED_REASON,
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
+    "m-unit-work-021": _OBSERVED_STATE_COALESCING_REASON,
+    "m-unit-work-022": _OBSERVED_STATE_COALESCING_REASON,
+    "m-unit-work-023": _OBSERVED_STATE_COALESCING_REASON,
+    "m-unit-work-024": _OBSERVED_GENERATION_REASON,
+    "m-unit-work-025": _OBSERVED_STATE_COALESCING_REASON,
     "m-unit-work-017": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-018": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-019": _WRITE_VALUE_PROVENANCE_REASON,

@@ -148,35 +148,76 @@ class EntityRowCodec:
         to zero does. A member the edit chain touched drops out when its current
         value equals the original the chain first recorded, so "nothing to
         write" has exactly one representation whatever the value's history.
+        Which members dropped out that way is :meth:`restored_members`'s answer,
+        for the one consumer that needs to know.
+
+        The whole selection — the primary key and every recorded name — is
+        judged from both sides before effectiveness is weighed
+        (:meth:`_touched`), so a selection this codec could not emit is refused
+        whether or not the chain nets to zero.
+        """
+        facts, names = self._resolved(value)
+        effective = self._effective_members(facts, names, value, "edited_row")
+        if not effective:
+            return None
+        row = self._identity_row(facts, names, value, "edited_row")
+        row.update(self._serialized(facts, names, value, effective, "edited_row"))
+        return row
+
+    def restored_members(self, value: object) -> frozenset[str]:
+        """The members ``value``'s edit chain touched and then put back, keyed by
+        canonical name — everything :meth:`edited_row` weighed and left out.
+
+        The pair is the whole of what an edit chain authored: what it changed,
+        and what it named and then restored. A restoration is not nothing. It is
+        the caller's last word on that member, so when another write of the same
+        observed state is already pending it has to be able to cancel that
+        write's assignment rather than being dropped as though the member was
+        never mentioned — which is what makes ``100 -> 125 -> 100`` emit no DML
+        instead of writing ``125``.
+
+        Judged exactly as :meth:`edited_row` judges effectiveness, so the two
+        partition the touched set and a member can never be in both or neither.
+        """
+        facts, names = self._resolved(value)
+        touched, _py_names = self._touched(facts, names, value, "restored_members")
+        return frozenset(touched) - self._effective_members(facts, names, value, "restored_members")
+
+    def _touched(
+        self, facts: _RowFacts, names: WireNames, value: object, operation: str
+    ) -> tuple[Mapping[str, object], Mapping[str, str]]:
+        """``value``'s Change Record as canonical-keyed originals, plus those
+        members' Python names — judged from both sides before anything is read.
 
         Refusal follows selection, and effectiveness is weighed afterwards: the
-        whole selection — the primary key and every recorded name — is judged
-        from both sides before a net-zero edit can answer ``None``, because what
-        the rule protects is a selection the codec cannot emit. So a recorded
-        name the resolved identity does not declare is refused even when the edit
-        that touched it restored the original value, and a value whose class
-        supplies no attribute for a selected member — key or recorded — is
+        whole selection is judged before a net-zero edit can answer that it names
+        nothing to write, because what the rule protects is a selection the codec
+        cannot emit. So a recorded name the resolved identity does not declare is
+        refused even when the edit that touched it restored the original value,
+        and a value whose class supplies no attribute for a selected member is
         refused even when its chain nets to zero. Weighing effectiveness first
         would read that attribute to compare it, so the judgement has to precede
         the comparison rather than merely the emission.
         """
-        facts, names = self._resolved(value)
         record = _change_record(facts, value)
         touched = {
             names.py_to_name.get(py_name, py_name): original for py_name, original in record.items()
         }
-        self._require_declared(facts, touched, "edited_row")
-        row = self._identity_row(facts, names, value, "edited_row")
-        py_names = self._require_supplied(facts, names, touched, "edited_row")
-        effective = frozenset(
+        self._require_declared(facts, touched, operation)
+        self._require_supplied(facts, names, facts.primary_key, operation)
+        return touched, self._require_supplied(facts, names, touched, operation)
+
+    def _effective_members(
+        self, facts: _RowFacts, names: WireNames, value: object, operation: str
+    ) -> frozenset[str]:
+        """The touched members whose current value differs from the original the
+        chain first recorded."""
+        touched, py_names = self._touched(facts, names, value, operation)
+        return frozenset(
             canonical
             for canonical, original in touched.items()
             if not _assignment_matches_original(getattr(value, py_names[canonical]), original)
         )
-        if not effective:
-            return None
-        row.update(self._serialized(facts, names, value, effective, "edited_row"))
-        return row
 
     # --- resolution and the shared emission ------------------------------- #
 

@@ -322,13 +322,13 @@ def test_a_carrier_refuses_a_claim_naming_other_evidence() -> None:
         )
 
 
-def test_two_surviving_writes_of_one_claim_answer_it_once() -> None:
+def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
     # Consumption records a fact about an OBSERVED STATE, so a flush spends one
-    # claim once however many of its surviving writes settled against it. Two
-    # edits of a single source value are exactly that shape: both carriers hold
-    # the identical retained observation, both survive coalescing, and both
-    # settle — so a per-carrier answer would hand the caller the same evidence
-    # twice and spend it twice.
+    # claim once however many of its buffered writes settled against it. Two
+    # edits of a single source value are exactly that shape, and Observed-State
+    # Coalescing is what makes them one write: the assignments merge in authored
+    # order, the later value wins the member both name, and the merged carrier
+    # keeps the identical retained observation both held.
     state = VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7)
     retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
     carriers = [
@@ -343,7 +343,9 @@ def test_two_surviving_writes_of_one_claim_answer_it_once() -> None:
             buffered_writes=carriers,
         )
     )
-    assert len(finalized.plan.steps) == 2
+    (step,) = finalized.plan.steps
+    assert isinstance(step, PlannedUpdate)
+    assert _member_value(step.assignments.attributes, "balance") == 150.00
     assert finalized.claims == (retained,)
 
 

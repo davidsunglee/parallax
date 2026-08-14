@@ -21,6 +21,7 @@ from typing import Any, cast
 import pytest
 from _transact_support import (
     BALANCE,
+    PERSON,
     RecordingPort,
     account_db,
     balance_row,
@@ -30,6 +31,7 @@ from _transact_support import (
 
 from _support import mirrored_models as mm
 from parallax.conformance import vo_models as vo
+from parallax.conformance.read_models import Person
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     VersionedStateKey,
@@ -381,6 +383,51 @@ def test_a_standalone_temporal_source_carries_its_milestone_into_a_transaction()
 
     db.transact(lambda tx: tx.update(node.edit(value=Decimal("9.00"))))
     assert [op[0] for op in port.ops] == ["read", "begin", "write", "write", "commit"]
+
+
+def test_a_standalone_versioned_source_is_refused_under_an_explicit_locking_preference() -> None:
+    # `locking` forces the Locking strategy onto every Entity, and its license is
+    # the shared row lock a read of the writing transaction holds. A standalone
+    # `db.find` acquired none, so its retained version buys nothing here: the
+    # verb refuses before buffering and before any statement is emitted.
+    port = _account_port()
+    db = account_db(port)
+    node = db.find(mm.Account.where(mm.Account.id == 1)).result()
+
+    with pytest.raises(WriteEvidenceError) as refusal:
+        db.transact(
+            lambda tx: tx.update(node.edit(balance=Decimal("125.00"))), concurrency="locking"
+        )
+    assert refusal.value.code == "write-evidence-unavailable"
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_a_standalone_unversioned_source_is_refused_under_the_default_preference() -> None:
+    # An unversioned Non-Temporal Entity has no optimistic gate, so the default
+    # `optimistic` preference resolves it to the Locking fallback and the shared
+    # row lock is the whole of its evidence. A standalone `db.find` holds none,
+    # and there is no version for the database to settle the write against, so
+    # the refusal is the only honest answer.
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+    db = db_for(PERSON, port)
+    node = db.find(Person.where(Person.id == 1)).result()
+
+    with pytest.raises(WriteEvidenceError) as refusal:
+        db.transact(lambda tx: tx.update(node.edit(name="Grace")))
+    assert refusal.value.code == "write-evidence-unavailable"
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_an_unconditional_delete_is_spelled_through_the_predicate_verb() -> None:
+    # What replaces a keyed verb against a constructed instance: `delete_where`
+    # says the unconditional intent outright rather than reaching it by building
+    # a throwaway value, and an unversioned Non-Temporal target lowers it
+    # readlessly to one predicate-shaped statement.
+    port = RecordingPort()
+    db_for(PERSON, port).transact(lambda tx: tx.delete_where(Person.where(Person.id == 1)))
+
+    assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
+    assert port.ops[1][2] == (1,)
 
 
 # --------------------------------------------------------------------------- #

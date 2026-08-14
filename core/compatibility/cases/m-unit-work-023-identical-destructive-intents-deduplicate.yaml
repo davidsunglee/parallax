@@ -1,0 +1,73 @@
+# Observed-State Coalescing (m-unit-work): two identical destructive intents
+# against ONE observed state and one temporal region are one destructive write.
+#
+# The third arm of the same algebra m-unit-work-021 (assignments merge) and
+# m-unit-work-022 (a destruction supersedes assignments) pin. Two deletes of one
+# key say the same thing twice, so the second adds nothing to the buffer and the
+# flush emits ONE gated DELETE. It is not merely that the second statement would
+# affect zero rows: a second statement is never emitted at all, which is what keeps
+# the row-count expectation of a gated write exact rather than turning a duplicate
+# intent into a spurious optimistic conflict.
+#   step 0 find  : observe account 1 (Ada, 100.00, version 1), 1 round trip.
+#   step 1 write : buffer the same delete of account 1 twice; the flush emits ONE
+#                  gated DELETE, 1 round trip.
+#   step 2 find  : the dependent find MUST observe NO rows.
+# The case is `run-only` (query-result-dependent): the delete's gate binds a
+# version a query returned.
+model: models/account.yaml
+tags: [m-unit-work, m-opt-lock, m-sql, coalescing, delete, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the surviving delete's gate binds the observed version the group's own find returned — a query result (m-opt-lock)"
+when:
+  scenario:
+    - uow: duplicate-delete
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
+      roundTrips: 1
+      note: observe account 1 (balance 100.00, version 1) — the ONE state both deletes settle against
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+    - uow: duplicate-delete
+      write:
+        - mutation: delete
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 1 }
+        - mutation: delete
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 1 }
+      on: 0
+      roundTrips: 1
+      note: the second delete says what the first already said, so ONE gated DELETE is emitted
+      statements:
+        - sql:
+            postgres: delete from account where id = ? and version = ?
+          binds: [1, 1]
+    - uow: duplicate-delete
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
+      roundTrips: 1
+      note: the dependent find MUST observe no rows; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows: []
+then:
+  roundTrips: 3

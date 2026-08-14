@@ -1022,23 +1022,26 @@ declares `uow` (evidence is transaction-scoped, and an ungrouped write shares a
 unit of work with no find), whose `write` is the **buffered keyed** form (a legacy
 string label carries no instruction and a predicate-selected write consumes no
 single milestone, so neither has anything an observation could reach), naming an
-EARLIER step of the SAME group that is a find, against a **temporal** target.
+EARLIER step of the SAME group that is a find.
 
-The target restriction is the one `m-unit-work` already draws between evidence
-addressed by identity and evidence addressed by a milestone. A versioned
-Non-Temporal target has exactly one row per primary key, so its grouped write
-reaches its group's evidence by identity and the reference would name nothing the
-resolution does not already have. A milestone chain holds several rows per key on
-**either** temporal profile, so both are settled against by name. A Bitemporal key
-may hold several disjoint rectangles current at once, and a
-**Transaction-Time-Only** key, though only one of its milestones is ever current,
-is read at as-of Transaction-Time coordinates that resolve to milestones of any
-age: a group that reads such a key's current milestone and then reads the same key
-as of an earlier instant holds two pieces of evidence, and the later read takes
-nothing from the earlier. Naming the find is what says which of them the write was
-handed — an implementation keying by identity alone settles the write against the
+Every profile a keyed write settles against is nameable, because on every one of
+them a unit of work may hold more than one piece of evidence about a key. A
+milestone chain holds several ROWS per key: a Bitemporal key may hold several
+disjoint rectangles current at once, and a **Transaction-Time-Only** key, though
+only one of its milestones is ever current, is read at as-of Transaction-Time
+coordinates that resolve to milestones of any age, so a group that reads such a
+key's current milestone and then reads the same key as of an earlier instant holds
+two. A **versioned Non-Temporal** key holds one row, but a group that observes it,
+writes it, and reads it again holds one observed **generation** per read, and the
+Observed State Key `m-unit-work` files evidence under distinguishes them by the
+observed version. Naming the find is what says which of them the write was handed.
+
+An implementation keying by identity alone answers only one of the several, and
+which one it loses depends on the profile: a temporal write settles against a
 historical milestone while the current one its value came from is the one it can
-close.
+close, and a versioned write gates on a generation its value never saw. Where a
+write names no find, its evidence is the group's **latest** reading of that key,
+which is the only reading an unnamed reference could mean.
 
 The profiles differ only in **which bind** a misresolution moves. A Bitemporal
 close addresses the observed rectangle's Valid-Time exclusive upper bound, so
@@ -1046,9 +1049,11 @@ naming the wrong milestone changes the address. A Transaction-Time-Only close
 addresses the key plus the invariant open Transaction-Time bound — an address every
 observation of that key shares — so there the whole of the difference lands on the
 optimistic **gate**, which binds the observed milestone's own Transaction-Time
-start. Neither profile is the weaker witness; a Transaction-Time-Only one grades
-the gate's derivation, which no conflict case can reach (*Naming the observed
-milestone*, above).
+start. A versioned Non-Temporal write is addressed by its key alone, so the whole
+of the difference lands on its gate too, which binds the observed version.
+No profile is the weaker witness; the two whose difference lands on the gate grade
+its derivation, which no conflict case can reach (*Naming the observed milestone*,
+above).
 
 A write settling against a find's result is **query-result-dependent**: the
 milestone it addresses is read off a row no compile lane executes, so such a case

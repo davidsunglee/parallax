@@ -20,7 +20,9 @@ plus the write evidence a read leaves on the values it publishes:
   :data:`ReadSources`), the resolution a keyed verb runs over one such source
   (:func:`source_hint_of`, :func:`resolve_write_evidence`,
   :class:`WriteEvidenceError`,
-  :data:`WRITE_EVIDENCE_CODES`), plus the per-row column contributions a
+  :data:`WRITE_EVIDENCE_CODES`), the claim that verb then takes on the state it
+  settles against (:func:`admit_write_claim`, :class:`ClaimLedger`), plus the
+  per-row column contributions a
   materializing predicate-write resolve streams into its
   :class:`~parallax.core.unit_work.MaterializedWriteGroup`
   (:func:`is_no_op_assignment`, :func:`key_column_values`,
@@ -35,9 +37,10 @@ point resolves once and carries into the helpers that read or write a row's
 columns. The read executor drives :class:`ReadObservations` and
 :func:`retain_evidence` while its rows are live; the dependency goes that way and
 only that way, so nothing here names :mod:`parallax.snapshot.handle._read`. The
-participating unit of work reaches this module as the structural
-:class:`ObservationLedger` — the two answers retention needs from a transaction,
-rather than the whole scope.
+participating unit of work reaches this module as two structural protocols —
+:class:`ObservationLedger`, the two answers retention needs from a transaction,
+and :class:`ClaimLedger`, the one answer a keyed write needs — rather than as
+the whole scope.
 
 Names crossing a module boundary (read from ``_transaction`` / ``_predicate_writes``)
 are spelled bare; a helper whose every caller lives here keeps its underscore.
@@ -85,6 +88,7 @@ from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
+    ClaimVerdict,
     Concurrency,
     KeyedMutation,
     ObjectKey,
@@ -95,6 +99,7 @@ from parallax.core.unit_work import (
     SourceHint,
     TemporalObservation,
     VersionObservation,
+    WriteIntent,
     WriteObservation,
     instant_literal,
     observed_state_key,
@@ -114,6 +119,7 @@ from parallax.snapshot.handle._family import (
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
     "WRITE_EVIDENCE_CODES",
+    "ClaimLedger",
     "KeyedWriteValueError",
     "ObservationLedger",
     "ReadObservations",
@@ -122,6 +128,7 @@ __all__ = [
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
     "WrittenObject",
+    "admit_write_claim",
     "is_no_op_assignment",
     "key_column_values",
     "metadata_of_instance",
@@ -355,6 +362,56 @@ class ObservationLedger(Protocol):
     def retain(self, observation: RetainedObservation, /) -> RetainedObservation: ...
 
 
+class ClaimLedger(Protocol):
+    """The unit of work a keyed write takes its claim from, satisfied structurally.
+
+    A verb needs one answer from the transaction before it buffers — what its
+    intent becomes against whatever the buffer already claimed for that exact
+    state — so it names that one rather than the whole scope.
+    """
+
+    def claim(self, key: ObservedStateKey, intent: WriteIntent, /) -> ClaimVerdict: ...
+
+
+def admit_write_claim(
+    ledger: ClaimLedger,
+    identity: EntityIdentity,
+    intent: WriteIntent,
+    *,
+    state: ObservedStateKey,
+) -> None:
+    """Take this write's claim on the state it settles against, refusing an
+    intent the buffer's existing claim cannot absorb.
+
+    The verdict comes from the one algebra finalization also reads
+    (:func:`~parallax.core.unit_work.admits`), so a refusal here is exactly the
+    combination the flush would have had no meaning for. Everything it admits is
+    something the flush performs: assignments merge in authored order, a
+    destruction supersedes the assignments buffered before it, and a repeated
+    destruction of one state and region is one destruction.
+
+    The message names what the held claim was rather than only that there was
+    one, because the caller's remedy differs: a different temporal region needs
+    the first intent flushed through a participating read, while an assignment
+    after a destruction has no remedy at all — the row it would write is going
+    away.
+    """
+    if ledger.claim(state, intent) != "incompatible":
+        return
+    raise WriteEvidenceError(
+        code="write-evidence-already-claimed",
+        message=(
+            f"{identity.canonical}: a write already buffered in this transaction claims "
+            "the exact state this one settles against, for an intent it cannot be combined "
+            "with — a different Valid-Time region composes no interval, an assignment after "
+            "a destructive intent resurrects nothing, and a predicate write's selected rows "
+            "are one compact group; read the row through this transaction to flush the "
+            "buffered intent and settle against fresh state"
+        ),
+        object_key=state.object,
+    )
+
+
 def retain_evidence(
     meta: Metamodel, observations: ReadObservations, *, ledger: ObservationLedger | None
 ) -> ReadSources:
@@ -483,19 +540,29 @@ def _observed_object(
     )
 
 
-type WriteEvidenceErrorCode = Literal["write-evidence-unavailable", "write-evidence-consumed"]
+type WriteEvidenceErrorCode = Literal[
+    "write-evidence-unavailable",
+    "write-evidence-consumed",
+    "write-evidence-already-claimed",
+]
 """The write-evidence refusals a keyed verb raises.
 
-The two partition what can be wrong with a source's evidence at the verb: there
-is none the target Entity's Effective Concurrency Strategy can use, or the
-evidence there is has been spent. A conflict the database discovers later is a
-different thing entirely and keeps its own flush-time classification.
+The three partition what can be wrong with a source's evidence at the verb:
+there is none the target Entity's Effective Concurrency Strategy can use, the
+evidence there is has been spent by a successful flush, or a write already
+buffered in this unit of work claimed that exact state for an intent this one
+cannot join. A conflict the database discovers later is a different thing
+entirely and keeps its own flush-time classification.
 """
 
 WRITE_EVIDENCE_CODES: Final[frozenset[str]] = frozenset(
-    {"write-evidence-unavailable", "write-evidence-consumed"}
+    {
+        "write-evidence-unavailable",
+        "write-evidence-consumed",
+        "write-evidence-already-claimed",
+    }
 )
-"""The complete set of codes :class:`WriteEvidenceError` currently carries."""
+"""The complete set of codes :class:`WriteEvidenceError` carries."""
 
 
 class WriteEvidenceError(LookupError):
@@ -539,7 +606,6 @@ def source_hint_of(instance: object) -> SourceHint | None:
 def resolve_write_evidence(
     meta: Metamodel,
     record: EntityMetadata,
-    declaring_entity: EntityMetadata,
     hint: SourceHint | None,
     *,
     object_key: ObjectKey,
@@ -556,7 +622,13 @@ def resolve_write_evidence(
 
     * **Locking** — the license is the shared row lock, so the source read must
       have run in THIS transaction. A source from another scope, or none at all,
-      proves no held lock.
+      proves no held lock. This holds for EVERY effective-Locking target,
+      unversioned Non-Temporal ones included: the lock is the whole of an
+      unversioned row's evidence, so exempting it would admit a keyed write
+      that proves nothing about the row it addresses and would make write
+      safety depend on whether a version column was declared. Unconditional
+      intent has its own spelling — ``tx.delete_where(query)`` — rather than
+      being reached by constructing a throwaway instance.
     * **Optimistic** — the license is the database gate, so the retained
       observation IS the evidence and a standalone ``db.find`` source carries it
       exactly as a participating read's does.
@@ -565,14 +637,13 @@ def resolve_write_evidence(
     (:func:`_refuse_consumed`).
 
     Absence stays structural: a target that observes no state resolves to
-    ``None`` and buffers bare.
+    ``None`` and buffers bare — the participating read it came from is the
+    license, and there is no observation for the flush to spend.
     """
     strategy = opt_lock.effective_strategy(preference, opt_lock.view(meta).key(record.identity))
     observation = None if hint is None else hint.observation
     if strategy == "locking":
-        if _observes_a_state(meta, declaring_entity) and (
-            hint is None or hint.participation is not participation
-        ):
+        if hint is None or hint.participation is not participation:
             raise WriteEvidenceError(
                 code="write-evidence-unavailable",
                 message=(
@@ -623,12 +694,6 @@ def _refuse_consumed(
         ),
         object_key=object_key,
     )
-
-
-def _observes_a_state(meta: Metamodel, declaring_entity: EntityMetadata) -> bool:
-    """Whether a read of this family observes a state at all — a versioned or
-    temporal target, never an unversioned Non-Temporal one."""
-    return version_attribute(meta, declaring_entity) is not None or _is_temporal(declaring_entity)
 
 
 def _temporal_observation(
@@ -779,6 +844,12 @@ def validate_write_value(
     write CONTAINS rather than which verb accepts it. The three answers partition
     the values a verb can be handed, so a refused value earns exactly one code and
     the message names the verb that does accept it.
+
+    On the UPDATE side this overlaps :func:`resolve_write_evidence`: a value no
+    managed read produced, and a value another source produced, both carry no
+    hint and so no usable evidence either. Provenance is asked first because it
+    is the more specific diagnosis — it names the verb that DOES accept the
+    value, where the evidence refusal could only report that there was none.
 
     An unedited value this source produced is NOT refused for an `update`: it
     carries no change, so it buffers nothing, issues no statement, and raises

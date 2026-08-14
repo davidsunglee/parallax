@@ -845,20 +845,74 @@ def test_settled_write_must_be_the_buffered_keyed_form() -> None:
         _assert_scenario_source_finds(case)
 
 
-def test_settled_write_target_must_be_temporal() -> None:
-    # A versioned Non-Temporal key has one row, so its grouped write already
-    # reaches its group's evidence by identity and the reference buys nothing.
-    source = _settled_case()
-    raw = copy.deepcopy(source.raw)
-    raw["model"] = "models/account.yaml"
-    raw["when"]["scenario"][2]["write"][0]["entity"] = "Account"
-    case = Case(
-        path=source.path.with_name("m-unit-work-996-synthetic.yaml"),
+def test_a_settled_versioned_writes_gate_binds_the_named_generation() -> None:
+    # A versioned Non-Temporal key holds one ROW but one observed GENERATION per
+    # read, so the reference names which reading a write settled against and the
+    # optimistic gate is where the difference lands. A golden binding a version
+    # the named find never returned is the misresolution this catches.
+    case = _versioned_settled_case(version=2)
+    _assert_scenario_settled_close(case, "postgres")
+
+    stale = _versioned_settled_case(version=1)
+    with pytest.raises(CaseFailure, match="observed version 2"):
+        _assert_scenario_settled_close(stale, "postgres")
+
+
+def _versioned_settled_case(*, version: int) -> Case:
+    """A `uow` group that observes Account 1 at version 2 and then updates it,
+    with the golden gate binding *version*."""
+    raw: dict[str, Any] = {
+        "model": "models/account.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "when": {
+            "uow": {"concurrency": "optimistic"},
+            "scenario": [
+                {
+                    "uow": "generations",
+                    "objectQuery": {
+                        "target": "parallax.compatibility.Account",
+                        "predicate": {
+                            "eq": {"attr": "parallax.compatibility.Account.id", "value": 1}
+                        },
+                    },
+                    "roundTrips": 1,
+                    "expectRows": [
+                        {"id": 1, "owner": "Ada", "balance": "125.00", "version": 2},
+                    ],
+                },
+                {
+                    "uow": "generations",
+                    "on": 0,
+                    "write": [
+                        {
+                            "mutation": "update",
+                            "entity": "Account",
+                            "rows": [{"id": 1, "balance": "175.00"}],
+                        }
+                    ],
+                    "roundTrips": 1,
+                    "statements": [
+                        {
+                            "sql": {
+                                "postgres": (
+                                    "update account set balance = ?, version = ? "
+                                    "where id = ? and version = ?"
+                                )
+                            },
+                            "binds": ["175.00", version + 1, 1, version],
+                        }
+                    ],
+                },
+            ],
+        },
+        "then": {"roundTrips": 2},
+    }
+    return Case(
+        path=COMPATIBILITY_ROOT / "cases" / "m-unit-work-996-synthetic.yaml",
         raw=raw,
         model=load_model(COMPATIBILITY_ROOT, "models/account.yaml"),
     )
-    with pytest.raises(CaseFailure, match="is NOT temporal"):
-        _assert_scenario_source_finds(case)
 
 
 def _transaction_time_only_settled_case(*, on: int) -> Case:

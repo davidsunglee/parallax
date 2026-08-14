@@ -22,6 +22,15 @@ seams, not part of the developer surface — nothing here is re-exported from
 
 from __future__ import annotations
 
+from parallax.core.unit_work.claims import (
+    SELECTION_INTENT,
+    ClaimTable,
+    ClaimVerdict,
+    WriteIntent,
+    WriteIntentKind,
+    admits,
+    keyed_intent,
+)
 from parallax.core.unit_work.clock import (
     Clock,
     FixedClock,
@@ -224,6 +233,7 @@ __all__ = [
     "OPTIMISTIC_CONFLICT",
     "PREDECESSOR_END",
     "PREDECESSOR_START",
+    "SELECTION_INTENT",
     "STALE_WRITE",
     "SUPERSEDED",
     "TEMPORAL_KEYED_WRITE_MULTI_ROW",
@@ -247,6 +257,8 @@ __all__ = [
     "ChangedState",
     "ChunkedColumn",
     "ChunkedColumnBuilder",
+    "ClaimTable",
+    "ClaimVerdict",
     "Clock",
     "CloseCause",
     "ColumnSlice",
@@ -345,6 +357,8 @@ __all__ = [
     "WriteEffectError",
     "WriteInstruction",
     "WriteInstructionError",
+    "WriteIntent",
+    "WriteIntentKind",
     "WriteObservation",
     "WritePlan",
     "WritePlanner",
@@ -352,6 +366,7 @@ __all__ = [
     "WriteRejectedError",
     "WriteTarget",
     "active_unit_of_work",
+    "admits",
     "buffered_write",
     "capture_subject_identity",
     "deserialize",
@@ -359,6 +374,7 @@ __all__ = [
     "enforce_affected_rows",
     "expand_milestone",
     "instant_literal",
+    "keyed_intent",
     "object_key",
     "observed_state_key",
     "plan_temporal_close",
