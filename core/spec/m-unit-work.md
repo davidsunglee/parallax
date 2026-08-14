@@ -836,12 +836,16 @@ settled. Evidence such a caller **does** supply travels with the write it was
 supplied for, and one observation is evidence about **one** row, so an
 implementation **MUST** refuse the pairing rather than drop the evidence.
 
-That refusal, and every other a keyed write can earn, leaves the transaction as
-it found it: an implementation **MUST NOT** record a write's claim before the
-write has passed the judgments that can still refuse it. A caller that catches a
-refusal and continues in the same unit of work would otherwise hold a claim for a
-write nothing buffered, and a later legal write of that scope would be refused,
-deduplicated, coalesced, or superseded against it.
+That refusal is a judgment about the write's own carrier, and both it and the
+refusal of an arriving intent the buffer's existing claim cannot absorb are made
+**before** the write is buffered, each leaving the claim ledger and the buffer as
+it found them. An implementation **MUST NOT** record a write's claim before the
+write has passed the carrier judgments that precede buffering: a caller that
+catches such a refusal and continues in the same unit of work would otherwise
+hold a claim for a write nothing buffered, and a later legal write of that scope
+would be refused, deduplicated, coalesced, or superseded against it. A refusal a
+buffered write earns later — when the buffer is planned or the write is settled —
+needs no such guarantee, because a failed flush aborts the unit of work.
 
 Each buffered write against existing state carries a **Write Intent** — what it
 does (an **assignment** that writes member values against a surviving row, or a
