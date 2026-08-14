@@ -31,8 +31,9 @@ a write lane this module does not drive. The lanes it drives are ENUMERATED — 
 `Database` lane, and the conformance engine's writeSequence, readless predicate
 write, and conflict entries. On an undriven lane,
 `test_source_enforcement_topology.py` still finds a second ``WritePlanner``
-construction and a second planner class, but a planner constructed through an
-alias is caught by neither module.
+construction and a second planner class, but a planner constructed under a name
+that tree's text does not tie to ``parallax`` — an alias, or a re-export read
+from another distribution — is caught by neither module.
 
 The `Database` lane is graded on identity as well as provenance. One planner
 serves the whole transaction, so a typed verb and ``tx.write_neutral`` are held

@@ -36,8 +36,8 @@ no source inventory, and nothing here is to be read as covering them:
   class descending from it reaches Snapshot's code as an imported name or as an
   attribute of a bound module, under any name a shipped module binds it by. A
   SUPERTYPE handler — `RuntimeError`, or a bare `except` — names nothing either
-  reading can list, and so does an unrelated distribution's namesake, which
-  catches nothing the codec raises. The
+  reading can list, and a name read from another distribution is passed on that
+  provenance rather than on what it denotes. The
   ordering it derives from — `spec/python.md` §5 decides a keyed verb's refusal
   in the shared preamble, ahead of any row derivation, so the refusal a caller
   observes carries no codec failure as its cause — is graded at the boundary by
@@ -139,11 +139,19 @@ def _row_vocabulary_sites(
     spelling of Pydantic's own internals.
 
     The names are the codec's own, so they are held where they come FROM the
-    codec's distribution: `from other_library import EntityRowError` binds an
-    unrelated exception that happens to share the spelling, and source using it
-    resembles the regression without being it. The Pydantic substrate is held by
-    the distribution it is read from rather than by any name, so no re-export
-    hides it.
+    codec's distribution: an exception another distribution exports under the same
+    spelling is source that resembles the regression rather than source that is
+    it. The Pydantic substrate is held by the distribution it is read from rather
+    than by any name, so no re-export hides it.
+
+    `foreign_locals` decides that on provenance alone, and this guard is no
+    stronger than that reading. A refusal reached through a distribution that
+    re-exports `parallax`'s own class passes, as does a genuine reach standing in
+    one scope of a file that binds the spelling from elsewhere in another. Both
+    need a Snapshot module to bind one of these names from outside `parallax`,
+    which its one declared dependency does not export, and the prohibition itself
+    is graded at the boundary by the compatibility cases and write-behavior
+    modules the module docstring names.
 
     A refusal is looked for as an attribute path's tail as well as an imported
     name, because `import parallax.core.entity as entity` binds a module rather
@@ -222,8 +230,8 @@ def test_the_row_vocabulary_guard_names_what_is_held_and_passes_what_resembles_i
     # `RowRefusal` stands for a subclass of the codec's refusal under a name of
     # its own, which catches the refusal exactly as the base does and which
     # `_codec_refusals` supplies from Python's registries; `other_library` stands
-    # for an unrelated distribution exporting the same spelling, whose exception
-    # is a different class and catches nothing the codec raises.
+    # for a distribution of another name exporting the same spelling, which the
+    # guard passes on that provenance rather than on what the name denotes.
     held = _row_vocabulary_sites(
         synthetic_sources(
             {
