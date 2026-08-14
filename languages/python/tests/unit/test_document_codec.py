@@ -31,6 +31,7 @@ from parallax.core.base import (
     TIME,
     TIMESTAMP,
     UUID,
+    AuthoredNumber,
     Decimal,
     NeutralType,
     PresentDocument,
@@ -185,6 +186,36 @@ def test_decode_reads_a_float32_leaf_at_its_declared_width() -> None:
     stored = encode_document(shape, {"ratio": Present(1048576.25)})
     assert stored == {"ratio": 1048576.2}
     assert decode_path(shape, stored, ("ratio",)) == Present(1048576.25)
+
+
+def test_a_stored_float_that_is_not_the_shortest_number_is_invalid_stored_data() -> None:
+    # The refusal a float's canonicality needs the AUTHORED DIGITS to make: two
+    # JSON numbers name one binary float, so a parse that discards the digits
+    # leaves `0.1` and `0.10000000000000001` indistinguishable and the second
+    # readable as the first. A parser preserving them (`AuthoredNumber`, what the
+    # Postgres port's document loader constructs) keeps the second refusable.
+    shape = DocumentShape(members=(Leaf(name="ratio", type=FLOAT64, nullable=True),))
+    assert decode_path(shape, {"ratio": AuthoredNumber("0.1")}, ("ratio",)) == Present(0.1)
+    # The number, not its rendering: `20` and `20.0` are one JSON number.
+    assert decode_path(shape, {"ratio": AuthoredNumber("20.0")}, ("ratio",)) == Present(20.0)
+    with pytest.raises(ValueError, match="invalid stored data"):
+        decode_path(shape, {"ratio": AuthoredNumber("0.10000000000000001")}, ("ratio",))
+    # At `float32` the canonical number is the shortest one that decodes back AT
+    # THAT WIDTH, so the exact binary32 value is itself a second spelling of it.
+    narrow = DocumentShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
+    assert decode_path(narrow, {"ratio": AuthoredNumber("1048576.2")}, ("ratio",)) == Present(
+        1048576.25
+    )
+    with pytest.raises(ValueError, match="invalid stored data"):
+        decode_path(narrow, {"ratio": AuthoredNumber("1048576.25")}, ("ratio",))
+
+
+def test_a_float_carrier_with_no_authored_digits_is_the_number_it_names() -> None:
+    # A runtime caller's own `float` is a carrier it chose rather than a spelling
+    # some writer produced, so there is no second spelling to distinguish it
+    # from: it reads back as the value it names.
+    shape = DocumentShape(members=(Leaf(name="ratio", type=FLOAT64, nullable=True),))
+    assert decode_path(shape, {"ratio": 0.1}, ("ratio",)) == Present(0.1)
 
 
 def _one_leaf(neutral_type: NeutralType) -> DocumentShape:

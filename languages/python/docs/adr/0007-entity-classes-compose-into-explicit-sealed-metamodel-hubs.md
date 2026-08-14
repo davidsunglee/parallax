@@ -568,8 +568,8 @@ Thus the valid staged `snapshot-history-includes` composition is never
 misclassified as an invalid query, while a missing implementation for a Feature
 claimed by the active Conformance Slice remains a defect rather than an
 allowable deferral. All four steps are one private seam, `preflight`, in
-that fixed order, which `Database.find`, `Transaction.find`, both neutral entry
-points, and the later
+that fixed order, which `Database.find`, `Transaction.find`, the Wire read
+interfaces beside them, the values lane's `read_rows`, and the later
 Session read boundary call rather than reimplementing.
 
 Predicate-selected writes introduce no public mutation-query type. All five

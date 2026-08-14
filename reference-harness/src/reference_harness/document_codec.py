@@ -32,7 +32,7 @@ import uuid as _uuid
 from collections.abc import Callable
 from typing import Any
 
-from .portable_literal import decode_number
+from .portable_literal import AuthoredNumber, decode_number
 
 __all__ = [
     "DocumentEncodingError",
@@ -96,13 +96,19 @@ def decode_stored(raw: Any) -> Any:
     column as the raw JSON text. Both collapse to the same portable document here, so
     every consumer above the driver is dialect-agnostic. A SQL ``NULL`` column stays
     ``None``.
+
+    A number keeps the digits it was stored with
+    (:class:`~reference_harness.portable_literal.AuthoredNumber`): a float leaf's
+    canonical spelling is a property of those digits, so parsing them into a binary
+    float here would make ``0.1`` and ``0.10000000000000001`` one value and leave
+    :func:`decode_leaf` nothing to refuse the second by.
     """
     if raw is None:
         return None
     if isinstance(raw, (bytes, bytearray, memoryview)):
         raw = bytes(raw).decode()
     if isinstance(raw, str):
-        return json.loads(raw)
+        return json.loads(raw, parse_float=AuthoredNumber)
     return raw
 
 
@@ -196,7 +202,19 @@ def _encoded_member(type_spelling: str, value: Any) -> Any:
     member = _value_space_member(type_spelling, value)
     if member is _NOT_ENCODED:
         return _NOT_ENCODED
-    return member if encode_leaf(type_spelling, member) == value else _NOT_ENCODED
+    encoded = encode_leaf(type_spelling, member)
+    if type_spelling in ("float32", "float64") and isinstance(value, AuthoredNumber):
+        # A float is the one row whose stored value carries more than the value it
+        # names: many JSON numbers name one binary float, so the comparison is of the
+        # authored DIGITS against the digits a writer of this table stores — as the
+        # exact numbers they name, so `20` and `20.0` stay one number while
+        # `0.10000000000000001` and `0.1` stay two.
+        return (
+            member
+            if decimal.Decimal(value.literal) == decimal.Decimal(repr(encoded))
+            else _NOT_ENCODED
+        )
+    return member if encoded == value else _NOT_ENCODED
 
 
 def _value_space_member(type_spelling: str, value: Any) -> Any:

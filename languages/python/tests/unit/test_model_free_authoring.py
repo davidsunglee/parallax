@@ -133,7 +133,14 @@ def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> 
     with pytest.raises(SnapshotConnectionError) as caught:
         database.find(Gizmo.where(Gizmo.id == 1))
     assert caught.value.code == "snapshot-class-backed-model-required"
-    assert database.wire is not None
+
+    # And the Wire read the same connection DOES serve runs end to end: the
+    # capability is an executed read rather than a reachable namespace.
+    served = Database.connect(
+        RecordingPort(rows=[{"id": 1}]), descriptor_backed, clock=FixedClock(FIXED)
+    )
+    published = served.wire.find({"target": "Gizmo", "predicate": {"all": {}}}).result()
+    assert published == {"id": 1}
 
 
 def test_connect_refuses_a_bare_accepted_metamodel() -> None:

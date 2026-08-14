@@ -35,6 +35,6 @@ error.
 
 Snapshot centralizes target resolution, query validation, and deferral
 classification in one private `preflight` seam over the canonical Object Query.
-Database, Transaction, Session read boundaries, and both neutral entry points
-reuse it before any new
+Database, Transaction, and Session read boundaries reuse it — through both the
+Typed and the Wire read interface, and through the values lane — before any new
 connection acquisition or Database Port access.

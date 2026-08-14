@@ -22,6 +22,7 @@ import uuid as _uuid
 from typing import cast
 
 from parallax.core.base import (
+    AuthoredNumber,
     Boolean,
     Bytes,
     Date,
@@ -111,11 +112,32 @@ def decode_wire(neutral_type: NeutralType, value: object) -> object:
     value for data that contradicts its declared type.
     """
     decoded = decode_neutral_literal(value, neutral_type)
-    if matches_neutral_type(decoded, neutral_type) and encode_wire(neutral_type, decoded) == value:
+    if matches_neutral_type(decoded, neutral_type) and _is_canonical(neutral_type, decoded, value):
         return decoded
     raise WireEncodingError(
         f"{value!r} is not the canonical spelling of any {neutral_type!r} value"
     )
+
+
+def _is_canonical(neutral_type: NeutralType, decoded: object, written: object) -> bool:
+    """Whether ``written`` is the ONE spelling this table gives ``decoded``.
+
+    Every spelling but a float's is settled by comparing it to the encoding, because
+    the written value carries exactly what the value it names does. A float's does not:
+    many JSON numbers name one binary float, so ``0.1`` and ``0.10000000000000001`` are
+    two spellings of one value and only the first is this table's. The digits are
+    therefore what is compared, as the exact numbers they name — ``20`` and ``20.0``
+    stay one number — and they are compared against the digits a writer of this table's
+    own output stores, which is the encoded float's shortest rendering.
+
+    A float that reached here carrying no digits is a native carrier a caller chose
+    rather than a spelling some writer produced, so the carrier IS the number it means
+    and there is no second spelling to distinguish it from.
+    """
+    canonical = encode_wire(neutral_type, decoded)
+    if isinstance(neutral_type, Float32 | Float64) and isinstance(written, AuthoredNumber):
+        return _decimal.Decimal(written.literal) == _decimal.Decimal(repr(canonical))
+    return canonical == written
 
 
 def _exact_decimal(value: _decimal.Decimal, scale: int) -> str:

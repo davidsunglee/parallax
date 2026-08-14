@@ -134,10 +134,10 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: 
 # the read-side sibling of the write stories above, executed through the SAME #
 # shipped `parallax.snapshot.connect` + `parallax-postgres` surface. Grading  #
 # is bespoke per story (unlike the write stories' shared row/table-state      #
-# comparators): each assertion mirrors its case's own `then.graph`/           #
-# `identityChecks`/scenario oracle as closely as one in-process assertion     #
+# comparators): each assertion mirrors its case's own `then.graph` or         #
+# scenario oracle as closely as one in-process assertion                      #
 # can — the developer-facing guarantees a wire grade cannot see (reference    #
-# identity surviving the frozen-node wrap, `is_view_loaded` /                 #
+# identity surviving materialization, `is_view_loaded` /                      #
 # `UnloadedRelationshipError`, `pin_of`/`edge_of` on a materialized node).     #
 # --------------------------------------------------------------------------- #
 _GRAPH_STORIES_BY_ID = {story.case_id: story for story in GRAPH_STORIES}
@@ -151,8 +151,9 @@ def test_diamond_identity_shares_one_child_node(provisioner: Any) -> None:
     order = snapshot.result()
     # The diamond: both include paths reach OrderItem 12 then OrderItem 11 (id
     # desc / shipped_on asc happen to agree here) — one materialized node, not
-    # two lookalike copies, exactly the reference identity `then.identityChecks`
-    # would grade at the wire level for the graph half of this case.
+    # two lookalike copies. Reference identity is what only this lane can show:
+    # the case's own `then.graph` grades the value at both positions and cannot
+    # distinguish one shared node from two equal ones.
     assert order.items[0] is order.items_by_ship_date[0]
     assert order.items[1] is order.items_by_ship_date[1]
     assert snapshot.execution.round_trips == 3

@@ -1575,12 +1575,15 @@ is the contract rather than an implementation detail. `form` is the one fact a
 query does not carry, because graph versus rows is a property of the call. It
 performs no SQL, Database
 Port access, connection acquisition, materialization, or transaction work.
-`Database.find`, `Transaction.find`, both neutral entry points, the conformance
-compile lane, and the later Session read boundary call
-this seam rather than reimplementing any step.
+Every read entry calls this seam rather than reimplementing any step:
+`Database.find` and `Transaction.find`, the `db.wire.find` / `tx.wire.find`
+peers beside them — each handle runs one read seam for both interfaces, so the
+two cannot gate differently — the values lane's `read_rows`, the conformance
+compile lane, and the later Session read boundary.
 
 Deferred Execution Features apply only to modeled read execution through
-`Database.find`, `Transaction.find`, and the later Session read boundary.
+`Database.find`, `Transaction.find`, their Wire peers, and the later Session
+read boundary.
 Predicate-selected write methods never invoke this classifier. They first
 require a mutation-compatible Object Query, so a read-shaped query matching a
 deferral still raises `QueryDefinitionError(query-not-mutation-compatible)`
@@ -2779,7 +2782,12 @@ or descriptor authoring form and performs no audit stamping.
   read-only nominal `Mapping[str, WireValue]` implemented by a private frozen
   `dict` subclass; nested mappings and lists are frozen private subclasses too.
   `isinstance(value, dict)` stays true while `type(value) is dict` is false;
-  ordinary mutation raises `TypeError`; values keep ordinary structural equality
+  ordinary mutation raises `TypeError` — every named mutator, the operators, and
+  the repopulating `value.__init__(...)`, at every depth. The bound is the
+  language's, not the design's: a caller that goes around the instance to the
+  base descriptor itself (`dict.__setitem__(value, ...)`) reaches the layout that
+  makes the value a `dict` at all, and no `dict` or `list` subclass in Python can
+  refuse it. Values keep ordinary structural equality
   with plain `dict` and `list` values, remain unhashable, and serialize directly
   through `json`. `dict(value)` and `list(value)` yield ordinary containers the
   caller owns. `copy()`, `copy.copy`, and `copy.deepcopy` answer the same

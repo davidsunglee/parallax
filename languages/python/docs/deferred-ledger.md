@@ -129,28 +129,6 @@ rows resolve to their own concretes — is the same either way, so nothing was
 lost. Any later work reaching for a TPCS family through a transaction hits the
 same wall and must plan around it or close it.
 
-### D-58 — Neutral Snapshot graph, tree, wire, and streaming shapes need one holistic decision
-
-*Design follow-up — deliberately excluded from COR-93.* Relates to
-`m-snapshot-read`, `m-conformance-adapter`, `parallax.snapshot.handle`, and the
-future streaming work tracked in COR-83.
-
-**What.** COR-93 keeps the current Snapshot graph semantics for its provisional
-Python `NeutralGraph`: roots are views over graph-local uniqued nodes, so cycles,
-diamonds, and shared descendants retain identity without duplicating logical
-nodes. A later representation may instead expose an ordered list of rooted
-trees. That could give eager and streaming reads the same traversal API and let
-neutral results render directly to JSON/wire, at the accepted cost that separate
-roots or branches may materialize distinct in-memory objects for one logical
-node.
-
-**Why it is deferred rather than fixed.** Changing only COR-93's adapter would
-silently fork core Snapshot semantics. The decision crosses core graph identity,
-compatibility graph oracles, Python typed and neutral results, cycle rendering,
-wire shape, and bounded-memory streaming. It needs its own grilling session and
-ticket after conformance has been reduced to the production path; COR-93 must not
-combine that semantic migration with deleting the duplicate engine.
-
 ### D-67 — A deep-fetch or snapshot CHILD level's graph node shape is authored per projection, and production materializes one merged, narrowed node
 
 *Medium — a corpus-versus-production divergence with no defect on either side.*
@@ -172,8 +150,8 @@ materializes one node per LOGICAL ROW:
   polymorphic view, absent on a single-concrete narrowed one — while a
   materialized node's variant spelling is its own, the same through every view;
 - one logical row reached through two views is authored twice with different
-  values, and materializes as one shared node, so a path that revisits it is a
-  back-reference cycle and truncates to its primary-key stub.
+  values, and materializes as ONE shared node, so both positions render that
+  node's own merged members rather than each view's own projection.
 
 **Why it is deferred rather than fixed.** `m-case-format` *Read targeting*
 already names this as open: the per-variant node shape "is scoped, for now, to a
@@ -209,19 +187,18 @@ grades no language implementation, so it covers none of this either.
 memory") is likely to remove the graph-level node-uniqueness requirement
 (`parallax.snapshot.materialize._merge`) so each route in memory carries its own
 full deep-fetch tree. That bears on divergence (c) alone — one logical row
-reached twice sharing a node and truncating to a primary-key stub
-(`parallax.conformance.engine._render_node`'s `visiting` recursion anchor) — and
-only on `m-inheritance-078`, the one case among the eleven whose graph is an
-actual back-reference cycle rather than two independent views of the same row
-(`m-snapshot-read-012`'s diamond renders its shared row in full at both
-positions; nothing there is ever truncated). Divergences (a) and (b) are decided
+reached twice sharing a node — and only on `m-inheritance-078`, the one case
+among the eleven that reaches a row a second time by revisiting an ANCESTOR
+(`m-snapshot-read-012`'s diamond reaches its shared row through two independent
+views instead, and the include tree renders it in full at both positions either
+way). Divergences (a) and (b) are decided
 upstream of any merge — by `convert_row`'s per-row, per-concrete-entity
-narrowing (`parallax.snapshot.materialize._convert:227-231`) and by
+narrowing (`parallax.snapshot.materialize._convert`) and by
 `_family_variant`'s per-node, per-concrete-entity spelling
-(`parallax.snapshot.materialize._neutral:365-377`) — and neither reads whether
+(`parallax.snapshot.materialize._wire`) — and neither reads whether
 the resulting node was merged with another, so removing the merge leaves all
 nine (a)/(b) cases diverging exactly as they do now. `m-inheritance-078` itself
-carries an (a) mismatch in its own `pets` child level besides its (c) cycle, so
+carries an (a) mismatch in its own `pets` child level besides its (c) sharing, so
 even it would not go green on the merge change alone. D-67 therefore survives
 COR-83 and still needs the `m-case-format` reconciliation it names.
 
@@ -295,6 +272,7 @@ prose.
 - **D-51** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P6, item 6d. A defining to-one whose foreign key sits on the target side.
 - **D-52** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). The silent unbinding it describes was already gone: [COR-89](https://linear.app/flimflam/issue/COR-89/let-an-operation-reference-name-a-namespaced-entity-and-migrate-the) made `targets(model)` register canonical spellings unconditionally and every serialized surface emit `identity.canonical`, so no in-tree producer can supply an ambiguous one. What COR-51 added is classification at the external-producer boundary — `unit_work.instructions._entity` and `snapshot.handle._read._metadata` both raise `reference-ambiguous-entity-name` — so a spelling arriving from outside is one refusal naming both candidates rather than a missing observation binding.
 - **D-57** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). `_identity_row` applies `serialize_member`, so all three Entity Row Codec operations carry one form; `python.md` §5 states that uniform contract in place of the asymmetry, and no golden moved, because a primary key is structurally a scalar Attribute that `serialize_member` passes through unchanged.
+- **D-58** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout) Phase 4. The holistic decision was taken rather than postponed, and it is neither shape alone: the merged graph keeps graph-local node identity, and the Wire read renders a FINITE value tree by unwinding the requested include tree (`parallax.snapshot.materialize._wire`), so a back-reference terminates because the tree strictly shrinks rather than because a cycle detector fired. Aliasing survives the tree — positions reaching one merged node under one subtree answer the identical frozen object — so the cost this entry accepted in advance (one logical node materializing as distinct objects) is not paid, and `then.graph` grades JSON-renderable values directly. Bounded-memory streaming is the one part left, and [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory) carries it: what it revisits is graph-level node uniqueness, not the wire shape this settled.
 - **D-60** → closed by this claim. The module's own source landed, so `MODULE_SCOPE` carries `parallax.core.execution_log`, the generated `[tool.importlinter]` block contracts it, `core/spec/modules.md` carries `m-snapshot-read --> m-execution-log`, and `m-snapshot-read.md` names the Read Trace its round-trip count is observed through. One consequence the entry did not foresee: `m-execution-log` reaches `m-sql`, so mapping the tag to `parallax.snapshot.materialize` would put SQL generation inside the closure of the grant `parallax.snapshot.handle._materializer` holds, dissolving the containment that child scope exists for. The tag therefore maps to `parallax.snapshot._read_result` — the scope that actually names the Read Trace — while `parallax.snapshot.materialize` carries the remaining `m-snapshot-read` edges as a support row.
 - **D-59** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). `then.execution` has one grader; `spec/python.md` §1 carries the single-witness limit.
 - **D-61** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). The envelope half: `validate_execution_observation` has no envelope-grading seam, and `core/spec/m-conformance-adapter.md` *Execution provenance* binds the adapter regardless.

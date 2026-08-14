@@ -5499,7 +5499,7 @@ def wire_row(row: Mapping[str, object]) -> Row:
     """Render every managed value of one observed row to canonical wire form.
 
     Takes any mapping, because the two sources differ in kind: a table-state read
-    hands over the driver's own row, and a neutral read hands over the immutable
-    one production materialized.
+    hands over the driver's own row, and the values lane hands over the immutable
+    one production published.
     """
     return {key: wire_value(value) for key, value in row.items()}

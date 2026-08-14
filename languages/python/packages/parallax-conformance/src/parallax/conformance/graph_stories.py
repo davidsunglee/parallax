@@ -4,14 +4,13 @@ Each story is ONE executable function over the **public** developer surface
 (``parallax.snapshot.connect`` -> ``db.find``), mirroring one corpus
 ``m-snapshot-read`` (or a closely related ``m-navigate``/``m-value-object``)
 case whose oracle is a materialized **graph** — a `then.graph`/`then.graphs`
-document, an ``identityChecks`` reference-identity assertion, or a scenario's
-own per-step observable. This is the read-side sibling of ``stories.py``'s
-write stories: an example whose behavior is only observable by executing it
-must run through the
-shipped surface, not merely serialize a statement — a wire-level ``graph``
-grade proves the assembled NEUTRAL nodes are correct, but says nothing about
-the frozen-node WRAPPING (`parallax.snapshot.handle`) layered on top by
-``db.find`` — identity surviving the wrap, `is_view_loaded`/
+document or a scenario's own per-step observable. This is the read-side sibling
+of ``stories.py``'s write stories: an example whose behavior is only observable
+by executing it must run through the
+shipped surface, not merely serialize a statement — a ``graph`` grade proves the
+Wire value tree is correct, but says nothing about what only the TYPED lane has:
+the frozen entity nodes (`parallax.snapshot.handle`) ``db.find`` builds over the
+same merge — identity surviving materialization, `is_view_loaded`/
 `UnloadedRelationshipError`, closed-world zero-SQL access, `pin_of`/`edge_of`
 on a materialized node. Those developer-facing guarantees are exactly what the
 API Conformance Suite exists to prove (`m-api-conformance` "Two proof paths").
@@ -25,7 +24,8 @@ row/table-state comparators): a graph story returns whatever its own
 docstring-free body naturally computes — a `Snapshot[T]`, a node, or a
 `(before, after)` pair — and the test file's own per-case assertion (named
 after the story) is the oracle, chosen to mirror the mirrored case's own
-`then.graph`/`identityChecks`/scenario observable as closely as one assertion
+`then.graph` or scenario observable — a step's `sameObjectAs` reference identity
+included — as closely as one assertion
 can. Two lifecycle observables this module's stories witness —
 `sameObjectAs`/`differentObjectFrom` reference identity and the closed-world
 `UnloadedRelationshipError` — are the SAME per-language guarantees
@@ -159,8 +159,8 @@ def a_finite_transaction_time_pinned_view_is_read_only(db: Database) -> None:
     as they do the supplemental history proof below.
 
     What it proves that the wire lane cannot: the mutate step's refusal graded on
-    the scenario lane is derived from the STEP's own Object Query, over
-    class-free neutral nodes that carry no lifecycle state at all — a path that
+    the scenario lane is derived from the STEP's own Object Query, over frozen
+    plain values that carry no lifecycle state at all — a path that
     never reaches ``edit``. Here the pin travels on the value, so the refusal is
     the one an ordinary developer receives, and it is the finite-Transaction-Time
     read-only rule holding through the real derivation. Optimistic mode matches
@@ -467,7 +467,7 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
     ),
     GraphStory(
         "m-snapshot-read-011",
-        "A back-reference cycle resolves to the SAME root node (identityChecks)",
+        "A back-reference cycle resolves to the SAME root node",
         "orders",
         back_reference_cycle_resolves_to_the_root,
     ),
