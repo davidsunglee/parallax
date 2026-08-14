@@ -1521,6 +1521,46 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
             )
 
 
+class _AbstractFamilyPosition(NamedTuple):
+    """The abstract family node a query reads, with the family it belongs to.
+
+    *target* keeps the QUERY's own spelling of that position — every :class:`Family`
+    lookup resolves an unambiguous local alias itself, so carrying the authored
+    spelling keeps a consumer's diagnostics in the case's own words.
+    """
+
+    family: Family
+    target: str
+    strategy: str | None
+
+
+def _abstract_family_position(case: Case, query: Any) -> _AbstractFamilyPosition | None:
+    """Classify *query*'s target position: the abstract family node it reads, or
+    ``None`` for every other read.
+
+    One classifier for every consumer whose behavior turns on the distinction,
+    because they all ask the same question of the same field. An ABSTRACT position
+    resolves over more than one concrete subtype, so its SQL partitions per branch
+    and its result carries a variant tag (`m-sql`); a CONCRETE-target read — and any
+    read of a non-inheritance entity — carries neither, having already named the one
+    variant it returns. What differs between consumers is only the storage
+    *strategy* they then project that behavior from.
+
+    Abstractness is read off the definition's inheritance role, which only a family
+    participant carries, so a non-inheritance target answers ``None`` by the same
+    test.
+    """
+    target = query.get("target") if isinstance(query, dict) else None
+    if not isinstance(target, str):
+        return None
+    family = Family(case.model.entity_defs)
+    if target not in family.defs:
+        return None
+    if not is_abstract(family.defs[target]):
+        return None
+    return _AbstractFamilyPosition(family, target, family.strategy_of(target))
+
+
 def _read_effective_set(case: Case, family: Family, target_name: str) -> list[str]:
     """The effective concrete-subtype set an abstract-target read resolves over.
 
@@ -1597,18 +1637,11 @@ def _assert_temporal_only_union_binds(case: Case, dialect: str) -> None:
         case.object_query
     ):
         return
-    target_name = case.object_query.get("target")
-    if not isinstance(target_name, str):
+    position = _abstract_family_position(case, case.object_query)
+    if position is None or position.strategy != STRATEGY_TPCS:
         return
-    family = Family(case.model.entity_defs)
-    if target_name not in family.defs:
-        return
-    target_def = family.defs[target_name]
-    if inheritance_of(target_def) is None or not is_abstract(target_def):
-        return
-    if family.strategy_of(target_name) != STRATEGY_TPCS:
-        return
-    ordered = family.canonical_concrete_order(_read_effective_set(case, family, target_name))
+    family = position.family
+    ordered = family.canonical_concrete_order(_read_effective_set(case, family, position.target))
     branch_entities = [case.model.entity(name) for name in ordered]
     if not any(entity.is_temporal for entity in branch_entities):
         return
@@ -1631,14 +1664,12 @@ def _assert_temporal_only_union_binds(case: Case, dialect: str) -> None:
 
 def _assert_tph_document_partition_shape(case: Case, dialect: str) -> None:
     """Grade a TPH document `union all` as one tag-filtered branch per variant."""
-    target_name = case.object_query.get("target")
-    if not isinstance(target_name, str):
+    position = _abstract_family_position(case, case.object_query)
+    if position is None or position.strategy != STRATEGY_TPH:
         return
-    family = Family(case.model.entity_defs)
-    if target_name not in family.defs or family.strategy_of(target_name) != STRATEGY_TPH:
-        return
+    family, target_name = position.family, position.target
     target = case.model.entity(target_name)
-    if not target.is_abstract or not _document_layout_members(case, target)[0]:
+    if not _document_layout_members(case, target)[0]:
         return
     statements = case.golden_statements(dialect)
     if not statements or " union all " not in statements[0]:
@@ -1809,19 +1840,13 @@ def _materialize_target_tph_document_layout(
     case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
 ) -> list[dict[str, Any]]:
     """Decode an abstract TPH document only after its raw tag resolves the variant."""
-    target_name = case.object_query.get("target")
-    if not isinstance(target_name, str):
-        return rows
-    family = Family(case.model.entity_defs)
-    if target_name not in family.defs:
+    position = _abstract_family_position(case, case.object_query)
+    if position is None or position.strategy != STRATEGY_TPH:
         return _materialize_target_document_layout(
             case, rows, include_value_objects=include_value_objects
         )
+    family, target_name = position.family, position.target
     target = case.model.entity(target_name)
-    if not target.is_abstract or family.strategy_of(target_name) != STRATEGY_TPH:
-        return _materialize_target_document_layout(
-            case, rows, include_value_objects=include_value_objects
-        )
     column, _members = _document_layout_members(case, target)
     if not column:
         return _materialize_target_document_layout(
@@ -1927,21 +1952,13 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
     tag column with the derived ``familyVariant`` (``tagValue`` -> concrete subtype
     name) so the materialized rows can be compared to ``then.rows``.
     """
-    target_name = case.object_query.get("target")
-    if not isinstance(target_name, str):
-        return rows
-    entity_defs = case.model.entity_defs
-    family = Family(entity_defs)
-    if target_name not in family.defs:
-        return rows
-    target_def = family.defs[target_name]
-    if inheritance_of(target_def) is None or not is_abstract(target_def):
+    position = _abstract_family_position(case, case.object_query)
+    if position is None:
         return rows  # concrete-target (or non-inheritance) read carries no familyVariant
-
-    strategy = family.strategy_of(target_name)
-    if strategy == STRATEGY_TPCS:
+    family, target_name = position.family, position.target
+    if position.strategy == STRATEGY_TPCS:
         return _materialize_tpcs_family_variant(case, rows, family, target_name)
-    if strategy != STRATEGY_TPH:
+    if position.strategy != STRATEGY_TPH:
         return rows
 
     tag_column = family.tag_column_of(target_name)
@@ -1951,7 +1968,7 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
         return rows
     effective = _read_effective_set(case, family, target_name)
     expected_columns = set(position_projection(case.model.storage_layout, family, effective))
-    variant_map = tag_value_to_subtype(entity_defs)
+    variant_map = tag_value_to_subtype(case.model.entity_defs)
 
     # Projection-shape assertion, derived from the GOLDEN SQL projection rather than a
     # sample row, so it is row-count-INDEPENDENT: a zero-row abstract read still
@@ -6384,21 +6401,15 @@ def _origin_variant_columns(case: Case, origin: dict[str, Any]) -> tuple[str, ..
     ``familyVariant`` — and reading one of those as a discriminator would refuse a
     settled write whose find observed exactly the row it names.
 
-    Abstractness is the same gate materialization itself asks
-    (:func:`_materialize_family_variant`), so one rule in this harness decides
-    whether a read's rows carry a variant.
+    Which position is abstract is asked of the same classifier materialization asks
+    (:func:`_abstract_family_position`), so one rule in this harness decides whether
+    a read's rows carry a variant — of *origin*'s own query, because that is the read
+    whose rows are being interrogated.
     """
-    query = origin.get("objectQuery")
-    target = query.get("target") if isinstance(query, dict) else None
-    if not isinstance(target, str):
+    position = _abstract_family_position(case, origin.get("objectQuery"))
+    if position is None:
         return ()
-    family = Family(case.model.entity_defs)
-    if target not in family.defs:
-        return ()
-    definition = family.defs[target]
-    if inheritance_of(definition) is None or not is_abstract(definition):
-        return ()
-    if family.strategy_of(target) == STRATEGY_TPCS:
+    if position.strategy == STRATEGY_TPCS:
         return ("familyVariant", _TPCS_VARIANT_COLUMN)
     return ("familyVariant",)
 
