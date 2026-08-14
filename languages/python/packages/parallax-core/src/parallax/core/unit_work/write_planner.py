@@ -192,6 +192,12 @@ class Finalization:
     which is what keeps a batch's surviving write from spending a claim no
     statement of it will carry (`m-unit-work` "A successful flush consumes").
 
+    Each claim appears ONCE, by identity, at the position its first surviving
+    carrier settled. Several writes of one flush may settle against one observed
+    state — two edits of one source value are two writes holding one claim — and
+    what consumption records is a fact about that observed state, not about a
+    statement, so a repeated entry would spend one piece of evidence twice.
+
     Spending them is the caller's, and only after the executor returns: a plan
     that never ran spends nothing.
     """
@@ -259,7 +265,9 @@ class WritePlanner:
         A claim is collected exactly where its carrier is settled, so the two
         answers are one traversal and cannot disagree about which writes
         survived: an item the earlier stages retired never reaches that point,
-        and therefore never contributes the evidence it was holding.
+        and therefore never contributes the evidence it was holding. Collection
+        is identity-keyed, so two surviving carriers holding one claim answer it
+        once.
 
         Pure with respect to its inputs — no database I/O, no direct clock
         access, no SQL. ``request.subject_identity`` is accepted and never
@@ -295,7 +303,7 @@ class WritePlanner:
         ordered = self._order(batched, resolved)
         segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
-        claims: list[RetainedObservation] = []
+        claims: dict[RetainedObservation, None] = {}
 
         def flush_pending() -> None:
             if pending:
@@ -331,7 +339,7 @@ class WritePlanner:
                     )
                 )
             if isinstance(item, ObservedKeyedWrite) and item.claim is not None:
-                claims.append(item.claim)
+                claims.setdefault(item.claim, None)
         flush_pending()
         return Finalization(WritePlan(steps=PlannedSteps(tuple(segments))), tuple(claims))
 
