@@ -962,6 +962,88 @@ def test_a_settled_steps_golden_must_open_its_predicate_with_a_bound_key() -> No
         _assert_scenario_settled_write(case, "postgres")
 
 
+def test_a_settled_steps_address_reads_each_identifier_with_its_own_quoting() -> None:
+    # An address is compared to the model by the identifier the golden SPELLS. An
+    # unquoted name is folded by the database, so it addresses the object however it
+    # is cased; a QUOTED one keeps exactly what it spells (m-dialect), so a quoted
+    # `"ACCOUNT"` / `"ID"` names a table and column this model does not declare.
+    # Lowercasing both sides would read all four spellings as one identifier, and a
+    # model declaring `"Order"` beside `order` would have its two objects' goldens
+    # answer for each other.
+    folded = _versioned_settled_case(version=2)
+    folded.when["scenario"][1]["statements"][0]["sql"]["postgres"] = (
+        "update ACCOUNT set balance = ?, version = ? where ID = ? and version = ?"
+    )
+    _assert_scenario_settled_write(folded, "postgres")
+
+    quoted = _versioned_settled_case(version=2)
+    quoted.when["scenario"][1]["statements"][0]["sql"]["postgres"] = (
+        'update "ACCOUNT" set balance = ?, version = ? where "ID" = ? and version = ?'
+    )
+    with pytest.raises(CaseFailure, match="no existing-row statement addressing"):
+        _assert_scenario_settled_write(quoted, "postgres")
+
+
+def test_a_settled_write_of_a_shared_table_routes_to_its_own_subtype() -> None:
+    # A table-per-hierarchy family shares one table, so the address a golden carries
+    # names the object but not which concrete subtype claimed it. The tag guard is
+    # what says that, and it binds the written subtype's own `tagValue`
+    # (m-inheritance) — a settled Dog update guarded on `cat` writes rows this entry
+    # never wrote.
+    _assert_scenario_settled_write(_shared_table_settled_case(), "postgres")
+
+    sibling = _shared_table_settled_case(tag="cat")
+    with pytest.raises(CaseFailure, match="tagValue"):
+        _assert_scenario_settled_write(sibling, "postgres")
+
+
+def _shared_table_settled_case(*, tag: str = "dog") -> Case:
+    """A `uow` group whose find observes Animal 1 and whose write settles an update
+    of the concrete subtype Dog against it, on the family's shared table."""
+    raw: dict[str, Any] = {
+        "model": "models/animal.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "when": {
+            "scenario": [
+                {
+                    "uow": "shared-table",
+                    "objectQuery": {"target": "parallax.compatibility.Animal"},
+                    "roundTrips": 1,
+                    "expectRows": [{"id": 1, "name": "Rex", "familyVariant": "Dog"}],
+                },
+                {
+                    "uow": "shared-table",
+                    "on": 0,
+                    "write": [
+                        {
+                            "mutation": "update",
+                            "entity": "parallax.compatibility.Dog",
+                            "rows": [{"id": 1, "barkVolume": 9}],
+                        }
+                    ],
+                    "roundTrips": 1,
+                    "statements": [
+                        {
+                            "sql": {
+                                "postgres": "update animal set bark_volume = ? "
+                                "where id = ? and kind = ?"
+                            },
+                            "binds": [9, 1, tag],
+                        }
+                    ],
+                },
+            ],
+        },
+        "then": {"roundTrips": 2},
+    }
+    return Case(
+        path=COMPATIBILITY_ROOT / "cases" / "m-unit-work-994-synthetic.yaml",
+        raw=raw,
+        model=load_model(COMPATIBILITY_ROOT, "models/animal.yaml"),
+    )
+
+
 def test_a_settled_writes_binds_are_read_for_the_executing_dialect() -> None:
     # `binds` carries the same dialect-keyed polymorphism `sql` does, so a golden
     # whose hole structure diverges answers with the executing dialect's own array
