@@ -6,11 +6,11 @@ read answers. The typed materializer runs over the same merge in the graph
 suites, which is what makes "peers over one merge" checkable rather than
 asserted.
 
-Three claims carry the phase: keys are declared member names and leaves are
-canonical Wire Values (`m-wire`); a back-reference unwinds finitely along the
-requested Include Paths rather than truncating to a primary-key stub; and every
-returned mapping and list is deeply frozen while staying an ordinary built-in
-subclass.
+Three claims bound what is asserted here: keys are declared member names and
+leaves are canonical Wire Values (`m-wire`); a back-reference unwinds finitely
+along the requested Include Paths rather than truncating to a primary-key stub;
+and every returned mapping and list refuses, at every depth, mutation reaching
+it through the instance, while staying an ordinary built-in subclass.
 """
 
 from __future__ import annotations
@@ -282,7 +282,7 @@ def _frozen_root() -> WireEntity:
     return _entity(_wire_database(port).wire.find(query).result())
 
 
-def test_a_wire_mapping_is_a_dict_that_refuses_every_mutation() -> None:
+def test_a_wire_mapping_is_a_dict_that_refuses_mutation_through_the_instance() -> None:
     root = _frozen_root()
     assert isinstance(root, dict)
     assert type(root) is not dict
@@ -302,7 +302,7 @@ def test_a_wire_mapping_is_a_dict_that_refuses_every_mutation() -> None:
     assert root["id"] == 1
 
 
-def test_a_wire_sequence_is_a_list_that_refuses_every_mutation() -> None:
+def test_a_wire_sequence_is_a_list_that_refuses_mutation_through_the_instance() -> None:
     items = _sequence(_frozen_root()["items"])
     assert isinstance(items, list)
     assert type(items) is not list
