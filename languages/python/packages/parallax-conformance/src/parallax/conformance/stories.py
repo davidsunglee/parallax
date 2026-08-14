@@ -299,9 +299,10 @@ def transaction_time_only_terminate_closes_the_current_milestone(db: Database) -
     def close(tx: Transaction) -> None:
         # Observe the current milestone FIRST (`python.md` §5: temporal
         # update/terminate follow the same prior-observation rule as versioned
-        # writes — in the default locking mode, the find's shared lock is
-        # exactly what licenses the ungated close), then close it keyed off
-        # the primary key alone (close-only, no chained row).
+        # writes — Balance is Transaction-Time temporal, so the default
+        # preference resolves it to the Optimistic strategy and the close binds
+        # that observed milestone's own `in_z` as its gate), then close it keyed
+        # off the primary key alone (close-only, no chained row).
         current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.terminate(current)
 
@@ -352,16 +353,19 @@ def transaction_time_only_chain_update_from_existing_history(db: Database) -> No
 # m-opt-lock: Account (versioned, non-temporal) keyed-write stories.          #
 # --------------------------------------------------------------------------- #
 def versioned_update_advances_the_version_ungated_in_locking_mode(db: Database) -> None:
-    # m-opt-lock-002: the DEFAULT `locking` mode's in-transaction read already
-    # took a shared row lock, so the keyed update needs no version check — it
-    # advances the version with NO `and version = ?` gate (contrast optimistic
-    # mode, m-opt-lock-005/-006). A writeSequence story (the corpus case's own
-    # shape): no trailing find, the committed table state is the oracle.
+    # m-opt-lock-002: the `locking` preference is the workflow-level override
+    # that forces every Entity to participate pessimistically. Its
+    # in-transaction read takes a shared row lock, so the keyed update needs no
+    # version check — it advances the version with NO `and version = ?` gate
+    # (contrast the default preference, which resolves a versioned Account to
+    # the Optimistic strategy: m-opt-lock-005/-006). A writeSequence story (the
+    # corpus case's own shape): no trailing find, the committed table state is
+    # the oracle.
     def fn(tx: Transaction) -> None:
         current = tx.find(Account.where(Account.id == 2)).result()  # observe the version
         tx.update(current.edit(balance=Decimal("500.00")))
 
-    db.transact(fn)
+    db.transact(fn, concurrency="locking")
 
 
 # --------------------------------------------------------------------------- #
@@ -372,15 +376,15 @@ def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
     # predicate-selected delete has nothing to gate per row — it lowers
     # DIRECTLY to one set-shaped `delete ... where balance < ?`, no
     # materializing read at all (contrast the versioned set delete,
-    # m-opt-lock-015/m-batch-write-004). The verifying find carries no shared
-    # read lock (the case's own lock-free golden) — optimistic concurrency,
-    # never the locking-mode default (which would take one on ANY
-    # transactional entity's find, m-read-lock-001).
+    # m-opt-lock-015/m-batch-write-004). That same missing version is why the
+    # verifying find DOES take the shared read lock: with no gate to recover
+    # correctness at write time, the default preference resolves Wallet to the
+    # Locking fallback.
     def fn(tx: Transaction) -> list[Entity]:
         tx.delete_where(Wallet.where(Wallet.balance < 200.00))
         return list(tx.find(Wallet.where(Wallet.balance < 200.00)).results())
 
-    return db.transact(fn, concurrency="optimistic").value
+    return db.transact(fn).value
 
 
 # --------------------------------------------------------------------------- #

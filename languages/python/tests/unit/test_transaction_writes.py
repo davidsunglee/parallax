@@ -20,7 +20,8 @@ from _transact_support import (
     ACCOUNT,
     BALANCE,
     CONTACT,
-    FIND_SQL,
+    FIND_SQL_LOCKED,
+    FIND_SQL_UNLOCKED,
     FIXED,
     INFINITY_INSTANT,
     INSERT_SQL,
@@ -124,6 +125,10 @@ def test_update_lowers_to_its_keyed_dml() -> None:
     # INSIDE this transaction — a versioned update requires a prior
     # observation; an edited copy fetched outside the writing transaction
     # cannot be updated directly (python.md §5).
+    #
+    # `Account` declares an explicit version, so the default `optimistic`
+    # preference resolves it to the Optimistic strategy: the find takes no
+    # shared lock and the update carries the observed-version gate.
     port = RecordingPort(
         rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]
     )
@@ -135,11 +140,13 @@ def test_update_lowers_to_its_keyed_dml() -> None:
     account_db(port).transact(fn)
     assert port.ops == [
         ("begin",),
-        ("read", FIND_SQL, (1,)),
+        ("read", FIND_SQL_UNLOCKED, (1,)),
         (
             "write",
-            POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?"),
-            (175.00, 2, 1),
+            POSTGRES.to_driver_sql(
+                "update account set balance = ?, version = ? where id = ? and version = ?"
+            ),
+            (175.00, 2, 1, 1),
         ),
         ("commit",),
     ]
@@ -150,8 +157,9 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
     # DELETE of a versioned row requires
     # a PRIOR observation exactly like a keyed update (python.md §5) — the
     # deleted row must be fetched INSIDE this transaction first, under the
-    # shared read lock. The observation licenses the write; under the default
-    # locking mode it renders no gate, exactly as a keyed update does.
+    # shared read lock the `locking` preference this test declares produces.
+    # The observation licenses the write; under the Locking strategy it renders
+    # no gate, exactly as a keyed update does.
     port = RecordingPort(
         rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
     )
@@ -160,10 +168,10 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
         tx.delete(fetched)
 
-    account_db(port).transact(fn)
+    account_db(port).transact(fn, concurrency="locking")
     assert port.ops == [
         ("begin",),
-        ("read", FIND_SQL, (3,)),
+        ("read", FIND_SQL_LOCKED, (3,)),
         ("write", POSTGRES.to_driver_sql("delete from account where id = ?"), (3,)),
         ("commit",),
     ]
@@ -187,10 +195,11 @@ def test_delete_of_a_versioned_row_never_observed_raises() -> None:
 
 def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
     # m-opt-lock's `updatedRows != 1` signal at the production developer
-    # surface, in the DEFAULT locking mode: the UPDATE is ungated there, so its
-    # zero-row shortfall is the non-retriable stale write rather than the
-    # retriable optimistic conflict — classification follows the gate, uniformly
-    # across update, delete, and close. The whole unit of work still rolls back.
+    # surface, under the explicit `locking` preference: the UPDATE is ungated
+    # there, so its zero-row shortfall is the non-retriable stale write rather
+    # than the retriable optimistic conflict — classification follows the gate,
+    # uniformly across update, delete, and close. The whole unit of work still
+    # rolls back.
     port = RecordingPort(
         rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}],
         write_affected=0,
@@ -201,7 +210,7 @@ def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
         tx.update(fetched.edit(balance=Decimal("175.00")))
 
     with pytest.raises(StaleWriteError, match="Account"):
-        account_db(port).transact(fn)
+        account_db(port).transact(fn, concurrency="locking")
     assert ("rollback",) in port.ops
     write_ops = [op for op in port.ops if op[0] == "write"]
     assert len(write_ops) == 1  # the ungated update, attempted once, then aborted
@@ -298,7 +307,7 @@ def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
 
     account_db(port).transact(fn)
     # The read happened; the write never did.
-    assert port.ops == [("begin",), ("read", FIND_SQL, (1,)), ("commit",)]
+    assert port.ops == [("begin",), ("read", FIND_SQL_UNLOCKED, (1,)), ("commit",)]
 
 
 def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
@@ -469,7 +478,8 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
     # `insert`. The row is authored straight at the buffer seam, which is what
     # puts it in front of `validate_write` without an edited copy deriving it.
     # The version advances from the observation the write carries, never a
-    # row-carried value (`m-opt-lock`).
+    # row-carried value (`m-opt-lock`). The `locking` preference keeps the
+    # statement ungated, so what the assertion measures is the sparse row.
     port = RecordingPort()
 
     def fn(tx: Transaction) -> None:
@@ -480,7 +490,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
             observation=VersionObservation(observed_version=1),
         )
 
-    account_db(port).transact(fn)
+    account_db(port).transact(fn, concurrency="locking")
     expected = (
         "write",
         POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?"),
@@ -1232,7 +1242,7 @@ def test_update_of_an_unedited_node_buffers_nothing() -> None:
         tx.update(tx.find(mm.Account.where(mm.Account.id == 1)).result())
 
     account_db(port).transact(fn)
-    assert port.ops == [("begin",), ("read", FIND_SQL, (1,)), ("commit",)]
+    assert port.ops == [("begin",), ("read", FIND_SQL_UNLOCKED, (1,)), ("commit",)]
 
 
 def test_a_terminate_takes_no_position_on_a_values_provenance() -> None:

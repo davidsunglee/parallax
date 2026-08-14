@@ -18,6 +18,8 @@ model: models/quote.yaml
 tags: [m-inheritance, m-txtime-write, m-sql, table-per-concrete-subtype, temporal, audit-only, write-sequence, terminate, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
+  uow:
+    concurrency: locking
   writeSequence:
     - mutation: insert
       entity: parallax.compatibility.SpotQuote

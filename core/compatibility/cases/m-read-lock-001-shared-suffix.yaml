@@ -1,8 +1,10 @@
 # Read-lock case (m-read-lock): an in-transaction read acquires a shared row lock.
 #
 # A read performed inside a unit of work that intends to write is made correct
-# automatically — the caller writes no locking SQL. The default in-transaction
-# read appends the dialect's shared-row-lock suffix (m-read-lock / m-dialect). For Postgres that
+# automatically — the caller writes no locking SQL. An in-transaction read
+# governed by the Locking Effective Concurrency Strategy, which this case's
+# declared `locking` preference imposes on the versioned Account, appends the
+# dialect's shared-row-lock suffix (m-read-lock / m-dialect). For Postgres that
 # is `for share of t0`, qualified by the root alias and appended AFTER every other
 # clause.
 #
@@ -21,6 +23,8 @@ model: models/account.yaml
 tags: [m-read-lock, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  uow:
+    concurrency: locking
   objectQuery:
     target: parallax.compatibility.Account
     predicate:

@@ -4934,10 +4934,15 @@ def _assert_temporal_input(
     def assert_close(statement: str, binds: list[Any]) -> None:
         # A close sets `out_z = at` on the milestone its address selects — no domain
         # values, just the derived bounds. A Transaction-Time-Only entity has one axis,
-        # so the address supplies no observed Valid-Time end.
-        _assert_write_values(
-            case, [at, *_close_address_binds(case, entity, pk, None)], binds, statement
-        )
+        # so the address supplies no observed Valid-Time end. Whether the close also
+        # GATES is decided by the SQL shape, exactly as the bitemporal split's own
+        # close is: a gated one appends the observed milestone's `in_z` LAST, and the
+        # gate's bind is reconstructed from the case's own history rather than
+        # authored on the step (:func:`_observed_milestone_start`).
+        expected = [at, *_close_address_binds(case, entity, pk, None)]
+        if _has_temporal_gate(statement, transaction_time["start_column"]):
+            expected.append(_observed_milestone_start(case, entity, step, pk))
+        _assert_write_values(case, expected, binds, statement)
 
     mutation = step["mutation"]
     if mutation == "insert":
@@ -5179,6 +5184,58 @@ def _edge_named_rectangle(
         )
     row = matched[0]
     return _Rectangle(valid_start, row.get(valid_axis.end.name), tx_start)
+
+
+def _observed_milestone_start(case: Case, entity: Entity, step: dict[str, Any], pk: Any) -> Any:
+    """The Transaction-Time start of the ONE milestone *step*'s close addresses.
+
+    A Transaction-Time-Only close's gate binds the observed ``in_z``, which the
+    closing step's own ① row never carries — that row carries the NEW value. It
+    comes from the milestone the case's own history left current: an earlier
+    writeSequence step that opened or chained one for the same key, or, when the
+    case loads its model's fixtures, the single fixture row of that key still
+    open on Transaction Time.
+    """
+    tx_axis = next(
+        axis for axis in temporal_axes(entity.runtime_facts) if axis.dimension == "transaction-time"
+    )
+    key_member = next(
+        attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")
+    )
+    current: Any = None
+    if case.load_fixtures:
+        # Fixture rows are keyed by MEMBER name, so the axis's declared
+        # attributes name them; the open upper bound is the `infinity` literal.
+        open_rows = [
+            row
+            for row in entity.rows
+            if _write_value_equal(row.get(key_member), pk)
+            and _write_value_equal(row.get(tx_axis.end.name), "infinity")
+        ]
+        if len(open_rows) == 1:
+            current = open_rows[0].get(tx_axis.start.name)
+    for prior in case.write_sequence:
+        if prior is step:
+            break
+        if prior["entity"] != step["entity"]:
+            continue
+        prior_keys = [
+            _classify_write_row(case, entity, row, mutation=prior["mutation"], opening=True)[1]
+            for row in prior.get("rows", [])
+        ]
+        if not any(_write_value_equal(prior_pk, pk) for prior_pk in prior_keys):
+            continue
+        # An `insert` opens a milestone and an `update` chains a successor; both
+        # leave one current at the step's own instant, and a `terminate` leaves
+        # none for a later close to address.
+        current = None if prior["mutation"] in _TERMINATE_MUTATIONS else prior.get("at")
+    if current is None:
+        raise CaseFailure(
+            f"{case.path.name}: a gated close of {entity.name} pk {pk!r} binds the observed "
+            f"{tx_axis.start.name}, but neither the case's own earlier steps nor its fixtures "
+            f"leave exactly one milestone of that key current on Transaction Time."
+        )
+    return current
 
 
 def _observed_rectangle(case: Case, entity: Entity, step: dict[str, Any], pk: Any) -> _Rectangle:

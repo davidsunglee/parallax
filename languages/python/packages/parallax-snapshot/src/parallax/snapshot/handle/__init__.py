@@ -54,7 +54,9 @@ public-surface check promises. Where the exported names live:
   :data:`WireQuery`, the three spellings a Wire read accepts for one canonical
   Object Query.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
-  the one production find executor, plus the result surface they build
+  the one production find executor, :func:`entity_read_lock`, the composed
+  per-Entity read-lock derivation every participating read resolves its own
+  levels through, plus the result surface they build
   (:class:`Snapshot`, :class:`CheckedSnapshot`, :class:`FindResult`,
   :class:`HistoryFindResult`,
   :class:`NoResultFound`, :class:`TooManyResultsFound`) and
@@ -141,6 +143,7 @@ from parallax.snapshot.handle._read import (
     RowsResult,
     Snapshot,
     TooManyResultsFound,
+    entity_read_lock,
     find,
     find_history,
 )
@@ -211,6 +214,7 @@ __all__ = [
     "WriteLoweringError",
     "build_write_planner",
     "connect",
+    "entity_read_lock",
     "find",
     "find_history",
     "lower_step",

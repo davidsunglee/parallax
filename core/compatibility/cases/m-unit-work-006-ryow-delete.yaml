@@ -7,10 +7,10 @@
 # first OBSERVES account 3 (Grace, balance 10.00, version 1), then commits a DELETE
 # of that SAME observed row, then issues a find that depends on it — the find MUST
 # observe the ABSENCE of the row (zero rows), not the stale fixture. The observation
-# LICENSES the delete in either mode, but whether it is GATED follows the
-# concurrency mode alone, exactly as a keyed UPDATE's version gate does
-# (`m-opt-lock`): under the DEFAULT `locking` mode here the golden DELETE is
-# UNGATED — the shared read lock the observing find takes is what makes it correct.
+# LICENSES the delete under either strategy, but whether it is GATED follows the
+# target's Effective Concurrency Strategy alone, exactly as a keyed UPDATE's
+# version gate does (`m-opt-lock`): Account declares a version, so the default
+# `optimistic` preference makes the golden DELETE gate on the observed version.
 # All three steps share ONE `uow` group (`observed-delete`): the observing find, the
 # versioned delete, and the dependent find run inside the SAME unit of work, which
 # is what makes the delete's required observation this group's OWN
@@ -18,13 +18,12 @@
 # could not otherwise derive — the case is therefore `compileEligibility: run-only`
 # (query-result-dependent). The scenario:
 #   step 0 find  : observe account 3 (Grace, 10.00, version 1), 1 round trip.
-#   step 1 write : a DELETE of the observed account 3, ungated.
+#   step 1 write : a DELETE of the observed account 3, gated on its observed version.
 #   step 2 find  : query account 3 — it MUST observe NO rows (the delete is
 #                  visible). The group COMMITS after this, its last step.
-# Every find is a cache MISS (the write step's forced flush precedes step 2) and, in
-# the DEFAULT `locking` mode, carries the m-read-lock shared-row-lock suffix
-# (`for share of t0` — locking zero rows is valid SQL); asserting an empty result
-# proves read-your-own-writes for a deletion against real committed data.
+# Every find is a cache MISS (the write step's forced flush precedes step 2) and
+# carries no shared-row-lock suffix; asserting an empty result proves
+# read-your-own-writes for a deletion against real committed data.
 # roundTrips = 3 (the observing find + the committed delete + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-snapshot-1, slice-managed-1]
@@ -46,7 +45,7 @@ when:
       note: observe account 3 (Grace, balance 10.00, version 1) before the delete, inside the SAME unit of work as the write below
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [3]
       expectRows:
         - { id: 3, owner: Grace, balance: 10.00, version: 1 }
@@ -57,11 +56,11 @@ when:
           rows:
             - { id: 3 }
       roundTrips: 1
-      note: buffer a delete of the observed account 3, ungated under the default locking mode; the unit of work commits at the group's last step below
+      note: buffer a delete of the observed account 3, gated on its observed version under the default preference; the unit of work commits at the group's last step below
       statements:
         - sql:
-            postgres: delete from account where id = ?
-          binds: [3]
+            postgres: delete from account where id = ? and version = ?
+          binds: [3, 1]
     - uow: observed-delete
       objectQuery:
         target: parallax.compatibility.Account
@@ -73,7 +72,7 @@ when:
       note: a dependent find MUST observe the deletion (read-your-own-writes) — zero rows; the group COMMITS after this, its last step
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [3]
       expectRows: []
 then:

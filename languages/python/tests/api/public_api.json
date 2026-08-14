@@ -480,6 +480,7 @@
     "WriteLoweringError",
     "build_write_planner",
     "connect",
+    "entity_read_lock",
     "find",
     "find_history",
     "lower_step",

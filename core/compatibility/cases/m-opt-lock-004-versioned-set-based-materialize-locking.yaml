@@ -18,7 +18,7 @@
 #                  version 1 -> 2, 2 round trips.
 #   step 2 find  : the SAME `balance < 200` re-resolves (cache MISS after the write)
 #                  and MUST observe both accounts at balance 0.00, version 2.
-# Under the DEFAULT `locking` strategy EVERY in-transaction object find carries the
+# Under the declared `locking` preference EVERY in-transaction object find carries the
 # shared-row-lock suffix (m-read-lock-002's rule) — the materialize read AND the
 # step-2 verify read — so the per-object writes need no version check: the ungated
 # version-advancing form (m-opt-lock-002 shape) per row. Optimistic mode

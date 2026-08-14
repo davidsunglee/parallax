@@ -27,6 +27,8 @@ model: models/document-layout.yaml
 tags: [m-bitemp-write, m-storage-layout, m-document-codec, m-sql, write-sequence, update-until, rectangle-split, temporal, bitemporal, json, document-layout, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
+  uow:
+    concurrency: locking
   writeSequence:
     - mutation: insert
       entity: parallax.compatibility.Charter

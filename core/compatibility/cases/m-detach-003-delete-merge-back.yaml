@@ -10,6 +10,8 @@ shape: writeSequence
 given:
   fixtures: true
 when:
+  uow:
+    concurrency: locking
   writeSequence:
     - mutation: delete
       entity: parallax.compatibility.Account

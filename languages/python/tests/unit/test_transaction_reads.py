@@ -15,13 +15,14 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import cast
 
+import _mixed_strategy_model as mx
 import observation_models as om
 import pytest
 from _transact_support import (
     ACCOUNT,
     BALANCE,
-    FIND_SQL,
-    FIND_SQL_NO_LOCK,
+    FIND_SQL_LOCKED,
+    FIND_SQL_UNLOCKED,
     FIXED,
     INFINITY_INSTANT,
     INSERT_SQL,
@@ -43,7 +44,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.dialect import POSTGRES, Dialect, LockMode
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution_log import TraceRecorder
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
@@ -83,7 +84,7 @@ def _recording_find(
         dialect: Dialect,
         port: DbPort,
         *,
-        lock: LockMode | None = None,
+        preference: Concurrency | None = None,
         observations: ObservationCollector | None = None,
         recorder: TraceRecorder | None = None,
     ) -> FindResult:
@@ -93,7 +94,7 @@ def _recording_find(
             meta,
             dialect,
             port,
-            lock=lock,
+            preference=preference,
             observations=observations,
             recorder=recorder,
         )
@@ -217,17 +218,119 @@ def test_find_force_flushes_pending_writes_first() -> None:
     assert port.ops == [
         ("begin",),
         ("write", INSERT_SQL, (7, "Newton", 5.00, 1)),
-        ("read", FIND_SQL, (7,)),
+        ("read", FIND_SQL_UNLOCKED, (7,)),
         ("commit",),
     ]
 
 
-def test_optimistic_mode_suppresses_the_read_lock_suffix() -> None:
+# --------------------------------------------------------------------------- #
+# The Effective Concurrency Strategy is derived per Entity, so the lock follows #
+# the level's own target rather than the transaction (m-unit-work "Strategy    #
+# selection"; m-opt-lock).                                                     #
+# --------------------------------------------------------------------------- #
+def test_an_explicit_optimistic_preference_reads_a_versioned_entity_lock_free() -> None:
+    # Explicit and omitted resolve identically, so this pins the same statement
+    # every default-preference find of a versioned Entity above already renders.
     port = RecordingPort()
     account_db(port).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)), concurrency="optimistic"
     )
-    assert port.ops == [("begin",), ("read", FIND_SQL_NO_LOCK, (7,)), ("commit",)]
+    assert port.ops == [("begin",), ("read", FIND_SQL_UNLOCKED, (7,)), ("commit",)]
+
+
+def test_the_locking_preference_reads_a_versioned_entity_under_the_shared_lock() -> None:
+    # The workflow-level override: `locking` forces the Locking strategy onto an
+    # Entity whose own facet would otherwise supply a gate.
+    port = RecordingPort()
+    account_db(port).transact(
+        lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)), concurrency="locking"
+    )
+    assert port.ops == [("begin",), ("read", FIND_SQL_LOCKED, (7,)), ("commit",)]
+
+
+def test_a_default_preference_read_of_an_unversioned_entity_takes_the_shared_lock() -> None:
+    # The mandatory Locking fallback: an unversioned Non-Temporal family
+    # supplies no gate, so `optimistic` cannot mean lock-free for it.
+    port = RecordingPort(rows=[])
+    db_for(mx.MIXED_STRATEGY_MODEL, port).transact(
+        lambda tx: tx.find(mx.ConsignmentLeg.where(mx.ConsignmentLeg.id == 1))
+    )
+    assert port.ops == [
+        ("begin",),
+        (
+            "read",
+            POSTGRES.to_driver_sql(
+                "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+                "where t0.id = ? for share of t0"
+            ),
+            (1,),
+        ),
+        ("commit",),
+    ]
+
+
+def test_one_default_transaction_locks_the_unversioned_level_and_not_the_versioned_root() -> None:
+    # The signature per-level derivation: ONE preference, one deep fetch, two
+    # strategies. The versioned root's statement carries no suffix because its
+    # write gate is the authority; the unversioned level's does, because a
+    # shared lock is the only correctness mechanism its family has.
+    port = RecordingPort(
+        row_queue=(
+            [{"id": 1, "total": Decimal("10.00"), "version": 1}],
+            [{"id": 5, "consignment_id": 1, "carrier": "Hansa"}],
+        )
+    )
+    db_for(mx.MIXED_STRATEGY_MODEL, port).transact(
+        lambda tx: tx.find(
+            mx.Consignment.where(mx.Consignment.id == 1).include(mx.Consignment.legs)
+        )
+    )
+    assert [op[0] for op in port.ops] == ["begin", "read", "read", "commit"]
+    root_sql, level_sql = port.ops[1][1], port.ops[2][1]
+    assert root_sql == POSTGRES.to_driver_sql(
+        "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"
+    )
+    assert level_sql == POSTGRES.to_driver_sql(
+        "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+        "where t0.consignment_id in (?) for share of t0"
+    )
+
+
+def test_the_locking_preference_locks_every_level_of_the_same_deep_fetch() -> None:
+    # The same read under the override: one preference forcing one strategy
+    # onto both Entities, which is what makes the mixed result above a
+    # derivation rather than a property of the model alone.
+    port = RecordingPort(
+        row_queue=(
+            [{"id": 1, "total": Decimal("10.00"), "version": 1}],
+            [{"id": 5, "consignment_id": 1, "carrier": "Hansa"}],
+        )
+    )
+    db_for(mx.MIXED_STRATEGY_MODEL, port).transact(
+        lambda tx: tx.find(
+            mx.Consignment.where(mx.Consignment.id == 1).include(mx.Consignment.legs)
+        ),
+        concurrency="locking",
+    )
+    assert cast("str", port.ops[1][1]).endswith("for share of t0")
+    assert cast("str", port.ops[2][1]).endswith("for share of t0")
+
+
+def test_a_standalone_find_never_locks_whatever_the_entity_declares() -> None:
+    # `db.find` owns no unit of work, so there is no participation to derive a
+    # strategy from and the Locking fallback cannot reach it.
+    port = RecordingPort(rows=[])
+    db_for(mx.MIXED_STRATEGY_MODEL, port).find(mx.ConsignmentLeg.where(mx.ConsignmentLeg.id == 1))
+    assert port.ops == [
+        (
+            "read",
+            POSTGRES.to_driver_sql(
+                "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+                "where t0.id = ?"
+            ),
+            (1,),
+        )
+    ]
 
 
 def test_db_find_pins_an_explicit_as_of_statement() -> None:
@@ -321,7 +424,7 @@ def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
         fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         tx.terminate(fetched)
 
-    db.transact(fn)  # locking (default) — must not raise
+    db.transact(fn, concurrency="locking")  # must not raise
     write_ops = [op for op in port.ops if op[0] == "write"]
     assert len(write_ops) == 1
     sql = write_ops[0][1]
@@ -332,7 +435,9 @@ def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
 
 def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields() -> None:
     # A sparse edited copy contains only the changed value, so chaining must merge
-    # it with the observed payload rather than dropping untouched fields.
+    # it with the observed payload rather than dropping untouched fields. Balance
+    # is Transaction-Time temporal, so the default preference resolves it to the
+    # Optimistic strategy and the close binds the observed `in_z` as its gate.
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
 
@@ -342,12 +447,17 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
 
     db.transact(fn)
     write_ops = [op for op in port.ops if op[0] == "write"]
-    assert len(write_ops) == 2  # the ungated close, then the merged chain
+    assert len(write_ops) == 2  # the close, then the merged chain
     close_sql, close_binds = write_ops[0][1], write_ops[0][2]
     assert close_sql == POSTGRES.to_driver_sql(
-        "update balance set out_z = ? where bal_id = ? and out_z = ?"
+        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
-    assert close_binds == ("2024-06-01T00:00:00+00:00", 1, "infinity")
+    assert close_binds == (
+        "2024-06-01T00:00:00+00:00",
+        1,
+        "infinity",
+        dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    )
     chain_sql, chain_binds = write_ops[1][1], write_ops[1][2]
     assert chain_sql == POSTGRES.to_driver_sql(
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
@@ -802,7 +912,7 @@ def test_an_included_polymorphic_levels_concrete_is_reachable_by_a_keyed_write()
     db_for(om.FLEET_MODEL, port).transact(fn)
     (write_op,) = [op for op in port.ops if op[0] == "write"]
     assert write_op[1] == POSTGRES.to_driver_sql(
-        "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ?"
+        "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
     )
     assert cast("tuple[object, ...]", write_op[2])[1:3] == (10, "tug")
 
@@ -835,6 +945,6 @@ def test_an_abstract_target_roots_concrete_is_reachable_by_a_keyed_write() -> No
     db_for(om.FLEET_MODEL, port).transact(fn)
     (write_op,) = [op for op in port.ops if op[0] == "write"]
     assert write_op[1] == POSTGRES.to_driver_sql(
-        "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ?"
+        "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
     )
     assert cast("tuple[object, ...]", write_op[2])[1:3] == (11, "barge")

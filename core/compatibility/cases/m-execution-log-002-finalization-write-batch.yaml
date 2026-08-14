@@ -21,6 +21,13 @@
 # and the log's `roundTrips` — one per call, with begin and commit counting none
 # — matches `then.roundTrips`. The one attempt is `committed`, so it carries no
 # failure.
+#
+# The case declares no `when.uow`, so the log's retained `concurrency` is the
+# resolved DEFAULT Concurrency Preference, `optimistic` (m-unit-work strategy
+# selection). What the log retains is that PREFERENCE, not a claim that every
+# Entity took one strategy: Order and OrderItem are unversioned, so each
+# resolves to the mandatory Locking fallback, and neither insert needs an
+# observation or a gate either way.
 model: models/orders.yaml
 tags: [m-execution-log, m-unit-work, write-batch, finalization, slice-snapshot-1]
 shape: scenario
@@ -54,7 +61,7 @@ then:
   roundTrips: 2
   execution:
     transactionLog:
-      concurrency: locking
+      concurrency: optimistic
       retryPolicy:
         maxRetries: 10
         retryOptimisticConflicts: false

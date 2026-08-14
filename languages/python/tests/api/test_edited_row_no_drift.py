@@ -156,8 +156,9 @@ def test_edited_row_temporal_update_gates_the_close_on_observed_tx_start() -> No
     # binds the OBSERVATION's own Transaction-Time start as its optimistic gate -- never a
     # value the edited copy carries (a temporal keyed write's row never even
     # HAS a Transaction-Time column to carry one, `m-unit-work` axis-column
-    # exclusion). Optimistic concurrency renders the gate at all
-    # (`~parallax.core.opt_lock.gates`); locking mode never does.
+    # exclusion). Whether the gate renders at all is the target's Effective
+    # Concurrency Strategy (`~parallax.core.opt_lock.effective_strategy`):
+    # Optimistic renders it, Locking never does.
     instruction = KeyedWrite("update", "Balance", (_edited_balance_row(),))
     observed = _observed_balance("2024-01-01T00:00:00+00:00")
     close = lower_instruction(

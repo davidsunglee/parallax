@@ -18,13 +18,15 @@
 # proves work that reached the database, so a flush with nothing to write creates
 # none.
 #
-# The find runs inside the group's default `locking` unit of work, so it carries
+# The find runs inside the group's declared `locking` unit of work, so it carries
 # the m-read-lock shared-row-lock suffix, and its Database Call's `readCompleted`
 # reports the one row the just-flushed insert made visible.
 model: models/account.yaml
 tags: [m-execution-log, m-unit-work, write-batch, read-dependency, slice-snapshot-1]
 shape: scenario
 when:
+  uow:
+    concurrency: locking
   scenario:
     - uow: dependency
       write:

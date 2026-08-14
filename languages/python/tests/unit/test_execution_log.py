@@ -610,7 +610,7 @@ def test_a_dependent_read_forces_a_batch_the_log_places_before_its_trace() -> No
     assert [type(trace).__name__ for trace in traces] == ["WriteBatchTrace", "ReadTrace"]
     assert isinstance(traces[0], WriteBatchTrace) and traces[0].trigger == "read_dependency"
     assert isinstance(traces[1], ReadTrace)
-    assert "for share of t0" in traces[1].calls[0].statement.sql
+    assert traces[1].calls[0].statement.binds == (7,)
     assert log.round_trips == 2
 
 

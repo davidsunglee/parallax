@@ -34,7 +34,7 @@ from parallax.conformance import (
     temporal_state,
 )
 from parallax.conformance.temporal_state import TemporalShadow
-from parallax.core import batch_write, deep_fetch, inheritance, opt_lock, read_lock, storage_layout
+from parallax.core import batch_write, deep_fetch, inheritance, opt_lock, storage_layout
 from parallax.core.base import (
     INFINITY_LITERAL,
     TemporalBound,
@@ -323,27 +323,18 @@ def _family_declarer(model: AcceptedMetamodel, entity: EntityMetadata) -> Entity
 
 
 def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
-    """A read-shape case's own unit-of-work participation mode — the
-    read-shape half of the `when.uow` threading (no previously reachable read
-    case ever carried it, so no other read
-    case's derivation changes).
+    """A read-shape case's own unit-of-work Concurrency Preference — the
+    read-shape half of the `when.uow` threading.
 
-    `when.uow.concurrency` when the case declares it (the read-lock matrix's
-    -002/-005 object-find pair, `api-conformance`-lane; any future transactional read
-    case that self-describes its mode the same way). The `m-read-lock`
-    corpus family's OWN harness-lane witnesses (-001 and -010, the two in-slice
-    read cases this default decides — -009 is the MariaDB row of the same
-    matrix and is out of slice) declare no `when.uow` at all, and each states a
-    LOCKED read in its own prose: -001 "an in-transaction object find", -010
-    "the outer ... lock the returned payment_document rows". That is the
-    module's own DEFAULT mode (`m-read-lock.md` "Automatic read-lock
-    correctness": "the default (`locking`) in-transaction object find acquires
-    a shared row lock") — so
-    a read case whose PRIMARY module is `m-read-lock` defaults to `locking`
-    absent an explicit `when.uow`, the one module-scoped default this seam
-    grants (no other read case's primary module carries this default:
-    every other reachable read models the plain, non-transactional
-    `db.find` surface, `None`).
+    `when.uow.concurrency` when the case declares it; ``None`` otherwise, which
+    is the plain, non-transactional `db.find` surface every other reachable read
+    models and which takes no lock under any preference.
+
+    Absent `when.uow` there is no participation to derive a strategy from at
+    all, so this seam grants no module-scoped default: the `m-read-lock`
+    witnesses whose goldens carry the shared-row-lock suffix declare the
+    preference that produces it, exactly as `m-case-format` requires of any
+    case whose SQL depends on the effective choice.
     """
     when = case.document.get("when")
     uow = cast("Mapping[str, object]", when).get("uow") if isinstance(when, Mapping) else None
@@ -351,8 +342,6 @@ def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
         concurrency = cast("Mapping[str, object]", uow).get("concurrency")
         if concurrency in ("locking", "optimistic"):
             return concurrency
-    if case.primary_module == "m-read-lock":
-        return "locking"
     return None
 
 
@@ -365,7 +354,6 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
     query = _read_query(case)
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
-    lock = read_lock.mode_for(_read_case_concurrency(case))
     try:
         metadata = case_entity(model, query.target.canonical)
         form: Literal["rows", "graph"] = "graph" if _result_form(case) == "instance" else "rows"
@@ -375,7 +363,7 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
             model,
             dialect,
             result_form=_result_form(case),
-            lock=lock,
+            lock=handle.entity_read_lock(model, metadata.identity, _read_case_concurrency(case)),
         )
     except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -911,43 +899,27 @@ def _write_sequence_entries(case: case_format.Case) -> list[Mapping[str, object]
 
 
 def _concurrency(case: case_format.Case) -> Concurrency:
-    """The case's declared unit-of-work participation mode (`when.uow.concurrency`;
-    `m-opt-lock`), defaulting to `locking` when the case declares none — the SAME
-    default `m-unit-work.TransactionSettings` resolves. Every writeSequence case
-    needing a non-default mode (m-bitemp-write-008 included, since the core
-    amendment bundle) self-describes via `when.uow.concurrency` — `when.uow` is
-    schema-legal on writeSequence shape (`compatibility-case.schema.json`'s
-    writeSequence `propertyNames` admits `uow` alongside `writeSequence`)."""
+    """The case's declared unit-of-work Concurrency Preference
+    (`when.uow.concurrency`; `m-unit-work` "Strategy selection"), defaulting to
+    `optimistic` when the case declares none — the SAME default
+    `m-unit-work.TransactionSettings` resolves and the one `m-case-format`
+    states for the `when.uow` block.
+
+    A preference is not a strategy: what each step's own Entity participates
+    under is derived from this value and that Entity's Optimistic Lock Facet, so
+    an unversioned Non-Temporal target still locks and still writes ungated
+    under the default. A case whose golden SQL depends on that choice declares
+    the preference explicitly (`m-case-format`); `when.uow` is schema-legal on
+    writeSequence shape (`compatibility-case.schema.json`'s writeSequence
+    `propertyNames` admits `uow` alongside `writeSequence`)."""
     when = case.document.get("when")
     if isinstance(when, Mapping):
         uow = cast("Mapping[str, object]", when).get("uow")
         if isinstance(uow, Mapping):
             value = cast("Mapping[str, object]", uow).get("concurrency")
-            if value == "optimistic":
-                return "optimistic"
-    return "locking"
-
-
-def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], model: AcceptedMetamodel) -> bool:
-    """Whether a scenario's ORDINARY (non-materializing-paired) find steps
-    carry the case's declared read-lock suffix at all (`m-read-lock`: "an
-    in-transaction object find that INTENDS TO WRITE acquires a shared row
-    lock" — the lock protects an observation a SUBSEQUENT keyed write depends
-    on). ``True`` unless EVERY write step in the scenario is a READLESS
-    predicate write (`m-batch-write-005`/`-006`'s own witness): a readless
-    write establishes no transaction-scoped
-    observation at all, so there is nothing for a lock to protect and the
-    scenario's find steps are plain, non-participating verification reads. A
-    scenario with no write step at all (a pure read narrative) keeps the
-    lock — unaffected, since it never reaches a readless predicate write.
-    """
-    write_steps = [step for step in steps if "write" in step]
-    if not write_steps:
-        return True
-    for step in write_steps:
-        if not _is_predicate_write_step(step["write"]) or _is_materializing_write_step(step, model):
-            return True
-    return False
+            if value == "locking":
+                return "locking"
+    return "optimistic"
 
 
 # The ONE reserved observation control key a case writeRow can author
@@ -2051,18 +2023,17 @@ def _compile_find(
     alone.
 
     A scenario find is an in-transaction object find; ``concurrency`` (the case's
-    own ``when.uow.concurrency``) decides the ``m-sql`` shared-row-lock suffix
-    (``for share of t0``) exactly as the production `Transaction.find` derives it
-    from ``self._uow.settings.concurrency``: ``locking`` renders it after every
-    clause; ``optimistic`` renders none (an optimistic-mode object find takes no lock —
-    the `m-txtime-write-008` / `m-bitemp-write-014` coalescing witnesses exercise
-    this OPTIMISTIC branch). ``None`` ALSO renders none — the caller's own
-    :func:`_scenario_needs_lock` gate: a scenario whose write steps are ALL
-    readless predicate writes (`m-batch-write-005`/`-006`) establishes no
-    transaction-scoped observation at all (`m-read-lock` "an in-transaction
-    object find that intends to write acquires a shared row lock" — a readless
-    write intends nothing an observation could ever protect), so its find
-    steps are plain, non-participating verification reads.
+    own ``when.uow.concurrency``) is the unit of work's Concurrency PREFERENCE,
+    which resolves against the step's own target Entity into the Effective
+    Concurrency Strategy that decides the ``m-sql`` shared-row-lock suffix
+    (``for share of t0``) — through
+    :func:`~parallax.snapshot.handle.entity_read_lock`, the same seam the
+    production `Transaction.find` derives every level's lock through. The
+    Locking strategy renders the suffix after every clause; the Optimistic one
+    renders none (the `m-txtime-write-008` / `m-bitemp-write-014` coalescing
+    witnesses exercise that branch). ``None`` ALSO renders none — a read case
+    declaring no `when.uow` at all, which models the plain, non-transactional
+    `db.find` surface.
 
     ``result_form`` defaults to ``instance`` — an ORDINARY (managed) scenario
     find mirrors production ``Transaction.find`` (`m-sql` *Read projection*,
@@ -2077,7 +2048,7 @@ def _compile_find(
     binds are query-result-dependent, so no pure oracle exists to compute them
     from).
 
-    This composition — `compile_read` + `read_lock.mode_for`, mirroring
+    This composition — `compile_read` + `entity_read_lock`, mirroring
     `Transaction.find`'s own derivation — is IRREDUCIBLE adapter content, not
     a residual "mirrors production" gap to close. The case-driven engine has
     no typed Python entity classes at all (a scenario step is a raw,
@@ -2092,13 +2063,12 @@ def _compile_find(
     query = _step_query(step)
     metadata = case_entity(model, query.target.canonical)
     entity_query = _canonicalize_read(query, metadata, model)
-    lock = read_lock.mode_for(concurrency)
     return compile_read(
         entity_query,
         model,
         dialect,
         result_form=result_form,
-        lock=lock,
+        lock=handle.entity_read_lock(model, metadata.identity, concurrency),
     )
 
 
@@ -2133,11 +2103,10 @@ def _run_standalone_find(
     """Run one UNGROUPED scenario find step through the production Wire read.
 
     A step whose scenario declares a participation mode runs inside a real
-    ``db.transact`` so the read takes the transaction's own shared row lock,
-    exactly as :func:`run_read_case` does and exactly as a developer's
-    ``tx.find`` would; a scenario whose write steps are all readless predicate
-    writes establishes no observation for a lock to protect
-    (:func:`_scenario_needs_lock`), so its verification finds run standalone.
+    ``db.transact`` so the read participates exactly as :func:`run_read_case`
+    does and exactly as a developer's ``tx.find`` would: whether it takes the
+    shared row lock is then the target Entity's own Effective Concurrency
+    Strategy, never a property of what the scenario goes on to write.
     """
     query = _step_query(step)
     db = handle.Database(port, model, dialect=dialect)
@@ -2279,7 +2248,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     lowered: list[_LoweredStep] = []
     try:
         steps = _scenario_steps(case)
-        find_lock = concurrency if _scenario_needs_lock(steps, model) else None
+        find_lock = concurrency
         doomed_spans = _doomed_group_spans(case.path.name, steps)
         index = 0
         while index < len(steps):
@@ -3982,7 +3951,7 @@ def run_scenario_case(
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
-    find_lock = concurrency if _scenario_needs_lock(steps, model) else None
+    find_lock = concurrency
     shadow = TemporalShadow()
     spans = _scenario_uow_spans(case.path.name, steps)
     if spans is None:
@@ -4392,22 +4361,28 @@ def _lower_conflict_write(
 
 
 def _implied_shortfall_error(
-    observation_requiring: bool, concurrency: Concurrency
+    observation_requiring: bool,
+    concurrency: Concurrency,
+    model: AcceptedMetamodel,
+    target: str,
 ) -> type[WriteEffectError]:
     """The ONE shortfall class a conflict case's declared facts imply.
 
     Derived from the case, never from the plan the implementation settled, so a
     write whose policy was settled wrongly cannot also move the expectation it is
     graded against. An OBSERVATION-REQUIRING write — a versioned keyed UPDATE or
-    DELETE, or a temporal close — classifies by its gate, which the concurrency
-    mode alone decides: a GATED (optimistic) shortfall is the retriable
-    optimistic-lock conflict, an UNGATED (locking-mode) one the non-retriable
-    stale write. Anything else is an observation-free keyed write, whose
-    shortfall means the addressed rows are simply not there.
+    DELETE, or a temporal close — classifies by its gate, which the target's own
+    Effective Concurrency Strategy decides: a GATED (Optimistic) shortfall is the
+    retriable optimistic-lock conflict, an UNGATED (Locking) one the
+    non-retriable stale write. Anything else is an observation-free keyed write,
+    whose shortfall means the addressed rows are simply not there.
     """
     if not observation_requiring:
         return MissingTargetError
-    return OptimisticLockConflictError if opt_lock.gates(concurrency) else StaleWriteError
+    strategy = opt_lock.effective_strategy(
+        concurrency, opt_lock.view(model).key(case_entity(model, target).identity)
+    )
+    return OptimisticLockConflictError if strategy == "optimistic" else StaleWriteError
 
 
 def _conflict_attempt_affected(
@@ -4514,7 +4489,7 @@ def _run_conflict_write(
         return landed  # the expectation machinery already verified this on success
 
     observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
-    implied = _implied_shortfall_error(observation_requiring, concurrency)
+    implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
     affected, log = _conflict_attempt_affected(database, concurrency, implied, body)
     return statements, affected, log, log.round_trips if log is not None else 0
 
@@ -4630,7 +4605,7 @@ def _run_conflict_close(
             enforce_affected_rows(step, affected)
         return affected
 
-    implied = _implied_shortfall_error(True, concurrency)
+    implied = _implied_shortfall_error(True, concurrency, model, target)
     affected = _admitted_affected(implied, lambda: port.transaction(run_close))
     # No Execution Log describes this lane: it opened no transaction through
     # `db.transact`, so there is no attempt graph to report and no case authors

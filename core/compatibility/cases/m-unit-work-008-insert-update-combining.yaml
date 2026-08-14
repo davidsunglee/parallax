@@ -12,13 +12,15 @@
 #   step 1 find  : query account 8 — it observes the combined INSERT's final state.
 # The single INSERT in step 0's golden (balance 99.00, no UPDATE statement) IS the
 # observable proof of combining; the dependent find confirms read-your-own-writes on
-# the combined row and, in the DEFAULT `locking` mode, carries the m-read-lock
+# the combined row and, under the declared `locking` preference, carries the m-read-lock
 # shared-row-lock suffix (`for share of t0`). roundTrips = 2 (the one combined
 # insert + the find).
 model: models/account.yaml
 tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 when:
+  uow:
+    concurrency: locking
   scenario:
     - write:
         - mutation: insert

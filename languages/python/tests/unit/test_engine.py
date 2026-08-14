@@ -18,7 +18,7 @@ import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 from _metamodel_support import Declaration, attribute, key, source
@@ -47,6 +47,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     Concurrency,
@@ -458,7 +459,9 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
     assert errors == []  # a keyed unit-of-work scenario reports no error observation
     assert [e.case_pointer for e in emissions] == ["/scenario/0/write", "/scenario/1/objectQuery"]
     assert emissions[0].sql.startswith("insert into account")
-    assert emissions[1].sql.endswith("for share of t0")  # the read-lock suffix renders
+    # Account is versioned, so the case's default preference resolves it to the
+    # Optimistic strategy and the participating find renders no lock suffix.
+    assert not emissions[1].sql.endswith("for share of t0")
     assert len(port.writes) == 1 and len(port.reads) == 1
     # An UNGROUPED find of a scenario declaring a participation mode runs in its
     # OWN transaction, exactly as `run_read_case` does: the read lock is the
@@ -511,10 +514,11 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     ]
     # The write's SET version bind is the OBSERVED version (1) advanced to 2 —
     # a genuine transaction-scoped observation this SAME group's own find
-    # recorded, never an authored value (`update ... set balance = ?,
-    # version = ? where id = ?`).
+    # recorded, never an authored value — and the same observed 1 binds the
+    # gate the default preference renders (`update ... set balance = ?,
+    # version = ? where id = ? and version = ?`).
     assert emissions[1].sql.startswith("update account set")
-    assert emissions[1].binds == (175.00, 2, 1)
+    assert emissions[1].binds == (175.00, 2, 1, 1)
     assert len(port.writes) == 1 and len(port.reads) == 2
     assert port.commits == 1 and port.rollbacks == 0
 
@@ -2155,10 +2159,9 @@ def test_a_read_step_names_its_own_object_query() -> None:
 
 
 def test_a_standalone_find_of_a_lockless_scenario_opens_no_transaction() -> None:
-    # A scenario whose write steps are all READLESS predicate writes establishes
-    # no observation for a lock to protect (`_scenario_needs_lock`), so its
-    # verification finds are plain non-participating reads — no boundary, no lock
-    # suffix.
+    # `None` is the "this step names no participation" spelling: the find runs
+    # outside any boundary, so no Effective Concurrency Strategy is derived for
+    # it and no lock suffix can reach it whatever its target declares.
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
     port = FakeWritePort(find_rows=[])
     result = engine._run_standalone_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
@@ -2348,8 +2351,9 @@ def test_versioned_delete_decomposes_per_row() -> None:
     # decomposes per row — each row is removed under its own prior observation,
     # so `batch_write.delete_collapses` refuses to collapse it — regardless of
     # the authored `statements` count matching `len(rows)` (which it does here
-    # too — the discriminator does not consult it either way). The default
-    # locking mode renders each key ungated.
+    # too — the discriminator does not consult it either way). `Account` is
+    # versioned, so the default `optimistic` preference gates each key on its
+    # own observed version.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -2371,8 +2375,8 @@ def test_versioned_delete_decomposes_per_row() -> None:
     emissions, round_trips = engine.compile_write_sequence_case(case, "postgres")
     assert round_trips == 2
     assert [(e.sql, e.binds) for e in emissions] == [
-        ("delete from account where id = ?", (1,)),
-        ("delete from account where id = ?", (2,)),
+        ("delete from account where id = ? and version = ?", (1, 1)),
+        ("delete from account where id = ? and version = ?", (2, 1)),
     ]
 
 
@@ -2729,9 +2733,9 @@ def test_elided_no_op_row_is_not_counted_as_a_statement() -> None:
     emissions, round_trips = engine.compile_write_sequence_case(case, "postgres")
     assert round_trips == 1
     assert [e.sql for e in emissions] == [
-        "update account set balance = ?, version = ? where id = ?"
+        "update account set balance = ?, version = ? where id = ? and version = ?"
     ]
-    assert emissions[0].binds == (5.00, 2, 2)
+    assert emissions[0].binds == (5.00, 2, 2, 1)
 
 
 def test_an_entry_whose_every_row_elides_emits_no_statement() -> None:
@@ -2939,7 +2943,7 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
     emissions, round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/objectQuery", "/scenario/1/write"]
-    assert emissions[1].sql == "delete from account where id = ?"
+    assert emissions[1].sql == "delete from account where id = ? and version = ?"
     assert len(port.writes) == 1 and len(port.reads) == 1 and port.commits == 1
 
 
@@ -3019,7 +3023,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
     emissions, round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/objectQuery", "/scenario/1/write"]
-    assert emissions[1].sql == "delete from account where id = ?"
+    assert emissions[1].sql == "delete from account where id = ? and version = ?"
     assert len(port.writes) == 1 and len(port.reads) == 1
     assert port.commits == 0 and port.rollbacks == 1
 
@@ -3395,14 +3399,22 @@ def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> Non
 
 def _always_implying(
     error_cls: type[WriteEffectError],
-) -> Callable[[bool, Concurrency], type[WriteEffectError]]:
+) -> Callable[[bool, Concurrency, AcceptedMetamodel, str], type[WriteEffectError]]:
     """An ``_implied_shortfall_error`` stand-in that ignores the case's own
     declared facts — a lane admitting the wrong shortfall class."""
 
-    def implied(_observation_requiring: bool, _concurrency: Concurrency) -> type[WriteEffectError]:
+    def implied(
+        _observation_requiring: bool,
+        _concurrency: Concurrency,
+        _model: AcceptedMetamodel,
+        _target: str,
+    ) -> type[WriteEffectError]:
         return error_cls
 
     return implied
+
+
+_ACCOUNT: Final[str] = "parallax.compatibility.Account"
 
 
 class TestConflictShortfallClassification:
@@ -3416,26 +3428,38 @@ class TestConflictShortfallClassification:
     gate").
     """
 
-    def test_optimistic_mode_implies_the_retriable_conflict(self) -> None:
+    def test_an_optimistic_strategy_implies_the_retriable_conflict(self) -> None:
+        from parallax.conformance import models
+
         assert (
-            engine._implied_shortfall_error(True, "optimistic")  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            engine._implied_shortfall_error(  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+                True, "optimistic", models.load_models()["account"], _ACCOUNT
+            )
             is OptimisticLockConflictError
         )
 
-    def test_locking_mode_implies_the_non_retriable_stale_write(self) -> None:
+    def test_a_locking_strategy_implies_the_non_retriable_stale_write(self) -> None:
+        from parallax.conformance import models
+
         assert (
-            engine._implied_shortfall_error(True, "locking")  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            engine._implied_shortfall_error(  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+                True, "locking", models.load_models()["account"], _ACCOUNT
+            )
             is StaleWriteError
         )
 
     @pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
-    def test_an_observation_free_write_implies_a_missing_target_in_either_mode(
+    def test_an_observation_free_write_implies_a_missing_target_under_either_preference(
         self, concurrency: Concurrency
     ) -> None:
         # A write that observed nothing has no gate to classify by, so its
         # shortfall says only that the addressed rows are not there.
+        from parallax.conformance import models
+
         assert (
-            engine._implied_shortfall_error(False, concurrency)  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            engine._implied_shortfall_error(  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+                False, concurrency, models.load_models()["account"], _ACCOUNT
+            )
             is MissingTargetError
         )
 

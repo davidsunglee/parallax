@@ -78,9 +78,9 @@ then:
           phones:
             - { type: home, number: '555-0100' }
     - sql:
-        postgres: update supplier set out_z = ? where sup_id = ? and out_z = ?
-        mariadb: update supplier set out_z = ? where sup_id = ? and out_z = ?
-      binds: ["2024-06-01T00:00:00+00:00", 1, infinity]
+        postgres: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?
+        mariadb: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?
+      binds: ["2024-06-01T00:00:00+00:00", 1, infinity, "2024-01-01T00:00:00+00:00"]
     - sql:
         postgres: insert into supplier(sup_id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)
         mariadb: insert into supplier(sup_id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)

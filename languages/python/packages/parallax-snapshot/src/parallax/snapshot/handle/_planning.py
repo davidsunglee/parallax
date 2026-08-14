@@ -70,8 +70,14 @@ class _BatchingAdapter:
 
 @dataclass(frozen=True, slots=True)
 class _ConcurrencyAdapter:
-    """``m-opt-lock``'s version arithmetic and observation-licensing policy,
-    structurally satisfying ``ConcurrencyStrategy``."""
+    """``m-opt-lock``'s per-Entity strategy derivation, version arithmetic, and
+    observation-licensing policy, structurally satisfying
+    ``ConcurrencyStrategy``.
+
+    Holding the model is what lets a gate be settled per Entity: every question
+    the planner asks resolves through the same Optimistic Lock Facet the
+    formation compiled once.
+    """
 
     model: Metamodel
 
@@ -79,8 +85,9 @@ class _ConcurrencyAdapter:
         key = opt_lock.view(self.model).key(entity.identity)
         return key.attribute if isinstance(key, opt_lock.ExplicitVersion) else None
 
-    def gates(self, concurrency: Concurrency) -> bool:
-        return opt_lock.gates(concurrency)
+    def gates(self, concurrency: Concurrency, entity: EntityMetadata) -> bool:
+        key = opt_lock.view(self.model).key(entity.identity)
+        return opt_lock.effective_strategy(concurrency, key) == "optimistic"
 
     def initial_version(self) -> int:
         return opt_lock.INITIAL_VERSION

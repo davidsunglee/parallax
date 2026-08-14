@@ -19,13 +19,13 @@
 #                  and MUST observe the ORIGINAL balance 100.00, never the aborted
 #                  999.00.
 # The teeth: step 2 cannot be a cache HIT — a hit would reuse step 0's rows, and
-# the aborted write must leave the row exactly as step 0 read it. The golden UPDATE
-# is the ungated version-advancing form (locking mode: no gate, `m-opt-lock` "The
-# version column") so a later phase's optimistic-mode semantics never re-touch it.
-# Both finds run in the DEFAULT `locking` mode — step 0 inside the aborting unit of
-# work, step 2 as the re-resolve in a fresh default-mode unit of work — so each
-# carries the m-read-lock shared-row-lock suffix (`for share of t0`). roundTrips = 3
-# (two finds + the rolled-back write, whose DML still executes).
+# the aborted write must leave the row exactly as step 0 read it. Account declares
+# a version, so the default `optimistic` preference resolves it to the Optimistic
+# strategy: the golden UPDATE advances the version AND gates on the observed one
+# (`m-opt-lock` "The version column"), and neither find carries a shared-row-lock
+# suffix — step 0 inside the aborting unit of work, step 2 as the re-resolve in a
+# fresh one. roundTrips = 3 (two finds + the rolled-back write, whose DML still
+# executes).
 model: models/account.yaml
 tags: [m-unit-work, rollback, abort, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
@@ -46,7 +46,7 @@ when:
       note: observe account 1 (balance 100.00, version 1) before the aborted write, inside the doomed unit of work
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
@@ -61,8 +61,8 @@ when:
       note: "apply a new balance for the OBSERVED account 1 — dooms the group (rollback: true); it ROLLS BACK after this, its last step"
       statements:
         - sql:
-            postgres: update account set balance = ?, version = ? where id = ?
-          binds: [999.00, 2, 1]
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: [999.00, 2, 1, 1]
     - objectQuery:
         target: parallax.compatibility.Account
         predicate:
@@ -73,7 +73,7 @@ when:
       note: the SAME find, UNGROUPED, re-resolves after the group's rollback and MUST observe 100.00, not 999.00
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }

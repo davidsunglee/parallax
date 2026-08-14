@@ -15,7 +15,9 @@
 #
 # Grace (id 3) is the only Boston address and owns no dependent Location or Depot rows,
 # so the one statement removes exactly her; the trailing find reads the same predicate
-# back and expects NO rows. Total roundTrips 2 = write (1) + verify read (1).
+# back and expects NO rows. Total roundTrips 2 = write (1) + verify read (1). Customer is
+# unversioned, so the default `optimistic` preference resolves the verifying find to the
+# Locking fallback and it carries the shared-row-lock suffix.
 model: models/customer.yaml
 tags: [m-batch-write, m-value-object, m-sql, m-unit-work, predicate-write, readless, nested, json, scenario, slice-snapshot-1]
 shape: scenario
@@ -41,7 +43,7 @@ when:
       roundTrips: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
+            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where jsonb_extract_path_text(t0.address, ?) = ? for share of t0
           binds: [city, Boston]
       referenceSql: select id, name, address from customer where address ->> 'city' = 'Boston'
       expectRows: []

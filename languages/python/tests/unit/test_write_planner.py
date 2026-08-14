@@ -50,6 +50,7 @@ from parallax.core.unit_work import (
     OPTIMISTIC_CONFLICT,
     STALE_WRITE,
     UNGATED,
+    UNVERSIONED,
     BufferItem,
     ChunkedColumnBuilder,
     Concurrency,
@@ -706,6 +707,22 @@ def test_a_versioned_update_with_a_recorded_observation_carries_a_settled_gate()
     version = next(ident for ident in step.assignments.attributes if ident.name == "version")
     assert step.concurrency == Versioned(gate=VersionGate(attribute=version, observed_version=3))
     assert step.affected_rows == ExactCount(1, OPTIMISTIC_CONFLICT)
+
+
+def test_an_unversioned_target_settles_ungated_under_the_optimistic_preference() -> None:
+    # The write half of the per-Entity derivation: `optimistic` is a preference,
+    # not a strategy, so a family supplying no version source settles with no
+    # gate — the same Unversioned decision the `locking` preference reaches
+    # (`m-unit-work` "Strategy selection"). Its correctness comes from the
+    # shared read lock its participating read took instead.
+    delete = KeyedWrite("delete", "Wallet", ({"id": 1},))
+    plan = _plan([delete], _WALLET, concurrency="optimistic")
+    (step,) = plan.steps
+    assert isinstance(step, PlannedDelete)
+    assert step.concurrency == UNVERSIONED
+    (under_locking,) = _plan([delete], _WALLET).steps
+    assert isinstance(under_locking, PlannedDelete)
+    assert under_locking.concurrency == step.concurrency
 
 
 def test_a_versioned_delete_with_a_recorded_observation_is_ungated_under_locking() -> None:
