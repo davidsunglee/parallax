@@ -3514,8 +3514,8 @@ or descriptor authoring form and performs no audit stamping.
   there. The
   refusal is decided in the shared keyed-verb preamble, **before** any row is
   derived, so a refused value reaches no codec, no buffer, no plan, and no
-  adapter — it is never a translation of a lower-level failure, and no
-  `EntityRowError` is caught or rethrown anywhere on the path. `delete`,
+  adapter — it is never a translation of a lower-level failure, and the refusal
+  a caller observes carries no codec failure as its cause. `delete`,
   `terminate`, and `terminate_until` derive an identity row alone and take no
   position on provenance. **An unchanged stored value is no refusal at all**: a
   node this store's read returned that no edit touched carries the empty
@@ -3975,6 +3975,10 @@ remains observable rather than making Python its own oracle.
   substitutes.
 
 ## 7. Source-enforcement topology
+
+This is the only section that constrains what the source looks like. Every other
+section states behavior observable at the API boundary, and a claim made in one
+of those sections is graded by behavior — never by inspecting source structure.
 
 Behavioral modules map onto Python submodules (enforcement scopes) inside the
 distributions of §8. `m-metamodel`, `m-model-formation`, `m-inheritance`,

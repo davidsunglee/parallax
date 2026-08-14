@@ -285,6 +285,10 @@ Retain the branch matching the lifecycle profile; do not answer both.
 
 ## 7. Source-enforcement topology
 
+This is the only section that constrains what the source looks like. Every other
+section states behavior observable at the API boundary, and a claim made in one
+of those sections is graded by behavior — never by inspecting source structure.
+
 The behavioral-module DAG governs dependencies between source enforcement
 scopes even when many scopes live in one source tree or common-runtime artifact.
 Complete a row for every claimed module, every unclaimed transitive prerequisite,
