@@ -81,7 +81,7 @@ class ReadStory:
     ``build`` rather than derived via ``inspect.getsource`` (a lambda's own
     source line would render the dict-literal/comma noise around it).
     :func:`read_story_snippet` is the Usage Guide's OWN rendered source: it
-    layers the participation-mode wrapper on top of ``snippet``, single-
+    layers the Concurrency Preference wrapper on top of ``snippet``, single-
     sourced from ``concurrency`` below rather than a second, independently-
     authored string.
 
@@ -348,7 +348,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
     # the read-lock matrix — `tx.find` inside a `db.transact` of the declared
     # mode. `m-read-lock-001` (the harness-lane single-connection golden) and
     # `-006`/`-007` (the two-session behavioral proofs) need no idiomatic
-    # story: they need no `db.transact` participation-mode CONFIGURATION to
+    # story: they need no `db.transact` Concurrency Preference CONFIGURATION to
     # demonstrate (the harness proof runs the golden verbatim; the two-session
     # proofs are a concurrency property this generic single-session runner
     # cannot hold open) — see `api_suite.CASE_SKIP_REASONS`.

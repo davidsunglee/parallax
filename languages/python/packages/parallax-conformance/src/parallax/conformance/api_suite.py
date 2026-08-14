@@ -836,7 +836,7 @@ _READ_LOCK_PARTITIONED_GOLDEN_REASON: Final[str] = (
     "the wire-level locking golden proves one outer base-row lock over the cast-safe "
     "tag-partitioned TPH document relation and is graded by the compile/run sweeps; "
     "the API suite's existing locking-mode object-find story already proves the "
-    "developer participation-mode surface, while this case isolates SQL shape"
+    "developer Concurrency Preference surface, while this case isolates SQL shape"
 )
 # The read-lock module's two-session behavioral proofs
 # (`m-read-lock-006`/`-007`/`-011`/`-012`) cover a genuine two-connection

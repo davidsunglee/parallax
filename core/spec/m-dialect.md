@@ -554,14 +554,15 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
 - **Read-lock application (`m-read-lock`).** *Applying* the in-transaction shared
   read lock is a dialect decision — not merely spelling the suffix, but deciding
   **whether, where, and when** to attach it. Given a compiled read and the
-  unit-of-work mode, the dialect returns the read with this dialect's locking
-  applied:
-  - a lockable **object find** in `locking` mode gets the shared-row-lock form
-    appended after every other clause — **Postgres** `for share of t0` (the
-    alias-qualified `for share`), **MariaDB** the unaliased **`lock in share
-    mode`** (no `for share` keyword; MDEV-17514);
-  - a lockable **object find** in **optimistic** mode is returned unchanged
-    (`m-opt-lock` takes no lock).
+  already-derived Effective Concurrency Strategy of the Entity that read
+  materializes (`m-unit-work`), the dialect returns the read with this dialect's
+  locking applied:
+  - a lockable **object find** under the **Locking** strategy gets the
+    shared-row-lock form appended after every other clause — **Postgres**
+    `for share of t0` (the alias-qualified `for share`), **MariaDB** the
+    unaliased **`lock in share mode`** (no `for share` keyword; MDEV-17514);
+  - a lockable **object find** under the **Optimistic** strategy is returned
+    unchanged (`m-opt-lock` takes no lock).
 
   This decision point specifies object-find locking only; it defines no lock
   behavior for any other read shape. Prior art: Reladomo keeps aggregated-data

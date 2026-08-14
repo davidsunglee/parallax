@@ -7,12 +7,14 @@
 # the read that took its shared lock), and one predicate statement can neither
 # carry nor acquire one — so it MATERIALIZES: one keyed
 # `delete from account where id = ?` per resolved row, mirroring the
-# versioned set-based UPDATE (m-opt-lock-003/004). This case runs in the DEFAULT
-# LOCKING mode, so every per-key delete is UNGATED, exactly as the locking-mode
-# versioned UPDATE (m-opt-lock-004) and the locking-mode temporal close are: the
-# shared read lock the resolving read takes, not a version predicate, is what
-# makes each removal correct (m-opt-lock: concurrency mode determines the gate
-# uniformly). The OPTIMISTIC counterpart (m-opt-lock-015) renders `and version =
+# versioned set-based UPDATE (m-opt-lock-003/004). This case DECLARES the
+# `locking` preference, which resolves versioned Account to the Locking Effective
+# Concurrency Strategy, so every per-key delete is UNGATED, exactly as the
+# locking-mode versioned UPDATE (m-opt-lock-004) and the locking-mode temporal
+# close are: the shared read lock the resolving read takes, not a version
+# predicate, is what makes each removal correct (m-opt-lock: the Effective
+# Concurrency Strategy determines the gate uniformly). The OPTIMISTIC
+# counterpart (m-opt-lock-015) renders `and version =
 # ?` per key instead, and a per-key gate matching zero rows there would be the
 # `updatedRows != 1` conflict signal (m-opt-lock-005).
 #

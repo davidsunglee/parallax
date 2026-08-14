@@ -3,7 +3,8 @@
 #
 # The locking-mode counterpart of m-opt-lock-015's gated per-row delete, and the
 # non-temporal sibling of m-temporal-read-012's ungated zero-row close. The
-# concurrency mode alone decides whether an observation-requiring write renders a
+# target Entity's Effective Concurrency Strategy alone decides whether an
+# observation-requiring write renders a
 # gate — uniformly across update, delete, and close — so a locking-mode keyed
 # DELETE emits `delete from account where id = ?` with no `and version = ?`
 # clause, exactly as the locking-mode versioned UPDATE (m-opt-lock-004) emits none.

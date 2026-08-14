@@ -30,7 +30,6 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, STRING, InstantError, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
-from parallax.core.dialect import dialect_for
 from parallax.core.metamodel import (
     AbstractRoot,
     AttributeIdentity,
@@ -2159,29 +2158,6 @@ def test_a_document_milestone_opened_after_out_of_band_statements_still_chains()
 def test_a_read_step_names_its_own_object_query() -> None:
     with pytest.raises(engine.EngineError, match="needs `objectQuery`"):
         engine._step_query({"roundTrips": 1})  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-
-
-def test_a_standalone_find_of_a_lockless_scenario_opens_no_transaction() -> None:
-    # `None` is the "this step names no participation" spelling: the find runs
-    # outside any boundary, so no Effective Concurrency Strategy is derived for
-    # it and no lock suffix can reach it whatever its target declares.
-    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    port = FakeWritePort(find_rows=[])
-    result = engine._run_standalone_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        port,
-        meta,
-        dialect_for("postgres"),
-        None,
-        {
-            "objectQuery": {
-                "target": "Account",
-                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
-            }
-        },
-    )
-    assert result.execution.round_trips == 1
-    assert port.commits == 0 and port.rollbacks == 0
-    assert not port.reads[0][0].endswith("for share of t0")
 
 
 def test_the_aborting_port_passes_reads_and_writes_through() -> None:

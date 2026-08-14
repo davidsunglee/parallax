@@ -60,8 +60,8 @@ def wire_query_node(query: WireQuery) -> ObjectQueryNode:
 class WireDatabaseView:
     """``db.wire`` — the Wire read interface outside any transaction.
 
-    Non-transactional exactly as ``db.find`` is: no read lock, no participation
-    mode, and no observation record.
+    Non-transactional exactly as ``db.find`` is: no read lock, no Concurrency
+    Preference, and no observation record.
     """
 
     __slots__ = ("_find",)

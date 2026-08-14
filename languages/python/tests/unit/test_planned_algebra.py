@@ -24,7 +24,7 @@ logical sequence whose views compare by value rather than by object identity.
 The temporal slice adds its own: a Milestone Target belongs to a Planned Close
 alone, a close expects exactly one row, and the address it names is complete —
 one exclusive upper bound per As-Of Axis, in canonical order, independent of the
-gate the concurrency mode decided.
+gate the Effective Concurrency Strategy decided.
 """
 
 from __future__ import annotations

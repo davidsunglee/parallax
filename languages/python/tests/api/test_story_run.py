@@ -738,11 +738,11 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 # `type(node)`"), not a field the developer surface itself exposes.           #
 #                                                                              #
 # `story.concurrency` (the `m-read-lock` matrix) opts a story into the         #
-# transactional half: `tx.find(build())` inside                               #
-# a `db.transact` of the declared participation mode, still graded against    #
-# the SAME `then.rows` oracle, PLUS the statements this story's own find      #
-# actually executed (`_StatementCapturePort` below) — the runtime proof that  #
-# the mode drives whether the                                                  #
+# transactional half: `tx.find(build())` inside a `db.transact` of the        #
+# declared Concurrency Preference, still graded against the SAME `then.rows`  #
+# oracle, PLUS the statements this story's own find actually executed         #
+# (`_StatementCapturePort` below) — the runtime proof that the preference and #
+# the read target's own Optimistic Lock Facet together drive whether the      #
 # emitted SQL carries the shared read-lock suffix (unobservable from          #
 # `then.rows` alone: two stories can return identical rows while one holds a  #
 # lock and the other does not).                                               #
