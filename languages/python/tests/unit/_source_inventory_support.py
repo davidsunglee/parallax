@@ -1,4 +1,4 @@
-"""Source inventories over the tree's own Python files.
+"""Source inventories over Python files, for guards stated over source shape.
 
 Extraction and nothing more: globbing a distribution's sources, matching a
 regular expression against their lines, parsing them with ``ast``, and reading
@@ -6,14 +6,16 @@ the import statements out of the parse. A caller gets paths, ``path:line``
 sites, parse trees, and `Import` records, and decides for itself what any of it
 means. Shared by `test_frontend_contraction_guards.py` and
 `test_source_enforcement_topology.py`, which assert about source shape for
-different reasons and on different timescales but read the source the same way.
+different reasons but read the source the same way.
 
-Name resolution is deliberately absent and is not coming back here. The scope
-trees, reaching definitions, and denotation this module's predecessor carried
-were deleted with the guards that read them: a claim about what a name MEANS,
-rather than about how the source spells it, is a claim behavior can grade
-directly, and grading it by approximating an interpreter is both weaker and a
-second implementation to maintain.
+Nothing here resolves a name to what it denotes. A claim about what a name MEANS
+rather than about how the source spells it is one behavior grades directly, and
+approximating an interpreter to grade it here would be both weaker than that and
+a second implementation to maintain.
+
+`synthetic_sources` hands a guard source to read in place of this tree's, which
+is how an assertion stated over source shape is shown to fail for the shape it
+forbids and to pass source that merely resembles it.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a `reportPrivateUsage` error under pyright strict, so privacy is
@@ -25,7 +27,7 @@ from __future__ import annotations
 import ast
 import importlib
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,6 +51,8 @@ __all__ = [
     "site_of",
     "snapshot_imports",
     "sources",
+    "synthetic_site",
+    "synthetic_sources",
     "word",
 ]
 
@@ -86,6 +90,29 @@ def all_sources() -> Iterator[tuple[Path, str]]:
 def site_of(path: Path, line: int) -> str:
     """One repository-relative ``path:line``, as a failure names it."""
     return f"{path.relative_to(PY_ROOT)}:{line}"
+
+
+_SYNTHETIC_SRC = PACKAGES / "parallax-synthetic" / "src"
+
+
+def _synthetic_path(module: str) -> Path:
+    return _SYNTHETIC_SRC.joinpath(*module.split(".")).with_suffix(".py")
+
+
+def synthetic_sources(modules: Mapping[str, str]) -> Iterator[tuple[Path, str]]:
+    """Each module's text, at the path a distribution holding it would use.
+
+    Nothing is written and nothing needs to exist: every reader here takes a path
+    and its text, so naming the module is enough to hand a guard source this tree
+    does not contain.
+    """
+    for module, text in modules.items():
+        yield _synthetic_path(module), text
+
+
+def synthetic_site(module: str, line: int) -> str:
+    """One line of a `synthetic_sources` module, as a failure would name it."""
+    return site_of(_synthetic_path(module), line)
 
 
 def _dotted(path: Path) -> str:
