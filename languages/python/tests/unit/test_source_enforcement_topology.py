@@ -18,8 +18,8 @@ new and stays red until someone has decided about it.
 Every inventory stated over source is a function of the source handed to it, and
 is shown on both sides: run over synthetic source carrying the shape it forbids
 it names that site, and run over source that merely resembles it it names
-nothing. `_first_party_descendants` is the one that is not — a class's ancestry
-is a runtime fact rather than a spelling, so it consumes imported classes and is
+nothing. The descendant registry is the one that is not — a class's ancestry is a
+runtime fact rather than a spelling, so it consumes imported classes and is
 demonstrated over classes a test defines.
 
 Two prohibitions the planner contraction carries are decidable neither from the
@@ -46,6 +46,7 @@ from _source_inventory_support import (
     Import,
     all_sources,
     declared_imports,
+    first_party_descendants,
     import_every_module,
     parsed,
     production_sources,
@@ -128,19 +129,22 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
                     "parallax.snapshot.materialize._new": (
                         "from parallax.core.entity._model import model_of\n"
                         "import parallax.core.entity._declaration\n"
+                        "from ...core.entity._graph_input import ValueObjectRecord\n"
                     ),
                     "parallax.snapshot.handle._resembling": (
                         "from parallax.core.entity import model_of, row_codec_of\n"
                         "import parallax.core.entity\n"
                         "from parallax.snapshot._inspection import declaration_of\n"
                         "from parallax.core.entity_records._model import model_of\n"
+                        "from ...core.entity import row_codec_of\n"
                     ),
                 }
             )
         )
     )
     assert _private_entity_reaches(imported) == {
-        ("parallax.snapshot.materialize._new", "_model"): {"model_of"}
+        ("parallax.snapshot.materialize._new", "_model"): {"model_of"},
+        ("parallax.snapshot.materialize._new", "_graph_input"): {"ValueObjectRecord"},
     }
     assert _entity_package_imports(imported) == [
         synthetic_site("parallax.snapshot.materialize._new", 2)
@@ -242,6 +246,10 @@ def _write_planner_constructions(over: Iterator[tuple[Path, str]]) -> list[str]:
     A construction and not a mention: the name has to stand as the callee of a
     call in the parse, so an annotation, a longer class name ending in it, and
     any spelling inside a comment or a docstring are all left alone.
+
+    The callee's tail is the whole subject, so a call qualified by any module
+    counts — the question is which module holds the construction, and a shipped
+    class of that name from somewhere else would be one to answer, not to skip.
     """
     found = [
         (path, node.lineno)
@@ -252,25 +260,9 @@ def _write_planner_constructions(over: Iterator[tuple[Path, str]]) -> list[str]:
     return [site_of(path, line) for path, line in sorted(found)]
 
 
-def _descendants(root: type) -> Iterator[type]:
-    yield root
-    for child in root.__subclasses__():
-        yield from _descendants(child)
-
-
-def _first_party_descendants(root: type) -> list[str]:
-    """Every shipped class that is, or descends from, ``root``.
-
-    Python's own subclass registry answers this once every module is imported,
-    so no alias, qualified base spelling, or class name evades it — and a class
-    merely named like ``root`` is not in it. A class a test defines is not
-    shipped and is left out.
-    """
-    return sorted(
-        f"{kind.__module__}.{kind.__qualname__}"
-        for kind in _descendants(root)
-        if kind.__module__.startswith("parallax.")
-    )
+def _shipped_descendant_names(root: type) -> list[str]:
+    """Every shipped class that is, or descends from, ``root``, by qualified name."""
+    return [f"{kind.__module__}.{kind.__qualname__}" for kind in first_party_descendants(root)]
 
 
 def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
@@ -288,7 +280,7 @@ def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
         str((SNAPSHOT_SRC / "handle" / "_planning.py").relative_to(PY_ROOT))
     ]
     import_every_module(all_sources())
-    assert _first_party_descendants(WritePlanner) == [
+    assert _shipped_descendant_names(WritePlanner) == [
         "parallax.core.unit_work.write_planner.WritePlanner"
     ]
 
@@ -301,6 +293,7 @@ def test_the_construction_guard_names_every_construction_and_passes_a_mention() 
                 holding: (
                     "planner = WritePlanner(model)\n"
                     "second = unit_work.WritePlanner(model)\n"
+                    "third = other_library.WritePlanner(model)\n"
                     "# a second WritePlanner(model) would be a second wiring\n"
                     '"""See :class:`WritePlanner` — built as WritePlanner(model)."""\n'
                 ),
@@ -308,19 +301,20 @@ def test_the_construction_guard_names_every_construction_and_passes_a_mention() 
                     "def take(planner: WritePlanner) -> None: ...\n"
                     "build_write_planner(model)\n"
                     "RecordingWritePlanner(model)\n"
+                    "planners.WritePlannerFactory(model)\n"
                 ),
             }
         )
-    ) == [synthetic_site(holding, 1), synthetic_site(holding, 2)]
+    ) == [synthetic_site(holding, line) for line in (1, 2, 3)]
 
 
 def test_the_descendant_registry_names_a_shipped_subclass_and_passes_a_test_one() -> None:
     root = type("Planner", (), {"__module__": "parallax.core.unit_work.probe"})
     shipped = type("WrappingPlanner", (root,), {"__module__": "parallax.snapshot.handle.probe"})
     rootless = type("SentinelPlanner", (root,), {"__module__": __name__})
-    assert _first_party_descendants(root) == [
+    assert _shipped_descendant_names(root) == [
         "parallax.core.unit_work.probe.Planner",
         "parallax.snapshot.handle.probe.WrappingPlanner",
     ]
-    assert _first_party_descendants(shipped) == ["parallax.snapshot.handle.probe.WrappingPlanner"]
-    assert _first_party_descendants(rootless) == []
+    assert _shipped_descendant_names(shipped) == ["parallax.snapshot.handle.probe.WrappingPlanner"]
+    assert _shipped_descendant_names(rootless) == []

@@ -32,9 +32,10 @@ no source inventory, and nothing here is to be read as covering them:
   write behavior is — about the row's content, not its provenance;
 - a handler typed broadly enough to catch a codec refusal without naming it,
   which is prohibited only where a codec call can actually reach it. Naming the
-  refusal is bordered from one side: `EntityRowError` reaches Snapshot's code
-  neither as an imported name nor as an attribute of a bound module, whichever
-  path binds it. A supertype handler names nothing either reading can list. The
+  refusal is bordered from one side: neither `EntityRowError` nor any shipped
+  class descending from it reaches Snapshot's code as an imported name or as an
+  attribute of a bound module, whichever path binds it. A SUPERTYPE handler —
+  `RuntimeError`, or a bare `except` — names nothing either reading can list. The
   ordering it derives from — `spec/python.md` §5 decides a keyed verb's refusal
   in the shared preamble, ahead of any row derivation, so the refusal a caller
   observes carries no codec failure as its cause — is graded at the boundary by
@@ -63,7 +64,9 @@ from _source_inventory_support import (
     Import,
     all_sources,
     declared_imports,
+    first_party_descendants,
     hits,
+    import_every_module,
     parsed,
     production_sources,
     site_of,
@@ -75,6 +78,7 @@ from _source_inventory_support import (
 )
 from pydantic import BaseModel
 
+from parallax.core.entity import EntityRowError
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
 
 # Row derivation: the codec answers, holding vocabulary Snapshot never holds.
@@ -85,21 +89,26 @@ from parallax.core.entity._entity import CHANGE_RECORD_SLOT
 DELETED_ROW_HELPERS = frozenset(
     {"full_row", "primary_key_row", "canonical_row", "changed_fields", "effective_change_set"}
 )
-# `EntityRowError` joins them as the codec's refusal vocabulary: naming that
-# refusal — to catch it, to rethrow it, or to translate it — requires the name,
-# and Snapshot decides a keyed verb's refusal before any codec is reached.
 FORBIDDEN_ROW_IMPORTS = DELETED_ROW_HELPERS | {
     "BaseModel",
     "CHANGE_RECORD_SLOT",
-    "EntityRowError",
     "WireNames",
 }
-# The refusal again, as the tail of an attribute path: `import parallax.core
-# .entity as entity` binds a module rather than a name, so `entity.EntityRowError`
-# names the refusal while the import inventory sees only `entity`. Read off the
-# parse, so prose discussing the refusal is left alone. The row helpers stay out
-# of this set: `self._codec.full_row(...)` IS the codec being consulted.
-FORBIDDEN_ROW_ATTRIBUTES = frozenset({"EntityRowError"})
+
+
+def _codec_refusals() -> frozenset[str]:
+    """Every name the codec's refusal answers to: `EntityRowError` and each
+    shipped class descending from it.
+
+    Naming that refusal — to catch it, to rethrow it, or to translate it —
+    requires one of these names, and Snapshot decides a keyed verb's refusal
+    before any codec is reached. The set is taken from Python's subclass registry
+    rather than listed, because a subclass under a name of its own catches the
+    refusal exactly as the base does, and a list would have to be remembered.
+    """
+    import_every_module(all_sources())
+    return frozenset(kind.__name__ for kind in first_party_descendants(EntityRowError))
+
 
 # Pydantic's internal vocabulary, read off the base class rather than listed, so
 # `model_dump` and `__pydantic_fields_set__` are forbidden on the same terms as
@@ -112,22 +121,33 @@ PRIVATE_VALUE_VOCABULARY = frozenset(
 ) | {CHANGE_RECORD_SLOT}
 
 
-def _row_vocabulary_sites(over: Iterable[tuple[Path, str]]) -> list[tuple[str, str]]:
+def _row_vocabulary_sites(
+    over: Iterable[tuple[Path, str]], refusals: frozenset[str]
+) -> list[tuple[str, str]]:
     """Each site holding part of what the Entity Row Codec holds, with what it
     holds there: an import of a name the codec owns, an import of the Pydantic
     substrate, an import of a private `parallax` name, an attribute path ending
-    in the codec's refusal, a definition of a row helper the codec replaced, or a
+    in one of ``refusals``, a definition of a row helper the codec replaced, or a
     spelling of Pydantic's own internals.
+
+    The names decide alone, wherever they come from: an import of the codec's
+    refusal out of an unrelated distribution is held here just the same, since
+    under Snapshot the spelling has one meaning and a second thing wearing it
+    would be the more alarming find.
+
+    A refusal is looked for as an attribute path's tail as well as an imported
+    name, because `import parallax.core.entity as entity` binds a module rather
+    than a name and `entity.EntityRowError` then names the refusal while the
+    import inventory sees only `entity`. That arm reads the parse, so prose
+    discussing the refusal is left alone. The row helpers stay out of it:
+    `self._codec.full_row(...)` IS the codec being consulted.
     """
     files = list(over)
     imported = list(declared_imports(iter(files)))
     trees = list(parsed(iter(files)))
+    forbidden = FORBIDDEN_ROW_IMPORTS | refusals
     return sorted(
-        [
-            (one.site, held)
-            for one in imported
-            for held in FORBIDDEN_ROW_IMPORTS & {one.name, one.local}
-        ]
+        [(one.site, held) for one in imported for held in forbidden & {one.name, one.local}]
         + [(one.site, one.distribution) for one in imported if one.distribution == "pydantic"]
         + [
             (one.site, one.name)
@@ -138,7 +158,7 @@ def _row_vocabulary_sites(over: Iterable[tuple[Path, str]]) -> list[tuple[str, s
             (site_of(path, node.lineno), node.attr)
             for path, tree in trees
             for node in ast.walk(tree)
-            if isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_ROW_ATTRIBUTES
+            if isinstance(node, ast.Attribute) and node.attr in refusals
         ]
         + [
             (site_of(path, node.lineno), node.name)
@@ -163,20 +183,26 @@ def test_snapshot_holds_none_of_the_codecs_row_vocabulary() -> None:
     #
     # `self._codec.full_row(...)` IS the codec being consulted, so the row
     # helpers are looked for in what Snapshot imports and defines rather than in
-    # what it calls. The refusal is the one name looked for as an attribute too,
-    # since no legitimate use of it exists here at all.
+    # what it calls. The refusals are the names looked for as attributes too,
+    # since no legitimate use of one exists here at all.
     #
     # The import inventory, the attribute scan, and the definition set are exact.
     # The spelling scan is the weakest of them: it holds only for names that can
     # mean nothing but Pydantic's internals, and the names that would actually
     # derive a row are not among them.
-    assert _row_vocabulary_sites(sources(SNAPSHOT_SRC)) == []
+    refusals = _codec_refusals()
+    assert "EntityRowError" in refusals, "the refusal registry came back without the refusal"
+    assert _row_vocabulary_sites(sources(SNAPSHOT_SRC), refusals) == []
     assert [
         (one.importer, one.source) for one in snapshot_imports() if one.name == "row_codec_of"
     ] == [("parallax.snapshot.handle._database", ENTITY_PACKAGE)]
 
 
 def test_the_row_vocabulary_guard_names_what_is_held_and_passes_what_resembles_it() -> None:
+    # `RowRefusal` stands for a subclass of the codec's refusal under a name of
+    # its own, which catches the refusal exactly as the base does and which
+    # `_codec_refusals` supplies from the subclass registry; `other_library`
+    # stands for the spelling arriving from somewhere the codec does not own.
     held = _row_vocabulary_sites(
         synthetic_sources(
             {
@@ -193,6 +219,11 @@ def test_the_row_vocabulary_guard_names_what_is_held_and_passes_what_resembles_i
                     "def take(f):\n"
                     "    try: f()\n"
                     "    except entity.EntityRowError: raise\n"
+                    "from parallax.core.entity import RowRefusal\n"
+                    "from other_library import EntityRowError\n"
+                    "def held(f):\n"
+                    "    try: f()\n"
+                    "    except refusals.RowRefusal: raise\n"
                 ),
                 "parallax.snapshot.handle._resembling": (
                     "from parallax.core.entity import row_codec_of\n"
@@ -202,9 +233,12 @@ def test_the_row_vocabulary_guard_names_what_is_held_and_passes_what_resembles_i
                     "def full_row_of(value): ...\n"
                     "def dump(value): return value.model_dumped\n"
                     "def cause(failure): return failure.entity_row_error\n"
+                    "from parallax.core.entity import EntityRowErrors\n"
+                    "def unwrap(failure): return failure.row_refusal\n"
                 ),
             }
-        )
+        ),
+        frozenset({"EntityRowError", "RowRefusal"}),
     )
     site = _holding_site
     assert held == sorted(
@@ -219,6 +253,9 @@ def test_the_row_vocabulary_guard_names_what_is_held_and_passes_what_resembles_i
             (site(7), "primary_key_row"),
             (site(8), "model_dump"),
             (site(12), "EntityRowError"),
+            (site(13), "RowRefusal"),
+            (site(14), "EntityRowError"),
+            (site(17), "RowRefusal"),
         ]
     )
 
@@ -371,7 +408,9 @@ def _statement_module_imports(imported: Iterable[Import]) -> list[str]:
 
     Read off the import statements rather than matched against lines, so the
     parenthesized multi-line form is seen and prose quoting the single-line form
-    is not.
+    is not. A relative spelling from inside the Entity package reaches the same
+    module as the absolute one and is seen on the same terms, since an `Import`
+    carries the module it reads from absolute however it was written.
     """
     return sorted(
         one.site
@@ -423,6 +462,30 @@ def test_the_statement_import_guard_names_the_module_and_passes_its_neighbours()
             )
         )
     ) == sorted(_holding_site(line) for line in (1, 2, 3, 4))
+
+
+def test_the_statement_import_guard_names_the_relative_spellings_from_inside_the_package() -> None:
+    # The same imports as a module of the Entity package itself would write them,
+    # where `.` names the package the retired module sat in. A package's own
+    # `__init__` is one level nearer than its siblings are, so both stand here.
+    module = f"{ENTITY_PACKAGE}._holding"
+    package = f"{ENTITY_PACKAGE}.__init__"
+    assert _statement_module_imports(
+        declared_imports(
+            synthetic_sources(
+                {
+                    module: (
+                        "from . import statement\n"
+                        "from .statement import build\n"
+                        "from . import statements\n"
+                        "from .. import statement\n"
+                        "from ._statement import x\n"
+                    ),
+                    package: ("from . import statement\nfrom .statement import build\n"),
+                }
+            )
+        )
+    ) == sorted(synthetic_site(holder, line) for holder in (module, package) for line in (1, 2))
 
 
 @pytest.mark.parametrize(
