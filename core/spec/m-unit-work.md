@@ -826,11 +826,22 @@ state either, so a default taken on a missing observation would sweep it in:
 
 A claim addresses one object, so a keyed instruction naming **several** rows
 reaches no arm's scope: it has no single Object Key and no single observed state,
-and an implementation **MUST NOT** claim it at either grain. Such a write is
-buffered **bare** — neither coalesced with another write nor refused for a claim.
-Only a caller holding a pre-formed multi-row instruction can author one; a keyed
-verb writes the one row the value it was handed names, and a target entitled to
-evidence still fails the required-observation rule when the write is settled.
+and an implementation **MUST NOT** claim it at either grain. Only a caller
+holding a pre-formed multi-row instruction can author one; a keyed verb writes
+the one row the value it was handed names. Where that caller supplies no evidence
+of its own, the derivation answers none and the write is buffered **bare** —
+neither coalesced with another write nor refused for a claim — and a target
+entitled to evidence still fails the required-observation rule when the write is
+settled. Evidence such a caller **does** supply travels with the write it was
+supplied for, and one observation is evidence about **one** row, so an
+implementation **MUST** refuse the pairing rather than drop the evidence.
+
+That refusal, and every other a keyed write can earn, leaves the transaction as
+it found it: an implementation **MUST NOT** record a write's claim before the
+write has passed the judgments that can still refuse it. A caller that catches a
+refusal and continues in the same unit of work would otherwise hold a claim for a
+write nothing buffered, and a later legal write of that scope would be refused,
+deduplicated, coalesced, or superseded against it.
 
 Each buffered write against existing state carries a **Write Intent** — what it
 does (an **assignment** that writes member values against a surviving row, or a

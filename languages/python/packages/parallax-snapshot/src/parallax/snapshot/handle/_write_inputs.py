@@ -392,8 +392,11 @@ def admit_write_claim(
     :func:`~parallax.core.opt_lock.settled_evidence`). A caller-held Write
     Observation and an instruction addressing several rows each carry an intent
     and reach no scope — the first because it is a value rather than a reference
-    into this ledger, the second because a claim addresses one object — so
-    neither leaves anything for a second intent to compete for.
+    into this ledger, the second because the derivation over a write with no
+    single object answers nothing, its caller having supplied nothing either;
+    supplied evidence never arrives here with such an instruction, because the
+    carrier holding it is built first and refuses the pairing — so neither
+    leaves anything for a second intent to compete for.
 
     The verdict comes from the one algebra finalization also reads
     (:func:`~parallax.core.unit_work.admits`), so a refusal here is exactly the
