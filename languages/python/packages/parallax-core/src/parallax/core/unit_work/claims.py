@@ -1,9 +1,9 @@
-"""What a buffered write intends, and what a second intent may do to it
-(`m-unit-work` "Observed-State Coalescing").
+"""What a buffered write intends, where it claims it, and what a second intent
+may do to it (`m-unit-work` "Observed-State Coalescing").
 
-One observed state may back several buffered writes before a flush, and this
+One claim scope may back several buffered writes before a flush, and this
 module states the only question that decides whether it may: given the intent a
-buffer already holds for a state, what does an arriving intent become? The
+buffer already holds at a scope, what does an arriving intent become? The
 answer is one closed verdict, and both consumers read it — the developer verb,
 which refuses `write-evidence-already-claimed` synchronously for the
 incompatible answers, and the Write Planner, which performs the compatible ones
@@ -20,15 +20,21 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from parallax.core.unit_work.instructions import INSERT_MUTATIONS, KeyedWrite
-from parallax.core.unit_work.planner import ObservedStateKey
+from parallax.core.unit_work.observe import WriteObservation
+from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
+from parallax.core.unit_work.retain import RetainedObservation
 
 __all__ = [
     "SELECTION_INTENT",
+    "ClaimScope",
     "ClaimTable",
     "ClaimVerdict",
+    "SettledEvidence",
     "WriteIntent",
     "WriteIntentKind",
     "admits",
+    "claim_scope",
+    "claimed_object",
     "keyed_intent",
 ]
 
@@ -79,6 +85,69 @@ no region of its own to compare: it is indivisible, and every keyed intent
 against a state it selected is incompatible with it."""
 
 
+type ClaimScope = ObservedStateKey | ObjectKey
+"""What one buffered write's claim is taken AT — the grain two intents must
+share before either can affect the other.
+
+A versioned or temporal existing-row write claims the exact
+:data:`~parallax.core.unit_work.planner.ObservedStateKey` its source observed,
+because two writes of one key that observed two different states are two
+independent intents. An unversioned Non-Temporal existing-row write claims its
+:class:`~parallax.core.unit_work.planner.ObjectKey`, because the shared row lock
+its evidence rule demands is held on the OBJECT and covers every state the row
+can be in — two such writes can never have observed two different states, so the
+state-keyed rule's own reason does not apply and the object is the correct grain.
+An insert claims nothing at all and reaches no scope.
+
+Which arm a write takes is derived from declared facts — the target Entity's
+Optimistic Key and the write's own mutation — never from an absent observation:
+an insert observes no state either, so an absence-triggered object claim would
+sweep it in.
+"""
+
+
+type SettledEvidence = WriteObservation | RetainedObservation | ObjectKey
+"""What one keyed write against existing state settles against, in the three
+shapes a producer can hold — which is also what decides the buffer item it
+becomes and the claim it takes:
+
+* a RETAINED observation is a read's own claim on one exact observed state: the
+  write settles against that state, claims it, and a successful flush spends it;
+* a caller-HELD Write Observation is that same evidence as a plain value: the
+  write settles against the state it describes and claims nothing, because there
+  is no reference into this scope's ledger for a second intent to compete for;
+* an OBJECT KEY is what an unversioned Non-Temporal row's write settles against.
+  Its evidence is the shared row lock, which is held on the object rather than on
+  a state, so the object is what it claims and there is nothing for a flush to
+  spend.
+"""
+
+
+def claim_scope(evidence: SettledEvidence | None) -> ClaimScope | None:
+    """The scope the write settling against ``evidence`` claims, or ``None``
+    where it claims nothing.
+
+    Total over the three shapes above, so a caller reads one answer rather than
+    pairing an evidence value with a separately derived address that could name
+    a different state than the evidence it travels with.
+    """
+    if isinstance(evidence, RetainedObservation):
+        return evidence.key
+    if isinstance(evidence, ObjectKey):
+        return evidence
+    return None
+
+
+def claimed_object(scope: ClaimScope) -> ObjectKey:
+    """The object ``scope`` addresses — itself for an object-scoped claim, and the
+    identity half of the state for a state-scoped one.
+
+    What a refusal reports is which OBJECT was refused; the observed state behind
+    a state-scoped claim stays implementation detail.
+    """
+    return scope if isinstance(scope, ObjectKey) else scope.object
+
+
 type ClaimVerdict = Literal["admit", "coalesce", "supersede", "deduplicate", "incompatible"]
 """What an arriving intent becomes against the intent a buffer already holds.
 
@@ -108,8 +177,8 @@ def keyed_intent(instruction: KeyedWrite) -> WriteIntent | None:
 
 
 def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
-    """What ``arriving`` becomes against the ``held`` claim on one observed state,
-    or against ``None`` where nothing claims that state yet.
+    """What ``arriving`` becomes against the ``held`` claim at one scope, or
+    against ``None`` where nothing claims that scope yet.
 
     The unclaimed row belongs here rather than in each consumer, which is what
     makes this function the whole rule: a caller answers every ``(held,
@@ -118,14 +187,14 @@ def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
 
     The rule reads in the order the incompatibilities appear:
 
-    * an unclaimed state admits whatever arrives;
+    * an unclaimed scope admits whatever arrives;
     * a Materialized Write Group's selection claim admits nothing beside it, in
       either direction — the group is compact and indivisible, so merging a keyed
       assignment into it would mean indexing and mutating it;
     * different temporal regions never compose, because interval composition is
       semantics this framework does not invent;
     * an assignment after a destruction is a resurrection, which no write means;
-    * two destructions of one state and region are one destruction; and
+    * two destructions of one scope and region are one destruction; and
     * everything else combines — assignments merge, and a destruction supersedes
       the assignments buffered before it.
     """
@@ -141,10 +210,10 @@ def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
 
 
 class ClaimTable:
-    """The claims one buffer holds, by the exact observed state each is about.
+    """The claims one buffer holds, by the scope each is taken at.
 
     Buffer-scoped and no wider: a flush spends the buffer it planned and the
-    claims travel out with it, so the states a later write may claim are decided
+    claims travel out with it, so what a later write may claim is decided
     by what is still pending rather than by everything this unit of work has
     ever written. An abort drops both together for the same reason.
     """
@@ -152,10 +221,10 @@ class ClaimTable:
     __slots__ = ("_held",)
 
     def __init__(self) -> None:
-        self._held: dict[ObservedStateKey, WriteIntent] = {}
+        self._held: dict[ClaimScope, WriteIntent] = {}
 
-    def claim(self, key: ObservedStateKey, intent: WriteIntent) -> ClaimVerdict:
-        """Take ``intent``'s claim on ``key``, answering what it became.
+    def claim(self, key: ClaimScope, intent: WriteIntent) -> ClaimVerdict:
+        """Take ``intent``'s claim at ``key``, answering what it became.
 
         The verdict is :func:`admits`' alone, unclaimed row included, so this
         table decides nothing of its own and stays the storage the rule is
@@ -172,8 +241,8 @@ class ClaimTable:
             self._held[key] = intent
         return verdict
 
-    def held(self, key: ObservedStateKey) -> WriteIntent | None:
-        """What this buffer currently claims for ``key``, if anything — the read
+    def held(self, key: ClaimScope) -> WriteIntent | None:
+        """What this buffer currently claims at ``key``, if anything — the read
         side of :meth:`claim`, for a verb deciding whether it has an earlier
         intent to combine with at all."""
         return self._held.get(key)

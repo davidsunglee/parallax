@@ -1,12 +1,15 @@
-"""The buffered writes that carry their own observation evidence (`m-unit-work`).
+"""The buffered writes that carry the claim their verb took for them
+(`m-unit-work`).
 
-A write against existing state settles against the database evidence a prior
-read retained. Both shapes here pair one buffered mutation with the evidence
-resolved for it, so the address a write takes, the gate it binds, and the
-license it holds are all read off one object rather than looked up separately.
-Each is an input to planning, never a member of a Write Plan; each stays
-indivisible through batching and dependency ordering and disappears during
-finalization.
+A write against existing state settles against evidence a prior read retained,
+or — where its target observes no state — against the object whose shared row
+lock licenses it. The observation-bearing shapes here pair one buffered mutation
+with the evidence resolved for it, so the address a write takes, the gate it
+binds, and the license it holds are all read off one object rather than looked up
+separately. Each shape is an input to planning, never a member of a Write Plan,
+and each disappears before the plan is frozen; the two observation-bearing ones
+additionally stay indivisible through batching and dependency ordering, because
+everything an observation licenses is per-row.
 
 A predicate-selected write whose target requires per-row observation cannot be
 planned from buffered data alone. Its resolving read happens before the pure
@@ -15,16 +18,16 @@ exactly one compact private group per authored predicate: one shared
 primary-key shape, one immutable value column per key attribute, and either an
 aligned version column or complete Predecessor Columns.
 
-A keyed write's evidence is resolved once, at the developer verb that holds the
+A keyed write's claim is resolved once, at the developer verb that holds the
 value being written, and rides beside the instruction from there — the retained
 claim included, so which write spends which evidence is a fact about the buffered
 item rather than a list kept beside it. What the author touched and then put back
-rides there too, because several writes of one observed state merge and the last
+rides there too, because several writes claiming one scope merge and the last
 word on a member decides whether it is written at all.
 
 :data:`BufferItem` and :func:`buffered_instruction` live here for that reason:
 the envelopes ARE the buffer's shapes, so the alias naming them and the unwrap
-that reads through them belong beside the two rather than in the planning
+that reads through them belong beside them rather than in the planning
 foundation that consumes them.
 """
 
@@ -32,6 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from parallax.core.unit_work.claims import SettledEvidence
 from parallax.core.unit_work.columns import ColumnSlice, PredecessorColumns
 from parallax.core.unit_work.instructions import (
     INSERT_MUTATIONS,
@@ -40,12 +44,15 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core.unit_work.observe import WriteObservation
+from parallax.core.unit_work.planner import ObjectKey
 from parallax.core.unit_work.retain import RetainedObservation
 
 __all__ = [
     "BufferItem",
+    "ClaimedKeyedWrite",
     "GroupObservations",
     "MaterializedWriteGroup",
+    "ObjectClaimedWrite",
     "ObservedKeyedWrite",
     "TemporalColumns",
     "VersionColumns",
@@ -210,40 +217,101 @@ class ObservedKeyedWrite:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class ObjectClaimedWrite:
+    """One keyed write against an existing UNVERSIONED Non-Temporal row: the
+    instruction, and what its author touched and put back.
+
+    Such a row observes no state, so this carrier holds no observation — and the
+    absence stays structural, exactly as :class:`ObservedKeyedWrite` requires the
+    presence. What makes it a carrier at all is the other half of the claim: its
+    write claims the OBJECT it addresses, because the shared row lock its
+    evidence rule demands is held on the object and covers every state the row
+    can be in (`m-unit-work` "Observed-State Coalescing"). Coalescing therefore
+    combines two of these by object where it combines two
+    :class:`ObservedKeyedWrite`\\ s by observed state, and neither ever meets the
+    other: one Entity's writes take one arm.
+
+    Construction refuses an insert and a multi-row instruction for the reasons
+    :class:`ObservedKeyedWrite` refuses them: an insert opens a row rather than
+    writing against one and claims nothing at all, and a claim addresses one
+    object, so an instruction naming several rows would let one object's claim
+    speak for another's.
+
+    It is stage-1 vocabulary. Everything it carries — which grain to combine on,
+    and which members the last word restored — is fully consumed by coalescing,
+    which hands the surviving write on as the ordinary instruction it always was.
+    No later stage sees this type, so batching, ordering, and settlement treat an
+    unversioned write exactly as they did before it existed.
+    """
+
+    instruction: KeyedWrite
+    restorations: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        if self.instruction.mutation in INSERT_MUTATIONS:
+            raise ValueError(
+                f"an insert claims no object: `{self.instruction.mutation}` on "
+                f"{self.instruction.entity!r} buffers bare (m-unit-work: an opening row has no "
+                "prior row to claim)"
+            )
+        if len(self.instruction.rows) != 1:
+            raise ValueError(
+                "an object claim addresses one object: "
+                f"`{self.instruction.mutation}` on {self.instruction.entity!r} addresses "
+                f"{len(self.instruction.rows)} rows (m-unit-work: a claim is about the object a "
+                "write settles against)"
+            )
+
+
+type ClaimedKeyedWrite = ObservedKeyedWrite | ObjectClaimedWrite
+"""One keyed write travelling with the claim its verb took for it, at either
+scope. The two carriers share what coalescing manipulates — an instruction and
+the members its author restored — and differ only in the grain their claims are
+taken at."""
+
+
 def buffered_write(
     instruction: WriteInstruction,
-    evidence: WriteObservation | RetainedObservation | None,
+    evidence: SettledEvidence | None,
     *,
     restorations: frozenset[str] = frozenset(),
-) -> WriteInstruction | ObservedKeyedWrite:
+) -> WriteInstruction | ClaimedKeyedWrite:
     """``instruction`` as the buffer item it travels to planning as: wrapped in
-    its carrier when its verb resolved evidence for it, bare when it resolved
-    none.
+    the carrier its evidence implies, bare when it settles against nothing.
 
-    The one place the optional-evidence-to-carrier decision is made, so every
+    The one place the evidence-to-carrier decision is made, so every
     producer — the developer verbs, the conformance engine's case translation,
     and the test probes that stand in for both — spells absence the same way and
-    inherits the carrier's own refusals: an insert and a multi-row instruction
+    inherits the carriers' own refusals: an insert and a multi-row instruction
     are both refused here, whatever produced the evidence.
 
-    ``evidence`` says which of the two things a producer holds. A
+    ``evidence`` says which of the three things a producer holds
+    (:data:`~parallax.core.unit_work.claims.SettledEvidence`). A
     :class:`~parallax.core.unit_work.RetainedObservation` is a READ's own claim,
     and travels whole so the flush that emits its write can spend it; a bare
     :class:`~parallax.core.unit_work.observe.WriteObservation` is a value the
-    caller holds directly, and claims nothing for a flush to spend.
+    caller holds directly, and claims nothing for a flush to spend; an
+    :class:`~parallax.core.unit_work.ObjectKey` is what an unversioned
+    Non-Temporal row's write settles against, and it claims that object rather
+    than any state of it. ``None`` is an insert, or a write against an object
+    this transaction has already buffered an insert of — neither settles against
+    anything a second intent could compete for.
 
     ``restorations`` is what the producer's author touched and put back, empty
-    for a producer holding no such record. A write with no evidence at all
-    carries none either: nothing coalesces with it, so there is no earlier
-    assignment for a restoration to cancel.
+    for a producer holding no such record. A write with no claim at all carries
+    none either: nothing coalesces with it, so there is no earlier assignment for
+    a restoration to cancel.
     """
     if evidence is None:
         return instruction
     if not isinstance(instruction, KeyedWrite):
         raise TypeError(
-            "only a keyed write carries a Write Observation; a predicate-selected write "
+            "only a keyed write settles against evidence of its own; a predicate-selected write "
             "materializes to a Materialized Write Group with its own observation columns"
         )
+    if isinstance(evidence, ObjectKey):
+        return ObjectClaimedWrite(instruction=instruction, restorations=restorations)
     if isinstance(evidence, RetainedObservation):
         return ObservedKeyedWrite(
             instruction=instruction,
@@ -257,8 +325,9 @@ def buffered_write(
 
 
 # One buffer item: an ordinary write instruction, a keyed write travelling with
-# the observation its verb resolved for it, or a materializing predicate write's
-# compact Materialized Write Group (`m-unit-work` "Materialized Write Groups",
+# the claim its verb took for it (the observation it settles against, or the
+# object an unversioned Non-Temporal write claims), or a materializing predicate
+# write's compact Materialized Write Group (`m-unit-work` "Materialized Write Groups",
 # ADR 0014). A group is buffered as ONE opaque item at the call
 # position (never split, never reordered internally) — EXEMPT from same-object
 # coalescing (a materializing resolve only ever matches EXISTING rows, which
@@ -271,10 +340,14 @@ def buffered_write(
 # an observation licenses is per-row (the milestone the write addresses, the
 # version it advances from, the gate it binds under optimistic mode, and the
 # single row each expects to affect) while a merged statement holds one address,
-# one assignment shape, and one affected-row total. Both settle directly into
-# Planned Steps at finalization; a frozen Write Plan never carries either type
-# at all.
-BufferItem = WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup
+# one assignment shape, and one affected-row total. An OBJECT-claimed write
+# carries no such per-row licence — the lock its evidence rule demands is held on
+# the object, and a batch of unversioned rows is exactly what `m-batch-write`
+# collapses — so it merges into a multi-row batch as freely as the bare
+# instruction it is, which is what coalescing hands on once it has combined by
+# object. All three settle directly into Planned Steps at finalization; a frozen
+# Write Plan never carries any of these types at all.
+BufferItem = WriteInstruction | ClaimedKeyedWrite | MaterializedWriteGroup
 
 
 def buffered_instruction(item: BufferItem) -> WriteInstruction:
@@ -285,7 +358,7 @@ def buffered_instruction(item: BufferItem) -> WriteInstruction:
     """
     if isinstance(item, MaterializedWriteGroup):
         return item.mutation
-    if isinstance(item, ObservedKeyedWrite):
+    if isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite):
         return item.instruction
     return item
 

@@ -32,16 +32,19 @@ from _transact_support import (
 
 from _support import mirrored_models as mm
 from parallax.conformance.read_models import Person
-from parallax.core import LATEST
+from parallax.core import LATEST, opt_lock
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.unit_work import (
     SELECTION_INTENT,
     ClaimTable,
     FixedClock,
     KeyedWrite,
+    ObjectClaimedWrite,
     ObjectKey,
+    RetainedObservation,
     VersionedStateKey,
+    VersionObservation,
     WriteIntent,
     admits,
     keyed_intent,
@@ -61,7 +64,15 @@ _UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
 _ASSIGNMENT = WriteIntent(kind="assignment")
 _DESTRUCTIVE = WriteIntent(kind="destructive")
+_OBJECT = ObjectKey(EntityIdentity("parallax.compatibility", "Account"), (("id", 1),))
 _STATE = VersionedStateKey(ObjectKey(EntityIdentity("parallax.compatibility", "Account"), ()), 4)
+_VERSION_ATTRIBUTE = AttributeIdentity(
+    EntityIdentity("parallax.compatibility", "Account"), "version"
+)
+_START_ATTRIBUTE = AttributeIdentity(EntityIdentity("parallax.compatibility", "Balance"), "inZ")
+_RETAINED = RetainedObservation(
+    VersionedStateKey(_OBJECT, 4), VersionObservation(observed_version=4), None
+)
 
 
 def _account_port(rows: list[dict[str, object]] | None = None) -> RecordingPort:
@@ -211,9 +222,9 @@ def test_a_restoring_edit_with_nothing_buffered_still_buffers_nothing() -> None:
 
 
 def test_a_restoring_edit_of_an_unversioned_source_buffers_nothing() -> None:
-    # An unversioned Non-Temporal row observes no state, so there is no claim for
-    # a restoration to cancel: the net-zero edit takes the ordinary no-op path and
-    # the shared row lock its read holds is all the write it never makes needed.
+    # An unversioned Non-Temporal row's claim is taken at its OBJECT, and nothing
+    # holds one here: the net-zero edit takes the ordinary no-op path and the
+    # shared row lock its read holds is all the write it never makes needed.
     port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
 
     def fn(tx: Transaction) -> None:
@@ -368,6 +379,184 @@ def test_a_participating_read_flushes_the_first_intent_and_frees_the_state() -> 
         "write",
         "commit",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# The claim-scope derivation, and the object-claimed arm through the verbs.   #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("key", "mutation", "expected"),
+    [
+        (opt_lock.UNVERSIONED, "insert", None),
+        (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "insert", None),
+        (opt_lock.TransactionTimeDerived(_START_ATTRIBUTE), "insertUntil", None),
+        (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "update", _RETAINED),
+        (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "delete", _RETAINED),
+        (opt_lock.TransactionTimeDerived(_START_ATTRIBUTE), "terminate", _RETAINED),
+        (opt_lock.UNVERSIONED, "update", _OBJECT),
+        (opt_lock.UNVERSIONED, "delete", _OBJECT),
+        (None, "delete", _OBJECT),
+    ],
+)
+def test_the_claim_scope_derivation_is_total_over_the_write_kind(
+    key: opt_lock.OptimisticKey | None, mutation: str, expected: object
+) -> None:
+    # Two declared facts decide every arm — the target's Optimistic Key and the
+    # mutation — so no arm is reached because something was absent. An Entity the
+    # facet does not name takes the object arm for the reason it takes the Locking
+    # fallback: its lock is all it has.
+    assert (
+        opt_lock.settled_evidence(
+            key,
+            mutation,  # pyright: ignore[reportArgumentType]
+            object_key=_OBJECT,
+            observation=_RETAINED,
+        )
+        is expected
+    )
+
+
+def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:
+    # The state arm answers what its source retained, and a producer that retained
+    # none settles against nothing here — the required-observation rule refuses it
+    # where every buffered write is settled, rather than an object claim standing
+    # in for evidence a gate needs.
+    assert (
+        opt_lock.settled_evidence(
+            opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE),
+            "update",
+            object_key=_OBJECT,
+            observation=None,
+        )
+        is None
+    )
+
+
+def test_an_unversioned_update_then_delete_of_one_object_is_one_delete() -> None:
+    # The object-claimed arm of the same algebra `-022`'s versioned pair proves:
+    # the destruction supersedes the assignment buffered before it, so the UPDATE
+    # never reaches the wire.
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+
+    def fn(tx: Transaction) -> None:
+        node = tx.find(Person.where(Person.id == 1)).result()
+        tx.update(node.edit(name="Grace"))
+        tx.delete(node)
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == [
+        ("write", POSTGRES.to_driver_sql("delete from person where id = ?"), (1,))
+    ]
+
+
+def test_identical_unversioned_destructive_intents_deduplicate() -> None:
+    # Unclaimed, the pair reaches the batch collapse as two writes of one key and
+    # a Key Target's addressed rows are distinct — so what the claim buys here is
+    # a legal two-verb sequence reaching a Planned Write at all.
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+
+    def fn(tx: Transaction) -> None:
+        node = tx.find(Person.where(Person.id == 1)).result()
+        tx.delete(node)
+        tx.delete(node)
+
+    db_for(PERSON, port).transact(fn)
+    assert len(_writes(port)) == 1
+
+
+def test_an_unversioned_assignment_after_a_destructive_intent_is_refused() -> None:
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+
+    def fn(tx: Transaction) -> None:
+        node = tx.find(Person.where(Person.id == 1)).result()
+        tx.delete(node)
+        tx.update(node.edit(name="Grace"))
+
+    with pytest.raises(WriteEvidenceError) as refusal:
+        db_for(PERSON, port).transact(fn)
+    assert refusal.value.code == "write-evidence-already-claimed"
+    assert refusal.value.object_key.primary_key == (("id", 1),)
+
+
+def test_two_unversioned_updates_of_one_object_merge_into_one_write() -> None:
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+
+    def fn(tx: Transaction) -> None:
+        node = tx.find(Person.where(Person.id == 1)).result()
+        tx.update(node.edit(name="Grace"))
+        tx.update(node.edit(name="Hopper"))
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == [
+        ("write", POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Hopper", 1))
+    ]
+
+
+def test_a_restoring_edit_cancels_an_unversioned_objects_pending_assignment() -> None:
+    # `Ada -> Grace -> Ada` across two verbs: the second is the caller's last word
+    # on `name`, so it cancels the pending assignment and the intermediate value
+    # never reaches the wire.
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+
+    def fn(tx: Transaction) -> None:
+        node = tx.find(Person.where(Person.id == 1)).result()
+        edited = node.edit(name="Grace")
+        tx.update(edited)
+        tx.update(edited.edit(name="Ada"))
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_writes_of_two_unversioned_objects_stay_independent_and_batch() -> None:
+    # One claim per object, so two objects' deletes are two claims — and they
+    # leave coalescing as the ordinary instructions they always were, which is
+    # what lets the batch collapse merge them into one set-based statement.
+    port = RecordingPort(
+        rows=[{"id": 1, "name": "Ada"}, {"id": 2, "name": "Linus"}], write_affected=2
+    )
+
+    def fn(tx: Transaction) -> None:
+        people = tx.find(Person.where(Person.id.in_([1, 2]))).results()
+        for person in people:
+            tx.delete(person)
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == [
+        ("write", POSTGRES.to_driver_sql("delete from person where id in (?, ?)"), (1, 2))
+    ]
+
+
+def test_a_restoring_edit_of_a_value_this_transaction_inserted_cancels_nothing() -> None:
+    # The insert-exempt path: a value this transaction buffered an insert of came
+    # from no read, so it carries no hint and claims nothing — the insert is the
+    # provenance, and same-object coalescing is what would combine the pair. The
+    # net-zero chain therefore takes the ordinary no-op path and the INSERT stands
+    # alone, carrying the value the caller ended on.
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        fresh = Person(id=9, name="Ada")
+        tx.insert(fresh)
+        tx.update(fresh.edit(name="Grace").edit(name="Ada"))
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == [
+        (
+            "write",
+            POSTGRES.to_driver_sql("insert into person(id, name) values (?, ?)"),
+            (9, "Ada"),
+        )
+    ]
+
+
+def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> None:
+    # The carrier's own structural half, which needs no model: an opening row has
+    # no prior row to claim, and a claim is about the object ONE row addresses.
+    with pytest.raises(ValueError, match="an insert claims no object"):
+        ObjectClaimedWrite(KeyedWrite("insert", "Person", ({"id": 1},)))
+    with pytest.raises(ValueError, match="an object claim addresses one object"):
+        ObjectClaimedWrite(KeyedWrite("delete", "Person", ({"id": 1}, {"id": 2})))
 
 
 # --------------------------------------------------------------------------- #

@@ -590,6 +590,15 @@ _OBSERVED_STATE_COALESCING_REASON: Final[str] = (
     "grade end to end and `tests/unit/test_write_claims.py` pins per rule"
 )
 
+_OBJECT_CLAIM_COALESCING_REASON: Final[str] = (
+    "the same Observed-State Coalescing witness against a target that observes no state: "
+    "an unversioned Non-Temporal row's writes claim the OBJECT, and what the case grades "
+    "is the single statement the flush emits for two of them. The developer spelling is "
+    "the ordinary keyed verb an idiomatic story already shows, so what would be narrated "
+    "is the collapse — a planner property the compile/run conformance lanes grade end to "
+    "end and `tests/unit/test_write_claims.py` pins per rule"
+)
+
 _OBSERVED_GENERATION_REASON: Final[str] = (
     "an observed-state KEYING witness: it grades which of a unit of work's several "
     "observed generations of one key a write settles against, which a case states by "
@@ -1270,6 +1279,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-023": _OBSERVED_STATE_COALESCING_REASON,
     "m-unit-work-024": _OBSERVED_GENERATION_REASON,
     "m-unit-work-025": _OBSERVED_STATE_COALESCING_REASON,
+    "m-unit-work-026": _OBJECT_CLAIM_COALESCING_REASON,
+    "m-unit-work-027": _OBJECT_CLAIM_COALESCING_REASON,
     "m-unit-work-017": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-018": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-019": _WRITE_VALUE_PROVENANCE_REASON,

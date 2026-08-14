@@ -317,6 +317,16 @@ _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
 # query result — so both lanes grade the pair of statements the derivation
 # produces.
 _LOCKING_FALLBACK_SCENARIOS: Final[frozenset[str]] = frozenset({"m-opt-lock-023"})
+# The object-claim coalescing scenarios (`m-unit-work-026`/`-027`): two buffered
+# writes of ONE unversioned Non-Temporal row, whose claims are taken at the object
+# because such a row observes no state (`m-unit-work` *Observed-State
+# Coalescing*). Compile-eligible for `_LOCKING_FALLBACK_SCENARIOS`' own reason —
+# neither surviving statement gates on anything a query returned — so both lanes
+# grade the single DELETE the flush emits where an unclaimed pair would emit two
+# statements (`-026`) or one multi-key DELETE repeating its own key (`-027`).
+_OBJECT_CLAIM_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
+    {"m-unit-work-026", "m-unit-work-027"}
+)
 # Compile-eligible non-temporal optimistic-locking and key-generation writes:
 # versioned advance (m-opt-lock-002), the inheritance-family keyed write family
 # (table-per-hierarchy tag derivation/guard, table-per-concrete-subtype own-table
@@ -541,6 +551,7 @@ WRITE_EXERCISED: Final[frozenset[str]] = (
     | _TEMPORAL_COALESCING_SCENARIOS
     | _READLESS_PREDICATE_WRITE_SCENARIOS
     | _LOCKING_FALLBACK_SCENARIOS
+    | _OBJECT_CLAIM_COALESCING_SCENARIOS
     | _PIN_CONTRAST_SCENARIOS
     | _PER_VIEW_PIN_SCENARIOS
 )

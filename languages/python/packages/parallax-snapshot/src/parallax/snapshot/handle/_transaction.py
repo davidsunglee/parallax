@@ -42,6 +42,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from parallax.core import opt_lock
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
 from parallax.core.entity import (
@@ -61,14 +62,17 @@ from parallax.core.unit_work import (
     ObservedStateKey,
     PredicateWrite,
     RetainedObservation,
+    SettledEvidence,
     TemporalStateKey,
     UnitOfWork,
     VersionedStateKey,
     WriteInstruction,
     WriteObservation,
     buffered_write,
+    claim_scope,
     instructions,
     keyed_intent,
+    object_key,
     validate_write,
 )
 
@@ -308,7 +312,7 @@ class Transaction:
         record, declaring, valid_from_literal = self._prepare_keyed_write(
             copy, "update", valid_from
         )
-        authored = self._authored_assignments(copy)
+        authored = self._authored_assignments(record, copy, "update")
         if authored is None:
             return
         row, restorations = authored
@@ -317,7 +321,7 @@ class Transaction:
             record.identity,
             row,
             valid_from=valid_from_literal,
-            claim=self._resolve_evidence(record, declaring, copy),
+            claim=self._resolve_evidence(record, declaring, copy, "update"),
             restorations=restorations,
         )
 
@@ -335,7 +339,7 @@ class Transaction:
             record.identity,
             self._codec.identity_row(node_or_instance),
             claim=self._resolve_evidence(
-                record, declaring_of(self._meta, record), node_or_instance
+                record, declaring_of(self._meta, record), node_or_instance, "delete"
             ),
         )
 
@@ -365,7 +369,7 @@ class Transaction:
             record.identity,
             self._codec.identity_row(node_or_instance),
             valid_from=valid_from_literal,
-            claim=self._resolve_evidence(record, declaring, node_or_instance),
+            claim=self._resolve_evidence(record, declaring, node_or_instance, "terminate"),
         )
 
     def update_until(
@@ -389,7 +393,7 @@ class Transaction:
             copy, "updateUntil", valid_from
         )
         until_literal = validate_until(declaring, "updateUntil", valid_from, until)
-        authored = self._authored_assignments(copy)
+        authored = self._authored_assignments(record, copy, "updateUntil")
         if authored is None:
             return
         row, restorations = authored
@@ -399,7 +403,7 @@ class Transaction:
             row,
             valid_from=valid_from_literal,
             until=until_literal,
-            claim=self._resolve_evidence(record, declaring, copy),
+            claim=self._resolve_evidence(record, declaring, copy, "updateUntil"),
             restorations=restorations,
         )
 
@@ -424,7 +428,7 @@ class Transaction:
             self._codec.identity_row(node_or_instance),
             valid_from=valid_from_literal,
             until=until_literal,
-            claim=self._resolve_evidence(record, declaring, node_or_instance),
+            claim=self._resolve_evidence(record, declaring, node_or_instance, "terminateUntil"),
         )
 
     def _prepare_keyed_write(
@@ -465,7 +469,7 @@ class Transaction:
         return record, declaring, valid_from_literal
 
     def _authored_assignments(
-        self, copy: EntityBase
+        self, record: EntityMetadata, copy: EntityBase, mutation: KeyedMutation
     ) -> tuple[Mapping[str, object], frozenset[str]] | None:
         """What an update verb buffers for ``copy``: its row and the members its
         edit chain touched and put back — or ``None`` when it buffers nothing.
@@ -475,8 +479,8 @@ class Transaction:
         last word left alone. A chain that nets to zero normally buffers nothing
         at all, which is the zero-round-trip no-op every net-zero edit has always
         been. The exception is the one thing such a chain CAN do: cancel an
-        assignment this transaction has already buffered against the same
-        observed state. There it buffers its identity row alone, carrying the
+        assignment this transaction has already buffered at the same claim
+        scope. There it buffers its identity row alone, carrying the
         restorations that erase the pending assignment — and the merged write is
         then eliminated exactly as a single net-zero edit is, so the outcome is
         still no DML rather than a write of a value the caller took back.
@@ -485,23 +489,42 @@ class Transaction:
         restorations = self._codec.restored_members(copy)
         if row is not None:
             return row, restorations
-        if not restorations or not self._cancels_a_pending_assignment(copy):
+        if not restorations or not self._cancels_a_pending_assignment(record, copy, mutation):
             return None
         return self._codec.identity_row(copy), restorations
 
-    def _cancels_a_pending_assignment(self, copy: EntityBase) -> bool:
-        """Whether this transaction already buffered an ASSIGNMENT against the
-        exact state ``copy``'s own source observed.
+    def _cancels_a_pending_assignment(
+        self, record: EntityMetadata, copy: EntityBase, mutation: KeyedMutation
+    ) -> bool:
+        """Whether this transaction already buffered an ASSIGNMENT at the scope
+        ``copy``'s own write would claim.
 
-        Read off the value's own hint rather than off its key, because what a
-        restoration cancels is an intent against ONE observed state: a write
-        settling against a different generation of the same row is a different
-        claim, and taking it back is not something this value said.
+        Read off the value's own hint rather than off a derived row, and at
+        whatever scope the target Entity's Optimistic Key names, so the question
+        is asked exactly where the verb about to buffer would take its claim: a
+        versioned write settling against a different generation of the same row
+        is a different claim and taking it back is not something this value said,
+        while an unversioned Non-Temporal row has one claim per object because
+        that is the grain its shared row lock is held at.
+
+        Asked before the write's evidence is resolved, which is what keeps the
+        no-op-first ordering `m-opt-lock` fixes: a net-zero chain off a value the
+        verb would refuse still buffers nothing rather than raising.
         """
         hint = source_hint_of(copy)
-        if hint is None or hint.observation is None:
+        if hint is None:
             return False
-        held = self._uow.claimed(hint.observation.key)
+        scope = claim_scope(
+            opt_lock.settled_evidence(
+                opt_lock.view(self._meta).key(record.identity),
+                mutation,
+                object_key=hint.object_key,
+                observation=hint.observation,
+            )
+        )
+        if scope is None:
+            return False
+        held = self._uow.claimed(scope)
         return held is not None and held.kind == "assignment"
 
     def _record_buffered_insert(
@@ -537,14 +560,18 @@ class Transaction:
         return object_written is not None and object_written in self._inserted_objects
 
     def _resolve_evidence(
-        self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
-    ) -> RetainedObservation | None:
-        """The retained evidence a keyed write against existing state settles
-        against — resolved once, here, off the value the verb was handed.
+        self,
+        record: EntityMetadata,
+        declaring: EntityMetadata,
+        instance: EntityBase,
+        mutation: KeyedMutation,
+    ) -> SettledEvidence | None:
+        """What a keyed write against existing state settles against — resolved
+        once, here, off the value the verb was handed.
 
-        One resolution serves the address, the gate, the version advance, and the
-        license, which is what makes it impossible for them to disagree. The
-        evidence comes from the VALUE rather than from a transaction-wide slot:
+        One resolution serves the address, the gate, the version advance, the
+        license, and the claim, which is what makes it impossible for them to
+        disagree. The evidence comes from the VALUE rather than from a transaction-wide slot:
         the observation belongs to the source that observed it (`m-unit-work`
         "Observation lifetime"), so a standalone ``db.find`` value carries its
         own and a value that came from no read carries none. Which of those
@@ -561,7 +588,10 @@ class Transaction:
         An object this SAME transaction buffered an insert for is exempt
         (read-your-own-writes: the buffered insert IS the provenance; the planner
         coalesces or orders the pair, `m-unit-work`), and the write that follows
-        it settles bare exactly as the insert does. Callers invoke this AFTER a
+        it settles bare and claims nothing, exactly as the insert does — the row
+        it revises is the one that insert opens, so there is no prior row for a
+        second intent to compete for and same-object coalescing is what combines
+        the pair. Callers invoke this AFTER a
         sparse update's empty-change-set no-op return (the no-op-first ordering
         `m-opt-lock` fixes: a no-op is dropped before any observation concern)
         and AFTER window validation (the window rejects first).
@@ -573,6 +603,7 @@ class Transaction:
             self._meta,
             record,
             hint,
+            mutation=mutation,
             object_key=(
                 hint.object_key
                 if hint is not None
@@ -760,8 +791,12 @@ class Transaction:
         the call that supplied it, rather than settling to a bare write whose
         refusal would surface at flush naming the wrong cause. A
         :class:`~parallax.core.unit_work.WriteObservation` is evidence a caller
-        holds directly and is used as given, and claims nothing. ``None`` buffers
-        bare, which is what an insert and an unobserved target need.
+        holds directly and is used as given, and claims nothing. ``None`` is what
+        an insert and an unversioned Non-Temporal write supply, which is not the
+        same answer: what each of them settles against is derived from the target
+        Entity's own Optimistic Key here, exactly as a typed verb derives it,
+        so an unversioned existing-row write claims its object through this
+        ingress too and an insert claims nothing through either.
 
         A predicate-selected instruction carries no observation of its own — it
         materializes to a Materialized Write Group with its own observation
@@ -794,10 +829,12 @@ class Transaction:
             )
             return
         self._validate_keyed(instruction)
-        if isinstance(observation, VersionedStateKey | TemporalStateKey):
-            self._admit_and_buffer(instruction, self._resolved_claim(observation))
-            return
-        self._admit_and_buffer(instruction, observation)
+        resolved = (
+            self._resolved_claim(observation)
+            if isinstance(observation, VersionedStateKey | TemporalStateKey)
+            else observation
+        )
+        self._admit_and_buffer(instruction, self._settled_evidence(instruction, resolved))
 
     def _validate_keyed(self, instruction: KeyedWrite) -> None:
         """The whole judgment a keyed write instruction is measured by, in the one
@@ -831,6 +868,27 @@ class Transaction:
                 validate_write(entity, row, self._meta, mutation=instruction.mutation)
         instructions.validate_instruction(instruction, self._meta)
 
+    def _settled_evidence(
+        self, instruction: KeyedWrite, observation: RetainedObservation | WriteObservation | None
+    ) -> SettledEvidence | None:
+        """What ``instruction`` settles against, for a caller holding an
+        instruction rather than the value it was derived from.
+
+        The typed verbs read the same derivation off a source value's hint
+        (:meth:`_resolve_evidence`); this reads it off the instruction's own
+        target and mutation, which is everything the derivation takes. A bridge
+        caller therefore cannot buffer an unversioned Non-Temporal write that
+        claims nothing where a developer's own verb would have claimed its
+        object, and the coalescing a case witnesses is the coalescing a program
+        gets.
+        """
+        return opt_lock.settled_evidence(
+            opt_lock.view(self._meta).key(_instruction_identity(self._meta, instruction)),
+            instruction.mutation,
+            object_key=object_key(instruction, self._meta),
+            observation=observation,
+        )
+
     def _resolved_claim(self, key: ObservedStateKey) -> RetainedObservation:
         """The retained evidence a neutral write claims, resolving a KEY here.
 
@@ -863,14 +921,16 @@ class Transaction:
         *,
         valid_from: str | None = None,
         until: str | None = None,
-        claim: RetainedObservation | None = None,
+        claim: SettledEvidence | None = None,
         restorations: frozenset[str] = frozenset(),
     ) -> None:
-        # `claim` is the retained evidence the verb resolved for THIS write off
-        # the value it was handed, and is what `buffered_write` turns into the
+        # `claim` is what the verb resolved THIS write settles against, off the
+        # value it was handed, and is what `buffered_write` turns into the
         # buffer variant it implies: an `ObservedKeyedWrite` carrying both the
-        # observation and the claim when there is one, the bare instruction when
-        # there is not. Riding the buffered item is what keeps the evidence alive
+        # observation and the claim where a state was observed, an
+        # `ObjectClaimedWrite` where the object's own lock is the evidence, and
+        # the bare instruction where the write settles against nothing. Riding
+        # the buffered item is what keeps the evidence alive
         # while the write is buffered and what has a successful flush spend
         # exactly the claims its surviving writes carried. The observation is
         # never an instruction field — a
@@ -911,34 +971,32 @@ class Transaction:
     def _admit_and_buffer(
         self,
         instruction: KeyedWrite,
-        evidence: RetainedObservation | WriteObservation | None,
+        evidence: SettledEvidence | None,
         *,
         restorations: frozenset[str] = frozenset(),
     ) -> None:
-        """Take this write's claim on the state it settles against, then buffer it.
+        """Take this write's claim at the scope it settles against, then buffer it.
 
         The claim is the last judgment a keyed write passes, so a refused intent
         leaves nothing behind: the instruction is already fully validated, and
-        the buffer and the claim it could not join are both untouched. A write
-        that settles against no observed state — every insert, and every
-        unversioned Non-Temporal write — claims nothing, because there is no
-        state for a second intent to collide with.
+        the buffer and the claim it could not join are both untouched.
 
-        A caller-HELD Write Observation claims nothing either, for the reason it
-        spends nothing at the flush: it is a value rather than a reference into
-        this scope's ledger, so there is no retained evidence a second intent
-        could be competing for. Finalization still combines two such writes when
-        they address one object and carry equal evidence, because what it
-        coalesces is the intent rather than the claim.
+        Scope and intent are read off what the write settles against and what its
+        verb does, and the two are absent together: an insert opens a row rather
+        than writing against one, so it has neither. A caller-HELD Write
+        Observation carries an intent but no scope, for the reason it spends
+        nothing at the flush — it is a value rather than a reference into this
+        scope's ledger, so there is no retained evidence a second intent could be
+        competing for. Finalization still combines two such writes when they
+        address one object and carry equal evidence, because what it coalesces is
+        the intent rather than the claim.
         """
-        intent = keyed_intent(instruction)
-        if isinstance(evidence, RetainedObservation) and intent is not None:
-            admit_write_claim(
-                self._uow,
-                _instruction_identity(self._meta, instruction),
-                intent,
-                state=evidence.key,
-            )
+        admit_write_claim(
+            self._uow,
+            _instruction_identity(self._meta, instruction),
+            keyed_intent(instruction),
+            scope=claim_scope(evidence),
+        )
         self._uow.buffer(buffered_write(instruction, evidence, restorations=restorations))
 
     # --- set-based write verbs (python.md §5) ----------------------------- #
@@ -1053,10 +1111,11 @@ class Transaction:
 def _instruction_identity(meta: Metamodel, instruction: KeyedWrite) -> EntityIdentity:
     """The Entity Identity ``instruction``'s own spelling names.
 
-    Only a refusal message reads it, and by the time one is raised the spelling
-    has already resolved through validation; the fallback keeps the message
-    honest for a spelling this model somehow does not carry rather than raising
-    a second failure while reporting the first.
+    Read by a refusal message and by the claim-scope derivation, both of which
+    run after validation has already resolved the spelling; the fallback keeps
+    the message honest — and leaves the derivation on the arm an unrecognized
+    Entity takes everywhere else — for a spelling this model somehow does not
+    carry, rather than raising a second failure while reporting the first.
     """
     entity = entity_by_name(meta, instruction.entity)
     if entity is None:  # pragma: no cover - validation resolved the spelling already

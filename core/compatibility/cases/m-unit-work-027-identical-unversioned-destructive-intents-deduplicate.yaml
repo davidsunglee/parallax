@@ -1,0 +1,55 @@
+# Observed-State Coalescing over an UNVERSIONED Non-Temporal target
+# (m-unit-work): two identical deletes of one such row are ONE delete.
+#
+# m-unit-work-023 pins the same arm against a versioned Account. OrderItem
+# observes no state, so what makes the second delete add nothing is the object
+# claim the first one took. The semantic distinction is sharper here than for a
+# versioned target: an implementation that leaves these writes outside the claim
+# algebra does not merely emit a redundant statement — it hands the flush two
+# writes of one primary key, which the batch collapse then merges into a single
+# multi-key DELETE whose key list repeats itself, and a Key Target's addressed
+# rows are distinct. A legal two-verb sequence therefore has to reach a Planned
+# Write rather than an internal invariant failure.
+#   step 0 write : buffer the same delete of item 21 twice; the flush emits ONE
+#                  ungated DELETE, 1 round trip.
+#   step 1 find  : the dependent find MUST observe no rows. OrderItem is
+#                  unversioned, so its Effective Concurrency Strategy is Locking
+#                  under the default preference and the read carries the
+#                  m-read-lock shared-row-lock suffix.
+model: models/orders.yaml
+tags: [m-unit-work, m-opt-lock, m-sql, coalescing, delete, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  scenario:
+    - write:
+        - mutation: delete
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 21 }
+        - mutation: delete
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 21 }
+      roundTrips: 1
+      note: the second delete says what the first already said, so ONE DELETE is emitted
+      statements:
+        - sql:
+            postgres: delete from order_item where id = ?
+          binds: [21]
+    - objectQuery:
+        target: parallax.compatibility.OrderItem
+        predicate:
+          eq:
+            attr: parallax.compatibility.OrderItem.id
+            value: 21
+      roundTrips: 1
+      note: item 21 is gone, and the read locks it because an unversioned target resolves to Locking
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ? for share of t0
+          binds: [21]
+      expectRows: []
+then:
+  roundTrips: 2
