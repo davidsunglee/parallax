@@ -24,9 +24,11 @@ demonstrated over classes a test defines.
 
 Two prohibitions the planner contraction carries are decidable neither from the
 source nor from Python's own registries, and nothing here is to be read as
-covering them: a planner constructed through an alias, which no inventory of a
-name finds and no subclass registry lists; and an audit value stamped by hand
-onto a row, under a name of its own, which reaches no audit strategy at all.
+covering them: a planner constructed under a name this tree's text does not tie
+to `parallax` — an alias, or a re-export read from another distribution — which
+no inventory of a name finds and no subclass registry lists; and an audit value
+stamped by hand onto a row, under a name of its own, which reaches no audit
+strategy at all.
 `tests/unit/test_planner_composition.py` narrows both by driving real writes — on
 each lane it drives, every plan reaching the shared write-lowering seam came from
 a planner the composition root built, and the audit port those planners hold is
@@ -251,9 +253,15 @@ def _write_planner_constructions(over: Iterator[tuple[Path, str]]) -> list[str]:
 
     A qualified callee counts by its tail, since which module a construction is
     written through is not the question. What the file binds from another
-    distribution is: `other_library.WritePlanner(model)` constructs a different
-    class that happens to share the spelling, and is left alone for the same
-    reason a mention is.
+    distribution is: a callee rooted in a name read from elsewhere is not this
+    class on the text's evidence, and is left alone for the same reason a mention
+    is.
+
+    `foreign_locals` decides that on provenance alone, and this guard is no
+    stronger than that reading: a planner reached through a distribution that
+    re-exports it, or a construction standing in one scope of a file that binds
+    the spelling from elsewhere in another, passes. Both are the alias case this
+    module's own docstring already hands to `test_planner_composition.py`.
     """
     found: list[tuple[Path, int]] = []
     for path, tree in parsed(over):

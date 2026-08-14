@@ -293,10 +293,17 @@ def bound_root(node: ast.expr) -> str:
 def foreign_locals(path: Path, tree: ast.Module) -> frozenset[str]:
     """Every name the module binds from a distribution other than `parallax`.
 
-    A guard stated over a spelling needs this to tell the name apart from a
-    namesake: an unrelated distribution exporting `WritePlanner` or a same-named
-    exception binds a different object, and source using it resembles the
-    regression without being it.
+    A guard stated over a spelling reads this to hold the name only where it is
+    read from the distribution owning it, so another distribution's `WritePlanner`
+    or same-named exception is source that resembles the regression rather than
+    source that is it.
+
+    What this decides is PROVENANCE in the text, and two things follow that a
+    caller states as its own limits. A distribution re-exporting a `parallax`
+    class is read from like any other, so a name taken through one is hidden here.
+    And the set is the module's, not a scope's: a name bound inside one function
+    stands for the whole file, since a per-scope answer is a scope tree and these
+    guards are stated without one.
     """
     return frozenset(
         one.local for one in _module_imports(path, tree) if one.distribution != "parallax"
