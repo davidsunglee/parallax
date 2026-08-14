@@ -28,7 +28,7 @@ import json
 import re
 import threading
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, NamedTuple
@@ -351,12 +351,17 @@ def _entry_pairs(entries: Any, dialect: str) -> list[tuple[str, list[Any]]]:
     return pairs
 
 
-def _entry_binds(entries: Any, index: int) -> list[Any]:
-    """The authored binds of statement *index* in a `statements` entry list (default [])."""
+def _entry_binds(entries: Any, index: int, dialect: str) -> list[Any]:
+    """The authored binds of statement *index* in a `statements` entry list for
+    *dialect* (default ``[]``).
+
+    Resolved through :func:`_entry_bind_values`, so a dialect-keyed ``binds`` map
+    answers with the executing dialect's own array rather than with its keys.
+    """
     if not isinstance(entries, list) or index >= len(entries):
         return []
     entry = entries[index]
-    return list(entry.get("binds", [])) if isinstance(entry, dict) else []
+    return _entry_bind_values(entry, dialect) if isinstance(entry, dict) else []
 
 
 def _assert_schema(case: Case) -> None:
@@ -5414,7 +5419,7 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
                 mutation,
                 _sole_conflict_write(case, attempt, pointer),
                 _attempt_statements(attempt, dialect),
-                _entry_binds(attempt.get("statements"), 0),
+                _entry_binds(attempt.get("statements"), 0, dialect),
                 pointer,
                 dialect,
             )
@@ -5654,7 +5659,7 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
                 None,
                 gated,
                 _attempt_statements(attempt, dialect),
-                _entry_binds(attempt.get("statements"), 0),
+                _entry_binds(attempt.get("statements"), 0, dialect),
                 pointer,
             )
         return
@@ -6032,21 +6037,26 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
     alone, so on both of those the whole difference lands on what the observation
     derives.
 
-    Every entry of one step grades against that step's FIRST golden statement,
-    because entries settling against one state coalesce into ONE (`m-unit-work`
-    *Observed-State Coalescing*): what distinguishes them is the assignments they
-    contribute to that statement, while what this cross-check reads — the state
-    they settled against — is the one thing they all share. A step whose entries
-    address more than one object has no such shared statement and is refused
-    rather than graded against the first.
+    An entry is aligned with its golden by the OBJECT it addresses. Entries
+    settling against one state of one object coalesce into ONE statement
+    (`m-unit-work` *Observed-State Coalescing*) — what distinguishes them is the
+    assignments they contribute to it, while what this cross-check reads, the
+    state they settled against, is the one thing they share — and the same buffer
+    equally expresses a mixed multi-object flush, whose objects emit one statement
+    each. The settling statement is the EXISTING-ROW one; a temporal successor's
+    chained INSERT settles nothing and is passed over
+    (:func:`_settled_statement`).
     """
     for index, step in enumerate(case.scenario):
         if "write" not in step or "on" not in step:
             continue
-        statements = _step_statements(step, dialect)
-        binds = _entry_binds(step.get("statements"), 0)
+        settling = [
+            (statement, binds)
+            for statement, binds in _entry_pairs(step.get("statements"), dialect)
+            if _is_existing_row_statement(statement)
+        ]
         origin = case.scenario[step["on"]]
-        addressed: list[tuple[str, str]] = []
+        ordinals: dict[tuple[str, str], int] = {}
         for entry in _scenario_write_entries(step):
             entity = case.model.entity(entry["entity"])
             row = _sole_settled_row(case, index, entity, entry)
@@ -6054,21 +6064,11 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
             _, pk, _set_cols, _observed = _classify_write_row(
                 case, entity, row, mutation=entry["mutation"], opening=temporal
             )
-            addressed.append((entity.name, repr(pk)))
-            if len(set(addressed)) != 1:
-                raise CaseFailure(
-                    f"{case.path.name}: scenario[{index}] settles writes of "
-                    f"{sorted(set(addressed))} against one find — entries that settle against "
-                    f"one state coalesce into one statement, and entries of different objects "
-                    f"emit one statement each, which this cross-check cannot align."
-                )
-            if not statements:  # pragma: no cover - a settled write always emits its statement
-                raise CaseFailure(
-                    f"{case.path.name}: scenario[{index}] settles against a find but emits no "
-                    f"golden statement for {dialect}."
-                )
+            statement, binds = _settled_statement(case, index, entity, pk, settling, ordinals)
             if not temporal:
-                _assert_settled_version_binds(case, entity, index, origin, pk, binds, statements[0])
+                _assert_settled_version_binds(
+                    case, entity, index, origin, pk, binds, statement, dialect
+                )
                 continue
             observed = _settled_milestone(case, entity, index, origin, pk)
             expected = [
@@ -6077,7 +6077,49 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
             ]
             if case.concurrency_mode == "optimistic":
                 expected.append(observed.tx_start)
-            _assert_write_values(case, expected, binds, statements[0])
+            _assert_write_values(case, expected, binds, statement)
+        if len(ordinals) != len(settling):
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] settles writes of {len(ordinals)} "
+                f"object(s) but its golden carries {len(settling)} existing-row statement(s) "
+                f"for {dialect} — entries settling against one state coalesce into one "
+                f"statement, and each further object emits its own."
+            )
+
+
+def _settled_statement(
+    case: Case,
+    index: int,
+    entity: Entity,
+    pk: Any,
+    settling: Sequence[tuple[str, list[Any]]],
+    ordinals: dict[tuple[str, str], int],
+) -> tuple[str, list[Any]]:
+    """The golden statement one settled entry's OBJECT survives as, with the binds
+    authored on it.
+
+    Objects take the step's existing-row goldens in the order their entries first
+    name them, which is the order the buffer holds those objects in; ``ordinals``
+    carries that assignment across the step's entries, so every entry of one
+    object reaches the one statement they coalesce into. The aligned statement
+    MUST bind the object's own key, so a golden list authored in another order is
+    refused here rather than grading one object against another's statement.
+    """
+    ordinal = ordinals.setdefault((entity.name, repr(pk)), len(ordinals))
+    if ordinal >= len(settling):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] settles a write of {entity.name} pk {pk!r} "
+            f"against a find but its golden carries no existing-row statement for that "
+            f"object — a settled write emits one."
+        )
+    statement, binds = settling[ordinal]
+    if not any(_write_value_equal(bind, pk) for bind in binds):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] aligns {entity.name} pk {pk!r} with golden "
+            f"{statement!r}, which binds no such key — a step settling writes of several "
+            f"objects lists their goldens in the order its entries first name them."
+        )
+    return statement, binds
 
 
 def _assert_settled_version_binds(
@@ -6088,6 +6130,7 @@ def _assert_settled_version_binds(
     pk: Any,
     binds: list[Any],
     statement: str,
+    dialect: str,
 ) -> None:
     """Cross-check a settled VERSIONED Non-Temporal write's golden against the
     generation the find it names observed OF ITS OWN KEY.
@@ -6110,6 +6153,11 @@ def _assert_settled_version_binds(
     write's own key, exactly as the temporal arm reads its milestone
     (:func:`_settled_milestone`), so the corpus states which generation the write
     settled against in two independent places.
+
+    The version column is located in the SET clause by the spelling the golden
+    renders it with (:func:`quote_identifier`) rather than by its model name: a
+    physical column may be reserved or otherwise non-simple, and the golden then
+    quotes it exactly as the generated DML does (`m-dialect`).
     """
     version_column = _version_column(entity)
     if version_column is None:
@@ -6126,13 +6174,14 @@ def _assert_settled_version_binds(
     if _set_clause(statement) is None:
         return
     assigned = _parse_set_columns(case, statement)
-    if version_column not in assigned:
+    spelling = quote_identifier(version_column, dialect)
+    if spelling not in assigned:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] settles a versioned {entity.name} update "
-            f"whose golden SET clause {assigned} assigns no {version_column!r} — a versioned "
+            f"whose golden SET clause {assigned} assigns no {spelling!r} — a versioned "
             f"update advances the framework-owned version under either concurrency strategy."
         )
-    position = assigned.index(version_column)
+    position = assigned.index(spelling)
     advanced = binds[position] if position < len(binds) else None
     if not _write_value_equal(advanced, observed + 1):
         raise CaseFailure(
@@ -6142,27 +6191,55 @@ def _assert_settled_version_binds(
         )
 
 
+def _settled_observed_row(
+    case: Case, entity: Entity, index: int, origin: dict[str, Any], pk: Any, state: str
+) -> dict[str, Any]:
+    """The ONE row of *pk* a settled write's named find declares it observed.
+
+    Read off that find step's own ``expectRows`` — the rows the case declares that
+    read returned, which is exactly the evidence the store it filled holds — so
+    this derivation consults the case's READ result rather than the tracked
+    current state every other write shape resolves from. That is the whole point
+    of the reference: a unit of work may hold more than one piece of evidence
+    about a key, so tracked state answers for at most one of them and only the
+    read the write named says which it was handed.
+
+    One resolver for both profiles, because the rule they share is the whole of
+    it — the write's own key, exactly one match — and what differs is only the
+    state each then projects out of the row (:func:`_settled_generation`,
+    :func:`_settled_milestone`). *state* is that profile's own noun, so the
+    refusal names what the write would have settled against.
+    """
+    key_column = _pk_column(entity)
+    observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []
+    matched = [row for row in observed_rows if _write_value_equal(row.get(key_column), pk)]
+    if len(matched) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] settles against a find that observed "
+            f"{len(matched)} row(s) of {entity.name} pk {pk!r} — a keyed write settles "
+            f"against the ONE {state} the value it was handed came from."
+        )
+    return matched[0]
+
+
 def _settled_generation(
     case: Case, entity: Entity, index: int, origin: dict[str, Any], pk: Any, version_column: str
 ) -> Any:
     """The version a settled versioned write's named find observed, of *pk*.
 
-    The versioned peer of :func:`_settled_milestone`, resolved the same way and
-    for the same reason: a versioned key holds one ROW but one observed
-    GENERATION per read of it, so only the read the write named says which one it
-    was handed, and a find that returned no row of this key names evidence that
-    does not exist.
+    The versioned peer of :func:`_settled_milestone`: a versioned key holds one
+    ROW but one observed GENERATION per read of it, so the resolved row must carry
+    the version that read saw, and a row carrying none states no generation for
+    the write to have settled against.
     """
-    key_column = _pk_column(entity)
-    observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []
-    matched = [row for row in observed_rows if _write_value_equal(row.get(key_column), pk)]
-    if len(matched) != 1 or version_column not in matched[0]:
+    row = _settled_observed_row(case, entity, index, origin, pk, "generation")
+    if version_column not in row:
         raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles against a find that observed "
-            f"{len(matched)} row(s) of {entity.name} pk {pk!r} carrying a version — a keyed "
-            f"write settles against the ONE generation the value it was handed came from."
+            f"{case.path.name}: scenario[{index}] settles against a find whose observed "
+            f"{entity.name} pk {pk!r} carries no {version_column!r} — a keyed write settles "
+            f"against the ONE generation the value it was handed came from."
         )
-    return matched[0][version_column]
+    return row[version_column]
 
 
 def _sole_settled_row(
@@ -6197,12 +6274,8 @@ def _settled_milestone(
 ) -> _Rectangle:
     """The milestone a settled write's named find observed, of *pk*.
 
-    Read off that find step's own ``expectRows`` — the rows the case declares that
-    read returned — so this derivation consults the case's READ result rather than
-    the tracked current state every other write shape resolves from. That is the
-    whole point of the reference: a milestone chain holds several rows per key, so
-    tracked state answers for at most one of them and only the read that returned
-    a milestone names it.
+    A milestone chain holds several rows per key, so the resolved row's own
+    rectangle is the whole of what the close derives from.
 
     A Transaction-Time-Only target has no Valid-Time half to read, and its close
     addresses the key plus the invariant open Transaction-Time bound, so there the
@@ -6211,16 +6284,7 @@ def _settled_milestone(
     """
     axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
     valid_axis, tx_axis = axes.get("valid-time"), axes["transaction-time"]
-    key_column = _pk_column(entity)
-    observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []
-    matched = [row for row in observed_rows if _write_value_equal(row.get(key_column), pk)]
-    if len(matched) != 1:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles against a find that observed "
-            f"{len(matched)} row(s) of {entity.name} pk {pk!r} — a keyed write settles "
-            f"against the ONE milestone the value it was handed came from."
-        )
-    row = matched[0]
+    row = _settled_observed_row(case, entity, index, origin, pk, "milestone")
     return _Rectangle(
         row.get(valid_axis.start.column) if valid_axis is not None else None,
         row.get(valid_axis.end.column) if valid_axis is not None else None,
@@ -6952,7 +7016,7 @@ def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
                 f"{case.path.name}: attempts[{index}] must list exactly one golden "
                 f"UPDATE for {dialect}, found {len(statements)}."
             )
-        affected = db.execute(statements[0], _entry_binds(attempt.get("statements"), 0))
+        affected = db.execute(statements[0], _entry_binds(attempt.get("statements"), 0, dialect))
         expected = attempt["affectedRows"]
         if affected != expected:
             raise CaseFailure(

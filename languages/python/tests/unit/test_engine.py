@@ -1946,7 +1946,7 @@ def test_a_settled_write_refuses_a_find_that_observed_several_rows_of_its_key() 
 
 def test_a_write_step_naming_no_find_settles_against_tracked_state() -> None:
     assert (
-        engine._source_find_milestones(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._source_find_observations(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"write": []}, 2, {}
         )
         is None
@@ -1955,17 +1955,18 @@ def test_a_write_step_naming_no_find_settles_against_tracked_state() -> None:
 
 def test_a_source_find_reference_names_one_index() -> None:
     with pytest.raises(engine.EngineError, match="settles against ONE find step"):
-        engine._source_find_milestones(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._source_find_observations(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"write": [], "on": [0, 1]}, 2, {}
         )
 
 
 def test_a_source_find_reference_answers_what_that_find_observed() -> None:
     # A find of the same group that observed nothing observable — an unversioned
-    # or non-temporal target — still answers, with an empty record: the reference
-    # resolved, and it is the WRITE's own resolution that then finds no milestone.
+    # Non-Temporal target — still answers, with an empty record: the reference
+    # resolved, and it is the WRITE's own resolution that then finds no observed
+    # state.
     assert (
-        engine._source_find_milestones(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._source_find_observations(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"write": [], "on": 1}, 2, {1: ()}
         )
         == ()
@@ -1977,7 +1978,7 @@ def test_a_source_find_reference_names_a_find_of_its_own_group() -> None:
     # outside the group, one that is not a find, or one that has not run yet —
     # refused rather than resolved to "the find observed nothing".
     with pytest.raises(engine.EngineError, match="not an EARLIER find step"):
-        engine._source_find_milestones(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._source_find_observations(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"write": [], "on": 0}, 2, {}
         )
 
