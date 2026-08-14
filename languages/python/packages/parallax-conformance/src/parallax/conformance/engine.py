@@ -2103,11 +2103,12 @@ def _run_standalone_find(
 ) -> handle.Snapshot[handle.WireEntity]:
     """Run one UNGROUPED scenario find step through the production Wire read.
 
-    A step whose scenario declares a participation mode runs inside a real
+    A step carrying its scenario's Concurrency Preference runs inside a real
     ``db.transact`` so the read participates exactly as :func:`run_read_case`
     does and exactly as a developer's ``tx.find`` would: whether it takes the
     shared row lock is then the target Entity's own Effective Concurrency
-    Strategy, never a property of what the scenario goes on to write.
+    Strategy, never a property of the preference alone or of what the scenario
+    goes on to write.
     """
     query = _step_query(step)
     db = handle.Database(port, model, dialect=dialect)

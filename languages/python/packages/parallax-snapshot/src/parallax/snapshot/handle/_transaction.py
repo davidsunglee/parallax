@@ -131,8 +131,8 @@ class Transaction:
     row: primary key + effective change set — an empty effective set is a
     no-op, zero round trips), :meth:`delete` a node or instance (keys off its
     primary key). :meth:`find` runs a participating read and returns
-    ``Snapshot[T]``: force-flush + the transaction's own lock suffix,
-    otherwise identical to :meth:`Database.find`. The predicate-selected
+    ``Snapshot[T]``: force-flush + the lock suffix each materialized level's own
+    target Entity calls for, otherwise identical to :meth:`Database.find`. The predicate-selected
     ``_where`` verb family (`python.md` §5) —
     :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where`,
     :meth:`update_until_where`, :meth:`terminate_until_where` — mirrors the
