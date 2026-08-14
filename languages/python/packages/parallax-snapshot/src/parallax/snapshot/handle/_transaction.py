@@ -5,7 +5,7 @@ the active unit of work and the transaction's own connection. It owns the
 keyed verbs (``insert`` / ``update`` / ``delete`` and the typed
 temporal-window family), the participating :meth:`Transaction.find`, and the
 neutral ``_buffer`` instruction seam every keyed verb shares — which ends at
-``_admit_and_buffer``, where a write's claim on the state it settles against is
+``_admit_and_buffer``, where a write's claim at the scope it settles against is
 taken and an intent the buffer's existing claim cannot absorb is refused.
 
 It also owns the row-form read (:meth:`Transaction.read_rows`) and the two
@@ -165,8 +165,8 @@ class Transaction:
     :meth:`observed_read` and :meth:`write_neutral` are the first-party
     conformance bridge: a Wire read that additionally answers the evidence it
     retained, and the write ingress that takes an already-decoded instruction plus
-    the observed state it settles against. Neither is developer surface, and both end
-    when the Wire write verbs land.
+    whatever observed state a caller holds for it. Neither is developer surface,
+    and both end when the Wire write verbs land.
     """
 
     __slots__ = (
@@ -510,19 +510,25 @@ class Transaction:
         Asked before the write's evidence is resolved, which is what keeps the
         no-op-first ordering `m-opt-lock` fixes: a net-zero chain off a value the
         verb would refuse still buffers nothing rather than raising.
+
+        A value carrying no hint came from no read and can cancel nothing. A hint
+        that IS there always reaches a scope for an update verb: it names an
+        Object Key unconditionally, and it retains an observation for exactly the
+        state-keyed targets whose arm needs one
+        (:class:`~parallax.core.unit_work.SourceHint`).
         """
         hint = source_hint_of(copy)
         if hint is None:
             return False
         scope = claim_scope(
             opt_lock.settled_evidence(
-                opt_lock.view(self._meta).key(record.identity),
+                opt_lock.optimistic_key(self._meta, record.identity),
                 mutation,
                 object_key=hint.object_key,
                 observation=hint.observation,
             )
         )
-        if scope is None:
+        if scope is None:  # pragma: no cover - a hint reaches its target's own arm
             return False
         held = self._uow.claimed(scope)
         return held is not None and held.kind == "assignment"
@@ -791,11 +797,13 @@ class Transaction:
         the call that supplied it, rather than settling to a bare write whose
         refusal would surface at flush naming the wrong cause. A
         :class:`~parallax.core.unit_work.WriteObservation` is evidence a caller
-        holds directly and is used as given, and claims nothing. ``None`` is what
-        an insert and an unversioned Non-Temporal write supply, which is not the
-        same answer: what each of them settles against is derived from the target
-        Entity's own Optimistic Key here, exactly as a typed verb derives it,
-        so an unversioned existing-row write claims its object through this
+        holds directly and is used as given, and claims nothing; a target
+        entitled to none refuses it where a resolved one is refused, rather than
+        having it dropped in favour of a claim the call never stated. ``None`` is
+        what an insert and an unversioned Non-Temporal write supply, which is not
+        the same answer: what each of them settles against is derived from the
+        target Entity's own Optimistic Key here, exactly as a typed verb derives
+        it, so an unversioned existing-row write claims its object through this
         ingress too and an insert claims nothing through either.
 
         A predicate-selected instruction carries no observation of its own — it
@@ -874,19 +882,28 @@ class Transaction:
         """What ``instruction`` settles against, for a caller holding an
         instruction rather than the value it was derived from.
 
-        The typed verbs read the same derivation off a source value's hint
-        (:meth:`_resolve_evidence`); this reads it off the instruction's own
-        target and mutation, which is everything the derivation takes. A bridge
-        caller therefore cannot buffer an unversioned Non-Temporal write that
-        claims nothing where a developer's own verb would have claimed its
+        Evidence the caller supplied is what the write settles against, used as
+        given: it is the one licensed way a keyed write settles against a row no
+        read of this unit of work materialized, so a target that can hold none
+        REFUSES it — an insert at the carrier, an unversioned Non-Temporal row
+        where the write is settled — rather than having it dropped for a claim
+        the caller never stated.
+
+        A caller who supplied none reaches the derivation the typed verbs read
+        off a source value's hint (:meth:`_resolve_evidence`), taken here from
+        the instruction's own target and mutation, which is everything it needs.
+        A bridge caller therefore cannot buffer an unversioned Non-Temporal write
+        that claims nothing where a developer's own verb would have claimed its
         object, and the coalescing a case witnesses is the coalescing a program
         gets.
         """
+        if observation is not None:
+            return observation
         return opt_lock.settled_evidence(
-            opt_lock.view(self._meta).key(_instruction_identity(self._meta, instruction)),
+            opt_lock.optimistic_key(self._meta, _instruction_identity(self._meta, instruction)),
             instruction.mutation,
             object_key=object_key(instruction, self._meta),
-            observation=observation,
+            observation=None,
         )
 
     def _resolved_claim(self, key: ObservedStateKey) -> RetainedObservation:

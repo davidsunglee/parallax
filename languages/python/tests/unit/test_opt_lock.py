@@ -2,9 +2,10 @@
 
 Direct, isolated pins for the pure policy scope ``parallax.snapshot.handle``'s
 write-lowering seam consumes: the observed-version requirement
-(:func:`require_observed`), the runtime-computed advance (:func:`advance`), the
-per-Entity strategy derivation (:func:`effective_strategy`), and the derived
-initial version.
+(:func:`require_observed`) and its temporal sibling
+(:func:`require_observed_milestone`), the runtime-computed advance
+(:func:`advance`), the per-Entity strategy derivation
+(:func:`effective_strategy`), and the derived initial version.
 The corpus-level composition (the gate and advance wired through real DML) is
 pinned in ``test_write_lowering.py``; this file is the policy scope's own,
 narrower unit boundary.
@@ -88,3 +89,18 @@ class TestRequireObserved:
         # so it never licenses a versioned advance either.
         with pytest.raises(opt_lock.UnobservedVersionError, match="Account"):
             opt_lock.require_observed("Account", _temporal())
+
+
+class TestRequireObservedMilestone:
+    def test_accepts_the_milestone_the_source_observed(self) -> None:
+        assert opt_lock.require_observed_milestone("Balance", _temporal()) is None
+
+    def test_raises_when_the_value_carries_no_milestone(self) -> None:
+        # The temporal sibling of the version rule: a close targets the milestone
+        # its source observed, so a value that observed none licenses nothing.
+        with pytest.raises(opt_lock.UnobservedMilestoneError, match="Balance"):
+            opt_lock.require_observed_milestone("Balance", None)
+
+    def test_raises_for_a_version_observation(self) -> None:
+        with pytest.raises(opt_lock.UnobservedMilestoneError, match="Balance"):
+            opt_lock.require_observed_milestone("Balance", VersionObservation(observed_version=5))

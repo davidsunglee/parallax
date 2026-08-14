@@ -562,9 +562,9 @@ type WriteEvidenceErrorCode = Literal[
 The three partition what can be wrong with a source's evidence at the verb:
 there is none the target Entity's Effective Concurrency Strategy can use, the
 evidence there is has been spent by a successful flush, or a write already
-buffered in this unit of work claimed that exact state for an intent this one
-cannot join. A conflict the database discovers later is a different thing
-entirely and keeps its own flush-time classification.
+buffered in this unit of work claimed the scope this one settles against, for an
+intent this one cannot join. A conflict the database discovers later is a
+different thing entirely and keeps its own flush-time classification.
 """
 
 WRITE_EVIDENCE_CODES: Final[frozenset[str]] = frozenset(
@@ -583,10 +583,10 @@ class WriteEvidenceError(LookupError):
     A ``LookupError`` because every code reports that the evidence this write
     needs is not there for it to use: never recorded for this source, recorded
     and already spent, or still live but claimed by an intent this unit of work
-    already buffered against that exact state, which this one cannot join.
-    ``object_key`` is the object the write addressed, always
+    already buffered at the scope this write settles against, which this one
+    cannot join. ``object_key`` is the object the write addressed, always
     visible so a caller can say WHICH write was refused; the Source Hint and the
-    Observed State Key behind it stay implementation state.
+    claim scope behind it stay implementation state.
 
     Raised synchronously at the verb, before any buffering and before any
     database access. A conflict the database discovers later is a different
@@ -657,7 +657,7 @@ def resolve_write_evidence(
     licenses are stated together: an unversioned Non-Temporal row observes no
     state, and what the lock this check just proved is held on is the OBJECT.
     """
-    key = opt_lock.view(meta).key(record.identity)
+    key = opt_lock.optimistic_key(meta, record.identity)
     strategy = opt_lock.effective_strategy(preference, key)
     observation = None if hint is None else hint.observation
     settled = opt_lock.settled_evidence(

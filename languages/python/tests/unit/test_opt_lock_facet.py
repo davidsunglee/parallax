@@ -192,6 +192,19 @@ def test_every_accepted_entity_has_a_key_and_a_miss_returns_absence() -> None:
     assert facet.key(EntityIdentity("elsewhere", "Fridge")) is None
 
 
+def test_the_total_accessor_reads_an_unrecognized_entity_as_unversioned() -> None:
+    # A consumer whose domain is the three variants themselves resolves through
+    # this rather than growing an arm for an absence: an Entity this model does
+    # not carry is never granted a gate it cannot supply, which is the same
+    # answer the strategy derivation gives it.
+    model = _formed("appliance")
+    stranger = EntityIdentity("elsewhere", "Fridge")
+    assert opt_lock.optimistic_key(model, stranger) == UNVERSIONED
+    assert opt_lock.optimistic_key(model, _corpus_entity("Fridge")) == opt_lock.view(model).key(
+        _corpus_entity("Fridge")
+    )
+
+
 # --------------------------------------------------------------------------
 # Family uniformity.
 # --------------------------------------------------------------------------

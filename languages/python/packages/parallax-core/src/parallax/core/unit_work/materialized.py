@@ -140,11 +140,13 @@ class ObservedKeyedWrite:
     its own from a transaction-wide map. That is what makes a close's address,
     its gate, and its license derive from a single object.
 
-    The observation is always present. A write that has none — every insert, and
-    every unversioned Non-Temporal write — buffers as a bare ``KeyedWrite``, so
-    absence stays structural (`m-unit-work`) rather than becoming a null field
-    that flows downstream. A write that REQUIRES one and arrives bare is refused
-    while it is settled, exactly where it is today.
+    The observation is always present. A write that has none takes one of the two
+    shapes that hold no observation field at all — an insert a bare
+    ``KeyedWrite``, an unversioned Non-Temporal write an
+    :class:`ObjectClaimedWrite` — so absence stays structural (`m-unit-work`)
+    rather than becoming a null field that flows downstream. A write that
+    REQUIRES one and arrives without this carrier is refused while it is settled,
+    exactly where it is today.
 
     Absence being structural cuts both ways, so construction REFUSES an insert:
     an opening row observes nothing, and a carrier around one would be evidence
@@ -241,8 +243,8 @@ class ObjectClaimedWrite:
     It is stage-1 vocabulary. Everything it carries — which grain to combine on,
     and which members the last word restored — is fully consumed by coalescing,
     which hands the surviving write on as the ordinary instruction it always was.
-    No later stage sees this type, so batching, ordering, and settlement treat an
-    unversioned write exactly as they did before it existed.
+    No later stage sees this type: batching, ordering, and settlement measure an
+    unversioned write as the bare instruction it is.
     """
 
     instruction: KeyedWrite

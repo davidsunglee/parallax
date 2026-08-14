@@ -70,8 +70,9 @@ setRetryOnOptimisticLockFailure`` (default off).
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, assert_never
 
+from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.opt_lock._compile import (
     MODEL_COMPILER,
     OptimisticLockModelCompiler,
@@ -131,6 +132,7 @@ __all__ = [
     "advance",
     "compile_facet",
     "effective_strategy",
+    "optimistic_key",
     "reject_caller_authored_version",
     "require_observed",
     "require_observed_milestone",
@@ -264,8 +266,25 @@ def effective_strategy(preference: Concurrency, key: OptimisticKey | None) -> Co
     return "optimistic" if isinstance(key, ExplicitVersion | TransactionTimeDerived) else "locking"
 
 
+def optimistic_key(model: Metamodel, entity: EntityIdentity) -> OptimisticKey:
+    """``entity``'s Optimistic Key under ``model``, total over any Identity.
+
+    The Optimistic Lock Facet answers every accepted Entity and nothing else, so
+    a spelling this model does not carry reaches no key of its own; it reads as
+    :class:`Unversioned` here, which is the answer :func:`effective_strategy`
+    already gives it — an unrecognized Entity is never granted a gate it cannot
+    supply, so its shared lock is all it has.
+
+    A consumer whose domain is the three variants themselves
+    (:func:`settled_evidence`) resolves the key through this rather than widening
+    itself to an absence that would then need an arm.
+    """
+    key = view(model).key(entity)
+    return UNVERSIONED if key is None else key
+
+
 def settled_evidence(
-    key: OptimisticKey | None,
+    key: OptimisticKey,
     mutation: KeyedMutation,
     *,
     object_key: ObjectKey | None,
@@ -292,25 +311,30 @@ def settled_evidence(
 
     The arms are derived from declared facts alone — this family's Optimistic Key
     and the write's own mutation — exactly as :func:`effective_strategy` derives a
-    strategy from a preference and that same key. Absence is never what selects an
-    arm: an insert observes no state either, so an absence-triggered object claim
-    would sweep it in, where it has no prior row to claim at all. An Identity the
-    facet does not name takes the object arm for the same reason it takes the
-    Locking fallback above — an unrecognized Entity is never granted a gate it
-    cannot supply, so its lock is all it has.
+    strategy from a preference and that same key. Each is named by the fact that
+    selects it and none is reached by falling through the others; absence is not
+    among the inputs, and every Identity has a key (:func:`optimistic_key`).
+    Deriving the object arm from a missing observation instead would sweep in the
+    insert, which observes no state either and has no prior row to claim at all.
 
     ``observation`` is what the producer resolved for the write, and reaches the
     answer only on the state-keyed arm; a state-keyed write handed none settles
     against nothing here and is refused where every buffered write is settled
     (`m-unit-work`: a required observation that is missing is a planning error).
-    ``object_key`` is absent only for a row that names no complete primary key,
-    which addresses no object for a claim to be about.
+    ``object_key`` is what the object arm claims, absent for a write that
+    addresses no single object — a row naming no complete primary key, or an
+    instruction naming several rows — which leaves nothing for a claim to be
+    about and settles the write against nothing.
     """
     if mutation in INSERT_MUTATIONS:
         return None
-    if isinstance(key, ExplicitVersion | TransactionTimeDerived):
-        return observation
-    return object_key
+    match key:
+        case ExplicitVersion() | TransactionTimeDerived():
+            return observation
+        case Unversioned():
+            return object_key
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(key)
 
 
 def reject_caller_authored_version(entity: str, version_attr: str) -> None:

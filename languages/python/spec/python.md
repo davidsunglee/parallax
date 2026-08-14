@@ -2870,8 +2870,13 @@ or descriptor authoring form and performs no audit stamping.
   than settling bare, and a key outlives no unit of work. A `WriteObservation`
   is evidence the caller HOLDS and is used as given: this is the one licensed
   way a keyed write settles against a row no read of this unit of work
-  materialized (see *Versioned keyed writes require prior observation* below).
-  `None` buffers bare, which is what an insert and an unobserved target need. A
+  materialized (see *Versioned keyed writes require prior observation* below),
+  and a target entitled to none refuses it exactly where a resolved one is
+  refused rather than having it dropped. `None` states that the caller holds
+  none, and what the write then settles against is the claim-scope derivation's
+  answer for its target and mutation — nothing for an insert, its `ObjectKey`
+  for an unversioned non-temporal existing-row write — so this ingress claims
+  what the typed verb for the same write would claim. A
   `PredicateWrite` resolves its own per-row evidence, so supplying any
   observation with one raises `TypeError` rather than silently dropping it.
   `Database(port, accepted_metamodel)` is the advanced connection these seams are
@@ -3059,10 +3064,14 @@ or descriptor authoring form and performs no audit stamping.
   a versioned or temporal existing-row write claims the `ObservedStateKey` its
   source retained, and an unversioned non-temporal existing-row write claims its
   `ObjectKey`, whose shared row lock is the evidence its `locking` arm just
-  required. No arm is reached because an observation was missing — an insert
-  observes no state either — and both write ingresses run the derivation, so what
-  a `tx.update` claims and what the conformance bridge's `write_neutral` claims
-  for the same instruction cannot differ. The write travels to planning as the
+  required. Its `key` is the three variants themselves and never their absence:
+  an Identity the Optimistic Lock Facet does not name reads as `Unversioned`
+  before the derivation runs (`opt_lock.optimistic_key`), so no arm is reached
+  because something was missing — an insert observes no state either. Both write
+  ingresses run the derivation for a write whose caller holds no evidence of its
+  own, so what a `tx.update` claims and what the conformance bridge's
+  `write_neutral` claims for the same instruction cannot differ. The write
+  travels to planning as the
   carrier its answer implies: `ObservedKeyedWrite` with the retained observation,
   `ObjectClaimedWrite` with the members its author restored, or the bare
   instruction.
