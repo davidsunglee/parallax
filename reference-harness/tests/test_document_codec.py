@@ -229,6 +229,22 @@ def test_two_numbers_naming_one_float_remain_two_spellings_through_the_parse() -
         decode_leaf("float64", stored["noncanonical"])
 
 
+def test_an_integer_stored_leaf_spells_the_same_number_a_float_carrier_would() -> None:
+    # A JSON number is a number, so the carrier a parser answered with settles
+    # nothing: `1e30` is the canonical `float64` document number, and the integer
+    # naming that same number IS that spelling — though the binary float carrying
+    # either holds 1000000000000000019884624838656 and equals neither rendering,
+    # which is what host equality would compare and refuse the integer by.
+    assert decode_leaf("float64", 10**30) == 1e30
+    # A number the width holds and this table does not spell stays refused: this
+    # one rounds to the same binary64 and is still a second number.
+    with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+        decode_leaf("float64", 10**30 + 2**40)
+    # At `float32` the document number is routinely not the value itself, so an
+    # integer spelling one reads back as the binary32 value it names.
+    assert decode_leaf("float32", 10**30) == 1.0000000150474662e30
+
+
 def test_decode_leaf_is_the_identity_wherever_the_document_spelling_is_the_wire_one() -> None:
     # Eight of the twelve rows: a member the layout moved into a Structured Column
     # reaches a result row spelled exactly as a Column of its own would spell it, so

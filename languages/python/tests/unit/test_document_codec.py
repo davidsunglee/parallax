@@ -218,6 +218,24 @@ def test_a_float_carrier_with_no_authored_digits_is_the_number_it_names() -> Non
     assert decode_path(shape, {"ratio": 0.1}, ("ratio",)) == Present(0.1)
 
 
+def test_an_integer_stored_leaf_spells_the_same_number_a_float_carrier_would() -> None:
+    # A JSON number is a number, so the carrier a parser answered with settles
+    # nothing: `1e30` is the canonical `float64` spelling, and the integer naming
+    # that same number IS that spelling — though the binary float carrying either
+    # holds 1000000000000000019884624838656 and equals neither rendering, which is
+    # what host equality would compare and refuse the integer by.
+    shape = DocumentShape(members=(Leaf(name="ratio", type=FLOAT64, nullable=True),))
+    assert decode_path(shape, {"ratio": 10**30}, ("ratio",)) == Present(1e30)
+    # A number the width holds and the table does not spell stays refused: this one
+    # rounds to the same binary64 and is still a second number.
+    with pytest.raises(ValueError, match="invalid stored data"):
+        decode_path(shape, {"ratio": 10**30 + 2**40}, ("ratio",))
+    # At `float32` the canonical number is routinely not the value itself, so an
+    # integer spelling one reads back as the binary32 value it names.
+    narrow = DocumentShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
+    assert decode_path(narrow, {"ratio": 10**30}, ("ratio",)) == Present(1.0000000150474662e30)
+
+
 def _one_leaf(neutral_type: NeutralType) -> DocumentShape:
     return DocumentShape(members=(Leaf(name="leaf", type=neutral_type, nullable=True),))
 
