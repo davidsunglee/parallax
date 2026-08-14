@@ -2847,7 +2847,8 @@ or descriptor authoring form and performs no audit stamping.
   relationship level and builds no graph, because the transformed row is already
   the representation; the shared read gate refuses a query naming Include Paths
   before any I/O. A participating `tx.read_rows` force-flushes, renders the
-  transaction's own read-lock suffix, and brackets its Read Trace exactly as
+  read-lock suffix its target Entity's Effective Concurrency Strategy calls for,
+  and brackets its Read Trace exactly as
   `tx.find` does, and records no observation — the values lane projects scalars
   only, so a Predecessor Row read off it would be incomplete under Relational
   Document Layout. It is not a third public result format: it exists for a

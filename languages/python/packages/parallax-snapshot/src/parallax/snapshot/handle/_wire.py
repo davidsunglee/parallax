@@ -90,8 +90,9 @@ class WireTransactionView(WireDatabaseView):
     A view over the SAME unit of work, observation ledger, locking, and Execution
     Log the Typed transaction interface uses, so a Wire read participates in
     exactly the four ways ``tx.find`` does: it force-flushes pending writes
-    first, renders the transaction's own read-lock suffix, records what a later
-    write settles against, and appends its Read Trace to the active attempt.
+    first, renders the read-lock suffix each materialized level's own target
+    Entity calls for, records what a later write settles against, and appends its
+    Read Trace to the active attempt.
     """
 
     __slots__ = ()

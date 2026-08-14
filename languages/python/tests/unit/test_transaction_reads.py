@@ -1,7 +1,8 @@
 """Participating-read unit tests for `parallax.snapshot.handle` (spec §5, Docker-free fake ports).
 
 `Transaction.find` and `Database.find`: force-flush before a read
-(read-your-own-writes), the participation-mode lock suffix, statement and
+(read-your-own-writes), the lock suffix each materialized level's own Effective
+Concurrency Strategy calls for, statement and
 milestone pin derivation, history statements, which of the two entry points
 hands the executor an observation collector and what that collector takes, and
 the observations a read leaves behind — proven through the writes they license

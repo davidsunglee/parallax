@@ -839,7 +839,7 @@ _READ_LOCK_PARTITIONED_GOLDEN_REASON: Final[str] = (
     "developer participation-mode surface, while this case isolates SQL shape"
 )
 # The read-lock module's two-session behavioral proofs
-# (`m-read-lock-006`/`-007`/`-012`) cover a genuine two-connection
+# (`m-read-lock-006`/`-007`/`-011`/`-012`) cover a genuine two-connection
 # concurrency property (a shared lock blocking/admitting a writer or a second
 # reader) no single-session idiomatic example can demonstrate — graded by the
 # case-driven `when.concurrency` rounds runner instead.

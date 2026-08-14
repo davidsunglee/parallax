@@ -463,9 +463,10 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
     # Optimistic strategy and the participating find renders no lock suffix.
     assert not emissions[1].sql.endswith("for share of t0")
     assert len(port.writes) == 1 and len(port.reads) == 1
-    # An UNGROUPED find of a scenario declaring a participation mode runs in its
-    # OWN transaction, exactly as `run_read_case` does: the read lock is the
-    # transaction's, so the boundary is what renders it.
+    # An UNGROUPED find runs in its OWN transaction, exactly as `run_read_case`
+    # does: every scenario resolves a Concurrency Preference (declared or the
+    # default), and a participating read needs a boundary to demarcate whatever
+    # lock its target Entity's own strategy calls for — so the find commits one.
     assert port.commits == 2 and port.rollbacks == 0
 
 
@@ -476,9 +477,10 @@ def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> N
     )
     assert round_trips == 2  # the aborted insert still counts one round trip
     assert len(port.writes) == 1  # the DML executed before the abort
-    # An UNGROUPED find of a scenario declaring a participation mode runs in its
-    # OWN transaction, exactly as `run_read_case` does: the read lock is the
-    # transaction's, so the boundary is what renders it.
+    # An UNGROUPED find runs in its OWN transaction, exactly as `run_read_case`
+    # does: every scenario resolves a Concurrency Preference (declared or the
+    # default), and a participating read needs a boundary to demarcate whatever
+    # lock its target Entity's own strategy calls for — so the find commits one.
     assert port.rollbacks == 1 and port.commits == 1
     assert emissions[0].case_pointer == "/scenario/0/write"
 
@@ -542,9 +544,10 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     ]
     assert len(port.writes) == 1  # the doomed write's DML still executed (and counted)
     assert len(port.reads) == 2  # the grouped observe find + the ungrouped post-abort find
-    # An UNGROUPED find of a scenario declaring a participation mode runs in its
-    # OWN transaction, exactly as `run_read_case` does: the read lock is the
-    # transaction's, so the boundary is what renders it.
+    # An UNGROUPED find runs in its OWN transaction, exactly as `run_read_case`
+    # does: every scenario resolves a Concurrency Preference (declared or the
+    # default), and a participating read needs a boundary to demarcate whatever
+    # lock its target Entity's own strategy calls for — so the find commits one.
     assert port.commits == 1 and port.rollbacks == 1
 
 

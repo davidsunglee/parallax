@@ -441,7 +441,8 @@ def test_a_wire_read_participates_in_the_transaction_that_owns_it() -> None:
         )
     )
     assert result.value["id"] == 1
-    # The participating read renders the transaction's own shared-lock suffix.
+    # Order is unversioned, so the default preference resolves it to the Locking
+    # fallback and the participating read renders that Entity's shared-lock suffix.
     assert " for share of " in port.executed[0][0]
 
 
