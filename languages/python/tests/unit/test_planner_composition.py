@@ -18,11 +18,12 @@ inherits nothing, so it performs no planning this module records and appears in
 no subclass registry; but its plan still has to become SQL, and every route from
 a plan to SQL runs through those two functions under a name this module replaced.
 
-Both functions are replaced on every imported ``parallax`` module holding them,
-the modules defining them included, so a caller reaching the seam under a second
-name — or binding it while the watch is installed, since every route to it reads
-one of the replaced attributes — is watched rather than missed. A plan handed to
-a stream nobody consumed renders nothing and is recorded nowhere.
+Both functions are replaced wherever an imported ``parallax`` module holds them,
+under whatever name the holder bound them by and in the modules defining them
+included, so a caller reaching the seam through an aliased import — or binding it
+while the watch is installed, since every route to it reads one of the replaced
+attributes — is watched rather than missed. A plan handed to a stream nobody
+consumed renders nothing and is recorded nowhere.
 
 What remains uncovered is stated exactly: a lane that emitted DML without
 rendering a step at all, assembling a statement from the SQL layer directly, and
@@ -134,20 +135,23 @@ class _Composition:
         return [step for plan in self.lowered for step in plan.steps]
 
 
-def _bindings_of(name: str) -> list[ModuleType]:
-    """Every imported ``parallax`` module holding the handle's ``name``.
+def _bindings_of(name: str) -> list[tuple[ModuleType, str]]:
+    """Every attribute of an imported ``parallax`` module holding the handle's
+    ``name``, as the module and the attribute to replace.
 
-    A module that imported the function keeps a binding of its own, which
-    replacing the name in the module that defines it leaves untouched. Asking
-    which modules hold the object is what makes the watch complete without
-    anyone having had to list the callers.
+    A module that imported the function keeps a binding of its own — under
+    whatever name it imported it as — which replacing the name in the module that
+    defines it leaves untouched. Asking which attributes hold the OBJECT is what
+    makes the watch complete without anyone having had to list the callers or the
+    names they chose.
     """
     original = getattr(handle, name)
     return [
-        module
+        (module, bound)
         for module in list(sys.modules.values())
         if getattr(module, "__name__", "").startswith("parallax.")
-        and getattr(module, name, None) is original
+        for bound, value in list(vars(module).items())
+        if value is original
     ]
 
 
@@ -210,8 +214,8 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     for replacement, name in ((lower, "stream_lowered"), (render, "lower_step")):
         holders = _bindings_of(name)
         assert holders, f"nothing imported holds {name}, so watching it grades nothing"
-        for module in holders:
-            monkeypatch.setattr(module, name, replacement)
+        for module, bound in holders:
+            monkeypatch.setattr(module, bound, replacement)
     return seen
 
 

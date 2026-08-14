@@ -1,13 +1,13 @@
-"""What `spec/python.md` §7 constrains, asserted against the source it names.
+"""What `spec/python.md` §7 records, asserted against the source it names.
 
-§7 is where the Python specification constrains source structure; its behavioral
-sections state behavior observable at the API boundary. These assertions carry
-the part of §7 that import-linter's scope contracts cannot: the private reaches
-§7 grants module by module, and the single composition root a Write Planner may
-be built in. Each is an inventory of what §7 grants today, so an entry changes
-here whenever that grant changes — which is what separates them from the pins in
-`test_frontend_contraction_guards.py`, each of which records a surface the
-frontend removed and is expected to sit untouched.
+§7 records which scope owns what and which reaches cross those scopes — decisions
+about the source itself, which is why they are graded by reading source at all.
+These assertions carry the part of §7 that import-linter's scope contracts
+cannot: the private reaches §7 grants module by module, and the single
+composition root a Write Planner may be built in. Each is an inventory of what §7
+grants today, so an entry changes here whenever that grant changes — which is
+what separates them from the pins in `test_frontend_contraction_guards.py`, each
+of which records a surface the frontend removed and is expected to sit untouched.
 
 The reaches inventoried here are exactly the ones §7 names. A reach §7 does not
 name is a §7 decision before it is a code change, and the exact-set form is what
@@ -45,8 +45,10 @@ from _source_inventory_support import (
     SNAPSHOT_SRC,
     Import,
     all_sources,
+    bound_root,
     declared_imports,
     first_party_descendants,
+    foreign_locals,
     import_every_module,
     parsed,
     production_sources,
@@ -247,16 +249,22 @@ def _write_planner_constructions(over: Iterator[tuple[Path, str]]) -> list[str]:
     call in the parse, so an annotation, a longer class name ending in it, and
     any spelling inside a comment or a docstring are all left alone.
 
-    The callee's tail is the whole subject, so a call qualified by any module
-    counts — the question is which module holds the construction, and a shipped
-    class of that name from somewhere else would be one to answer, not to skip.
+    A qualified callee counts by its tail, since which module a construction is
+    written through is not the question. What the file binds from another
+    distribution is: `other_library.WritePlanner(model)` constructs a different
+    class that happens to share the spelling, and is left alone for the same
+    reason a mention is.
     """
-    found = [
-        (path, node.lineno)
-        for path, tree in parsed(over)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and _callee(node.func) == "WritePlanner"
-    ]
+    found: list[tuple[Path, int]] = []
+    for path, tree in parsed(over):
+        foreign = foreign_locals(path, tree)
+        found.extend(
+            (path, node.lineno)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and _callee(node.func) == "WritePlanner"
+            and bound_root(node.func) not in foreign
+        )
     return [site_of(path, line) for path, line in sorted(found)]
 
 
@@ -291,21 +299,26 @@ def test_the_construction_guard_names_every_construction_and_passes_a_mention() 
         synthetic_sources(
             {
                 holding: (
+                    "from parallax.core.unit_work import WritePlanner\n"
+                    "from parallax.core import unit_work\n"
                     "planner = WritePlanner(model)\n"
                     "second = unit_work.WritePlanner(model)\n"
-                    "third = other_library.WritePlanner(model)\n"
                     "# a second WritePlanner(model) would be a second wiring\n"
                     '"""See :class:`WritePlanner` — built as WritePlanner(model)."""\n'
                 ),
                 "parallax.snapshot.handle._resembling": (
+                    "import other_library\n"
+                    "from other_library import WritePlanner\n"
                     "def take(planner: WritePlanner) -> None: ...\n"
                     "build_write_planner(model)\n"
                     "RecordingWritePlanner(model)\n"
                     "planners.WritePlannerFactory(model)\n"
+                    "third = other_library.WritePlanner(model)\n"
+                    "fourth = WritePlanner(model)\n"
                 ),
             }
         )
-    ) == [synthetic_site(holding, line) for line in (1, 2, 3)]
+    ) == [synthetic_site(holding, line) for line in (3, 4)]
 
 
 def test_the_descendant_registry_names_a_shipped_subclass_and_passes_a_test_one() -> None:
