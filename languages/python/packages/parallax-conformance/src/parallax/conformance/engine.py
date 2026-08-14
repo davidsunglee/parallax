@@ -1245,8 +1245,12 @@ def _build_temporal_instruction(
             observation = shadow.resolve(model, entity_metadata, row)
             evidence = observation
         else:
-            settled = _settled_against_source(entity_name, pk_key, source)
-            evidence, observation = settled
+            evidence, settled = _settled_against_source(entity_name, pk_key, source)
+            # A temporal row's evidence is its whole predecessor milestone; a
+            # versioned target's Version Observation can never answer a lookup
+            # this branch reached, because the branch is chosen by temporality.
+            assert isinstance(settled, TemporalObservation)
+            observation = settled
     if observation is not None and not is_coalescing_candidate:
         shadow.retire(model, entity_metadata, observation)
     if is_insert and pk_key is not None:
@@ -1256,16 +1260,17 @@ def _build_temporal_instruction(
 
 def _settled_against_source(
     entity_name: str, pk_key: ObjectKey | None, source: ObservedNodes
-) -> tuple[WriteEvidence, TemporalObservation]:
+) -> tuple[WriteEvidence, WriteObservation]:
     """The evidence a write settles against when its step named the find it came
     from (`m-case-format` *Settling against a grouped find*).
 
     The named find's own record for this key is the evidence the write was handed,
     so the state the unit of work retained it under is the one the write settles
-    against — production's own Observed State Key, naming the milestone the read
+    against — production's own Observed State Key, naming the state the read
     actually saw, rather than a coordinate this engine re-derived and hoped
     agreed. That is what makes a store keyed by identity alone observably wrong
-    here: a key holding several current rectangles has no single answer, while the
+    here: a key holding several current rectangles — or, on a versioned target,
+    several observed generations of one row — has no single answer, while the
     retained record names exactly one.
 
     Returns the key the real write settles by beside the observation the pure
@@ -1284,9 +1289,6 @@ def _settled_against_source(
             "a grouped find')"
         )
     record = matched[0]
-    # A milestone coordinate keys only a Temporal Observation; a versioned row's
-    # evidence carries none and can never answer this lookup.
-    assert isinstance(record.evidence, TemporalObservation)
     return record.key, record.evidence
 
 
@@ -1769,14 +1771,14 @@ def _build_instructions(
     binds its OWN object key and Version Observation (its reserved
     ``observedVersion`` stripped into one — `m-opt-lock`; ADR 0013), which in
     turn tells the planner to keep that row separately identifiable rather than
-    merging it. A row that authors no observed version falls back to
+    merging it. A row that authors no observed version takes its evidence from
+    the group instead: from the find its step NAMED with ``on``
+    (:func:`_settled_against_source`) where it named one, and otherwise from
     ``group_observations`` — a writeSequence's own permanently-empty sequence, or
-    (the scenario RUN lane only) a `uow` GROUP's own prior find step(s)
-    (:func:`_observed_nodes`, via :func:`_run_uow_group`) — by object identity
-    alone, since one row per primary key needs no milestone to address it. That is
-    why such a write names no source find: identity already addresses its
-    evidence, so ``source`` is refused above for a NON-temporal target and reaches
-    the temporal branch alone.
+    (the scenario RUN lane only) a `uow` GROUP's own prior find step(s), scanned
+    from the end. A versioned target holds one ROW per primary key but a unit of
+    work may hold several observed GENERATIONS of it, so the unnamed fallback
+    answers the latest reading while the reference is what names any other.
 
     An entry's authored ``statements`` count is graded later, once
     :func:`_lower_resolved` has actually planned and lowered the buffer these
@@ -1797,13 +1799,6 @@ def _build_instructions(
             "entry vocabulary is keyed-only)"
         )
     entity_name = cast("str", entry["entity"])
-    if source is not None and not _is_temporal_entity(model, entity_name):
-        raise EngineError(
-            f"{entity_name!r}: a write step naming the find it settles against targets a "
-            "TEMPORAL entity — a versioned Non-Temporal target has one row per primary key, so "
-            "identity already reaches its group's evidence and the reference names nothing the "
-            "resolution does not have (m-case-format 'Settling against a grouped find')"
-        )
     if _is_temporal_entity(model, entity_name):
         return [_build_temporal_instruction(entry, model, shadow, unit_inserted, source)]
     mutation = cast("str", entry["mutation"])
@@ -1823,9 +1818,12 @@ def _build_instructions(
         if binds_observations and not opens_a_row:
             key = object_key(instruction, model)
             if observation is None and key is not None:
-                observed = _observed_for(group_observations, key)
-                if observed is not None:
-                    evidence, observation = observed.key, observed.evidence
+                if source is not None:
+                    evidence, observation = _settled_against_source(entity_name, key, source)
+                else:
+                    observed = _observed_for(group_observations, key)
+                    if observed is not None:
+                        evidence, observation = observed.key, observed.evidence
         else:
             evidence, observation = None, None
         out.append(_ResolvedWrite(instruction, evidence, observation))

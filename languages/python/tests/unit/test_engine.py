@@ -59,6 +59,8 @@ from parallax.core.unit_work import (
     StaleWriteError,
     TemporalObservation,
     TemporalStateKey,
+    VersionedStateKey,
+    VersionObservation,
     WriteEffectError,
 )
 from parallax.snapshot import DeferredFeatureError
@@ -1980,12 +1982,42 @@ def test_a_source_find_reference_names_a_find_of_its_own_group() -> None:
         )
 
 
-def test_a_settled_write_targets_a_temporal_entity() -> None:
-    # A versioned Non-Temporal target has one row per primary key, so its grouped
-    # write already reaches its group's evidence by identity; the reference would
-    # name nothing the resolution does not already have.
+def _account_node(version: int) -> Any:
+    """One node a grouped find of the versioned `Account` published."""
+    key = ObjectKey(EntityIdentity("parallax.compatibility", "Account"), (("id", 1),))
+    return RetainedObservation(
+        VersionedStateKey(key, version), VersionObservation(observed_version=version), None
+    )
+
+
+def test_a_settled_write_names_a_versioned_targets_own_read_generation() -> None:
+    # A versioned Non-Temporal target holds one ROW per primary key, but a unit of
+    # work holds one observed GENERATION of it per read: a group that observes the
+    # row, writes it, and reads it again holds two, and the reference is what says
+    # which of them a write settles against. A store keyed by identity alone
+    # answers only the latest, so the earlier generation would be unreachable.
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    with pytest.raises(engine.EngineError, match="a TEMPORAL entity"):
+
+    def settle(node: Any) -> object:
+        write = engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 5.00}]},
+            meta,
+            TemporalShadow(),
+            set(),
+            [],
+            (node,),
+        )[0]
+        return write.execution_evidence
+
+    assert settle(_account_node(1)) == _account_node(1).key
+    assert settle(_account_node(4)) == _account_node(4).key
+
+
+def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -> None:
+    # The reference names evidence that does not exist, and a write with no
+    # evidence at all is refused where every unobserved keyed write is.
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    with pytest.raises(engine.EngineError, match="observed 0 rows"):
         engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 5.00}]},
             meta,

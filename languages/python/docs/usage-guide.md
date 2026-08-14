@@ -1007,18 +1007,8 @@ def create_then_delete_a_parent_child_pair(db: Database) -> None:
         tx.insert(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))
 
     def teardown(tx: Transaction) -> None:
-        tx.delete(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))  # child first
-        tx.delete(
-            Order(
-                id=100,
-                name="Hopper",
-                sku="X-1",
-                qty=1,
-                price=Decimal("9.99"),
-                active=True,
-                ordered_on=dt.date(2024, 7, 1),
-            )
-        )
+        tx.delete_where(OrderItem.where(OrderItem.id == 200))  # child first
+        tx.delete_where(Order.where(Order.id == 100))
 
     db.transact(create)
     db.transact(teardown)

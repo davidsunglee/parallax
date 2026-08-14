@@ -3046,9 +3046,25 @@ or descriptor authoring form and performs no audit stamping.
   addressed and never the Source Hint or the Observed State Key behind it. The
   codes are `write-evidence-unavailable` — the Optimistic strategy found no
   retained observation, or the Locking strategy found no participation of this
-  transaction — and `write-evidence-consumed`. Every one is raised synchronously
+  transaction — `write-evidence-consumed`, and
+  `write-evidence-already-claimed`. Every one is raised synchronously
   at the verb, before buffering and before any database access; a conflict the
   database discovers later keeps its own flush-time classification.
+- **Several buffered writes may settle against one observed state, and one rule
+  says what the second becomes.** Each carries a Write Intent — an assignment or
+  a destruction, over the authored Valid-Time region — and the intent a buffer
+  already holds for that exact state decides: assignments over one region merge
+  in authored order with the later value winning a repeated member, a destruction
+  supersedes the assignments buffered before it, an identical destruction
+  deduplicates, and a different region, an assignment after a destruction, or a
+  state a predicate write's Materialized Write Group already selected are
+  `write-evidence-already-claimed`. The verb-time refusal and the flush-time
+  merge read the same rule, so they cannot disagree. Effective-change elimination
+  runs after the merge and compares each winning assignment with its source's
+  own original — for a Typed write, the Change Record's — so a member an author
+  touched and then restored cancels an assignment buffered earlier for the same
+  state, and a write left with nothing but its key is eliminated, issues no
+  statement, and consumes no observation.
 - **An observation is keyed by the row's own resolved Entity Identity.** A read
   observes each row under the exact Entity that row's own compiled read
   resolved it to — a per-row fact under table-per-hierarchy — never under the
@@ -3279,7 +3295,13 @@ or descriptor authoring form and performs no audit stamping.
   milestone observed by a standalone read; the emitted database gate detects an
   intervening writer. An unversioned Non-Temporal Entity has no gate and therefore
   uses the Locking evidence rule even when the Unit Work's preference is
-  `optimistic`.
+  `optimistic`. The shared row lock is the whole of such a row's evidence, so a
+  keyed verb needs it as surely as a versioned verb needs its version:
+  `tx.delete(OrderItem(id=200, ...))` over a constructed instance proves nothing
+  about the row it addresses and is refused. Unconditional intent has its own
+  spelling — `tx.delete_where(OrderItem.where(OrderItem.id == 200))` says outright
+  that the caller means to remove whatever matches, rather than arriving there by
+  building a throwaway value.
 
   A keyed assignment payload that tries to change the Entity's version Attribute
   raises `CallerAuthoredVersionError` before evidence resolution. An authentic
@@ -3369,7 +3391,16 @@ or descriptor authoring form and performs no audit stamping.
   a value may then be written into is the write-evidence rule's answer rather
   than provenance's: an effective Locking strategy requires this transaction's
   participating read, while an effective Optimistic strategy may accept the
-  authentic standalone source's retained version or milestone. The
+  authentic standalone source's retained version or milestone. On the **update**
+  side the two families now overlap — a value no managed read produced, and a
+  value another source produced, both carry no usable evidence either — and
+  provenance keeps precedence because it is the more specific diagnosis: it names
+  the verb that does accept the value rather than reporting only that evidence
+  was missing. The **insert** side does not overlap at all: an insert observes no
+  state, so `write-value-already-stored` is the only refusal a stored value earns
+  there. `UnobservedWriteError` stays separate from both for the same reason it
+  is raised where it is: it reports an unresolvable reference to what was READ,
+  not a judgement about the value being written. The
   refusal is decided in the shared keyed-verb preamble, **before** any row is
   derived, so a refused value reaches no codec, no buffer, no plan, and no
   adapter — it is never a translation of a lower-level failure, and no

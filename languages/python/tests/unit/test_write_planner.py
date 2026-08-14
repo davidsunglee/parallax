@@ -59,6 +59,7 @@ from parallax.core.unit_work import (
     KeyTarget,
     MaterializedWriteGroup,
     ObjectKey,
+    ObservedKeyedWrite,
     PlannedClose,
     PlannedDelete,
     PlannedInsert,
@@ -218,6 +219,96 @@ def test_nontemporal_insert_then_update_coalesces_to_one_insert() -> None:
     assert row["owner"] == "Noether"
     assert row["balance"] == 99.00
     assert row["version"] == 1
+
+
+def test_two_assignments_of_one_observed_state_merge_with_the_later_value_winning() -> None:
+    # Observed-State Coalescing: two writes settling against ONE observed state
+    # over one region are one write. The assignments merge in authored order, so
+    # a member only the first names survives and a member both name takes the
+    # LAST authored value — never the first, which is what an accumulate-and-keep
+    # merge would leave.
+    key = corpus_object_key("Account", ("id", 1))
+    observation = VersionObservation(observed_version=4)
+    first = KeyedWrite("update", "Account", ({"id": 1, "owner": "Grace", "balance": 125.00},))
+    second = KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},))
+    plan = _plan([first, second], _ACCOUNT, observations={key: observation})
+    (step,) = plan.steps
+    assert isinstance(step, PlannedUpdate)
+    assert _assignment_values(step) == {"owner": "Grace", "balance": 175.00, "version": 5}
+
+
+def test_a_restored_member_is_dropped_after_the_merge_rather_than_before_it() -> None:
+    # Effective-change elimination runs AFTER the merge, so the caller's last word
+    # on a member decides whether it is written: the second write restores
+    # `balance`, which erases the first write's assignment to it while leaving the
+    # member only the first named standing.
+    key = corpus_object_key("Account", ("id", 1))
+    observation = VersionObservation(observed_version=4)
+    first = KeyedWrite("update", "Account", ({"id": 1, "owner": "Grace", "balance": 125.00},))
+    second = KeyedWrite("update", "Account", ({"id": 1},))
+    plan = _plan(
+        [first, ObservedKeyedWrite(second, observation, restorations=frozenset({"balance"}))],
+        _ACCOUNT,
+        observations={key: observation},
+    )
+    (step,) = plan.steps
+    assert isinstance(step, PlannedUpdate)
+    assert _assignment_values(step) == {"owner": "Grace", "version": 5}
+
+
+def test_a_wholly_restored_merge_leaves_no_step_at_all() -> None:
+    # What is left names only the key, which is no work: stage 2 eliminates the
+    # merged write exactly as it eliminates a lone key-only row, so a chain that
+    # nets to zero across two verbs emits no DML.
+    key = corpus_object_key("Account", ("id", 1))
+    observation = VersionObservation(observed_version=4)
+    first = KeyedWrite("update", "Account", ({"id": 1, "balance": 125.00},))
+    second = KeyedWrite("update", "Account", ({"id": 1},))
+    plan = _plan(
+        [first, ObservedKeyedWrite(second, observation, restorations=frozenset({"balance"}))],
+        _ACCOUNT,
+        observations={key: observation},
+    )
+    assert list(plan.steps) == []
+
+
+def test_a_destructive_intent_supersedes_the_assignments_buffered_before_it() -> None:
+    key = corpus_object_key("Account", ("id", 1))
+    observation = VersionObservation(observed_version=4)
+    update = KeyedWrite("update", "Account", ({"id": 1, "balance": 125.00},))
+    delete = KeyedWrite("delete", "Account", ({"id": 1},))
+    plan = _plan([update, delete], _ACCOUNT, observations={key: observation})
+    (step,) = plan.steps
+    assert isinstance(step, PlannedDelete)
+
+
+def test_identical_destructive_intents_of_one_state_plan_one_step() -> None:
+    key = corpus_object_key("Account", ("id", 1))
+    observation = VersionObservation(observed_version=4)
+    delete = KeyedWrite("delete", "Account", ({"id": 1},))
+    plan = _plan([delete, delete], _ACCOUNT, observations={key: observation})
+    (step,) = plan.steps
+    assert isinstance(step, PlannedDelete)
+
+
+def test_writes_of_two_observed_states_of_one_object_stay_independent() -> None:
+    # Coalescing is keyed by the observed STATE, not by the object: two writes
+    # settling against two generations of one row are two intents, and merging
+    # them would gate the survivor on a version one of them never saw.
+    first = ObservedKeyedWrite(
+        KeyedWrite("update", "Account", ({"id": 1, "balance": 125.00},)),
+        VersionObservation(observed_version=4),
+    )
+    second = ObservedKeyedWrite(
+        KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},)),
+        VersionObservation(observed_version=5),
+    )
+    plan = _plan([first, second], _ACCOUNT, concurrency="optimistic")
+    assert len(plan.steps) == 2
+
+
+def _assignment_values(step: PlannedUpdate) -> dict[str, object]:
+    return {ident.name: value for ident, value in step.assignments.attributes.items()}
 
 
 def test_audit_insert_then_update_coalesces_in_place() -> None:

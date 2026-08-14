@@ -1,0 +1,82 @@
+# Observed-State Coalescing (m-unit-work): two assignment-bearing writes against
+# ONE observed state and one temporal region merge into a single write, and the
+# later authored value wins a member both of them name.
+#
+# The buffer holds two keyed updates of account 1, both settling against the state
+# the group's own observing find recorded (version 1). They intend the same thing
+# over the same region, so they are one intent: the flush emits ONE gated UPDATE
+# carrying the union of their sparse assignments — `owner` from the second write,
+# which is the only one that names it, and `balance` from the second as well,
+# because a repeated member takes the LAST authored value rather than the first.
+# The version advances once, 1 -> 2, and the gate binds the ONE observed version
+# both writes settled against; two separate statements would advance it twice and
+# the second would gate on a version no read of this unit of work ever saw.
+#   step 0 find  : observe account 1 (Ada, 100.00, version 1), 1 round trip.
+#   step 1 write : buffer `balance = 125.00`, then `owner = Grace, balance = 175.00`;
+#                  the flush emits one UPDATE binding Grace / 175.00 / version 2,
+#                  gated on the observed version 1, 1 round trip.
+#   step 2 find  : the dependent find MUST observe Grace / 175.00 / version 2 — the
+#                  merged value, never the intermediate 125.00.
+# Both writes name the find they settle against with `on` (m-case-format *Settling
+# against a grouped find*), which is what makes the shared observed state explicit
+# rather than inferred from the key. The case is `run-only`
+# (query-result-dependent): the version both binds carry is the framework-owned
+# advance of a version a query returned.
+model: models/account.yaml
+tags: [m-unit-work, m-opt-lock, m-sql, coalescing, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the merged write's version bind is the framework-owned advance of the version the group's own observing find returned — a query result (m-opt-lock)"
+when:
+  scenario:
+    - uow: merged-assignments
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
+      roundTrips: 1
+      note: observe account 1 (balance 100.00, version 1) — the ONE state both buffered writes settle against
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+    - uow: merged-assignments
+      write:
+        - mutation: update
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 1, balance: 125.00 }
+        - mutation: update
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 1, owner: Grace, balance: 175.00 }
+      on: 0
+      roundTrips: 1
+      note: two assignment-bearing writes of one observed state merge into ONE gated UPDATE; the later 175.00 wins over 125.00
+      statements:
+        - sql:
+            postgres: update account set owner = ?, balance = ?, version = ? where id = ? and version = ?
+          binds: [Grace, 175.00, 2, 1, 1]
+    - uow: merged-assignments
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
+      roundTrips: 1
+      note: the dependent find MUST observe the merged value, never the intermediate 125.00; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Grace, balance: 175.00, version: 2 }
+then:
+  roundTrips: 3

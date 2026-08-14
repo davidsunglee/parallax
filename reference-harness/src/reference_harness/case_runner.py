@@ -5965,9 +5965,10 @@ def _assert_scenario_source_finds(case: Case) -> None:
 
     The reference is legal only where every part of it is meaningful: on a `uow`-
     grouped step whose ``write`` is the BUFFERED KEYED form, naming ONE earlier
-    step of the SAME group that is a find, against a TEMPORAL target. A versioned
-    Non-Temporal target has one row per primary key, so identity already reaches
-    its group's evidence; a milestone chain does not, on either temporal profile.
+    step of the SAME group that is a find. Every target profile is nameable,
+    because on every one of them a unit of work may hold more than one piece of
+    evidence about a key: a milestone chain holds several rows per key, and a
+    versioned Non-Temporal key holds one observed generation per read of it.
 
     Structural and dialect-free, so it holds on every run rather than only where
     the case carries a golden for the dialect under test — the same reason the
@@ -6007,14 +6008,6 @@ def _assert_scenario_source_finds(case: Case) -> None:
                 f"a predicate-selected write consumes no single milestone, so neither has "
                 f"anything the named observation could reach."
             )
-        for entry in _scenario_write_entries(step):
-            entity = case.model.entity(entry["entity"])
-            if not temporal_axes(entity.runtime_facts):
-                raise CaseFailure(
-                    f"{case.path.name}: scenario[{index}] settles {entity.name} against a find, "
-                    f"but {entity.name} is NOT temporal — a versioned Non-Temporal target has "
-                    f"one row per primary key, so identity already reaches its group's evidence."
-                )
 
 
 def _assert_scenario_settled_close(case: Case, dialect: str) -> None:
@@ -6042,6 +6035,9 @@ def _assert_scenario_settled_close(case: Case, dialect: str) -> None:
         binds = _entry_binds(step.get("statements"), 0)
         for entry in _scenario_write_entries(step):
             entity = case.model.entity(entry["entity"])
+            if not temporal_axes(entity.runtime_facts):
+                _assert_settled_version_gate(case, entity, index, step, binds)
+                continue
             row = _sole_settled_row(case, index, entity, entry)
             _, pk, _set_cols, _observed = _classify_write_row(
                 case, entity, row, mutation=entry["mutation"], opening=True
@@ -6059,6 +6055,45 @@ def _assert_scenario_settled_close(case: Case, dialect: str) -> None:
                     f"golden statement for {dialect}."
                 )
             _assert_write_values(case, expected, binds, statements[0])
+
+
+def _assert_settled_version_gate(
+    case: Case, entity: Entity, index: int, step: dict[str, Any], binds: list[Any]
+) -> None:
+    """Cross-check a settled VERSIONED Non-Temporal write's gate against the
+    generation the find it names observed.
+
+    A versioned write is addressed by its key alone, so the whole difference
+    between one observed generation and another lands on the optimistic gate:
+    the golden's LAST bind is the observed version, and a write settled against
+    the wrong reading binds a version that read never returned. Read off the
+    named find step's own ``expectRows``, exactly as the temporal arm reads its
+    milestone, so the corpus states which generation the write settled against
+    in two independent places.
+
+    A ``locking`` case emits no gate at all, so there is nothing to cross-check
+    and the address, which every generation shares, is the whole of the write.
+    """
+    if case.concurrency_mode != "optimistic":
+        return
+    version_column = _version_column(entity)
+    if version_column is None:
+        return
+    observed_rows: list[dict[str, Any]] = case.scenario[step["on"]].get("expectRows") or []
+    versions = {row[version_column] for row in observed_rows if version_column in row}
+    if len(versions) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] settles against a find that observed "
+            f"{len(versions)} version(s) of {entity.name} — a keyed write settles against "
+            f"the ONE generation the value it was handed came from."
+        )
+    observed = versions.pop()
+    if not binds or not _write_value_equal(binds[-1], observed):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] settles {entity.name} against a find that "
+            f"observed version {observed!r}, but its golden gate binds "
+            f"{binds[-1] if binds else None!r}."
+        )
 
 
 def _sole_settled_row(

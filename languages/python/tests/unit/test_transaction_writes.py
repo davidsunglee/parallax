@@ -1167,13 +1167,13 @@ def test_a_foreign_twins_members_are_refused_when_the_row_is_derived() -> None:
 
 
 def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() -> None:
-    port = RecordingPort()
+    port = RecordingPort(rows=[{"id": 1, "left_only": "x"}])
 
     def fn(tx: Transaction) -> None:
-        tx.delete(_TwinLeft(id=1, left_only="x"))
+        tx.delete(tx.find(_TwinLeft.where(_TwinLeft.id == 1)).result())
 
     db_for(_TWIN_LEFT, port).transact(fn)
-    assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
+    assert [op[0] for op in port.ops] == ["begin", "read", "write", "commit"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1328,17 +1328,37 @@ def test_a_read_outside_the_writing_transaction_is_still_this_source(second_hand
 
 
 @pytest.mark.parametrize("second_handle", [True, False], ids=["second-handle", "same-handle"])
-def test_an_unversioned_update_of_such_a_value_is_addressed_by_its_key(second_handle: bool) -> None:
-    # Provenance carries no cross-read guarantee, and the write path asks an
-    # unversioned Non-Temporal target for no evidence of its own — such a row
-    # observes no state to carry any — so this update is planned and emitted,
-    # addressed by its key alone.
+def test_an_unversioned_update_of_such_a_value_is_refused_for_its_evidence(
+    second_handle: bool,
+) -> None:
+    # An unversioned Non-Temporal target resolves to the Locking fallback, whose
+    # license is the shared row lock a read of THIS transaction holds. Neither
+    # arrangement holds one — a second handle's read and this handle's own
+    # non-transactional read alike — so the update is refused at the verb,
+    # before anything is buffered and before any statement is emitted.
     port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
     writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
 
-    writer.transact(lambda tx: tx.update(node.edit(name="Grace")))
-    assert port.ops[-3:] == [
-        ("begin",),
+    with pytest.raises(WriteEvidenceError) as refusal:
+        writer.transact(lambda tx: tx.update(node.edit(name="Grace")))
+    assert refusal.value.code == "write-evidence-unavailable"
+    assert refusal.value.object_key.primary_key == (("id", 1),)
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_an_unversioned_update_of_a_participating_read_is_addressed_by_its_key() -> None:
+    # The licensing read moved inside the writing transaction: the participating
+    # find takes the Locking fallback's shared row lock, and the update it
+    # licenses is planned and emitted, addressed by its key alone and gated by
+    # nothing.
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+
+    def fn(tx: Transaction) -> None:
+        node = tx.find(Person.where(Person.id == 1)).result()
+        tx.update(node.edit(name="Grace"))
+
+    db_for(PERSON, port).transact(fn)
+    assert port.ops[-2:] == [
         ("write", POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Grace", 1)),
         ("commit",),
     ]

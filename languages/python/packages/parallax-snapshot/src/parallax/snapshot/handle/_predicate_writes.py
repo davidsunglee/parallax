@@ -70,17 +70,25 @@ from parallax.core.sql_gen import compile_read
 from parallax.core.storage_layout import DocumentPath
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
+    SELECTION_INTENT,
     ChunkedColumnBuilder,
     MaterializedWriteGroup,
+    ObjectKey,
+    ObservedStateKey,
     PredecessorColumns,
+    PredecessorRow,
     PredecessorShape,
     PredicateMutation,
     PredicateWrite,
     TemporalColumns,
+    TemporalObservation,
     UnitOfWork,
     VersionColumns,
+    VersionObservation,
+    WriteObservation,
     WriteRejectedError,
     instructions,
+    observed_state_key,
     whole,
 )
 from parallax.core.unit_work.write_planner import assigned_many_path
@@ -560,6 +568,14 @@ def _materialize_predicate_write(
         ):
             builder.append(value)
 
+    declaring_entity = declaring(meta, entity)
+    selected: list[ObservedStateKey] = []
+
+    def select_state(row: Row, observation: WriteObservation) -> None:
+        keys = zip(key_attributes, key_column_values(pk_attrs, layout, row), strict=True)
+        object_key = ObjectKey(entity.identity, tuple(keys))
+        selected.append(observed_state_key(object_key, observation, declaring_entity))
+
     if version_attr is not None:
         version_builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
         for row in rows:
@@ -568,7 +584,9 @@ def _materialize_predicate_write(
             ):
                 continue  # per-row no-op elimination (assignment-bearing verbs only)
             append_key(row)
-            version_builder.append(cast("int", row[slot_column(layout, version_attr.identity)]))
+            version = cast("int", row[slot_column(layout, version_attr.identity)])
+            version_builder.append(version)
+            select_state(row, VersionObservation(observed_version=version))
             matched += 1
         if matched == 0:
             return
@@ -580,6 +598,7 @@ def _materialize_predicate_write(
                 observations=VersionColumns(versions=whole(version_builder.build())),
             )
         )
+        _claim_selected_states(uow, selected)
         return
 
     attribute_names = tuple(name for name, (_column, is_vo) in member_columns.items() if not is_vo)
@@ -600,6 +619,7 @@ def _materialize_predicate_write(
             value_object_builders[name].append(payload[name])
         if structured_column is not None:
             document_builder.append(materialized.document)
+        select_state(row, TemporalObservation(predecessor=PredecessorRow(payload)))
         matched += 1
     if matched == 0:
         return
@@ -621,3 +641,19 @@ def _materialize_predicate_write(
             observations=TemporalColumns(predecessors=predecessors),
         )
     )
+    _claim_selected_states(uow, selected)
+
+
+def _claim_selected_states(uow: UnitOfWork, selected: Sequence[ObservedStateKey]) -> None:
+    """Register the group's claim on every state its predicate resolved
+    (`m-unit-work` "Observed-State Coalescing").
+
+    A Materialized Write Group owns those observations outright: it is one
+    compact indivisible unit, so a later keyed write of a state it selected has
+    nothing to join and is refused rather than merged in — which would mean
+    indexing and mutating the group. The reverse order needs no claim at all,
+    because the resolving read force-flushes the buffer first and therefore
+    selects state no pending intent still holds.
+    """
+    for state in selected:
+        uow.claim(state, SELECTION_INTENT)

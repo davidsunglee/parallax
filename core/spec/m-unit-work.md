@@ -790,6 +790,52 @@ it is a buffering decision, not a per-verb one — the milestone modules
 (`m-txtime-write`, `m-bitemp-write`) describe the durable cross-transaction shapes and
 defer the same-transaction combination to this scope.
 
+### Observed-State Coalescing
+
+The rules above combine writes of one **object** whose first write OPENED it. The
+rule below combines writes against one **observed state** of an object that already
+existed, and it is keyed by the Observed State Key rather than by the Object Key:
+what the writes share is the evidence they settle against, so two writes of one key
+that observed two different states are two independent intents.
+
+Each buffered write against existing state carries a **Write Intent** — what it
+does (an **assignment** that writes member values against a surviving row, or a
+**destruction** that removes the row or closes the milestone) over which **temporal
+region** (the authored Valid-Time bounds, absent on both ends for a non-temporal or
+Transaction-Time-Only write). One closed rule decides what an arriving intent
+becomes against the intent a buffer already holds for that exact state, and both the
+arriving verb and the flush read it, so a synchronous refusal can never disagree
+with what the flush would have done:
+
+| Held | Arriving | Outcome |
+| -- | -- | -- |
+| nothing | any | the arriving intent is admitted |
+| assignment | assignment, same region | **coalesce** — the sparse assignments merge in authored order, the later value winning a repeated member, into one surviving write |
+| assignment | destruction, same region | **supersede** — the destruction replaces the assignments buffered before it, so an update then a delete of one state is one delete |
+| destruction | destruction, same region | **deduplicate** — the second says what the first said and adds nothing |
+| destruction | assignment | **incompatible** — no write means to resurrect a row that is going away |
+| any | any, different region | **incompatible** — interval composition is semantics this framework does not invent |
+| a Materialized Write Group's selection | any | **incompatible** — the group is one compact indivisible unit, so a keyed intent has nothing to join |
+
+Effective-change elimination runs **after** the merge, so what is weighed is the
+caller's last word on each member rather than each verb's own. A member an author
+touched and then restored to the value its source observed is not written, and it
+cancels an assignment to that member buffered earlier for the same state — which is
+what makes a chain from a value to another and back emit no DML across several
+verbs, exactly as it does within one. A write left with nothing but its key is
+eliminated, consumes no observation, and issues no statement.
+
+An incompatible intent is refused **synchronously at the verb**, before buffering
+and before any database access, and the refusal is a write-evidence failure naming
+the object it addressed. The remedy is the ordinary one: a participating read
+force-flushes the buffered intent and returns fresh state, which nothing claims.
+
+A **Materialized Write Group** claims every state its predicate resolution
+selected. A later keyed write of one of those states is refused rather than merged
+in, because merging would mean indexing and mutating the compact group. In the
+reverse order there is nothing to refuse: the group's resolving read force-flushes
+the buffer first, so it selects state no pending intent still holds.
+
 A coalescing witness encodes **both** buffered mutations explicitly by authoring
 the write step as an ordered **buffer-and-flush** scenario. `/scenario/<n>/write`
 carries a **general ordered buffer of one-or-more keyed write instructions** — the

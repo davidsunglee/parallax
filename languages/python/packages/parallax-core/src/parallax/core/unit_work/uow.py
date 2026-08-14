@@ -2,8 +2,9 @@
 
 The transaction scope's stateful machinery around the pure :class:`~parallax.
 core.unit_work.write_planner.WritePlanner`: the frame stack (a nested scope
-joins the active transaction), the write buffer, the weak index of the observed
-states its reads have seen, call-time reads that force-flush pending writes so a
+joins the active transaction), the write buffer and the claims its writes have
+taken on the states they settle against, the weak index of the observed states
+its reads have seen, call-time reads that force-flush pending writes so a
 dependent read observes them (read-your-own-writes), and abort — which discards
 buffered effects and **withholds** the callback value.
 
@@ -39,6 +40,7 @@ from typing import Literal, Protocol
 from weakref import WeakValueDictionary
 
 from parallax.core.metamodel import Metamodel
+from parallax.core.unit_work.claims import ClaimTable, ClaimVerdict, WriteIntent
 from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.materialized import BufferItem
 from parallax.core.unit_work.plan import WritePlan
@@ -140,6 +142,7 @@ class UnitOfWork:
 
     __slots__ = (
         "_buffer",
+        "_claims",
         "_closed",
         "_frame_depth",
         "_observations",
@@ -195,6 +198,11 @@ class UnitOfWork:
         # the strong reference that keeps a write's evidence alive after its
         # source value is released, and what a successful flush spends through.
         self._buffer: list[BufferItem] = []
+        # What the buffered writes have claimed, by the exact observed state each
+        # claim is about. It travels with the buffer rather than with the scope:
+        # a flush spends what it planned, so the states a later write may claim
+        # are decided by what is still pending.
+        self._claims = ClaimTable()
         # The ledger is an INDEX, not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
         # disappears with the last of them (`m-unit-work` "Observation lifetime").
@@ -244,6 +252,33 @@ class UnitOfWork:
         """
         self._ensure_open()
         self._buffer.append(instruction)
+
+    def claim(self, key: ObservedStateKey, intent: WriteIntent) -> ClaimVerdict:
+        """Take ``intent``'s claim on the observed state ``key`` names, answering
+        what it became against whatever this buffer already claimed there.
+
+        The verdict is the one algebra
+        (:func:`~parallax.core.unit_work.claims.admits`) both the arriving verb
+        and the flush read: an ``incompatible`` answer is what a verb refuses
+        synchronously, and every other answer names what finalization will do
+        with the two writes. Called before the write is buffered, so a refused
+        intent leaves the buffer and the claim it could not join untouched.
+        """
+        self._ensure_open()
+        return self._claims.claim(key, intent)
+
+    def claimed(self, key: ObservedStateKey) -> WriteIntent | None:
+        """What the buffered writes currently claim for one exact observed state,
+        if anything — the read side of :meth:`claim`.
+
+        A verb asks this when what it has to buffer depends on whether there is
+        an earlier intent to combine with: an edit that restores everything it
+        touched writes nothing on its own, but cancels a pending assignment to
+        the same state, so whether it buffers at all is a question about this
+        answer rather than about the value alone.
+        """
+        self._ensure_open()
+        return self._claims.held(key)
 
     def retain(self, observation: RetainedObservation) -> RetainedObservation:
         """Index ``observation`` under the state it observed, answering the
@@ -305,6 +340,9 @@ class UnitOfWork:
         it retired, and it names each one once however many surviving writes
         settled against it. A flush that fails aborts the transaction, so
         evidence needs no restoring.
+
+        The claims the buffer took travel out with it: what a later write may
+        claim is decided by what is still pending, and after a flush nothing is.
         """
         self._ensure_open()
         if not self._buffer:
@@ -319,6 +357,7 @@ class UnitOfWork:
         )
         finalized = self._planner.finalize(request)
         self._buffer.clear()
+        self._claims.clear()
         self.flush_executor(finalized.plan, trigger=trigger)
         for claim in finalized.claims:
             claim.consume()
@@ -352,6 +391,7 @@ class UnitOfWork:
         # Buffered claims are released rather than spent: nothing this scope wrote
         # survives, so evidence a later scope is handed is still about stored state.
         self._buffer.clear()
+        self._claims.clear()
         self._observations.clear()
 
     def run_outermost[T](self, body: Callable[[UnitOfWork], T]) -> T:

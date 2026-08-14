@@ -35,7 +35,9 @@ decoration (:meth:`plan`'s own trailing pass) runs after every step's topology
 is settled and before the Write Plan freezes. :meth:`plan` therefore runs
 coalesce, eliminate no-ops, form batches, order, settle, in that order —
 eliminating a no-op ahead of batching is what lets two writes a no-op
-separates in the buffer still merge into one batch.
+separates in the buffer still merge into one batch, and combining writes of one
+observed state ahead of that elimination is what lets a restored member cancel
+an assignment an earlier verb buffered for the same state.
 """
 
 from __future__ import annotations
@@ -61,6 +63,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
+from parallax.core.unit_work.claims import WriteIntent, admits, keyed_intent
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.columns import (
     ColumnSlice,
@@ -346,11 +349,18 @@ class WritePlanner:
     # ----------------------------------------------------------------- #
     # Stage 1: resolve identities and coalesce buffered intent.          #
     # A same-transaction keyed insert-then-update of one object folds     #
-    # into a single final-value write; insert-then-delete cancels.        #
+    # into a single final-value write; insert-then-delete cancels; and    #
+    # several writes settling against ONE observed state combine by the   #
+    # claim algebra their verbs already admitted them under.              #
     # ----------------------------------------------------------------- #
     def _coalesce(self, buffer: BufferedWrites, resolved: Targets) -> list[BufferItem]:
         result: list[BufferItem | None] = []
         pending_insert: dict[ObjectKey, int] = {}
+        # Where each object's still-open observed-state claim sits, so a second
+        # write of that state reaches the carrier it must combine with. One
+        # object holds at most one such entry: a second observed state of it is
+        # a different claim, and the entry it would have joined is replaced.
+        pending_state: dict[ObjectKey, _StateClaim] = {}
         for item in buffer:
             if isinstance(item, MaterializedWriteGroup):
                 result.append(item)
@@ -375,9 +385,15 @@ class WritePlanner:
                 result[index] = _merge_update_into_insert(base, instruction, resolved)
             elif verb in _DELETE_VERBS and key in pending_insert:
                 result[pending_insert.pop(key)] = None
+            elif isinstance(item, ObservedKeyedWrite):
+                _combine_observed(item, key, result, pending_state)
             else:
                 result.append(item)
-        return [item for item in result if item is not None]
+        return [
+            surviving
+            for surviving in (_without_restorations(item) for item in result)
+            if surviving is not None
+        ]
 
     # ----------------------------------------------------------------- #
     # Stage 4: form compatible batches. Same-entity, same-mutation,       #
@@ -1535,6 +1551,116 @@ def _merge_update_into_insert(
         rows=(merged,),
         valid_from=insert.valid_from,
         until=insert.until,
+    )
+
+
+@dataclass(slots=True)
+class _StateClaim:
+    """One object's still-open observed-state claim during coalescing: where its
+    surviving carrier sits, which state it settles against, and what it intends.
+
+    The observed state is carried as the observation itself rather than as an
+    Observed State Key, because the two writes only have to agree — and equal
+    evidence about one object IS one state, while deriving the key would make
+    coalescing depend on temporal coordinates a caller-held observation need not
+    be able to produce.
+    """
+
+    index: int
+    observation: WriteObservation
+    intent: WriteIntent
+
+
+def _combine_observed(
+    item: ObservedKeyedWrite,
+    key: ObjectKey,
+    result: list[BufferItem | None],
+    pending: dict[ObjectKey, _StateClaim],
+) -> None:
+    """Combine ``item`` with the claim already open on its observed state, or
+    open a new one, extending ``result`` and ``pending`` in place.
+
+    The verdict is the one algebra the arriving verb already ran
+    (:func:`~parallax.core.unit_work.claims.admits`), so what happens here is
+    what that verb admitted rather than a second reading of the same buffer:
+    assignments merge in authored order, a destruction supersedes the
+    assignments buffered before it, and a repeated destruction of one state and
+    region adds nothing. An ``incompatible`` pair is one no verb of this
+    transaction admitted — the caller reached the buffer another way — and both
+    writes are left standing rather than combined by a rule neither states.
+    """
+    intent = keyed_intent(item.instruction)
+    assert intent is not None  # a carrier refuses to wrap an insert
+    held = pending.get(key)
+    if held is not None and held.observation == item.observation:
+        verdict = admits(held.intent, intent)
+        if verdict == "coalesce":
+            base = result[held.index]
+            assert isinstance(base, ObservedKeyedWrite)
+            result[held.index] = _merge_observed(base, item)
+            return
+        if verdict == "deduplicate":
+            return
+        if verdict == "supersede":
+            result[held.index] = None
+    result.append(item)
+    pending[key] = _StateClaim(index=len(result) - 1, observation=item.observation, intent=intent)
+
+
+def _merge_observed(base: ObservedKeyedWrite, arriving: ObservedKeyedWrite) -> ObservedKeyedWrite:
+    """``base`` carrying ``arriving``'s assignments too, later value winning.
+
+    The surviving carrier keeps ``base``'s position, mutation, bounds,
+    observation, and claim — the two settle against one state over one region,
+    which is what let them coalesce — and gains the merged row. Restoration
+    follows the same later-wins rule as the value: a member ``arriving`` assigns
+    stops being restored, and one it put back becomes restored however the
+    earlier write left it.
+    """
+    merged = dict(base.instruction.rows[0])
+    merged.update(arriving.instruction.rows[0])
+    return ObservedKeyedWrite(
+        instruction=KeyedWrite(
+            mutation=base.instruction.mutation,
+            entity=base.instruction.entity,
+            rows=(merged,),
+            valid_from=base.instruction.valid_from,
+            until=base.instruction.until,
+        ),
+        observation=base.observation,
+        claim=base.claim,
+        restorations=(base.restorations - set(arriving.instruction.rows[0]))
+        | arriving.restorations,
+    )
+
+
+def _without_restorations(item: BufferItem | None) -> BufferItem | None:
+    """``item`` with every member its author touched and put back dropped from
+    its row — the last word on a member deciding whether it is written at all.
+
+    Applied once coalescing has settled which write survives, so a restoration
+    cancels every assignment merged into that survivor rather than only the one
+    its own verb saw. What is left is measured by stage 2 exactly as an ordinary
+    sparse row is, which is how a chain that nets to zero across several verbs
+    reaches the same no-DML outcome a single net-zero edit does.
+    """
+    if not isinstance(item, ObservedKeyedWrite) or not item.restorations:
+        return item
+    row = {
+        name: value
+        for name, value in item.instruction.rows[0].items()
+        if name not in item.restorations
+    }
+    return ObservedKeyedWrite(
+        instruction=KeyedWrite(
+            mutation=item.instruction.mutation,
+            entity=item.instruction.entity,
+            rows=(row,),
+            valid_from=item.instruction.valid_from,
+            until=item.instruction.until,
+        ),
+        observation=item.observation,
+        claim=item.claim,
     )
 
 

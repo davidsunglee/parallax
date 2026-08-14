@@ -1,0 +1,76 @@
+# Observed-State Coalescing (m-unit-work): an update followed by a delete of ONE
+# observed state is one delete — the destructive intent supersedes the assignments
+# buffered before it.
+#
+# The sibling of m-unit-work-021, which merges two assignments. Here the second
+# intent removes the row the first would have written, so merging their assignments
+# would be writing values into a row that is about to stop existing: the surviving
+# write is the delete alone, and the UPDATE the caller authored first emits nothing.
+# Both settle against the ONE state the group's observing find recorded, so the
+# delete's gate binds the observed version 1 exactly as a lone delete would.
+#   step 0 find  : observe account 1 (Ada, 100.00, version 1), 1 round trip.
+#   step 1 write : buffer `balance = 175.00`, then a delete of the same key; the
+#                  flush emits ONE gated DELETE, 1 round trip.
+#   step 2 find  : the dependent find MUST observe NO rows — the row is gone, and
+#                  no intermediate 175.00 was ever written.
+# The reverse order is not the same rule read backwards: an assignment AFTER a
+# destructive intent is refused rather than superseded, because no write means to
+# resurrect a row (m-unit-work "Observed-State Coalescing"). The case is `run-only`
+# (query-result-dependent): the delete's gate binds a version a query returned.
+model: models/account.yaml
+tags: [m-unit-work, m-opt-lock, m-sql, coalescing, delete, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the surviving delete's gate binds the observed version the group's own find returned — a query result (m-opt-lock)"
+when:
+  scenario:
+    - uow: superseded-assignment
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
+      roundTrips: 1
+      note: observe account 1 (balance 100.00, version 1) — the ONE state both buffered writes settle against
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+    - uow: superseded-assignment
+      write:
+        - mutation: update
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 1, balance: 175.00 }
+        - mutation: delete
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 1 }
+      on: 0
+      roundTrips: 1
+      note: the delete supersedes the buffered assignment; ONE gated DELETE is emitted and the UPDATE never reaches the wire
+      statements:
+        - sql:
+            postgres: delete from account where id = ? and version = ?
+          binds: [1, 1]
+    - uow: superseded-assignment
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
+      roundTrips: 1
+      note: the dependent find MUST observe no rows; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows: []
+then:
+  roundTrips: 3

@@ -73,7 +73,7 @@ from parallax.core.unit_work.write_planner import (
     assigned_many_path,
 )
 from parallax.snapshot import QueryTargetError, SnapshotDecodingError
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 
 # The buffering seam below every write ingress, driven directly by the case that
 # pins its own refusals.
@@ -1952,3 +1952,49 @@ def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in
     ]
     reads = [op for op in port.ops if op[0] == "read"]
     assert reads[0] == reads[1]
+
+
+# --------------------------------------------------------------------------- #
+# A Materialized Write Group's own claim (`m-unit-work` "Observed-State         #
+# Coalescing"). The group owns the observation of every state its predicate     #
+# resolved, and it is one compact indivisible unit — so the question a later    #
+# keyed write asks is answered by the group's presence rather than by anything  #
+# inside it.                                                                    #
+# --------------------------------------------------------------------------- #
+def test_a_group_refuses_a_later_keyed_write_of_a_state_it_selected() -> None:
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
+
+    def fn(tx: Transaction) -> None:
+        node = tx.find(mm.Account.where(mm.Account.id == 3)).result()
+        tx.update_where(
+            mm.Account.where(mm.Account.balance < 200.00),
+            mm.Account.owner.set("Ada"),
+        )
+        tx.update(node.edit(balance=Decimal("125.00")))
+
+    with pytest.raises(WriteEvidenceError) as refusal:
+        account_db(port).transact(fn)
+    assert refusal.value.code == "write-evidence-already-claimed"
+    assert refusal.value.object_key.primary_key == (("id", 3),)
+
+
+def test_a_group_leaves_a_keyed_write_of_an_unselected_state_alone() -> None:
+    port = RecordingPort(
+        row_queue=[
+            [{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}],
+            [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}],
+        ]
+    )
+
+    def fn(tx: Transaction) -> None:
+        node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        tx.update_where(
+            mm.Account.where(mm.Account.balance < 50.00),
+            mm.Account.owner.set("Ada"),
+        )
+        tx.update(node.edit(balance=Decimal("125.00")))
+
+    account_db(port).transact(fn)
+    assert len([op for op in port.ops if op[0] == "write"]) == 2
