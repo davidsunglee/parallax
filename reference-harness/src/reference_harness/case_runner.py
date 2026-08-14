@@ -372,7 +372,7 @@ def _assert_schema(case: Case) -> None:
         # Whether a write step may settle against a find at all is a property of
         # the document, not of a dialect, so it is decided HERE — the one layer
         # every scenario reaches. The cross-check that consumes the reference
-        # (:func:`_assert_scenario_settled_close`) is skipped for a dialect the
+        # (:func:`_assert_scenario_settled_write`) is skipped for a dialect the
         # case carries no golden for, so a rule left there would hold on some
         # runs and not others.
         _assert_scenario_source_finds(case)
@@ -5988,7 +5988,7 @@ def _assert_scenario_source_finds(case: Case) -> None:
             raise CaseFailure(
                 f"{case.path.name}: scenario[{index}].on is {source!r}; a write step settles "
                 f"against exactly ONE find, named by its index — a keyed write settles "
-                f"against the one milestone the value it was handed came from."
+                f"against the one observed state the value it was handed came from."
             )
         if not 0 <= source < index:
             raise CaseFailure(
@@ -6005,103 +6005,174 @@ def _assert_scenario_source_finds(case: Case) -> None:
             raise CaseFailure(
                 f"{case.path.name}: scenario[{index}] settles against a find but its `write` is "
                 f"not the buffered keyed form — a legacy string label carries no instruction and "
-                f"a predicate-selected write consumes no single milestone, so neither has "
+                f"a predicate-selected write consumes no single observation, so neither has "
                 f"anything the named observation could reach."
             )
 
 
-def _assert_scenario_settled_close(case: Case, dialect: str) -> None:
-    """Cross-check each settled write step's golden CLOSE against the milestone the
-    find it names observed (`m-case-format` *Settling against a grouped find*).
+def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
+    """Cross-check each settled write step's golden against the observed state the
+    find it names recorded (`m-case-format` *Settling against a grouped find*).
 
-    The observed milestone is resolved INDEPENDENTLY of the golden, from the named
+    The observed state is resolved INDEPENDENTLY of the golden, from the named
     find step's own ``expectRows`` — the rows that read returned, which is exactly
-    the evidence the store it filled holds. The close's address (on a Bitemporal
-    target, its Valid-Time exclusive upper bound) and, under optimistic
-    concurrency, its gate are then derived from that ONE row and compared against
-    the step's first golden statement, which a temporal write always leads with.
+    the evidence the store it filled holds — and by each entry's OWN key, so a
+    find that observed no row of that key names evidence that does not exist.
+    What the resolution then reaches is the target's PROFILE's answer: a temporal
+    write's close address (on a Bitemporal target, its Valid-Time exclusive upper
+    bound) and its optimistic gate, and a versioned Non-Temporal write's own gate
+    and framework-computed version advance. Either way the corpus states which
+    state the write settled against in two independent places — here and in
+    execution.
 
-    Which bind a misresolution moves is the target's PROFILE's answer: a Bitemporal
-    key's current rectangles are disjoint on Valid Time, so a close binding the
-    OTHER current rectangle fails on the address, while a Transaction-Time-Only
-    close addresses the key plus the invariant open bound and so fails on the gate
-    alone. Either way the corpus states which milestone the write settled against
-    in two independent places — here and in execution.
+    Which bind a misresolution moves differs the same way: a Bitemporal key's
+    current rectangles are disjoint on Valid Time, so a close binding the OTHER
+    current rectangle fails on the address, while a Transaction-Time-Only close
+    addresses the key plus the invariant open bound and a versioned write its key
+    alone, so on both of those the whole difference lands on what the observation
+    derives.
+
+    Every entry of one step grades against that step's FIRST golden statement,
+    because entries settling against one state coalesce into ONE (`m-unit-work`
+    *Observed-State Coalescing*): what distinguishes them is the assignments they
+    contribute to that statement, while what this cross-check reads — the state
+    they settled against — is the one thing they all share. A step whose entries
+    address more than one object has no such shared statement and is refused
+    rather than graded against the first.
     """
     for index, step in enumerate(case.scenario):
         if "write" not in step or "on" not in step:
             continue
         statements = _step_statements(step, dialect)
         binds = _entry_binds(step.get("statements"), 0)
+        origin = case.scenario[step["on"]]
+        addressed: list[tuple[str, str]] = []
         for entry in _scenario_write_entries(step):
             entity = case.model.entity(entry["entity"])
-            if not temporal_axes(entity.runtime_facts):
-                _assert_settled_version_gate(case, entity, index, step, binds)
-                continue
             row = _sole_settled_row(case, index, entity, entry)
+            temporal = bool(temporal_axes(entity.runtime_facts))
             _, pk, _set_cols, _observed = _classify_write_row(
-                case, entity, row, mutation=entry["mutation"], opening=True
+                case, entity, row, mutation=entry["mutation"], opening=temporal
             )
-            observed = _settled_milestone(case, entity, index, case.scenario[step["on"]], pk)
+            addressed.append((entity.name, repr(pk)))
+            if len(set(addressed)) != 1:
+                raise CaseFailure(
+                    f"{case.path.name}: scenario[{index}] settles writes of "
+                    f"{sorted(set(addressed))} against one find — entries that settle against "
+                    f"one state coalesce into one statement, and entries of different objects "
+                    f"emit one statement each, which this cross-check cannot align."
+                )
+            if not statements:  # pragma: no cover - a settled write always emits its statement
+                raise CaseFailure(
+                    f"{case.path.name}: scenario[{index}] settles against a find but emits no "
+                    f"golden statement for {dialect}."
+                )
+            if not temporal:
+                _assert_settled_version_binds(case, entity, index, origin, pk, binds, statements[0])
+                continue
+            observed = _settled_milestone(case, entity, index, origin, pk)
             expected = [
                 entry.get("at"),
                 *_close_address_binds(case, entity, pk, observed.valid_end),
             ]
             if case.concurrency_mode == "optimistic":
                 expected.append(observed.tx_start)
-            if not statements:  # pragma: no cover - a settled write always emits its close
-                raise CaseFailure(
-                    f"{case.path.name}: scenario[{index}] settles against a find but emits no "
-                    f"golden statement for {dialect}."
-                )
             _assert_write_values(case, expected, binds, statements[0])
 
 
-def _assert_settled_version_gate(
-    case: Case, entity: Entity, index: int, step: dict[str, Any], binds: list[Any]
+def _assert_settled_version_binds(
+    case: Case,
+    entity: Entity,
+    index: int,
+    origin: dict[str, Any],
+    pk: Any,
+    binds: list[Any],
+    statement: str,
 ) -> None:
-    """Cross-check a settled VERSIONED Non-Temporal write's gate against the
-    generation the find it names observed.
+    """Cross-check a settled VERSIONED Non-Temporal write's golden against the
+    generation the find it names observed OF ITS OWN KEY.
 
     A versioned write is addressed by its key alone, so the whole difference
-    between one observed generation and another lands on the optimistic gate:
-    the golden's LAST bind is the observed version, and a write settled against
-    the wrong reading binds a version that read never returned. Read off the
-    named find step's own ``expectRows``, exactly as the temporal arm reads its
-    milestone, so the corpus states which generation the write settled against
-    in two independent places.
+    between one observed generation and another lands on what the observation
+    derives, and both halves are graded: the optimistic gate, which is the
+    golden's LAST bind and is the observed version itself, and the
+    framework-computed advance, which is one more than it and is assigned in
+    BOTH concurrency modes. A locking UPDATE therefore still states its observed
+    generation; a DELETE assigns nothing, so a locking one states none and there
+    is nothing here to cross-check.
 
-    A ``locking`` case emits no gate at all, so there is nothing to cross-check
-    and the address, which every generation shares, is the whole of the write.
+    Which of the two the statement carries is read off the STATEMENT rather than
+    off the entry's own verb, because coalescing decides what survives: a
+    destructive intent supersedes the assignments buffered before it, so an
+    entry spelling `update` may reach a golden DELETE that advances nothing.
+
+    The generation is read off the named find step's own ``expectRows`` by the
+    write's own key, exactly as the temporal arm reads its milestone
+    (:func:`_settled_milestone`), so the corpus states which generation the write
+    settled against in two independent places.
     """
-    if case.concurrency_mode != "optimistic":
-        return
     version_column = _version_column(entity)
     if version_column is None:
         return
-    observed_rows: list[dict[str, Any]] = case.scenario[step["on"]].get("expectRows") or []
-    versions = {row[version_column] for row in observed_rows if version_column in row}
-    if len(versions) != 1:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles against a find that observed "
-            f"{len(versions)} version(s) of {entity.name} — a keyed write settles against "
-            f"the ONE generation the value it was handed came from."
-        )
-    observed = versions.pop()
-    if not binds or not _write_value_equal(binds[-1], observed):
+    observed = _settled_generation(case, entity, index, origin, pk, version_column)
+    if case.concurrency_mode == "optimistic" and (
+        not binds or not _write_value_equal(binds[-1], observed)
+    ):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] settles {entity.name} against a find that "
             f"observed version {observed!r}, but its golden gate binds "
             f"{binds[-1] if binds else None!r}."
         )
+    if _set_clause(statement) is None:
+        return
+    assigned = _parse_set_columns(case, statement)
+    if version_column not in assigned:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] settles a versioned {entity.name} update "
+            f"whose golden SET clause {assigned} assigns no {version_column!r} — a versioned "
+            f"update advances the framework-owned version under either concurrency strategy."
+        )
+    position = assigned.index(version_column)
+    advanced = binds[position] if position < len(binds) else None
+    if not _write_value_equal(advanced, observed + 1):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] settles {entity.name} against a find that "
+            f"observed version {observed!r}, but its golden advances the version to "
+            f"{advanced!r} rather than {observed + 1!r}."
+        )
+
+
+def _settled_generation(
+    case: Case, entity: Entity, index: int, origin: dict[str, Any], pk: Any, version_column: str
+) -> Any:
+    """The version a settled versioned write's named find observed, of *pk*.
+
+    The versioned peer of :func:`_settled_milestone`, resolved the same way and
+    for the same reason: a versioned key holds one ROW but one observed
+    GENERATION per read of it, so only the read the write named says which one it
+    was handed, and a find that returned no row of this key names evidence that
+    does not exist.
+    """
+    key_column = _pk_column(entity)
+    observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []
+    matched = [row for row in observed_rows if _write_value_equal(row.get(key_column), pk)]
+    if len(matched) != 1 or version_column not in matched[0]:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] settles against a find that observed "
+            f"{len(matched)} row(s) of {entity.name} pk {pk!r} carrying a version — a keyed "
+            f"write settles against the ONE generation the value it was handed came from."
+        )
+    return matched[0][version_column]
 
 
 def _sole_settled_row(
     case: Case, index: int, entity: Entity, entry: dict[str, Any]
 ) -> dict[str, Any]:
-    """The ONE row a settled temporal write entry authors.
+    """The ONE row a settled write entry authors.
 
-    The plural half is `m-unit-work`'s temporal singleton and is asked of the SAME
+    The plural half is `m-unit-work`'s own singleton — a temporal entry chains
+    one milestone, and an observed write of any profile is evidence about one row
+    — and it is asked of the SAME
     :func:`~reference_harness.keyed_write_validate.validate_keyed_write` every
     other lane asks it of, so this lane cannot refuse a different set of entries;
     what is local here is only the consequence — a settled entry must hand over
@@ -6114,8 +6185,8 @@ def _sole_settled_row(
     rows = entry.get("rows")
     if not isinstance(rows, list) or len(rows) != 1:
         raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles a temporal write entry carrying "
-            f"{len(rows) if isinstance(rows, list) else 0} rows against a find — a temporal "
+            f"{case.path.name}: scenario[{index}] settles a write entry carrying "
+            f"{len(rows) if isinstance(rows, list) else 0} rows against a find — a settled "
             f"entry carries ONE row, which is the one value that find handed over."
         )
     return rows[0]
@@ -7456,7 +7527,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_serde(case)  # layer 4
         _assert_equivalent_encodings(case)  # layer 4c
         _assert_scenario_count_consistency(case, dialect)  # layer 5 (count)
-        _assert_scenario_settled_close(case, dialect)  # layer 5c (observed ↔ ② close)
+        _assert_scenario_settled_write(case, dialect)  # layer 5c (observed state ↔ ②)
         _provision(case, db)
         # Here the out-of-band setup puts state into a row no authored member could
         # produce — a Structured Column key the model declares nowhere included.

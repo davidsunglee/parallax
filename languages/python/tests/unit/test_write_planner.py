@@ -307,6 +307,31 @@ def test_writes_of_two_observed_states_of_one_object_stay_independent() -> None:
     assert len(plan.steps) == 2
 
 
+def test_a_second_state_of_one_object_does_not_close_the_first_states_claim() -> None:
+    # An object's claims are open per observed STATE, so a write of one state
+    # standing between two writes of another leaves their claim exactly where it
+    # was: the verb admitted the third write as a merge into the first, and
+    # emitting it separately would gate two statements on one generation — the
+    # second of which no read ever saw current.
+    earlier = VersionObservation(observed_version=4)
+    later = VersionObservation(observed_version=5)
+    first = ObservedKeyedWrite(
+        KeyedWrite("update", "Account", ({"id": 1, "balance": 125.00},)), earlier
+    )
+    interleaved = ObservedKeyedWrite(
+        KeyedWrite("update", "Account", ({"id": 1, "owner": "Grace"},)), later
+    )
+    third = ObservedKeyedWrite(
+        KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},)), earlier
+    )
+    plan = _plan([first, interleaved, third], _ACCOUNT, concurrency="optimistic")
+    merged, standing = plan.steps
+    assert isinstance(merged, PlannedUpdate)
+    assert isinstance(standing, PlannedUpdate)
+    assert _assignment_values(merged) == {"balance": 175.00, "version": 5}
+    assert _assignment_values(standing) == {"owner": "Grace", "version": 6}
+
+
 def _assignment_values(step: PlannedUpdate) -> dict[str, object]:
     return {ident.name: value for ident, value in step.assignments.attributes.items()}
 

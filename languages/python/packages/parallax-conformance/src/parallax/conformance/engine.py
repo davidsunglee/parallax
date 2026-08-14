@@ -1275,8 +1275,7 @@ def _settled_against_source(
 
     Returns the key the real write settles by beside the observation the pure
     re-lowering oracle plans with — one record, so the two can never disagree. A
-    miss returns neither and the close is refused where every unobserved close is.
-    A named find that observed no row of this key — or several, which no single
+    named find that observed no row of this key — or several, which no single
     value could have come from — is an authoring defect, refused here where the
     diagnosis can name the step.
     """
@@ -1285,8 +1284,8 @@ def _settled_against_source(
         raise EngineError(
             f"{entity_name!r}: the find step this write settles against observed "
             f"{len(matched)} rows of {pk_key!r} — a keyed write settles against the ONE "
-            "milestone the value it was handed came from (m-case-format 'Settling against "
-            "a grouped find')"
+            "observed state the value it was handed came from (m-case-format 'Settling "
+            "against a grouped find')"
         )
     record = matched[0]
     return record.key, record.evidence

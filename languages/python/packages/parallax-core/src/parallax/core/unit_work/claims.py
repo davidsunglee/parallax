@@ -107,11 +107,18 @@ def keyed_intent(instruction: KeyedWrite) -> WriteIntent | None:
     return WriteIntent(kind=kind, valid_from=instruction.valid_from, until=instruction.until)
 
 
-def admits(held: WriteIntent, arriving: WriteIntent) -> ClaimVerdict:
-    """What ``arriving`` becomes against the ``held`` claim on one observed state.
+def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
+    """What ``arriving`` becomes against the ``held`` claim on one observed state,
+    or against ``None`` where nothing claims that state yet.
+
+    The unclaimed row belongs here rather than in each consumer, which is what
+    makes this function the whole rule: a caller answers every ``(held,
+    arriving)`` pair by asking once, and the verb-time seam and the flush cannot
+    disagree about the one row a second implementation would have had to repeat.
 
     The rule reads in the order the incompatibilities appear:
 
+    * an unclaimed state admits whatever arrives;
     * a Materialized Write Group's selection claim admits nothing beside it, in
       either direction — the group is compact and indivisible, so merging a keyed
       assignment into it would mean indexing and mutating it;
@@ -122,6 +129,8 @@ def admits(held: WriteIntent, arriving: WriteIntent) -> ClaimVerdict:
     * everything else combines — assignments merge, and a destruction supersedes
       the assignments buffered before it.
     """
+    if held is None:
+        return "admit"
     if "selection" in (held.kind, arriving.kind):
         return "incompatible"
     if held.region != arriving.region:
@@ -148,18 +157,18 @@ class ClaimTable:
     def claim(self, key: ObservedStateKey, intent: WriteIntent) -> ClaimVerdict:
         """Take ``intent``'s claim on ``key``, answering what it became.
 
-        The table is left holding what the buffer will actually carry after the
+        The verdict is :func:`admits`' alone, unclaimed row included, so this
+        table decides nothing of its own and stays the storage the rule is
+        applied to.
+
+        What it is left holding is what the buffer will actually carry after the
         verdict: an admitted or coalescing intent replaces the held one, a
         superseding destruction replaces it too, and a deduplicated or
         incompatible intent leaves it untouched — the first because the second
         adds nothing, the second because the arriving verb is about to refuse.
         """
-        held = self._held.get(key)
-        if held is None:
-            self._held[key] = intent
-            return "admit"
-        verdict = admits(held, intent)
-        if verdict in ("coalesce", "supersede"):
+        verdict = admits(self._held.get(key), intent)
+        if verdict in ("admit", "coalesce", "supersede"):
             self._held[key] = intent
         return verdict
 
