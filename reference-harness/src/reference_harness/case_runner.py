@@ -6050,6 +6050,14 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
     equally expresses a mixed multi-object flush, whose objects emit one statement
     each. The settling statement is the EXISTING-ROW one; a temporal successor's
     chained INSERT settles nothing and is passed over.
+
+    An address names the object but not which concrete subtype of it a golden
+    claims, because a table-per-hierarchy family shares one table, so the aligned
+    statement is also required to ROUTE to the entry's own subtype — the tag guard
+    binding that subtype's ``tagValue``, or, under table-per-concrete-subtype, its
+    own table (`m-inheritance`). The writeSequence lane asks the same of its
+    goldens; a scenario write carries no writeSequence, so this is where a settled
+    one is asked.
     """
     for index, step in enumerate(case.scenario):
         if "write" not in step or "on" not in step:
@@ -6069,6 +6077,7 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
                 case, entity, row, mutation=entry["mutation"], opening=temporal
             )
             statement, binds = _settled_statement(case, index, entity, pk, settling, aligned)
+            _assert_inheritance_write_routing(case, entity, [statement], [binds])
             if not temporal:
                 _assert_settled_version_binds(
                     case, entity, index, origin, pk, binds, statement, dialect
@@ -6116,8 +6125,8 @@ def _settled_statement(
     matches = [
         position
         for position, (address, _statement, _binds) in enumerate(settling)
-        if address.table == entity.table.lower()
-        and address.key_column == _pk_column(entity).lower()
+        if _names(address.table, entity.table)
+        and _names(address.key_column, _pk_column(entity))
         and _write_value_equal(address.key, pk)
     ]
     if not matches:
@@ -6139,12 +6148,23 @@ def _settled_statement(
 
 
 class _ObjectAddress(NamedTuple):
-    """Which object an existing-row statement writes: the table its DML targets and
-    the Object Key its identity predicate binds, with the key column that predicate
-    names."""
+    """Which object an existing-row statement writes: the identifiers its DML names
+    the target table and the key column with, and the primary-key value its identity
+    predicate binds.
 
-    table: str
-    key_column: str
+    Table and key together ARE an Object Key — Entity Identity plus primary-key
+    values (`m-unit-work`). Every structural Table has exactly one mapping owner
+    (`m-storage-layout`) and object identity normalizes to the inheritance family
+    (`m-identity-map`), so a table names ONE Entity Identity: a table-per-hierarchy
+    family's shared table names that family, a table-per-concrete-subtype table its
+    own subtype, and no two objects share a table and a primary key. Which concrete
+    subtype of a shared table a golden claims is the one thing the address cannot
+    say, so the settled lane grades it separately
+    (:func:`_assert_inheritance_write_routing`).
+    """
+
+    table: exp.Identifier
+    key_column: exp.Identifier
     key: Any
 
 
@@ -6159,30 +6179,18 @@ def _statement_object(
     then follow in that order (`m-sql`, `m-inheritance`, `m-opt-lock`). The key's
     bind is therefore the predicate's first placeholder, and every placeholder
     before it belongs to the `set` clause.
-
-    Read through the grammar rather than by pattern, for the reasons the sibling
-    readers are: a reserved physical table or column is rendered QUOTED
-    (`m-dialect`), and a subquery's own predicate is a conjunct of the inner
-    SELECT rather than of this one (:func:`_conjuncts`).
     """
-    tree = None
-    with contextlib.suppress(sqlglot.ParseError):
-        tree = sqlglot.parse_one(statement, read=sqlglot_dialect(dialect))
-    where = tree.args.get("where") if isinstance(tree, (exp.Update, exp.Delete)) else None
-    key_column = (
-        _bound_equality_column(next(_conjuncts(where.this)))
-        if isinstance(where, exp.Where)
-        else None
-    )
+    write = _existing_row_write(statement, dialect)
+    key_column = _bound_equality_identifier(write.conjuncts[0]) if write is not None else None
     offset = _predicate_bind_offset(statement)
-    if tree is None or key_column is None or offset is None or offset >= len(binds):
+    if write is None or key_column is None or offset is None or offset >= len(binds):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] carries an existing-row golden whose "
             f"predicate does not open with a bound key equality for {dialect}: "
             f"{statement!r} — a settled write addresses the ONE object it survives as, "
             f"and its key leads that address."
         )
-    return _ObjectAddress(str(tree.this.name).lower(), key_column.lower(), binds[offset])
+    return _ObjectAddress(write.table, key_column, binds[offset])
 
 
 def _predicate_bind_offset(statement: str) -> int | None:
@@ -6291,6 +6299,12 @@ def _settled_observed_row(
     state each then projects out of the row (:func:`_settled_generation`,
     :func:`_settled_milestone`). *state* is that profile's own noun, so the
     refusal names what the write would have settled against.
+
+    The key alone resolves the row even when the find is POLYMORPHIC: its rows come
+    from one target's own family, and identity normalizes to that family
+    (`m-identity-map`), so one primary key names one object however many concrete
+    subtypes the read spanned. Two rows of the key are therefore two observed
+    states, which is what the write would have to choose between.
     """
     key_column = _pk_column(entity)
     observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []
@@ -6866,25 +6880,46 @@ def _has_version_gate(statement: str, version_col: str, dialect: str) -> bool:
     The optimistic golden write appends ``and <version> = ?`` to its keyed predicate
     (m-opt-lock). Two other places name the same column and are NOT that gate: an
     ``UPDATE``'s own ``SET`` clause, which carries the framework-derived advance in
-    BOTH modes, and any nested ``SELECT``'s own ``WHERE``. Scanning text cannot
-    separate them — the last ` where ` in the statement may belong to a subquery, and
-    a quoted spelling (``"version"``, `` `version` ``) is the same column under a
-    different surface. The statement is therefore PARSED for *dialect* and only the
-    outer ``UPDATE`` / ``DELETE`` predicate's own top-level conjuncts are inspected,
-    so quoting, whitespace, and nesting are decided by the grammar rather than by a
-    pattern. A statement that does not parse, or that is not a keyed write at all,
-    carries no gate.
+    BOTH modes, and any nested ``SELECT``'s own ``WHERE`` — which is why the gate is
+    projected out of the parsed statement (:func:`_existing_row_write`) rather than
+    scanned for. A statement that is no existing-row write carries no gate.
     """
-    try:
+    write = _existing_row_write(statement, dialect)
+    return write is not None and any(_gates_on(operand, version_col) for operand in write.conjuncts)
+
+
+class _ExistingRowWrite(NamedTuple):
+    """The outer keyed DML a golden statement is: the identifier its ``UPDATE`` /
+    ``DELETE`` names the target table with, and its own top-level predicate
+    conjuncts."""
+
+    table: exp.Identifier
+    conjuncts: tuple[Expr, ...]
+
+
+def _existing_row_write(statement: str, dialect: str) -> _ExistingRowWrite | None:
+    """*statement* read as the existing-row write it is, or None when it is not one.
+
+    The ONE reader of that grammar, which each consumer projects its own fact out of
+    — which object the statement addresses (:func:`_statement_object`), whether it
+    gates on the optimistic version (:func:`_has_version_gate`) — so what counts as
+    an existing-row write, and what an unparseable or non-DML statement answers,
+    is decided in one place for all of them.
+
+    Read through the grammar rather than by pattern, because a reserved physical
+    table or column is rendered QUOTED (`m-dialect`), the last ` where ` in the text
+    may belong to a subquery, and a subquery's own predicate is a conjunct of the
+    inner ``SELECT`` rather than of this one (:func:`_conjuncts`). A statement that
+    does not parse for *dialect*, that is not an ``UPDATE`` / ``DELETE`` of a table,
+    or that carries no outer predicate is no existing-row write: it addresses no
+    object and gates on nothing.
+    """
+    with contextlib.suppress(sqlglot.ParseError):
         tree = sqlglot.parse_one(statement, read=sqlglot_dialect(dialect))
-    except sqlglot.ParseError:
-        return False
-    if not isinstance(tree, (exp.Update, exp.Delete)):
-        return False
-    where = tree.args.get("where")
-    if not isinstance(where, exp.Where):
-        return False
-    return any(_gates_on(operand, version_col) for operand in _conjuncts(where.this))
+        where = tree.args.get("where") if isinstance(tree, (exp.Update, exp.Delete)) else None
+        if isinstance(where, exp.Where) and isinstance(tree.this, exp.Table):
+            return _ExistingRowWrite(tree.this.this, tuple(_conjuncts(where.this)))
+    return None
 
 
 def _conjuncts(predicate: Expr) -> Iterator[Expr]:
@@ -6905,16 +6940,17 @@ def _conjuncts(predicate: Expr) -> Iterator[Expr]:
 
 def _gates_on(operand: Expr, column: str) -> bool:
     """Whether *operand* is the ``<column> = ?`` equality a gate renders."""
-    bound = _bound_equality_column(operand)
-    return bound is not None and bound.lower() == column.lower()
+    bound = _bound_equality_identifier(operand)
+    return bound is not None and _names(bound, column)
 
 
-def _bound_equality_column(operand: Expr) -> str | None:
-    """The column a ``<column> = ?`` conjunct names, or None for any other operand.
+def _bound_equality_identifier(operand: Expr) -> exp.Identifier | None:
+    """The identifier a ``<column> = ?`` conjunct names its column with, or None for
+    any other operand.
 
     The one predicate shape both a gate and an address are written in, either way
-    round, with the column's name taken from the parse so a quoted spelling is the
-    same column under a different surface.
+    round, taken from the parse so the identifier keeps its own quoting — which is
+    what decides whether the spelling is the model's column (:func:`_names`).
     """
     if not isinstance(operand, exp.EQ):
         return None
@@ -6922,8 +6958,23 @@ def _bound_equality_column(operand: Expr) -> str | None:
     if isinstance(right, exp.Column) and isinstance(left, exp.Placeholder):
         left, right = right, left
     if isinstance(left, exp.Column) and isinstance(right, exp.Placeholder):
-        return left.name
+        return left.this if isinstance(left.this, exp.Identifier) else None
     return None
+
+
+def _names(identifier: exp.Identifier, declared: str) -> bool:
+    """Whether *identifier*, as a golden spells it, is the physical *declared* name.
+
+    A QUOTED identifier keeps exactly the name it spells — quoting is what a
+    reserved or otherwise non-simple physical name is rendered with, and the
+    normalizer preserves it (`m-dialect`) — while an UNQUOTED one is folded by the
+    database, so it names *declared* whenever the two differ only in case.
+    Lowercasing both sides instead would read a quoted ``"Order"`` and a bare
+    ``order``, two names one model may declare separately, as one identifier.
+    """
+    return identifier.name == declared or (
+        not identifier.quoted and identifier.name.lower() == declared.lower()
+    )
 
 
 def _assert_scenario_conflict_abort(
