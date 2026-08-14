@@ -608,17 +608,18 @@ def _two_terminate_rows() -> list[Row]:
 
 
 def test_materializing_terminate_where_over_an_audit_only_target() -> None:
-    # LOCKING mode (the default): every resolved row gets its own close, in
-    # the resolving read's own resolved-row order, and every close stays
-    # UNGATED (`m-txtime-write` "a LOCKING-mode close stays ungated" —
-    # `~parallax.core.opt_lock.gates` only ever binds the observed-`in_z`
-    # candidate under optimistic concurrency).
+    # The explicit `locking` preference: every resolved row gets its own close,
+    # in the resolving read's own resolved-row order, and every close stays
+    # UNGATED (`m-txtime-write` "a LOCKING-mode close stays ungated" — the
+    # observed-`in_z` candidate binds only under the Optimistic strategy, which
+    # `~parallax.core.opt_lock.effective_strategy` reaches for a
+    # Transaction-Time target under the default preference alone).
     port = RecordingPort(rows=_two_terminate_rows())
 
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
 
-    Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn, concurrency="locking")
     writes = [op for op in port.ops if op[0] == "write"]
     assert len(writes) == 2  # one Transaction-Time-only close per resolved row, no chain
     close_sql = POSTGRES.to_driver_sql(
@@ -726,7 +727,7 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
     assert reads[0][1] == POSTGRES.to_driver_sql(
         "select t0.id, t0.name, t0.in_z, t0.out_z, not t0.address is null, "
         "t0.address from where_ledger t0 "
-        "where t0.id = ? and t0.out_z = ? for share of t0"
+        "where t0.id = ? and t0.out_z = ?"
     )
     assert len(writes) == 2  # close then chain
     chain_sql, chain_binds = writes[1][1], writes[1][2]
@@ -801,7 +802,7 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
     assert reads[0][1] == POSTGRES.to_driver_sql(
         "select t0.id, t0.in_z, t0.out_z, not t0.payload is null, "
         "t0.payload from where_voyage t0 "
-        "where t0.id = ? and t0.out_z = ? for share of t0"
+        "where t0.id = ? and t0.out_z = ?"
     )
     assert len(writes) == 2  # close then chain
     chain_sql, chain_binds = writes[1][1], writes[1][2]
@@ -1900,7 +1901,7 @@ def _update_balance_where(tx: Transaction) -> None:
 
 def test_materializing_where_shortfall_in_locking_mode_is_a_stale_write() -> None:
     # The `_where` counterpart of the keyed locking-mode shortfall: the UPDATE a
-    # materialized group emits under locking concurrency is ungated, so a
+    # materialized group emits under the Locking strategy is ungated, so a
     # zero-row shortfall is the non-retriable stale write and the whole unit of
     # work rolls back.
     port = RecordingPort(
@@ -1909,7 +1910,7 @@ def test_materializing_where_shortfall_in_locking_mode_is_a_stale_write() -> Non
     )
 
     with pytest.raises(StaleWriteError, match="Account"):
-        account_db(port).transact(_update_balance_where)
+        account_db(port).transact(_update_balance_where, concurrency="locking")
     assert [op[0] for op in port.ops] == ["begin", "read", "write", "rollback"]
 
 

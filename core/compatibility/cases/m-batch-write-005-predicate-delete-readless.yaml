@@ -11,7 +11,10 @@
 # The scenario has no `given.fixtures`; it authors the single DELETE (roundTrips 1) and
 # then reads the same predicate back, expecting NO rows. That trailing find is the ONLY
 # read in the scenario and proves every matching row was removed by the one set-shaped
-# statement. Total roundTrips 2 = write (1) + verify read (1).
+# statement. Total roundTrips 2 = write (1) + verify read (1). That verifying find
+# participates like any other in-transaction object find, and Wallet is unversioned,
+# so the default `optimistic` preference resolves it to the Locking fallback and the
+# read carries the shared-row-lock suffix (m-unit-work strategy selection).
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, m-unit-work, predicate-write, readless, scenario, slice-snapshot-1]
 shape: scenario
@@ -37,7 +40,7 @@ when:
       roundTrips: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.balance < ?
+            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.balance < ? for share of t0
           binds: [200.00]
       referenceSql: select id, owner, balance from wallet where balance < 200.00
       expectRows: []

@@ -30,7 +30,7 @@
 #                  observes the SAME unchanged row (balance 250.00, version 1)
 #                  through the group's own held transaction, 1 round trip. The
 #                  group COMMITS after this, its last step.
-# The unit of work runs in the DEFAULT `locking` mode, so both finds carry the
+# The unit of work runs under the declared `locking` preference, so both finds carry the
 # m-read-lock shared-row-lock suffix (`for share of t0`) — step 0's shared lock
 # is held for the WHOLE group's duration, which is what makes step 2's read
 # lock-correct. The zero-round-trip repeated-find / query-cache claim this case
@@ -46,6 +46,8 @@ compileEligibility:
   reason: query-result-dependent
   note: "the no-op write's licensing derives from the group's own observing find - a query result (m-opt-lock, m-unit-work uow grouping)"
 when:
+  uow:
+    concurrency: locking
   scenario:
     - uow: observe-noop-verify
       objectQuery:

@@ -10,8 +10,10 @@
 # This case witnesses the GATED CLOSE of the chaining update reusing the temporal
 # inactivation gate shape (m-bitemp-write-004): a conflict case runs only that single
 # gated close, not the replacement INSERT the chaining update would go on to emit —
-# the chain proper is proven ungated by m-txtime-write-002/-004/-005. Here the gate
-# MATCHES (a fresh observed in_z), so the close affects exactly 1 row.
+# the chain proper is proven end to end by m-txtime-write-002/-004/-005, whose own
+# closes gate the same way under the default preference, and ungated by
+# m-txtime-write-010's declared `locking` preference. Here the gate MATCHES (a
+# fresh observed in_z), so the close affects exactly 1 row.
 #
 # Fixtures are loaded. Id 1 (acct A) has a superseded milestone [2024-01-01,
 # 2024-06-01) value 100.00 and a CURRENT milestone [2024-06-01, infinity) value

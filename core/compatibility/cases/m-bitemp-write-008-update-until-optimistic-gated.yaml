@@ -1,27 +1,27 @@
-# Write sequence: updateUntil under an OPTIMISTIC gate, asserted END-TO-END — the
-# full bitemporal RECTANGLE SPLIT (-001) whose inactivating close is GATED on the
-# observed rectangle's Transaction-Time start (in_z), so the
+# Write sequence: updateUntil under an EXPLICIT `optimistic` preference, asserted
+# END-TO-END — the full bitemporal RECTANGLE SPLIT (-001) whose inactivating close
+# is GATED on the observed rectangle's Transaction-Time start (in_z), so the
 # whole gated split (close + head/middle/tail) is witnessed, not just the single
 # gated UPDATE that -004/-005 pin (m-bitemp-write + m-opt-lock).
 #
 # A bitemporal entity has no version column, so the observed Transaction-Time start (in_z)
 # is the optimistic-lock version analogue. It rides the GATE alone; the close's
-# ADDRESS (pos_id plus one exclusive upper bound per axis, thru_z then out_z) is the
-# SAME one -001 renders under locking mode, so the two goldens differ only by the
-# trailing `and in_z = ?`. Here
-# the sequence opens a single Latest rectangle at valid [2024-01-01, infinity),
-# transaction [2024-01-01, infinity), then an `updateUntil` corrects the value to
-# 200 for the bounded Valid-Time window [2024-03-01, 2024-09-01) at txInstant
-# 2024-02-15. The close addresses (thru_z, out_z) = (infinity, infinity) and gates on
-# the observed in_z 2024-01-01 — NOTE the addressed thru_z (infinity, the observed
-# row's own Valid-Time end) is DISTINCT from the window boundaries the split chains
-# (2024-03-01 / 2024-09-01). It then chains head / middle / tail as in -001.
+# ADDRESS (pos_id plus one exclusive upper bound per axis, thru_z then out_z) carries
+# no concurrency decision at all.
+#
+# What this case pins that -001 does not is the EQUIVALENCE `m-unit-work` states:
+# omission and an explicit `optimistic` resolve to the same Concurrency Preference.
+# -001 declares no `when.uow` and this one declares `concurrency: optimistic`, and
+# every other authored byte — steps, statements, binds, table state, round trips —
+# is identical. The two goldens agreeing IS the observation. The `locking`
+# counterpart of the same split, whose close is ungated, is -019's document-layout
+# sibling and -002/-007's terminate pair.
 #
 # The optimistic gate rides the GOLDEN close directly (no `observedTxStart` token on the
 # writeSequence step): the writeSequence steps are identical to -001's, self-
-# describing the optimistic mode via `when.uow.concurrency` (descriptive only —
+# describing the preference via `when.uow.concurrency` (descriptive only —
 # the harness executes the authored golden SQL either way, `compatibility-case.
-# schema.json`); only the close statement in `then.statements` carries the
+# schema.json`); the close statement in `then.statements` carries the
 # trailing `and in_z = ?` gate, whose bind is drawn from the
 # currently-open row.
 #

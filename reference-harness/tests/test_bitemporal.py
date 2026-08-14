@@ -279,7 +279,7 @@ def test_ungated_close_with_a_trailing_bind_but_no_gate_predicate_is_rejected() 
     # observed rectangle's in_z exactly — is a shape mismatch (4 placeholders, 5 binds),
     # which a branch keyed on bind length would tolerate as "gated". It MUST raise.
     case = copy.deepcopy(
-        next(c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-006"))
+        next(c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-007"))
     )
     # Sanity: as authored the plain split cross-checks cleanly.
     _assert_write_input_columns(case, "postgres")

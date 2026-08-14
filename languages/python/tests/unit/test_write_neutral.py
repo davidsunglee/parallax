@@ -21,8 +21,7 @@ import pytest
 from _transact_support import (
     ACCOUNT,
     BALANCE,
-    FIND_SQL,
-    FIND_SQL_NO_LOCK,
+    FIND_SQL_UNLOCKED,
     RecordingPort,
     account_db,
     db_for,
@@ -56,7 +55,9 @@ from parallax.snapshot.handle import (
 )
 
 ACCOUNT_META = model_of(ACCOUNT)
-UPDATE_SQL = "update account set balance = %s, version = %s where id = %s"
+# `Account` is versioned, so the default `optimistic` preference resolves it to
+# the Optimistic strategy and every keyed update binds the observed version last.
+UPDATE_SQL = "update account set balance = %s, version = %s where id = %s and version = %s"
 ACCOUNT_ROW: Row = {"id": 3, "owner": "Grace", "balance": Decimal("10"), "version": 1}
 
 
@@ -106,7 +107,7 @@ def test_a_participating_row_read_publishes_the_rows_it_materialized() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
     rows = _run(port, lambda tx: tx.read_rows(_account_query()).rows)
     assert list(rows) == [ACCOUNT_ROW]
-    assert port.ops == [("begin",), ("read", FIND_SQL, (3,)), ("commit",)]
+    assert port.ops == [("begin",), ("read", FIND_SQL_UNLOCKED, (3,)), ("commit",)]
 
 
 def test_a_published_row_is_detached_from_the_mapping_it_was_built_from() -> None:
@@ -120,7 +121,7 @@ def test_a_published_row_is_detached_from_the_mapping_it_was_built_from() -> Non
 def test_a_standalone_bridge_read_takes_no_lock_and_files_no_record() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
     snapshot = account_db(port).wire.find(_account_query())
-    assert port.ops == [("read", FIND_SQL_NO_LOCK, (3,))]
+    assert port.ops == [("read", FIND_SQL_UNLOCKED, (3,))]
     assert snapshot.execution.round_trips == 1
 
 
@@ -135,7 +136,7 @@ def test_a_participating_bridge_read_answers_the_slot_the_unit_of_work_filed() -
         return read.observations[0].key
 
     assert cast("ObservationKey", _run(port, fn)) == _account_slot()
-    assert port.ops == [("begin",), ("read", FIND_SQL, (3,)), ("commit",)]
+    assert port.ops == [("begin",), ("read", FIND_SQL_UNLOCKED, (3,)), ("commit",)]
 
 
 def test_a_participating_read_force_flushes_pending_bridge_writes_first() -> None:
@@ -175,7 +176,7 @@ def test_an_explicit_observation_licenses_the_version_advance() -> None:
             _update(11), observation=VersionObservation(observed_version=1)
         ),
     )
-    assert port.ops[1][1:] == (UPDATE_SQL, (11, 2, 3))
+    assert port.ops[1][1:] == (UPDATE_SQL, (11, 2, 3, 1))
 
 
 def test_an_observation_key_resolves_against_this_units_own_record() -> None:
@@ -187,7 +188,7 @@ def test_an_observation_key_resolves_against_this_units_own_record() -> None:
 
     _run(port, fn)
     assert [op[0] for op in port.ops] == ["begin", "read", "write", "commit"]
-    assert port.ops[2][1:] == (UPDATE_SQL, (11, 2, 3))
+    assert port.ops[2][1:] == (UPDATE_SQL, (11, 2, 3, 1))
 
 
 # --------------------------------------------------------------------------- #

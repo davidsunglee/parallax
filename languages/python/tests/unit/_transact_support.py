@@ -34,8 +34,8 @@ __all__ = [
     "ACCOUNT",
     "BALANCE",
     "CONTACT",
-    "FIND_SQL",
-    "FIND_SQL_NO_LOCK",
+    "FIND_SQL_LOCKED",
+    "FIND_SQL_UNLOCKED",
     "FIXED",
     "INFINITY_INSTANT",
     "INSERT_SQL",
@@ -116,12 +116,15 @@ INSERT_SQL = POSTGRES.to_driver_sql(
 )
 
 
-FIND_SQL = POSTGRES.to_driver_sql(
+# `Account` declares an explicit version, so a participating find of one takes
+# the shared lock only under the `locking` preference; the default `optimistic`
+# preference resolves it to the Optimistic strategy, whose gate is the authority.
+FIND_SQL_LOCKED = POSTGRES.to_driver_sql(
     "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0"
 )
 
 
-FIND_SQL_NO_LOCK = POSTGRES.to_driver_sql(
+FIND_SQL_UNLOCKED = POSTGRES.to_driver_sql(
     "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?"
 )
 

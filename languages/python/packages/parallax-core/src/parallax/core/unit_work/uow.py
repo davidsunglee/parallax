@@ -119,9 +119,15 @@ class RollbackOnlyError(UnitOfWorkError):
 
 @dataclass(frozen=True, slots=True)
 class TransactionSettings:
-    """A unit of work's fixed participation mode."""
+    """A unit of work's fixed Concurrency Preference.
 
-    concurrency: Concurrency = "locking"
+    The default is `optimistic` (`m-unit-work` "Strategy selection"): a
+    preference, not a uniform strategy — each Entity's own Optimistic Lock Facet
+    decides whether it yields Optimistic or the mandatory Locking fallback
+    (`m-opt-lock`).
+    """
+
+    concurrency: Concurrency = "optimistic"
 
 
 class UnitOfWork:

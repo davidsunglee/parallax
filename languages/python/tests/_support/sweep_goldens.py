@@ -310,6 +310,13 @@ _WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n
 _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-batch-write-005", "m-batch-write-006", "m-batch-write-007"}
 )
+# The Locking-fallback scenario (`m-opt-lock-023`): an unversioned Non-Temporal
+# target under the DEFAULT Concurrency Preference, whose participating find takes
+# the shared row lock and whose keyed update is ungated. Fully authored and
+# compile-eligible — the update needs no observation, so no bind depends on a
+# query result — so both lanes grade the pair of statements the derivation
+# produces.
+_LOCKING_FALLBACK_SCENARIOS: Final[frozenset[str]] = frozenset({"m-opt-lock-023"})
 # Compile-eligible non-temporal optimistic-locking and key-generation writes:
 # versioned advance (m-opt-lock-002), the inheritance-family keyed write family
 # (table-per-hierarchy tag derivation/guard, table-per-concrete-subtype own-table
@@ -533,6 +540,7 @@ WRITE_EXERCISED: Final[frozenset[str]] = (
     | _TEMPORAL_WRITE_SEQUENCES
     | _TEMPORAL_COALESCING_SCENARIOS
     | _READLESS_PREDICATE_WRITE_SCENARIOS
+    | _LOCKING_FALLBACK_SCENARIOS
     | _PIN_CONTRAST_SCENARIOS
     | _PER_VIEW_PIN_SCENARIOS
 )

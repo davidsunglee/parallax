@@ -387,8 +387,12 @@ class Database:
 
         Every option is sentinel-backed (spec §5): ``None`` means *apply the
         outermost defaults when this call opens the transaction* (``retries=10``,
-        ``concurrency="locking"``, ``retry_optimistic_conflicts=False``) *and
-        inherit the active transaction's settings when it joins one*. A call
+        ``concurrency="optimistic"``, ``retry_optimistic_conflicts=False``) *and
+        inherit the active transaction's settings when it joins one*.
+        ``concurrency`` is a Concurrency PREFERENCE: each Entity's own Optimistic
+        Lock Facet decides whether it participates optimistically or falls back
+        to the shared read lock, so one transaction mixes both (`m-unit-work`
+        "Strategy selection"). A call
         while a transaction is active on the current thread joins it, but only
         through the exact ``Database`` that opened the boundary — any other
         handle raises :class:`TransactionOwnershipError` before every later
@@ -445,7 +449,7 @@ class Database:
             return TransactionResult(value=joined, execution_log=demarcation.tx.execution_log)
         options = _ResolvedOptions(
             retries=retries if retries is not None else 10,
-            concurrency=concurrency if concurrency is not None else "locking",
+            concurrency=concurrency if concurrency is not None else "optimistic",
             retry_optimistic_conflicts=(
                 retry_optimistic_conflicts if retry_optimistic_conflicts is not None else False
             ),

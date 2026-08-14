@@ -34,8 +34,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
-      binds: ["2024-09-01T00:00:00+00:00", 1, infinity]
+        postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+      binds: ["2024-09-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00"]
     - sql:
         postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
       binds: [1, A, 175.00, "2024-09-01T00:00:00+00:00", infinity]

@@ -40,7 +40,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from parallax.core import opt_lock, read_lock
+from parallax.core import opt_lock
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
 from parallax.core.entity import (
@@ -646,7 +646,8 @@ class Transaction:
         read interfaces run.
 
         The gate precedes the force-flush ``uow.read`` performs, so a refused
-        read flushes nothing; the participation mode derives the lock; and the
+        read flushes nothing; each level derives its own lock from this unit of
+        work's Concurrency Preference and that level's own Entity; and the
         Read Trace bracket opens BEFORE that flush, so a batch the flush produces
         is appended first and the trace this read closes lands immediately after
         it — the read-dependency causality the Execution Log states positionally
@@ -654,7 +655,6 @@ class Transaction:
         answers none, which is why its branch returns before the record.
         """
         preflight(node, model=self._meta, form="graph")
-        lock = read_lock.mode_for(self._uow.settings.concurrency)
         if scans_an_axis(node):
             with self._attempt.read_trace() as recorder:
                 history_result = self._uow.read(
@@ -671,7 +671,7 @@ class Transaction:
                     self._meta,
                     self._dialect,
                     self._conn,
-                    lock=lock,
+                    preference=self._uow.settings.concurrency,
                     observations=observations,
                     recorder=recorder,
                 )
@@ -700,9 +700,9 @@ class Transaction:
 
         The values lane's peer of :meth:`find`, participating in three of the
         same four ways: it force-flushes pending writes first
-        (read-your-own-writes), renders the transaction's own read-lock suffix
-        from its participation mode, and appends its Read Trace to this attempt
-        in the position that states the read-dependency causality.
+        (read-your-own-writes), renders the read-lock suffix its target Entity's
+        Effective Concurrency Strategy calls for, and appends its Read Trace to
+        this attempt in the position that states the read-dependency causality.
 
         It records NO observation. The values lane projects scalars only, so a
         Predecessor Row read off it would be incomplete under Relational Document
@@ -714,7 +714,6 @@ class Transaction:
         # that read force-flushes pending buffered writes, so a refused read must
         # be refused before it or a refusal turns into a write.
         preflight(query, model=self._meta, form="rows")
-        lock = read_lock.mode_for(self._uow.settings.concurrency)
         # The bracket opens BEFORE the force-flush, exactly as `find`'s does, so
         # a dependency batch lands immediately before the trace it enabled.
         with self._attempt.read_trace() as recorder:
@@ -724,7 +723,7 @@ class Transaction:
                     self._meta,
                     self._dialect,
                     self._conn,
-                    lock=lock,
+                    preference=self._uow.settings.concurrency,
                     recorder=recorder,
                 )
             )

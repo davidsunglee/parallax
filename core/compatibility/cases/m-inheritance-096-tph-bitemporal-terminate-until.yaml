@@ -24,6 +24,8 @@ model: models/instrument.yaml
 tags: [m-inheritance, m-bitemp-write, m-sql, table-per-hierarchy, tag, temporal, bitemporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
+  uow:
+    concurrency: locking
   writeSequence:
     - mutation: insert
       entity: parallax.compatibility.Stock

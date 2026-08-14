@@ -15,7 +15,7 @@
 #   step 2 find  : cache HIT (0 round trips) — the SAME row, unchanged
 # Because nothing was written, the version does NOT advance and the row is byte-
 # identical to the loaded fixture (Ada, 100.00, version 1). The step-0 find runs in
-# the DEFAULT `locking` mode, so it carries the m-read-lock shared-row-lock suffix
+# the declared `locking` preference, so it carries the m-read-lock shared-row-lock suffix
 # (`for share of t0`); the lock releases with that unit of work — it is never held
 # across the detached edit. roundTrips = 1 (the single find; the no-op merge and the
 # cache hit cost nothing).
@@ -23,6 +23,8 @@ model: models/account.yaml
 tags: [m-detach, m-unit-work, no-op, scenario, slice-managed-1]
 shape: scenario
 when:
+  uow:
+    concurrency: locking
   scenario:
     - objectQuery:
         target: parallax.compatibility.Account

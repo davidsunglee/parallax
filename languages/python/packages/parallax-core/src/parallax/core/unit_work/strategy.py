@@ -69,7 +69,13 @@ __all__ = [
     "capture_subject_identity",
 ]
 
-# The per-unit-of-work participation mode (`m-unit-work` "Strategy selection").
+# The closed two-valued concurrency vocabulary (`m-unit-work` "Strategy
+# selection"). ONE name spells two related things: the unit of work's resolved
+# Concurrency PREFERENCE, and the Effective Concurrency STRATEGY `m-opt-lock`
+# derives per Entity from that preference and the Entity's Optimistic Lock
+# Facet. They coincide in spelling and differ in scope — a preference is
+# transaction-wide, a strategy is per Entity — so a signature naming this type
+# says which one it means.
 # Declared here, rather than on the unit-of-work shell that names it first in
 # prose, because every strategy port switches on it and both the shell
 # (`uow.py`) and the planner (`write_planner.py`) need the same value: defining
@@ -277,21 +283,29 @@ class BatchingStrategy(Protocol):
 
 @runtime_checkable
 class ConcurrencyStrategy(Protocol):
-    """How one transaction's concurrency mode settles a versioned write's gate
-    and version arithmetic (`m-opt-lock`).
+    """How one transaction's Concurrency Preference settles a versioned write's
+    gate and version arithmetic (`m-opt-lock`).
 
     Every method mirrors one `m-opt-lock` policy question the planner cannot
     answer itself, because the module DAG runs `m-opt-lock --> m-unit-work`:
-    which Attribute (if any) carries an entity's optimistic version, whether
-    the mode renders a gate at all, the derived initial and advanced version
+    which Attribute (if any) carries an entity's optimistic version, whether the
+    write's own Entity gates at all, the derived initial and advanced version
     values, whether a required version was actually observed, and whether a row
     still authors an explicit version value. Each raises the policy's own error
     on refusal; the planner never inspects or re-raises a specific type.
+
+    ``gates`` takes the write's own Entity beside the preference because a gate
+    is settled per Entity, not per transaction: the preference combines with
+    that Entity's Optimistic Lock Facet into its Effective Concurrency
+    Strategy, and only the Optimistic one gates. The planner passes the
+    DECLARING entity — the family root, which is where both the version source
+    and the As-Of Axes are declared — exactly as it does to
+    ``version_attribute``.
     """
 
     def version_attribute(self, entity: EntityMetadata) -> AttributeIdentity | None: ...
 
-    def gates(self, concurrency: Concurrency) -> bool: ...
+    def gates(self, concurrency: Concurrency, entity: EntityMetadata) -> bool: ...
 
     def initial_version(self) -> int: ...
 

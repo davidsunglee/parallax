@@ -13,6 +13,8 @@
 # The trailing find keys on the NEW owner value (owner = 'Updated') and expects the two
 # rows the predicate touched (id 1 and 3, now Updated / 150.00), proving the update
 # applied to exactly the matching set. Total roundTrips 2 = write (1) + verify read (1).
+# Wallet is unversioned, so the default `optimistic` preference resolves the verifying
+# find to the Locking fallback and it carries the shared-row-lock suffix.
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, m-unit-work, predicate-write, readless, scenario, slice-snapshot-1]
 shape: scenario
@@ -41,7 +43,7 @@ when:
       roundTrips: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.owner = ?
+            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.owner = ? for share of t0
           binds: [Updated]
       referenceSql: select id, owner, balance from wallet where owner = 'Updated'
       expectRows:

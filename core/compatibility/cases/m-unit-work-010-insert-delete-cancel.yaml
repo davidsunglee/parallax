@@ -9,7 +9,7 @@
 # two CANCEL, so the flush emits NOTHING — no golden SQL, 0 round trips (the net-zero
 # effective-change-set elision extended across two verbs). The 0-round-trip flush IS
 # the observable proof: executing the INSERT then the DELETE would cost 2 round trips.
-# Step 1 finds account 9 ABSENT — never persisted (default `locking` mode, so the find
+# Step 1 finds account 9 ABSENT — never persisted (the declared `locking` preference, so the find
 # carries the m-read-lock shared-row-lock suffix `for share of t0`). Account is
 # non-temporal: the buffered writes carry no Valid-Time bound or Transaction-Time
 # instant.
@@ -19,6 +19,8 @@ shape: scenario
 given:
   fixtures: true
 when:
+  uow:
+    concurrency: locking
   scenario:
     - write:
         - mutation: insert

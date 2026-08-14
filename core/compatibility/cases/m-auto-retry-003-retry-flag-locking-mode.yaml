@@ -2,7 +2,7 @@
 # there is no gate to conflict on — `api-conformance` lane.
 #
 # The conflict-retry opt-in only matters where a version gate can conflict — i.e.
-# optimistic mode. Under the default `locking` strategy a versioned keyed update is
+# optimistic mode. Under the declared `locking` preference a versioned keyed update is
 # the UNGATED version-advancing form (`m-opt-lock-002`): the shared read lock, not a version
 # check, makes the write correct, so no conflict can arise. Setting
 # `retryOptimisticConflicts: true` on a locking unit of work is therefore a NO-OP —

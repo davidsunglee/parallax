@@ -234,11 +234,12 @@ def test_table_observation_refuses_a_table_the_model_does_not_map() -> None:
 
 def test_multi_attribute_audit_update_chains_all_new_values() -> None:
     # m-txtime-write-004: a multi-attribute correction (acct + value). The close touches
-    # ONLY out_z; the chained INSERT carries the entity's FULL physical row with EVERY
+    # ONLY out_z — under the case's default preference it also gates on the observed
+    # in_z — while the chained INSERT carries the entity's FULL physical row with EVERY
     # new value (Family B — a milestone always writes the whole row).
     case = _write_case_by_id("m-txtime-write-004")
     close, chain = case.golden_statements("postgres")[1], case.golden_statements("postgres")[2]
-    assert close == "update balance set out_z = ? where bal_id = ? and out_z = ?"
+    assert close == "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     assert chain.startswith("insert into balance(bal_id, acct_num, val, in_z, out_z)")
     # The chained INSERT binds carry BOTH corrected attributes (acct B, value 250.00).
     assert case.statement_binds(2)[:3] == [1, "B", 250.00]

@@ -10,7 +10,7 @@ rediscovers a version column. Consumers reach the facet through :func:`view`, so
 generic facet retrieval stays an internal formation seam.
 ``m-opt-lock`` depends on ``m-unit-work``, ``m-temporal-read``, ``m-metamodel``,
 ``m-model-formation``, and ``m-inheritance``.
-Four normative pieces (`core/spec/
+Five normative pieces (`core/spec/
 m-opt-lock.md`; `python.md` §5; ADR 0013):
 
 1. **No-op-first.** An update whose effective change set is empty is dropped
@@ -27,12 +27,20 @@ m-opt-lock.md`; `python.md` §5; ADR 0013):
    this unit of work; unobserved raises before any DML. Caller-authored version
    values are never accepted as gate or new version — the observed value is the
    only legitimate source, and the new version is always ``observed + 1``.
-3. **Gate/advance** (:data:`INITIAL_VERSION`, :func:`advance`, :func:`gates`):
-   every versioned UPDATE sets ``version = observed + 1`` in BOTH modes;
-   optimistic mode additionally gates ``and <version> = ?`` binding the
-   observed value LAST. INSERT derives the initial version unconditionally
-   (never a row-carried value).
-4. **Conflict classification policy**: this module decides only which shortfall
+3. **Gate/advance** (:data:`INITIAL_VERSION`, :func:`advance`): every versioned
+   UPDATE sets ``version = observed + 1`` under BOTH strategies; the Optimistic
+   strategy additionally gates ``and <version> = ?`` binding the observed value
+   LAST. INSERT derives the initial version unconditionally (never a
+   row-carried value).
+4. **Effective Concurrency Strategy** (:func:`effective_strategy`): the unit of
+   work resolves ONE Concurrency Preference, and this module derives the
+   strategy each Entity actually participates under by combining that
+   preference with the Entity's own Optimistic Lock Facet. An unversioned
+   Non-Temporal family supplies no gate, so it falls back to `m-read-lock`'s
+   shared lock even under the `optimistic` preference; one transaction
+   therefore mixes strategies across Entities without any per-object
+   bookkeeping (`m-unit-work` "Strategy selection"; ADR 0059).
+5. **Conflict classification policy**: this module decides only which shortfall
    tag a write's settled gate earns — a GATED write's shortfall is the
    retriable-when-opted-in optimistic conflict, an UNGATED
    observation-requiring one the distinct non-retriable stale write, because a
@@ -106,7 +114,7 @@ __all__ = [
     "Unversioned",
     "advance",
     "compile_facet",
-    "gates",
+    "effective_strategy",
     "reject_caller_authored_version",
     "require_observed",
     "require_observed_milestone",
@@ -212,18 +220,29 @@ def advance(observed: int) -> int:
     return observed + 1
 
 
-def gates(concurrency: Concurrency) -> bool:
-    """Whether ``concurrency`` emits an observation-bound gate predicate.
+def effective_strategy(preference: Concurrency, key: OptimisticKey | None) -> Concurrency:
+    """The Effective Concurrency Strategy an Entity whose Optimistic Lock Facet
+    answers ``key`` participates under, given the unit of work's resolved
+    Concurrency Preference (`m-unit-work` "Strategy selection"; ADR 0059).
 
-    The answer is UNIFORM across every observation-requiring write — a
-    versioned keyed UPDATE, a versioned keyed DELETE, and a temporal close all
-    consult this one decision (`m-opt-lock` "Concurrency mode determines the
-    gate uniformly"), so a gate's presence never depends on the mutation kind.
-    Optimistic mode only — the version still advances in the ``set`` of BOTH
-    modes (`m-opt-lock` "The version column"); locking mode's shared read lock
-    is what makes an ungated write correct.
+    The preference is the caller's ergonomic choice and this is the safe result
+    derived from it. ``locking`` forces the Locking strategy on every Entity —
+    the workflow-level override. ``optimistic`` means *gate-preferred*, not
+    lock-free: an Entity whose family supplies a version source (an explicit
+    version Attribute, or a Transaction-Time milestone start) participates
+    optimistically, while an unversioned Non-Temporal family has no gate to
+    recover correctness with and therefore falls back to `m-read-lock`'s shared
+    lock. One transaction consequently mixes strategies across Entities, and
+    every consumer — read-lock derivation per deep-fetch level, gate settlement
+    per planned write, write-evidence rules — resolves through this one
+    function rather than reading the preference directly.
+
+    An Identity the facet does not name has no key and takes the same Locking
+    fallback: an unrecognized Entity is never granted a gate it cannot supply.
     """
-    return concurrency == "optimistic"
+    if preference == "locking":
+        return "locking"
+    return "optimistic" if isinstance(key, ExplicitVersion | TransactionTimeDerived) else "locking"
 
 
 def reject_caller_authored_version(entity: str, version_attr: str) -> None:

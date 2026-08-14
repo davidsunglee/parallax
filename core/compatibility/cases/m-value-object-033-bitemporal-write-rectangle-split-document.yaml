@@ -89,9 +89,9 @@ then:
           phones:
             - { type: main, number: '555-1000' }
     - sql:
-        postgres: update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ?
-        mariadb: update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ?
-      binds: ["2024-02-15T00:00:00+00:00", 1, infinity, infinity]
+        postgres: update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ? and in_z = ?
+        mariadb: update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ? and in_z = ?
+      binds: ["2024-02-15T00:00:00+00:00", 1, infinity, infinity, "2024-01-01T00:00:00+00:00"]
     - sql:
         postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
         mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)

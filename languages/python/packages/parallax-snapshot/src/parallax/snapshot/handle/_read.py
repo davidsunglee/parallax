@@ -69,7 +69,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
-from parallax.core import deep_fetch, inheritance
+from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
 from parallax.core import predicate as predicate_algebra
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
@@ -88,6 +88,7 @@ from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, MaterializedReadRow, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, query_pin
+from parallax.core.unit_work import Concurrency
 from parallax.snapshot._read_result import (
     FindResult,
     HistoryFindResult,
@@ -132,6 +133,7 @@ __all__ = [
     "Snapshot",
     "StagedRows",
     "TooManyResultsFound",
+    "entity_read_lock",
     "find",
     "find_history",
     "find_rows",
@@ -368,6 +370,31 @@ class ObservationCollector(Protocol):
         ...
 
 
+def entity_read_lock(
+    meta: Metamodel, entity: EntityIdentity, preference: Concurrency | None
+) -> LockMode | None:
+    """The read-lock mode a participating read of ``entity`` carries, composed
+    from the two policies this scope legally names at once.
+
+    The lock follows the ENTITY, not the query: `m-opt-lock` derives that
+    Entity's Effective Concurrency Strategy from the unit of work's one
+    Concurrency Preference and the Entity's own Optimistic Lock Facet, and
+    `m-read-lock` maps the derived strategy to the `m-dialect` lock parameter.
+    So one transaction's deep fetch locks its unversioned levels while leaving
+    its versioned and temporal ones lock-free, and the same level locks or not
+    depending on the model rather than on the call.
+
+    ``preference`` is ``None`` for a read no unit of work owns — a standalone
+    :meth:`~parallax.snapshot.handle.Database.find` — which has no participation
+    to derive a strategy from and therefore never locks.
+    """
+    if preference is None:
+        return None
+    return read_lock.mode_for(
+        opt_lock.effective_strategy(preference, opt_lock.view(meta).key(entity))
+    )
+
+
 def _new_roots() -> list[SnapshotNodeRef]:
     return []
 
@@ -388,7 +415,7 @@ def find(
     dialect: Dialect,
     port: DbPort,
     *,
-    lock: LockMode | None = None,
+    preference: Concurrency | None = None,
     observations: ObservationCollector | None = None,
     recorder: TraceRecorder | None = None,
 ) -> FindResult:
@@ -423,6 +450,13 @@ def find(
     references in result order, and the query's own lowered pin — plus the
     read's own sealed Read Trace.
 
+    ``preference`` is the owning unit of work's Concurrency Preference, and
+    EVERY level derives its own read lock from it against that level's own
+    target Entity (:func:`entity_read_lock`): a versioned root reads lock-free
+    while an unversioned included Entity in the same transaction takes the
+    shared lock. Omitting it is how a non-transactional read locks nothing at
+    all.
+
     ``observations``, when supplied, takes every materialized row (root and each
     attached level) as the level materializes it, so a caller with a unit of work
     behind it can record what a later write needs. Omitting it is how a
@@ -440,7 +474,13 @@ def find(
     calls = recorder if recorder is not None else TraceRecorder()
     scope = MergeScope(meta)
 
-    root_compiled = compile_read(plan_.root, meta, dialect, result_form="instance", lock=lock)
+    root_compiled = compile_read(
+        plan_.root,
+        meta,
+        dialect,
+        result_form="instance",
+        lock=entity_read_lock(meta, root_entity.identity, preference),
+    )
     root_refs = _convert_level(scope, port, dialect, root_compiled, calls, observations)
 
     level_refs: list[tuple[SnapshotNodeRef, ...]] = []
@@ -461,7 +501,7 @@ def find(
             meta,
             dialect,
             result_form="instance",
-            lock=lock,
+            lock=entity_read_lock(meta, child_query.target, preference),
         )
         child_refs = _convert_level(scope, port, dialect, child_compiled, calls, observations)
         _attach_children(scope, meta, level, parents, child_refs)
@@ -564,7 +604,7 @@ def read_rows(
     dialect: Dialect,
     port: DbPort,
     *,
-    lock: LockMode | None = None,
+    preference: Concurrency | None = None,
     recorder: TraceRecorder | None = None,
 ) -> RowsResult:
     """Preflight ``query`` and run it through the values lane — the STANDALONE
@@ -576,7 +616,7 @@ def read_rows(
     because it must gate BEFORE the force-flush that stands between them.
     """
     preflight(query, model=meta, form="rows")
-    return find_rows(query, meta, dialect, port, lock=lock, recorder=recorder)
+    return find_rows(query, meta, dialect, port, preference=preference, recorder=recorder)
 
 
 def find_rows(
@@ -585,7 +625,7 @@ def find_rows(
     dialect: Dialect,
     port: DbPort,
     *,
-    lock: LockMode | None = None,
+    preference: Concurrency | None = None,
     recorder: TraceRecorder | None = None,
 ) -> RowsResult:
     """The row-form read: one statement, its rows transformed, no graph.
@@ -610,7 +650,13 @@ def find_rows(
     """
     root_entity = _metadata(meta, query.target.canonical)
     plan_ = deep_fetch.plan(root_entity, query, meta)
-    compiled = compile_read(plan_.root, meta, dialect, result_form="row", lock=lock)
+    compiled = compile_read(
+        plan_.root,
+        meta,
+        dialect,
+        result_form="row",
+        lock=entity_read_lock(meta, root_entity.identity, preference),
+    )
     calls = recorder if recorder is not None else TraceRecorder()
     rows = execute_read(
         port,

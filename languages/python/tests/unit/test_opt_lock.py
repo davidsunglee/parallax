@@ -3,7 +3,8 @@
 Direct, isolated pins for the pure policy scope ``parallax.snapshot.handle``'s
 write-lowering seam consumes: the observed-version requirement
 (:func:`require_observed`), the runtime-computed advance (:func:`advance`), the
-optimistic-only gate decision (:func:`gates`), and the derived initial version.
+per-Entity strategy derivation (:func:`effective_strategy`), and the derived
+initial version.
 The corpus-level composition (the gate and advance wired through real DML) is
 pinned in ``test_write_lowering.py``; this file is the policy scope's own,
 narrower unit boundary.
@@ -14,10 +15,18 @@ from __future__ import annotations
 import pytest
 
 from parallax.core import opt_lock
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.unit_work import (
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
+)
+
+_VERSION = AttributeIdentity(
+    entity=EntityIdentity(namespace="parallax.compatibility", name="Account"), name="version"
+)
+_TX_START = AttributeIdentity(
+    entity=EntityIdentity(namespace="parallax.compatibility", name="Balance"), name="txStart"
 )
 
 
@@ -36,9 +45,34 @@ def test_advance_is_runtime_computed_from_the_observed_value() -> None:
     assert opt_lock.advance(0) == 1
 
 
-def test_gates_only_in_optimistic_mode() -> None:
-    assert opt_lock.gates("optimistic") is True
-    assert opt_lock.gates("locking") is False
+class TestEffectiveStrategy:
+    def test_the_locking_preference_forces_locking_on_every_key(self) -> None:
+        assert opt_lock.effective_strategy("locking", opt_lock.UNVERSIONED) == "locking"
+        assert (
+            opt_lock.effective_strategy("locking", opt_lock.ExplicitVersion(_VERSION)) == "locking"
+        )
+        assert (
+            opt_lock.effective_strategy("locking", opt_lock.TransactionTimeDerived(_TX_START))
+            == "locking"
+        )
+
+    def test_the_optimistic_preference_gates_wherever_the_model_supplies_a_version(self) -> None:
+        assert (
+            opt_lock.effective_strategy("optimistic", opt_lock.ExplicitVersion(_VERSION))
+            == "optimistic"
+        )
+        assert (
+            opt_lock.effective_strategy("optimistic", opt_lock.TransactionTimeDerived(_TX_START))
+            == "optimistic"
+        )
+
+    def test_an_unversioned_family_falls_back_to_locking_under_the_optimistic_preference(
+        self,
+    ) -> None:
+        assert opt_lock.effective_strategy("optimistic", opt_lock.UNVERSIONED) == "locking"
+
+    def test_an_entity_the_facet_does_not_name_takes_the_same_locking_fallback(self) -> None:
+        assert opt_lock.effective_strategy("optimistic", None) == "locking"
 
 
 class TestRequireObserved:

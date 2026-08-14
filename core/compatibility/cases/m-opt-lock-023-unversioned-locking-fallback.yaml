@@ -1,0 +1,84 @@
+# The mandatory Locking fallback under the DEFAULT Concurrency Preference
+# (m-unit-work "Strategy selection"; m-opt-lock; m-read-lock).
+#
+# The preference a unit of work resolves is not the strategy an Entity
+# participates under: the runtime combines it with that Entity's Optimistic Lock
+# Facet. Wallet is Account minus the `version` column and carries no As-Of Axis,
+# so its family supplies NO version source and no gate can recover correctness at
+# write time. `optimistic` therefore cannot mean lock-free for it, and the
+# derivation lands on Locking — the shared read lock is the only mechanism the
+# model leaves.
+#
+# The case declares no `when.uow`, so it runs under the resolved DEFAULT
+# preference (`optimistic`), and the observation is the pair of consequences that
+# preference produces for THIS Entity:
+#   step 0 find  : the participating object find carries the m-read-lock
+#                  shared-row-lock suffix (`for share of t0`), exactly as an
+#                  explicit `locking` preference would render it — the SAME read
+#                  that renders none against the versioned Account of
+#                  m-unit-work-005.
+#   step 1 write : the keyed UPDATE of that locked row is UNGATED and advances no
+#                  version, because there is none to advance or bind. Its
+#                  correctness comes from the lock step 0 took.
+#   step 2 find  : a dependent find observes the updated row (read-your-own-writes)
+#                  and takes the same shared lock.
+# All three steps share one `uow` group, so the lock step 0 acquires is still held
+# when the write lands. The contrast case is m-opt-lock-002, whose versioned
+# target renders the opposite pair — no lock, a version gate — under the SAME
+# default preference.
+model: models/wallet.yaml
+tags: [m-opt-lock, m-read-lock, m-unit-work, m-sql, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  scenario:
+    - uow: fallback
+      objectQuery:
+        target: parallax.compatibility.Wallet
+        predicate:
+          eq:
+            attr: parallax.compatibility.Wallet.id
+            value: 1
+      roundTrips: 1
+      note: observe wallet 1 inside the group; the unversioned target resolves to Locking, so the find takes the shared row lock
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.id = ? for share of t0
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00 }
+    - uow: fallback
+      write:
+        - mutation: update
+          entity: parallax.compatibility.Wallet
+          rows:
+            - { id: 1, balance: 175.00 }
+      roundTrips: 1
+      note: the keyed update of the locked row is ungated and advances no version; the unit of work commits at the group's last step below
+      statements:
+        - sql:
+            postgres: update wallet set balance = ? where id = ?
+          binds: [175.00, 1]
+    - uow: fallback
+      objectQuery:
+        target: parallax.compatibility.Wallet
+        predicate:
+          eq:
+            attr: parallax.compatibility.Wallet.id
+            value: 1
+      roundTrips: 1
+      note: a dependent find observes the updated balance and takes the same shared lock; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.id = ? for share of t0
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 175.00 }
+then:
+  roundTrips: 3
+  tableState:
+    wallet:
+      - { id: 1, owner: Ada, balance: 175.00 }
+      - { id: 2, owner: Linus, balance: 250.00 }
+      - { id: 3, owner: Grace, balance: 10.00 }

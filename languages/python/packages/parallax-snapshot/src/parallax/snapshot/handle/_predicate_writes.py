@@ -42,7 +42,7 @@ import datetime as dt
 from collections.abc import Sequence
 from typing import Any, Final, cast
 
-from parallax.core import deep_fetch, inheritance, read_lock
+from parallax.core import deep_fetch, inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
@@ -95,7 +95,11 @@ from parallax.snapshot.handle._family import (
     slot_column,
     version_attribute,
 )
-from parallax.snapshot.handle._read import execute_read, stage_publishable_rows
+from parallax.snapshot.handle._read import (
+    entity_read_lock,
+    execute_read,
+    stage_publishable_rows,
+)
 from parallax.snapshot.handle._write_inputs import (
     is_no_op_assignment,
     key_column_values,
@@ -419,10 +423,13 @@ def _materialize_predicate_write(
     compact :class:`~parallax.core.unit_work.MaterializedWriteGroup` (`m-unit-
     work` "Materialized Write Groups") at the call position. Zero resolved
     rows, or every resolved row eliminated as a no-op, means no group is
-    buffered at all. The lock suffix on the resolve derives from the
-    transaction's own concurrency mode (``locking`` ⇒ the shared read lock,
-    ``optimistic`` ⇒ none) — the SAME rule a real ``Transaction.find``
-    applies.
+    buffered at all. The lock suffix on the resolve derives from the TARGET
+    Entity's Effective Concurrency Strategy — this transaction's Concurrency
+    Preference resolved against that Entity's own Optimistic Lock Facet —
+    through the SAME seam a real ``Transaction.find`` derives it. Reaching here
+    means the target is versioned or temporal, so it is the preference alone
+    that decides: the default resolves the target to Optimistic and the resolve
+    takes no lock.
 
     A TEMPORAL target's raw predicate carries no as-of term (a
     mutation-compatible Object Query carries no temporal clause, python.md §5),
@@ -437,7 +444,7 @@ def _materialize_predicate_write(
     layout = entity_layout(meta, entity)
     if layout is None:  # pragma: no cover - a predicate-write target always owns rows
         raise ValueError(f"{entity.identity.canonical}: predicate-write target has no Table")
-    lock: LockMode | None = read_lock.mode_for(uow.settings.concurrency)
+    lock: LockMode | None = entity_read_lock(meta, entity.identity, uow.settings.concurrency)
     selection = _current_selection(entity.identity, instruction.target.predicate, declaring_entity)
     plan_ = deep_fetch.plan(entity, selection, meta)
     assignments = {

@@ -115,7 +115,7 @@ def test_join_with_equal_or_omitted_options_inherits() -> None:
         return db.transact(
             lambda _inner: "joined",
             retries=10,
-            concurrency="locking",
+            concurrency="optimistic",
             retry_optimistic_conflicts=False,
         ).value
 
@@ -128,7 +128,7 @@ def _must_not_run(_tx: Transaction) -> None:  # pragma: no cover - conflict fore
 
 _CONFLICTING_JOINS: list[tuple[str, Callable[[Database], object]]] = [
     ("retries", lambda db: db.transact(_must_not_run, retries=3)),
-    ("concurrency", lambda db: db.transact(_must_not_run, concurrency="optimistic")),
+    ("concurrency", lambda db: db.transact(_must_not_run, concurrency="locking")),
     (
         "retry_optimistic_conflicts",
         lambda db: db.transact(_must_not_run, retry_optimistic_conflicts=True),

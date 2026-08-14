@@ -5,8 +5,9 @@
 # variant. account.version is an optimistic-lock column, so a keyed UPDATE requires
 # a PRIOR observation (`m-opt-lock` "Version values are framework-owned") — the unit
 # of work first OBSERVES account 1 (Ada, balance 100.00, version 1), then commits an
-# UPDATE that advances from that observation (locking mode: no gate, version
-# advances 1 -> 2), then issues a find that depends on the update — it MUST observe
+# UPDATE that advances from that observation (version advances 1 -> 2 and, under
+# the default preference's Optimistic strategy, gates on the observed 1), then
+# issues a find that depends on the update — it MUST observe
 # the updated row, not the stale fixture value. All three steps share ONE `uow`
 # group (`observed-update`): the observing find, the versioned write, and the
 # dependent find run inside the SAME unit of work, which is what lets the write's
@@ -19,10 +20,10 @@
 #                  the OBSERVED version 1 -> 2.
 #   step 2 find  : query account 1 — it MUST observe balance 175.00, version 2. The
 #                  group COMMITS after this, its last step.
-# Every find is a cache MISS (the write step's forced flush precedes step 2) and, in
-# the DEFAULT `locking` mode, carries the m-read-lock shared-row-lock suffix
-# (`for share of t0`). roundTrips = 3 (the observing find + the committed update +
-# the dependent find).
+# Every find is a cache MISS (the write step's forced flush precedes step 2) and
+# carries no shared-row-lock suffix — the gate is the concurrency authority for a
+# versioned Entity under the default preference. roundTrips = 3 (the observing
+# find + the committed update + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
@@ -43,7 +44,7 @@ when:
       note: observe account 1 (balance 100.00, version 1) before the update, inside the SAME unit of work as the write below
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
@@ -57,8 +58,8 @@ when:
       note: buffer a keyed update of account 1 (balance 175.00), advancing the OBSERVED version 1 -> 2; the unit of work commits at the group's last step below
       statements:
         - sql:
-            postgres: update account set balance = ?, version = ? where id = ?
-          binds: [175.00, 2, 1]
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: [175.00, 2, 1, 1]
     - uow: observed-update
       objectQuery:
         target: parallax.compatibility.Account
@@ -70,7 +71,7 @@ when:
       note: a dependent find MUST observe the flushed update (read-your-own-writes); the group COMMITS after this, its last step
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: 175.00, version: 2 }

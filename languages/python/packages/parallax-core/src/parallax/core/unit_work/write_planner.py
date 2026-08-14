@@ -463,7 +463,9 @@ class WritePlanner:
             return (self._settle_insert(entity, members, instruction, version_attr),)
         observed_version = self._observed_version(entity, instruction, version_attr, observation)
         settled = _non_temporal_concurrency(
-            version_attr, observed_version, self._concurrency.gates(concurrency)
+            version_attr,
+            observed_version,
+            self._concurrency.gates(concurrency, declaring_entity),
         )
         key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
         target = _key_target(entity, key_attributes, instruction.rows)
@@ -616,7 +618,7 @@ class WritePlanner:
             gate = _temporal_gate(
                 _gate_axis(declaring_entity, topology.closure.gate_basis).start_attribute,
                 observed.predecessor,
-                self._concurrency.gates(concurrency),
+                self._concurrency.gates(concurrency, declaring_entity),
             )
             steps.append(
                 _close(
@@ -794,7 +796,7 @@ class WritePlanner:
         if version_attr is None:
             _require_unobserved(entity, group.mutation.mutation, group.observations)
         key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
-        gated = self._concurrency.gates(concurrency)
+        gated = self._concurrency.gates(concurrency, declaring_entity)
         versions = group.observations.versions
         mutation = group.mutation.mutation
         base_assignments: PlannedAssignments | None = None
@@ -845,7 +847,7 @@ class WritePlanner:
         """
         assert isinstance(group.observations, TemporalColumns)
         topology = self._temporal.topology(declaring_entity, group.mutation.mutation)
-        gated = self._concurrency.gates(concurrency)
+        gated = self._concurrency.gates(concurrency, declaring_entity)
         steps_per_row = (1 if topology.closure is not None else 0) + len(topology.successors)
         # Reaching a temporal group is what makes the attempt capture its
         # instant; every row's close end and every successor's fresh start
@@ -1198,7 +1200,7 @@ def plan_temporal_close(
     key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
     _refuse_unaddressing_identity(entity, key_attributes, identity)
     gate: TemporalConcurrency = UNGATED
-    if observed_tx_start is not None and concurrency_strategy.gates(concurrency):
+    if observed_tx_start is not None and concurrency_strategy.gates(concurrency, declaring_entity):
         gate = TemporalGate(
             start_attribute=_tx_time_axis(declaring_entity).start_attribute,
             observed_start=observed_tx_start,
