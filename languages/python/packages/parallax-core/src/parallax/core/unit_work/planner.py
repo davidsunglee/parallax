@@ -42,11 +42,13 @@ from parallax.core.unit_work.observe import TemporalObservation, WriteObservatio
 __all__ = [
     "BufferItem",
     "ObjectKey",
-    "ObservationKey",
+    "ObservedStateKey",
     "Targets",
+    "TemporalStateKey",
+    "VersionedStateKey",
     "buffered_instruction",
     "object_key",
-    "observation_key",
+    "observed_state_key",
     "primary_key_names",
     "resolve_object_key",
     "targets",
@@ -57,7 +59,11 @@ __all__ = [
 class ObjectKey:
     """One object's identity: its Entity and its ordered
     ``(pk-attribute-name, value)`` pairs. The coalescing scope is keyed by it,
-    and it is the identity half of an :class:`ObservationKey`.
+    and it is the identity half of every :data:`ObservedStateKey`.
+
+    It is deliberately STATE-independent — no version, no milestone — so it
+    addresses the object across its states, which is what write coalescing,
+    cancellation, and buffered-insert recognition each ask about.
 
     ``entity`` is the structured Entity Identity rather than a spelling of one,
     so no producer stringifies an identity it already holds and two entities
@@ -70,49 +76,61 @@ class ObjectKey:
 
 
 @dataclass(frozen=True, slots=True)
-class ObservationKey:
-    """What one Write Observation is filed under: the object it observed AND the
-    milestone it observed of that object.
+class VersionedStateKey:
+    """One exact observed state of a versioned Non-Temporal object: the object,
+    and the optimistic-lock version the read saw it at.
+
+    The version is part of the key rather than payload beside it, so two reads
+    that saw two generations of one row address two states and neither can erase
+    the other's evidence.
+    """
+
+    object: ObjectKey
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalStateKey:
+    """One exact observed state of a temporal object: the object, and the
+    milestone the read saw it at.
 
     A milestone chain holds more than one row per primary key at a time, so
-    identity alone cannot address the evidence a write needs: two reads of one
-    key at different as-of coordinates observe two different rows, and a slot
-    keyed by identity alone would let the second erase the first. Qualifying the
-    slot by the observed milestone's own coordinate makes each read evidence
-    about the row it actually saw.
-
-    Two reads of ONE milestone at different pins share one coordinate and
-    therefore one slot, and the overwrite loses nothing: an observation records
-    the row that was read and nothing about the read that reached it, so the
-    two are equal.
-
-    ``milestone`` is absent for a versioned Non-Temporal row, which has exactly
-    one row per primary key and therefore needs no coordinate to be addressed.
+    identity alone cannot address the evidence a write needs. Two reads of ONE
+    milestone at different pins share one coordinate and therefore one state: an
+    observation records the row that was read and nothing about the read that
+    reached it, so the two are equal.
     """
 
-    object_key: ObjectKey
-    milestone: Edge | None
+    object: ObjectKey
+    milestone: Edge
 
 
-def observation_key(
+type ObservedStateKey = VersionedStateKey | TemporalStateKey
+"""What one Write Observation is evidence ABOUT: one exact observed state.
+
+Closed and structural. An insert and an unversioned Non-Temporal write observe
+no state and therefore have no Observed State Key at all — the absence is the
+missing arm, never a key with an empty coordinate.
+"""
+
+
+def observed_state_key(
     object_key: ObjectKey, observation: WriteObservation, declaring_entity: EntityMetadata
-) -> ObservationKey:
-    """The slot ``observation`` is filed under: ``object_key`` qualified by the
-    milestone the observation is *of*.
+) -> ObservedStateKey:
+    """The exact state ``observation`` is evidence about: ``object_key``
+    qualified by the coordinate the observation itself carries.
 
-    The coordinate is derived from the observation's OWN Predecessor Row rather
-    than supplied beside it, so a recorder cannot file an observation under a
-    milestone other than the one it is recording — the two-sides-agree property
-    holds by construction rather than by every recording site being careful.
-    A Version Observation names no milestone: a versioned Non-Temporal row has
-    exactly one row per primary key, so identity alone already addresses it.
+    The coordinate is derived from the observation's OWN evidence rather than
+    supplied beside it, so a recorder cannot file an observation under a state
+    other than the one it is recording — the two-sides-agree property holds by
+    construction rather than by every recording site being careful.
 
     ``declaring_entity`` is the family root that declares the As-Of Axes, whose
-    start Attributes name the members the coordinate is read from.
+    start Attributes name the members a temporal coordinate is read from.
     """
     if not isinstance(observation, TemporalObservation):
-        return ObservationKey(object_key, None)
-    return ObservationKey(
+        return VersionedStateKey(object_key, observation.observed_version)
+    return TemporalStateKey(
         object_key,
         milestone_edge_from_members(declaring_entity, observation.predecessor.members),
     )

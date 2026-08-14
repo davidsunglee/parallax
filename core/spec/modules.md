@@ -369,13 +369,13 @@ construction it may reference any behavioral module it harnesses.
   *reads* are algebra-level, so navigation references `m-temporal-read`, not the
   write modules.
 - **`m-unit-work --> m-temporal-read`.** A write-planning module depending on a
-  read module is the surprise, and it is load-bearing: a Write Observation is
-  filed under the object it observed **plus the observed milestone's own
+  read module is the surprise, and it is load-bearing: a temporal Observed State
+  Key addresses the object it observed **plus the observed milestone's own
   coordinate**, and that coordinate is `m-temporal-read`'s Edge. A milestone
   chain holds more than one row per primary key at a time, so identity alone
   cannot address the evidence a close needs — the unit of work therefore states
-  its observation key in the as-of read model's vocabulary rather than inventing
-  an opaque parallel one. The edge is to the read *model* only: nothing here
+  its observed-state address in the as-of read model's vocabulary rather than
+  inventing an opaque parallel one. The edge is to the read *model* only: nothing here
   reaches as-of lowering, and the direction stays one-way, since
   `m-temporal-read` names no unit-of-work construct.
 - **`m-execution-log --> m-unit-work`, `--> m-auto-retry`, `--> m-db-port`,

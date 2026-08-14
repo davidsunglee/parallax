@@ -366,8 +366,8 @@ def observable_columns(
 ) -> dict[str, object]:
     """One row's observable state, keyed by PHYSICAL column, documents decoded.
 
-    What a participating read hands its observation collector: the complete
-    persisted row a Predecessor Row requires (`m-unit-work`), with each projected
+    What a graph-form read retains evidence from: the complete persisted row a
+    Predecessor Row requires (`m-unit-work`), with each projected
     document decoded to its declared shape exactly as conversion decodes it, so a
     successor's carried-versus-changed comparison reads one spelling of a member
     rather than two.

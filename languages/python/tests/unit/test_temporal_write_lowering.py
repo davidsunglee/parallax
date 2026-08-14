@@ -68,12 +68,12 @@ from parallax.core.unit_work import (
     KeyedWrite,
     NewLineage,
     ObjectKey,
-    ObservationKey,
     PlannedClose,
     PlannedInsert,
     PredecessorRow,
     TemporalGate,
     TemporalObservation,
+    TemporalStateKey,
     TransactionSettings,
     UnitOfWork,
     WriteBatchTrigger,
@@ -91,7 +91,7 @@ from parallax.snapshot.handle import (
     lower_step,
     plan_temporal_close,
 )
-from parallax.snapshot.handle._write_inputs import ReadObservations, record_observations
+from parallax.snapshot.handle._write_inputs import ReadObservations, retain_evidence
 
 
 def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
@@ -975,6 +975,26 @@ _SPOT_QUOTE_COLUMNS: Mapping[str, object] = {
 _SPOT_QUOTE_EDGE: Final[Edge] = Edge(tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
 
 
+def _retained(
+    model: AcceptedMetamodel,
+    observations: ReadObservations,
+    uow: UnitOfWork,
+    entity: EntityIdentity,
+) -> WriteObservation | None:
+    """The evidence ``observations`` retained for the SpotQuote milestone.
+
+    Read off the source hint the retention answered, and cross-checked against
+    the unit of work's own index: the two are one object, because the index is a
+    weak view of what the sources hold rather than a second copy.
+    """
+    hint = retain_evidence(model, observations, ledger=uow)[0]
+    assert hint.observation is not None
+    state = TemporalStateKey(ObjectKey(entity, (("id", 1),)), _SPOT_QUOTE_EDGE)
+    assert hint.observation.key == state
+    assert uow.retained_for(state) is hint.observation
+    return hint.observation.evidence
+
+
 def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -> None:
     # An observation's payload comes from the row-owning Entity's OWN Table Layout
     # selection, so a member declared on a concrete subtype — SpotQuote's `symbol` —
@@ -984,13 +1004,10 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     # next milestone instead of carrying it forward.
     model, entity = _accepted("SpotQuote", QUOTE)
     observations = ReadObservations()
-    observations.observe_row(entity.identity, _SPOT_QUOTE_COLUMNS, None)
+    observations.observe_row(0, entity.identity, _SPOT_QUOTE_COLUMNS, None)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
-        record_observations(uow, model, observations)
-        return uow.observation_for(
-            ObservationKey(ObjectKey(entity.identity, (("id", 1),)), _SPOT_QUOTE_EDGE)
-        )
+        return _retained(model, observations, uow, entity.identity)
 
     observation = run_unit_of_work(
         observe,
@@ -1028,13 +1045,10 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
     model, entity = _accepted("SpotQuote", QUOTE)
     stored = {"price": "50.00", "symbol": "ACME", "charterCode": "NB-118"}
     observations = ReadObservations()
-    observations.observe_row(entity.identity, _SPOT_QUOTE_COLUMNS, stored)
+    observations.observe_row(0, entity.identity, _SPOT_QUOTE_COLUMNS, stored)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
-        record_observations(uow, model, observations)
-        return uow.observation_for(
-            ObservationKey(ObjectKey(entity.identity, (("id", 1),)), _SPOT_QUOTE_EDGE)
-        )
+        return _retained(model, observations, uow, entity.identity)
 
     observation = run_unit_of_work(
         observe,

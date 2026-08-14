@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import cast
 
@@ -58,20 +59,32 @@ from parallax.snapshot import DeferredFeatureError, InvalidData, QueryTargetErro
 from parallax.snapshot.handle import (
     Database,
     FindResult,
-    ObservationCollector,
     Transaction,
     TransactionTimePinReadOnlyError,
 )
 from parallax.snapshot.handle import _database as database_module
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _transaction as transaction_module
-from parallax.snapshot.handle._write_inputs import ReadObservations
+from parallax.snapshot.handle._write_inputs import ObservationLedger
 
 
-def _recording_find(
-    calls: list[ObservationCollector | None],
-) -> Callable[..., FindResult]:
-    """A ``find`` stand-in recording the collector each call was handed.
+@dataclass(frozen=True, slots=True)
+class _RecordedFind:
+    """One executor call: whether it was handed a ledger, the participation that
+    ledger answered while its scope was open, and the result the call produced.
+
+    The participation is read inside the call rather than kept as the unit of
+    work itself, because a unit of work fences every access once its scope ends —
+    which is the same reason evidence outliving a transaction holds a token
+    rather than the transaction.
+    """
+
+    participation: object | None
+    result: FindResult
+
+
+def _recording_find(calls: list[_RecordedFind]) -> Callable[..., FindResult]:
+    """A ``find`` stand-in recording the ledger each call was handed.
 
     Spelled with the executor's full signature rather than ``*args`` so the
     recorded parameter is the real one — a rename or a move to a positional
@@ -86,62 +99,63 @@ def _recording_find(
         port: DbPort,
         *,
         preference: Concurrency | None = None,
-        observations: ObservationCollector | None = None,
+        ledger: ObservationLedger | None = None,
         recorder: TraceRecorder | None = None,
     ) -> FindResult:
-        calls.append(observations)
-        return real(
+        result = real(
             query,
             meta,
             dialect,
             port,
             preference=preference,
-            observations=observations,
+            ledger=ledger,
             recorder=recorder,
         )
+        calls.append(_RecordedFind(None if ledger is None else ledger.participation, result))
+        return result
 
     return recording
 
 
-def test_a_non_transactional_find_hands_the_executor_no_observation_collector() -> None:
-    # Presence IS the decision: `Database.find` has no unit of work to observe
-    # into, so it supplies no collector at all and the executor allocates no
-    # observation state — rather than building a record and discarding it.
-    calls: list[ObservationCollector | None] = []
+def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() -> None:
+    # A standalone read has no unit of work to file into, so it hands the
+    # executor no ledger — and still retains what its rows observed, because a
+    # value's write evidence belongs to the value. What its sources lack is
+    # participation, which is exactly what an effective-Locking write asks for.
+    calls: list[_RecordedFind] = []
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(database_module, "find", _recording_find(calls))
         db.find(mm.Balance.where(mm.Balance.id == 1)).result()
-    assert calls == [None]
+    (call,) = calls
+    assert call.participation is None
+    (hint,) = call.result.sources.values()
+    assert hint.participation is None
+    assert hint.observation is not None
 
 
-def test_a_participating_find_hands_the_executor_a_collector() -> None:
+def test_a_participating_find_stamps_its_transactions_own_participation() -> None:
     # The other side of the same decision: `Transaction.find` has a unit of work
-    # behind it, so it supplies the collector every observation is recorded from.
-    calls: list[ObservationCollector | None] = []
+    # behind it, so it hands the executor that unit of work as the ledger and
+    # every source it produces carries that transaction's participation.
+    calls: list[_RecordedFind] = []
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(transaction_module, "find", _recording_find(calls))
         db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
-    assert len(calls) == 1
-    assert calls[0] is not None
+    (call,) = calls
+    (hint,) = call.result.sources.values()
+    assert call.participation is not None
+    assert hint.participation is call.participation
 
 
-def test_an_invalid_participating_find_records_no_observation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_non_hydrating_find_retains_no_evidence() -> None:
     # The read publishes its classified root in band, and the row behind that
-    # root licenses no later write: a classified projection is never observed,
-    # so the unit of work is handed nothing for it.
-    recorded: list[ReadObservations] = []
-
-    def recording(*args: object) -> None:
-        observations = cast("ReadObservations", args[2])
-        recorded.append(observations)
-
-    monkeypatch.setattr(transaction_module, "record_observations", recording)
+    # root licenses no later write: no conforming value exists for it, so it is
+    # observed by nothing and no source stands behind it.
+    calls: list[_RecordedFind] = []
     port = RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}])
 
     def fn(tx: Transaction) -> None:
@@ -149,15 +163,16 @@ def test_an_invalid_participating_find_records_no_observation(
         assert isinstance(root, InvalidData)
         assert root.data is None
 
-    account_db(port).transact(fn)
-    assert [observations.rows for observations in recorded] == [[]]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(transaction_module, "find", _recording_find(calls))
+        account_db(port).transact(fn)
+    assert [dict(call.result.sources) for call in calls] == [{}]
 
 
-def test_the_collector_takes_every_attached_level_row_as_that_level_lands() -> None:
-    # A deep fetch materializes the root and then each level, and the collector
-    # takes every one of those rows — not only the root's. Each record carries
-    # that row's OWN physical columns, so an observation reads back without the
-    # row it was taken from or the node built beside it.
+def test_every_attached_level_row_retains_its_own_evidence() -> None:
+    # A deep fetch materializes the root and then each level, and every one of
+    # those rows retains its own evidence — not only the root's — so an included
+    # child a caller keeps is as writable as the root it came from.
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     policy_row: Row = {
         "id": 1,
@@ -176,7 +191,7 @@ def test_the_collector_takes_every_attached_level_row_as_that_level_lands() -> N
         "in_z": from_z,
         "out_z": INFINITY_INSTANT,
     }
-    calls: list[ObservationCollector | None] = []
+    calls: list[_RecordedFind] = []
     port = RecordingPort(row_queue=([policy_row], [coverage_row]))
     db = db_for(POLICY_MODEL, port)
     with pytest.MonkeyPatch.context() as patch:
@@ -186,16 +201,18 @@ def test_the_collector_takes_every_attached_level_row_as_that_level_lands() -> N
                 Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
             ).result()
         )
-    collector = calls[0]
-    assert isinstance(collector, ReadObservations)
-    assert [dict(record.columns) for record in collector.rows] == [policy_row, coverage_row]
+    (call,) = calls
+    assert [hint.object_key.primary_key for hint in call.result.sources.values()] == [
+        (("id", 1),),
+        (("id", 10),),
+    ]
 
 
-def test_find_on_a_non_versioned_entity_records_no_observation() -> None:
-    # `Transaction.find`'s observation recording is defensive: a materialized
-    # node whose entity declares no `optimisticLocking` version column (every
-    # Payment-family member) is skipped, never raising and never observing
-    # anything a later write could consult.
+def test_find_on_a_non_versioned_entity_retains_no_observed_state() -> None:
+    # Retention is defensive: a materialized node whose entity declares no
+    # `optimisticLocking` version column (every Payment-family member) observes
+    # no state at all, never raising and never retaining evidence a later write
+    # could gate on.
     port = RecordingPort(rows=[{"id": 1, "amount": Decimal("100.00"), "card_network": "Visa"}])
 
     def fn(tx: Transaction) -> None:

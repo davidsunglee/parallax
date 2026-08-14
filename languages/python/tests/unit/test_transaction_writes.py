@@ -44,7 +44,7 @@ from _support import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, Payment, Person
 from parallax.conformance.vo_models import Contact, Shipment
-from parallax.core import LATEST, Attr, DomainModel, Entity, attr, opt_lock
+from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
@@ -57,8 +57,11 @@ from parallax.core.entity import (
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.unit_work import (
     FixedClock,
+    ObjectKey,
     OptimisticLockConflictError,
+    RetainedObservation,
     StaleWriteError,
+    VersionedStateKey,
     VersionObservation,
     WriteInstructionError,
     WriteRejectedError,
@@ -70,6 +73,7 @@ from parallax.snapshot.handle import (
     KeyedWriteValueError,
     Transaction,
     TransactionTimePinReadOnlyError,
+    WriteEvidenceError,
 )
 
 
@@ -178,19 +182,20 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
     ]
 
 
-def test_delete_of_a_versioned_row_never_observed_raises() -> None:
-    # An edited/deleted instance built OUTSIDE the writing transaction (never
-    # fetched via THIS unit of work's own `tx.find`) carries no observation —
-    # the framework never issues an implicit resolving read on behalf of a
-    # keyed write, so the delete raises before any DML, exactly as an
-    # unobserved keyed update does.
+def test_delete_of_a_versioned_row_no_read_produced_raises() -> None:
+    # A plainly constructed instance carries no Source Hint at all, so it
+    # observed no state and the Optimistic strategy has nothing to gate on — the
+    # framework never issues an implicit resolving read on behalf of a keyed
+    # write, so the delete raises at the verb, before any DML.
     port = RecordingPort()
 
     def fn(tx: Transaction) -> None:
         tx.delete(grace())
 
-    with pytest.raises(opt_lock.UnobservedVersionError, match="Account"):
+    with pytest.raises(WriteEvidenceError) as refusal:
         account_db(port).transact(fn)
+    assert refusal.value.code == "write-evidence-unavailable"
+    assert refusal.value.object_key == ObjectKey(mm.Account.identity, (("id", 3),))
     assert not any(op[0] == "write" for op in port.ops)
 
 
@@ -569,7 +574,11 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
             "update",
             mm.Account.identity,
             {"id": 1, "balance": Decimal("175.00")},
-            observation=VersionObservation(observed_version=1),
+            claim=RetainedObservation(
+                VersionedStateKey(ObjectKey(mm.Account.identity, (("id", 1),)), 1),
+                VersionObservation(observed_version=1),
+                None,
+            ),
         )
 
     account_db(port).transact(fn, concurrency="locking")
@@ -850,29 +859,32 @@ def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
 # `require_observed` rule, enforced at the developer verb.                    #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
-def test_unobserved_temporal_terminate_raises_before_any_dml(concurrency: str) -> None:
-    # A keyed temporal close of a milestone this unit of work never observed
-    # is a read-before-write programming error in EITHER mode: in locking
-    # mode the observing find's shared lock is the ungated close's ONLY
-    # protection; in optimistic mode there is no observed `in_z` to gate on.
+def test_a_temporal_close_of_a_value_no_read_produced_raises_before_any_dml(
+    concurrency: str,
+) -> None:
+    # A keyed temporal close of a milestone nothing observed is a
+    # read-before-write programming error under EITHER strategy: under Locking
+    # the observing find's shared lock is the ungated close's ONLY protection,
+    # and under Optimistic there is no observed `in_z` to gate on. A plainly
+    # constructed instance carries no Source Hint, so it proves neither.
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
 
     def fn(tx: Transaction) -> None:
         tx.terminate(mm.Balance(id=1, acct_num="A-1", value=Decimal("5.00")))
 
-    with pytest.raises(opt_lock.UnobservedMilestoneError, match="transaction-scoped find"):
+    with pytest.raises(WriteEvidenceError) as refusal:
         db.transact(fn, concurrency=cast("Any", concurrency))
+    assert refusal.value.code == "write-evidence-unavailable"
     assert not any(op[0] == "write" for op in port.ops)
 
 
-def test_unobserved_temporal_update_from_a_cross_transaction_copy_raises() -> None:
-    # Provenance alone is not a license: a copy edited from a node ANOTHER
-    # scope's read materialized (a plain `db.find`, no unit of work) reaches
-    # `tx.update` with no transaction-scoped observation — the §5 rule names
-    # "the milestone THIS unit of work observed", so it raises (the
-    # stale-web-edit recipe's in-transaction re-fetch is the sanctioned
-    # spelling for transported coordinates).
+def test_a_standalone_temporal_source_is_accepted_without_an_in_transaction_reread() -> None:
+    # The ownership inversion, at the temporal verb: the evidence belongs to the
+    # VALUE, so a node a plain `db.find` materialized carries the milestone it
+    # observed into a later transaction. Under the default preference `Balance`
+    # resolves to Optimistic, where the database gate is the authority, so the
+    # close binds that retained `in_z` and no reread is issued.
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
     node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
@@ -880,8 +892,28 @@ def test_unobserved_temporal_update_from_a_cross_transaction_copy_raises() -> No
     def fn(tx: Transaction) -> None:
         tx.update(node.edit(value=Decimal("9.00")))
 
-    with pytest.raises(opt_lock.UnobservedMilestoneError, match="transaction-scoped find"):
-        db.transact(fn)
+    db.transact(fn)
+    # One read (the standalone find), then the close and its chained successor —
+    # no second read of any kind.
+    assert [op[0] for op in port.ops] == ["read", "begin", "write", "write", "commit"]
+    close = port.ops[2]
+    assert "in_z = " in cast("str", close[1])
+
+
+def test_a_standalone_temporal_source_is_refused_under_an_explicit_locking_preference() -> None:
+    # The Locking strategy's license is the shared row lock a read of THIS
+    # transaction holds, and a standalone source proves no such lock however
+    # authentic its evidence is. The refusal is at the verb, before any DML.
+    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = db_for(BALANCE, port)
+    node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
+
+    def fn(tx: Transaction) -> None:
+        tx.update(node.edit(value=Decimal("9.00")))
+
+    with pytest.raises(WriteEvidenceError) as refusal:
+        db.transact(fn, concurrency="locking")
+    assert refusal.value.code == "write-evidence-unavailable"
     assert not any(op[0] == "write" for op in port.ops)
 
 
@@ -1329,15 +1361,16 @@ def test_update_of_an_unedited_node_buffers_nothing() -> None:
 
 def test_a_terminate_takes_no_position_on_a_values_provenance() -> None:
     # `delete` / `terminate` / `terminateUntil` derive an identity row alone, so
-    # a value no read produced is not refused for them — the milestone rules
-    # decide what they need, and this one has no observation to close against.
+    # the PROVENANCE refusal does not apply to them — what refuses this one is
+    # the evidence rule, which finds no observed state behind the value.
     port = RecordingPort()
 
     def fn(tx: Transaction) -> None:
         tx.terminate(mm.Balance(id=9, acct_num="Z", value=Decimal("1.00")))
 
-    with pytest.raises(opt_lock.UnobservedMilestoneError):
+    with pytest.raises(WriteEvidenceError) as refusal:
         db_for(BALANCE, port).transact(fn)
+    assert refusal.value.code == "write-evidence-unavailable"
 
 
 def test_the_keyed_write_value_code_set_is_closed_against_an_unlisted_code() -> None:

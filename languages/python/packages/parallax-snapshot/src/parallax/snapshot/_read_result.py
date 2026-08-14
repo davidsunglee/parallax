@@ -25,8 +25,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from parallax.core.execution_log import ReadTrace
+from parallax.core.unit_work import SourceHint
 from parallax.snapshot.materialize import (
     EMPTY_UNWIND,
     InvalidData,
@@ -50,11 +52,18 @@ class FindResult:
     wire unwind follows. The merged graph alone cannot supply them: it keeps
     every view any level loaded onto a node, so a back-reference would revisit
     its target forever. The executor knows the plan, so it hands the tree on.
+
+    ``sources`` is the private Source Hint each observed projection's value will
+    carry, keyed by that projection's own index in ``graph.nodes``. It travels
+    with the graph input because only the executor holds the row and the
+    projection at once: a materializer builds the value, but the row it came from
+    is gone by then.
     """
 
     graph: SnapshotGraphInput
     execution: ReadTrace
     includes: UnwindTree = EMPTY_UNWIND
+    sources: Mapping[int, SourceHint] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,7 +10,7 @@ Materialized Write Group buffering.
 
 Every entry point threads ``(uow, meta, conn, dialect)`` — the four pieces of
 transaction state this lane actually reads — mirroring
-:func:`~parallax.snapshot.handle._write_inputs.record_observations`'s own shape.
+:func:`~parallax.snapshot.handle._write_inputs.retain_evidence`'s own shape.
 ``meta`` is the accepted Metamodel; family shape comes from the Inheritance,
 Temporal, and Optimistic Lock facets through :mod:`parallax.snapshot.handle._family`,
 and every physical column comes from the target's Storage Layout view, resolved

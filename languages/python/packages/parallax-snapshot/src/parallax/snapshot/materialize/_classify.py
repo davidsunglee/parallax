@@ -26,6 +26,7 @@ nothing and wrapping nothing.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final
 
@@ -39,7 +40,11 @@ from parallax.core.metamodel import (
 )
 from parallax.core.temporal_read import Edge, TemporalReadError, milestone_edge_of
 from parallax.core.unit_work import ObjectKey
-from parallax.snapshot.materialize._input import InvalidRootInput, StoredDataIssueCode
+from parallax.snapshot.materialize._input import (
+    InvalidRootInput,
+    StoredDataIssueCode,
+    StoredDataIssueInput,
+)
 from parallax.snapshot.materialize._invalid import InvalidData, StoredDataIssue
 from parallax.snapshot.materialize._merge import GraphMerge, MergedNode
 
@@ -49,6 +54,7 @@ __all__ = [
     "GraphClassification",
     "RootClassification",
     "classify_roots",
+    "hydrates",
 ]
 
 NON_HYDRATING_CODES: Final[frozenset[StoredDataIssueCode]] = frozenset(
@@ -66,6 +72,18 @@ Their complement — a required member absent or stored null, and a wrong-kind
 occurrence — is exactly the set the normative absence collapse already answers,
 so a root carrying only those hydrates completely.
 """
+
+
+def hydrates(issues: Iterable[StoredDataIssueInput]) -> bool:
+    """Whether a node carrying ``issues`` still publishes a value.
+
+    The question every consumer of a classified node asks before treating it as
+    ordinary data: a hydratable node's collapse produced legal member values, so
+    it is an Entity a caller reads and a row a later write settles against, while
+    a non-hydrating one has no conforming value to be either.
+    """
+    return not any(issue.code in NON_HYDRATING_CODES for issue in issues)
+
 
 _UNIDENTIFIED_CODES: Final[frozenset[StoredDataIssueCode]] = frozenset(
     {
@@ -153,9 +171,7 @@ def classify_roots(
         )
         for node, key in zip(nodes, keys, strict=True)
     )
-    blocking = tuple(
-        any(issue.code in NON_HYDRATING_CODES for issue in node.issues) for node in nodes
-    )
+    blocking = tuple(not hydrates(node.issues) for node in nodes)
 
     roots: list[RootClassification] = []
     reached_by_published: set[int] = set()

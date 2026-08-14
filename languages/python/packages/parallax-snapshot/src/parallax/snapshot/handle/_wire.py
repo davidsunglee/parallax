@@ -3,7 +3,7 @@
 ``db.wire`` and ``tx.wire`` are lightweight VIEWS over the same connected model
 and adapter their Typed peers use, never separate connections or transaction
 modes. A view holds the one entry point its owner already composed — read gate,
-force-flush, locking, observation recording, trace bracket — so a Wire read and a
+force-flush, locking, evidence retention, trace bracket — so a Wire read and a
 Typed read differ in nothing but which materializer runs once execution has
 finished. That is why the interfaces are two objects rather than one ``format=``
 argument: capability is what a caller holds, not a value it passes.
@@ -87,12 +87,12 @@ class WireDatabaseView:
 class WireTransactionView(WireDatabaseView):
     """``tx.wire`` — the Wire read interface inside a transaction.
 
-    A view over the SAME unit of work, observation ledger, locking, and Execution
+    A view over the SAME unit of work, evidence retention, locking, and Execution
     Log the Typed transaction interface uses, so a Wire read participates in
     exactly the four ways ``tx.find`` does: it force-flushes pending writes
     first, renders the read-lock suffix each materialized level's own target
-    Entity calls for, records what a later write settles against, and appends its
-    Read Trace to the active attempt.
+    Entity calls for, retains onto each published node what a later write settles
+    against, and appends its Read Trace to the active attempt.
     """
 
     __slots__ = ()

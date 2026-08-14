@@ -156,6 +156,22 @@ class GraphMerge:
         """The whole-graph pin every node of this graph was read at."""
         return self._graph.pin
 
+    def by_allocation[T](self, by_projection: Mapping[int, T]) -> Mapping[int, T]:
+        """``by_projection`` re-keyed from projection index to allocation index.
+
+        Several projections may resolve to one logical node, so the first one
+        walked wins — the same first-projection-wins rule every merged member
+        already follows, and sound for the same reason: duplicate projections of
+        one logical node resolve the same row at the same pin. A projection no
+        root reached contributes nothing, because nothing allocates it.
+        """
+        resolved: dict[int, T] = {}
+        for projection, value in by_projection.items():
+            index = self._resolved[projection]
+            if index != _UNREACHED:
+                resolved.setdefault(index, value)
+        return resolved
+
     def node(self, index: int) -> MergedNode:
         """One allocation index's merged populate inputs.
 

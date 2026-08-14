@@ -35,7 +35,8 @@ non-terminating, so such nodes are shareable but not hashable.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
+from types import MappingProxyType
 
 from parallax.core.entity import LOADED_NULL as _LOADED_NULL
 from parallax.core.entity import (
@@ -51,6 +52,7 @@ from parallax.core.entity import (
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Edge, milestone_edge_of
+from parallax.core.unit_work import SourceHint
 from parallax.snapshot._inspection import SnapshotNodeState
 from parallax.snapshot.materialize import (
     ClassifiedRoot,
@@ -73,6 +75,7 @@ def materialize_graph(
     construction: EntityGraphConstruction,
     *,
     ordinal_offset: int = 0,
+    sources: Mapping[int, SourceHint] = MappingProxyType({}),
 ) -> tuple[object | InvalidData[object], ...]:
     """Merge ``graph``, classify its roots, and construct the ones that hydrate.
 
@@ -82,11 +85,16 @@ def materialize_graph(
 
     ``ordinal_offset`` is where this graph's roots start in the ordered result the
     caller publishes, which is nonzero only where one Snapshot spans several
-    graphs.
+    graphs. ``sources`` is the Source Hint the executor retained per projection,
+    which each node's own Snapshot state carries so a later keyed write reads its
+    evidence off the value it was handed.
     """
     merge = merge_graph_input(graph, model)
     return _Materialization(
-        merge, model, classify_roots(merge, model, ordinal_offset=ordinal_offset)
+        merge,
+        model,
+        classify_roots(merge, model, ordinal_offset=ordinal_offset),
+        merge.by_allocation(sources),
     ).run(construction)
 
 
@@ -100,14 +108,27 @@ class _Materialization:
     beside Snapshot Graph Input and the merge itself.
     """
 
-    __slots__ = ("_classification", "_handles", "_merge", "_model", "_pending", "_scope")
+    __slots__ = (
+        "_classification",
+        "_handles",
+        "_merge",
+        "_model",
+        "_pending",
+        "_scope",
+        "_sources",
+    )
 
     def __init__(
-        self, merge: GraphMerge, model: Metamodel, classification: GraphClassification
+        self,
+        merge: GraphMerge,
+        model: Metamodel,
+        classification: GraphClassification,
+        sources: Mapping[int, SourceHint],
     ) -> None:
         self._merge = merge
         self._model = model
         self._classification = classification
+        self._sources = sources
         self._scope = tuple(
             index for index in range(len(merge.order)) if index not in classification.excluded
         )
@@ -161,7 +182,8 @@ class _Materialization:
         having been exposed.
         """
         del handle
-        node = self._merge.node(next(self._pending))
+        index = next(self._pending)
+        node = self._merge.node(index)
         edge = self._edge(node)
         return SnapshotNodeState(
             entity=node.concrete_entity,
@@ -172,6 +194,7 @@ class _Materialization:
             },
             pin=self._merge.pin if edge is not None else None,
             edge=edge,
+            source=self._sources.get(index),
         )
 
     def _arm(self, value: int | tuple[int, ...] | None) -> RelationshipInput:

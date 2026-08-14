@@ -2855,16 +2855,17 @@ or descriptor authoring form and performs no audit stamping.
   first-party caller grading flat results, and its element type is the same union
   both public materializers publish.
   `tx.observed_read(query)` and `tx.write_neutral(instruction, *, observation:
-  ObservationKey | WriteObservation | None = None)` are the **conformance
+  ObservedStateKey | WriteObservation | None = None)` are the **conformance
   bridge**, first-party and scheduled to end with the Wire write verbs.
   `observed_read` runs the participating Wire read and answers an `ObservedRead`
-  pairing that `Snapshot[WireEntity]` with the `ObservedRecord`s the read filed,
-  because only their producer can pair an address with the evidence it names;
-  `write_neutral` validates and buffers one already-decoded write instruction for
-  the same Write Planner the typed verbs feed and reaches no read executor.
-  `observation` states that evidence three ways and only three. An
-  `ObservationKey` is a REFERENCE into this unit of work's own record and
-  dereferences immediately — a key naming no recorded observation raises
+  pairing that `Snapshot[WireEntity]` with the `RetainedObservation`s the read
+  retained, because only their producer can pair an address with the evidence it
+  names, and holding them is what keeps that evidence alive for a later bridge
+  write; `write_neutral` validates and buffers one already-decoded write
+  instruction for the same Write Planner the typed verbs feed and reaches no read
+  executor. `observation` states that evidence three ways and only three. An
+  `ObservedStateKey` is a REFERENCE into this unit of work's own weak index and
+  dereferences immediately — a key naming no reachable observation raises
   `UnobservedWriteError` (`write-observation-not-recorded`) at the call rather
   than settling bare, and a key outlives no unit of work. A `WriteObservation`
   is evidence the caller HOLDS and is used as given: this is the one licensed
@@ -2993,21 +2994,55 @@ or descriptor authoring form and performs no audit stamping.
   observation buffers paired with it and one without buffers bare, so no
   no-observation value and no nullable observation field exists at any point,
   and `PlanningRequest` carries no observation map for the planner to search.
-- **An observation is keyed by the milestone it observed.** A temporal read
-  files its evidence under the object's identity **plus that row's own `Edge`**
-  — the milestone's start instant on every declared axis, the same value
-  `edge_of(node)` answers for. A versioned non-temporal row has one row per
-  primary key, so its evidence is keyed by identity alone. Reading one key twice
-  at as-of coordinates that resolve to **different** milestones therefore
-  retains evidence about each, and a later write settles against the milestone
-  the value it was handed came from; reading one milestone twice at different
-  pins produces two equal observations in one slot. That second half is the
-  deliberate **converse** of `pin_of`'s rule that distinct coordinates denote
-  distinct pinned views (§3): a view is a way of looking, an observation is what
-  was seen. The coordinate is derived from the observation's own predecessor
-  payload, so no recording site can file evidence under a milestone other than
-  the one it is recording, and the write side reads its coordinate off the value
-  through the same derivation.
+- **An observation is addressed by the exact state it observed.** The address is
+  the closed `ObservedStateKey` union — `VersionedStateKey(object, version)` for
+  a versioned non-temporal row, and `TemporalStateKey(object, milestone)` for a
+  temporal one, whose milestone is that row's own `Edge`, the same value
+  `edge_of(node)` answers for. An `ObjectKey` stays state-independent and
+  addresses the object across its states; inserts and unversioned non-temporal
+  writes observe no state and have no `ObservedStateKey` at all. Reading one key
+  twice at coordinates that resolve to **different** states therefore retains
+  evidence about each, and a later write settles against the state the value it
+  was handed came from; reading one state twice answers one retained
+  observation. That second half is the deliberate **converse** of `pin_of`'s
+  rule that distinct coordinates denote distinct pinned views (§3): a view is a
+  way of looking, an observation is what was seen. The coordinate is derived
+  from the observation's own evidence, so no retaining site can address evidence
+  by a state other than the one it is recording, and the write side reads its
+  coordinate off the value through the same derivation.
+- **Evidence belongs to the source value; the transaction holds a weak index.**
+  A graph-form read attaches a private Source Hint to every Entity node it
+  publishes — the concrete Entity, the object the row denotes, the participation
+  its read licensed, and the retained observation for the state it saw. A Typed
+  node reaches its hint through the same private lifecycle state `edge_of` and
+  `pin_of` read; a frozen `WireEntity` node carries it on a slot, never as a
+  mapping entry, so `dict(value)`, JSON, and pickle produce ordinary domain data
+  with no keyed-source status. Only an Entity node can carry one: a nested Value
+  Object mapping has no slot. `Entity.edit(...)` preserves lifecycle state and
+  therefore transfers the claim to the derived value; a Wire copy answers the
+  same object and therefore the same claim. A standalone `db.find` /
+  `db.wire.find` produces sources exactly as a participating read does and
+  differs only in stamping no participation. A transaction keeps a
+  `WeakValueDictionary` of the states its own reads saw plus the participation
+  token an effective-Locking write tests against, so eligibility is strong
+  reachability: when every source value and every buffered write for a state is
+  released, its evidence is gone, on the runtime's ordinary collection schedule
+  and with no claim counting, stack inspection, or reference-count semantics.
+- **A successful flush consumes the evidence its writes used.** A retained
+  observation carries one mutable fact — whether it has been spent — which lives
+  on the shared object rather than in a transaction-side set, because a later
+  transaction handed the same still-live source must be refused. A flush that
+  emits DML spends the claims its buffered writes carried; a plan finalization
+  eliminated entirely spends none, and an aborted flush spends none and needs no
+  restoration. A keyed verb refuses a source whose evidence the target Entity's
+  Effective Concurrency Strategy cannot use with `WriteEvidenceError`
+  (`LookupError`), carrying its `code` and the visible `object_key` the write
+  addressed and never the Source Hint or the Observed State Key behind it. The
+  codes are `write-evidence-unavailable` — the Optimistic strategy found no
+  retained observation, or the Locking strategy found no participation of this
+  transaction — and `write-evidence-consumed`. Every one is raised synchronously
+  at the verb, before buffering and before any database access; a conflict the
+  database discovers later keeps its own flush-time classification.
 - **An observation is keyed by the row's own resolved Entity Identity.** A read
   observes each row under the exact Entity that row's own compiled read
   resolved it to — a per-row fact under table-per-hierarchy — never under the
@@ -3026,8 +3061,8 @@ or descriptor authoring form and performs no audit stamping.
   Column, which a temporal observation retains so a successor is patched from
   what the row held rather than rebuilt from the members the model declares
   (ADR 0042). Collection happens at the read executor while the row is live,
-  deliberately upstream of Graph Input, which is what lets a non-transactional
-  read allocate no observation state at all. And physical keying is the
+  deliberately upstream of Graph Input, which is the only point at which the row
+  and the projection it converts into are both in hand. And physical keying is the
   carrier's purpose rather than its convenience: it is a faithful record of a
   persisted row for a later SQL comparison, not a projection of the model.
   Retaining a second, logical carrier beside it would be strictly worse than

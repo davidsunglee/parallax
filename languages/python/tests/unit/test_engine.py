@@ -53,14 +53,15 @@ from parallax.core.unit_work import (
     KeyTarget,
     MissingTargetError,
     ObjectKey,
-    ObservationKey,
     OptimisticLockConflictError,
     PredecessorRow,
+    RetainedObservation,
     StaleWriteError,
     TemporalObservation,
+    TemporalStateKey,
     WriteEffectError,
 )
-from parallax.snapshot import DeferredFeatureError, handle
+from parallax.snapshot import DeferredFeatureError
 
 
 def _rows(row: Row | None, key: str) -> list[Row]:
@@ -1899,9 +1900,10 @@ def _policy_node(valid_start: dt.datetime, valid_end: object, name: str) -> Any:
         "txStart": _APR,
         "txEnd": INFINITY,
     }
-    return handle.ObservedRecord(
-        key=ObservationKey(_POLICY, Edge(valid_time=valid_start, tx_time=_APR)),
-        observation=TemporalObservation(predecessor=PredecessorRow(members=members)),
+    return RetainedObservation(
+        TemporalStateKey(_POLICY, Edge(valid_time=valid_start, tx_time=_APR)),
+        TemporalObservation(predecessor=PredecessorRow(members=members)),
+        None,
     )
 
 
@@ -2005,9 +2007,10 @@ def _balance_node(tx_start: str, value: str) -> Any:
         "txStart": start,
         "txEnd": INFINITY,
     }
-    return handle.ObservedRecord(
-        key=ObservationKey(key, Edge(tx_time=start)),
-        observation=TemporalObservation(predecessor=PredecessorRow(members=members)),
+    return RetainedObservation(
+        TemporalStateKey(key, Edge(tx_time=start)),
+        TemporalObservation(predecessor=PredecessorRow(members=members)),
+        None,
     )
 
 
@@ -2038,8 +2041,8 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
         assert isinstance(observation, TemporalObservation)
         return observation.predecessor.members["txStart"]
 
-    assert settle(current) == current.observation.predecessor.members["txStart"]
-    assert settle(historical) == historical.observation.predecessor.members["txStart"]
+    assert settle(current) == current.evidence.predecessor.members["txStart"]
+    assert settle(historical) == historical.evidence.predecessor.members["txStart"]
 
 
 def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_names() -> None:
