@@ -14,14 +14,18 @@ statement of spec §5's model-neutral seam. The conformance engine builds a
 planner per lowering and holds none, so its drives claim provenance rather than
 identity.
 
+The factory's own wiring is graded here too, for the one strategy whose
+production value is a decision rather than an implementation: the audit port it
+injects is the neutral one, so no planner a write path reaches can decorate.
+
 The lane list here is ENUMERATED, and that is this module's limit: a write lane
 added later and not driven here is not graded here, and this module still
 passes. What covers the shapes that limit admits is
-`test_frontend_contraction_guards.py`, which holds every Write Planner
-construction to ``_planning.py`` and reads ``WritePlanner.__subclasses__()`` for
-a second planner class — so a new lane reaches a planner either through this
-factory or by implementing an unrelated planner of its own, which neither module
-catches.
+`test_frontend_contraction_guards.py`, which finds the spelling ``WritePlanner(``
+in ``_planning.py`` alone and reads ``WritePlanner.__subclasses__()`` for a
+second planner class — so a new lane reaches a planner through this factory, or
+else by constructing one under an aliased name or by implementing an unrelated
+planner of its own, and those last two are what neither module catches.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ from _support.repo import REPO_ROOT
 from parallax.conformance import case_format, engine
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
+    NO_AUDIT,
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
@@ -56,13 +61,25 @@ type _CompileCase = Callable[[case_format.Case, str], tuple[list[engine.Emission
 _CASES: Path = REPO_ROOT / "core" / "compatibility" / "cases"
 
 
+@dataclass(frozen=True, slots=True)
+class _Built:
+    """One planner the composition root built, and the audit strategy it wired.
+
+    The strategy is taken where the factory injects it rather than read back off
+    the planner, which holds it privately.
+    """
+
+    planner: WritePlanner
+    audit: AuditStrategy
+
+
 @dataclass(slots=True)
 class _Composition:
     """One drive's planning provenance: the planners the composition root built
     while it ran, and every planning that ran, each with its receiver."""
 
     lane: str
-    built: list[WritePlanner]
+    built: list[_Built]
     planned: list[tuple[WritePlanner, PlanningRequest]]
 
     def escaped(self) -> list[PlanningRequest]:
@@ -70,7 +87,7 @@ class _Composition:
         return [
             request
             for planner, request in self.planned
-            if not any(planner is built for built in self.built)
+            if not any(planner is built.planner for built in self.built)
         ]
 
 
@@ -104,7 +121,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         planner = WritePlanner(
             model, batching=batching, concurrency=concurrency, temporal=temporal, audit=audit
         )
-        seen.built.append(planner)
+        seen.built.append(_Built(planner=planner, audit=audit))
         return planner
 
     def plan(self: WritePlanner, request: PlanningRequest) -> WritePlan:
@@ -162,7 +179,36 @@ def test_the_database_lane_plans_every_ingress_through_one_factory_planner(
     _assert_planned_only_through_the_factory(seen)
     assert len(seen.planned) == 2, "the two ingresses were planned by two separate flushes"
     assert len(seen.built) == 1, "one connected Metamodel, one planner"
-    assert all(planner is seen.built[0] for planner, _request in seen.planned)
+    assert all(planner is seen.built[0].planner for planner, _request in seen.planned)
+
+
+def test_the_composition_root_wires_the_audit_port_to_the_neutral_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Audit decoration is a wired port with nothing behind it, and this is the
+    # wiring half: the planner a write path plans through holds the neutral
+    # strategy, so no step reaching stage 8 meets one that could decorate. The
+    # other half — that the neutral strategy hands back the step it was given —
+    # is a property of the strategy itself and lives with the rest of the
+    # algebra's behavior in `test_planned_algebra.py`.
+    #
+    # Which classes SATISFY the port is deliberately not asked. It is a
+    # runtime-checkable Protocol, so satisfying it means owning a method named
+    # `decorate`: the question answers yes for any decorator with nothing to do
+    # with audit, and no for a hand-written stamp under another name.
+    #
+    # The limit: a value stamped by hand onto a row, under a name of its own and
+    # ahead of the reserved audit property names, reaches no strategy and so
+    # passes here. What a write emits is a property of the statement and its
+    # binds, constrained where write behavior is — an extra column or an extra
+    # bind fails an exact-statement assertion for the write shapes those
+    # assertions cover, and a stamp that never varies survives every comparison
+    # of two writes to each other.
+    seen = _watch("Database", monkeypatch)
+    account_db(RecordingPort())
+
+    assert seen.built, "connecting built no planner, so this grades no wiring"
+    assert all(built.audit is NO_AUDIT for built in seen.built)
 
 
 @pytest.mark.parametrize(

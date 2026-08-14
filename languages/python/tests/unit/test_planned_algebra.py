@@ -567,9 +567,11 @@ def test_an_incomplete_milestone_address_is_refused(kwargs: dict[str, object], m
 def test_the_audit_port_decorates_nothing_by_default() -> None:
     # Pipeline stage 8 exists as a seam from the start, so provenance decoration
     # becomes a change of injected adapter rather than a change of interface.
+    # The default hands the step itself back rather than an equal rebuild, which
+    # is what makes the seam cost nothing while nothing is wired behind it.
     step = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
     decorated = NO_AUDIT.decorate(
         step, subject_identity=TEST_SUBJECT_IDENTITY, transaction_instant=inert_instant()
     )
-    assert decorated == step
+    assert decorated is step
     assert isinstance(NO_AUDIT, AuditStrategy)
