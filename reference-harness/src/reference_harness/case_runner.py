@@ -6037,26 +6037,30 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
     alone, so on both of those the whole difference lands on what the observation
     derives.
 
-    An entry is aligned with its golden by the OBJECT it addresses. Entries
-    settling against one state of one object coalesce into ONE statement
+    An entry is aligned with its golden by the OBJECT each statement itself
+    addresses (:func:`_statement_object`), never by the order the buffer names
+    objects in: a flush dependency-orders its surviving writes so a parent is
+    inserted before and deleted after the children referencing it (`m-unit-work`
+    *the planning pipeline*, `m-case-format` *foreign-key-ordered at flush*), so
+    the statement order a legal buffer produces is the graph's, not the author's.
+    Entries settling against one state of one object coalesce into ONE statement
     (`m-unit-work` *Observed-State Coalescing*) — what distinguishes them is the
     assignments they contribute to it, while what this cross-check reads, the
     state they settled against, is the one thing they share — and the same buffer
     equally expresses a mixed multi-object flush, whose objects emit one statement
     each. The settling statement is the EXISTING-ROW one; a temporal successor's
-    chained INSERT settles nothing and is passed over
-    (:func:`_settled_statement`).
+    chained INSERT settles nothing and is passed over.
     """
     for index, step in enumerate(case.scenario):
         if "write" not in step or "on" not in step:
             continue
         settling = [
-            (statement, binds)
+            (_statement_object(case, index, statement, binds, dialect), statement, binds)
             for statement, binds in _entry_pairs(step.get("statements"), dialect)
             if _is_existing_row_statement(statement)
         ]
         origin = case.scenario[step["on"]]
-        ordinals: dict[tuple[str, str], int] = {}
+        aligned: set[int] = set()
         for entry in _scenario_write_entries(step):
             entity = case.model.entity(entry["entity"])
             row = _sole_settled_row(case, index, entity, entry)
@@ -6064,7 +6068,7 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
             _, pk, _set_cols, _observed = _classify_write_row(
                 case, entity, row, mutation=entry["mutation"], opening=temporal
             )
-            statement, binds = _settled_statement(case, index, entity, pk, settling, ordinals)
+            statement, binds = _settled_statement(case, index, entity, pk, settling, aligned)
             if not temporal:
                 _assert_settled_version_binds(
                     case, entity, index, origin, pk, binds, statement, dialect
@@ -6078,12 +6082,12 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
             if case.concurrency_mode == "optimistic":
                 expected.append(observed.tx_start)
             _assert_write_values(case, expected, binds, statement)
-        if len(ordinals) != len(settling):
+        if len(aligned) != len(settling):
             raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] settles writes of {len(ordinals)} "
-                f"object(s) but its golden carries {len(settling)} existing-row statement(s) "
-                f"for {dialect} — entries settling against one state coalesce into one "
-                f"statement, and each further object emits its own."
+                f"{case.path.name}: scenario[{index}] carries {len(settling) - len(aligned)} "
+                f"existing-row statement(s) for {dialect} addressing an object no entry of its "
+                f"buffer writes — every statement a settled flush emits belongs to one of the "
+                f"objects written, and entries settling against one state coalesce into one."
             )
 
 
@@ -6092,34 +6096,112 @@ def _settled_statement(
     index: int,
     entity: Entity,
     pk: Any,
-    settling: Sequence[tuple[str, list[Any]]],
-    ordinals: dict[tuple[str, str], int],
+    settling: Sequence[tuple[_ObjectAddress, str, list[Any]]],
+    aligned: set[int],
 ) -> tuple[str, list[Any]]:
     """The golden statement one settled entry's OBJECT survives as, with the binds
     authored on it.
 
-    Objects take the step's existing-row goldens in the order their entries first
-    name them, which is the order the buffer holds those objects in; ``ordinals``
-    carries that assignment across the step's entries, so every entry of one
-    object reaches the one statement they coalesce into. The aligned statement
-    MUST bind the object's own key, so a golden list authored in another order is
-    refused here rather than grading one object against another's statement.
+    Alignment is by OBJECT IDENTITY — the entry's own table and Object Key against
+    the ones each statement addresses — so it holds however the flush ordered
+    those statements, and every entry of one object reaches the one statement they
+    coalesce into. Two statements addressing one object are refused as firmly as
+    none: coalescing leaves an object at most one surviving existing-row write per
+    observed state, and the second would be graded against evidence the first
+    already consumed.
+
+    ``aligned`` collects the statements entries reached, which is what lets the
+    caller name a golden addressing an object the buffer never writes.
     """
-    ordinal = ordinals.setdefault((entity.name, repr(pk)), len(ordinals))
-    if ordinal >= len(settling):
+    matches = [
+        position
+        for position, (address, _statement, _binds) in enumerate(settling)
+        if address.table == entity.table.lower()
+        and address.key_column == _pk_column(entity).lower()
+        and _write_value_equal(address.key, pk)
+    ]
+    if not matches:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] settles a write of {entity.name} pk {pk!r} "
-            f"against a find but its golden carries no existing-row statement for that "
+            f"against a find but its golden carries no existing-row statement addressing that "
             f"object — a settled write emits one."
         )
-    statement, binds = settling[ordinal]
-    if not any(_write_value_equal(bind, pk) for bind in binds):
+    if len(matches) > 1:
         raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] aligns {entity.name} pk {pk!r} with golden "
-            f"{statement!r}, which binds no such key — a step settling writes of several "
-            f"objects lists their goldens in the order its entries first name them."
+            f"{case.path.name}: scenario[{index}] carries {len(matches)} existing-row "
+            f"statements addressing {entity.name} pk {pk!r} — writes settling against one "
+            f"observed state of one object coalesce into ONE statement."
         )
+    (position,) = matches
+    aligned.add(position)
+    _address, statement, binds = settling[position]
     return statement, binds
+
+
+class _ObjectAddress(NamedTuple):
+    """Which object an existing-row statement writes: the table its DML targets and
+    the Object Key its identity predicate binds, with the key column that predicate
+    names."""
+
+    table: str
+    key_column: str
+    key: Any
+
+
+def _statement_object(
+    case: Case, index: int, statement: str, binds: list[Any], dialect: str
+) -> _ObjectAddress:
+    """The object *statement* addresses, read off the statement's own address.
+
+    Every existing-row write renders one address shape: the DML names the target
+    table and the predicate LEADS with the primary-key equality, which the
+    table-per-hierarchy tag guard, the temporal bounds, and the optimistic gate
+    then follow in that order (`m-sql`, `m-inheritance`, `m-opt-lock`). The key's
+    bind is therefore the predicate's first placeholder, and every placeholder
+    before it belongs to the `set` clause.
+
+    Read through the grammar rather than by pattern, for the reasons the sibling
+    readers are: a reserved physical table or column is rendered QUOTED
+    (`m-dialect`), and a subquery's own predicate is a conjunct of the inner
+    SELECT rather than of this one (:func:`_conjuncts`).
+    """
+    tree = None
+    with contextlib.suppress(sqlglot.ParseError):
+        tree = sqlglot.parse_one(statement, read=sqlglot_dialect(dialect))
+    where = tree.args.get("where") if isinstance(tree, (exp.Update, exp.Delete)) else None
+    key_column = (
+        _bound_equality_column(next(_conjuncts(where.this)))
+        if isinstance(where, exp.Where)
+        else None
+    )
+    offset = _predicate_bind_offset(statement)
+    if tree is None or key_column is None or offset is None or offset >= len(binds):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] carries an existing-row golden whose "
+            f"predicate does not open with a bound key equality for {dialect}: "
+            f"{statement!r} — a settled write addresses the ONE object it survives as, "
+            f"and its key leads that address."
+        )
+    return _ObjectAddress(str(tree.this.name).lower(), key_column.lower(), binds[offset])
+
+
+def _predicate_bind_offset(statement: str) -> int | None:
+    """How many binds precede the outer predicate's own first placeholder, or None
+    when the statement carries no outer predicate.
+
+    Scanned through :func:`_sql_scan` for the reason every reader that takes a
+    golden apart by position is: a `?` inside a string literal binds nothing, and a
+    `where` inside a quoted identifier or a subquery opens no predicate of this
+    statement's own.
+    """
+    lowered = statement.lower()
+    preceding = 0
+    for position, char, depth in _sql_scan(statement):
+        if depth == 0 and _keyword_at(lowered, position, "where"):
+            return preceding
+        if char == "?":
+            preceding += 1
+    return None
 
 
 def _assert_settled_version_binds(
@@ -6823,16 +6905,25 @@ def _conjuncts(predicate: Expr) -> Iterator[Expr]:
 
 def _gates_on(operand: Expr, column: str) -> bool:
     """Whether *operand* is the ``<column> = ?`` equality a gate renders."""
+    bound = _bound_equality_column(operand)
+    return bound is not None and bound.lower() == column.lower()
+
+
+def _bound_equality_column(operand: Expr) -> str | None:
+    """The column a ``<column> = ?`` conjunct names, or None for any other operand.
+
+    The one predicate shape both a gate and an address are written in, either way
+    round, with the column's name taken from the parse so a quoted spelling is the
+    same column under a different surface.
+    """
     if not isinstance(operand, exp.EQ):
-        return False
+        return None
     left, right = operand.left, operand.right
     if isinstance(right, exp.Column) and isinstance(left, exp.Placeholder):
         left, right = right, left
-    return (
-        isinstance(left, exp.Column)
-        and left.name.lower() == column.lower()
-        and isinstance(right, exp.Placeholder)
-    )
+    if isinstance(left, exp.Column) and isinstance(right, exp.Placeholder):
+        return left.name
+    return None
 
 
 def _assert_scenario_conflict_abort(
