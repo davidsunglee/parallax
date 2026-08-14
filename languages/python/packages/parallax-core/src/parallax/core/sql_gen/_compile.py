@@ -492,12 +492,15 @@ def compile_read(
     below.
 
     ``lock`` renders the transactional read-lock suffix (m-sql *Read-lock suffix*,
-    applied through the m-dialect seam): an in-transaction **object find** in
-    ``locking`` mode appends the dialect's shared-row-lock suffix (Postgres
-    ``for share of t0``) after every other clause; ``optimistic`` mode and the
-    default (``None`` — a non-transactional read) append nothing. Grouped / aggregate
-    reads are not yet reachable. The conformance scenario runner derives ``lock``
-    from the step's unit of work concurrency mode.
+    applied through the m-dialect seam): ``locking`` appends the dialect's
+    shared-row-lock suffix (Postgres ``for share of t0``) after every other
+    clause; ``optimistic`` and the default (``None`` — a non-transactional read)
+    append nothing. Grouped / aggregate reads are not yet reachable. The value is
+    the read TARGET's already-derived Effective Concurrency Strategy, never a raw
+    Concurrency Preference — every caller composes
+    :func:`~parallax.snapshot.handle.entity_read_lock` for the Entity this
+    statement materializes, so one deep fetch's levels may disagree. This
+    compiler is the renderer and makes no part of that decision.
     """
     target = model.entity(query.target)
     if target is None:

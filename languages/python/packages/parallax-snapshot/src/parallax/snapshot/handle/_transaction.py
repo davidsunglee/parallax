@@ -585,10 +585,13 @@ class Transaction:
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         """Run a participating read for ``query`` and return ``Snapshot[S]``:
-        force-flushes pending writes first (read-your-own-writes), and
-        the transaction's participation mode renders the read-lock suffix
-        (``locking`` takes the dialect's shared row lock; ``optimistic`` takes
-        none). Otherwise identical to :meth:`Database.find` — the SAME
+        force-flushes pending writes first (read-your-own-writes), and renders
+        the read-lock suffix per materialized level from that level's OWN target
+        Entity — its Effective Concurrency Strategy, derived from this
+        transaction's one Concurrency Preference and the Entity's Optimistic
+        Lock Facet, takes the dialect's shared row lock under Locking and none
+        under Optimistic. One deep fetch may therefore lock some levels and not
+        others. Otherwise identical to :meth:`Database.find` — the SAME
         :func:`~parallax.snapshot.handle._preflight.preflight` gate, which
         runs BEFORE the force-flush so a refused read flushes nothing, the SAME
         shared find executor, the SAME frozen-node wrapping, and the SAME

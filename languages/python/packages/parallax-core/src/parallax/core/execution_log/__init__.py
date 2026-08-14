@@ -766,7 +766,14 @@ class ExecutionLog:
 
     @property
     def concurrency(self) -> Concurrency:
-        """The resolved effective participation mode, retained once."""
+        """The resolved Concurrency PREFERENCE, retained once.
+
+        A preference is not a strategy: each Entity's own Optimistic Lock Facet
+        combines with this one value into the strategy that Entity participates
+        under, so a transaction whose Entities disagree still retains exactly
+        one preference here. What each Entity actually did — the read that
+        locked, the write that gated — is on the individual Database Calls.
+        """
         return self._state.concurrency
 
     @property

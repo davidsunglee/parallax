@@ -4606,11 +4606,12 @@ def _assert_versioned_update_input(
 
     The golden SET clause is the domain set columns + the framework-owned ``version``
     column (advanced ``observedVersion + 1``, DERIVED — never authored in ①). The
-    binds are ``[…set values…, newVersion, pk]`` in the default LOCKING mode
-    (``m-opt-lock-002`` / ``m-detach-002`` — the m-read-lock shared read lock makes
-    the write correct, so no
-    ``and version = ?`` gate) or ``[…, newVersion, pk, observedVersion]`` in
-    optimistic mode. One golden statement per ① row.
+    binds are ``[…set values…, newVersion, pk]`` under the Locking strategy a
+    declared ``locking`` preference imposes (``m-opt-lock-002`` / ``m-detach-002``
+    — the m-read-lock shared read lock makes the write correct, so no
+    ``and version = ?`` gate) or ``[…, newVersion, pk, observedVersion]`` under
+    the Optimistic strategy a versioned target takes by default. One golden
+    statement per ① row.
 
     Under Relational Document Layout the Structured Column is one further `set`
     term, carrying the dialect's mutation expression and contributing one
@@ -5186,6 +5187,31 @@ def _edge_named_rectangle(
     return _Rectangle(valid_start, row.get(valid_axis.end.name), tx_start)
 
 
+def _prior_steps_for_key(
+    case: Case, entity: Entity, current_step: dict[str, Any], pk: Any
+) -> Iterator[dict[str, Any]]:
+    """Every writeSequence step BEFORE *current_step* that mutates *pk* of the
+    same Entity, in authored order.
+
+    Both temporal reconstructions replay this same history — the
+    Transaction-Time-Only milestone and the bitemporal rectangle — so the filter
+    lives here once. A row's key is not authored as such: it is what classifying
+    the row against its own mutation yields, which is why the traversal cannot be
+    a plain attribute comparison.
+    """
+    for prior in case.write_sequence:
+        if prior is current_step:
+            return
+        if prior["entity"] != current_step["entity"]:
+            continue
+        prior_keys = [
+            _classify_write_row(case, entity, row, mutation=prior["mutation"], opening=True)[1]
+            for row in prior.get("rows", [])
+        ]
+        if any(_write_value_equal(prior_pk, pk) for prior_pk in prior_keys):
+            yield prior
+
+
 def _observed_milestone_start(case: Case, entity: Entity, step: dict[str, Any], pk: Any) -> Any:
     """The Transaction-Time start of the ONE milestone *step*'s close addresses.
 
@@ -5214,17 +5240,7 @@ def _observed_milestone_start(case: Case, entity: Entity, step: dict[str, Any], 
         ]
         if len(open_rows) == 1:
             current = open_rows[0].get(tx_axis.start.name)
-    for prior in case.write_sequence:
-        if prior is step:
-            break
-        if prior["entity"] != step["entity"]:
-            continue
-        prior_keys = [
-            _classify_write_row(case, entity, row, mutation=prior["mutation"], opening=True)[1]
-            for row in prior.get("rows", [])
-        ]
-        if not any(_write_value_equal(prior_pk, pk) for prior_pk in prior_keys):
-            continue
+    for prior in _prior_steps_for_key(case, entity, step, pk):
         # An `insert` opens a milestone and an `update` chains a successor; both
         # leave one current at the step's own instant, and a `terminate` leaves
         # none for a later close to address.
@@ -5276,17 +5292,7 @@ def _current_rectangles(
     valid_time = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "valid-time")
     infinity = valid_time.get("infinity", "infinity")
     rectangles: tuple[_Rectangle, ...] = ()
-    for prior in case.write_sequence:
-        if prior is current_step:
-            break
-        if prior["entity"] != current_step["entity"]:
-            continue
-        prior_keys = [
-            _classify_write_row(case, entity, row, mutation=prior["mutation"], opening=True)[1]
-            for row in prior.get("rows", [])
-        ]
-        if not any(_write_value_equal(prior_pk, pk) for prior_pk in prior_keys):
-            continue
+    for prior in _prior_steps_for_key(case, entity, current_step, pk):
         valid_from, until, at = prior.get("validFrom"), prior.get("until"), prior.get("at")
         if prior["mutation"] in _OPENING_MUTATIONS:
             opened = _Rectangle(valid_from, infinity if until is None else until, at)

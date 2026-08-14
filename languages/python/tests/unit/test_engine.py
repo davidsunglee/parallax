@@ -2909,8 +2909,10 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
     # A VERSIONED target's predicate delete MATERIALIZES (ADR 0014): the
     # scenario's own preceding find step pairs with it
     # (`_run_materializing_pair`), resolving through the SAME `FakeWritePort`
-    # connection the subsequent per-row delete commits on — no Docker. The
-    # default locking mode renders each key ungated.
+    # connection the subsequent per-row delete commits on — no Docker. The case
+    # declares no `when.uow`, so it runs under the resolved `optimistic`
+    # preference, which a versioned target turns into the Optimistic strategy:
+    # each materialized key is gated.
     case = _synthetic_write(
         "scenario",
         {

@@ -15,6 +15,7 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, cast
 
+import _mixed_strategy_model as mx
 import pytest
 from _transact_support import (
     ACCOUNT,
@@ -233,6 +234,87 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
     with pytest.raises(OptimisticLockConflictError, match="Account"):
         account_db(port).transact(fn, concurrency="optimistic")
     assert ("rollback",) in port.ops
+
+
+# --------------------------------------------------------------------------- #
+# ONE default transaction over two Entities whose Optimistic Lock Facets       #
+# disagree: both strategies, both halves (read lock and write gate), one       #
+# commit (m-unit-work "Strategy selection"; m-opt-lock; m-execution-log). The  #
+# read half alone is `test_transaction_reads.py`'s per-level pair; these two   #
+# carry it through the writes the reads license and the log that records them. #
+# --------------------------------------------------------------------------- #
+def _mixed_port() -> RecordingPort:
+    return RecordingPort(
+        row_queue=(
+            [{"id": 1, "total": Decimal("10.00"), "version": 1}],
+            [{"id": 5, "consignment_id": 1, "carrier": "Hansa"}],
+        )
+    )
+
+
+def _mix_strategies(tx: Transaction) -> None:
+    consignment = tx.find(
+        mx.Consignment.where(mx.Consignment.id == 1).include(mx.Consignment.legs)
+    ).result()
+    tx.update(consignment.edit(total=Decimal("20.00")))
+    tx.update(consignment.legs[0].edit(carrier="Baltic"))
+
+
+def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversioned_read() -> None:
+    port = _mixed_port()
+    db_for(mx.MIXED_STRATEGY_MODEL, port).transact(_mix_strategies)
+    assert port.ops == [
+        ("begin",),
+        (
+            "read",
+            POSTGRES.to_driver_sql(
+                "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"
+            ),
+            (1,),
+        ),
+        (
+            "read",
+            POSTGRES.to_driver_sql(
+                "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+                "where t0.consignment_id in (?) for share of t0"
+            ),
+            (1,),
+        ),
+        (
+            "write",
+            POSTGRES.to_driver_sql(
+                "update consignment set total = ?, version = ? where id = ? and version = ?"
+            ),
+            (20.00, 2, 1, 1),
+        ),
+        (
+            "write",
+            POSTGRES.to_driver_sql("update consignment_leg set carrier = ? where id = ?"),
+            ("Baltic", 5),
+        ),
+        ("commit",),
+    ]
+
+
+def test_the_mixed_transactions_log_retains_one_preference_beside_both_behaviors() -> None:
+    # The Execution Log's own division of labour: it retains the ONE resolved
+    # Concurrency Preference — never a per-Entity strategy — while each Database
+    # Call carries the statement its own Entity actually produced, which is where
+    # the lock and the gate are readable.
+    port = _mixed_port()
+    log = db_for(mx.MIXED_STRATEGY_MODEL, port).transact(_mix_strategies).execution_log
+    assert log.concurrency == "optimistic"
+    (attempt,) = log.attempts
+    assert [(call.kind, call.statement.sql) for call in attempt.calls] == [
+        ("read", "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"),
+        (
+            "read",
+            "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+            "where t0.consignment_id in (?) for share of t0",
+        ),
+        ("write", "update consignment set total = ?, version = ? where id = ? and version = ?"),
+        ("write", "update consignment_leg set carrier = ? where id = ?"),
+    ]
 
 
 # --------------------------------------------------------------------------- #
