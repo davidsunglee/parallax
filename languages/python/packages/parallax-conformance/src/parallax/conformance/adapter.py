@@ -268,10 +268,12 @@ def _read_observations(case: case_format.Case, dialect: str, port: DbPort) -> di
             "observations": {"graphs": graphs, "roundTrips": round_trips},
         }
     if has_graph:
-        emissions, graph, round_trips, identity_checks = engine.run_graph_case(case, dialect, port)
+        emissions, graph, round_trips, stored_data_issues = engine.run_graph_case(
+            case, dialect, port
+        )
         observations: dict[str, Any] = {"graph": graph, "roundTrips": round_trips}
-        if identity_checks is not None:
-            observations["identityChecks"] = identity_checks
+        if stored_data_issues is not None:
+            observations["storedDataIssues"] = stored_data_issues
         return {"emissions": emissions, "observations": observations}
     emissions, rows, round_trips, trace = engine.run_read_case(case, dialect, port)
     read_observations: dict[str, Any] = {"rows": rows, "roundTrips": round_trips}

@@ -63,14 +63,35 @@ def _to_decimal(value: object) -> object:
     return value
 
 
+def _to_instant(value: object) -> object:
+    """Coerce an ISO-8601 instant spelling to the instant it names.
+
+    `m-case-format` admits both spellings of one UTC instant — the ``Z`` suffix a
+    canonical Wire Value carries (`m-wire`) and the ``+00:00`` offset the corpus
+    authors — so a residual difference between two strings that name the same
+    moment is a spelling difference, not a value one. Anything that is not an
+    instant spelling passes through for exact ``==``.
+    """
+    import datetime as dt
+
+    if not isinstance(value, str):
+        return value
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    return parsed if parsed.tzinfo is not None else value
+
+
 def _scalar_equal(observed: object, expected: object) -> bool:
-    """Exact wire equality, with an exact-Decimal fallback for numerics.
+    """Exact wire equality, with exact-Decimal and instant fallbacks.
 
     Exact ``==`` decides every string / date / uuid / bytes / bool value (so this
-    never loosens a comparison that already holds); only a residual numeric
-    difference — the wire-rendered ``decimal`` string ``"99.99"`` against the
-    authored number ``99.99`` — reconciles in Decimal space. ``bool`` is never
-    numeric (``True`` never equals ``1``).
+    never loosens a comparison that already holds); only a residual difference in
+    an admitted second spelling reconciles — the wire-rendered ``decimal`` string
+    ``"99.99"`` against the authored number ``99.99`` in Decimal space, and the
+    canonical ``...Z`` instant against the authored ``...+00:00`` one as the
+    moment both name. ``bool`` is never numeric (``True`` never equals ``1``).
     """
     from decimal import Decimal
 
@@ -79,7 +100,9 @@ def _scalar_equal(observed: object, expected: object) -> bool:
     if isinstance(observed, bool) or isinstance(expected, bool):
         return False
     left, right = _to_decimal(observed), _to_decimal(expected)
-    return isinstance(left, Decimal) and isinstance(right, Decimal) and left == right
+    if isinstance(left, Decimal) and isinstance(right, Decimal):
+        return left == right
+    return _to_instant(observed) == _to_instant(expected)
 
 
 def _row_equal(observed: dict[str, Any], expected: dict[str, Any]) -> bool:
@@ -154,6 +177,27 @@ def instance_row(instance: Entity, *, family_variant: bool = False) -> dict[str,
     return row
 
 
+def instance_graph_node(instance: Entity, *, family_variant: bool = False) -> dict[str, Any]:
+    """Render one materialized entity instance's OWN scalar/value-object
+    members to a DECLARED-MEMBER-keyed node — the key convention
+    ``then.graph`` / ``then.graphs`` use (`m-case-format` "Graph keys": a graph
+    leaf is keyed by the name the model declares, e.g. ``orderedOn``, never the
+    physical column ``ordered_on`` a `then.rows` oracle spells).
+    ``family_variant=True`` additionally reports ``familyVariant`` as
+    ``type(instance).__name__`` — the API-suite's own observation of
+    polymorphism (`python.md` §4: "every materialized node is an instance of its
+    concrete entity class, so the corpus's `familyVariant` is observable as
+    `type(node)`").
+    """
+    from parallax.core.entity._entity import wire_names_of
+
+    names = wire_names_of(type(instance))
+    node = {name: getattr(instance, py_name) for py_name, name in names.py_to_name.items()}
+    if family_variant:
+        node["familyVariant"] = type(instance).__name__
+    return node
+
+
 # --------------------------------------------------------------------------- #
 # Graph comparison (m-case-format `then.graph` / `then.graphs` leaves): a      #
 # recursive structural comparison over nested dicts/lists, sharing the same   #
@@ -212,6 +256,20 @@ def compare_graph(observed: Mapping[str, Any], expected: Mapping[str, Any]) -> N
     expected_wire = wire_value_deep(dict(expected))
     assert _values_equal(observed_wire, expected_wire), (
         f"graph mismatch:\n  observed: {observed_wire!r}\n  expected: {expected_wire!r}"
+    )
+
+
+def compare_stored_data_issues(observed: object, expected: object) -> None:
+    """Assert a read's classified positions equal what the case authored.
+
+    Both sides are compared as authored — an ordered list of records, each
+    carrying its ordinal, whether hydration completed, and its own diagnosis set.
+    A conforming read publishes none and a case that expects none authors none,
+    so the absent-versus-empty distinction never arises: the harness compares the
+    two absences directly.
+    """
+    assert observed == expected, (
+        f"stored-data classification mismatch:\n  observed: {observed!r}\n  expected: {expected!r}"
     )
 
 

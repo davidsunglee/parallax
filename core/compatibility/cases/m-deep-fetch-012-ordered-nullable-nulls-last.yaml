@@ -43,18 +43,18 @@ then:
         qty: 5
         price: 10.50
         active: true
-        ordered_on: 2024-01-05
+        orderedOn: 2024-01-05
         itemsByShipDate:
-          - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
-          - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+          - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+          - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
       - id: 42
         name: Grace
         sku: A-999
         qty: 30
         price: 99.99
         active: true
-        ordered_on: 2024-06-30
+        orderedOn: 2024-06-30
         itemsByShipDate:
-          - { id: 422, order_id: 42, sku: B-200, quantity: 5, shipped_on: 2024-02-05 }
-          - { id: 421, order_id: 42, sku: A-999, quantity: 3, shipped_on: 2024-03-10 }
+          - { id: 422, orderId: 42, sku: B-200, quantity: 5, shippedOn: 2024-02-05 }
+          - { id: 421, orderId: 42, sku: A-999, quantity: 3, shippedOn: 2024-03-10 }
   roundTrips: 2

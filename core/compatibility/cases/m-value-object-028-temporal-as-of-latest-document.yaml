@@ -37,10 +37,10 @@ then:
   referenceSql: select sup_id, name, in_z, out_z from supplier where out_z > '9000-01-01'
   graph:
     Supplier:
-      - sup_id: 1
+      - id: 1
         name: Nordic Foods
-        in_z: "2024-06-01T00:00:00+00:00"
-        out_z: infinity
+        txStart: "2024-06-01T00:00:00+00:00"
+        txEnd: infinity
         address:
           street: 2 New Avenue
           city: Bergen
@@ -48,10 +48,10 @@ then:
             country: "NO"
           phones:
             - { type: work, number: '555-0200' }
-      - sup_id: 2
+      - id: 2
         name: Baltic Traders
-        in_z: "2024-02-01T00:00:00+00:00"
-        out_z: infinity
+        txStart: "2024-02-01T00:00:00+00:00"
+        txEnd: infinity
         address:
           street: 5 Port Road
           city: Riga

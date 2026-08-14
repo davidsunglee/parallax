@@ -76,7 +76,7 @@ then:
             - { type: work, number: '555-9999' }
         locations:
           - id: 100
-            customer_id: 1
+            customerId: 1
             label: HQ
             address:
               street: 1 Harbour Way
@@ -88,7 +88,7 @@ then:
               phones:
                 - { type: work, number: '555-0100' }
           - id: 101
-            customer_id: 1
+            customerId: 1
             label: Depot
             address: null
       - id: 2
@@ -104,7 +104,7 @@ then:
             - { type: home, number: '555-9999' }
         locations:
           - id: 102
-            customer_id: 2
+            customerId: 2
             label: Home
             address:
               street: 5 Karl Johans Gate
@@ -184,4 +184,26 @@ then:
           geo: null
           phones: []
         locations: []
+  storedDataIssues:
+    - ordinal: 5
+      hydrated: true
+      issues:
+        - code: stored-data-one-wrong-kind
+          entity: parallax.compatibility.Customer
+          member: parallax.compatibility.Customer.address.geo
+          objectKey: { entity: parallax.compatibility.Customer, key: { id: 6 } }
+    - ordinal: 8
+      hydrated: true
+      issues:
+        - code: stored-data-many-wrong-kind
+          entity: parallax.compatibility.Customer
+          member: parallax.compatibility.Customer.address.phones
+          objectKey: { entity: parallax.compatibility.Customer, key: { id: 9 } }
+    - ordinal: 9
+      hydrated: true
+      issues:
+        - code: stored-data-many-wrong-kind
+          entity: parallax.compatibility.Customer
+          member: parallax.compatibility.Customer.address.phones
+          objectKey: { entity: parallax.compatibility.Customer, key: { id: 10 } }
   roundTrips: 2

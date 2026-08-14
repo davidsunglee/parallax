@@ -2801,7 +2801,9 @@ def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
             )
         for index in group:
             owner[index] = gi
-        assembled = {root_entity.name: [_normalize_row(root_rows[i]) for i in group]}
+        assembled = {
+            root_entity.name: [_graph_node(case.model, root_entity, root_rows[i]) for i in group]
+        }
         if not _graphs_equal(assembled, expected, case.model):
             raise CaseFailure(
                 f"{case.path.name}: then.graphs[{gi}] (pin {pin!r}) assembled graph "
@@ -2896,14 +2898,13 @@ def _assemble_graph(
             # m-sql "Read projection", slot 4). A VO-free entity (every orders-model
             # entity) has no value objects, so this is byte-identical to the prior
             # `_normalize_row` — no existing deep-fetch graph changes.
-            registry[key] = _materialize_owner_node(entity, raw_row)
+            registry[key] = _graph_node(case.model, entity, raw_row)
         return registry[key]
 
     root_nodes = [node_for("", root_entity, r) for r in root_rows]
 
     for path in _deepfetch_paths_raw(case):
         root_source = resolve_root_source_set(family, root_position, path)
-        parent_entity = root_entity
         parent_nodes = root_nodes
         parent_hop: _HopKey | None = None
         for index, segment in enumerate(path["segments"]):
@@ -2912,12 +2913,13 @@ def _assemble_graph(
             )
             step = step_by_hopkey[hop.key]
             admitted = _guarded_parents(case.path.name, step, parent_nodes)
-            parent_col = _column_of(parent_entity, step.parent_attr)
             bucket = children_by_step[step.hop_key]
 
             next_nodes: list[dict[str, Any]] = []
             for parent_node in admitted:
-                parent_key = _coerce_identity_key(parent_node.get(parent_col))
+                # A materialized node is keyed by declared member name, so the
+                # correlation member is addressed by name rather than by column.
+                parent_key = _coerce_identity_key(parent_node.get(step.parent_attr))
                 matched = bucket.get(parent_key, [])
                 child_nodes = [node_for(step.view_key, step.child_entity, c) for c in matched]
                 if step.to_many:
@@ -2925,7 +2927,6 @@ def _assemble_graph(
                 else:
                     parent_node[step.view_key] = child_nodes[0] if child_nodes else None
                 next_nodes.extend(child_nodes)
-            parent_entity = step.child_entity
             parent_nodes = next_nodes
             parent_hop = hop.key
 
@@ -3144,6 +3145,38 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
     return node
 
 
+def _graph_node(model: Model, entity: Entity, row: dict[str, Any]) -> dict[str, Any]:
+    """One materialized node keyed the way `then.graph` keys one.
+
+    A graph leaf is keyed by the DECLARED member name (`m-case-format` *Graph
+    keys*), while a read row arrives keyed by its physical column, so the
+    attribute half is renamed here. Value Object occurrences and relationship
+    views are already name-keyed by :func:`_materialize_owner_node` and the
+    assembly, and `familyVariant` names no declared member, so both pass through.
+
+    The rename map comes from the node's OWN concrete Entity where the row states
+    one: an abstract-root read narrows each node to its variant's declared
+    columns, and two concrete siblings may spell one column name for two
+    different members. A polymorphic level that projects no variant is read at an
+    abstract position that declares none of its descendants' own members, so the
+    model's remaining declarations fill what that position cannot name — never
+    overriding what it can.
+    """
+    node = _materialize_owner_node(entity, row)
+    concrete = entity
+    variant = node.get("familyVariant")
+    if isinstance(variant, str):
+        try:
+            concrete = model.entity(variant)
+        except KeyError:
+            concrete = entity
+    names = {attribute["column"]: attribute["name"] for attribute in concrete.attributes}
+    for other in model.entities:
+        for attribute in other.attributes:
+            names.setdefault(attribute["column"], attribute["name"])
+    return {names.get(key, key): value for key, value in node.items()}
+
+
 def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     """Assert a top-level ``then.graph`` read (no Includes, no milestone set)
     materializes from its ONE golden statement, with no child statement.
@@ -3205,7 +3238,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     # is a separate, graph-assembly-only step.
     rows = _materialize_family_variant(case, rows)
     narrowed_rows = _narrow_to_variant_columns(case, rows)
-    assembled = {entity.name: [_materialize_owner_node(entity, row) for row in narrowed_rows]}
+    assembled = {entity.name: [_graph_node(case.model, entity, row) for row in narrowed_rows]}
 
     expected = case.expected_graph or {}
     if not _graphs_equal(assembled, expected, case.model):

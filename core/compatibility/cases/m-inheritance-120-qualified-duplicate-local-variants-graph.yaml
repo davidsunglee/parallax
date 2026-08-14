@@ -16,6 +16,6 @@ then:
         mariadb: select t0.id, t0.family_variant parallax_attr_1, t0.parallax_attr_0 parallax_attr_2, cast(null as char(64)) parallax_attr_3, 'archive.SharedVariant' family_variant from archive_shared t0 union all select t0.id, t0.family_variant parallax_attr_1, cast(null as char(64)) parallax_attr_2, t0.parallax_attr_0 parallax_attr_3, 'catalog.SharedVariant' family_variant from catalog_shared t0
   graph:
     Record:
-      - { id: 3, family_variant: archive-marker, parallax_attr_0: archived, familyVariant: archive.SharedVariant }
-      - { id: 4, family_variant: catalog-marker, parallax_attr_0: current, familyVariant: catalog.SharedVariant }
+      - { id: 3, variantMarker: archive-marker, archiveLabel: archived, familyVariant: archive.SharedVariant }
+      - { id: 4, variantMarker: catalog-marker, catalogLabel: current, familyVariant: catalog.SharedVariant }
   roundTrips: 1

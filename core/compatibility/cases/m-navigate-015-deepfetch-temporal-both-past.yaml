@@ -37,18 +37,18 @@ then:
     Policy:
       - id: 1
         name: Auto
-        from_z: "2024-01-01T00:00:00+00:00"
-        thru_z: infinity
-        in_z: "2024-01-01T00:00:00+00:00"
-        out_z: infinity
+        validStart: "2024-01-01T00:00:00+00:00"
+        validEnd: infinity
+        txStart: "2024-01-01T00:00:00+00:00"
+        txEnd: infinity
         coverages:
-          - { id: 10, policy_id: 1, amount: 500.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
+          - { id: 10, policyId: 1, amount: 500.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: "2024-04-01T00:00:00+00:00" }
       - id: 2
         name: Home
-        from_z: "2024-01-01T00:00:00+00:00"
-        thru_z: infinity
-        in_z: "2024-01-01T00:00:00+00:00"
-        out_z: infinity
+        validStart: "2024-01-01T00:00:00+00:00"
+        validEnd: infinity
+        txStart: "2024-01-01T00:00:00+00:00"
+        txEnd: infinity
         coverages:
-          - { id: 20, policy_id: 2, amount: 300.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
+          - { id: 20, policyId: 2, amount: 300.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
   roundTrips: 2

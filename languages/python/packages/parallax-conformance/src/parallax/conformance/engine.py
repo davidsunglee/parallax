@@ -4,9 +4,10 @@ The adapter path compiles and runs a compatibility case against the class-free
 production spine (no dynamic class synthesis): the case's model YAML is ingested
 through the ``m-descriptor`` deserializer and its ``when.objectQuery`` through the
 ``m-object-query`` deserializer. ``compile`` lowers that query through ``m-sql``;
-``run`` routes it through the production neutral-read seam, which owns planning,
-compilation, execution, conversion, publication, and row materialization before
-the adapter renders the observed result to wire form. Compile eligibility
+``run`` routes it through the production read seams — the public Wire read for a
+graph, the values lane for rows — which own planning, compilation, execution,
+conversion, classification, and row materialization before the adapter builds the
+observation envelope around what they published. Compile eligibility
 (``m-case-format`` ``compileEligibility``) is read from the case; the run-only
 minority is never compiled.
 """
@@ -21,11 +22,10 @@ import socket
 import threading
 import time
 import uuid
-from collections import deque
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Final, Literal, Protocol, cast, runtime_checkable
+from typing import Any, Final, Literal, Protocol, cast, runtime_checkable
 
 from parallax.conformance import (
     case_format,
@@ -33,7 +33,7 @@ from parallax.conformance import (
     provision,
     temporal_state,
 )
-from parallax.conformance.temporal_state import TemporalShadow, predecessor_row
+from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import batch_write, deep_fetch, inheritance, opt_lock, read_lock, storage_layout
 from parallax.core.base import (
     INFINITY_LITERAL,
@@ -60,8 +60,12 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
+    MemberIdentity,
     Multiplicity,
     NestedValueObjectMetadata,
+    TemporalDimension,
+    ValueObjectAttributeIdentity,
+    ValueObjectIdentity,
     ValueObjectMetadata,
     entity_by_name,
 )
@@ -74,7 +78,7 @@ from parallax.core.predicate import (
     ModelRejectedError,
 )
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, SqlGenError, compile_read
-from parallax.core.temporal_read import Pin, TemporalReadError, query_pin
+from parallax.core.temporal_read import Pin, TemporalReadError, query_pin, scans_an_axis
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     CardinalityCorruptionError,
@@ -387,9 +391,9 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
 def run_read_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], list[Row], int, ReadTrace]:
-    """Run a row-form read case through the production neutral read seam.
+    """Run a row-form read case through the production values lane.
 
-    The whole lane is ``db.read_neutral`` / ``tx.read_neutral``: canonicalization,
+    The whole lane is ``db.read_rows`` / ``tx.read_rows``: canonicalization,
     compilation, the read-lock suffix, the Database Call, `familyVariant`
     materialization, and the round-trip count are all production's, and what is
     left here is wire rendering and the case's own routing. A row this adapter
@@ -423,27 +427,40 @@ def run_read_case(
     db = handle.Database(port, model, dialect=dialect_for(dialect_name))
     concurrency = _read_case_concurrency(case)
     try:
-        request = handle.NeutralReadRequest.rows(query)
         result = (
-            db.read_neutral(request)
+            db.read_rows(query)
             if concurrency is None
-            else db.transact(lambda tx: tx.read_neutral(request), concurrency=concurrency).value
+            else db.transact(lambda tx: tx.read_rows(query), concurrency=concurrency).value
         )
     except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-    rows = result.output
-    if not isinstance(rows, handle.NeutralRows):  # pragma: no cover - a rows request answers rows
-        raise EngineError(f"{case.path.name}: a row-form read answered {type(rows).__name__}")
     emissions = [
         Emission("/objectQuery", call.statement.sql, call.statement.binds)
         for call in result.execution.calls
     ]
     return (
         emissions,
-        [wire_row(row) for row in rows],
+        [wire_row(_conforming_row(case, row)) for row in result.rows],
         result.execution.round_trips,
         result.execution,
     )
+
+
+def _conforming_row(case: case_format.Case, row: handle.PublishedRow) -> Mapping[str, object]:
+    """One published row-form element as the row a `then.rows` case grades.
+
+    A row whose stored state contradicted the model publishes its record instead
+    of itself, and the row-form observation has no place to carry one, so this
+    lane names the shape rather than grading a record as though it were a row.
+    Graph-form cases grade `InvalidData` through `then.storedDataIssues`.
+    """
+    if isinstance(row, handle.InvalidData):
+        raise EngineError(
+            f"{case.path.name}: a row-form read published an InvalidData record — stored data "
+            "that contradicts the model is graded through a `then.graph` case's own "
+            "`storedDataIssues`, never as a row"
+        )
+    return row
 
 
 def _driver_binds(binds: Sequence[object]) -> list[object]:
@@ -451,92 +468,163 @@ def _driver_binds(binds: Sequence[object]) -> list[object]:
 
 
 # --------------------------------------------------------------------------- #
-# Graph reads (m-deep-fetch / m-snapshot-read): the lane runs the production    #
-# neutral read seam in graph form, so every level's compile, execute, convert,  #
-# and merge is production's. What is left here is rendering the neutral node    #
-# views to the wire `graph` / `graphs` observation the corpus grades.           #
+# Graph reads (m-deep-fetch / m-snapshot-read): the lane runs the PUBLIC Wire   #
+# read, so every level's compile, execute, convert, merge, classify, and unwind #
+# is production's and a `then.graph` observation IS a Wire result. What is left #
+# here is the envelope around it — the root key, the milestone pin, and the     #
+# stored-data records a classified root publishes in place of itself.           #
 # --------------------------------------------------------------------------- #
-def _neutral_read(
+def _wire_read(
     case: case_format.Case,
     query: ObjectQueryNode,
     model: AcceptedMetamodel,
     port: DbPort,
     dialect_name: str,
-) -> handle.NeutralReadResult:
-    """One graph-form neutral read of the case's own Object Query.
+) -> handle.Snapshot[handle.WireEntity]:
+    """One graph-form Wire read of the case's own Object Query.
 
-    The whole lane is ``db.read_neutral``: target resolution, validation,
-    deep-fetch planning, per-level compilation and execution, row conversion,
-    projection merging, and the round-trip count are production's, and a scanning
-    read answers the milestone-set form from the same call, exactly as
-    ``db.find`` does.
+    The whole lane is ``db.wire.find``: target resolution, validation, deep-fetch
+    planning, per-level compilation and execution, row conversion, projection
+    merging, root classification, the finite include-tree unwind, and the
+    round-trip count are production's, and a scanning read answers the
+    milestone-set form from the same call, exactly as ``db.find`` does.
     """
     db = handle.Database(port, model, dialect=dialect_for(dialect_name))
     try:
-        return db.read_neutral(handle.NeutralReadRequest.graph(query))
+        return db.wire.find(query)
     except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
 def run_graph_case(
     case: case_format.Case, dialect_name: str, port: DbPort
-) -> tuple[list[Emission], dict[str, list[Row]], int, list[dict[str, object]] | None]:
-    """Run a single-graph deep-fetch / snapshot read, rendering the neutral node
-    views production materialized to the wire `then.graph` shape (root-class-
-    keyed) and, for a case declaring `then.identityChecks`, evaluating each
-    declared reference-identity assertion over the MATERIALIZED (pre-truncation)
-    graph.
+) -> tuple[list[Emission], dict[str, list[Row | None]], int, list[dict[str, object]] | None]:
+    """Run a single-graph deep-fetch / snapshot read, reporting the Wire result
+    production published as the wire `then.graph` shape (root-class-keyed) and,
+    for a root whose stored state contradicted the model, the record it published
+    in place of itself.
     """
     query = _read_query(case)
     model = load_case_metamodel(case)
-    result = _neutral_read(case, query, model, port, dialect_name)
-    graph = result.output
-    if not isinstance(graph, handle.NeutralGraph):
+    snapshot = _wire_read(case, query, model, port, dialect_name)
+    if not _is_single_graph(query):
         raise EngineError(
-            f"{case.path.name}: a `then.graph` case read answered {type(graph).__name__} — "
+            f"{case.path.name}: a `then.graph` case read a milestone SET — "
             "a milestone-set read asserts `then.graphs`"
         )
-    root_key = _graph_root_key(query.target.canonical, model)
+    roots = snapshot.checked().results()
     return (
-        _read_emissions(result),
-        _render_graph(root_key, graph.roots, model),
-        result.execution.round_trips,
-        _evaluate_identity_checks(case, root_key, graph.roots),
+        _read_emissions(snapshot.execution),
+        {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
+        snapshot.execution.round_trips,
+        _stored_data_records(roots),
     )
 
 
 def run_graphs_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], list[dict[str, object]], int]:
-    """Run a milestone-set (`history` / `asOfRange`) snapshot read, rendering
-    production's ordered per-milestone graphs to the wire `then.graphs` shape:
-    an array of `{pin, graph}` entries, each pin keyed by declared as-of
-    dimension spelling."""
+    """Run a milestone-set (`history` / `asOfRange`) snapshot read, reporting
+    production's ordered per-milestone roots as the wire `then.graphs` shape: an
+    array of `{pin, graph}` entries, each pin keyed by declared as-of dimension
+    spelling.
+
+    A milestone-set Wire Snapshot publishes every milestone's roots in ONE
+    ordered result (`m-snapshot-read`), so the per-milestone partition is
+    recovered from each root's own edge — the coordinate the pin states — rather
+    than from a second read per milestone.
+    """
     query = _read_query(case)
     model = load_case_metamodel(case)
-    result = _neutral_read(case, query, model, port, dialect_name)
-    graphs = result.output
-    if not isinstance(graphs, handle.NeutralGraphs):
+    snapshot = _wire_read(case, query, model, port, dialect_name)
+    if _is_single_graph(query):
         raise EngineError(
-            f"{case.path.name}: a `then.graphs` case read answered {type(graphs).__name__} — "
+            f"{case.path.name}: a `then.graphs` case read a single instant — "
             "a single-instant read asserts `then.graph`"
         )
     root_key = _graph_root_key(query.target.canonical, model)
+    entity = _declaring_metadata(model, query.target.canonical)
     graphs_wire: list[dict[str, object]] = [
-        {
-            "pin": _wire_pin(graph.pin),
-            "graph": _render_graph(root_key, graph.roots, model),
-        }
-        for graph in graphs
+        {"pin": _wire_pin(pin), "graph": {root_key: roots}}
+        for pin, roots in _milestone_partition(entity, snapshot.checked().results())
     ]
-    return _read_emissions(result), graphs_wire, result.execution.round_trips
+    return _read_emissions(snapshot.execution), graphs_wire, snapshot.execution.round_trips
 
 
-def _read_emissions(result: handle.NeutralReadResult) -> list[Emission]:
+def _is_single_graph(query: ObjectQueryNode) -> bool:
+    """Whether the read answers one graph rather than a milestone SET.
+
+    The dispatch is the query's own — a scanned axis is what makes a read
+    milestone-set (`m-temporal-read`) — read here rather than inferred from the
+    result, because both forms now publish one ordered Snapshot.
+    """
+    return not scans_an_axis(query)
+
+
+def _milestone_partition(
+    entity: EntityMetadata, roots: Sequence[object]
+) -> list[tuple[Pin, list[Row | None]]]:
+    """One ordered milestone-set result partitioned back into its own graphs.
+
+    Roots arrive in the executor's chronological milestone order, so a partition
+    closes as soon as the edge changes: grouping by first appearance would fold
+    two milestones a scan legitimately answers twice.
+    """
+    partitions: list[tuple[Pin, list[Row | None]]] = []
+    for root in roots:
+        pin = _root_pin(entity, root)
+        if not partitions or partitions[-1][0] != pin:
+            partitions.append((pin, []))
+        partitions[-1][1].append(_graph_root(root))
+    return partitions
+
+
+def _root_pin(entity: EntityMetadata, root: object) -> Pin:
+    """One milestone-set root's own edge pin, read off the values it published.
+
+    A milestone-set graph is edge-pinned at its own milestone's from-instant
+    (`m-snapshot-read`), and the root carries those axis starts as declared
+    members, so the coordinate is the row's own rather than a second reading of
+    the query.
+    """
+    values = _graph_root(root)
+    if values is None:  # pragma: no cover - a non-hydrating milestone root pins nothing
+        raise EngineError("a milestone-set root published no value to pin")
+    coordinates: dict[TemporalDimension, object] = {
+        axis.dimension: values.get(axis.start_attribute.name) for axis in entity.declared_as_of_axes
+    }
+    return Pin(
+        tx_time=_pin_instant(coordinates.get(TemporalDimension.TRANSACTION_TIME)),
+        valid_time=_pin_instant(coordinates.get(TemporalDimension.VALID_TIME)),
+    )
+
+
+def _pin_instant(value: object) -> dt.datetime | None:
+    """One published axis start as the instant a :class:`Pin` carries."""
+    if not isinstance(value, str):
+        return None
+    return normalize_instant(dt.datetime.fromisoformat(value))
+
+
+def _graph_root(root: object) -> Row | None:
+    """One published result position as the value `then.graph` grades.
+
+    A conforming root IS the graph node. A classified root publishes its record
+    instead, carrying the hydrated node when the collapse produced one and
+    nothing when no value could be produced without inventing it — and the graph
+    position then carries ``null``, because a record is graded through
+    `then.storedDataIssues` rather than rendered as though it were a node.
+    """
+    if isinstance(root, handle.InvalidData):
+        return cast("Row | None", cast("handle.InvalidData[object]", root).data)
+    return cast("Row", root)
+
+
+def _read_emissions(execution: ReadTrace) -> list[Emission]:
     """The read's own emissions: the statements production actually ran, in order."""
     return [
         Emission("/objectQuery", call.statement.sql, call.statement.binds)
-        for call in result.execution.calls
+        for call in execution.calls
     ]
 
 
@@ -576,161 +664,81 @@ def _graph_root_key(target: str, model: AcceptedMetamodel) -> str:
     return entity.identity.name
 
 
-def _render_graph(
-    root_key: str, roots: Sequence[handle.NeutralNodeView], model: AcceptedMetamodel
-) -> dict[str, list[Row]]:
-    """The wire `then.graph` shape: root-class-keyed, each root rendered through
-    :func:`_render_node` (back-reference cycles truncate to a PK-only stub; a
-    diamond at a non-cyclic position keeps its full value)."""
-    return {root_key: [_render_node(view, frozenset(), model) for view in roots]}
+def _stored_data_records(roots: Sequence[object]) -> list[dict[str, object]] | None:
+    """The `then.storedDataIssues` observation, or ``None`` for a clean read.
 
-
-def _render_node(
-    view: handle.NeutralNodeView, visiting: frozenset[int], model: AcceptedMetamodel
-) -> Row:
-    """Render one neutral node view to wire JSON.
-
-    A node whose identity is ALREADY on the current recursion path (a true
-    back-reference cycle, m-case-format "Back-reference cycles") truncates to a
-    PK-only stub instead of recursing again; every other position — including a
-    diamond reached a second time from a DIFFERENT, non-ancestor position —
-    renders its full value.
-
-    Every member arrives keyed by structured identity, because that is what a
-    production read publishes; the wire keys are physical for an Attribute (the
-    spelling `then.graph` leaves author) and the canonical member name for a
-    Value Object occurrence. The recursion is keyed on the shared
-    :class:`~parallax.snapshot.handle.NeutralNode` rather than on the view, so a
-    cycle is recognized by the identity anchor production merged the projections
-    onto.
+    One entry per INVALID result position, in result order: the position itself,
+    whether hydration completed, and the closed diagnosis set the root carries.
+    A conforming read reports nothing at all, so a case that authors no
+    expectation is never handed an empty array to explain.
     """
-    anchor = id(view.node)
-    if anchor in visiting:
-        return {
-            _member_column(model, identity): wire_value(view.attributes[identity])
-            for identity in view.primary_key
-        }
-    nested = visiting | {anchor}
-    rendered: Row = {}
-    for identity, value in view.attributes.items():
-        column = _member_column(model, identity)
-        _put_rendered(rendered, column, _render_value(value, nested, model))
-    if view.family_variant is not None:
-        _put_rendered(rendered, "familyVariant", view.family_variant)
-    for occurrence, document in view.value_objects.items():
-        _put_rendered(rendered, occurrence.path[-1], _render_value(document, nested, model))
-    for key, related in view.relationships.items():
-        _put_rendered(
-            rendered,
-            key.narrowed_view or key.relationship.name,
-            _render_value(related, nested, model),
-        )
+    records = [
+        _stored_data_record(cast("handle.InvalidData[object]", root))
+        for root in roots
+        if isinstance(root, handle.InvalidData)
+    ]
+    return records or None
+
+
+def _stored_data_record(record: handle.InvalidData[object]) -> dict[str, object]:
+    """One published :class:`~parallax.snapshot.InvalidData` on the wire.
+
+    ``hydrated`` states the one thing the graph position cannot: whether the
+    ``null`` at that position means "no value could be produced without inventing
+    one" or is the node's own collapsed value.
+    """
+    return {
+        "ordinal": record.ordinal,
+        "hydrated": record.data is not None,
+        "issues": sorted(
+            (_stored_data_issue(issue) for issue in record.issues),
+            key=lambda issue: (
+                cast("str", issue["code"]),
+                cast("str", issue.get("member") or ""),
+                cast("str", issue["entity"]),
+            ),
+        ),
+    }
+
+
+def _stored_data_issue(issue: handle.StoredDataIssue) -> dict[str, object]:
+    """One diagnosis as its cross-language record (`m-snapshot-read`).
+
+    ``member`` is absent for an unresolved family tag alone — its discriminator
+    names no declared member — and ``objectKey`` is absent wherever the affected
+    object's own identity did not decode.
+    """
+    rendered: dict[str, object] = {"code": issue.code, "entity": issue.entity.canonical}
+    if issue.member is not None:
+        rendered["member"] = _member_path(issue.member)
+    if issue.object_key is not None:
+        rendered["objectKey"] = _wire_object_key(issue.object_key)
     return rendered
 
 
-def _member_column(model: AcceptedMetamodel, identity: AttributeIdentity) -> str:
-    """The physical column ``identity`` is stored under — the spelling a
-    `then.graph` leaf keys that member by."""
-    entity = model.entity(identity.entity)
-    attribute = None if entity is None else entity.attribute(identity.name)
-    if attribute is None:  # pragma: no cover - a materialized member is declared Metadata
-        raise EngineError(f"{identity.entity.canonical}.{identity.name} names no declared member")
-    return attribute.storage.name
+def _member_path(member: MemberIdentity) -> str:
+    """One member identity as the dotted path the corpus addresses members by.
 
-
-def _put_rendered(rendered: Row, key: str, value: object) -> None:
-    """Add one provenance-resolved graph field, refusing an impossible collision."""
-    if key in rendered:  # pragma: no cover - Model Formation rejects this defensively
-        raise EngineError(f"materialized field key {key!r} has more than one contributor")
-    rendered[key] = value
-
-
-def _render_value(value: object, visiting: frozenset[int], model: AcceptedMetamodel) -> object:
-    if isinstance(value, handle.NeutralNodeView):
-        return _render_node(value, visiting, model)
-    if isinstance(value, tuple | list):
-        return [_render_value(item, visiting, model) for item in cast("Sequence[object]", value)]
-    if isinstance(value, Mapping):
-        mapping = cast("Mapping[str, object]", value)
-        return {key: _render_value(v, visiting, model) for key, v in mapping.items()}
-    return wire_value(value)
-
-
-def _evaluate_identity_checks(
-    case: case_format.Case, root_key: str, roots: Sequence[handle.NeutralNodeView]
-) -> list[dict[str, object]] | None:
-    """The case's declared `then.identityChecks` (m-case-format / m-conformance-
-    adapter), each evaluated as reference identity over the MATERIALIZED graph —
-    resolved by walking the SAME JSON-Pointer path the case declares, against the
-    neutral node views directly (never the truncated wire JSON, so a stubbed
-    cycle position still resolves to its real referent).
-
-    Sameness is asked of the shared identity anchor rather than of the view,
-    which is what "the same node" means once production has merged every
-    projection of one logical row onto one
-    :class:`~parallax.snapshot.handle.NeutralNode`. Returns ``None`` when the
-    case declares no identityChecks at all.
+    The same spelling a nested predicate authors
+    (``parallax.compatibility.Customer.address.geo.country``), so a diagnosis
+    names a member exactly as a case already names one.
     """
-    then = case.document.get("then")
-    declared = (
-        cast("Mapping[str, object]", then).get("identityChecks")
-        if isinstance(then, Mapping)
-        else None
-    )
-    if not declared:
-        return None
-    root_map = {root_key: roots}
-    results: list[dict[str, object]] = []
-    for check in cast("list[Mapping[str, object]]", declared):
-        left = _resolve_graph_pointer(case, root_map, cast("str", check["left"]))
-        right = _resolve_graph_pointer(case, root_map, cast("str", check["right"]))
-        results.append(
-            {"left": check["left"], "right": check["right"], "same": left.node is right.node}
-        )
-    return results
+    match member:
+        case AttributeIdentity():
+            return f"{member.entity.canonical}.{member.name}"
+        case ValueObjectIdentity():
+            return ".".join((member.entity.canonical, *member.path))
+        case ValueObjectAttributeIdentity():
+            occurrence = member.value_object
+            return ".".join((occurrence.entity.canonical, *occurrence.path, member.name))
 
 
-def _resolve_graph_pointer(
-    case: case_format.Case,
-    root_map: Mapping[str, Sequence[handle.NeutralNodeView]],
-    pointer: str,
-) -> handle.NeutralNodeView:
-    """Resolve a `/then/graph/<RootClass>/<index>/<key>/<index>/...` JSON Pointer
-    against the materialized (pre-truncation) graph, alternating list-index and
-    relationship-key navigation exactly as the pointer's own segments do."""
-    parts = pointer.lstrip("/").split("/")
-    if len(parts) < 4 or parts[0] != "then" or parts[1] != "graph":
-        raise EngineError(f"{case.path.name}: identityChecks pointer {pointer!r} is malformed")
-    current: object = root_map[parts[2]][int(parts[3])]
-    for part in parts[4:]:
-        current = (
-            cast("tuple[object, ...]", current)[int(part)]
-            if isinstance(current, tuple)
-            else _view_relationship(case, pointer, current, part)
-        )
-    if not isinstance(current, handle.NeutralNodeView):
-        raise EngineError(
-            f"{case.path.name}: identityChecks pointer {pointer!r} does not name a graph node"
-        )
-    return current
-
-
-def _view_relationship(case: case_format.Case, pointer: str, current: object, name: str) -> object:
-    """One pointer segment resolved against a node view's relationship views,
-    under the wire key a `then.graph` leaf spells them by.
-
-    Only relationship segments navigate: a pointer naming an Attribute reaches a
-    scalar, which can never be one side of an identity claim, so refusing here
-    reports the malformed pointer rather than a later, less specific miss.
-    """
-    if isinstance(current, handle.NeutralNodeView):
-        for key, related in current.relationships.items():
-            if (key.narrowed_view or key.relationship.name) == name:
-                return related
-    raise EngineError(
-        f"{case.path.name}: identityChecks pointer {pointer!r} does not resolve "
-        "against the materialized graph"
-    )
+def _wire_object_key(key: ObjectKey) -> dict[str, object]:
+    """One Object Key on the wire: its Entity plus its ordered primary-key values."""
+    return {
+        "entity": key.entity.canonical,
+        "key": {name: wire_value(value) for name, value in key.primary_key},
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -968,32 +976,10 @@ _ROW_OBSERVATION_KEYS: Final[tuple[str, ...]] = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _ObservedNode:
-    """One node a `uow` group's own find step returned, as production published
-    it (`m-opt-lock`; ADR 0013).
-
-    ``object_key`` and ``observation_key`` are the ACTIVE unit of work's own —
-    the identity it derived for the node and the slot it filed that node's Write
-    Observation under (`~parallax.snapshot.handle.NeutralNode`) — so a later
-    write of this SAME object settles against evidence production recorded rather
-    than against a map this engine keyed for itself.
-
-    ``observation`` is the same evidence rendered for the PURE re-lowering oracle
-    (:func:`_lower_resolved`), which plans a buffer with no unit of work behind
-    it and therefore cannot dereference a key. It is read off the node's own
-    published values, never off production's observation record.
-    """
-
-    object_key: ObjectKey
-    observation_key: ObservationKey
-    observation: WriteObservation
-
-
-# What ONE grouped find step observed, in returned-node order. A later write step
-# of the same group names that step with `on` and settles against the node of its
-# OWN key (`m-case-format` "Settling against a grouped find").
-ObservedNodes = tuple[_ObservedNode, ...]
+# What ONE grouped find step observed, in the order production filed it. A later
+# write step of the same group names that step with `on` and settles against the
+# record of its OWN key (`m-case-format` "Settling against a grouped find").
+ObservedNodes = tuple[handle.ObservedRecord, ...]
 
 # Everything a `uow` group's find steps have observed so far, in step order — the
 # store a grouped write with no `on` reference resolves its own evidence from.
@@ -1008,7 +994,7 @@ ObservedNodes = tuple[_ObservedNode, ...]
 # transaction records the version at read time ("the shadow value read earlier")
 # and threads it into the UPDATE bind
 # (`docs/research/reladomo/09-transactions-locking.md:55-59`).
-GroupObservations = list[_ObservedNode]
+GroupObservations = list[handle.ObservedRecord]
 
 # What a write hands `Transaction.write_neutral` as the evidence it settles
 # against: the active unit of work's own Observation Key where a grouped find
@@ -1051,142 +1037,6 @@ def _versioned_non_temporal_version_attribute(
     if declaring.declared_as_of_axes:
         return None
     return next((attr for attr in declaring.declared_attributes if attr.optimistic_locking), None)
-
-
-def _observed_nodes(model: AcceptedMetamodel, entity_name: str, output: object) -> ObservedNodes:
-    """What one `uow` group's find step observed, as production published it.
-
-    Every node of the neutral graph carries the active unit of work's own
-    :class:`~parallax.core.unit_work.ObjectKey` and the
-    :class:`~parallax.core.unit_work.ObservationKey` its evidence was filed
-    under, so this reads them rather than deriving a second identity and a second
-    filing rule that would have to agree with production's by inspection. A node
-    the unit of work observed nothing of publishes no key and contributes
-    nothing: an unversioned, non-temporal target is exactly that case.
-
-    EVERY materialized node counts, not just the roots: a find observes each row
-    it materialized at every deep-fetch level, so a later grouped write of an
-    included child has production evidence to settle against. Each node is
-    therefore classified by its OWN concrete Entity — the root's temporal profile
-    decides nothing about a child's, and a child of an unobserved root can be the
-    only observed thing in the graph.
-
-    The Write Observation beside them is the SAME evidence rendered for the pure
-    re-lowering oracle, which plans with no unit of work behind it and so cannot
-    dereference a key. It comes from the node's own published values — a version
-    cell for a versioned Non-Temporal target, the whole milestone for a temporal
-    one — which is what the read returned, never a copy of what production filed.
-    """
-    if not isinstance(output, handle.NeutralGraph):
-        raise EngineError(
-            f"a grouped find over {entity_name!r} answered "
-            f"{type(output).__name__} — a participating scenario find is graph-form"
-        )
-    observed: list[_ObservedNode] = []
-    for view in _materialized_nodes(output):
-        key = view.node.observation_key
-        if key is None:
-            continue
-        node_entity = view.node.entity.canonical
-        is_temporal = _is_temporal_entity(model, node_entity)
-        if is_temporal:
-            _refuse_document_layout_milestone(model, node_entity)
-        version_attr = _versioned_non_temporal_version_attribute(model, node_entity)
-        observation = (
-            _milestone_observation(view)
-            if is_temporal
-            else _version_observation(view, version_attr)
-            if version_attr is not None
-            else None
-        )
-        if observation is None:  # pragma: no cover - defends a projection short of its version
-            continue
-        observed.append(_ObservedNode(view.node.object_key, key, observation))
-    return tuple(observed)
-
-
-def _materialized_nodes(graph: handle.NeutralGraph) -> Iterator[handle.NeutralNodeView]:
-    """Every node ``graph`` materialized, roots first and each exactly once.
-
-    Breadth-first from the roots in result order, so the roots keep the order the
-    read returned them in and a deeper level never precedes a shallower one —
-    which is what makes "the LATEST node observed of this key"
-    (:func:`_observed_for`) a stable reading. A graph may hold diamonds and
-    cycles, and one logical node has one identity anchor, so a node already
-    yielded is never walked again.
-    """
-    seen: set[handle.NeutralNode] = set()
-    queue: deque[handle.NeutralNodeView] = deque(graph.roots)
-    while queue:
-        view = queue.popleft()
-        if view.node in seen:
-            continue
-        seen.add(view.node)
-        yield view
-        for related in view.relationships.values():
-            if related is None:
-                continue
-            queue.extend(related if isinstance(related, tuple) else (related,))
-
-
-def _version_observation(
-    view: handle.NeutralNodeView, version_attr: AttributeMetadata
-) -> VersionObservation | None:
-    """The Version Observation one observed node carries — ``None`` when the
-    projection did not return the version member, which no well-formed find
-    reaches but this seam takes no data on faith."""
-    for identity, value in view.attributes.items():
-        if identity == version_attr.identity:
-            return VersionObservation(observed_version=cast("int", value))
-    return None  # pragma: no cover - defends a projection missing its version member
-
-
-def _milestone_observation(view: handle.NeutralNodeView) -> TemporalObservation:
-    """The whole milestone one observed node is, as the Predecessor Row a close
-    addresses, gates on, and carries state forward from (`m-unit-work`).
-
-    The node's projection IS the applicable member set, declared-member filled by
-    the neutral materializer, so the complete row a Predecessor Row requires needs
-    no second walk of the model to assemble. It converts through the same
-    :func:`~parallax.conformance.temporal_state.predecessor_row` policy the
-    tracked milestones do, so an observed milestone and a tracked one are the
-    same shape.
-
-    Complete only under ``Columns``, which is why
-    :func:`_refuse_document_layout_milestone` guards every call.
-    """
-    return TemporalObservation(predecessor=predecessor_row(view.attributes, view.value_objects))
-
-
-def _refuse_document_layout_milestone(model: AcceptedMetamodel, entity_name: str) -> None:
-    """Refuse to observe a temporal node whose target is stored under Relational
-    Document Layout; a target under ``Columns`` passes.
-
-    The milestone this engine reconstructs from a neutral node
-    (:func:`_milestone_observation`) is built from the node's DECLARED members,
-    because a neutral read result publishes decoded members and no raw Structured
-    Column. Under ``Columns`` those members are the whole stored row. Under
-    ``Document`` they are not: the successor a close chains is patched onto the
-    document the observing read returned (`m-unit-work`), so reconstructing from
-    declared members alone would drop every key the stored document holds that
-    this model does not declare, and would spell an absent Value Object occurrence
-    the same way as an empty one the document distinguished. Naming the shape is
-    the only answer that cannot be silently wrong.
-
-    This is the find-derived half of one policy;
-    :func:`_refuse_unaccounted_document_milestone` is the tracker-derived half,
-    which refuses on a narrower trigger because a tracked milestone IS the whole
-    stored document as long as the case authored every key in it.
-    """
-    column = _shared_document_column(model, entity_name)
-    if column is None:
-        return
-    raise EngineError(
-        f"a grouped find observed the temporal target {entity_name!r}, whose document-resident "
-        f"members are stored in the shared Structured Column {column!r} — the milestone this "
-        "engine reconstructs from a neutral node carries declared members only, and a successor "
-        "patched from it would lose whatever else that document holds"
-    )
 
 
 def _refuse_unaccounted_document_milestone(
@@ -1435,21 +1285,22 @@ def _settled_against_source(
     """The evidence a write settles against when its step named the find it came
     from (`m-case-format` *Settling against a grouped find*).
 
-    The named find's own node for this key is the value the write was handed, so
-    the slot the unit of work filed THAT node's evidence under is the one the
-    write settles against — production's own Observation Key, naming the milestone
-    the node actually came from, rather than a coordinate this engine re-derived
-    and hoped agreed. That is what makes a store keyed by identity alone
-    observably wrong here: a key holding several current rectangles has no single
-    answer, while the node names exactly one.
+    The named find's own record for this key is the evidence the write was handed,
+    so the slot the unit of work filed it under is the one the write settles
+    against — production's own Observation Key, naming the milestone the read
+    actually saw, rather than a coordinate this engine re-derived and hoped
+    agreed. That is what makes a store keyed by identity alone observably wrong
+    here: a key holding several current rectangles has no single answer, while the
+    filed record names exactly one.
 
     Returns the key the real write settles by beside the observation the pure
-    re-lowering oracle plans with. A miss returns neither and the close is refused
-    where every unobserved close is. A named find that returned no node of this
-    key — or several, which no single value could have come from — is an authoring
-    defect, refused here where the diagnosis can name the step.
+    re-lowering oracle plans with — one record, so the two can never disagree. A
+    miss returns neither and the close is refused where every unobserved close is.
+    A named find that observed no row of this key — or several, which no single
+    value could have come from — is an authoring defect, refused here where the
+    diagnosis can name the step.
     """
-    matched = [node for node in source if node.object_key == pk_key]
+    matched = [record for record in source if record.key.object_key == pk_key]
     if len(matched) != 1:
         raise EngineError(
             f"{entity_name!r}: the find step this write settles against observed "
@@ -1457,11 +1308,11 @@ def _settled_against_source(
             "milestone the value it was handed came from (m-case-format 'Settling against "
             "a grouped find')"
         )
-    node = matched[0]
+    record = matched[0]
     # A milestone coordinate files only a Temporal Observation; a versioned row's
     # evidence has none and can never answer this lookup.
-    assert isinstance(node.observation, TemporalObservation)
-    return node.observation_key, node.observation
+    assert isinstance(record.observation, TemporalObservation)
+    return record.key, record.observation
 
 
 def _is_predicate_write_step(raw_write: object) -> bool:
@@ -1999,24 +1850,24 @@ def _build_instructions(
             if observation is None and key is not None:
                 observed = _observed_for(group_observations, key)
                 if observed is not None:
-                    evidence, observation = observed.observation_key, observed.observation
+                    evidence, observation = observed.key, observed.observation
         else:
             evidence, observation = None, None
         out.append(_ResolvedWrite(instruction, evidence, observation))
     return out
 
 
-def _observed_for(observations: GroupObservations, key: ObjectKey) -> _ObservedNode | None:
-    """The LATEST node this group's finds observed of ``key``, or ``None``.
+def _observed_for(observations: GroupObservations, key: ObjectKey) -> handle.ObservedRecord | None:
+    """The LATEST record this group's finds filed for ``key``, or ``None``.
 
     Latest rather than first: a versioned Non-Temporal target holds one row per
     primary key, so a second find of it observes the same object again and its
     evidence supersedes the earlier reading — the overwrite production's own
     observation record performs, expressed over an ordered store instead.
     """
-    for node in reversed(observations):
-        if node.object_key == key:
-            return node
+    for record in reversed(observations):
+        if record.key.object_key == key:
+            return record
     return None
 
 
@@ -2194,7 +2045,7 @@ def _compile_find(
     """Compile a scenario ``find`` step through the read path with the read-lock
     suffix — the COMPILE lane's own oracle, which reaches no database.
 
-    Every RUN lane instead executes the step through ``read_neutral``
+    Every RUN lane instead executes the step through the public Wire read
     (:func:`_run_standalone_find`, :func:`_run_uow_group`) and reports the
     statement production actually ran, so this function answers the compile lane
     alone.
@@ -2266,10 +2117,10 @@ def _step_query(step: Mapping[str, object]) -> ObjectQueryNode:
     return deserialize_query(query_doc)
 
 
-def _trace_statements(result: handle.NeutralReadResult) -> tuple[LoweredStatement, ...]:
-    """The statements a neutral read actually ran, in call order — a find step's
+def _trace_statements(snapshot: handle.Snapshot[Any]) -> tuple[LoweredStatement, ...]:
+    """The statements a read actually ran, in call order — a find step's
     emission, read off its own Read Trace rather than re-lowered beside it."""
-    return tuple(call.statement for call in result.execution.calls)
+    return tuple(call.statement for call in snapshot.execution.calls)
 
 
 def _run_standalone_find(
@@ -2278,8 +2129,8 @@ def _run_standalone_find(
     dialect: Dialect,
     concurrency: Concurrency | None,
     step: Mapping[str, object],
-) -> handle.NeutralReadResult:
-    """Run one UNGROUPED scenario find step through the production neutral read.
+) -> handle.Snapshot[handle.WireEntity]:
+    """Run one UNGROUPED scenario find step through the production Wire read.
 
     A step whose scenario declares a participation mode runs inside a real
     ``db.transact`` so the read takes the transaction's own shared row lock,
@@ -2288,50 +2139,51 @@ def _run_standalone_find(
     writes establishes no observation for a lock to protect
     (:func:`_scenario_needs_lock`), so its verification finds run standalone.
     """
-    request = handle.NeutralReadRequest.graph(_step_query(step))
+    query = _step_query(step)
     db = handle.Database(port, model, dialect=dialect)
     if concurrency is None:
-        return db.read_neutral(request)
-    return db.transact(lambda tx: tx.read_neutral(request), concurrency=concurrency).value
+        return db.wire.find(query)
+    return db.transact(lambda tx: tx.wire.find(query), concurrency=concurrency).value
 
 
-def _graph_rows(model: AcceptedMetamodel, output: object) -> list[Mapping[str, object]]:
-    """A neutral graph's root nodes as physically-keyed rows — the interleaved
-    lane's own ``expectRows`` oracle.
+def _graph_rows(
+    model: AcceptedMetamodel, entity_name: str, snapshot: handle.Snapshot[handle.WireEntity]
+) -> list[Mapping[str, object]]:
+    """A Wire result's roots as physically-keyed rows — the interleaved lane's
+    own ``expectRows`` oracle.
 
     The corpus states a find step's expectation in the projection's own physical
-    spelling, so each member's value is re-keyed by the slot it occupies. It is a
-    rendering of what production materialized, never a second traversal: the
-    graph is already merged, narrowed, and declared-member filled.
+    spelling while a Wire root is keyed by declared member name, so each member's
+    value is re-keyed by the slot it occupies. It is a rendering of what
+    production published, never a second traversal.
     """
-    # pragma: no cover reason - a graph request always answers a graph
-    if not isinstance(output, handle.NeutralGraph):  # pragma: no cover
-        return []
-    rows: list[Mapping[str, object]] = []
-    for view in output.roots:
-        position = inheritance.view(model).entity(view.node.entity)
-        if position is None:  # pragma: no cover - the facet covers every accepted Entity
-            continue
-        columns: dict[object, str] = {
-            attribute.identity: attribute.storage.name
-            for attribute in position.applicable_attributes
+    columns = _member_columns(model, entity_name)
+    return [
+        {
+            columns[name]: value
+            for name, value in (_graph_root(root) or {}).items()
+            if name in columns
         }
-        columns.update(
-            {
-                occurrence.identity: occurrence.storage.name
-                for occurrence in position.applicable_value_objects
-            }
-        )
-        rows.append(
-            {
-                columns[identity]: value
-                for identity, value in (
-                    *view.attributes.items(),
-                    *view.value_objects.items(),
-                )
-            }
-        )
-    return rows
+        for root in snapshot.checked().results()
+    ]
+
+
+def _member_columns(model: AcceptedMetamodel, entity_name: str) -> Mapping[str, str]:
+    """Each declared member name of ``entity_name`` paired with its own column."""
+    position = inheritance.view(model).entity(case_entity(model, entity_name).identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        return {}
+    columns = {
+        attribute.identity.name: attribute.storage.name
+        for attribute in position.applicable_attributes
+    }
+    columns.update(
+        {
+            occurrence.identity.path[-1]: occurrence.storage.name
+            for occurrence in position.applicable_value_objects
+        }
+    )
+    return columns
 
 
 def _lower_scenario_step(
@@ -2583,8 +2435,8 @@ def _run_snapshot_scenario(
     steps: Sequence[Mapping[str, object]],
 ) -> tuple[list[Emission], int, list[dict[str, object]]]:
     """Run a snapshot-read scenario: each find step reads through the SAME
-    production neutral seam every graph read uses (``db.read_neutral`` in graph
-    form); `mutate` runs the production write seam's
+    public Wire read every graph read uses (``db.wire.find``); `mutate` runs the
+    production write seam's
     finite-Transaction-Time-pin refusal against the referenced find step's own
     statement pin and, when that verdict accepts, assigns the step's `set` to the
     named view's own in-memory members (:func:`_grade_mutate_step`) — zero round
@@ -2617,40 +2469,29 @@ def _run_snapshot_scenario(
             # document is read, so no later step carries a spelling into a
             # production seam that takes an Entity Identity.
             identity = case_entity(model, query.target.canonical).identity
-            result = db.read_neutral(handle.NeutralReadRequest.graph(query))
+            snapshot = db.wire.find(query)
             pin = _find_step_pin(model, query)
         except _READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
-        for call in result.execution.calls:
+        for call in snapshot.execution.calls:
             emissions.append(
                 Emission(f"/scenario/{index}/objectQuery", call.statement.sql, call.statement.binds)
             )
-        round_trips += result.execution.round_trips
-        results.append(_ScenarioStepResult(_root_members(case, result), pin, identity))
+        round_trips += snapshot.execution.round_trips
+        results.append(_ScenarioStepResult(_root_members(snapshot), pin, identity))
     return emissions, round_trips, errors
 
 
 def _root_members(
-    case: case_format.Case, result: handle.NeutralReadResult
+    snapshot: handle.Snapshot[handle.WireEntity],
 ) -> tuple[dict[str, object], ...]:
     """Each root the step materialized, as its own detached member state.
 
     Member NAME keyed, because that is the vocabulary a case's `set` is authored
-    in; the values are the ones production materialized, copied out so a later
-    assignment reaches nothing the immutable neutral view still publishes.
+    in — the Wire result's own keying — and the values are copied out so a later
+    assignment reaches nothing the frozen result still publishes.
     """
-    graph = result.output
-    if isinstance(graph, handle.NeutralGraph):
-        roots = graph.roots
-    elif isinstance(graph, handle.NeutralGraphs):  # pragma: no cover - no such step is authored
-        roots = tuple(root for one in graph for root in one.roots)
-    else:
-        raise EngineError(  # pragma: no cover - a graph request answers a graph
-            f"{case.path.name}: a scenario find answered {type(graph).__name__}"
-        )
-    return tuple(
-        {identity.name: value for identity, value in root.attributes.items()} for root in roots
-    )
+    return tuple(dict(_graph_root(root) or {}) for root in snapshot.checked().results())
 
 
 def _find_step_pin(model: AcceptedMetamodel, query: ObjectQueryNode) -> Pin:
@@ -3237,7 +3078,7 @@ def _run_group_step(
     step: Mapping[str, object],
     index: int,
     tx_instant: str,
-) -> tuple[_LoweredStep, handle.NeutralReadOutput | None]:
+) -> tuple[_LoweredStep, handle.Snapshot[handle.WireEntity] | None]:
     """One `uow` group step, inside the group's own open transaction — the ONE
     interpreter both group runners share, contiguous span and interleaved index
     list alike.
@@ -3247,11 +3088,12 @@ def _run_group_step(
     other write path uses (:func:`_lower_resolved`) BEFORE the group's flush
     executes anything, and buffers each resolved write through
     ``tx.write_neutral`` carrying the evidence production itself issued. A FIND
-    step runs through ``tx.read_neutral`` — the participating neutral read, which
+    step runs through ``tx.observed_read`` — the participating Wire read, which
     force-flushes any pending buffered write, takes the transaction's own read
     lock, records what a later write settles against, and brackets its own Read
-    Trace, exactly as a real ``Transaction.find`` does — and publishes what it
-    observed into both halves of ``state``, which this function extends in place.
+    Trace, exactly as a real ``Transaction.find`` does — and publishes the records
+    that recording filed into both halves of ``state``, which this function
+    extends in place.
 
     Returns the step's lowered emission pointer, and a find step's own read
     output beside it: what a caller does with the rows it returned — grade them,
@@ -3280,14 +3122,12 @@ def _run_group_step(
             ),
             None,
         )
-    query = _step_query(step)
-    read = tx.read_neutral(handle.NeutralReadRequest.graph(query))
-    observed = _observed_nodes(model, query.target.canonical, read.output)
-    state.finds[index] = observed
-    state.observations.extend(observed)
+    read = tx.observed_read(_step_query(step))
+    state.finds[index] = read.observations
+    state.observations.extend(read.observations)
     return _LoweredStep(
-        f"/scenario/{index}/objectQuery", _trace_statements(read), False, False
-    ), read.output
+        f"/scenario/{index}/objectQuery", _trace_statements(read.snapshot), False, False
+    ), read.snapshot
 
 
 def _run_uow_group(
@@ -3500,7 +3340,9 @@ def _run_interleaved_group(
                 tx, context, state, steps[index], index, _INERT_CLOCK_INSTANT
             )
             if output is not None:
-                result.rows[index] = _graph_rows(context.model, output)
+                result.rows[index] = _graph_rows(
+                    context.model, _step_query(steps[index]).target.canonical, output
+                )
             if not is_last:
                 turnstile.advance()
 
@@ -4094,7 +3936,7 @@ def run_interleaved_scenario_case(
                 "step is a trailing verify find only"
             )
         read = _run_standalone_find(port, model, dialect, concurrency, step)
-        rows_by_index[index] = _graph_rows(model, read.output)
+        rows_by_index[index] = _graph_rows(model, _step_query(step).target.canonical, read)
         round_trips += read.execution.round_trips
         lowered[index] = _LoweredStep(
             f"/scenario/{index}/objectQuery", _trace_statements(read), False, False

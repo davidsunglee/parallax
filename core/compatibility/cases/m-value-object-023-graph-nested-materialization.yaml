@@ -10,13 +10,16 @@
 # trip. The graph is the DECLARED projection: only declared members appear (the
 # undeclared `zip` inside `geo` is dropped), every declared member is present, and
 # absence collapses exactly as the read predicates do (m-predicate Q5) — a null,
-# missing, or JSON-null `one` member materializes as null, and the corresponding
-# accepted `many` states materialize as []. Wrong-kind stored state is classified
-# before publication rather than represented in this graph. Per id: 4 a SQL-NULL address column
+# missing, JSON-null, or WRONG-KIND `one` member materializes as null, and the
+# corresponding `many` states materialize as []. A wrong-kind occurrence collapses
+# AND is classified: the graph carries the collapsed value while
+# `then.storedDataIssues` carries the diagnosis for that result position, which is
+# what makes hydration and classification one pass rather than a refusal
+# (m-snapshot-read). Per id: 4 a SQL-NULL address column
 # (whole object null); 5 missing city + geo inner keys (geo all-null, point null,
-# phones missing); 6 an explicit JSON-null geo occurrence; 7 explicit JSON-null
+# phones missing); 6 a wrong-kind geo scalar; 7 explicit JSON-null
 # point leaves beside a real one-element phones array; 8 phones an explicit JSON
-# null; 9/10 phones empty arrays whose other row values differ — still []. Golden SQL is
+# null; 9/10 phones a wrong-kind scalar / object — still []. Golden SQL is
 # dialect-identical (a presence-plus-document projection; MariaDB
 # returns the `json` column as text, Postgres the `jsonb` parsed — the same
 # composite). Element order in a to-many member is UNSPECIFIED (m-value-object):
@@ -123,4 +126,26 @@ then:
           city: null
           geo: null
           phones: []
+  storedDataIssues:
+    - ordinal: 5
+      hydrated: true
+      issues:
+        - code: stored-data-one-wrong-kind
+          entity: parallax.compatibility.Customer
+          member: parallax.compatibility.Customer.address.geo
+          objectKey: { entity: parallax.compatibility.Customer, key: { id: 6 } }
+    - ordinal: 8
+      hydrated: true
+      issues:
+        - code: stored-data-many-wrong-kind
+          entity: parallax.compatibility.Customer
+          member: parallax.compatibility.Customer.address.phones
+          objectKey: { entity: parallax.compatibility.Customer, key: { id: 9 } }
+    - ordinal: 9
+      hydrated: true
+      issues:
+        - code: stored-data-many-wrong-kind
+          entity: parallax.compatibility.Customer
+          member: parallax.compatibility.Customer.address.phones
+          objectKey: { entity: parallax.compatibility.Customer, key: { id: 10 } }
   roundTrips: 1

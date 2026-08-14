@@ -51,7 +51,6 @@ MIRRORED_DEFS = frozenset(
         "transactionAttempt",
         "retryPolicy",
         "transactionLog",
-        "jsonPointer",
     }
 )
 

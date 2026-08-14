@@ -24,18 +24,43 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
+from _metamodel_support import Declaration, key, source
 from _transact_support import NoIoPort
 
 from _support.document_reads import fold_mapping_rows
+from _support.sql import compile_read
 from parallax.conformance import models
 from parallax.core import Attr, DomainModel, Entity, attr
-from parallax.core.base import INFINITY
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import INFINITY, STRING, PresentDocument
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row
 from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import (
+    AbstractRoot,
+    Column,
+    ConcreteSubtype,
+    EntityIdentity,
+    ExactEntityReference,
+    Table,
+    TablePerHierarchy,
+    ValueObjectAttributeDeclaration,
+    ValueObjectOccurrenceDeclaration,
+    ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
+)
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
+from parallax.core.predicate import All
+from parallax.core.temporal_read import Pin
 from parallax.snapshot import InvalidData, WireEntity, handle
 from parallax.snapshot.handle._wire import WireDatabaseView, wire_query_node
+from parallax.snapshot.materialize import (
+    LevelContext,
+    MergeScope,
+    convert_row,
+    merge_graph_input,
+    wire_roots,
+)
 
 _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]
@@ -567,3 +592,82 @@ def test_a_participating_milestone_set_wire_read_runs_inside_the_transaction() -
     database = handle.Database(port, INVOICE, dialect=POSTGRES)
     result = database.transact(lambda tx: tx.wire.find(_HISTORY_QUERY).results())
     assert [_entity(root)["amount"] for root in result.value] == ["50.00", "75.00"]
+
+
+# --------------------------------------------------------------------------- #
+# Declared names keep the published field set collision-free.                  #
+# --------------------------------------------------------------------------- #
+_VARIANT_ROOT = EntityIdentity("catalog", "AssetRecord")
+_SHARED_VARIANT = EntityIdentity("archive", "SharedVariant")
+
+# One Entity family whose Value Object storage column is spelled exactly like the
+# synthetic family-variant key. A projection that published members by COLUMN
+# would put the stored document where the variant spelling belongs; declared
+# names cannot collide with it, and the wire node proves both survive.
+_VARIANT_MODEL = form_metamodel(
+    source(
+        Declaration(
+            identity=_VARIANT_ROOT,
+            container=Table("asset_record"),
+            attributes=(key(_VARIANT_ROOT),),
+            value_objects=(
+                ValueObjectOccurrenceDeclaration(
+                    name="mailingAddress",
+                    storage=Column("familyVariant"),
+                    shape=ValueObjectShapeDeclaration(
+                        key=ValueObjectShapeKey(),
+                        attributes=(ValueObjectAttributeDeclaration("label", STRING),),
+                    ),
+                ),
+            ),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        Declaration(
+            identity=_SHARED_VARIANT,
+            value_objects=(
+                ValueObjectOccurrenceDeclaration(
+                    name="archiveProfile",
+                    storage=Column("archive_profile"),
+                    shape=ValueObjectShapeDeclaration(
+                        key=ValueObjectShapeKey(),
+                        attributes=(ValueObjectAttributeDeclaration("label", STRING),),
+                    ),
+                ),
+            ),
+            inheritance=ConcreteSubtype(ExactEntityReference(_VARIANT_ROOT), "archive-shared"),
+        ),
+    )
+)
+
+
+def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both() -> None:
+    compiled = compile_read(All(), _VARIANT_MODEL, POSTGRES, _root_of(_VARIANT_MODEL))
+    materialized = compiled.materialize_row(
+        {
+            "id": 1,
+            "kind": "archive-shared",
+            "familyVariant": PresentDocument({"label": "mail"}),
+            "archive_profile": PresentDocument({"label": "archive"}),
+        }
+    )
+    scope = MergeScope(_VARIANT_MODEL)
+    ref = convert_row(
+        materialized.values,
+        LevelContext(materialized.resolved_entity, compiled.documents),
+        scope,
+    )
+    (root,) = wire_roots(
+        merge_graph_input(scope.build((ref,), Pin()), _VARIANT_MODEL), _VARIANT_MODEL
+    )
+    assert root == {
+        "id": 1,
+        "familyVariant": "SharedVariant",
+        "mailingAddress": {"label": "mail"},
+        "archiveProfile": {"label": "archive"},
+    }
+
+
+def _root_of(model: Any) -> Any:
+    entity = model.entity(_VARIANT_ROOT)
+    assert entity is not None
+    return entity

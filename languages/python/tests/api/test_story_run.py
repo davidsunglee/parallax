@@ -39,6 +39,7 @@ from _support.corpus import (
     compare_binds,
     compare_graph,
     compare_rows,
+    instance_graph_node,
     instance_row,
 )
 from parallax.conformance import case_format, engine
@@ -57,7 +58,7 @@ from parallax.core import LATEST, DomainModel
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import UnloadedRelationshipError, ValueObject, shape_of
 from parallax.core.entity._model import model_of
-from parallax.snapshot import connect, edge_of, is_view_loaded, pin_of, view
+from parallax.snapshot import InvalidData, connect, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.handle import TransactionTimePinReadOnlyError
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
@@ -163,8 +164,9 @@ def test_back_reference_cycle_resolves_to_the_root(provisioner: Any) -> None:
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     order = snapshot.result()
-    # `then.identityChecks` graded as Python reference identity: the back-
-    # reference IS the root node, never a lookalike re-fetch.
+    # The typed lane merges every projection of one row onto one node, so the
+    # back-reference IS the root object rather than a lookalike re-fetch — the
+    # in-memory cycle the wire lane unwinds finitely into a value tree.
     assert order.items[0].order is order
     assert order.items[1].order is order
     assert snapshot.execution.round_trips == 2
@@ -492,29 +494,29 @@ def _value_object_projection(value: Any) -> dict[str, Any] | None:
 
 
 def _vo_owner_row(instance: Any, vo_py_name: str = "address") -> dict[str, Any]:
-    """A materialized VO-bearing owner's own row, PHYSICAL-column-keyed
-    (``instance_row``), with its value-object member rendered as the declared
-    projection (:func:`_value_object_projection`) so ``compare_graph`` can
-    recurse into it exactly like the wire-level engine's own `then.graph`
+    """A materialized VO-bearing owner's own graph node, DECLARED-member-keyed
+    (``instance_graph_node``), with its value-object member rendered as the
+    declared projection (:func:`_value_object_projection`) so ``compare_graph``
+    can recurse into it exactly like the wire-level engine's own `then.graph`
     grading.
 
     The projection, not the canonical document: a read preserves the stored
     document's own field presence, so serializing the carrier would omit a
     member storage never held, while `then.graph` grades every declared member
     with absence collapsed."""
-    row = instance_row(instance)
+    row = instance_graph_node(instance)
     row[vo_py_name] = _value_object_projection(getattr(instance, vo_py_name))
     return row
 
 
-def _assert_vo_owner_graph(case_id: str, snapshot: Any, entity_name: str, pk_column: str) -> None:
+def _assert_vo_owner_graph(case_id: str, snapshot: Any, entity_name: str, pk_member: str) -> None:
     expected_by_pk = {
-        row[pk_column]: row
+        row[pk_member]: row
         for row in cast(
             "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"][entity_name]
         )
     }
-    observed = snapshot.results()
+    observed = [_hydrated(root) for root in snapshot.checked().results()]
     assert {instance.id for instance in observed} == set(expected_by_pk)
     for instance in observed:
         compare_graph(_vo_owner_row(instance), expected_by_pk[instance.id])
@@ -525,7 +527,7 @@ def test_transaction_time_only_vo_owner_as_of_latest(provisioner: Any) -> None:
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
-    _assert_vo_owner_graph(story.case_id, snapshot, "Supplier", "sup_id")
+    _assert_vo_owner_graph(story.case_id, snapshot, "Supplier", "id")
     assert snapshot.execution.round_trips == 1
 
 
@@ -534,7 +536,7 @@ def test_transaction_time_only_vo_owner_as_of_a_past_instant(provisioner: Any) -
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
-    _assert_vo_owner_graph(story.case_id, snapshot, "Supplier", "sup_id")
+    _assert_vo_owner_graph(story.case_id, snapshot, "Supplier", "id")
     assert snapshot.execution.round_trips == 1
 
 
@@ -543,7 +545,7 @@ def test_bitemporal_vo_owner_as_of_latest(provisioner: Any) -> None:
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
-    _assert_vo_owner_graph(story.case_id, snapshot, "Branch", "br_id")
+    _assert_vo_owner_graph(story.case_id, snapshot, "Branch", "id")
     assert snapshot.execution.round_trips == 1
 
 
@@ -552,21 +554,23 @@ def test_bitemporal_vo_owner_as_of_a_past_audit_point(provisioner: Any) -> None:
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
-    _assert_vo_owner_graph(story.case_id, snapshot, "Branch", "br_id")
+    _assert_vo_owner_graph(story.case_id, snapshot, "Branch", "id")
     assert snapshot.execution.round_trips == 1
 
 
 def _assert_typed_per_variant_graph(case_id: str, snapshot: Any, entity_name: str) -> None:
     """Render each instance with its concrete class's declared members.
 
-    ``instance_row`` also includes ``familyVariant`` for the
-    physical-column-keyed, spec §4 "observable as `type(node)`") — never a
+    ``instance_graph_node`` also includes ``familyVariant`` for the
+    declared-member-keyed node (spec §4 "observable as `type(node)`") — never a
     sibling's null-padded column, matching the case's own per-variant
     `then.graph` exactly (order-insensitive, `compare_rows`)."""
     expected = cast(
         "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"][entity_name]
     )
-    observed = [instance_row(instance, family_variant=True) for instance in snapshot.results()]
+    observed = [
+        instance_graph_node(instance, family_variant=True) for instance in snapshot.results()
+    ]
     compare_rows(observed, expected)
 
 
@@ -612,6 +616,18 @@ def test_tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instance
     assert snapshot.execution.round_trips == 1
 
 
+def _hydrated(root: Any) -> Any:
+    """One published result position as the Entity a `then` oracle grades.
+
+    The Customer fixture carries stored states that contradict the model on
+    purpose, so a read over it publishes `InvalidData` records beside its
+    conforming roots. The checked view is what a caller reading such a model uses;
+    the classification itself is graded by the corpus (`then.storedDataIssues`),
+    and what these stories grade is that the hydrated value is unchanged by it.
+    """
+    return cast("Any", root).data if isinstance(root, InvalidData) else root
+
+
 def _assert_customer_predicate_rows(case_id: str, snapshot: Any) -> None:
     """The row-form predicate original's own ``then.rows`` oracle — id/name
     only, never the exact SQL the corpus's row-form classification would
@@ -619,7 +635,10 @@ def _assert_customer_predicate_rows(case_id: str, snapshot: Any) -> None:
     this grades here, bespoke, rather than through ``ReadStory``'s
     byte-exact generic runner)."""
     expected = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["rows"])
-    observed = [{"id": customer.id, "name": customer.name} for customer in snapshot.results()]
+    observed = [
+        {"id": customer.id, "name": customer.name}
+        for customer in map(_hydrated, snapshot.checked().results())
+    ]
     compare_rows(observed, expected)
 
 
@@ -677,7 +696,7 @@ def _assert_customer_locations_graph(case_id: str, snapshot: Any) -> None:
             "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"]["Customer"]
         )
     }
-    observed = snapshot.results()
+    observed = [_hydrated(root) for root in snapshot.checked().results()]
     assert {customer.id for customer in observed} == set(expected_by_id)
     for customer in observed:
         row = _vo_owner_row(customer)

@@ -16,6 +16,7 @@ import pytest
 from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import adapter, case_format, engine
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
+from parallax.core.base import PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 
@@ -700,10 +701,10 @@ _GRAPHS_CASE = (
 )
 
 
-def test_run_case_graph_observation_reports_the_assembled_graph_and_identity_checks() -> None:
+def test_run_case_graph_observation_reports_the_assembled_graph() -> None:
     # `then.graph` (a snapshot graph, not a bare rows list) routes through
-    # `run_graph_case`; the envelope carries `graph`, `roundTrips`, AND
-    # `identityChecks` when the case declares them.
+    # `run_graph_case`; the envelope carries `graph` and `roundTrips`, and — for
+    # a conforming read — no `storedDataIssues` entry at all.
     port = _QueuePort(
         [
             [
@@ -734,23 +735,41 @@ def test_run_case_graph_observation_reports_the_assembled_graph_and_identity_che
     assert envelope["status"] == "ok"
     assert envelope["observations"]["roundTrips"] == 2
     assert envelope["observations"]["graph"]["Order"][0]["id"] == 1
-    assert envelope["observations"]["identityChecks"] == [
-        {"left": "/then/graph/Order/0", "right": "/then/graph/Order/0/items/0/order", "same": True},
-        {"left": "/then/graph/Order/0", "right": "/then/graph/Order/0/items/1/order", "same": True},
-    ]
+    assert "storedDataIssues" not in envelope["observations"]
     # The whole envelope round-trips through the wire (json.dumps).
     assert json.loads(json.dumps(envelope)) == envelope
 
 
-_GRAPH_CASE_NO_IDENTITY_CHECKS = (
-    case_format.default_cases_dir() / "m-snapshot-read-003-null-to-one.yaml"
+_GRAPH_CASE_CONFORMING = case_format.default_cases_dir() / "m-snapshot-read-003-null-to-one.yaml"
+_GRAPH_CASE_CLASSIFIED = (
+    case_format.default_cases_dir()
+    / "m-storage-layout-027-classified-read-layout-twin-columns.yaml"
 )
 
 
-def test_run_case_graph_observation_omits_identity_checks_when_the_case_declares_none() -> None:
-    # A `then.graph` case with no declared `identityChecks` carries no such key
-    # at all in the envelope (the OTHER branch of `_read_observations`' optional
-    # `identityChecks` — the test above pins the declared-and-present branch).
+def test_run_case_graph_observation_reports_the_positions_a_read_classified() -> None:
+    # The optional `storedDataIssues` observation's present branch: a read whose
+    # stored state contradicted the model reports one entry per invalid position
+    # beside the graph, and the whole envelope still round-trips through the wire.
+    port = _QueuePort(
+        [
+            [{"id": 1, "profile": PresentDocument({"city": "Oslo"})}],
+            [],
+        ]
+    )
+    envelope = adapter.run_case(_GRAPH_CASE_CLASSIFIED, "postgres", port)
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    (record,) = envelope["observations"]["storedDataIssues"]
+    assert record["ordinal"] == 0
+    assert record["hydrated"] is True
+    assert json.loads(json.dumps(envelope)) == envelope
+
+
+def test_run_case_graph_observation_omits_classification_when_every_position_conformed() -> None:
+    # A `then.graph` case whose read publishes no record carries no such key at
+    # all in the envelope (the OTHER branch of `_read_observations`' optional
+    # `storedDataIssues`).
     port = _QueuePort(
         [
             [
@@ -773,10 +792,10 @@ def test_run_case_graph_observation_omits_identity_checks_when_the_case_declares
             ],
         ]
     )
-    envelope = adapter.run_case(_GRAPH_CASE_NO_IDENTITY_CHECKS, "postgres", port)
+    envelope = adapter.run_case(_GRAPH_CASE_CONFORMING, "postgres", port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
-    assert "identityChecks" not in envelope["observations"]
+    assert "storedDataIssues" not in envelope["observations"]
     assert json.loads(json.dumps(envelope)) == envelope
 
 

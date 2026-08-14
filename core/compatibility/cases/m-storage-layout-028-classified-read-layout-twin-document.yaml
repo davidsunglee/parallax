@@ -1,0 +1,80 @@
+# Relational Document Layout half of the cross-layout classification proof: the same
+# production Object Query publishes the same four result positions, the same graph,
+# and the same diagnoses. Only the physical projection differs — `profile` is
+# decoded out of the shared `payload` document rather than out of a column of its
+# own — which is exactly the difference the Storage Layout invariant says a read
+# result may not observe. The ordinary sweep therefore exercises production
+# descriptor formation, fixture provisioning, document decoding, classification, and
+# result grading without an adapter override.
+model: models/classification-transparency-layout-twin-document.yaml
+tags: [m-storage-layout, m-snapshot-read, m-document-codec, read, layout-twin, document-layout, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the ClassificationTwinItem.children IN-list binds are the distinct item ids gathered from the root query result"
+when:
+  objectQuery:
+    target: parallax.compatibility.ClassificationTwinItem
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.ClassificationTwinItem.id
+        direction: asc
+    includes:
+      - segments:
+          - rel: parallax.compatibility.ClassificationTwinItem.children
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, not t0.payload is null, t0.payload from classification_twin t0 order by t0.id asc
+        mariadb: select t0.id, not t0.payload is null, t0.payload from classification_twin t0 order by t0.id asc
+    - sql:
+        postgres: select t0.id, t0.item_id, not t0.payload is null, t0.payload from classification_twin_child t0 where t0.item_id in (?, ?, ?, ?) order by t0.id asc
+        mariadb: select t0.id, t0.item_id, not t0.payload is null, t0.payload from classification_twin_child t0 where t0.item_id in (?, ?, ?, ?) order by t0.id asc
+      binds: [1, 2, 3, 4]
+  graph:
+    ClassificationTwinItem:
+      - id: 1
+        profile: { street: 1 Main, city: null }
+        children:
+          - { id: 11, itemId: 1, profile: { street: null, city: Berlin } }
+      - id: 2
+        profile: { street: null, city: Oslo }
+        children:
+          - { id: 12, itemId: 2, profile: { street: 12 Main, city: null } }
+      - id: 3
+        profile: { street: null, city: Berlin }
+        children:
+          - { id: 13, itemId: 3, profile: { street: null, city: Oslo } }
+      - id: 4
+        profile: { street: 4 Main, city: Boston }
+        children:
+          - { id: 14, itemId: 4, profile: { street: 14 Main, city: null } }
+  storedDataIssues:
+    - ordinal: 0
+      hydrated: true
+      issues:
+        - code: stored-data-required-member-absent
+          entity: parallax.compatibility.ClassificationTwinChild
+          member: parallax.compatibility.ClassificationTwinChild.profile.street
+          objectKey: { entity: parallax.compatibility.ClassificationTwinChild, key: { id: 11 } }
+    - ordinal: 1
+      hydrated: true
+      issues:
+        - code: stored-data-required-member-absent
+          entity: parallax.compatibility.ClassificationTwinItem
+          member: parallax.compatibility.ClassificationTwinItem.profile.street
+          objectKey: { entity: parallax.compatibility.ClassificationTwinItem, key: { id: 2 } }
+    - ordinal: 2
+      hydrated: true
+      issues:
+        - code: stored-data-required-member-absent
+          entity: parallax.compatibility.ClassificationTwinChild
+          member: parallax.compatibility.ClassificationTwinChild.profile.street
+          objectKey: { entity: parallax.compatibility.ClassificationTwinChild, key: { id: 13 } }
+        - code: stored-data-required-member-absent
+          entity: parallax.compatibility.ClassificationTwinItem
+          member: parallax.compatibility.ClassificationTwinItem.profile.street
+          objectKey: { entity: parallax.compatibility.ClassificationTwinItem, key: { id: 3 } }
+  roundTrips: 2

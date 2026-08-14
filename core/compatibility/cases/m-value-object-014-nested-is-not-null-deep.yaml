@@ -3,8 +3,8 @@
 #
 # nestedIsNotNull(Customer.address.geo.country) is the complement of the collapse
 # case: it matches only the rows whose geo.country is present — NO (1, 2) and US
-# (3). The not-present paths — null column (4), missing key (5), JSON-null
-# occurrence (6), and explicit JSON-null leaf (7) — are excluded. It normalizes
+# (3). All four not-present states — null column (4), missing key (5), non-object
+# intermediate (6), and explicit JSON `null` leaf (7) — are excluded. It normalizes
 # to a leading `not`: Postgres `not jsonb_extract_path_text(t0.address, ?, ?) is
 # null`, MariaDB `not json_value(t0.address, ?) is null`.
 model: models/customer.yaml

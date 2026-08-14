@@ -35,9 +35,9 @@ then:
         qty: 5
         price: 10.50
         active: true
-        ordered_on: 2024-01-05
+        orderedOn: 2024-01-05
         tags:
-          - { id: 3, order_id: 1, label: fragile, priority: 5 }
-          - { id: 2, order_id: 1, label: gift, priority: 2 }
-          - { id: 1, order_id: 1, label: urgent, priority: 2 }
+          - { id: 3, orderId: 1, label: fragile, priority: 5 }
+          - { id: 2, orderId: 1, label: gift, priority: 2 }
+          - { id: 1, orderId: 1, label: urgent, priority: 2 }
   roundTrips: 2

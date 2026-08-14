@@ -182,10 +182,10 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
 
 def test_row_form_does_not_judge_an_unrequested_required_occurrence() -> None:
     port = QueuePort([[{"id": 1}]])
-    result = handle.Database.connect(port, _PROFILE_OWNER_MODEL).read_neutral(
-        handle.NeutralReadRequest.rows(object_query_node(ProfileOwner.where(ProfileOwner.id == 1)))
+    result = handle.Database.connect(port, _PROFILE_OWNER_MODEL).read_rows(
+        object_query_node(ProfileOwner.where(ProfileOwner.id == 1))
     )
-    assert result.output == handle.NeutralRows(({"id": 1},))
+    assert result.rows == ({"id": 1},)
     assert len(port.executed) == 1
 
 
@@ -462,6 +462,35 @@ def test_find_history_classifies_an_invalid_milestone_before_partitioning() -> N
     )
 
 
+def test_find_history_refuses_a_root_whose_own_key_never_decoded() -> None:
+    # The arm of the shared publication gate with no converted node behind the
+    # result position at all: a milestone read has no in-band channel to publish a
+    # verdict through, so it refuses the whole batch before partitioning it.
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": None,
+                    "invoice_id": 100,
+                    "amount": Decimal("50.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                    "out_z": INFINITY,
+                }
+            ]
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "InvoiceLine",
+            "predicate": {"eq": {"attr": "InvoiceLine.invoiceId", "value": 100}},
+            "temporal": {"transaction-time": {"history": {}}},
+        }
+    )
+    with pytest.raises(SnapshotDecodingError) as refusal:
+        handle.find_history(query, INVOICE, POSTGRES, port)
+    assert refusal.value.code == "snapshot-decoding-failed"
+
+
 def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
     # `DepositRate` declares NO `as_of_axes` of its own (`Rate`, the
     # family root, does). `milestone_edge`, `_edge_pin`, and `_edge_sort_key`
@@ -700,18 +729,32 @@ def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization()
     }
 
 
-def test_the_values_lane_still_refuses_an_invalid_requested_root_key() -> None:
-    # In-band classification is the typed graph lane's; every other lane still
-    # crosses the shared publication gate, and a root whose own key never decoded
-    # is the arm of it with no converted node behind the result position at all.
+def test_the_values_lane_classifies_an_invalid_requested_root_key() -> None:
+    # The values lane publishes the same union the graph lanes do, one result
+    # position at a time: a root whose own key never decoded has no converted row
+    # behind its position at all, so it publishes its record carrying nothing.
     port = QueuePort([[{"id": None, "name": "Ada"}]])
     db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
-    request = handle.NeutralReadRequest.rows(
+    (row,) = db.read_rows(deserialize_query({"target": "Customer", "predicate": {"all": {}}})).rows
+    assert isinstance(row, InvalidData)
+    assert row.data is None
+    assert row.object_key is None
+    assert {issue.code for issue in row.issues} == {"stored-data-primary-key-null"}
+
+
+def test_the_values_lane_publishes_a_clean_row_beside_a_classified_one() -> None:
+    # Classification is per result position here as it is in a graph: one row
+    # contradicting the model no longer withholds the rows beside it, which is
+    # exactly what the shared publication refusal used to do to the whole read.
+    port = QueuePort([[{"id": 1, "name": "Ada"}, {"id": 2, "name": None}]])
+    db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
+    clean, classified = db.read_rows(
         deserialize_query({"target": "Customer", "predicate": {"all": {}}})
-    )
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        db.read_neutral(request)
-    assert refusal.value.code == "snapshot-decoding-failed"
+    ).rows
+    assert clean == {"id": 1, "name": "Ada"}
+    assert isinstance(classified, InvalidData)
+    assert classified.ordinal == 1
+    assert {issue.code for issue in classified.issues} == {"stored-data-attribute-null"}
 
 
 def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing() -> None:

@@ -14,21 +14,22 @@ row-to-graph surface holds: a forbidden contract is the complement of a closure,
 so a scope that must stay clear of SQL generation has to be granted a scope that
 does not reach it.
 
-Both materializers' results sit here for that one reason: a result PAIRS an
-output with the Read Trace that produced it, and naming the Read Trace is what
-this scope exists to be allowed to do. The neutral output vocabulary itself names
-no provenance and therefore stays in the narrower row-to-graph scope, beside the
-merge both materializers consume.
+Every lane's result sits here for that one reason: a result PAIRS an output with
+the Read Trace that produced it, and naming the Read Trace is what this scope
+exists to be allowed to do. The row-to-graph vocabulary itself names no
+provenance and therefore stays in the narrower row-to-graph scope, beside the
+merge every materializer consumes.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from parallax.core.execution_log import ReadTrace
 from parallax.snapshot.materialize import (
     EMPTY_UNWIND,
-    NeutralReadOutput,
+    InvalidData,
     SnapshotGraphInput,
     UnwindTree,
 )
@@ -36,7 +37,8 @@ from parallax.snapshot.materialize import (
 __all__ = [
     "FindResult",
     "HistoryFindResult",
-    "NeutralReadResult",
+    "PublishedRow",
+    "RowsResult",
 ]
 
 
@@ -69,16 +71,25 @@ class HistoryFindResult:
     execution: ReadTrace
 
 
-@dataclass(frozen=True, slots=True)
-class NeutralReadResult:
-    """A model-neutral read's materialized output plus its Read Trace.
+type PublishedRow = Mapping[str, object] | InvalidData[Mapping[str, object]]
+"""One row-form result position: the transformed row itself, or the record a row
+whose stored state contradicted the model publishes in its place.
 
-    The neutral peer of the typed :class:`~parallax.snapshot.handle.Snapshot`:
-    ``output`` is whichever form the request selected — rows, one graph, or one
-    graph per milestone — already eager, detached, and immutable. For a
+The values lane's element type is the same union both public materializers
+publish, one result position at a time — a row-form read has no graph, so its
+own root IS the row."""
+
+
+@dataclass(frozen=True, slots=True)
+class RowsResult:
+    """A row-form read's published rows plus its Read Trace.
+
+    ``rows`` is every result position in result order, already eager, detached,
+    and immutable, keyed as the read PROJECTED it — physical columns plus the
+    synthetic ``familyVariant`` where the compiled read materializes one. For a
     PARTICIPATING read ``execution`` is the same trace object the transaction's
-    current attempt records, exactly as it is for a typed one.
+    current attempt records, exactly as it is for a graph-form one.
     """
 
-    output: NeutralReadOutput
+    rows: tuple[PublishedRow, ...]
     execution: ReadTrace

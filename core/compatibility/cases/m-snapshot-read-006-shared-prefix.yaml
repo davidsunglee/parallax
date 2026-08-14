@@ -55,36 +55,36 @@ then:
         qty: 5
         price: 10.50
         active: true
-        ordered_on: 2024-01-05
+        orderedOn: 2024-01-05
         items:
           - id: 12
-            order_id: 1
+            orderId: 1
             sku: B-200
             quantity: 1
-            shipped_on: 2024-02-15
+            shippedOn: 2024-02-15
             statuses:
-              - { id: 203, order_id: 1, order_item_id: 12, code: PICKED }
+              - { id: 203, orderId: 1, orderItemId: 12, code: PICKED }
           - id: 11
-            order_id: 1
+            orderId: 1
             sku: A-100
             quantity: 2
-            shipped_on: null
+            shippedOn: null
             statuses:
-              - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
-              - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
+              - { id: 202, orderId: 1, orderItemId: 11, code: PACKED }
+              - { id: 201, orderId: 1, orderItemId: 11, code: PICKED }
       - id: 2
         name: Linus
         sku: B-200
         qty: 10
         price: 20.00
         active: true
-        ordered_on: 2024-02-10
+        orderedOn: 2024-02-10
         items:
           - id: 21
-            order_id: 2
+            orderId: 2
             sku: A-300
             quantity: 4
-            shipped_on: 2024-02-20
+            shippedOn: 2024-02-20
             statuses: []
       - id: 3
         name: ada
@@ -92,7 +92,7 @@ then:
         qty: 15
         price: 30.25
         active: false
-        ordered_on: 2024-03-15
+        orderedOn: 2024-03-15
         items: []
       - id: 4
         name: Margaret
@@ -100,7 +100,7 @@ then:
         qty: 20
         price: 40.00
         active: true
-        ordered_on: 2024-04-20
+        orderedOn: 2024-04-20
         items: []
       - id: 5
         name: Alan
@@ -108,7 +108,7 @@ then:
         qty: 25
         price: 50.75
         active: false
-        ordered_on: 2024-05-25
+        orderedOn: 2024-05-25
         items: []
       - id: 42
         name: Grace
@@ -116,19 +116,19 @@ then:
         qty: 30
         price: 99.99
         active: true
-        ordered_on: 2024-06-30
+        orderedOn: 2024-06-30
         items:
           - id: 422
-            order_id: 42
+            orderId: 42
             sku: B-200
             quantity: 5
-            shipped_on: 2024-02-05
+            shippedOn: 2024-02-05
             statuses: []
           - id: 421
-            order_id: 42
+            orderId: 42
             sku: A-999
             quantity: 3
-            shipped_on: 2024-03-10
+            shippedOn: 2024-03-10
             statuses:
-              - { id: 204, order_id: 42, order_item_id: 421, code: PICKED }
+              - { id: 204, orderId: 42, orderItemId: 421, code: PICKED }
   roundTrips: 3

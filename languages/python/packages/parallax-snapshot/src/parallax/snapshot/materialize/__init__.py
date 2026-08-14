@@ -25,15 +25,12 @@ produce and consume it.
   of frozen plain values keyed by declared member name — the second public
   materializer, a peer of the typed one rather than a wrapper of it. It consumes
   the same root classification, so both publish the same verdicts.
-- :mod:`~parallax.snapshot.materialize._neutral` turns one merge into class-free
-  nodes and views. It still calls the shared publication refusal; both public
-  materializers classify instead, in band.
 
 Nothing here constructs an Entity: this scope is granted the shared carrier
 algebra (``parallax.core.entity._graph_input``) and nothing else of the Entity
 frontend, so the layering between graph input and graph construction is
 structurally enforced rather than asserted. Its consumers —
-``parallax.snapshot.handle._materializer`` and the neutral materializer above —
+``parallax.snapshot.handle._materializer`` and the wire materializer above —
 each compose it with what their own result form needs.
 
 It never imports ``m-sql`` / ``m-dialect``: `familyVariant` materialization and
@@ -89,20 +86,6 @@ from parallax.snapshot.materialize._merge import (
     MergedRelationshipView,
     merge_graph_input,
 )
-from parallax.snapshot.materialize._neutral import (
-    NeutralGraph,
-    NeutralGraphs,
-    NeutralNode,
-    NeutralNodeView,
-    NeutralReadOutput,
-    NeutralRelationshipView,
-    NeutralRows,
-    NeutralValue,
-    ObservationKeying,
-    neutral_graph,
-    neutral_graphs,
-    neutral_rows,
-)
 from parallax.snapshot.materialize._publication import (
     require_publishable,
 )
@@ -133,15 +116,6 @@ __all__ = [
     "MergeScope",
     "MergedNode",
     "MergedRelationshipView",
-    "NeutralGraph",
-    "NeutralGraphs",
-    "NeutralNode",
-    "NeutralNodeView",
-    "NeutralReadOutput",
-    "NeutralRelationshipView",
-    "NeutralRows",
-    "NeutralValue",
-    "ObservationKeying",
     "RelationshipViewKey",
     "RootClassification",
     "SnapshotDecodingError",
@@ -162,9 +136,6 @@ __all__ = [
     "has_invalid_key",
     "logical_key",
     "merge_graph_input",
-    "neutral_graph",
-    "neutral_graphs",
-    "neutral_rows",
     "observable_columns",
     "require_publishable",
     "unwind_tree",

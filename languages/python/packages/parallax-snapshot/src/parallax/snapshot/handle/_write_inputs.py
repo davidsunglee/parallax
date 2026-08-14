@@ -15,16 +15,14 @@ plus the observation machinery a read leaves behind for it:
   identity half of its observation key (:func:`written_object_key`), and the
   codec-free reading of which object a value names (:func:`written_object`) that
   a decision taken BEFORE any row derivation has to use;
-* the observation record a read leaves behind (:class:`ReadObservations`) and its
-  recording into the unit of work (:func:`record_observations`), plus the per-row
+* the observation record a read leaves behind (:class:`ReadObservations`), its
+  recording into the unit of work (:func:`record_observations`), and the
+  :class:`ObservedRecord` pairs that recording answers with, plus the per-row
   column contributions a materializing predicate-write resolve streams into its
   :class:`~parallax.core.unit_work.MaterializedWriteGroup`
   (:func:`is_no_op_assignment`, :func:`key_column_values`,
   :func:`predecessor_payload`), which share their payload extraction with
-  :func:`record_observations` through the module-local ``_row_payload``;
-* the same slot rule answered for a materialized NODE rather than a row
-  (:func:`observation_keying`), which is how a neutral read publishes the
-  Observation Key a class-less caller settles a later write against.
+  :func:`record_observations` through the module-local ``_row_payload``.
 
 Semantic family facts come from the accepted Metamodel and its facets, resolved
 through :mod:`parallax.snapshot.handle._family` (the declaring root,
@@ -65,7 +63,6 @@ from parallax.core.entity import lifecycle_state_of
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.entity._entity import wire_names_of
 from parallax.core.metamodel import (
-    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
@@ -77,7 +74,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import Latest
 from parallax.core.storage_layout import EntityLayoutView
-from parallax.core.temporal_read import Edge, Pin, milestone_edge_of
+from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     KeyedMutation,
@@ -102,11 +99,11 @@ from parallax.snapshot.handle._family import (
     tx_time_axis,
     version_attribute,
 )
-from parallax.snapshot.materialize import ObservationKeying
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
     "KeyedWriteValueError",
+    "ObservedRecord",
     "ReadObservations",
     "TransactionTimePinReadOnlyError",
     "WrittenObject",
@@ -114,7 +111,6 @@ __all__ = [
     "key_column_values",
     "metadata_of_instance",
     "normalize_assignment_values",
-    "observation_keying",
     "predecessor_payload",
     "record_observations",
     "source_edge",
@@ -313,7 +309,25 @@ class ReadObservations:
         return self._rows
 
 
-def record_observations(uow: UnitOfWork, meta: Metamodel, observations: ReadObservations) -> None:
+@dataclass(frozen=True, slots=True)
+class ObservedRecord:
+    """One observation :func:`record_observations` filed, as it filed it.
+
+    ``key`` names the slot — the object together with the milestone the evidence
+    is *of* — and ``observation`` is the evidence itself. The pair is what the
+    first-party conformance bridge settles a later write against, so a caller
+    that needs both the address and the value reads production's own record
+    rather than deriving a second one that would have to agree with it by
+    inspection.
+    """
+
+    key: ObservationKey
+    observation: WriteObservation
+
+
+def record_observations(
+    uow: UnitOfWork, meta: Metamodel, observations: ReadObservations
+) -> tuple[ObservedRecord, ...]:
     """Record this unit of work's observed version/temporal-milestone for
     every VERSIONED or TEMPORAL row :func:`find` materialized (`m-opt-lock`;
     ADR 0013).
@@ -351,7 +365,11 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, observations: ReadObse
     observation retains it (`m-unit-work`) so a successor is patched from what the
     row held rather than rebuilt from the members this model declares — at no
     extra query, because the predecessor read already materialized it.
+
+    Answers what it filed, in materialization order, so a caller that asked for
+    the read can hand those records on without re-deriving either half.
     """
+    recorded: list[ObservedRecord] = []
     for observed in observations.rows:
         observed_fields = observed.columns
         entity = meta.entity(observed.entity)
@@ -378,13 +396,15 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, observations: ReadObse
         if version_attr is not None:
             version_column = slot_column(layout, version_attr.identity)
             if version_column in observed_fields:
-                _record(
-                    uow,
-                    object_key,
-                    declaring_entity,
-                    VersionObservation(
-                        observed_version=cast("int", observed_fields[version_column])
-                    ),
+                recorded.append(
+                    _record(
+                        uow,
+                        object_key,
+                        declaring_entity,
+                        VersionObservation(
+                            observed_version=cast("int", observed_fields[version_column])
+                        ),
+                    )
                 )
             continue
         if not _is_temporal(declaring_entity):
@@ -393,48 +413,19 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, observations: ReadObse
         tx_start_column, _tx_end_column = axis_columns(layout, tx_axis)
         if tx_start_column not in observed_fields:  # pragma: no cover - malformed model/projection
             continue
-        _record(
-            uow,
-            object_key,
-            declaring_entity,
-            _temporal_observation(
-                members(placed_members(meta, entity, layout)),
-                observed_fields,
-                observed.document,
-            ),
+        recorded.append(
+            _record(
+                uow,
+                object_key,
+                declaring_entity,
+                _temporal_observation(
+                    members(placed_members(meta, entity, layout)),
+                    observed_fields,
+                    observed.document,
+                ),
+            )
         )
-
-
-def observation_keying(meta: Metamodel) -> ObservationKeying:
-    """The slot rule :func:`record_observations` files under, answered for a
-    node instead of for a row.
-
-    A neutral read publishes the Observation Key on the node it materialized, so
-    a caller with no Entity Class can settle a later write against the row it
-    actually read. The key has to be the SAME slot the recording side computed,
-    and this is that rule read off member identities rather than off columns: a
-    versioned target keys by identity alone (one row per primary key), a temporal
-    one is qualified by the milestone its own interval members name, and a target
-    the unit of work observes nothing of answers absence.
-
-    The object identity arrives already derived, so the node's identity anchor
-    and the slot naming it cannot be keyed two different ways.
-    """
-
-    def key_for(
-        object_key: ObjectKey, members: Mapping[AttributeIdentity, object]
-    ) -> ObservationKey | None:
-        record = meta.entity(object_key.entity)
-        if record is None:  # pragma: no cover - a materialized node resolved in this model
-            return None
-        declaring_entity = declaring(meta, record)
-        if version_attribute(meta, declaring_entity) is not None:
-            return ObservationKey(object_key, None)
-        if not _is_temporal(declaring_entity):
-            return None
-        return ObservationKey(object_key, milestone_edge_of(declaring_entity, members))
-
-    return key_for
+    return tuple(recorded)
 
 
 def _record(
@@ -442,14 +433,16 @@ def _record(
     object_key: ObjectKey,
     declaring_entity: EntityMetadata,
     observation: WriteObservation,
-) -> None:
+) -> ObservedRecord:
     """File one observation under the milestone it is an observation OF.
 
     The key is derived from the observation itself rather than assembled beside
     it, so this seam cannot record a row under one coordinate while claiming
-    another.
+    another, and the record it answers names that same derived slot.
     """
-    uow.observe(observation_key(object_key, observation, declaring_entity), observation)
+    key = observation_key(object_key, observation, declaring_entity)
+    uow.observe(key, observation)
+    return ObservedRecord(key, observation)
 
 
 def _temporal_observation(

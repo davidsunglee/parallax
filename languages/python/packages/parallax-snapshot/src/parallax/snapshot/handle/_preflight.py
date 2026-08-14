@@ -1,15 +1,16 @@
 """``parallax.snapshot.handle._preflight`` — the shared read-preflight seam.
 
 Every modeled read passes through :func:`preflight` before any I/O:
-:meth:`Database.find`, :meth:`Transaction.find`, both neutral entry points, and
-the conformance compile lane call it rather than reimplementing a step of it. The
+:meth:`Database.find`, :meth:`Transaction.find`, both Wire views' ``find``, both
+values-lane entry points, and the conformance compile lane call it rather than
+reimplementing a step of it. The
 seam resolves the query's own target in the connected model, validates the
 canonical Object Query from that resolved root, and classifies it against
 Snapshot's Deferred Execution Features, in that order.
 
 There is one gate rather than two because there is one value: an Object Query
-carries its target and its clauses, so a typed caller and a class-less one hand
-over the same thing. The refusals and their order therefore exist once, and no
+carries its target and its clauses, so a Typed caller, a Wire caller, and a
+class-less one hand over the same thing. The refusals and their order therefore exist once, and no
 entry point can become a second, laxer read door by drifting from a second copy.
 
 ``form`` is the one fact a query does not carry — an Object Query has no result

@@ -32,27 +32,27 @@ then:
   referenceSql: select id, order_id, order_item_id, code from order_status
   graph:
     OrderStatus:
-      - { id: 101, order_id: 1, order_item_id: null, code: NEW, orderItem: null }
-      - { id: 102, order_id: 2, order_item_id: null, code: SHIPPED, orderItem: null }
-      - { id: 142, order_id: 42, order_item_id: null, code: NEW, orderItem: null }
+      - { id: 101, orderId: 1, orderItemId: null, code: NEW, orderItem: null }
+      - { id: 102, orderId: 2, orderItemId: null, code: SHIPPED, orderItem: null }
+      - { id: 142, orderId: 42, orderItemId: null, code: NEW, orderItem: null }
       - id: 201
-        order_id: 1
-        order_item_id: 11
+        orderId: 1
+        orderItemId: 11
         code: PICKED
-        orderItem: { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+        orderItem: { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
       - id: 202
-        order_id: 1
-        order_item_id: 11
+        orderId: 1
+        orderItemId: 11
         code: PACKED
-        orderItem: { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+        orderItem: { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
       - id: 203
-        order_id: 1
-        order_item_id: 12
+        orderId: 1
+        orderItemId: 12
         code: PICKED
-        orderItem: { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+        orderItem: { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
       - id: 204
-        order_id: 42
-        order_item_id: 421
+        orderId: 42
+        orderItemId: 421
         code: PICKED
-        orderItem: { id: 421, order_id: 42, sku: A-999, quantity: 3, shipped_on: 2024-03-10 }
+        orderItem: { id: 421, orderId: 42, sku: A-999, quantity: 3, shippedOn: 2024-03-10 }
   roundTrips: 2

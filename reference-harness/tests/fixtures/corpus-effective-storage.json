@@ -120,6 +120,62 @@
       }
     }
   },
+  "models/classification-transparency-layout-twin-columns.yaml": {
+    "parallax.compatibility.ClassificationTwinChild": {
+      "attribute": {
+        "id": "id",
+        "itemId": "item_id"
+      },
+      "documentPath": {
+        "profile.city": "profile:city",
+        "profile.street": "profile:street"
+      },
+      "valueObject": {
+        "profile": "profile"
+      }
+    },
+    "parallax.compatibility.ClassificationTwinItem": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {
+        "profile.city": "profile:city",
+        "profile.street": "profile:street"
+      },
+      "valueObject": {
+        "profile": "profile"
+      }
+    }
+  },
+  "models/classification-transparency-layout-twin-document.yaml": {
+    "parallax.compatibility.ClassificationTwinChild": {
+      "attribute": {
+        "id": "id",
+        "itemId": "item_id"
+      },
+      "documentPath": {
+        "profile": "payload:profile",
+        "profile.city": "payload:profile.city",
+        "profile.street": "payload:profile.street"
+      },
+      "valueObject": {
+        "profile": "profile"
+      }
+    },
+    "parallax.compatibility.ClassificationTwinItem": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {
+        "profile": "payload:profile",
+        "profile.city": "payload:profile.city",
+        "profile.street": "payload:profile.street"
+      },
+      "valueObject": {
+        "profile": "profile"
+      }
+    }
+  },
   "models/contact.yaml": {
     "parallax.compatibility.Contact": {
       "attribute": {

@@ -14,9 +14,10 @@
 # number that matches the pattern (555-9999) sits on her `work` element, so the unscoped
 # AND of the two flat any-element predicates would match her and this scoped form does
 # not — the same contrast m-value-object-018 draws against -019, now with a pattern on
-# one side. The array-type guard also makes every zero-element form not-present:
-# the empty arrays (3, 9, 10), the null column (4), the missing keys (5, 6), and the
-# nested null (8).
+# one side. Priya (10) is the trap: her non-array OBJECT `phones` is exactly
+# {type: home, number: '555-9999'}, which satisfies the whole compound; the array-type
+# guard collapses her to not-present, with the empty array (3), the null column (4), the
+# missing keys (5, 6) and the other non-array states (8, 9).
 #
 # Both element predicates lower against the SAME unnested alias t1, the structural signal
 # of same-element matching.

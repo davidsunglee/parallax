@@ -9,8 +9,9 @@
 # `work` phone, so the unscoped AND of the two flat any-element predicates admits her and
 # this scoped form does not.
 #
-# Every zero-element form remains out: the empty arrays (3, 9, 10), the null column
-# (4), the missing keys (5, 6), and the nested null (8).
+# Priya (10) is the trap: her non-array OBJECT `phones` satisfies the compound exactly;
+# the array-type guard collapses it to zero elements along with the JSON null (8) and the
+# scalar (9).
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, endsWith, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

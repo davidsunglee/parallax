@@ -980,12 +980,12 @@
           "items": { "type": "object" }
         },
         "graph": {
-          "description": "The assembled object graph a read must produce. For a deep fetch: the root rows, each carrying its eager-fetched related rows under the relationship name — OR, for a NARROWED polymorphic hop (m-deep-fetch, m-inheritance), under the DERIVED narrowed view key `<rel>[<Concrete>,<Concrete>]` (the local relationship name, the effective concrete-subtype set in canonical alphabetical order by entity name, no spaces; equivalent authored narrowings collapse to the same key). A polymorphic view's child objects additionally carry `familyVariant` (the concrete subtype name, materialized from the tag map, never projected as SQL). For a value-object materialization read (m-value-object): the owning entity's rows, each carrying its embedded value-object values decoded from the single structured-document column under the value-object name (a nested object for a `one` member, an ordered list for a `many` member, to arbitrary depth). Keyed by the root class's LOCAL name — result vocabulary, so it is derived by resolving the query's own `target` and taking the resolved Entity's local name rather than reusing the canonical spelling `target` carries — whose value is a list of root objects; a related set appears under its relationship name (or narrowed view key), and a value-object member under its declared name. When a relationship reaches an ANCESTOR node already on the current path (a true BACK-REFERENCE cycle, m-snapshot-read), recursion stops and the cycle point carries a PK-ONLY stub — ONLY the referenced node's primary-key attribute(s), no other scalars, no relationships; a diamond-shared node at a NON-cyclic position keeps its full-value representation (the stub is scoped to true cycles). The stub proves nothing about sameness by itself — the cycle's same-node claim rides `then.identityChecks`.",
+          "description": "The assembled object graph a read must produce. EVERY key is a DECLARED model member name — an Attribute by its own declared name, never its physical column — and every leaf is its canonical Wire Value (m-wire): UTC instants spelled with `Z`, decimals at declared scale, bytes as lowercase hex. For a deep fetch: the root rows, each carrying its eager-fetched related rows under the relationship name — OR, for a NARROWED polymorphic hop (m-deep-fetch, m-inheritance), under the DERIVED narrowed view key `<rel>[<Concrete>,<Concrete>]` (the local relationship name, the effective concrete-subtype set in canonical alphabetical order by entity name, no spaces; equivalent authored narrowings collapse to the same key). A polymorphic view's child objects additionally carry `familyVariant` (the concrete subtype name, materialized from the tag map, never projected as SQL). For a value-object materialization read (m-value-object): the owning entity's rows, each carrying its embedded value-object values decoded from the single structured-document column under the value-object name (a nested object for a `one` member, an ordered list for a `many` member, to arbitrary depth). Keyed by the root class's LOCAL name — result vocabulary, so it is derived by resolving the query's own `target` and taking the resolved Entity's local name rather than reusing the canonical spelling `target` carries — whose value is a list of root objects; a related set appears under its relationship name (or narrowed view key), and a value-object member under its declared name. The REQUESTED INCLUDE TREE bounds the value, not the identity graph: a relationship reaching an ancestor already on the current path (a BACK-REFERENCE cycle, m-snapshot-read) is unwound like any other level, so it renders its target once, in full, at the depth the tree still admits — and terminates because the tree strictly shrinks with depth. A diamond-shared node at a non-cyclic position likewise keeps its full-value representation. A result position whose stored state contradicted the model carries `null` here and states its diagnoses in `then.storedDataIssues`.",
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
             "type": "array",
-            "items": { "type": "object" }
+            "items": { "type": ["object", "null"] }
           }
         },
         "graphs": {
@@ -1010,24 +1010,46 @@
                 "minProperties": 1,
                 "additionalProperties": {
                   "type": "array",
-                  "items": { "type": "object" }
+                  "items": { "type": ["object", "null"] }
                 }
               }
             }
           }
         },
-        "identityChecks": {
-          "description": "Declared reference-identity expectations over graph node positions (m-snapshot-read, resolved Q5b), mirroring the m-conformance-adapter `identityCheck`. Each entry is `{left, right, same}`: `left` / `right` are JSON Pointers into the case (into `then.graph` / `then.graphs`) naming the two compared node positions, and `same` is the asserted reference verdict. Authored where the graph JSON cannot express identity by value — the BACK-REFERENCE cycle (m-snapshot-read-011), whose PK-only stub proves nothing about sameness by itself: the cycle's same-node claim (`items[0].order` is the SAME node as the root, not a lookalike copy) rides this observation, graded as REFERENCE identity by each language's API Conformance Suite while the wire harness proves the accompanying golden SQL / graph. An adapter-delegated observable — the wire harness validates it is well-formed and skips grading it.",
+        "storedDataIssues": {
+          "description": "The stored-data diagnoses a read publishes for the result positions whose stored state contradicted the declared model (m-snapshot-read). One entry per INVALID position, in result order, so a conforming read authors none at all: `ordinal` is that position's zero-based place in the ordered result, `hydrated` states whether the normative collapse produced a value (the `then.graph` position carries it) or none could be produced without inventing one (the position carries `null`), and `issues` is the closed diagnosis set the position carries — deduplicated within the position and repeated across every position that reaches the same invalid node. Each issue names its closed `code`, the canonical `entity` the violation was found on, the dotted `member` path where one is nameable (absent for an unresolved family tag alone, whose discriminator is no declared member), and the affected `objectKey` where the object's own identity decoded.",
           "type": "array",
           "minItems": 1,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["left", "right", "same"],
+            "required": ["ordinal", "hydrated", "issues"],
             "properties": {
-              "left": { "$ref": "#/$defs/jsonPointer" },
-              "right": { "$ref": "#/$defs/jsonPointer" },
-              "same": { "type": "boolean" }
+              "ordinal": { "type": "integer", "minimum": 0 },
+              "hydrated": { "type": "boolean" },
+              "issues": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["code", "entity"],
+                  "properties": {
+                    "code": { "$ref": "#/$defs/storedDataIssueCode" },
+                    "entity": { "type": "string", "minLength": 1 },
+                    "member": { "type": "string", "minLength": 1 },
+                    "objectKey": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["entity", "key"],
+                      "properties": {
+                        "entity": { "type": "string", "minLength": 1 },
+                        "key": { "type": "object", "minProperties": 1 }
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         },
@@ -1151,6 +1173,20 @@
     }
   },
   "$defs": {
+    "storedDataIssueCode": {
+      "description": "The closed public vocabulary of stored-data violations (m-snapshot-read). Each code names one violation a detecting seam judged without inventing a value; the first four collapse to a producible value and the rest leave the affected position unhydrated.",
+      "enum": [
+        "stored-data-required-member-absent",
+        "stored-data-required-member-null",
+        "stored-data-one-wrong-kind",
+        "stored-data-many-wrong-kind",
+        "stored-data-leaf-undecodable",
+        "stored-data-attribute-null",
+        "stored-data-family-tag-unknown",
+        "stored-data-primary-key-null",
+        "stored-data-primary-key-undecodable"
+      ]
+    },
     "databaseCall": {
       "description": "One ATTEMPTED database round trip (m-execution-log Database Call). `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds — and is OMITTED on a lane that authors no golden SQL (`api-conformance`), where `kind` and `completion` are the whole portable oracle. `kind` keeps a failed call classifiable without parsing SQL.",
       "type": "object",
@@ -1323,11 +1359,6 @@
         },
         "roundTrips": { "type": "integer", "minimum": 0 }
       }
-    },
-    "jsonPointer": {
-      "description": "A JSON Pointer into the case (RFC 6901), naming a graph node position for a `then.identityChecks` entry. Mirrors the m-conformance-adapter `jsonPointer` def: the empty string (whole document) or a `/`-rooted path.",
-      "type": "string",
-      "pattern": "^($|/.*)$"
     },
     "entityName": {
       "description": "A metamodel Entity spelling, bare or namespace-qualified (identity.schema.json) — the entity a write-sequence step mutates or a write instruction targets. The same grammar the Predicate schema's attribute/relationship references use before the member dot; a read names its queried entity inside its own Object Query.",

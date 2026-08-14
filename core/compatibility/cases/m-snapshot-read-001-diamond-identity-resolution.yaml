@@ -51,11 +51,11 @@ then:
         qty: 5
         price: 10.50
         active: true
-        ordered_on: 2024-01-05
+        orderedOn: 2024-01-05
         items:
-          - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
-          - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+          - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+          - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
         itemsByShipDate:
-          - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
-          - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+          - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+          - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
   roundTrips: 3

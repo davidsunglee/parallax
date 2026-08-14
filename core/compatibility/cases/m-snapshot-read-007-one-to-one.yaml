@@ -35,9 +35,9 @@ then:
     Person:
       - id: 1
         name: Alan
-        passport: { id: 101, person_id: 1, number: P-AAA }
+        passport: { id: 101, personId: 1, number: P-AAA }
       - id: 2
         name: Grace
-        passport: { id: 102, person_id: 2, number: P-BBB }
+        passport: { id: 102, personId: 2, number: P-BBB }
       - { id: 3, name: Ada, passport: null }
   roundTrips: 2

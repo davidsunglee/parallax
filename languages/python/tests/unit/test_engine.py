@@ -24,7 +24,6 @@ import pytest
 from _metamodel_support import Declaration, attribute, key, source
 
 from _support.document_reads import fold_mapping_rows
-from _support.sql import compile_read
 from parallax.conformance import case_format, engine, sweep
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core._formation_profile import form_metamodel
@@ -39,16 +38,15 @@ from parallax.core.metamodel import (
     ConcreteSubtype,
     EntityIdentity,
     ExactEntityReference,
-    RelationshipIdentity,
     Table,
     TablePerHierarchy,
     ValueObjectAttributeDeclaration,
-    ValueObjectMetadata,
+    ValueObjectAttributeIdentity,
+    ValueObjectIdentity,
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     Concurrency,
@@ -60,17 +58,27 @@ from parallax.core.unit_work import (
     PredecessorRow,
     StaleWriteError,
     TemporalObservation,
-    VersionObservation,
     WriteEffectError,
 )
 from parallax.snapshot import DeferredFeatureError, handle
-from parallax.snapshot.materialize import RelationshipViewKey
 
 
-def _rows(row: Row, key: str) -> list[Row]:
+def _rows(row: Row | None, key: str) -> list[Row]:
     """A graph leaf's relationship-attached rows, typed for test-side assertions
     (`then.graph`'s wire shape is intentionally a plain ``dict[str, object]``)."""
+    assert row is not None
     return cast("list[Row]", row[key])
+
+
+def _node(nodes: list[Row | None], index: int) -> Row:
+    """One published graph position that carries a value.
+
+    A position whose stored state contradicted the model carries ``null``, so a
+    test asserting about the node itself states that it expected one.
+    """
+    node = nodes[index]
+    assert node is not None
+    return node
 
 
 def _entry(entry: dict[str, object], key: str) -> Row:
@@ -854,6 +862,11 @@ setattr(
 )
 
 
+def _wire_row(row: Row) -> dict[str, object]:
+    """One authored row as the Wire spelling a find step's own rows carry."""
+    return {key: engine.wire_value(value) for key, value in row.items()}
+
+
 def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abort() -> None:
     # `m-opt-lock-012` end to end over two SCRIPTED fake connections (never a
     # real database): the `ours` group's own observing find (step 0) is stale
@@ -894,8 +907,10 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     assert len(peer_port.writes) == 1  # the concurrent group's own gated update
     # Every find step's own observed rows, in
     # scenario step order (0, 1, then the trailing ungrouped verify at 4) —
-    # the doomed group's discarded insert leaves account 9 absent.
-    assert find_rows == [[row_v1], [row_v1], []]
+    # the doomed group's discarded insert leaves account 9 absent. The rows are
+    # the Wire result re-keyed by column, so a `decimal` reads as its canonical
+    # string exactly as the grader's own wire space compares it.
+    assert find_rows == [[_wire_row(row_v1)], [_wire_row(row_v1)], []]
 
 
 def test_run_interleaved_scenario_case_applies_out_of_band_statements_before_the_groups() -> None:
@@ -1078,7 +1093,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
         "/scenario/2/write",
         "/scenario/3/objectQuery",
     ]
-    assert find_rows == [[row_v1], [row3]]
+    assert find_rows == [[_wire_row(row_v1)], [_wire_row(row3)]]
 
 
 def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -> None:
@@ -1878,9 +1893,8 @@ def _policy_node(valid_start: dt.datetime, valid_end: object, name: str) -> Any:
         "txStart": _APR,
         "txEnd": INFINITY,
     }
-    return engine._ObservedNode(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        object_key=_POLICY,
-        observation_key=ObservationKey(_POLICY, Edge(valid_time=valid_start, tx_time=_APR)),
+    return handle.ObservedRecord(
+        key=ObservationKey(_POLICY, Edge(valid_time=valid_start, tx_time=_APR)),
         observation=TemporalObservation(predecessor=PredecessorRow(members=members)),
     )
 
@@ -1901,7 +1915,7 @@ def test_a_settled_write_settles_against_the_node_the_named_find_observed() -> N
     tail = _policy_node(_JUN, INFINITY, "tail")
     for node, expected in ((head, "head"), (tail, "tail")):
         key, observation = _settled((node,))
-        assert key == node.observation_key
+        assert key == node.key
         assert isinstance(observation, TemporalObservation)
         assert observation.predecessor.members["name"] == expected
 
@@ -1985,9 +1999,8 @@ def _balance_node(tx_start: str, value: str) -> Any:
         "txStart": start,
         "txEnd": INFINITY,
     }
-    return engine._ObservedNode(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        object_key=key,
-        observation_key=ObservationKey(key, Edge(tx_time=start)),
+    return handle.ObservedRecord(
+        key=ObservationKey(key, Edge(tx_time=start)),
         observation=TemporalObservation(predecessor=PredecessorRow(members=members)),
     )
 
@@ -2014,7 +2027,7 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
             [],
             (node,),
         )[0]
-        assert write.execution_evidence == node.observation_key
+        assert write.execution_evidence == node.key
         observation = write.oracle_observation
         assert isinstance(observation, TemporalObservation)
         return observation.predecessor.members["txStart"]
@@ -2060,147 +2073,6 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     # The close's address is the OBSERVED rectangle's own `thru_z`, derived from
     # the node the named find published — never the primary key alone.
     assert close.binds[2] == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-
-
-def test_observed_nodes_refuses_an_output_that_is_not_a_graph() -> None:
-    # A participating scenario find is graph-form: only the graph lane records the
-    # evidence a later write settles against, so a row-form answer here would be a
-    # find that observed nothing while reporting that it had.
-    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    with pytest.raises(engine.EngineError, match="a participating scenario find is graph-form"):
-        engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            meta,
-            "parallax.compatibility.Account",
-            handle.NeutralRows(()),
-        )
-
-
-def test_observed_nodes_records_nothing_for_an_unversioned_non_temporal_target() -> None:
-    # An unversioned, non-temporal target observes nothing at all (m-unit-work),
-    # so the find publishes no evidence and a later write of it buffers bare.
-    meta = engine.load_case_metamodel(_case("m-unit-work-003"))
-    assert (
-        engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            meta,
-            "parallax.compatibility.Order",
-            handle.NeutralGraph((), Pin()),
-        )
-        == ()
-    )
-
-
-def test_observed_nodes_skips_a_node_the_unit_of_work_observed_nothing_of() -> None:
-    # A node carrying no Observation Key is one the unit of work filed no evidence
-    # for, so there is no slot a later write could settle against and it
-    # contributes none.
-    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    model = meta
-    account = EntityIdentity("parallax.compatibility", "Account")
-    node = handle.NeutralNode(entity=account, object_key=ObjectKey(account, (("id", 1),)))
-    view = handle.NeutralNodeView(
-        node=node,
-        primary_key=(),
-        family_variant=None,
-        attributes={},
-        value_objects={},
-        relationships={},
-    )
-    assert (
-        engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            model, "parallax.compatibility.Account", handle.NeutralGraph((view,), Pin())
-        )
-        == ()
-    )
-
-
-def test_observed_nodes_publishes_every_deep_fetch_level_and_walks_a_cycle_once() -> None:
-    # A find observes every row it materialized, at the root and at every
-    # deep-fetch level, and files a key for each. Reading only the roots would
-    # discard evidence production recorded, so a later grouped write of an
-    # INCLUDED object could not settle against it — the child here carries a
-    # version of its own and appears in the result exactly once even though the
-    # graph closes a cycle back through it.
-    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    model = meta
-    account = EntityIdentity("parallax.compatibility", "Account")
-    version = AttributeIdentity(account, "version")
-    peer = RelationshipIdentity(account, "peer")
-    peers = RelationshipIdentity(account, "peers")
-    owner = RelationshipIdentity(account, "owner")
-
-    def view(
-        pk: int,
-        observed_version: int,
-        relationships: dict[RelationshipViewKey, Any],
-    ) -> handle.NeutralNodeView:
-        key = ObjectKey(account, (("id", pk),))
-        return handle.NeutralNodeView(
-            node=handle.NeutralNode(
-                entity=account, object_key=key, observation_key=ObservationKey(key, None)
-            ),
-            primary_key=(),
-            family_variant=None,
-            attributes={version: observed_version},
-            value_objects={},
-            relationships=relationships,
-        )
-
-    child_links: dict[RelationshipViewKey, Any] = {}
-    child = view(2, 8, child_links)
-    grandchild = view(3, 9, {})
-    root = view(
-        1,
-        7,
-        {
-            RelationshipViewKey(peer): child,
-            RelationshipViewKey(peers): (grandchild,),
-            RelationshipViewKey(owner): None,
-        },
-    )
-    child_links[RelationshipViewKey(peer)] = root  # the cycle back to the root
-
-    observed = engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        model, "parallax.compatibility.Account", handle.NeutralGraph((root,), Pin())
-    )
-    assert [node.object_key.primary_key for node in observed] == [
-        (("id", 1),),
-        (("id", 2),),
-        (("id", 3),),
-    ]
-    assert [cast("VersionObservation", node.observation).observed_version for node in observed] == [
-        7,
-        8,
-        9,
-    ]
-
-
-def test_observed_nodes_refuses_a_temporal_target_stored_as_a_document() -> None:
-    # A milestone reconstructed from a neutral node holds the DECLARED members and
-    # no raw Structured Column, which is the whole stored row under `Columns` and
-    # is not under Relational Document Layout — a successor patched from it would
-    # drop every key the stored document holds that this model declares nowhere.
-    # The engine names the shape rather than chaining a wrong successor.
-    meta = engine.load_case_metamodel(_load_case("m-txtime-write-010"))
-    voyage = EntityIdentity("parallax.compatibility", "Voyage")
-    object_key = ObjectKey(voyage, (("id", 1),))
-    view = handle.NeutralNodeView(
-        node=handle.NeutralNode(
-            entity=voyage,
-            object_key=object_key,
-            observation_key=ObservationKey(object_key, None),
-        ),
-        primary_key=(),
-        family_variant=None,
-        attributes={},
-        value_objects={},
-        relationships={},
-    )
-    with pytest.raises(engine.EngineError, match="shared Structured Column 'payload'"):
-        engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            meta,
-            "parallax.compatibility.Voyage",
-            handle.NeutralGraph((view,), Pin()),
-        )
 
 
 def test_a_tracked_milestone_of_a_document_target_is_refused_after_out_of_band_statements() -> None:
@@ -4529,8 +4401,9 @@ def test_read_table_state_normalizes_values_without_changing_the_projection() ->
 
 # --------------------------------------------------------------------------- #
 # Graph reads (m-deep-fetch / m-snapshot-read): the                            #
-# `run_graph_case` / `run_graphs_case` rendering lane, and the internal graph- #
-# node serializer / identityChecks evaluator / scenario `mutate` action.       #
+# `run_graph_case` / `run_graphs_case` envelope lane and the scenario          #
+# `mutate` action. What a root LOOKS like is the wire materializer's own       #
+# contract (`test_wire_reads.py`); what is left here is the envelope.          #
 # --------------------------------------------------------------------------- #
 class QueueDbPort:
     """A fake `m-db-port` returning one canned response per `execute()` call."""
@@ -4586,17 +4459,17 @@ def test_run_graph_case_renders_root_class_keyed_graph_with_relationships() -> N
             ],
         ]
     )
-    emissions, graph, round_trips, identity_checks = engine.run_graph_case(
+    emissions, graph, round_trips, stored_data_issues = engine.run_graph_case(
         _case("m-snapshot-read-001"), "postgres", port
     )
     assert round_trips == 3
     assert len(emissions) == 3
-    assert identity_checks is None
+    assert stored_data_issues is None
     assert [item["id"] for item in _rows(graph["Order"][0], "items")] == [12, 11]
-    assert _rows(graph["Order"][0], "itemsByShipDate")[0]["shipped_on"] == "2024-02-15"
+    assert _rows(graph["Order"][0], "itemsByShipDate")[0]["shippedOn"] == "2024-02-15"
 
 
-def test_run_graph_case_evaluates_identity_checks_over_the_assembled_graph() -> None:
+def test_run_graph_case_unwinds_a_back_reference_finitely() -> None:
     port = QueueDbPort(
         [
             [
@@ -4622,18 +4495,108 @@ def test_run_graph_case_evaluates_identity_checks_over_the_assembled_graph() -> 
             ],
         ]
     )
-    _emissions, graph, round_trips, identity_checks = engine.run_graph_case(
+    _emissions, graph, round_trips, stored_data_issues = engine.run_graph_case(
         _case("m-snapshot-read-011"), "postgres", port
     )
     assert round_trips == 2
-    assert identity_checks == [
-        {"left": "/then/graph/Order/0", "right": "/then/graph/Order/0/items/0/order", "same": True},
-        {"left": "/then/graph/Order/0", "right": "/then/graph/Order/0/items/1/order", "same": True},
+    assert stored_data_issues is None
+    # The back-reference renders its target ONCE, in full, and terminates: the
+    # include tree — not a cycle detector — is what bounds the value, so the
+    # position carries the ancestor's own members rather than a primary-key stub.
+    back = _rows(graph["Order"][0], "items")[0]["order"]
+    assert isinstance(back, Mapping)
+    assert back["id"] == 1
+    assert back["name"] == "Ada"
+    assert "items" not in back
+
+
+def test_run_graph_case_reports_the_records_a_classified_root_published() -> None:
+    # A `then.graph` position whose stored state contradicted the model carries the
+    # collapsed node the classification hydrated, and the diagnosis rides the
+    # separate `storedDataIssues` observation — one entry per invalid position, in
+    # result order, naming the concrete Entity, the member path inside the
+    # occurrence, and the affected object's own key.
+    port = QueueDbPort(
+        [
+            [
+                {"id": 1, "profile": PresentDocument({"street": "1 Main", "city": None})},
+                {"id": 2, "profile": PresentDocument({"city": "Oslo"})},
+            ],
+            [{"id": 12, "item_id": 2, "profile": PresentDocument({"street": "12 Main"})}],
+        ]
+    )
+    _emissions, graph, _round_trips, stored_data_issues = engine.run_graph_case(
+        _load_case("m-storage-layout-027"), "postgres", port
+    )
+    assert _node(graph["ClassificationTwinItem"], 0)["profile"] == {
+        "street": "1 Main",
+        "city": None,
+    }
+    assert _node(graph["ClassificationTwinItem"], 1)["profile"] == {"street": None, "city": "Oslo"}
+    assert stored_data_issues == [
+        {
+            "ordinal": 1,
+            "hydrated": True,
+            "issues": [
+                {
+                    "code": "stored-data-required-member-absent",
+                    "entity": "parallax.compatibility.ClassificationTwinItem",
+                    "member": "parallax.compatibility.ClassificationTwinItem.profile.street",
+                    "objectKey": {
+                        "entity": "parallax.compatibility.ClassificationTwinItem",
+                        "key": {"id": 2},
+                    },
+                }
+            ],
+        }
     ]
-    # The back-reference cycle position truncates to a PK-only stub in the wire
-    # rendering — the SAME position identityChecks proved is the root's own
-    # object, above, evaluated over the assembled (pre-truncation) graph.
-    assert _rows(graph["Order"][0], "items")[0]["order"] == {"id": 1}
+
+
+def test_run_graph_case_publishes_null_where_nothing_could_be_hydrated() -> None:
+    # The other arm of the same observation: a leaf no declared decoding admits
+    # leaves the position with no value at all, so the graph carries `null` and
+    # `hydrated` is what says the null means "unhydrated" rather than "collapsed".
+    port = QueueDbPort(
+        [
+            [{"id": 1, "profile": PresentDocument({"street": "1 Main", "city": 7})}],
+            [],
+        ]
+    )
+    _emissions, graph, _round_trips, stored_data_issues = engine.run_graph_case(
+        _load_case("m-storage-layout-027"), "postgres", port
+    )
+    assert graph["ClassificationTwinItem"] == [None]
+    assert stored_data_issues is not None
+    (record,) = stored_data_issues
+    assert record["hydrated"] is False
+    assert [issue["code"] for issue in cast("list[Row]", record["issues"])] == [
+        "stored-data-leaf-undecodable"
+    ]
+
+
+def test_a_diagnosis_names_its_member_by_the_path_the_corpus_addresses_one_by() -> None:
+    # The three member arms a diagnosis can name, in the one dotted spelling a
+    # nested predicate already authors: a top-level Attribute, a Value Object
+    # occurrence at any containment depth, and a scalar inside one.
+    entity = EntityIdentity("parallax.compatibility", "Customer")
+    occurrence = ValueObjectIdentity(entity, ("address", "geo"))
+    assert engine._member_path(AttributeIdentity(entity, "name")) == (  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        "parallax.compatibility.Customer.name"
+    )
+    assert engine._member_path(occurrence) == (  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        "parallax.compatibility.Customer.address.geo"
+    )
+    assert engine._member_path(ValueObjectAttributeIdentity(occurrence, "country")) == (  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        "parallax.compatibility.Customer.address.geo.country"
+    )
+
+
+def test_run_read_case_refuses_a_row_form_position_the_read_classified() -> None:
+    # The row-form observation has no place to carry a record, so the lane names
+    # the shape rather than grading a classification as though it were a row.
+    port = FakeDbPort([{"id": 4, "name": None}])
+    with pytest.raises(engine.EngineError, match="published an InvalidData record"):
+        engine.run_read_case(_load_case("m-value-object-007"), "postgres", port)
 
 
 def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
@@ -4650,10 +4613,10 @@ def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
             }
         ]
     )
-    _emissions, graph, _round_trips, _identity_checks = engine.run_graph_case(
+    _emissions, graph, _round_trips, _stored_data_issues = engine.run_graph_case(
         _case("m-descriptor-002"), "postgres", port
     )
-    row = graph["MemberColumnDefaults"][0]
+    row = _node(graph["MemberColumnDefaults"], 0)
     assert row["mailingAddress"] == {"city": "Oslo"}
     assert "mailing_address" not in row
 
@@ -4731,171 +4694,6 @@ _ATTACH_MODEL = form_metamodel(
         ),
     )
 )
-
-
-def _neutral_roots(
-    model: AcceptedMetamodel,
-    projections: Sequence[tuple[EntityIdentity, Row]],
-    *,
-    roots: Sequence[int] = (0,),
-    attachments: Sequence[tuple[int, RelationshipViewKey, int | tuple[int, ...] | None]] = (),
-    documents: Mapping[int, Sequence[ValueObjectMetadata]] = {},
-) -> tuple[handle.NeutralNodeView, ...]:
-    """The neutral roots production materializes from hand-written projections.
-
-    Built through the real conversion, merge, and neutral materialization rather
-    than by constructing views, so a test of the renderer is a test of what the
-    production read actually hands it — including projection merging, which is
-    what decides whether a repeated logical row is one node or two. An attachment
-    names its target by projection index: a lone index is a loaded to-one, a
-    tuple is a loaded to-many, and ``None`` is loaded-null.
-    """
-    from parallax.snapshot.materialize import (
-        LevelContext,
-        MergeScope,
-        SnapshotNodeRef,
-        convert_row,
-        merge_graph_input,
-        neutral_graph,
-    )
-
-    scope = MergeScope(model)
-    refs = [
-        convert_row(row, LevelContext(entity, tuple(documents.get(index, ()))), scope)
-        for index, (entity, row) in enumerate(projections)
-    ]
-
-    def attached(
-        value: int | tuple[int, ...] | None,
-    ) -> SnapshotNodeRef | tuple[SnapshotNodeRef, ...] | None:
-        if value is None:
-            return None
-        if isinstance(value, tuple):
-            return tuple(refs[index] for index in value)
-        return refs[value]
-
-    for parent, view, value in attachments:
-        scope.attach(refs[parent], view, attached(value))
-    graph = scope.build(tuple(refs[index] for index in roots), Pin())
-    return neutral_graph(merge_graph_input(graph, model), model).roots
-
-
-def test_render_node_keeps_a_value_object_and_a_same_named_relationship_apart() -> None:
-    owner = _ATTACH_MODEL.entity(_ATTACH_OWNER)
-    assert owner is not None
-    roots = _neutral_roots(
-        _ATTACH_MODEL,
-        [
-            (_ATTACH_OWNER, {"id": 1, "target_id": 7, "details": {"label": "stored"}}),
-            (_ATTACH_TARGET, {"id": 7}),
-        ],
-        attachments=[(0, RelationshipViewKey(RelationshipIdentity(_ATTACH_OWNER, "details")), 1)],
-        documents={0: owner.declared_value_objects},
-    )
-    graph = engine._render_graph(  # pyright: ignore[reportPrivateUsage] - integration test renders a real materialized relationship
-        "Owner", roots, _ATTACH_MODEL
-    )
-    assert graph == {
-        "Owner": [{"id": 1, "target_id": 7, "profile": {"label": "stored"}, "details": {"id": 7}}]
-    }
-
-
-def test_namespaced_duplicate_variants_flow_from_sql_plan_through_production_to_renderer() -> None:
-    from parallax.core.dialect import POSTGRES
-    from parallax.core.predicate import All
-
-    root = _VARIANT_MODEL.entity(_VARIANT_ROOT)
-    assert root is not None
-    compiled = compile_read(All(), _VARIANT_MODEL, POSTGRES, root, result_form="instance")
-    materialized = compiled.materialize_row(
-        {
-            "id": 1,
-            "kind": "archive-shared",
-            "familyVariant": PresentDocument({"label": "mail"}),
-            "named_profile": None,
-            "catalog_profile": None,
-            "archive_profile": PresentDocument({"label": "archive"}),
-        }
-    )
-    assert materialized.resolved_entity == _SECOND_SHARED_VARIANT
-    assert materialized.family_variant == "archive.SharedVariant"
-    assert materialized.values["familyVariant"] == {"label": "mail"}
-
-    roots = _neutral_roots(
-        _VARIANT_MODEL,
-        [(materialized.resolved_entity, materialized.values)],
-        documents={0: compiled.documents},
-    )
-    assert roots[0].family_variant == "archive.SharedVariant"
-    graph = engine._render_graph(  # pyright: ignore[reportPrivateUsage] - integration test drives the renderer after a real materialization
-        _VARIANT_ROOT.canonical, roots, _VARIANT_MODEL
-    )
-    assert graph[_VARIANT_ROOT.canonical] == [
-        {
-            "id": 1,
-            "familyVariant": "archive.SharedVariant",
-            "mailingAddress": {"label": "mail"},
-            "archiveProfile": {"label": "archive"},
-        }
-    ]
-
-
-def test_rendering_defensively_rejects_two_contributors_for_one_wire_key() -> None:
-    rendered: Row = {"shared": 1}
-    with pytest.raises(engine.EngineError, match="more than one contributor"):
-        engine._put_rendered(rendered, "shared", 2)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's defensive helper
-
-
-def test_render_node_does_not_stub_a_diamond_at_a_non_cyclic_position() -> None:
-    roots = _neutral_roots(
-        _ATTACH_MODEL,
-        [(_ATTACH_OWNER, {"id": 1}), (_ATTACH_TARGET, {"id": 11})],
-        attachments=[
-            (0, RelationshipViewKey(RelationshipIdentity(_ATTACH_OWNER, "a")), 1),
-            (0, RelationshipViewKey(RelationshipIdentity(_ATTACH_OWNER, "b")), 1),
-        ],
-    )
-    rendered = engine._render_node(roots[0], frozenset(), _ATTACH_MODEL)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    assert rendered["a"] == {"id": 11}
-    assert rendered["b"] == {"id": 11}
-
-
-def test_render_node_truncates_a_true_ancestor_cycle_to_a_pk_only_stub() -> None:
-    roots = _neutral_roots(
-        _ATTACH_MODEL,
-        [(_ATTACH_OWNER, {"id": 1, "target_id": 3})],
-        attachments=[(0, RelationshipViewKey(RelationshipIdentity(_ATTACH_OWNER, "self")), 0)],
-    )
-    rendered = engine._render_node(roots[0], frozenset(), _ATTACH_MODEL)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    assert rendered["self"] == {"id": 1}
-
-
-def test_resolve_graph_pointer_rejects_a_malformed_pointer() -> None:
-    roots = _neutral_roots(_ATTACH_MODEL, [(_ATTACH_OWNER, {"id": 1})])
-    with pytest.raises(engine.EngineError, match="malformed"):
-        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-011"), {"Order": roots}, "/nonsense"
-        )
-
-
-def test_resolve_graph_pointer_rejects_a_segment_naming_no_relationship_view() -> None:
-    roots = _neutral_roots(_ATTACH_MODEL, [(_ATTACH_OWNER, {"id": 1})])
-    with pytest.raises(engine.EngineError, match="does not resolve"):
-        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-011"), {"Order": roots}, "/then/graph/Order/0/id"
-        )
-
-
-def test_resolve_graph_pointer_rejects_a_pointer_resolving_to_a_non_node() -> None:
-    roots = _neutral_roots(
-        _ATTACH_MODEL,
-        [(_ATTACH_OWNER, {"id": 1})],
-        attachments=[(0, RelationshipViewKey(RelationshipIdentity(_ATTACH_OWNER, "peers")), ())],
-    )
-    with pytest.raises(engine.EngineError, match="does not name a graph node"):
-        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-011"), {"Order": roots}, "/then/graph/Order/0/peers"
-        )
 
 
 def _scenario_result(
@@ -5094,10 +4892,10 @@ def test_render_value_recurses_into_a_nested_value_object_document() -> None:
             }
         ]
     )
-    _emissions, graph, _round_trips, _identity_checks = engine.run_graph_case(
+    _emissions, graph, _round_trips, _stored_data_issues = engine.run_graph_case(
         _case("m-value-object-024"), "postgres", port
     )
-    rendered = graph["Customer"][0]
+    rendered = _node(graph["Customer"], 0)
     assert rendered["address"] == {
         "street": "x",
         "city": "Oslo",

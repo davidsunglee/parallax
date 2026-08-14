@@ -633,7 +633,13 @@ _EARLY_GRAPH = {
     "pin": {"transaction-time": _EARLY_PIN},
     "graph": {
         "InvoiceLine": [
-            {"id": 1000, "invoice_id": 100, "amount": 50.00, "in_z": _EARLY_PIN, "out_z": _LATE_PIN}
+            {
+                "id": 1000,
+                "invoiceId": 100,
+                "amount": 50.00,
+                "txStart": _EARLY_PIN,
+                "txEnd": _LATE_PIN,
+            }
         ]
     },
 }
@@ -641,7 +647,13 @@ _LATE_GRAPH = {
     "pin": {"transaction-time": _LATE_PIN},
     "graph": {
         "InvoiceLine": [
-            {"id": 1000, "invoice_id": 100, "amount": 75.00, "in_z": _LATE_PIN, "out_z": "infinity"}
+            {
+                "id": 1000,
+                "invoiceId": 100,
+                "amount": 75.00,
+                "txStart": _LATE_PIN,
+                "txEnd": "infinity",
+            }
         ]
     },
 }
@@ -733,17 +745,17 @@ def test_assert_graphs_rejects_overlapping_distinct_pins():
             "InvoiceLine": [
                 {
                     "id": 1000,
-                    "invoice_id": 100,
+                    "invoiceId": 100,
                     "amount": 50.00,
-                    "in_z": _EARLY_PIN,
-                    "out_z": _LATE_PIN,
+                    "txStart": _EARLY_PIN,
+                    "txEnd": _LATE_PIN,
                 },
                 {
                     "id": 1000,
-                    "invoice_id": 100,
+                    "invoiceId": 100,
                     "amount": 75.00,
-                    "in_z": _LATE_PIN,
-                    "out_z": "infinity",
+                    "txStart": _LATE_PIN,
+                    "txEnd": "infinity",
                 },
             ]
         },

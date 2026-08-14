@@ -49,20 +49,20 @@ then:
         qty: 5
         price: 10.50
         active: true
-        ordered_on: 2024-01-05
+        orderedOn: 2024-01-05
         notesDescNullsLast:
-          - { id: 51, order_id: 1, body: gift wrap, resolved_on: 2024-03-01 }
-          - { id: 53, order_id: 1, body: fragile handling, resolved_on: 2024-01-15 }
-          - { id: 52, order_id: 1, body: address check, resolved_on: null }
+          - { id: 51, orderId: 1, body: gift wrap, resolvedOn: 2024-03-01 }
+          - { id: 53, orderId: 1, body: fragile handling, resolvedOn: 2024-01-15 }
+          - { id: 52, orderId: 1, body: address check, resolvedOn: null }
       - id: 42
         name: Grace
         sku: A-999
         qty: 30
         price: 99.99
         active: true
-        ordered_on: 2024-06-30
+        orderedOn: 2024-06-30
         notesDescNullsLast:
-          - { id: 55, order_id: 42, body: signature required, resolved_on: 2024-06-06 }
-          - { id: 56, order_id: 42, body: insured, resolved_on: 2024-05-05 }
-          - { id: 54, order_id: 42, body: expedite, resolved_on: 2024-04-04 }
+          - { id: 55, orderId: 42, body: signature required, resolvedOn: 2024-06-06 }
+          - { id: 56, orderId: 42, body: insured, resolvedOn: 2024-05-05 }
+          - { id: 54, orderId: 42, body: expedite, resolvedOn: 2024-04-04 }
   roundTrips: 2

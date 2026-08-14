@@ -52,9 +52,9 @@ then:
     Animal:
       - id: 1
         name: Rex
-        owner_id: 10
-        license_id: L-100
-        bark_volume: 7
+        ownerId: 10
+        licenseId: L-100
+        barkVolume: 7
         familyVariant: Dog
         owner: { id: 10, name: Alice }
   roundTrips: 2

@@ -1342,10 +1342,10 @@ canonical Entity Identity order and reports every later independent same-Table
 owner as `storage-layout-table-mapping-collision` at that Entity's mapping
 provenance with the first owner's provenance related. It never merges separate
 model primary keys into one layout that each Entity can only partially supply.
-Neutral materialization preserves scalar, Value Object, relationship, and
-`familyVariant` provenance until wrapping/rendering. A Value Object storage
-column may therefore equal a differently named relationship without either
-value overwriting or renaming the other. Domain Model construction separately reports
+Materialization preserves scalar, Value Object, relationship, and
+`familyVariant` provenance to the published field set, which is keyed by declared
+member name. A Value Object storage column may therefore equal a differently
+named relationship without either value overwriting or renaming the other. Domain Model construction separately reports
 `inheritance-materialization-key-collision` when keys that actually coexist in
 one rendered node remain ambiguous. A polymorphic node's `familyVariant` uses a
 bare concrete class name when family-unique and the canonical qualified Entity
@@ -2100,11 +2100,13 @@ or descriptor authoring form and performs no audit stamping.
   `INFINITY` sentinel; a SQL NULL temporal end is invalid and is never replaced
   with that sentinel.
 
-  The typed graph materializer classifies those findings in band (§4). Every
-  other lane — the values lane, milestone-set staging, predicate-write staging,
-  and the neutral graph materializer — still calls one publication gate over the
-  reachable merged graph before allocating objects, deriving Object Keys, or
-  invoking observation keying. The gate raises exported `SnapshotDecodingError(ValueError)` with
+  Both public graph materializers and the values lane classify those findings in
+  band (§4). Milestone-set staging and predicate-write staging still call one
+  publication gate over the reachable merged graph before allocating objects,
+  deriving Object Keys, or partitioning by milestone: a milestone read must decode
+  a temporal edge before it can partition at all, and a write has no in-band
+  channel a verdict could publish through. The gate raises exported
+  `SnapshotDecodingError(ValueError)` with
   stable code `snapshot-decoding-failed`, the concrete `EntityIdentity`, and the
   applicable `AttributeIdentity | ValueObjectIdentity |
   ValueObjectAttributeIdentity | None`. It exposes no raw stored value and
@@ -2825,33 +2827,32 @@ or descriptor authoring form and performs no audit stamping.
   A participating `tx.find` shares its `ReadTrace` object with the attempt that
   issued it, so `snapshot.execution` and `tx.execution_log` never disagree about
   what a level cost.
-- **The model-neutral seam.** A caller holding no Entity Class reaches the typed
-  path's own runtime through three entry points exported from
-  `parallax.snapshot.handle` beside `Database` and `Transaction` together with
-  the `Neutral*` result vocabulary and `ObservationKey`. `db.read_neutral(request)`
-  and `tx.read_neutral(request)` are reads, and which executor entry they take is
-  the request's FORM: a graph-form request enters the very entries `db.find` and
-  `tx.find` enter — the instance-form executor with its per-level deep-fetch loop,
-  or the milestone-set entry a scanned axis dispatches to — while a row-form
-  request enters a third entry of its own, which shares the root canonicalization,
-  the same compilation with the values lane selected, and the same recorded
-  Database Call, but runs no relationship level and builds no graph, because the
-  transformed row is already the representation;
-  `tx.write_neutral(instruction, *, observation: ObservationKey |
-  WriteObservation | None = None)` is the neutral WRITE ingress —
-  it validates and buffers one write instruction for the same Write Planner the
-  typed verbs feed, and reaches no read executor. A `NeutralReadRequest`
-  carries one canonical Object Query — which names its own target — and selects
-  the row or graph form;
-  everything after it is the typed path's own: the same read gate, the same
-  canonicalization and compilation, the same Database Call, the same deep-fetch
-  loop wherever the form runs one, and, on `tx.read_neutral`, the same
-  force-flush, read-lock derivation,
-  observation recording, and Read Trace bracket. The two materializers are peers
-  chosen only once execution has finished, so a typed read constructs no
-  `Neutral*` value. A graph-form node publishes the `ObservationKey` its evidence
-  was filed under; a row-form read and a milestone-set read record no evidence
-  and publish none, matching what `tx.find` observes for the same shapes.
+- **The first-party seams beside the developer surface.** Two capabilities live
+  on the handles without being developer surface, and neither has a `Neutral*`
+  vocabulary: the public read interfaces are `db.find` / `tx.find` and
+  `db.wire.find` / `tx.wire.find`, and nothing else answers a result.
+  `db.read_rows(query)` / `tx.read_rows(query)` are the **values lane** — one
+  canonical Object Query into `RowsResult`, whose `rows` is the transformed rows
+  in result order as `Mapping | InvalidData[Mapping]`, keyed as the read projected
+  them. It shares the root canonicalization, the same compilation with the values
+  lane selected, and the same recorded Database Call with `find`, but runs no
+  relationship level and builds no graph, because the transformed row is already
+  the representation; the shared read gate refuses a query naming Include Paths
+  before any I/O. A participating `tx.read_rows` force-flushes, renders the
+  transaction's own read-lock suffix, and brackets its Read Trace exactly as
+  `tx.find` does, and records no observation — the values lane projects scalars
+  only, so a Predecessor Row read off it would be incomplete under Relational
+  Document Layout. It is not a third public result format: it exists for a
+  first-party caller grading flat results, and its element type is the same union
+  both public materializers publish.
+  `tx.observed_read(query)` and `tx.write_neutral(instruction, *, observation:
+  ObservationKey | WriteObservation | None = None)` are the **conformance
+  bridge**, first-party and scheduled to end with the Wire write verbs.
+  `observed_read` runs the participating Wire read and answers an `ObservedRead`
+  pairing that `Snapshot[WireEntity]` with the `ObservedRecord`s the read filed,
+  because only their producer can pair an address with the evidence it names;
+  `write_neutral` validates and buffers one already-decoded write instruction for
+  the same Write Planner the typed verbs feed and reaches no read executor.
   `observation` states that evidence three ways and only three. An
   `ObservationKey` is a REFERENCE into this unit of work's own record and
   dereferences immediately — a key naming no recorded observation raises
@@ -2859,17 +2860,16 @@ or descriptor authoring form and performs no audit stamping.
   than settling bare, and a key outlives no unit of work. A `WriteObservation`
   is evidence the caller HOLDS and is used as given: this is the one licensed
   way a keyed write settles against a row no read of this unit of work
-  materialized (see *Versioned keyed writes require prior observation* below),
-  and it exists because a class-less caller may already possess the observed
-  row. `None` buffers bare, which is what an insert and an unobserved target
-  need. A `PredicateWrite` resolves its own per-row evidence, so supplying any
+  materialized (see *Versioned keyed writes require prior observation* below).
+  `None` buffers bare, which is what an insert and an unobserved target need. A
+  `PredicateWrite` resolves its own per-row evidence, so supplying any
   observation with one raises `TypeError` rather than silently dropping it.
-  `Database(port, accepted_metamodel)` is the advanced connection this surface is
-  reachable through; `Database.connect(...)` still admits only a class-backed
-  Domain Model. There is no `connect_neutral`, `plan_neutral`, `compile_neutral`,
-  neutral write on `Database`, or public flush: runtime returns and retains no
-  `WritePlan`, and a buffered write executes only when a dependency batch or the
-  outer boundary's finalization requires it.
+  `Database(port, accepted_metamodel)` is the advanced connection these seams are
+  reachable through; `Database.connect(...)` additionally admits every Domain
+  Model. There is no `read_neutral`, `connect_neutral`, `plan_neutral`,
+  `compile_neutral`, neutral write on `Database`, or public flush: runtime returns
+  and retains no `WritePlan`, and a buffered write executes only when a dependency
+  batch or the outer boundary's finalization requires it.
 - **Nesting, ownership, and concurrency preference.** A `db.transact` call while
   a transaction is already active on the current thread **joins** it, but only
   through the exact `Database` object that opened the boundary. The outermost

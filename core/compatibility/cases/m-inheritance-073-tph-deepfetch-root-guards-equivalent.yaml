@@ -47,37 +47,37 @@ then:
     Animal:
       - id: 1
         name: Rex
-        owner_id: 10
-        license_id: L-100
-        bark_volume: 7
+        ownerId: 10
+        licenseId: L-100
+        barkVolume: 7
         indoor: null
-        tusk_length: null
+        tuskLength: null
         familyVariant: Dog
         owner: { id: 10, name: Alice }
       - id: 2
         name: Fido
-        owner_id: 11
-        license_id: L-101
-        bark_volume: 3
+        ownerId: 11
+        licenseId: L-101
+        barkVolume: 3
         indoor: null
-        tusk_length: null
+        tuskLength: null
         familyVariant: Dog
         owner: { id: 11, name: Bob }
       - id: 3
         name: Whiskers
-        owner_id: 10
-        license_id: L-200
-        bark_volume: null
+        ownerId: 10
+        licenseId: L-200
+        barkVolume: null
         indoor: true
-        tusk_length: null
+        tuskLength: null
         familyVariant: Cat
         owner: { id: 10, name: Alice }
       - id: 4
         name: Tusker
-        owner_id: 12
-        license_id: null
-        bark_volume: null
+        ownerId: 12
+        licenseId: null
+        barkVolume: null
         indoor: null
-        tusk_length: 12.50
+        tuskLength: 12.50
         familyVariant: WildBoar
   roundTrips: 2

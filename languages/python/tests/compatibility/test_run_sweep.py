@@ -26,6 +26,7 @@ from _support.corpus import (
     compare_execution,
     compare_graph,
     compare_rows,
+    compare_stored_data_issues,
     wire_value_deep,
 )
 from _support.repo import adapter_schema
@@ -202,8 +203,9 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         compare_rows(observations["rows"], then["rows"])
     elif "graph" in then and case.case_id not in _CHILD_LEVEL_GRAPH_SHAPE_DEFERRED:
         compare_graph(observations["graph"], then["graph"])
-        if "identityChecks" in then:
-            assert observations.get("identityChecks") == then["identityChecks"], case.case_id
+        compare_stored_data_issues(
+            observations.get("storedDataIssues"), then.get("storedDataIssues")
+        )
     elif "graphs" in then:
         expected_graphs = then["graphs"]
         observed_graphs = observations["graphs"]
