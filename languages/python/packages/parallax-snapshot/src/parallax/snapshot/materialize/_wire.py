@@ -33,7 +33,7 @@ and dies with it, so its scope IS the materialization unit.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Self, SupportsIndex, cast
@@ -63,7 +63,6 @@ __all__ = [
     "FAMILY_VARIANT_KEY",
     "UnwindTree",
     "WireEntity",
-    "WireRoot",
     "WireValue",
     "unwind_tree",
     "wire_roots",
@@ -112,7 +111,7 @@ class WireEntity(Mapping[str, "WireValue"]):
 
 
 class _FrozenMapping(dict[str, Any]):
-    """A ``dict`` that refuses every mutation.
+    """A ``dict`` that refuses every mutation reaching it through the instance.
 
     Subclassing ``dict`` rather than wrapping one is what keeps a Wire value
     directly JSON-serializable and structurally equal to the plain mapping it
@@ -121,13 +120,23 @@ class _FrozenMapping(dict[str, Any]):
     value came from Parallax. Inherited equality and the inherited ``__hash__``
     of ``None`` are both correct as they stand, so neither is restated.
 
-    Copying answers the same object. The value is immutable, so a copy could
-    differ from it in identity alone — and identity is exactly what a later
-    phase's private source hint rides on, so preserving it costs nothing and
-    keeps a copied source usable.
+    ``__init__`` is a mutator too — ``dict.__init__`` repopulates an existing
+    mapping — so it refuses like the rest, and :func:`_frozen_mapping` builds an
+    instance without it. What the refusals cannot reach is a caller that goes
+    around the instance to the base descriptor itself
+    (``dict.__setitem__(value, ...)``): that route exists for every ``dict``
+    subclass in the language and closing it means not being a ``dict``, which is
+    the property this value is chosen for.
+
+    Copying answers the same object. An immutable value's copy can differ from it
+    in identity alone, so allocating one buys a caller nothing and costs it the
+    identity two positions of one read share.
     """
 
     __slots__ = ()
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError(_FROZEN)
 
     def __setitem__(self, key: str, value: Any) -> None:
         raise TypeError(_FROZEN)
@@ -174,11 +183,17 @@ class _FrozenMapping(dict[str, Any]):
 
 
 class _FrozenSequence(list[Any]):
-    """A ``list`` that refuses every mutation, for the same reasons as
-    :class:`_FrozenMapping`: an ordered Wire collection stays JSON-serializable,
-    structurally equal to the plain list it mirrors, and unhashable."""
+    """A ``list`` that refuses every mutation reaching it through the instance,
+    for the same reasons as :class:`_FrozenMapping`: an ordered Wire collection
+    stays JSON-serializable, structurally equal to the plain list it mirrors, and
+    unhashable — and refuses the repopulating ``__init__`` with the rest, while
+    the base descriptor a caller reaches around the instance for
+    (``list.append(value, ...)``) stays open to exactly the same limit."""
 
     __slots__ = ()
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError(_FROZEN)
 
     def __setitem__(self, *args: Any, **kwargs: Any) -> None:
         raise TypeError(_FROZEN)
@@ -232,18 +247,43 @@ class _FrozenSequence(list[Any]):
 class _WireEntityNode(_FrozenMapping, WireEntity):
     """The one runtime realization of :class:`WireEntity`.
 
-    Separate from :class:`_FrozenMapping` because only an ENTITY node may later
-    carry a private source hint: the slot lives on this class, so a nested Value
-    Object mapping structurally cannot hold one and no mapping entry ever exposes
-    it.
+    Separate from :class:`_FrozenMapping` because the nominal type belongs to an
+    ENTITY node alone: a nested Value Object mapping is structurally identical
+    and must answer ``isinstance(value, WireEntity)`` with false, which is what
+    lets a caller ask of any mapping in the result whether the read published it
+    as an Entity.
     """
 
     __slots__ = ()
 
 
-type WireRoot = WireEntity | InvalidData[WireEntity]
+def _frozen_mapping[T: _FrozenMapping](cls: type[T], entries: Mapping[str, WireValue]) -> T:
+    """One frozen mapping of ``cls``, populated through ``dict``'s own writer.
+
+    Construction cannot run through ``cls(entries)``: the refusing ``__init__``
+    that closes ``value.__init__({...})`` closes ordinary construction with it,
+    so the instance is allocated and filled directly.
+    """
+    value = dict.__new__(cls)
+    dict[str, Any].update(value, entries)
+    return value
+
+
+def _frozen_sequence(values: Iterable[WireValue]) -> _FrozenSequence:
+    """One frozen sequence, populated through ``list``'s own writer
+    (:func:`_frozen_mapping`'s reason)."""
+    value = list.__new__(_FrozenSequence)
+    list[Any].extend(value, values)
+    return value
+
+
+type _WireRoot = WireEntity | InvalidData[WireEntity]
 """One published Wire result position: the Entity node, or the record a root
-whose stored state contradicted the model publishes in its place."""
+whose stored state contradicted the model publishes in its place.
+
+Private: every returned Entity mapping is a :class:`WireEntity`, root and
+included node alike, and naming the published union would read as a second
+public type for the root position where the contract has none."""
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -270,7 +310,7 @@ def wire_roots(
     includes: UnwindTree = EMPTY_UNWIND,
     *,
     ordinal_offset: int = 0,
-) -> tuple[WireRoot, ...]:
+) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
     """``merge``'s roots as Wire values, in result order.
 
     Classification runs first and exactly once, so this materializer publishes
@@ -281,7 +321,7 @@ def wire_roots(
     """
     classification = classify_roots(merge, model, ordinal_offset=ordinal_offset)
     unwind = _Unwind(merge, model)
-    published: list[WireRoot] = []
+    published: list[_WireRoot] = []
     for verdict in classification.roots:
         if not isinstance(verdict, ClassifiedRoot):
             published.append(unwind.node(verdict.node, includes))
@@ -341,7 +381,7 @@ class _Unwind:
                 continue
             key = view.narrowed_view or view.relationship.name
             _put(rendered, key, self._related(loaded[view], child))
-        return _WireEntityNode(rendered)
+        return _frozen_mapping(_WireEntityNode, rendered)
 
     def _related(self, value: object, subtree: UnwindTree) -> WireValue:
         """One loaded view's arm resolved against the graph's own nodes.
@@ -350,7 +390,7 @@ class _Unwind:
         ``None`` is loaded-null, and a lone allocation index is loaded-one.
         """
         if isinstance(value, tuple):
-            return _FrozenSequence(
+            return _frozen_sequence(
                 self.node(index, subtree) for index in cast("tuple[int, ...]", value)
             )
         if value is None:
@@ -389,7 +429,7 @@ def _occurrence(
     """One occurrence entry as its declared-member-filled Wire value."""
     if declared.multiplicity is Multiplicity.MANY:
         records = value if isinstance(value, tuple) else ()
-        return _FrozenSequence(_members(record, declared) for record in records)
+        return _frozen_sequence(_members(record, declared) for record in records)
     return None if value is None else _members(value, declared)
 
 
@@ -419,7 +459,7 @@ def _members(record: ValueObjectRecord | object, declared: _VoContainer) -> Wire
         filled[occurrence.identity.path[-1]] = _occurrence(
             nested.get(occurrence.identity), occurrence
         )
-    return _FrozenMapping(filled)
+    return _frozen_mapping(_FrozenMapping, filled)
 
 
 def _declared_attributes(

@@ -190,10 +190,11 @@ class CompiledRead:
     under, and the row transform that materializes `familyVariant`.
 
     Self-contained by design: everything a caller needs to turn driver rows into
-    observed rows travels WITH the compiled statement. Production conformance
-    enters the same ``Database.read_neutral`` path as any other neutral caller;
-    snapshot consumers use :meth:`materialize_row`, row conversion, and the
-    publication gate. Neither lane re-derives what the statement projected.
+    observed rows travels WITH the compiled statement. The flat lane publishes a
+    transformed row through :meth:`transform_row`; every materializing consumer —
+    the typed and wire snapshot lanes and the write lanes alike — uses
+    :meth:`materialize_row`, row conversion, and the staging graph its own lane
+    classifies or refuses. Neither re-derives what the statement projected.
 
     ``narrow_to`` is the read's own query-wide narrowing or ``None`` for a bare read: a
     table-per-concrete-subtype position resolving to exactly one concrete emits

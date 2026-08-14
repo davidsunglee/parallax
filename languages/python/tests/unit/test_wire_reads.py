@@ -29,7 +29,7 @@ from _transact_support import NoIoPort
 
 from _support.document_reads import fold_mapping_rows
 from _support.sql import compile_read
-from parallax.conformance import models
+from parallax.conformance import class_models, models
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, STRING, PresentDocument
@@ -52,7 +52,8 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.predicate import All
 from parallax.core.temporal_read import Pin
-from parallax.snapshot import InvalidData, WireEntity, handle
+from parallax.descriptor import domain_model_from_document
+from parallax.snapshot import InvalidData, WireEntity, connect, handle
 from parallax.snapshot.handle._wire import WireDatabaseView, wire_query_node
 from parallax.snapshot.materialize import (
     LevelContext,
@@ -373,6 +374,33 @@ def test_the_wire_entity_interface_is_not_constructible() -> None:
         cast("Any", WireEntity)()
 
 
+def test_a_published_value_refuses_the_repopulating_initializer() -> None:
+    # `__init__` mutates too — `dict.__init__` / `list.__init__` repopulate an
+    # existing container in place — so a caller reaching for the one mutator
+    # that is not named like one is refused with the rest, at every depth.
+    root = _frozen_root()
+    items = _sequence(root["items"])
+    for mutate in (
+        lambda: cast("Any", root).__init__({"id": 2}),
+        lambda: cast("Any", items).__init__([{"id": 2}]),
+        lambda: cast("Any", items[0]).__init__({"id": 2}),
+    ):
+        with pytest.raises(TypeError, match="immutable"):
+            mutate()
+    assert root["id"] == 1
+    assert len(items) == 1
+    assert _mapping(items[0])["id"] == 11
+
+
+def test_a_published_value_is_the_type_its_construction_could_not_have_faked() -> None:
+    # The refusing `__init__` is what makes construction private: `type(value)(…)`
+    # — the one spelling a caller holding a published value can reach the class
+    # through — cannot produce a second one.
+    root = _frozen_root()
+    with pytest.raises(TypeError, match="immutable"):
+        cast("Any", type(root))({"id": 2})
+
+
 # --------------------------------------------------------------------------- #
 # Query spellings, capability, and classification.                             #
 # --------------------------------------------------------------------------- #
@@ -417,7 +445,66 @@ def test_a_wire_read_participates_in_the_transaction_that_owns_it() -> None:
     assert " for share of " in port.executed[0][0]
 
 
-def test_a_wire_read_classifies_a_root_the_typed_lane_would_have_classified() -> None:
+# Both Domain Model provenances a connection admits, over one corpus model: the
+# classes an application composes and the descriptor document a class-free caller
+# hands the public door. Capability follows the model, so every result shape a
+# Wire read can publish is proven through BOTH.
+_CUSTOMER_MODELS: Mapping[str, DomainModel] = {
+    "class-backed": class_models.MODELS["customer"],
+    "descriptor-backed": domain_model_from_document(
+        models.read_document(models.default_models_dir() / "customer.yaml")
+    ),
+}
+
+_VALID_CUSTOMER: Row = {
+    "id": 1,
+    "name": "Ada",
+    "address": {"street": "Storgata 1", "city": "Oslo", "phones": []},
+}
+
+
+def _customer_wire(model: DomainModel, row: Row) -> object:
+    """One connected Customer read, published in band."""
+    port = QueuePort([[row]])
+    query = deserialize_query({"target": "Customer", "predicate": {"all": {}}})
+    return connect(port, model, dialect=POSTGRES).wire.find(query).checked().result()
+
+
+@pytest.mark.parametrize("provenance", list(_CUSTOMER_MODELS))
+def test_either_model_provenance_publishes_one_conforming_wire_root(provenance: str) -> None:
+    published = _entity(_customer_wire(_CUSTOMER_MODELS[provenance], _VALID_CUSTOMER))
+    assert published["name"] == "Ada"
+    address = _mapping(published["address"])
+    assert address["street"] == "Storgata 1"
+    # Declared-member filled at every depth: an absent nested `one` reads None.
+    assert address["geo"] is None
+
+
+@pytest.mark.parametrize("provenance", list(_CUSTOMER_MODELS))
+def test_either_model_provenance_publishes_a_hydratable_record(provenance: str) -> None:
+    published = _customer_wire(
+        _CUSTOMER_MODELS[provenance], {"id": 1, "name": "Ada", "address": {"city": "Oslo"}}
+    )
+    assert isinstance(published, InvalidData)
+    record = cast("InvalidData[object]", published)
+    assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
+    assert _mapping(cast("Mapping[str, object]", record.data)["address"])["street"] is None
+
+
+@pytest.mark.parametrize("provenance", list(_CUSTOMER_MODELS))
+def test_either_model_provenance_publishes_a_non_hydrating_record(provenance: str) -> None:
+    published = _customer_wire(
+        _CUSTOMER_MODELS[provenance], {"id": None, "name": "Ada", "address": None}
+    )
+    assert isinstance(published, InvalidData)
+    record = cast("InvalidData[object]", published)
+    assert {issue.code for issue in record.issues} == {"stored-data-primary-key-null"}
+    assert record.data is None
+
+
+def test_a_first_party_metamodel_connection_classifies_the_same_way() -> None:
+    # The bare accepted Metamodel `connect` refuses and the conformance adapter
+    # holds: it reaches the same materializer, so its verdicts are the same ones.
     port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": "Oslo"}}]])
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
@@ -428,26 +515,21 @@ def test_a_wire_read_classifies_a_root_the_typed_lane_would_have_classified() ->
     assert isinstance(published, InvalidData)
     record = cast("InvalidData[object]", published)
     assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
-    assert _mapping(cast("Mapping[str, object]", record.data)["address"])["street"] is None
-
-
-def test_a_non_hydrating_root_publishes_no_wire_value() -> None:
-    port = QueuePort([[{"id": None, "name": "Ada", "address": None}]])
-    query = deserialize_query({"target": "Customer", "predicate": {"all": {}}})
-    published = (
-        handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).checked().results()
-    )
-    record = published[0]
-    assert isinstance(record, InvalidData)
-    assert cast("InvalidData[object]", record).data is None
 
 
 def test_a_classless_connection_serves_wire_and_refuses_typed_before_any_io() -> None:
-    port = NoIoPort()
-    database = handle.Database(port, ORDERS, dialect=POSTGRES)
     with pytest.raises(handle.SnapshotConnectionError):
-        database.find(cast("Any", Gadget.where(Gadget.id == 1)))
-    assert isinstance(database.wire, WireDatabaseView)
+        handle.Database(NoIoPort(), ORDERS, dialect=POSTGRES).find(
+            cast("Any", Gadget.where(Gadget.id == 1))
+        )
+    # The capability the same connection DOES hold is an executed read, not a
+    # reachable namespace: the Wire lane needs no Entity Class, so it runs.
+    served = handle.Database(QueuePort([[_order_row()]]), ORDERS, dialect=POSTGRES)
+    assert isinstance(served.wire, WireDatabaseView)
+    published = served.wire.find(
+        {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+    ).result()
+    assert _entity(published)["name"] == "Ada"
 
 
 # --------------------------------------------------------------------------- #

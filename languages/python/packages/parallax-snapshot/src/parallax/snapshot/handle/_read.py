@@ -64,7 +64,7 @@ than through a second copy of the timing and failed-call rules.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Protocol, cast
@@ -110,7 +110,6 @@ from parallax.snapshot.materialize import (
     SnapshotNodeRef,
     UnwindTree,
     WireEntity,
-    WireRoot,
     attribute_value,
     classify_roots,
     convert_row,
@@ -128,6 +127,7 @@ __all__ = [
     "NoResultFound",
     "ObservationCollector",
     "PublishedRow",
+    "ResultPublication",
     "RowsResult",
     "Snapshot",
     "StagedRows",
@@ -137,8 +137,10 @@ __all__ = [
     "find_rows",
     "read_rows",
     "stage_publishable_rows",
+    "typed_publication",
     "wire_from_find_result",
     "wire_from_history_result",
+    "wire_publication",
 ]
 
 
@@ -475,14 +477,18 @@ def find(
 
 @dataclass(frozen=True, slots=True)
 class StagedRows:
-    """One flat batch after SQL row materialization and publication validation.
+    """One flat batch after SQL row materialization, before any lane has judged it.
+
+    Staging carries what contradicted the model rather than deciding about it, so
+    a batch reaching a lane through :func:`stage_rows` has passed no publication
+    gate and one reaching it through :func:`stage_publishable_rows` has.
 
     ``rows`` and their aligned ``contexts`` remain available for the lane-specific
-    work that follows validation. ``scope`` and ``roots`` retain the converted
-    projections for the history lane, which repartitions clean nodes by milestone
-    without converting them a second time. ``merge`` is the staging graph the
-    lane either classifies or refuses; each row occupies the root position of the
-    same ordinal, so a verdict lands on the row it judged.
+    work that follows. ``scope`` and ``roots`` retain the converted projections
+    for the history lane, which repartitions clean nodes by milestone without
+    converting them a second time. ``merge`` is the staging graph the lane either
+    classifies or refuses; each row occupies the root position of the same
+    ordinal, so a verdict lands on the row it judged.
     """
 
     rows: tuple[MaterializedReadRow, ...]
@@ -662,10 +668,11 @@ def find_history(
     root-only graph per milestone, each with its OWN merge scope — graph-local
     identity never promises reuse across milestones.
 
-    The flat batch first passes the same staged publication gate as row-form and
-    predicate-write reads. Clean converted projections are then repartitioned
-    into milestone-local scopes without converting their retained member carriers
-    a second time. The graphs come out in chronological edge order (Valid Time
+    The flat batch first passes the same staged publication gate a predicate
+    write's resolving read does — the row-form lane classifies in band instead.
+    Clean converted projections are then repartitioned into milestone-local
+    scopes without converting their retained member carriers a second time. The
+    graphs come out in chronological edge order (Valid Time
     first, matching the corpus's own authored `then.graphs` order) rather than in
     the database's unspecified natural row order, and rows within one milestone
     keep that natural order.
@@ -1106,10 +1113,45 @@ def wire_from_history_result(result: HistoryFindResult, meta: Metamodel) -> Snap
     so the offset advances by what each graph contributed. A milestone-set read
     carries no Include Path (`m-case-format`), so every graph unwinds root-only.
     """
-    roots: list[WireRoot] = []
+    roots: list[WireEntity | InvalidData[WireEntity]] = []
     for graph in result.graphs:
         roots.extend(wire_roots(merge_graph_input(graph, meta), meta, ordinal_offset=len(roots)))
     return Snapshot(tuple(roots), Pin(), result.execution)
+
+
+@dataclass(frozen=True, slots=True)
+class ResultPublication[R]:
+    """Which materializer a read publishes through, as the two conversions the
+    one dispatch can reach: a find's own graph, and a milestone-set find's graphs.
+
+    A handle's read orchestration is the same whichever materializer runs — the
+    shared gate, the milestone-set dispatch, the executor entry, and inside a
+    transaction the lock derivation, the trace bracket, and the observation
+    record. Passing the publication in is what lets that orchestration exist once
+    per handle instead of once per result form, so the equivalence the Typed and
+    Wire interfaces promise is structural rather than maintained by inspection.
+    """
+
+    from_find: Callable[[FindResult], R]
+    from_history: Callable[[HistoryFindResult], R]
+
+
+def typed_publication(
+    meta: Metamodel, construction: EntityGraphConstruction
+) -> ResultPublication[Snapshot[Any]]:
+    """Publish through the typed materializer: frozen Entity instances."""
+    return ResultPublication(
+        lambda result: snapshot_from_find_result(result, meta, construction),
+        lambda result: snapshot_from_history_result(result, meta, construction),
+    )
+
+
+def wire_publication(meta: Metamodel) -> ResultPublication[Snapshot[WireEntity]]:
+    """Publish through the wire materializer: frozen declared-name value trees."""
+    return ResultPublication(
+        lambda result: wire_from_find_result(result, meta),
+        lambda result: wire_from_history_result(result, meta),
+    )
 
 
 def snapshot_from_find_result(

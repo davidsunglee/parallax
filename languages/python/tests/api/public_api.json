@@ -424,7 +424,6 @@
     "StoredDataIssueInput",
     "UnwindTree",
     "WireEntity",
-    "WireRoot",
     "WireValue",
     "attribute_value",
     "classify_roots",

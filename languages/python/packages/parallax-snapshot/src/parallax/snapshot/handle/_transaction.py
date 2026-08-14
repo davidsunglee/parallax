@@ -80,15 +80,14 @@ from parallax.snapshot.handle._predicate_writes import (
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
+    ResultPublication,
     RowsResult,
     Snapshot,
     find,
     find_history,
     find_rows,
-    snapshot_from_find_result,
-    snapshot_from_history_result,
-    wire_from_find_result,
-    wire_from_history_result,
+    typed_publication,
+    wire_publication,
 )
 from parallax.snapshot.handle._wire import WireTransactionView
 from parallax.snapshot.handle._write_inputs import (
@@ -606,41 +605,15 @@ class Transaction:
         write's close/chain derives from THIS observation, never a shadow
         lookup or an implicit resolving read (a MILESTONE-SET read —
         `.history()` / `.as_of_range()` — records nothing here; its own
-        dispatch branch returns before this point).
+        dispatch branch files no observation at all).
         """
-        # Both refusals precede `uow.read` deliberately: that read force-flushes
-        # pending buffered writes, so a refused read must be refused before it.
+        # The classless-connection refusal precedes the read seam deliberately:
+        # the gate and the force-flush it stands in front of both live below
+        # here, so a Transaction that cannot materialize a Snapshot refuses
+        # before either runs.
         construction = _materializing(self._construction)
         node = object_query_node(query)
-        preflight(node, model=self._meta, form="graph")
-        lock = read_lock.mode_for(self._uow.settings.concurrency)
-        # The Read Trace bracket opens BEFORE the force-flush, so a batch that
-        # flush produces is appended first and the trace this read closes lands
-        # immediately after it — the read-dependency causality the Execution Log
-        # states positionally (`m-execution-log`).
-        if scans_an_axis(node):
-            with self._attempt.read_trace() as recorder:
-                history_result = self._uow.read(
-                    lambda: find_history(
-                        node, self._meta, self._dialect, self._conn, recorder=recorder
-                    )
-                )
-            return snapshot_from_history_result(history_result, self._meta, construction)
-        observations = ReadObservations()
-        with self._attempt.read_trace() as recorder:
-            find_result = self._uow.read(
-                lambda: find(
-                    node,
-                    self._meta,
-                    self._dialect,
-                    self._conn,
-                    lock=lock,
-                    observations=observations,
-                    recorder=recorder,
-                )
-            )
-        snapshot = snapshot_from_find_result(find_result, self._meta, construction)
-        record_observations(self._uow, self._meta, observations)
+        snapshot, _ = self._read(node, typed_publication(self._meta, construction))
         return snapshot
 
     @property
@@ -658,12 +631,27 @@ class Transaction:
         return self._observed_wire_find(node).snapshot
 
     def _observed_wire_find(self, node: ObjectQueryNode) -> ObservedRead:
-        """One participating Wire read, composed exactly as :meth:`find` composes
-        a Typed one: the same gate before the force-flush, the same lock
-        derivation, the same observation recording, and the same trace bracket.
+        """One participating Wire read, paired with the observations it filed.
 
-        It answers the observations that recording filed beside the Snapshot,
-        because the two come from one read and only their producer can pair them.
+        Only this read's producer can pair the two, which is why the bridge's
+        value is built here rather than derived from a Snapshot afterwards.
+        """
+        return ObservedRead(*self._read(node, wire_publication(self._meta)))
+
+    def _read[R](
+        self, node: ObjectQueryNode, publication: ResultPublication[R]
+    ) -> tuple[R, tuple[ObservedRecord, ...]]:
+        """One participating read of ``node``, published through ``publication``
+        and paired with the observations it filed — the whole composition both
+        read interfaces run.
+
+        The gate precedes the force-flush ``uow.read`` performs, so a refused
+        read flushes nothing; the participation mode derives the lock; and the
+        Read Trace bracket opens BEFORE that flush, so a batch the flush produces
+        is appended first and the trace this read closes lands immediately after
+        it — the read-dependency causality the Execution Log states positionally
+        (`m-execution-log`). A milestone-set read files no observation at all and
+        answers none, which is why its branch returns before the record.
         """
         preflight(node, model=self._meta, form="graph")
         lock = read_lock.mode_for(self._uow.settings.concurrency)
@@ -674,7 +662,7 @@ class Transaction:
                         node, self._meta, self._dialect, self._conn, recorder=recorder
                     )
                 )
-            return ObservedRead(wire_from_history_result(history_result, self._meta), ())
+            return publication.from_history(history_result), ()
         observations = ReadObservations()
         with self._attempt.read_trace() as recorder:
             find_result = self._uow.read(
@@ -688,8 +676,10 @@ class Transaction:
                     recorder=recorder,
                 )
             )
-        snapshot = wire_from_find_result(find_result, self._meta)
-        return ObservedRead(snapshot, record_observations(self._uow, self._meta, observations))
+        return (
+            publication.from_find(find_result),
+            record_observations(self._uow, self._meta, observations),
+        )
 
     def observed_read(self, query: ObjectQueryNode) -> ObservedRead:
         """A participating Wire read paired with the observations it filed — the

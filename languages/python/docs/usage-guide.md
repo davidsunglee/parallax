@@ -750,7 +750,7 @@ def mutation_has_no_writeback(db: Database) -> tuple[Any, Snapshot[Any]]:
     return mutated, reread
 ```
 
-## A back-reference cycle resolves to the SAME root node (identityChecks)
+## A back-reference cycle resolves to the SAME root node
 
 Corpus case: `m-snapshot-read-011`
 

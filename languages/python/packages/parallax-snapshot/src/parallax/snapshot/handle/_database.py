@@ -94,15 +94,14 @@ from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
+    ResultPublication,
     RowsResult,
     Snapshot,
     find,
     find_history,
     read_rows,
-    snapshot_from_find_result,
-    snapshot_from_history_result,
-    wire_from_find_result,
-    wire_from_history_result,
+    typed_publication,
+    wire_publication,
 )
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import WireDatabaseView
@@ -326,12 +325,7 @@ class Database:
         # two entry points refuse a classless connection in the same order.
         construction = self._connected.materializing()
         node = object_query_node(query)
-        preflight(node, model=self._meta, form="graph")
-        if scans_an_axis(node):
-            history_result = find_history(node, self._meta, self._dialect, self._port)
-            return snapshot_from_history_result(history_result, self._meta, construction)
-        find_result = find(node, self._meta, self._dialect, self._port)
-        return snapshot_from_find_result(find_result, self._meta, construction)
+        return self._read(node, typed_publication(self._meta, construction))
 
     @property
     def wire(self) -> WireDatabaseView:
@@ -345,17 +339,24 @@ class Database:
         return WireDatabaseView(self._wire_find)
 
     def _wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
-        """One Wire read, composed exactly as :meth:`find` composes a Typed one.
+        """One Wire read: :meth:`_read` under the wire publication."""
+        return self._read(node, wire_publication(self._meta))
 
-        Same gate, same executor entry, same milestone-set dispatch; only the
-        materializer differs, and it is chosen after execution has finished.
+    def _read[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
+        """One non-transactional read of ``node``, published through
+        ``publication`` — the whole composition both read interfaces run.
+
+        The gate, the milestone-set dispatch, and the executor entry are the
+        read; which materializer publishes its result is decided only after
+        execution has finished. Non-transactional in the same three ways for
+        both: no read lock, no participation mode, no observation record.
         """
         preflight(node, model=self._meta, form="graph")
         if scans_an_axis(node):
-            return wire_from_history_result(
-                find_history(node, self._meta, self._dialect, self._port), self._meta
+            return publication.from_history(
+                find_history(node, self._meta, self._dialect, self._port)
             )
-        return wire_from_find_result(find(node, self._meta, self._dialect, self._port), self._meta)
+        return publication.from_find(find(node, self._meta, self._dialect, self._port))
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Execute ``query`` exactly once outside any transaction and return its

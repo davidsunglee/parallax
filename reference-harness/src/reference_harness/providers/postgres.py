@@ -7,6 +7,7 @@ stable Postgres major; bump the tag as new majors ship.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
@@ -16,12 +17,13 @@ from typing import TYPE_CHECKING, Any, cast
 import psycopg
 from psycopg.abc import QueryNoTemplate
 from psycopg.adapt import Loader
-from psycopg.types.json import Jsonb
+from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 from testcontainers.postgres import PostgresContainer
 
 from .. import errors
 from ..ddl_builder import quote_identifier
 from ..document_codec import is_document
+from ..portable_literal import AuthoredNumber
 from . import register
 
 if TYPE_CHECKING:
@@ -50,6 +52,10 @@ def _adapt(value: Any) -> Any:
 def _trusted_query(sql: str) -> QueryNoTemplate:
     """Mark harness-controlled SQL as trusted for psycopg's LiteralString stubs."""
     return cast(QueryNoTemplate, sql)
+
+
+def _load_authored_json(data: str | bytes) -> Any:
+    return json.loads(data, parse_float=AuthoredNumber)
 
 
 class _IsoTimestamptzLoader(Loader):
@@ -91,8 +97,26 @@ class _StableTextLoader(Loader):
         return str(data)
 
 
+class _AuthoredJsonbLoader(JsonbLoader):
+    """Read a ``jsonb`` document keeping the digits each number was stored with.
+
+    psycopg's default loader parses a number into a binary float, which makes
+    ``0.1`` and ``0.10000000000000001`` one value — and a float leaf's canonical
+    spelling is a property of exactly those digits, so the stored-data refusal
+    ``document_codec.decode_leaf`` owes a noncanonical number would have nothing
+    left to refuse it by.
+    """
+
+    _loads = staticmethod(_load_authored_json)
+
+
+class _AuthoredJsonbBinaryLoader(JsonbBinaryLoader):
+    _loads = staticmethod(_load_authored_json)
+
+
 def _register_stable_loaders(conn: psycopg.Connection[Any]) -> None:
-    """Read instant and driver-native scalar columns as stable text on *conn*.
+    """Read instant, driver-native scalar, and document columns as stable values
+    on *conn*.
 
     Every connection the harness reads a case row through registers the same
     loaders: the autocommit one a provider owns and the manual-commit one a held
@@ -105,6 +129,8 @@ def _register_stable_loaders(conn: psycopg.Connection[Any]) -> None:
     conn.adapters.register_loader("timestamp", _IsoTimestamptzLoader)
     conn.adapters.register_loader("time", _StableTextLoader)
     conn.adapters.register_loader("uuid", _StableTextLoader)
+    conn.adapters.register_loader("jsonb", _AuthoredJsonbLoader)
+    conn.adapters.register_loader("jsonb", _AuthoredJsonbBinaryLoader)
 
 
 class PostgresProvider:

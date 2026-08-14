@@ -214,6 +214,21 @@ def test_decode_stored_is_dialect_agnostic() -> None:
     assert decode_stored(None) is None  # SQL NULL column
 
 
+def test_two_numbers_naming_one_float_remain_two_spellings_through_the_parse() -> None:
+    # The one refusal a float's canonicality cannot make from the value alone:
+    # `0.1` and `0.10000000000000001` name ONE binary64, so a parse that keeps
+    # only the float leaves the second indistinguishable from the first and
+    # readable as it. `decode_stored` keeps the authored digits, which is what
+    # leaves the second refusable — and keeps `20` / `20.0` one number.
+    stored: dict[str, Any] = decode_stored(
+        '{"canonical": 0.1, "noncanonical": 0.10000000000000001, "integral": 20.0}'
+    )
+    assert decode_leaf("float64", stored["canonical"]) == 0.1
+    assert decode_leaf("float64", stored["integral"]) == 20.0
+    with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+        decode_leaf("float64", stored["noncanonical"])
+
+
 def test_decode_leaf_is_the_identity_wherever_the_document_spelling_is_the_wire_one() -> None:
     # Eight of the twelve rows: a member the layout moved into a Structured Column
     # reaches a result row spelled exactly as a Column of its own would spell it, so

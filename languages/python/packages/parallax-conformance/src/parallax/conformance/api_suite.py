@@ -380,9 +380,9 @@ EXAMPLES: Final[list[Example]] = [
     # (`parallax.conformance.graph_stories`) — the snippet is the story's own
     # source, and the real-Postgres suite executes it through the shipped
     # `parallax.snapshot.connect` + `parallax-postgres` (test_story_run),
-    # grading the mirrored case's own oracle (a `then.graph`/`identityChecks`
-    # reference-identity assertion, a closed-world `UnloadedRelationshipError`,
-    # a `pin`/`edge_of` coordinate, or a scenario's own per-step observable).
+    # grading the mirrored case's own oracle (a `then.graph` position, a
+    # closed-world `UnloadedRelationshipError`, a `pin`/`edge_of` coordinate, or
+    # a scenario's own per-step observable, `sameObjectAs` included).
     *(Example(story.case_id, story.title, graph_story_snippet(story)) for story in GRAPH_STORIES),
     # The joined-transaction Execution Log (m-execution-log): the case's own
     # `then.execution` oracle is a TERMINAL value graph the boundary runner
