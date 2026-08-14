@@ -77,3 +77,8 @@ is proven by the two-connection concurrency cases: it **excludes a writer**
 (`m-read-lock-006`, `error`/`concurrency`), is **shared, not exclusive**
 (`m-read-lock-007`, a second reader is admitted). The second case carries the
 `concurrencySuccess` shape (two held sessions, no error raised).
+
+Both halves are proven again for the strategy the caller never asked for: the
+unversioned Non-Temporal fallback renders the suffix under the default
+`optimistic` preference (`m-opt-lock-023`) and that derived lock excludes a
+writer too (`m-read-lock-012`).

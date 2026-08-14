@@ -96,23 +96,26 @@ def reachable_boundary_cases(cases: list[case_format.Case] | None = None) -> lis
 @dataclass(frozen=True, slots=True)
 class BoundaryUow:
     """A boundary case's own `when.uow` (m-auto-retry / m-opt-lock retry
-    configuration), defaulted exactly as `db.transact`'s own sentinel-backed
-    options resolve them (`python.md` §5)."""
+    configuration), as `db.transact` arguments.
 
-    concurrency: Concurrency
+    An option the case omits stays ``None`` — `db.transact`'s OWN sentinel
+    (`python.md` §5) — so the case runs under whatever production resolves the
+    omission to, rather than under a copy of that answer kept here that a
+    changed default would silently strand.
+    """
+
+    concurrency: Concurrency | None
     retries: int | None
-    retry_optimistic_conflicts: bool
+    retry_optimistic_conflicts: bool | None
 
 
 def boundary_uow(case: case_format.Case) -> BoundaryUow:
     when = cast("dict[str, Any]", case.document.get("when") or {})
     uow = cast("dict[str, Any]", when.get("uow") or {})
-    concurrency = cast("Concurrency", uow.get("concurrency", "locking"))
-    retries = uow.get("retries")
     return BoundaryUow(
-        concurrency=concurrency,
-        retries=cast("int | None", retries),
-        retry_optimistic_conflicts=bool(uow.get("retryOptimisticConflicts", False)),
+        concurrency=cast("Concurrency | None", uow.get("concurrency")),
+        retries=cast("int | None", uow.get("retries")),
+        retry_optimistic_conflicts=cast("bool | None", uow.get("retryOptimisticConflicts")),
     )
 
 
@@ -314,7 +317,7 @@ def expected_attempts(
     fault: str | None,
     outcome_kind: str,
     retries: int | None,
-    retry_optimistic_conflicts: bool,
+    retry_optimistic_conflicts: bool | None,
 ) -> int:
     """The authored attempt count (`m-auto-retry.md` / `m-opt-lock.md`'s own
     retriability rules, never a per-case hand table): no fault surfaces or
@@ -324,14 +327,17 @@ def expected_attempts(
     succeeds on the SECOND attempt (`persistent` — see
     :class:`FaultInjectingPort` — is a don't-care there, injected once);
     a retriable fault that PERSISTS to a failure-kind outcome exhausts the
-    bound (`retries` re-executions, so ``bound + 1`` total attempts;
-    `retries` defaults to 10, `m-auto-retry.md` "The bound is configurable
-    with a default of 10").
+    bound (`retries` re-executions, so ``bound + 1`` total attempts).
+
+    This is the ONE place the retry defaults an omitting case inherits are
+    restated, because an oracle needs the resolved numbers: ``None`` retries
+    means 10 (`m-auto-retry.md` "The bound is configurable with a default of
+    10") and an absent opt-in means off (`m-opt-lock.md`).
     """
     if fault is None:
         return 1
     if fault == "optimistic-lock-conflict":
-        retriable = retry_optimistic_conflicts
+        retriable = bool(retry_optimistic_conflicts)
     elif fault == "lock-wait-timeout":
         retriable = False
     else:  # serialization-failure / deadlock — always retriable (m-auto-retry.md)

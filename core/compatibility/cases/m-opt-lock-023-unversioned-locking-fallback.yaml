@@ -23,9 +23,11 @@
 #   step 2 find  : a dependent find observes the updated row (read-your-own-writes)
 #                  and takes the same shared lock.
 # All three steps share one `uow` group, so the lock step 0 acquires is still held
-# when the write lands. The contrast case is m-opt-lock-002, whose versioned
-# target renders the opposite pair — no lock, a version gate — under the SAME
-# default preference.
+# when the write lands. The contrast case is m-unit-work-005, whose versioned
+# Account renders the opposite pair — no lock, a version gate — under the SAME
+# default preference. m-read-lock-012 completes this one: it holds step 0's
+# statement open against a concurrent writer and proves the derived lock excludes
+# it.
 model: models/wallet.yaml
 tags: [m-opt-lock, m-read-lock, m-unit-work, m-sql, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

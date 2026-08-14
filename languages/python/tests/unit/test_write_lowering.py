@@ -652,11 +652,12 @@ def test_insert_then_update_coalesces_to_one_final_value_insert() -> None:
 
 
 def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
-    # m-unit-work-009: three objects, one flush, canonical combined order. BOTH
+    # m-unit-work-009's canonical combined order: three objects, one flush. BOTH
     # the update's and the delete's version (m-opt-lock's own prior-observation
     # requirement) come from THIS unit of work's own recorded observation —
-    # never a row-carried value. Under the default locking mode neither renders
-    # a gate.
+    # never a row-carried value. `_flush_and_lower`'s own `locking` preference
+    # resolves Account to the Locking strategy, under which neither renders a
+    # gate.
     statements = _flush_and_lower(
         [
             KeyedWrite(

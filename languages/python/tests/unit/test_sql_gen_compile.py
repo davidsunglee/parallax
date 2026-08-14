@@ -348,8 +348,9 @@ def test_limit_bind_lands_after_predicate_binds() -> None:
 # Read-lock suffix (m-sql *Read-lock suffix*, via the m-dialect seam).         #
 # --------------------------------------------------------------------------- #
 def test_locking_object_find_matches_the_scenario_find_golden() -> None:
-    # The exact m-unit-work-001 step-1 golden: an in-transaction object find in the
-    # default `locking` mode carries the shared-row-lock suffix, last in the statement.
+    # The m-read-lock-001 golden's shape: an in-transaction object find whose
+    # target resolved to the Locking strategy carries the shared-row-lock
+    # suffix, last in the statement.
     compiled = compile_read(
         oa.Comparison(op="eq", attr="Account.id", value=7),
         ACCOUNT,

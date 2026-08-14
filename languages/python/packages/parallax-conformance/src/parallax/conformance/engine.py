@@ -388,13 +388,14 @@ def run_read_case(
     reports is the row production materialized, not a row this adapter
     re-derived from the query a second time.
 
-    A case declaring an in-transaction participation mode is RUN in one
+    A case declaring a `when.uow` Concurrency Preference is RUN in a transaction
     (`m-read-lock` "an in-transaction object find that intends to write acquires
-    a shared row lock"): the lock suffix comes from the transaction's own
-    resolved concurrency, exactly as it does for a developer's ``tx.find``,
-    rather than from a lock this lane asked a compiler for while executing
-    outside any boundary. Begin and commit reach the database but are no Database
-    Call, so the round trips a locking case reports are the read's alone.
+    a shared row lock"): the lock suffix is derived inside production from that
+    preference and the read target's own Optimistic Lock Facet, exactly as it is
+    for a developer's ``tx.find``, rather than from a lock this lane asked a
+    compiler for while executing outside any boundary. Begin and commit reach the
+    database but are no Database Call, so the round trips a locking case reports
+    are the read's alone.
 
     The adapter returns **managed** Python values (``Decimal``, ``datetime``,
     ``UUID``, ``bytes``, …); the conformance harness grades in **wire space**, so

@@ -77,7 +77,7 @@ when:
             - { id: 3 }
       rollback: true
       roundTrips: 1
-      note: "apply an ungated delete of the OBSERVED account 3 — dooms the group (rollback: true)"
+      note: "apply a gated delete of the OBSERVED account 3 — dooms the group (rollback: true)"
       statements:
         - sql:
             postgres: delete from account where id = ? and version = ?

@@ -45,11 +45,15 @@ def _case(document: dict[str, Any], *, case_id: str = "m-auto-retry-900") -> cas
 # --------------------------------------------------------------------------- #
 # when.uow / when.boundary / given.fault / then.outcome parsing.              #
 # --------------------------------------------------------------------------- #
-def test_boundary_uow_defaults_when_omitted() -> None:
+def test_boundary_uow_leaves_every_omitted_option_to_db_transact() -> None:
+    # A case declaring no `when.uow` supplies no argument at all, so
+    # `db.transact` resolves each option itself (`optimistic`, 10 retries, no
+    # conflict opt-in) — the runner never restates a default that could drift
+    # from production's.
     uow = boundary_runner.boundary_uow(_case({}))
-    assert uow.concurrency == "locking"
+    assert uow.concurrency is None
     assert uow.retries is None
-    assert uow.retry_optimistic_conflicts is False
+    assert uow.retry_optimistic_conflicts is None
 
 
 def test_boundary_uow_reads_declared_fields() -> None:
@@ -312,7 +316,7 @@ class _AttemptsCase:
     fault: str | None
     outcome_kind: str
     retries: int | None
-    retry_optimistic_conflicts: bool
+    retry_optimistic_conflicts: bool | None
     expected: int
 
 
@@ -330,6 +334,9 @@ _ATTEMPTS_CASES: list[_AttemptsCase] = [
     _AttemptsCase("optimistic-lock-conflict", "optimistic-lock-conflict", None, False, 1),
     # m-opt-lock-011: conflict with the opt-in — retried to success.
     _AttemptsCase("optimistic-lock-conflict", "committed", None, True, 2),
+    # An omitted `retryOptimisticConflicts` reaches the oracle as `None` and
+    # resolves to the same off posture an explicit `false` declares.
+    _AttemptsCase("optimistic-lock-conflict", "optimistic-lock-conflict", None, None, 1),
     # m-unit-work-004: no fault, the scripted closure itself aborts.
     _AttemptsCase(None, "aborted", None, False, 1),
     # lock-wait-timeout is never retriable, opt-in or not.

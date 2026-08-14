@@ -152,10 +152,10 @@ _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
 )
 # The read-lock matrix's compile-eligible in-slice read cases (`m-read-lock`):
 # `m-read-lock-001` is the harness-lane single-
-# connection golden — the module's OWN witness for "the default (locking)
-# in-transaction object find" (`m-read-lock.md`), so its `when.uow`-free read
-# still compiles the locked golden through `engine._read_case_concurrency`'s
-# module-scoped default. `m-read-lock-002`/`-005` are the
+# connection golden — the module's OWN witness for the shared-row-lock suffix
+# (`m-read-lock.md`), which it reaches by declaring the `locking` preference its
+# versioned target needs to resolve to Locking; `engine._read_case_concurrency`
+# grants no module-scoped default. `m-read-lock-002`/`-005` are the
 # `api-conformance`-lane runtime matrix (an explicit `when.uow.concurrency`
 # locking object-find lock / optimistic object-find omits-lock): compile-eligible
 # (no `compileEligibility` declared), so

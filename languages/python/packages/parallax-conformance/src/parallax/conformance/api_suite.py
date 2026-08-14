@@ -768,8 +768,9 @@ _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON: Final[str] = (
 # A versioned set-based delete refuses the IN-list collapse its unversioned
 # sibling takes (m-batch-write-003) and lowers per resolved row instead.
 _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON: Final[str] = (
-    "a versioned set-based delete's per-key materialize, running in the DEFAULT locking "
-    "mode where each keyed delete is UNGATED: graded end-to-end by the run lane; no "
+    "a versioned set-based delete's per-key materialize, running under the declared "
+    "`locking` preference where each keyed delete is UNGATED: graded end-to-end by the "
+    "run lane; no "
     "idiomatic story covers it because what it pins is the planner's refusal to collapse "
     "a versioned set delete into one IN-list statement, an emitted-SQL contract rather "
     "than a developer spelling (the resolving read half is proven by "
@@ -818,19 +819,18 @@ _OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
     "cross-check"
 )
 # The read-lock module's single-connection golden (`m-read-lock-001`) verifies
-# that the default locking-mode object
-# find carries the shared read lock and is graded end-to-end by the compile and
-# run sweeps. No `db.transact` participation-mode configuration is needed to
-# demonstrate beyond the module's own declared default (its api-conformance-
-# lane runtime siblings `-002` and `-005` are already exercised above).
+# that an object find resolving to the Locking strategy carries the shared read
+# lock and is graded end-to-end by the compile and run sweeps. Its own declared
+# `locking` preference is all it needs (its api-conformance-lane runtime
+# siblings `-002` and `-005` are already exercised above).
 _READ_LOCK_HARNESS_GOLDEN_REASON: Final[str] = (
-    "the module's own harness-lane single-connection golden (the default locking-"
-    "mode object find carries the shared read lock) is graded end-to-end by the "
+    "the module's own harness-lane single-connection golden (a Locking-strategy "
+    "object find carries the shared read lock) is graded end-to-end by the "
     "compile AND run sweeps; no idiomatic example is "
     "needed beyond the runtime matrix's own api-conformance siblings "
     "(`m-read-lock-002`/`-005`, exercised as idiomatic read-story examples "
-    "above) — this witness needs no `db.transact` participation-mode configuration, "
-    "only the module's own declared default"
+    "above) — this witness needs nothing from `db.transact` beyond the "
+    "`locking` preference the case itself declares"
 )
 _READ_LOCK_PARTITIONED_GOLDEN_REASON: Final[str] = (
     "the wire-level locking golden proves one outer base-row lock over the cast-safe "
@@ -839,12 +839,12 @@ _READ_LOCK_PARTITIONED_GOLDEN_REASON: Final[str] = (
     "developer participation-mode surface, while this case isolates SQL shape"
 )
 # The read-lock module's two-session behavioral proofs
-# (`m-read-lock-006`/`-007`) cover a genuine two-connection
+# (`m-read-lock-006`/`-007`/`-012`) cover a genuine two-connection
 # concurrency property (a shared lock blocking/admitting a writer or a second
 # reader) no single-session idiomatic example can demonstrate — graded by the
 # case-driven `when.concurrency` rounds runner instead.
 _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
-    "the two-session behavioral proof (a locking-mode reader's shared lock "
+    "the two-session behavioral proof (a Locking-strategy reader's shared lock "
     "blocking/admitting a writer or a second reader) is graded end-to-end by the "
     "case-driven `when.concurrency` "
     "rounds runner (`parallax.conformance.concurrency_runner`, "
@@ -1271,6 +1271,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-read-lock-007": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-010": _READ_LOCK_PARTITIONED_GOLDEN_REASON,
     "m-read-lock-011": _READ_LOCK_TWO_SESSION_REASON,
+    "m-read-lock-012": _READ_LOCK_TWO_SESSION_REASON,
     # -- m-batch-write: versioned per-key delete materialization ------------- #
     "m-batch-write-004": _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON,
     # -- m-pk-gen: temporal composition -------------------------------------- #

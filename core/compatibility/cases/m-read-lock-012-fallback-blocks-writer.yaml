@@ -1,0 +1,44 @@
+# Behavioral counterpart to m-opt-lock-023 (m-read-lock / m-opt-lock / m-unit-work): the
+# lock the mandatory Locking FALLBACK derives excludes a concurrent writer.
+#
+# m-opt-lock-023 proves the derivation renders this exact statement: an unversioned
+# Non-Temporal Wallet read inside a unit of work that declares NO preference resolves
+# to Locking and appends the dialect's shared-row-lock suffix. What that case cannot
+# show from one connection is that the derived lock is a real lock. Round 1:
+# transaction A issues m-opt-lock-023's OWN step-0 statement, verbatim, on wallet 1 and
+# HOLDS (no commit). Round 2: transaction B attempts to UPDATE wallet 1 and, with the
+# session's lowered lock-wait budget (lock_timeout / innodb_lock_wait_timeout), blocks
+# on A's shared lock and raises lockWaitTimeout.
+#
+# The pair is the fallback's twin of m-read-lock-001 + m-read-lock-006, which prove the
+# same two halves for a read whose Locking strategy comes from an explicit `locking`
+# preference instead. Neutral category lockWaitTimeout; native PG 55P03 / MariaDB 1205.
+model: models/wallet.yaml
+tags: [m-read-lock, m-opt-lock, m-unit-work, m-dialect, m-db-error, concurrency, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
+shape: error
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (when.concurrency)"
+given:
+  fixtures: true
+when:
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.id = ? for share of t0
+                mariadb: select t0.id, t0.owner, t0.balance from wallet t0 where t0.id = ? lock in share mode
+              binds: [1]
+      - B:
+          statements:
+            - sql:
+                postgres: update wallet set balance = ? where id = ?
+                mariadb: update wallet set balance = ? where id = ?
+              binds: [999.00, 1]
+then:
+  errorClass: lockWaitTimeout
+  nativeCode:
+    postgres: "55P03"
+    mariadb: 1205
