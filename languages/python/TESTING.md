@@ -53,6 +53,7 @@ Support code only one surface uses stays inside that surface —
 `_layout_twin_document.py`, `_metamodel_support.py`,
 `_snapshot_graph_support.py`, `_transact_support.py`,
 `tests/unit/observation_models.py`, and
+`_source_inventory_support.py`,
 `tests/unit/value_object_bad_models.py`.
 
 `_support/` is the only package under `tests/`. Every surface directory is

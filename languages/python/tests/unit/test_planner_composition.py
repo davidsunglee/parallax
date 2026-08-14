@@ -21,7 +21,7 @@ injects is the neutral one, so no planner a write path reaches can decorate.
 The lane list here is ENUMERATED, and that is this module's limit: a write lane
 added later and not driven here is not graded here, and this module still
 passes. What covers the shapes that limit admits is
-`test_frontend_contraction_guards.py`, which finds the spelling ``WritePlanner(``
+`test_source_enforcement_topology.py`, which finds the spelling ``WritePlanner(``
 in ``_planning.py`` alone and reads ``WritePlanner.__subclasses__()`` for a
 second planner class — so a new lane reaches a planner through this factory, or
 else by constructing one under an aliased name or by implementing an unrelated
