@@ -21,10 +21,13 @@ produce and consume it.
   construction scope that attribution implies.
 - :mod:`~parallax.snapshot.materialize._invalid` holds the public record a
   classified root publishes in place of itself.
+- :mod:`~parallax.snapshot.materialize._wire` turns one merge into a finite tree
+  of frozen plain values keyed by declared member name — the second public
+  materializer, a peer of the typed one rather than a wrapper of it. It consumes
+  the same root classification, so both publish the same verdicts.
 - :mod:`~parallax.snapshot.materialize._neutral` turns one merge into class-free
-  nodes and views — the second materializer, a peer of the typed one rather than
-  a wrapper of it. It still calls the shared publication refusal; the typed
-  materializer classifies instead, in band.
+  nodes and views. It still calls the shared publication refusal; both public
+  materializers classify instead, in band.
 
 Nothing here constructs an Entity: this scope is granted the shared carrier
 algebra (``parallax.core.entity._graph_input``) and nothing else of the Entity
@@ -103,8 +106,20 @@ from parallax.snapshot.materialize._neutral import (
 from parallax.snapshot.materialize._publication import (
     require_publishable,
 )
+from parallax.snapshot.materialize._wire import (
+    EMPTY_UNWIND,
+    FAMILY_VARIANT_KEY,
+    UnwindTree,
+    WireEntity,
+    WireRoot,
+    WireValue,
+    unwind_tree,
+    wire_roots,
+)
 
 __all__ = [
+    "EMPTY_UNWIND",
+    "FAMILY_VARIANT_KEY",
     "SNAPSHOT_DECODING_FAILED",
     "ClassifiedRoot",
     "ConformingRoot",
@@ -137,6 +152,10 @@ __all__ = [
     "StoredDataIssue",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
+    "UnwindTree",
+    "WireEntity",
+    "WireRoot",
+    "WireValue",
     "attribute_value",
     "classify_roots",
     "convert_row",
@@ -148,5 +167,7 @@ __all__ = [
     "neutral_rows",
     "observable_columns",
     "require_publishable",
+    "unwind_tree",
     "validate_graph_input",
+    "wire_roots",
 ]

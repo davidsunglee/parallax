@@ -34,6 +34,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-model-formation",
         "m-storage-layout",
         "m-value-object",
+        "m-wire",
         "m-document-codec",
         "m-relationship",
         "m-object-query",

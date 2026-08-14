@@ -29,7 +29,7 @@ never something an application developer hand-writes.
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "python", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-log", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-log", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -2735,6 +2735,63 @@ or descriptor authoring form and performs no audit stamping.
   collection operations, and Parallax adds no partition method or side
   collection.
 
+### Wire results
+
+- **Two read interfaces, not a format argument.** The public read surface is
+  `db.find` / `tx.find` (`Snapshot[T]`) beside `db.wire.find` / `tx.wire.find`
+  (`Snapshot[WireEntity]`). There is no `format=` argument, no public format
+  enum, and no `db.typed` or `tx.typed` namespace. `db.wire` and `tx.wire` are
+  lightweight views over the same connected model and adapter; `tx.wire`
+  additionally shares the Unit of Work, observation ledger, locking, and
+  Execution Log with the Typed transaction interface, so the two are not
+  separate connections or transaction modes.
+- **Capability follows the model, not the constructor.** `connect(adapter,
+  model)` accepts a Domain Model of either provenance. A class-backed model
+  serves both interfaces; a descriptor-backed model serves Wire and refuses
+  Typed materialization with `SnapshotConnectionError(snapshot-class-backed-model-required)`
+  at the read call, before any I/O. The bare-Metamodel constructor path remains
+  private and first-party, and `connect` still refuses it.
+- **Accepted query spellings.** `find` on either Wire view takes the canonical
+  Object Query mapping, the canonical `ObjectQueryNode`, or — on a class-backed
+  model — the Typed `ObjectQuery` authoring value directly. All three lower to
+  one canonical node before the shared read gate, so no spelling reaches a
+  different executor and no public serialization step is introduced. A
+  descriptor-backed pure-Wire flow passes the mapping and imports no Entity
+  Class, `EntityIdentity`, or Object Query node type.
+- **The published value.** Every returned Entity mapping — result root and
+  included node alike — is a `WireEntity`; there is no separate root type. Keys
+  are declared model member names, never physical column names, and an
+  inheritance participant additionally carries its stable variant spelling under
+  `familyVariant`. Leaves are canonical Wire Values (`m-wire`), the same
+  spelling the document codec stores; a temporal end's open bound carries
+  `m-core`'s `infinity` literal. Value Object occurrences are declared-member
+  filled at every depth: an absent leaf or `one` reads `None` and an absent
+  `many` reads `[]`.
+- **Finite unwind.** Relationships render along the requested Include Paths
+  rather than the merged identity graph, so a back-reference renders its target
+  once, in full, and terminates — never a primary-key stub. A relationship no
+  level loaded onto a node is absent from the mapping, which is what unloaded
+  means. Positions reaching one merged node under one requested subtree answer
+  the identical object, so graph aliasing survives without copying.
+- **The Python realization.** `WireEntity` is a public, non-constructible,
+  read-only nominal `Mapping[str, WireValue]` implemented by a private frozen
+  `dict` subclass; nested mappings and lists are frozen private subclasses too.
+  `isinstance(value, dict)` stays true while `type(value) is dict` is false;
+  ordinary mutation raises `TypeError`; values keep ordinary structural equality
+  with plain `dict` and `list` values, remain unhashable, and serialize directly
+  through `json`. `dict(value)` and `list(value)` yield ordinary containers the
+  caller owns. `copy()`, `copy.copy`, and `copy.deepcopy` answer the same
+  immutable value, and pickling produces ordinary domain data — a plain mapping
+  or list — rather than reconstructing the frozen subclass. No framework
+  metadata key is exposed. `WireValue` stays structural and adds no public frozen
+  list or mapping type: deep immutability is a runtime guarantee, and insert
+  data, changes, predicates, and Object Query input continue to accept ordinary
+  structural mappings.
+- **The same verdicts.** Both public materializers consume one root
+  classification, so a Wire element is `WireEntity | InvalidData[WireEntity]`
+  under exactly the rules §4 states for the Typed one, with the same default and
+  checked accessors.
+
 ## 5. Transactions and writes
 
 - **Demarcation construct.** Callback-only:
@@ -3664,6 +3721,7 @@ legalizes a forbidden edge.
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
 | `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | generated forbidden contracts, `languages/python/pyproject.toml` |
+| `m-wire` | `parallax.core.wire` | `parallax.core.wire` | `m-core` | generated forbidden contracts |
 | `m-metamodel` | `parallax.core.metamodel` | `parallax.core.metamodel` | `m-core` | generated forbidden contracts |
 | `m-model-formation` | `parallax.core.model_formation` | `parallax.core.model_formation` | `m-metamodel` | generated forbidden contracts |
 | Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | generated forbidden contracts |
@@ -3672,7 +3730,7 @@ legalizes a forbidden edge.
 | `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-storage-layout` | `parallax.core.storage_layout` | `parallax.core.storage_layout` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
-| `m-document-codec` | `parallax.core.document_codec` | `parallax.core.document_codec` | `m-core`, `m-metamodel` | generated forbidden contracts |
+| `m-document-codec` | `parallax.core.document_codec` | `parallax.core.document_codec` | `m-core`, `m-metamodel`, `m-wire` | generated forbidden contracts |
 | `m-relationship` | `parallax.core.relationship` | `parallax.core.relationship` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-predicate` | `parallax.core.predicate` | `parallax.core.predicate` | `m-metamodel`, `m-inheritance` | generated forbidden contracts |
 | `m-object-query` | `parallax.core.object_query` | `parallax.core.object_query` | `m-predicate`, `m-metamodel`, `m-inheritance` | generated forbidden contracts |
@@ -3692,11 +3750,11 @@ legalizes a forbidden edge.
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance` | generated forbidden contracts |
-| `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-log` | generated forbidden contracts + cross-package contract |
+| `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-log`, `m-wire` | generated forbidden contracts + cross-package contract |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-log`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot row-to-graph conversion and Graph Input carriers (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts + cross-package contract |
+| Snapshot row-to-graph conversion and Graph Input carriers (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
@@ -3798,6 +3856,7 @@ parallax.snapshot.materialize --> parallax.core.metamodel
 parallax.snapshot.materialize --> parallax.core.inheritance
 parallax.snapshot.materialize --> parallax.core.relationship
 parallax.snapshot.materialize --> parallax.core.temporal_read
+parallax.snapshot.materialize --> parallax.core.wire
 parallax.snapshot.handle._materializer --> parallax.snapshot.materialize
 parallax.snapshot.handle._materializer --> parallax.snapshot._inspection
 parallax.snapshot.handle._materializer --> parallax.core.entity

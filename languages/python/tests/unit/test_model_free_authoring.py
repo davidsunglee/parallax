@@ -123,14 +123,17 @@ def test_a_query_whose_target_the_connected_model_does_not_declare_is_refused() 
 # --------------------------------------------------------------------------- #
 # What a Database still requires of its model                                  #
 # --------------------------------------------------------------------------- #
-def test_connect_refuses_a_model_that_composed_no_entity_class() -> None:
-    # A Snapshot instantiates Entity Class instances, so a descriptor-backed
-    # model is refused at the connection rather than after a round trip. The
-    # raising port proves nothing was inspected.
+def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> None:
+    # Which Domain Model provenance a caller connected decides capability, not
+    # which constructor ran: a descriptor-backed model connects and serves Wire,
+    # and only the Typed read it cannot materialize is refused — at the read
+    # call, before any I/O, which the raising port proves.
     descriptor_backed = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
+    database = Database.connect(NoIoPort(), descriptor_backed, clock=FixedClock(FIXED))
     with pytest.raises(SnapshotConnectionError) as caught:
-        Database.connect(NoIoPort(), descriptor_backed, clock=FixedClock(FIXED))
+        database.find(Gizmo.where(Gizmo.id == 1))
     assert caught.value.code == "snapshot-class-backed-model-required"
+    assert database.wire is not None
 
 
 def test_connect_refuses_a_bare_accepted_metamodel() -> None:

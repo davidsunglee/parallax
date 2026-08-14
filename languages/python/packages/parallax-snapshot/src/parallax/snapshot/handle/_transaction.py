@@ -49,6 +49,7 @@ from parallax.core.entity import (
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.execution_log import AttemptRecorder, ExecutionLog
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
+from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
@@ -85,7 +86,10 @@ from parallax.snapshot.handle._read import (
     find_history,
     snapshot_from_find_result,
     snapshot_from_history_result,
+    wire_from_find_result,
+    wire_from_history_result,
 )
+from parallax.snapshot.handle._wire import WireTransactionView
 from parallax.snapshot.handle._write_inputs import (
     ReadObservations,
     WrittenObject,
@@ -125,6 +129,10 @@ class Transaction:
     its owning scope ends raises
     :class:`~parallax.core.unit_work.EscapedTransactionError` (every verb
     delegates to the unit of work, which fences use-after-scope).
+
+    :attr:`wire` is the Wire read interface over this same transaction — a view,
+    not a second lifecycle, so a Wire read participates exactly as :meth:`find`
+    does.
 
     :meth:`read_neutral` and :meth:`write_neutral` are the same two capabilities
     for a caller with no Entity Class: a read that participates exactly as
@@ -614,6 +622,48 @@ class Transaction:
                 )
             )
         snapshot = snapshot_from_find_result(find_result, self._meta, construction)
+        record_observations(self._uow, self._meta, observations)
+        return snapshot
+
+    @property
+    def wire(self) -> WireTransactionView:
+        """This transaction's Wire read interface (spec §3).
+
+        A lightweight view over the SAME unit of work, observation ledger,
+        locking, and Execution Log the Typed verbs use, so Typed and Wire calls
+        mix within one transaction without any cross-interface bookkeeping.
+        """
+        return WireTransactionView(self._wire_find)
+
+    def _wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
+        """One participating Wire read, composed exactly as :meth:`find` composes
+        a Typed one: the same gate before the force-flush, the same lock
+        derivation, the same observation recording, and the same trace bracket.
+        """
+        preflight(node, model=self._meta, form="graph")
+        lock = read_lock.mode_for(self._uow.settings.concurrency)
+        if scans_an_axis(node):
+            with self._attempt.read_trace() as recorder:
+                history_result = self._uow.read(
+                    lambda: find_history(
+                        node, self._meta, self._dialect, self._conn, recorder=recorder
+                    )
+                )
+            return wire_from_history_result(history_result, self._meta)
+        observations = ReadObservations()
+        with self._attempt.read_trace() as recorder:
+            find_result = self._uow.read(
+                lambda: find(
+                    node,
+                    self._meta,
+                    self._dialect,
+                    self._conn,
+                    lock=lock,
+                    observations=observations,
+                    recorder=recorder,
+                )
+            )
+        snapshot = wire_from_find_result(find_result, self._meta)
         record_observations(self._uow, self._meta, observations)
         return snapshot
 

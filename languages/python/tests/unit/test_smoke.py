@@ -59,6 +59,8 @@ def test_top_package_public_surfaces() -> None:
         "TooManyResultsFound",
         "TransactionOwnershipError",
         "UnloadedRelationshipError",
+        "WireEntity",
+        "WireValue",
         "is_view_loaded",
         "view",
         "pin_of",

@@ -94,6 +94,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | Module | Summary | Status | Coverage |
 |---|---|---|---|
 | `m-core` | Neutral types, UTC / timezone, temporal infinity | active | cases |
+| `m-wire` | Canonical wire value spelling per Neutral Type (storage and transport) | active | cases |
 | `m-metamodel` | Representation-independent declarations, identity, lookup, and compiled metadata | active | cases |
 | `m-model-formation` | Explicit deterministic composition of model rules and facet compilers | active | cases |
 | `m-descriptor` | Canonical descriptor interchange & serde | active | cases |
@@ -153,6 +154,7 @@ deployable artifact.
 
 ```dependency-graph
 m-metamodel --> m-core
+m-wire --> m-core
 m-model-formation --> m-metamodel
 m-descriptor --> m-core
 m-descriptor --> m-metamodel
@@ -168,6 +170,7 @@ m-value-object --> m-metamodel
 m-value-object --> m-model-formation
 m-document-codec --> m-core
 m-document-codec --> m-metamodel
+m-document-codec --> m-wire
 m-relationship --> m-metamodel
 m-relationship --> m-model-formation
 m-predicate --> m-metamodel
@@ -227,6 +230,7 @@ m-snapshot-read --> m-inheritance
 m-snapshot-read --> m-relationship
 m-snapshot-read --> m-temporal-read
 m-snapshot-read --> m-execution-log
+m-snapshot-read --> m-wire
 m-temporal-read --> m-predicate
 m-temporal-read --> m-object-query
 m-temporal-read --> m-metamodel

@@ -29,6 +29,13 @@ the Entity graph a successful read's rows describe; and
 it was handed to does not accept, whose three codes are
 :data:`KEYED_WRITE_VALUE_CODES`.
 
+The Wire read interface's own result vocabulary is here too: :class:`WireEntity`,
+the frozen Entity node ``db.wire.find`` / ``tx.wire.find`` publishes, and
+:data:`WireValue`, the recursive plain-value shape its positions carry. The
+``db.wire`` / ``tx.wire`` views themselves are reached off a handle rather than
+imported, so their types stay in :mod:`parallax.snapshot.handle` beside the
+handles that answer them.
+
 It also publishes the surface that inspects a node this lifecycle produced —
 :func:`is_view_loaded`, :func:`view`, :func:`pin_of`, :func:`edge_of`, their
 :class:`SnapshotInspectionError` refusal, and the
@@ -73,6 +80,8 @@ from parallax.snapshot.handle import (
     TransactionNotCommittedError,
     TransactionOwnershipError,
     TransactionResult,
+    WireEntity,
+    WireValue,
     connect,
 )
 from parallax.snapshot.materialize import SnapshotDecodingError
@@ -103,6 +112,8 @@ __all__ = [
     "TransactionOwnershipError",
     "TransactionResult",
     "UnloadedRelationshipError",
+    "WireEntity",
+    "WireValue",
     "connect",
     "edge_of",
     "is_view_loaded",
