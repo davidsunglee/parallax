@@ -3,8 +3,10 @@
 
 A write against existing state settles against evidence a prior read retained,
 or — where its target observes no state — against the object whose shared row
-lock licenses it. Both address one row, so an instruction naming several settles
-against neither and travels as the bare instruction it is. The
+lock licenses it. Both address one row, so an instruction naming several is
+derived neither and travels as the bare instruction it is; evidence a caller
+supplies with such an instruction is refused by the carrier that would hold it,
+before the write takes any claim. The
 observation-bearing shapes here pair one buffered mutation with the evidence
 resolved for it, so the address a write takes, the gate it binds, and the license
 it holds are all read off one object rather than looked up

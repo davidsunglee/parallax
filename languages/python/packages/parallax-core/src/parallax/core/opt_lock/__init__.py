@@ -50,10 +50,12 @@ m-opt-lock.md`; `python.md` §5; ADR 0013):
    observed state for a family with a version source, and the OBJECT for an
    unversioned Non-Temporal one, whose shared row lock is its evidence and is
    held on the object rather than on any state of it. Both answers address ONE
-   object, so an instruction naming several rows settles against neither and
-   claims nothing (`m-unit-work` "Observed-State Coalescing"). A caller holding
-   the instruction rather than the value it came from reads the whole ingress
-   rule from :func:`instruction_evidence`.
+   object, so the derivation reaches neither for an instruction naming several
+   rows, which therefore claims nothing (`m-unit-work` "Observed-State
+   Coalescing"). A caller holding the instruction rather than the value it came
+   from reads the whole ingress rule from :func:`instruction_evidence`, which
+   uses supplied evidence as given — including with such an instruction, where
+   the single-row carrier refuses the pairing rather than dropping it.
 6. **Conflict classification policy**: this module decides only which shortfall
    tag a write's settled gate earns — a GATED write's shortfall is the
    retriable-when-opted-in optimistic conflict, an UNGATED
@@ -366,13 +368,15 @@ def instruction_evidence(
 
     Evidence the caller supplied is what the write settles against, used as
     given: it is the one licensed way a keyed write settles against a row no read
-    of the writing unit of work materialized, so a target that can hold none
-    REFUSES it — an insert at its carrier, an unversioned Non-Temporal row where
-    the write is settled — rather than having it dropped for a claim the call
-    never stated. A caller who supplied none reaches :func:`settled_evidence`
-    over the instruction's own target and mutation, which is everything that
-    derivation needs and exactly what a typed verb reads off a source value's
-    hint.
+    of the writing unit of work materialized, so a write that can hold none
+    REFUSES it — an insert or an instruction naming several rows at its carrier,
+    an unversioned Non-Temporal row where the write is settled — rather than
+    having it dropped for a claim the call never stated. A caller who supplied
+    none reaches :func:`settled_evidence` over the instruction's own target and
+    mutation, which is everything that derivation needs and exactly what a typed
+    verb reads off a source value's hint — and that derivation is where an
+    instruction naming several rows answers nothing and stays bare, rather than
+    the evidence such a caller did supply being dropped for it.
 
     The rule is stated here, once, because every caller that holds an instruction
     must decide identically: a runtime's neutral write ingress buffers into a

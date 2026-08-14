@@ -806,9 +806,12 @@ class Transaction:
         ingress shares with every other caller holding an instruction), so an
         unversioned existing-row write naming ONE row claims its object through
         this ingress too and an insert claims nothing through either. An
-        instruction naming SEVERAL rows addresses no single object and no single
-        observed state, so it claims nothing on any arm and buffers bare — the
-        one write shape no typed verb can author.
+        instruction naming SEVERAL rows — the one write shape no typed verb can
+        author — addresses no single object and no single observed state, so
+        supplied nothing it reaches no arm, claims nothing, and buffers bare;
+        supplied either of the other two shapes it is refused by the single-row
+        carrier, before it takes any claim, because one observation is evidence
+        about one row.
 
         A predicate-selected instruction carries no observation of its own — it
         materializes to a Materialized Write Group with its own observation
@@ -971,9 +974,16 @@ class Transaction:
     ) -> None:
         """Take this write's claim at the scope it settles against, then buffer it.
 
-        The claim is the last judgment a keyed write passes, so a refused intent
-        leaves nothing behind: the instruction is already fully validated, and
-        the buffer and the claim it could not join are both untouched.
+        The buffer item is built FIRST, because the carriers' own structural
+        refusals are judgments about this write alone — an insert or an
+        instruction naming several rows cannot hold the evidence it was handed —
+        while a claim is a mutation of state the transaction survives. Taking the
+        claim first would leave a caller who catches such a refusal in an open
+        transaction holding a claim for a write that was never buffered, against
+        which a later legal write of that same scope would be refused, coalesced,
+        or superseded. In this order the claim is the last judgment a keyed write
+        passes, and a write refused by any of them leaves nothing behind: the
+        buffer and the claims it could not join are both untouched.
 
         Scope and intent are read off what the write settles against and what its
         verb does, and the two are absent together: an insert opens a row rather
@@ -985,13 +995,14 @@ class Transaction:
         address one object and carry equal evidence, because what it coalesces is
         the intent rather than the claim.
         """
+        item = buffered_write(instruction, evidence, restorations=restorations)
         admit_write_claim(
             self._uow,
             _instruction_identity(self._meta, instruction),
             keyed_intent(instruction),
             scope=claim_scope(evidence),
         )
-        self._uow.buffer(buffered_write(instruction, evidence, restorations=restorations))
+        self._uow.buffer(item)
 
     # --- set-based write verbs (python.md §5) ----------------------------- #
     def update_where(

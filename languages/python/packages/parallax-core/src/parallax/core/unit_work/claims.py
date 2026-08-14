@@ -100,10 +100,13 @@ state-keyed rule's own reason does not apply and the object is the correct grain
 An insert claims nothing at all and reaches no scope.
 
 Both keyed arms address ONE object, so an instruction naming SEVERAL rows reaches
-no scope either: it has no single object and no single observed state, so it
-claims nothing and buffers bare. Only a caller holding a pre-formed multi-row
-instruction can author one — a keyed developer verb writes the one row the value
-it was handed names.
+no scope either: it has no single object and no single observed state. Only a
+caller holding a pre-formed multi-row instruction can author one — a keyed
+developer verb writes the one row the value it was handed names — and where that
+caller supplies no evidence of its own, the write claims nothing and buffers
+bare. Evidence such a caller does supply is refused by the single-row carrier
+that would have had to hold it, before the write takes any claim, rather than
+dropped in favour of the bare shape.
 
 Which arm a write takes is derived from declared facts — the target Entity's
 Optimistic Key and the write's own mutation — never from an absent observation:
@@ -127,10 +130,12 @@ becomes and the claim it takes:
   a state, so the object is what it claims and there is nothing for a flush to
   spend.
 
-A write against existing state that addresses no single object holds none of the
-three and settles against nothing: an instruction naming several rows, or a row
-naming no complete primary key, has neither a state nor an object for evidence to
-be about.
+A write against existing state that addresses no single object is derived none of
+the three and settles against nothing: an instruction naming several rows, or a
+row naming no complete primary key, has neither a state nor an object for
+evidence to be about. A caller can still hold one of the three and supply it with
+such a write, and the carrier it would travel in refuses that pairing rather than
+settling the write bare.
 """
 
 

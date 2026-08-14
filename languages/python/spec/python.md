@@ -2872,7 +2872,9 @@ or descriptor authoring form and performs no audit stamping.
   way a keyed write settles against a row no read of this unit of work
   materialized (see *Versioned keyed writes require prior observation* below),
   and a target entitled to none refuses it exactly where a resolved one is
-  refused rather than having it dropped. `None` states that the caller holds
+  refused rather than having it dropped; an instruction naming several rows can
+  carry neither shape at all and is refused before it takes any claim, one
+  observation being evidence about one row. `None` states that the caller holds
   none, and what the write then settles against is the claim-scope derivation's
   answer for its target and mutation — nothing for an insert, its `ObjectKey`
   for an unversioned non-temporal existing-row write naming ONE row, and nothing
@@ -3071,8 +3073,12 @@ or descriptor authoring form and performs no audit stamping.
   not name rather than reading it as `Unversioned`, so no arm is reached because
   something was missing — an insert observes no state either. The three arms
   answer for a write addressing ONE object; a keyed instruction naming several
-  rows has no single `ObjectKey` and no single observed state, claims nothing,
-  and buffers bare. Both write ingresses run the derivation for a write whose
+  rows has no single `ObjectKey` and no single observed state, so the derivation
+  answers nothing for it and — its caller having supplied nothing either — it
+  claims nothing and buffers bare. Evidence supplied WITH such an instruction is
+  refused by the single-row carrier instead, before the write takes any claim,
+  because one observation is evidence about one row. Both write ingresses run
+  the derivation for a write whose
   caller holds no evidence of its own, so what a `tx.update` claims and what the
   conformance bridge's `write_neutral` claims for the same instruction cannot
   differ; and every caller holding the instruction rather than the value it came
