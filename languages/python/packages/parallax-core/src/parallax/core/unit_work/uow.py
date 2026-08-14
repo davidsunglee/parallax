@@ -40,7 +40,7 @@ from typing import Literal, Protocol
 from weakref import WeakValueDictionary
 
 from parallax.core.metamodel import Metamodel
-from parallax.core.unit_work.claims import ClaimTable, ClaimVerdict, WriteIntent
+from parallax.core.unit_work.claims import ClaimScope, ClaimTable, ClaimVerdict, WriteIntent
 from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.materialized import BufferItem
 from parallax.core.unit_work.plan import WritePlan
@@ -198,10 +198,10 @@ class UnitOfWork:
         # the strong reference that keeps a write's evidence alive after its
         # source value is released, and what a successful flush spends through.
         self._buffer: list[BufferItem] = []
-        # What the buffered writes have claimed, by the exact observed state each
-        # claim is about. It travels with the buffer rather than with the scope:
-        # a flush spends what it planned, so the states a later write may claim
-        # are decided by what is still pending.
+        # What the buffered writes have claimed, by the scope each claim is taken
+        # at. It travels with the buffer rather than with the scope:
+        # a flush spends what it planned, so what a later write may claim
+        # is decided by what is still pending.
         self._claims = ClaimTable()
         # The ledger is an INDEX, not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
@@ -253,8 +253,8 @@ class UnitOfWork:
         self._ensure_open()
         self._buffer.append(instruction)
 
-    def claim(self, key: ObservedStateKey, intent: WriteIntent) -> ClaimVerdict:
-        """Take ``intent``'s claim on the observed state ``key`` names, answering
+    def claim(self, key: ClaimScope, intent: WriteIntent) -> ClaimVerdict:
+        """Take ``intent``'s claim at the scope ``key`` names, answering
         what it became against whatever this buffer already claimed there.
 
         The verdict is the one algebra
@@ -267,14 +267,14 @@ class UnitOfWork:
         self._ensure_open()
         return self._claims.claim(key, intent)
 
-    def claimed(self, key: ObservedStateKey) -> WriteIntent | None:
-        """What the buffered writes currently claim for one exact observed state,
-        if anything — the read side of :meth:`claim`.
+    def claimed(self, key: ClaimScope) -> WriteIntent | None:
+        """What the buffered writes currently claim at one scope, if anything —
+        the read side of :meth:`claim`.
 
         A verb asks this when what it has to buffer depends on whether there is
         an earlier intent to combine with: an edit that restores everything it
-        touched writes nothing on its own, but cancels a pending assignment to
-        the same state, so whether it buffers at all is a question about this
+        touched writes nothing on its own, but cancels a pending assignment at
+        the same scope, so whether it buffers at all is a question about this
         answer rather than about the value alone.
         """
         self._ensure_open()

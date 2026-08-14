@@ -44,7 +44,14 @@ m-opt-lock.md`; `python.md` §5; ADR 0013):
    shared lock even under the `optimistic` preference; one transaction
    therefore mixes strategies across Entities without any per-object
    bookkeeping (`m-unit-work` "Strategy selection"; ADR 0059).
-5. **Conflict classification policy**: this module decides only which shortfall
+5. **What a keyed write settles against** (:func:`settled_evidence`): the same
+   Optimistic Lock Facet answer that derives the strategy also derives what a
+   write against existing state settles against and therefore claims — the exact
+   observed state for a family with a version source, and the OBJECT for an
+   unversioned Non-Temporal one, whose shared row lock is its evidence and is
+   held on the object rather than on any state of it (`m-unit-work`
+   "Observed-State Coalescing").
+6. **Conflict classification policy**: this module decides only which shortfall
    tag a write's settled gate earns — a GATED write's shortfall is the
    retriable-when-opted-in optimistic conflict, an UNGATED
    observation-requiring one the distinct non-retriable stale write, because a
@@ -90,7 +97,12 @@ from parallax.core.opt_lock._rules import (
     validate_optimistic_locking,
 )
 from parallax.core.unit_work import (
+    INSERT_MUTATIONS,
     Concurrency,
+    KeyedMutation,
+    ObjectKey,
+    RetainedObservation,
+    SettledEvidence,
     TemporalObservation,
     VersionObservation,
     WriteObservation,
@@ -122,6 +134,7 @@ __all__ = [
     "reject_caller_authored_version",
     "require_observed",
     "require_observed_milestone",
+    "settled_evidence",
     "validate_optimistic_locking",
     "view",
 ]
@@ -249,6 +262,55 @@ def effective_strategy(preference: Concurrency, key: OptimisticKey | None) -> Co
     if preference == "locking":
         return "locking"
     return "optimistic" if isinstance(key, ExplicitVersion | TransactionTimeDerived) else "locking"
+
+
+def settled_evidence(
+    key: OptimisticKey | None,
+    mutation: KeyedMutation,
+    *,
+    object_key: ObjectKey | None,
+    observation: WriteObservation | RetainedObservation | None,
+) -> SettledEvidence | None:
+    """What a keyed write settles against, and therefore claims — the total
+    derivation over the write kind (`m-unit-work` "Observed-State Coalescing").
+
+    Three arms, each named by what the write IS:
+
+    * an **insert** settles against nothing and claims nothing: it opens a row
+      rather than writing against one, so there is no prior row to conflict over,
+      and a value naming a row that IS stored has its own provenance refusal;
+    * a **versioned or temporal** existing-row write settles against the exact
+      observed state its source retained and claims that state, because two
+      writes of one key that observed two different states are two independent
+      intents;
+    * an **unversioned Non-Temporal** existing-row write settles against its
+      **object**, because the shared row lock its evidence rule demands (arm 4
+      above) is held on the object and covers every state the row can be in. Two
+      such writes can never have observed two different states, so the
+      state-keyed rule's own reason does not apply and the object is the correct
+      grain.
+
+    The arms are derived from declared facts alone — this family's Optimistic Key
+    and the write's own mutation — exactly as :func:`effective_strategy` derives a
+    strategy from a preference and that same key. Absence is never what selects an
+    arm: an insert observes no state either, so an absence-triggered object claim
+    would sweep it in, where it has no prior row to claim at all. An Identity the
+    facet does not name takes the object arm for the same reason it takes the
+    Locking fallback above — an unrecognized Entity is never granted a gate it
+    cannot supply, so its lock is all it has.
+
+    ``observation`` is what the producer resolved for the write, and reaches the
+    answer only on the state-keyed arm; a state-keyed write handed none settles
+    against nothing here and is refused where every buffered write is settled
+    (`m-unit-work`: a required observation that is missing is a planning error).
+    ``object_key`` is absent only for a row that names no complete primary key,
+    which addresses no object for a claim to be about.
+    """
+    if mutation in INSERT_MUTATIONS:
+        return None
+    if isinstance(key, ExplicitVersion | TransactionTimeDerived):
+        return observation
+    return object_key
 
 
 def reject_caller_authored_version(entity: str, version_attr: str) -> None:

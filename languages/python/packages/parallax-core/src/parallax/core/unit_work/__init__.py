@@ -24,11 +24,15 @@ from __future__ import annotations
 
 from parallax.core.unit_work.claims import (
     SELECTION_INTENT,
+    ClaimScope,
     ClaimTable,
     ClaimVerdict,
+    SettledEvidence,
     WriteIntent,
     WriteIntentKind,
     admits,
+    claim_scope,
+    claimed_object,
     keyed_intent,
 )
 from parallax.core.unit_work.clock import (
@@ -73,8 +77,10 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.materialized import (
     BufferItem,
+    ClaimedKeyedWrite,
     GroupObservations,
     MaterializedWriteGroup,
+    ObjectClaimedWrite,
     ObservedKeyedWrite,
     TemporalColumns,
     VersionColumns,
@@ -257,8 +263,10 @@ __all__ = [
     "ChangedState",
     "ChunkedColumn",
     "ChunkedColumnBuilder",
+    "ClaimScope",
     "ClaimTable",
     "ClaimVerdict",
+    "ClaimedKeyedWrite",
     "Clock",
     "CloseCause",
     "ColumnSlice",
@@ -289,6 +297,7 @@ __all__ = [
     "MissingTargetError",
     "NewLineage",
     "NonTemporalConcurrency",
+    "ObjectClaimedWrite",
     "ObjectKey",
     "ObservedKeyedWrite",
     "ObservedStateKey",
@@ -318,6 +327,7 @@ __all__ = [
     "RetainedObservation",
     "RollbackOnlyError",
     "SelfIncrement",
+    "SettledEvidence",
     "Shortfall",
     "SourceHint",
     "StaleWrite",
@@ -369,6 +379,8 @@ __all__ = [
     "admits",
     "buffered_write",
     "capture_subject_identity",
+    "claim_scope",
+    "claimed_object",
     "deserialize",
     "eager_segment",
     "enforce_affected_rows",

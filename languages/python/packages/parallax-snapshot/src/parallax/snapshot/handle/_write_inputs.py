@@ -20,7 +20,7 @@ plus the write evidence a read leaves on the values it publishes:
   :data:`ReadSources`), the resolution a keyed verb runs over one such source
   (:func:`source_hint_of`, :func:`resolve_write_evidence`,
   :class:`WriteEvidenceError`,
-  :data:`WRITE_EVIDENCE_CODES`), the claim that verb then takes on the state it
+  :data:`WRITE_EVIDENCE_CODES`), the claim that verb then takes at the scope it
   settles against (:func:`admit_write_claim`, :class:`ClaimLedger`), plus the
   per-row column contributions a
   materializing predicate-write resolve streams into its
@@ -88,6 +88,7 @@ from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
+    ClaimScope,
     ClaimVerdict,
     Concurrency,
     KeyedMutation,
@@ -96,11 +97,13 @@ from parallax.core.unit_work import (
     ParticipationToken,
     PredecessorRow,
     RetainedObservation,
+    SettledEvidence,
     SourceHint,
     TemporalObservation,
     VersionObservation,
     WriteIntent,
     WriteObservation,
+    claimed_object,
     instant_literal,
     observed_state_key,
 )
@@ -366,29 +369,36 @@ class ClaimLedger(Protocol):
     """The unit of work a keyed write takes its claim from, satisfied structurally.
 
     A verb needs one answer from the transaction before it buffers — what its
-    intent becomes against whatever the buffer already claimed for that exact
-    state — so it names that one rather than the whole scope.
+    intent becomes against whatever the buffer already claimed at that exact
+    scope — so it names that one rather than the whole scope.
     """
 
-    def claim(self, key: ObservedStateKey, intent: WriteIntent, /) -> ClaimVerdict: ...
+    def claim(self, key: ClaimScope, intent: WriteIntent, /) -> ClaimVerdict: ...
 
 
 def admit_write_claim(
     ledger: ClaimLedger,
     identity: EntityIdentity,
-    intent: WriteIntent,
+    intent: WriteIntent | None,
     *,
-    state: ObservedStateKey,
+    scope: ClaimScope | None,
 ) -> None:
-    """Take this write's claim on the state it settles against, refusing an
+    """Take this write's claim at the scope it settles against, refusing an
     intent the buffer's existing claim cannot absorb.
+
+    A write with neither claims nothing, and the two are absent together: an
+    insert has no intent against existing state and no scope to take one at
+    (:func:`~parallax.core.unit_work.keyed_intent`,
+    :func:`~parallax.core.opt_lock.settled_evidence`), and a caller-held Write
+    Observation is a value rather than a reference into this ledger, so there is
+    nothing for a second intent to compete for.
 
     The verdict comes from the one algebra finalization also reads
     (:func:`~parallax.core.unit_work.admits`), so a refusal here is exactly the
     combination the flush would have had no meaning for. Everything it admits is
     something the flush performs: assignments merge in authored order, a
     destruction supersedes the assignments buffered before it, and a repeated
-    destruction of one state and region is one destruction.
+    destruction of one scope and region is one destruction.
 
     The message names what the held claim was rather than only that there was
     one, because the caller's remedy differs: a different temporal region needs
@@ -396,19 +406,21 @@ def admit_write_claim(
     after a destruction has no remedy at all — the row it would write is going
     away.
     """
-    if ledger.claim(state, intent) != "incompatible":
+    if intent is None or scope is None:
+        return
+    if ledger.claim(scope, intent) != "incompatible":
         return
     raise WriteEvidenceError(
         code="write-evidence-already-claimed",
         message=(
             f"{identity.canonical}: a write already buffered in this transaction claims "
-            "the exact state this one settles against, for an intent it cannot be combined "
+            "what this one settles against, for an intent it cannot be combined "
             "with — a different Valid-Time region composes no interval, an assignment after "
             "a destructive intent resurrects nothing, and a predicate write's selected rows "
             "are one compact group; read the row through this transaction to flush the "
             "buffered intent and settle against fresh state"
         ),
-        object_key=state.object,
+        object_key=claimed_object(scope),
     )
 
 
@@ -610,17 +622,18 @@ def resolve_write_evidence(
     record: EntityMetadata,
     hint: SourceHint | None,
     *,
+    mutation: KeyedMutation,
     object_key: ObjectKey,
     preference: Concurrency,
     participation: ParticipationToken,
-) -> RetainedObservation | None:
-    """The evidence a keyed write against existing state settles against, read
+) -> SettledEvidence | None:
+    """What a keyed write against existing state settles against, read
     off the source value's own hint.
 
-    One resolution serves the address, the gate, and the version advance, which
-    is what makes it impossible for them to disagree. It follows the target
-    Entity's Effective Concurrency Strategy (`m-opt-lock`), not the transaction's
-    preference:
+    One resolution serves the address, the gate, the version advance, and the
+    claim, which is what makes it impossible for them to disagree. It follows the
+    target Entity's Effective Concurrency Strategy (`m-opt-lock`), not the
+    transaction's preference:
 
     * **Locking** — the license is the shared row lock, so the source read must
       have run in THIS transaction. A source from another scope, or none at all,
@@ -638,12 +651,18 @@ def resolve_write_evidence(
     Evidence a successful flush already spent is refused under BOTH strategies
     (:func:`_refuse_consumed`).
 
-    Absence stays structural: a target that observes no state resolves to
-    ``None`` and buffers bare — the participating read it came from is the
-    license, and there is no observation for the flush to spend.
+    What the licensed write then settles against — and therefore claims — is
+    :func:`~parallax.core.opt_lock.settled_evidence`'s derivation over this
+    target's own Optimistic Key, so the participation check and the scope it
+    licenses are stated together: an unversioned Non-Temporal row observes no
+    state, and what the lock this check just proved is held on is the OBJECT.
     """
-    strategy = opt_lock.effective_strategy(preference, opt_lock.view(meta).key(record.identity))
+    key = opt_lock.view(meta).key(record.identity)
+    strategy = opt_lock.effective_strategy(preference, key)
     observation = None if hint is None else hint.observation
+    settled = opt_lock.settled_evidence(
+        key, mutation, object_key=object_key, observation=observation
+    )
     if strategy == "locking":
         if hint is None or hint.participation is not participation:
             raise WriteEvidenceError(
@@ -657,7 +676,7 @@ def resolve_write_evidence(
                 object_key=object_key,
             )
         _refuse_consumed(record, observation, object_key)
-        return observation
+        return settled
     if observation is None:
         raise WriteEvidenceError(
             code="write-evidence-unavailable",
@@ -669,7 +688,7 @@ def resolve_write_evidence(
             object_key=object_key,
         )
     _refuse_consumed(record, observation, object_key)
-    return observation
+    return settled
 
 
 def _refuse_consumed(

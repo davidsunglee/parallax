@@ -82,12 +82,12 @@ from parallax.core.temporal_read import Pin, TemporalReadError, query_pin, scans
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     CardinalityCorruptionError,
+    ClaimedKeyedWrite,
     Concurrency,
     FixedClock,
     KeyedWrite,
     MissingTargetError,
     ObjectKey,
-    ObservedKeyedWrite,
     ObservedStateKey,
     OptimisticLockConflictError,
     PlanningRequest,
@@ -1882,19 +1882,33 @@ def _resolve_entries(
 
 
 def _buffered(
-    instruction: WriteInstruction, observation: WriteObservation | None
-) -> WriteInstruction | ObservedKeyedWrite:
+    instruction: WriteInstruction, observation: WriteObservation | None, model: AcceptedMetamodel
+) -> WriteInstruction | ClaimedKeyedWrite:
     """One resolved entry as the buffer item a unit of work would hold for it.
 
-    An entry whose case document (or this group's own prior find) supplied an
-    observation travels with it, exactly as a developer verb's own resolution
-    does; an unobserved entry stays bare, so absence is the absence of the
-    wrapper here too. Whether an observation may exist at all is decided BEFORE
+    What the entry settles against is the SAME derivation production's own write
+    ingress runs (:func:`~parallax.core.opt_lock.settled_evidence`), over the same
+    two declared facts: an entry whose case document (or this group's own prior
+    find) supplied an observation travels with it, exactly as a developer verb's
+    own resolution does, an existing-row entry against an unversioned
+    Non-Temporal target claims its object, and an insert claims nothing. Running
+    the derivation rather than forwarding the observation alone is what keeps this
+    PURE re-lowering oracle answering the plan the real flush produces, coalescing
+    included. Whether an observation may exist at all is decided BEFORE
     this point, by :func:`_durable_row` — the one seam every producer's rows pass
-    through — and by the carrier's own structural refusals; this function only
+    through — and by the carriers' own structural refusals; this function only
     forwards what they left.
     """
-    return buffered_write(instruction, observation)
+    assert isinstance(instruction, KeyedWrite)  # every producer of this seam resolves keyed writes
+    return buffered_write(
+        instruction,
+        opt_lock.settled_evidence(
+            opt_lock.view(model).key(case_entity(model, instruction.entity).identity),
+            instruction.mutation,
+            object_key=object_key(instruction, model),
+            observation=observation,
+        ),
+    )
 
 
 def _lower_resolved(
@@ -1928,7 +1942,7 @@ def _lower_resolved(
     (:meth:`TemporalShadow.staged`), so a doomed unit's are discarded with its
     rows.
     """
-    buffer = [_buffered(write.instruction, write.oracle_observation) for write in resolved]
+    buffer = [_buffered(write.instruction, write.oracle_observation, model) for write in resolved]
     instant = _pinned_instant(tx_instant)
     plan = build_write_planner(model).plan(
         PlanningRequest(
@@ -4359,7 +4373,9 @@ def _lower_conflict_write(
             subject_identity=_PLANNING_SUBJECT,
             transaction_instant=instant,
             concurrency=concurrency,
-            buffered_writes=[_buffered(write.instruction, write.observation) for write in resolved],
+            buffered_writes=[
+                _buffered(write.instruction, write.observation, model) for write in resolved
+            ],
         )
     )
     return tuple(statement for _step, statement in stream_lowered(plan, model, dialect))

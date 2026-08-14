@@ -357,7 +357,7 @@ def test_a_predicate_write_cannot_be_buffered_with_one_observation() -> None:
     predicate = PredicateWrite(
         "delete", PredicateSelection("Account", predicate_algebra.Comparison("eq", "Account.id", 1))
     )
-    with pytest.raises(TypeError, match="only a keyed write carries"):
+    with pytest.raises(TypeError, match="only a keyed write settles against evidence of its own"):
         buffered_write(predicate, VersionObservation(observed_version=1))
 
 

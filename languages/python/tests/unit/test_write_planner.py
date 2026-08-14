@@ -58,6 +58,7 @@ from parallax.core.unit_work import (
     KeyedWrite,
     KeyTarget,
     MaterializedWriteGroup,
+    ObjectClaimedWrite,
     ObjectKey,
     ObservedKeyedWrite,
     PlannedClose,
@@ -330,6 +331,57 @@ def test_a_second_state_of_one_object_does_not_close_the_first_states_claim() ->
     assert isinstance(standing, PlannedUpdate)
     assert _assignment_values(merged) == {"balance": 175.00, "version": 5}
     assert _assignment_values(standing) == {"owner": "Grace", "version": 6}
+
+
+def test_object_claimed_writes_of_one_unversioned_row_merge_into_one_step() -> None:
+    # The object-claimed arm reaches the same algebra by the same call: what such
+    # writes share is the object, because no state stands behind them.
+    first = ObjectClaimedWrite(KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)))
+    second = ObjectClaimedWrite(KeyedWrite("update", "Wallet", ({"id": 1, "owner": "Grace"},)))
+    plan = _plan([first, second], _WALLET)
+    (step,) = plan.steps
+    assert isinstance(step, PlannedUpdate)
+    assert _assignment_values(step) == {"balance": 5.00, "owner": "Grace"}
+
+
+def test_an_object_claimed_destruction_supersedes_the_assignment_before_it() -> None:
+    update = ObjectClaimedWrite(KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)))
+    delete = ObjectClaimedWrite(KeyedWrite("delete", "Wallet", ({"id": 1},)))
+    plan = _plan([update, delete], _WALLET)
+    (step,) = plan.steps
+    assert isinstance(step, PlannedDelete)
+
+
+def test_identical_object_claimed_destructions_plan_one_step() -> None:
+    # Unclaimed, the pair reaches the batch collapse as a repeated authored key,
+    # which a Key Target refuses — so deduplication is what keeps a legal two-verb
+    # sequence out of an internal invariant failure.
+    delete = ObjectClaimedWrite(KeyedWrite("delete", "Wallet", ({"id": 1},)))
+    plan = _plan([delete, delete], _WALLET)
+    (step,) = plan.steps
+    assert isinstance(step, PlannedDelete)
+
+
+def test_a_wholly_restoring_object_claimed_merge_leaves_no_step_at_all() -> None:
+    first = ObjectClaimedWrite(KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)))
+    second = ObjectClaimedWrite(
+        KeyedWrite("update", "Wallet", ({"id": 1},)), restorations=frozenset({"balance"})
+    )
+    plan = _plan([first, second], _WALLET)
+    assert list(plan.steps) == []
+
+
+def test_object_claimed_writes_of_two_rows_still_collapse_into_one_batch() -> None:
+    # A claim is per object, so two objects' deletes are two claims — and each
+    # leaves coalescing as the bare instruction it always was, which is what keeps
+    # `m-batch-write`'s set-based collapse reachable for unversioned rows.
+    first = ObjectClaimedWrite(KeyedWrite("delete", "Wallet", ({"id": 1},)))
+    second = ObjectClaimedWrite(KeyedWrite("delete", "Wallet", ({"id": 2},)))
+    plan = _plan([first, second], _WALLET)
+    (step,) = plan.steps
+    assert isinstance(step, PlannedDelete)
+    assert isinstance(step.target, KeyTarget)
+    assert step.target.key_values == ((1,), (2,))
 
 
 def _assignment_values(step: PlannedUpdate) -> dict[str, object]:

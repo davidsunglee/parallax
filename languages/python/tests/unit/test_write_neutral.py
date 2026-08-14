@@ -23,6 +23,7 @@ from _transact_support import (
     ACCOUNT,
     BALANCE,
     FIND_SQL_UNLOCKED,
+    PERSON,
     RecordingPort,
     account_db,
     db_for,
@@ -230,6 +231,30 @@ def test_a_bare_instruction_buffers_with_no_evidence() -> None:
         }
     )
     _run(port, lambda tx: tx.write_neutral(insert))
+    assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
+
+
+def test_an_unversioned_instruction_claims_its_object_through_this_ingress_too() -> None:
+    # A bridge caller holds an instruction rather than the value a verb derives
+    # one from, so what its write settles against is derived here from the same
+    # two declared facts a typed verb's own resolution reads. Without that, an
+    # unversioned Non-Temporal write would claim nothing through this ingress and
+    # a case would witness a coalescing a program never gets: two deletes of one
+    # key reach the batch collapse as a repeated authored key.
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+    delete = instructions.deserialize(
+        {
+            "mutation": "delete",
+            "entity": "parallax.compatibility.Person",
+            "rows": [{"id": 1}],
+        }
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.write_neutral(delete)
+        tx.write_neutral(delete)
+
+    db_for(PERSON, port).transact(fn)
     assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
 
 

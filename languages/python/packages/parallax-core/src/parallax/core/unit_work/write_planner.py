@@ -79,7 +79,9 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.materialized import (
     BufferItem,
+    ClaimedKeyedWrite,
     MaterializedWriteGroup,
+    ObjectClaimedWrite,
     ObservedKeyedWrite,
     TemporalColumns,
     VersionColumns,
@@ -157,6 +159,16 @@ __all__ = [
 ]
 
 type BufferedWrites = Sequence[BufferItem]
+
+type _CoalescedItem = WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup
+"""A buffer item once stage 1 has read every claim it carries.
+
+An object-claimed write is absent by construction rather than by convention:
+coalescing is the only stage that reads one, and it hands the survivor on as the
+ordinary instruction it always was, so batching, ordering, and settlement are
+written against exactly the shapes they were written against before object claims
+existed.
+"""
 
 # The predicate-selected verbs a readless template exists for. A `terminate`
 # or `*Until` predicate write names a milestone, so its only legal targets
@@ -350,22 +362,24 @@ class WritePlanner:
     # Stage 1: resolve identities and coalesce buffered intent.          #
     # A same-transaction keyed insert-then-update of one object folds     #
     # into a single final-value write; insert-then-delete cancels; and    #
-    # several writes settling against ONE observed state combine by the   #
-    # claim algebra their verbs already admitted them under.              #
+    # several writes claiming ONE scope combine by the claim algebra      #
+    # their verbs already admitted them under.                            #
     # ----------------------------------------------------------------- #
-    def _coalesce(self, buffer: BufferedWrites, resolved: Targets) -> list[BufferItem]:
+    def _coalesce(self, buffer: BufferedWrites, resolved: Targets) -> list[_CoalescedItem]:
         result: list[BufferItem | None] = []
         pending_insert: dict[ObjectKey, int] = {}
-        # Where each object's still-open observed-state claims sit, so a second
-        # write of one of those states reaches the carrier it must combine with.
-        # One entry per exact observed state rather than per object: a key whose
-        # reads resolved to two states — two current rectangles of one Bitemporal
-        # key, or two observed generations of one versioned row — holds two
-        # independent claims, and writes of them interleave freely. Indexing by
-        # object alone would let the second state evict the first, and a later
-        # write of the first would then be emitted beside the write it was
-        # admitted to merge into.
-        pending_state: dict[ObjectKey, list[_StateClaim]] = {}
+        # Where each object's still-open claims sit, so a second write claiming
+        # one of them reaches the carrier it must combine with. An object's
+        # entries are one per exact observed state, plus at most one the object
+        # itself is the scope of: a key whose reads resolved to two states — two
+        # current rectangles of one Bitemporal key, or two observed generations of
+        # one versioned row — holds two independent claims, and writes of them
+        # interleave freely. Indexing by object alone would let the second state
+        # evict the first, and a later write of the first would then be emitted
+        # beside the write it was admitted to merge into. An unversioned
+        # Non-Temporal object's writes can never be in that position, which is why
+        # one entry serves all of them.
+        pending: dict[ObjectKey, list[_PendingClaim]] = {}
         for item in buffer:
             if isinstance(item, MaterializedWriteGroup):
                 result.append(item)
@@ -382,21 +396,20 @@ class WritePlanner:
             elif verb in _UPDATE_VERBS and key in pending_insert:
                 index = pending_insert[key]
                 base = result[index]
-                # An `ObservedKeyedWrite` refuses to wrap an insert, so a
-                # pending-insert slot is always a bare instruction — and folding
-                # an update into it yields an insert, which is why the merged
-                # item stays bare.
+                # Neither carrier wraps an insert, so a pending-insert slot is
+                # always a bare instruction — and folding an update into it
+                # yields an insert, which is why the merged item stays bare.
                 assert isinstance(base, KeyedWrite)
                 result[index] = _merge_update_into_insert(base, instruction, resolved)
             elif verb in _DELETE_VERBS and key in pending_insert:
                 result[pending_insert.pop(key)] = None
-            elif isinstance(item, ObservedKeyedWrite):
-                _combine_observed(item, key, result, pending_state)
+            elif isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite):
+                _combine_claimed(item, key, result, pending)
             else:
                 result.append(item)
         return [
             surviving
-            for surviving in (_without_restorations(item) for item in result)
+            for surviving in (_coalesced_item(item) for item in result)
             if surviving is not None
         ]
 
@@ -408,8 +421,10 @@ class WritePlanner:
     # update reaches settlement sharing a step the strategy never         #
     # admitted.                                                           #
     # ----------------------------------------------------------------- #
-    def _form_batches(self, buffer: Sequence[BufferItem], resolved: Targets) -> list[BufferItem]:
-        result: list[BufferItem] = []
+    def _form_batches(
+        self, buffer: Sequence[_CoalescedItem], resolved: Targets
+    ) -> list[_CoalescedItem]:
+        result: list[_CoalescedItem] = []
         run: list[KeyedWrite] = []
         run_group: object = None
 
@@ -472,17 +487,17 @@ class WritePlanner:
     # predicate write is a hard ordering barrier partitioning the         #
     # sequence into independently reorderable regions.                    #
     # ----------------------------------------------------------------- #
-    def _order(self, items: Sequence[BufferItem], resolved: Targets) -> list[BufferItem]:
+    def _order(self, items: Sequence[_CoalescedItem], resolved: Targets) -> list[_CoalescedItem]:
         ranks = _fk_ranks(self._model)
 
-        def rank(item: BufferItem) -> int:
+        def rank(item: _CoalescedItem) -> int:
             entity = resolved.entity(_instruction_entity(buffered_instruction(item)))
             return 0 if entity is None else ranks.get(entity.identity, 0)
 
-        def mutation(item: BufferItem) -> str:
+        def mutation(item: _CoalescedItem) -> str:
             return buffered_instruction(item).mutation
 
-        def order_region(region: Sequence[BufferItem]) -> list[BufferItem]:
+        def order_region(region: Sequence[_CoalescedItem]) -> list[_CoalescedItem]:
             inserts = [i for i in region if mutation(i) in INSERT_MUTATIONS]
             updates = [i for i in region if mutation(i) in _UPDATE_VERBS]
             deletes = [i for i in region if mutation(i) in _DELETE_VERBS]
@@ -490,8 +505,8 @@ class WritePlanner:
             deletes.sort(key=lambda i: -rank(i))
             return [*inserts, *updates, *deletes]
 
-        ordered: list[BufferItem] = []
-        region: list[BufferItem] = []
+        ordered: list[_CoalescedItem] = []
+        region: list[_CoalescedItem] = []
         for item in items:
             if isinstance(item, PredicateWrite):
                 ordered.extend(order_region(region))
@@ -1560,55 +1575,61 @@ def _merge_update_into_insert(
 
 
 @dataclass(slots=True)
-class _StateClaim:
-    """One still-open observed-state claim during coalescing: where its surviving
-    carrier sits, which state it settles against, and what it intends.
+class _PendingClaim:
+    """One still-open claim during coalescing: where its surviving carrier sits,
+    the observed state it settles against — absent where the OBJECT is what it
+    claims — and what it intends.
 
     The observed state is carried as the observation itself rather than as an
     Observed State Key, because the two writes only have to agree — and equal
     evidence about one object IS one state, while deriving the key would make
     coalescing depend on temporal coordinates a caller-held observation need not
-    be able to produce.
+    be able to produce. An unversioned Non-Temporal object's claim carries none
+    for the reason its scope is the object: there is no state to agree about, and
+    the entry's own position under its Object Key is the whole of its address.
     """
 
     index: int
-    observation: WriteObservation
+    observation: WriteObservation | None
     intent: WriteIntent
 
 
-def _combine_observed(
-    item: ObservedKeyedWrite,
+def _combine_claimed(
+    item: ClaimedKeyedWrite,
     key: ObjectKey,
     result: list[BufferItem | None],
-    pending: dict[ObjectKey, list[_StateClaim]],
+    pending: dict[ObjectKey, list[_PendingClaim]],
 ) -> None:
-    """Combine ``item`` with the claim already open on its OWN observed state, or
-    open a new one, extending ``result`` and ``pending`` in place.
+    """Combine ``item`` with the claim already open at its OWN scope, or open a
+    new one, extending ``result`` and ``pending`` in place.
 
     The verdict is the one algebra the arriving verb already ran
     (:func:`~parallax.core.unit_work.claims.admits`), unclaimed row included, so
     what happens here is what that verb admitted rather than a second reading of
     the same buffer: assignments merge in authored order, a destruction
     supersedes the assignments buffered before it, and a repeated destruction of
-    one state and region adds nothing. An ``incompatible`` pair is one no verb of
+    one scope and region adds nothing. An ``incompatible`` pair is one no verb of
     this transaction admitted — the caller reached the buffer another way — and
     both writes are left standing rather than combined by a rule neither states.
 
-    Which claim ``item`` meets is decided by its evidence and never by its key,
-    exactly as the verb-time table's Observed State Key decides it. An object's
-    other open claims are left where they are, so writes of two states of one key
-    may interleave without either displacing the other.
+    Which claim ``item`` meets is decided by what it settles against and never by
+    its key alone, exactly as the verb-time table's own scope decides it: an
+    observation-bearing write meets the claim on its own observed state, and an
+    object-claimed one meets the object's. An object's other open claims are left
+    where they are, so writes of two states of one key may interleave without
+    either displacing the other.
     """
     intent = keyed_intent(item.instruction)
-    assert intent is not None  # a carrier refuses to wrap an insert
+    assert intent is not None  # neither carrier wraps an insert
+    observed = item.observation if isinstance(item, ObservedKeyedWrite) else None
     claims = pending.setdefault(key, [])
-    held = next((claim for claim in claims if claim.observation == item.observation), None)
+    held = next((claim for claim in claims if claim.observation == observed), None)
     verdict = admits(None if held is None else held.intent, intent)
     if verdict == "coalesce":
-        assert held is not None  # an unclaimed state admits
+        assert held is not None  # an unclaimed scope admits
         base = result[held.index]
-        assert isinstance(base, ObservedKeyedWrite)
-        result[held.index] = _merge_observed(base, item)
+        assert isinstance(base, ObservedKeyedWrite | ObjectClaimedWrite)
+        result[held.index] = _merged_claimed(base, item)
         return
     if verdict == "deduplicate":
         return
@@ -1617,67 +1638,89 @@ def _combine_observed(
             result[held.index] = None
         claims.remove(held)
     result.append(item)
-    claims.append(_StateClaim(index=len(result) - 1, observation=item.observation, intent=intent))
+    claims.append(_PendingClaim(index=len(result) - 1, observation=observed, intent=intent))
 
 
-def _merge_observed(base: ObservedKeyedWrite, arriving: ObservedKeyedWrite) -> ObservedKeyedWrite:
+def _merged_claimed(base: ClaimedKeyedWrite, arriving: ClaimedKeyedWrite) -> ClaimedKeyedWrite:
     """``base`` carrying ``arriving``'s assignments too, later value winning.
 
-    The surviving carrier keeps ``base``'s position, mutation, bounds,
-    observation, and claim — the two settle against one state over one region,
-    which is what let them coalesce — and gains the merged row. Restoration
-    follows the same later-wins rule as the value: a member ``arriving`` assigns
-    stops being restored, and one it put back becomes restored however the
-    earlier write left it.
+    The surviving carrier keeps ``base``'s position, mutation, bounds, and claim
+    — the two claim one scope over one region, which is what let them coalesce —
+    and gains the merged row. Restoration follows the same later-wins rule as the
+    value: a member ``arriving`` assigns stops being restored, and one it put back
+    becomes restored however the earlier write left it.
     """
     merged = dict(base.instruction.rows[0])
     merged.update(arriving.instruction.rows[0])
-    return ObservedKeyedWrite(
-        instruction=KeyedWrite(
-            mutation=base.instruction.mutation,
-            entity=base.instruction.entity,
-            rows=(merged,),
-            valid_from=base.instruction.valid_from,
-            until=base.instruction.until,
-        ),
-        observation=base.observation,
-        claim=base.claim,
-        restorations=(base.restorations - set(arriving.instruction.rows[0]))
-        | arriving.restorations,
+    return _rewritten(
+        base,
+        merged,
+        (base.restorations - set(arriving.instruction.rows[0])) | arriving.restorations,
     )
 
 
-def _without_restorations(item: BufferItem | None) -> BufferItem | None:
-    """``item`` with every member its author touched and put back dropped from
-    its row — the last word on a member deciding whether it is written at all.
+def _rewritten(
+    item: ClaimedKeyedWrite, row: Mapping[str, object], restorations: frozenset[str]
+) -> ClaimedKeyedWrite:
+    """``item`` carrying ``row`` and ``restorations``, at its own claim scope.
+
+    The one place a carrier is rebuilt, so merging and restoration-dropping state
+    what changes rather than each restating which fields a carrier keeps.
+    """
+    instruction = KeyedWrite(
+        mutation=item.instruction.mutation,
+        entity=item.instruction.entity,
+        rows=(row,),
+        valid_from=item.instruction.valid_from,
+        until=item.instruction.until,
+    )
+    if isinstance(item, ObservedKeyedWrite):
+        return ObservedKeyedWrite(
+            instruction=instruction,
+            observation=item.observation,
+            claim=item.claim,
+            restorations=restorations,
+        )
+    return ObjectClaimedWrite(instruction=instruction, restorations=restorations)
+
+
+def _coalesced_item(item: BufferItem | None) -> _CoalescedItem | None:
+    """``item`` as it leaves stage 1: every member its author touched and put back
+    dropped from its row, and an object claim it no longer needs unwrapped.
 
     Applied once coalescing has settled which write survives, so a restoration
     cancels every assignment merged into that survivor rather than only the one
     its own verb saw. What is left is measured by stage 2 exactly as an ordinary
     sparse row is, which is how a chain that nets to zero across several verbs
     reaches the same no-DML outcome a single net-zero edit does.
+
+    An object-claimed write leaves stage 1 as the bare instruction it always was.
+    Everything its carrier said — which grain to combine on, and which members the
+    last word restored — has been read by the time this runs, and it licenses
+    nothing per-row that would keep it out of a multi-row batch, so no later stage
+    needs to know the type existed.
     """
-    if not isinstance(item, ObservedKeyedWrite) or not item.restorations:
+    if not isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite):
         return item
+    if not item.restorations:
+        return _unclaimed(item)
     row = {
         name: value
         for name, value in item.instruction.rows[0].items()
         if name not in item.restorations
     }
-    return ObservedKeyedWrite(
-        instruction=KeyedWrite(
-            mutation=item.instruction.mutation,
-            entity=item.instruction.entity,
-            rows=(row,),
-            valid_from=item.instruction.valid_from,
-            until=item.instruction.until,
-        ),
-        observation=item.observation,
-        claim=item.claim,
-    )
+    return _unclaimed(_rewritten(item, row, frozenset()))
 
 
-def _decomposed_updates(buffer: Sequence[BufferItem], resolved: Targets) -> list[BufferItem]:
+def _unclaimed(item: ClaimedKeyedWrite) -> _CoalescedItem:
+    """``item`` as the buffer item planning's later stages consume: an
+    observation carrier whole, an object claim as its own instruction."""
+    return item.instruction if isinstance(item, ObjectClaimedWrite) else item
+
+
+def _decomposed_updates(
+    buffer: Sequence[_CoalescedItem], resolved: Targets
+) -> list[_CoalescedItem]:
     """``buffer`` with every PREFORMED multi-row non-temporal keyed update split
     back into one single-row instruction per row.
 
@@ -1703,7 +1746,7 @@ def _decomposed_updates(buffer: Sequence[BufferItem], resolved: Targets) -> list
     still refuses it as the multi-row milestone chain it is rather than silently
     settling it as several chains the caller never authored.
     """
-    decomposed: list[BufferItem] = []
+    decomposed: list[_CoalescedItem] = []
     for item in buffer:
         if not isinstance(item, KeyedWrite) or not _splits_into_rows(item, resolved):
             decomposed.append(item)
@@ -1852,7 +1895,7 @@ def _instruction_entity(instruction: WriteInstruction) -> str:
     return instruction.target.entity
 
 
-def _without_noop_rows(item: BufferItem, resolved: Targets) -> BufferItem | None:
+def _without_noop_rows(item: _CoalescedItem, resolved: Targets) -> _CoalescedItem | None:
     """``item`` with its known no-op rows gone, or ``None`` when none survive.
 
     An update row naming only key members changes nothing: a key ADDRESSES the
@@ -1905,7 +1948,7 @@ def _without_noop_rows(item: BufferItem, resolved: Targets) -> BufferItem | None
     )
 
 
-def _canonical_item(item: BufferItem, resolved: Targets) -> BufferItem:
+def _canonical_item(item: _CoalescedItem, resolved: Targets) -> _CoalescedItem:
     """``item`` with every opening row's canonical member set spelled out.
 
     An opening row that does not name a `many` Value Object occurrence has said the

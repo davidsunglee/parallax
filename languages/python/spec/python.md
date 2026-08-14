@@ -2990,9 +2990,10 @@ or descriptor authoring form and performs no audit stamping.
   complete persisted state, and nothing about the read that reached it. Inserts
   and unversioned non-temporal writes record nothing at all rather than an empty
   observation, so "a version and a predecessor" and "neither" are both
-  unrepresentable. Absence extends to the buffer: a keyed write with an
-  observation buffers paired with it and one without buffers bare, so no
-  no-observation value and no nullable observation field exists at any point,
+  unrepresentable. Absence extends to the buffer: only a keyed write with an
+  observation buffers paired with it, and the two carriers a write with none may
+  take — `ObjectClaimedWrite`, and the bare instruction — hold no observation
+  field to be null, so no no-observation value exists at any point,
   and `PlanningRequest` carries no observation map for the planner to search.
 - **An observation is addressed by the exact state it observed.** The address is
   the closed `ObservedStateKey` union — `VersionedStateKey(object, version)` for
@@ -3000,7 +3001,8 @@ or descriptor authoring form and performs no audit stamping.
   temporal one, whose milestone is that row's own `Edge`, the same value
   `edge_of(node)` answers for. An `ObjectKey` stays state-independent and
   addresses the object across its states; inserts and unversioned non-temporal
-  writes observe no state and have no `ObservedStateKey` at all. Reading one key
+  writes observe no state and have no `ObservedStateKey` at all — which is not
+  the same as claiming nothing, per the claim-scope derivation below. Reading one key
   twice at coordinates that resolve to **different** states therefore retains
   evidence about each, and a later write settles against the state the value it
   was handed came from; reading one state twice answers one retained
@@ -3050,10 +3052,24 @@ or descriptor authoring form and performs no audit stamping.
   `write-evidence-already-claimed`. Every one is raised synchronously
   at the verb, before buffering and before any database access; a conflict the
   database discovers later keeps its own flush-time classification.
-- **Several buffered writes may settle against one observed state, and one rule
-  says what the second becomes.** Each carries a Write Intent — an assignment or
+- **What a keyed write claims is derived from the write kind, in three arms.**
+  `opt_lock.settled_evidence(key, mutation, ...)` is the one derivation — total
+  over the target Entity's own `OptimisticKey` and the verb's mutation, the same
+  shape `effective_strategy(preference, key)` takes: an `insert` claims nothing,
+  a versioned or temporal existing-row write claims the `ObservedStateKey` its
+  source retained, and an unversioned non-temporal existing-row write claims its
+  `ObjectKey`, whose shared row lock is the evidence its `locking` arm just
+  required. No arm is reached because an observation was missing — an insert
+  observes no state either — and both write ingresses run the derivation, so what
+  a `tx.update` claims and what the conformance bridge's `write_neutral` claims
+  for the same instruction cannot differ. The write travels to planning as the
+  carrier its answer implies: `ObservedKeyedWrite` with the retained observation,
+  `ObjectClaimedWrite` with the members its author restored, or the bare
+  instruction.
+- **Several buffered writes may claim one scope, and one rule says what the
+  second becomes.** Each carries a Write Intent — an assignment or
   a destruction, over the authored Valid-Time region — and the intent a buffer
-  already holds for that exact state decides: assignments over one region merge
+  already holds at that exact scope decides: assignments over one region merge
   in authored order with the later value winning a repeated member, a destruction
   supersedes the assignments buffered before it, an identical destruction
   deduplicates, and a different region, an assignment after a destruction, or a
@@ -3062,8 +3078,8 @@ or descriptor authoring form and performs no audit stamping.
   merge read the same rule, so they cannot disagree. Effective-change elimination
   runs after the merge and compares each winning assignment with its source's
   own original — for a Typed write, the Change Record's — so a member an author
-  touched and then restored cancels an assignment buffered earlier for the same
-  state, and a write left with nothing but its key is eliminated, issues no
+  touched and then restored cancels an assignment buffered earlier at the same
+  scope, and a write left with nothing but its key is eliminated, issues no
   statement, and consumes no observation.
 - **An observation is keyed by the row's own resolved Entity Identity.** A read
   observes each row under the exact Entity that row's own compiled read

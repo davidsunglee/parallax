@@ -547,7 +547,11 @@ buffered-insert recognition each ask about. An **Observed State Key** addresses
 **one** of those states, which is what observation eligibility and consumption
 ask about. Inserts and unversioned Non-Temporal writes observe no state and
 therefore have no Observed State Key at all; the absence is the missing arm,
-never a key with an empty coordinate.
+never a key with an empty coordinate. The two differ in what follows from that
+absence: an insert opens a row and has no prior state for anything to be about,
+while an unversioned Non-Temporal existing-row write does write against a stored
+row and is claimed at that row's **Object Key** (*Observed-State Coalescing*
+below), whose shared row lock is its evidence.
 
 An implementation **MUST NOT** address observations by identity alone. Two reads
 of one primary key may observe two different states — two generations of one
@@ -611,10 +615,13 @@ downstream, or a mode in which an observation-requiring write proceeds unobserve
 Structural absence extends to the buffer. A buffered write that has an
 observation is buffered **paired** with it — one keyed instruction and the one
 observation resolved for it, the keyed counterpart of a Materialized Write
-Group's own aligned evidence (below) — and a write with none is buffered bare.
-Absence is therefore the absence of the pairing rather than a field carrying
-it, which is what lets planning read a write's address, gate, and carried state
-off one object.
+Group's own aligned evidence (below) — and a write with none carries no
+observation field for anything to be absent from. Absence is therefore the
+absence of the pairing rather than a field carrying it, which is what lets
+planning read a write's address, gate, and carried state off one object. What an
+unobserved write MAY still travel with is what *Observed-State Coalescing* below
+gives it: the claim scope it takes, and the members its author restored. Neither
+is an observation, and neither survives the stage that reads it.
 
 A **Predecessor Row** is the complete, immutable persisted state a Temporal
 Observation retains: every applicable scalar Attribute value, every complete
@@ -793,17 +800,33 @@ defer the same-transaction combination to this scope.
 ### Observed-State Coalescing
 
 The rules above combine writes of one **object** whose first write OPENED it. The
-rule below combines writes against one **observed state** of an object that already
-existed, and it is keyed by the Observed State Key rather than by the Object Key:
-what the writes share is the evidence they settle against, so two writes of one key
-that observed two different states are two independent intents.
+rule below combines writes against an object that already existed, at the **claim
+scope** each of them takes.
+
+Claim scope is a **total derivation over the write kind**, from two declared
+facts: the target Entity's Optimistic Key (`m-opt-lock`) and the write's own
+mutation. It has exactly three arms, and an implementation **MUST NOT** reach one
+of them because something was absent — an insert observes no state either, so a
+default taken on a missing observation would sweep it in:
+
+- an **insert** claims nothing: it opens a row rather than writing against one, so
+  there is no prior row for a second intent to conflict over;
+- a **versioned or temporal** existing-row write is claimed at its **Observed
+  State Key**, because what such writes share is the evidence they settle against
+  and two writes of one key that observed two different states are two independent
+  intents; and
+- an **unversioned Non-Temporal** existing-row write is claimed at its **Object
+  Key**, because the shared row lock its evidence rule demands is held on the
+  object and covers every state the row can be in. Two such writes can never have
+  observed two different states, so the state-keyed arm's own reason does not
+  apply and the object is the correct grain.
 
 Each buffered write against existing state carries a **Write Intent** — what it
 does (an **assignment** that writes member values against a surviving row, or a
 **destruction** that removes the row or closes the milestone) over which **temporal
 region** (the authored Valid-Time bounds, absent on both ends for a non-temporal or
 Transaction-Time-Only write). One closed rule decides what an arriving intent
-becomes against the intent a buffer already holds for that exact state, and both the
+becomes against the intent a buffer already holds at that exact scope, and both the
 arriving verb and the flush read it, so a synchronous refusal can never disagree
 with what the flush would have done:
 
@@ -811,7 +834,7 @@ with what the flush would have done:
 | -- | -- | -- |
 | nothing | any | the arriving intent is admitted |
 | assignment | assignment, same region | **coalesce** — the sparse assignments merge in authored order, the later value winning a repeated member, into one surviving write |
-| assignment | destruction, same region | **supersede** — the destruction replaces the assignments buffered before it, so an update then a delete of one state is one delete |
+| assignment | destruction, same region | **supersede** — the destruction replaces the assignments buffered before it, so an update then a delete at one scope is one delete |
 | destruction | destruction, same region | **deduplicate** — the second says what the first said and adds nothing |
 | destruction | assignment | **incompatible** — no write means to resurrect a row that is going away |
 | any | any, different region | **incompatible** — interval composition is semantics this framework does not invent |
@@ -820,7 +843,7 @@ with what the flush would have done:
 Effective-change elimination runs **after** the merge, so what is weighed is the
 caller's last word on each member rather than each verb's own. A member an author
 touched and then restored to the value its source observed is not written, and it
-cancels an assignment to that member buffered earlier for the same state — which is
+cancels an assignment to that member buffered earlier at the same scope — which is
 what makes a chain from a value to another and back emit no DML across several
 verbs, exactly as it does within one. A write left with nothing but its key is
 eliminated, consumes no observation, and issues no statement.
