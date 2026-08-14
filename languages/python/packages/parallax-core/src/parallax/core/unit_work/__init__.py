@@ -63,6 +63,7 @@ from parallax.core.unit_work.instructions import (
     validate_instruction,
 )
 from parallax.core.unit_work.materialized import (
+    BufferItem,
     GroupObservations,
     MaterializedWriteGroup,
     ObservedKeyedWrite,
@@ -139,7 +140,6 @@ from parallax.core.unit_work.planned import (
     shortfall_for,
 )
 from parallax.core.unit_work.planner import (
-    BufferItem,
     ObjectKey,
     ObservedStateKey,
     TemporalStateKey,
@@ -198,6 +198,7 @@ from parallax.core.unit_work.uow import (
     run_unit_of_work,
 )
 from parallax.core.unit_work.write_planner import (
+    Finalization,
     PlanningRequest,
     SubjectIdentity,
     WritePlanner,
@@ -253,6 +254,7 @@ __all__ = [
     "ConcurrencyStrategy",
     "EscapedTransactionError",
     "ExactCount",
+    "Finalization",
     "Finite",
     "FixedClock",
     "FlushExecutor",

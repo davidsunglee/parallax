@@ -7,7 +7,10 @@ existing state arrives carrying the observation its verb resolved for it, so the
 planner resolves no evidence of its own. It is model-scoped,
 constructed once per accepted Metamodel with its batching, concurrency,
 temporal, and audit strategies already wired, and it exposes exactly one
-planning operation, :meth:`WritePlanner.plan`.
+planning pipeline in two shapes: :meth:`WritePlanner.finalize`, which answers
+the plan together with the retained claims its surviving writes settled against,
+and :meth:`WritePlanner.plan`, that result's plan alone for a caller with no
+evidence to spend.
 
 **It emits no SQL.** The module DAG pins ``m-unit-work -> m-predicate``,
 ``m-unit-work -> m-db-port``, and ``m-unit-work -> m-temporal-read`` (the Edge a
@@ -72,10 +75,12 @@ from parallax.core.unit_work.instructions import (
     non_temporal_milestone_refusal,
 )
 from parallax.core.unit_work.materialized import (
+    BufferItem,
     MaterializedWriteGroup,
     ObservedKeyedWrite,
     TemporalColumns,
     VersionColumns,
+    buffered_instruction,
 )
 from parallax.core.unit_work.observe import (
     PredecessorRow,
@@ -117,13 +122,12 @@ from parallax.core.unit_work.planned import (
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.core.unit_work.planner import (
-    BufferItem,
     ObjectKey,
     Targets,
-    buffered_instruction,
     resolve_object_key,
     targets,
 )
+from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
@@ -141,7 +145,13 @@ from parallax.core.unit_work.temporal import (
 )
 from parallax.core.unit_work.write_validate import WriteRejectedError
 
-__all__ = ["PlanningRequest", "SubjectIdentity", "WritePlanner", "plan_temporal_close"]
+__all__ = [
+    "Finalization",
+    "PlanningRequest",
+    "SubjectIdentity",
+    "WritePlanner",
+    "plan_temporal_close",
+]
 
 type BufferedWrites = Sequence[BufferItem]
 
@@ -169,6 +179,27 @@ class WritePlanningError(ValueError):
     or a row naming a member outside its Entity's family)."""
 
 
+@dataclass(frozen=True, slots=True)
+class Finalization:
+    """One flush's finalized plan, and the claims its SURVIVING writes settled
+    against.
+
+    The two travel together because only finalization knows both: the plan says
+    what will execute, and ``claims`` says which retained evidence that execution
+    uses — the claims carried by the buffered writes that reached settlement, in
+    settlement order. Work the earlier stages retired (folded into a pending
+    insert, cancelled against one, eliminated as a known no-op) contributes none,
+    which is what keeps a batch's surviving write from spending a claim no
+    statement of it will carry (`m-unit-work` "A successful flush consumes").
+
+    Spending them is the caller's, and only after the executor returns: a plan
+    that never ran spends nothing.
+    """
+
+    plan: WritePlan
+    claims: tuple[RetainedObservation, ...] = ()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PlanningRequest:
     """One flush's complete planning input.
@@ -188,7 +219,8 @@ class WritePlanner:
     """The model-scoped, stateless Write Planner (`m-unit-work`).
 
     Constructed once per accepted Metamodel with its strategy adapters already
-    wired; :meth:`plan` is its entire caller-visible surface. No caller
+    wired; :meth:`finalize` and its plan-only projection :meth:`plan` are its
+    entire caller-visible surface. No caller
     sequences coalescing, batching, ordering, temporal expansion, observation
     validation, instant acquisition, or provenance decoration by hand.
     """
@@ -211,8 +243,23 @@ class WritePlanner:
         self._audit = audit
 
     def plan(self, request: PlanningRequest) -> WritePlan:
+        """One flush's Write Plan — :meth:`finalize`'s plan alone.
+
+        The projection a caller with no evidence to spend uses: a pure lowering,
+        a probe, or any consumer that holds its observations as values rather
+        than as a read's retained claims.
+        """
+        return self.finalize(request).plan
+
+    def finalize(self, request: PlanningRequest) -> Finalization:
         """Plan one flush: coalesce, eliminate no-ops, batch, order, settle
-        every surviving item, decorate the eagerly settled steps, and freeze.
+        every surviving item, decorate the eagerly settled steps, and freeze —
+        answering the plan and the claims the settled writes carried.
+
+        A claim is collected exactly where its carrier is settled, so the two
+        answers are one traversal and cannot disagree about which writes
+        survived: an item the earlier stages retired never reaches that point,
+        and therefore never contributes the evidence it was holding.
 
         Pure with respect to its inputs — no database I/O, no direct clock
         access, no SQL. ``request.subject_identity`` is accepted and never
@@ -248,6 +295,7 @@ class WritePlanner:
         ordered = self._order(batched, resolved)
         segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
+        claims: list[RetainedObservation] = []
 
         def flush_pending() -> None:
             if pending:
@@ -282,8 +330,10 @@ class WritePlanner:
                         transaction_instant=request.transaction_instant,
                     )
                 )
+            if isinstance(item, ObservedKeyedWrite) and item.claim is not None:
+                claims.append(item.claim)
         flush_pending()
-        return WritePlan(steps=PlannedSteps(tuple(segments)))
+        return Finalization(WritePlan(steps=PlannedSteps(tuple(segments))), tuple(claims))
 
     # ----------------------------------------------------------------- #
     # Stage 1: resolve identities and coalesce buffered intent.          #

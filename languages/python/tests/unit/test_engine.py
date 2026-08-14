@@ -1891,7 +1891,7 @@ _POLICY = ObjectKey(EntityIdentity("parallax.compatibility", "Policy"), (("id", 
 
 def _policy_node(valid_start: dt.datetime, valid_end: object, name: str) -> Any:
     """One node a grouped find of a bitemporal `Policy` published: production's
-    own identity and Observation Key for it, beside the milestone it is."""
+    own identity and Observed State Key for it, beside the milestone it is."""
     members: dict[str, object] = {
         "id": 1,
         "name": name,
@@ -2048,8 +2048,8 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
 def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_names() -> None:
     # m-unit-work-015: two finds of ONE bitemporal key observe two rectangles both
     # current on Transaction Time, and the write step names the first with `on`.
-    # The evidence the write settles by is the Observation Key the unit of work
-    # itself filed that node under, and the golden the oracle renders comes from
+    # The evidence the write settles by is the Observed State Key the claim that
+    # node carries is addressed by, and the golden the oracle renders comes from
     # the same node's own milestone — so the close addresses R2's `thru_z`, which
     # a store keyed by identity alone could not have chosen between.
     port = FakeWritePort(

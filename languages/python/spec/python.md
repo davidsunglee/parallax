@@ -3031,10 +3031,14 @@ or descriptor authoring form and performs no audit stamping.
 - **A successful flush consumes the evidence its writes used.** A retained
   observation carries one mutable fact — whether it has been spent — which lives
   on the shared object rather than in a transaction-side set, because a later
-  transaction handed the same still-live source must be refused. A flush that
-  emits DML spends the claims its buffered writes carried; a plan finalization
-  eliminated entirely spends none, and an aborted flush spends none and needs no
-  restoration. A keyed verb refuses a source whose evidence the target Entity's
+  transaction handed the same still-live source must be refused. A flush spends
+  the claims its **surviving** writes carried, once the executor returns.
+  Buffered work finalization retires — folded into a pending insert, cancelled
+  against one, or eliminated as a known no-op — spends none, and that holds
+  per write rather than per batch: a retired write's claim stays eligible even
+  when a sibling write of the same flush executed. An aborted flush spends none
+  and needs no restoration. A keyed verb refuses a source whose evidence the
+  target Entity's
   Effective Concurrency Strategy cannot use with `WriteEvidenceError`
   (`LookupError`), carrying its `code` and the visible `object_key` the write
   addressed and never the Source Hint or the Observed State Key behind it. The
@@ -4165,7 +4169,7 @@ hatchling.
 |---|---|---|---|---|---|
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `InvalidData[T]`, `StoredDataIssue`, `ObjectKey`, `InvalidDataError`, `ReadTrace`, `DatabaseCall`, `ExecutionLog`, `TransactionAttempt`, `TransactionResult`, `TransactionInProgressError`, `TransactionNotCommittedError`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `WireValue`, `InvalidData[T]`, `StoredDataIssue`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `ReadTrace`, `DatabaseCall`, `ExecutionLog`, `TransactionAttempt`, `TransactionResult`, `TransactionInProgressError`, `TransactionNotCommittedError`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

@@ -750,9 +750,10 @@ def _wire_object_key(key: ObjectKey) -> dict[str, object]:
 # every write choreography unit — a writeSequence entry, a scenario write step, a
 # conflict attempt — through the SHIPPED ``db.transact`` entry point (one
 # transaction per unit, ``clock=FixedClock(<entry at>)``, ADR 0010), buffered
-# through the neutral ``Transaction.write_neutral`` ingress + ``UnitOfWork.observe`` (never
-# the typed instance verbs, which this engine's case-driven metamodel has no
-# compiled classes for). The COMPILE lane still lowers PURELY (no database,
+# through the neutral ``Transaction.write_neutral`` ingress carrying the evidence
+# a bridge read retained (never the typed instance verbs, which this engine's
+# case-driven metamodel has no compiled classes for). The COMPILE lane still
+# lowers PURELY (no database,
 # ``build_write_planner(...).plan`` / ``stream_lowered``) — that pure lowering is
 # ALSO what the RUN lane's emissions/round-trips observation grades against,
 # since both are the SAME deterministic computation over the SAME
@@ -971,8 +972,8 @@ ObservedNodes = tuple[RetainedObservation, ...]
 GroupObservations = list[RetainedObservation]
 
 # What a write hands `Transaction.write_neutral` as the evidence it settles
-# against: the active unit of work's own Observation Key where a grouped find
-# issued one, the case's own authored or tracked Write Observation otherwise.
+# against: the Observed State Key of a claim a grouped find retained where one
+# ran, the case's own authored or tracked Write Observation otherwise.
 type WriteEvidence = ObservedStateKey | WriteObservation | None
 
 
@@ -984,8 +985,8 @@ class _ResolvedWrite:
     The two evidence fields are deliberately separate carriers of related facts.
     ``execution_evidence`` is what the REAL write hands
     :meth:`~parallax.snapshot.handle.Transaction.write_neutral`, which may be an
-    Observation Key the active unit of work issued and which only that unit of
-    work can dereference. ``oracle_observation`` is the same evidence as a value,
+    Observed State Key naming a claim only the active unit of work can
+    dereference. ``oracle_observation`` is the same evidence as a value,
     for the PURE re-lowering (:func:`_lower_resolved`) that plans with no unit of
     work behind it. Neither substitutes for the other, and an entry needing no
     evidence at all carries neither.
@@ -1190,7 +1191,7 @@ def _build_temporal_instruction(
     (:func:`_refuse_unaccounted_document_milestone`), are both refused first.
     Given one, the entry's own
     step named a find of its `uow` group with ``on``, and the evidence is the
-    Observation Key the active unit of work filed that node under
+    Observed State Key the claim that node carries is addressed by
     (:func:`_settled_against_source`).
 
     The corpus and canonical instruction share the same ``validFrom`` / ``until``
@@ -1832,12 +1833,14 @@ def _build_instructions(
 
 
 def _observed_for(observations: GroupObservations, key: ObjectKey) -> RetainedObservation | None:
-    """The LATEST record this group's finds filed for ``key``, or ``None``.
+    """The LATEST claim this group's finds retained for ``key``, or ``None``.
 
     Latest rather than first: a versioned Non-Temporal target holds one row per
-    primary key, so a second find of it observes the same object again and its
-    evidence supersedes the earlier reading — the overwrite production's own
-    observation record performs, expressed over an ordered store instead.
+    primary key, so a second find of it reads whatever state the row now stands
+    in, and a write this group authors next settles against that reading rather
+    than against a stale one. Production keeps every observed state distinct and
+    lets each source value name its own; an ordered store scanned from the end
+    is how a lane holding instructions instead of values reaches the same one.
     """
     for record in reversed(observations):
         if record.key.object == key:
@@ -4282,7 +4285,7 @@ class _ConflictWrite:
         """This row as the buffer item both write consumers take. Its Version
         Observation is evidence the case authored and this lane holds directly,
         so the real write and the pure oracle settle against the same value and
-        no Observation Key stands between them."""
+        no Observed State Key stands between them."""
         return _ResolvedWrite(self.instruction, self.observation, self.observation)
 
 

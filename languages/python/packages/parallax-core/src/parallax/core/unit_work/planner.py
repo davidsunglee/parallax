@@ -5,10 +5,9 @@ shapes (m-unit-work).
 entity spellings and family membership, computed once per flush and threaded
 through every stage that needs it — :mod:`~parallax.core.unit_work.
 write_planner`'s coalescing, batching, ordering, and finalization stages, and
-this module's own :func:`object_key`. :data:`BufferItem` is the buffered-write
-shape those stages consume: an ordinary write instruction, or a materializing
-predicate write's compact
-:class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup`.
+this module's own :func:`object_key`. The buffered-write shapes those stages
+consume are :mod:`~parallax.core.unit_work.materialized`'s, which is also where
+the evidence they carry lives.
 
 Bare (non-underscored) names here are intra-package shared infrastructure —
 privacy is carried by ``__all__`` and by this being an internal engine seam
@@ -36,17 +35,14 @@ from parallax.core.metamodel import (
 )
 from parallax.core.temporal_read import Edge, milestone_edge_from_members
 from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
-from parallax.core.unit_work.materialized import MaterializedWriteGroup, ObservedKeyedWrite
 from parallax.core.unit_work.observe import TemporalObservation, WriteObservation
 
 __all__ = [
-    "BufferItem",
     "ObjectKey",
     "ObservedStateKey",
     "Targets",
     "TemporalStateKey",
     "VersionedStateKey",
-    "buffered_instruction",
     "object_key",
     "observed_state_key",
     "primary_key_names",
@@ -248,40 +244,6 @@ def targets(model: Metamodel) -> Targets:
         if counts[entity.identity.name] == 1:
             by_spelling.setdefault(entity.identity.name, entity)
     return Targets(model=model, by_spelling=by_spelling, families=inheritance.view(model))
-
-
-# One buffer item: an ordinary write instruction, a keyed write travelling with
-# the observation its verb resolved for it, or a materializing predicate write's
-# compact Materialized Write Group (`m-unit-work` "Materialized Write Groups",
-# ADR 0014). A group is buffered as ONE opaque item at the call
-# position (never split, never reordered internally) — EXEMPT from same-object
-# coalescing (a materializing resolve only ever matches EXISTING rows, which
-# read-your-own-writes has already flushed past any pending same-key insert,
-# so no coalescing candidate can structurally arise) and from cross-unit
-# reordering (dependency ordering moves it as ONE block, ranked by its own
-# target entity, never reordering its rows internally). An observed keyed write
-# coalesces and orders exactly as its bare instruction would, and — like an
-# observed write today — never merges into a multi-row batch, because everything
-# an observation licenses is per-row (the milestone the write addresses, the
-# version it advances from, the gate it binds under optimistic mode, and the
-# single row each expects to affect) while a merged statement holds one address,
-# one assignment shape, and one affected-row total. Both settle directly into
-# Planned Steps at finalization; a frozen Write Plan never carries either type
-# at all.
-BufferItem = WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup
-
-
-def buffered_instruction(item: BufferItem) -> WriteInstruction:
-    """The write instruction ``item`` carries, unwrapped from any envelope.
-
-    A Materialized Write Group answers the predicate write it materialized,
-    which is what dependency ordering ranks it by.
-    """
-    if isinstance(item, MaterializedWriteGroup):
-        return item.mutation
-    if isinstance(item, ObservedKeyedWrite):
-        return item.instruction
-    return item
 
 
 def object_key(instruction: WriteInstruction, model: Metamodel) -> ObjectKey | None:

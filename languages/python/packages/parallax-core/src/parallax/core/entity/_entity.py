@@ -27,6 +27,7 @@ from parallax.core.entity._declaration import (
 )
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
+    LIFECYCLE_STATE_SLOT,
     DeclarationKind,
     EntityHeader,
     build_class,
@@ -702,6 +703,38 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         """Refused for :meth:`__copy__`'s reason, plus deep-copied originals."""
         del memo
         raise _use_edit(type(self), "__deepcopy__") from None
+
+    def __getstate__(self) -> dict[Any, Any]:
+        """Serialize as ordinary domain data: declared member values, and no
+        lifecycle state.
+
+        A pickled value crosses a boundary the lifecycle state cannot. That state
+        is one lifecycle's private record of a value IT materialized — the views
+        it loaded, the coordinates it read at, and the private hint a keyed write
+        reads its evidence off — and every one of those facts is about a live
+        read in a live process. Reconstructing them elsewhere would hand a caller
+        a value that answers a lifecycle's inspection surface, and claims a
+        stored row's write evidence, on the strength of nothing but a byte
+        string; the retained observation behind such a hint would come back as a
+        fresh object whose consumed state is whatever the pickling happened to
+        capture. What comes back is therefore an ordinary constructed value with
+        no keyed-source status, which is exactly what it is, and a caller that
+        means to write it reads the row again.
+
+        The Change Record travels: it is authored state, written by
+        :meth:`edit` from values the caller supplied, and it earns a write
+        nothing, because provenance is the lifecycle state this drops.
+        """
+        state = super().__getstate__()
+        instance = cast("dict[str, Any]", state.get("__dict__", {}))
+        if LIFECYCLE_STATE_SLOT not in instance:
+            return state
+        return {
+            **state,
+            "__dict__": {
+                name: value for name, value in instance.items() if name != LIFECYCLE_STATE_SLOT
+            },
+        }
 
 
 class TxTemporal(Entity, _mint=FRAMEWORK_MINT, _axes=(TemporalDimension.TRANSACTION_TIME,)):

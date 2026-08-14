@@ -124,12 +124,11 @@ def test_keyed_insert_through_the_verb_follows_the_entity_layout_slot_order() ->
 
 def test_update_lowers_to_its_keyed_dml() -> None:
     # m-unit-work-005, migrated to the m-opt-lock observation flow: a keyed
-    # update (SET the non-PK members, WHERE the
-    # key, version advanced from THIS unit of work's own recorded
-    # observation). The edited copy is built from a row `tx.find` fetches
-    # INSIDE this transaction — a versioned update requires a prior
-    # observation; an edited copy fetched outside the writing transaction
-    # cannot be updated directly (python.md §5).
+    # update (SET the non-PK members, WHERE the key, version advanced from the
+    # observation the source value itself retained). The edited copy is built
+    # from a row `tx.find` fetches INSIDE this transaction, which is what an
+    # effective-Locking target requires; an effective-Optimistic one may import
+    # a standalone source's own observation instead (python.md §5).
     #
     # `Account` declares an explicit version, so the default `optimistic`
     # preference resolves it to the Optimistic strategy: the find takes no
@@ -1330,9 +1329,10 @@ def test_a_read_outside_the_writing_transaction_is_still_this_source(second_hand
 
 @pytest.mark.parametrize("second_handle", [True, False], ids=["second-handle", "same-handle"])
 def test_an_unversioned_update_of_such_a_value_is_addressed_by_its_key(second_handle: bool) -> None:
-    # Provenance carries no cross-read guarantee, and an unversioned target has
-    # nothing to gate on — so the update the framework never observed a read for
-    # is planned and emitted, which is what unversioned means.
+    # Provenance carries no cross-read guarantee, and the write path asks an
+    # unversioned Non-Temporal target for no evidence of its own — such a row
+    # observes no state to carry any — so this update is planned and emitted,
+    # addressed by its key alone.
     port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
     writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
 

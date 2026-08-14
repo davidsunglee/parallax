@@ -4,9 +4,9 @@
 (read-your-own-writes), the lock suffix each materialized level's own Effective
 Concurrency Strategy calls for, statement and
 milestone pin derivation, history statements, which of the two entry points
-hands the executor an observation collector and what that collector takes, and
-the observations a read leaves behind — proven through the writes they license
-or refuse. Also the spec §3 stale-web-edit recipe's Docker-free halves.
+stamps its participation on the values it publishes, and the evidence a read
+leaves on those values — proven through the writes they license or refuse. Also
+the spec §3 stale-web-edit recipe's Docker-free halves.
 """
 
 from __future__ import annotations

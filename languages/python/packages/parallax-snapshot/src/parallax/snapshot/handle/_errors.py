@@ -105,13 +105,14 @@ class SnapshotMaterializationError(RuntimeError):
 
 
 class UnobservedWriteError(LookupError):
-    """A neutral write named an Observation Key this unit of work never filed.
+    """A neutral write named an Observed State Key no evidence of this unit of
+    work's is reachable under.
 
-    An Observation Key is a REFERENCE into the transaction's own observation
-    record, so ``tx.write_neutral`` dereferences it at the call rather than
-    carrying it to planning: the defect is about what was read, and letting the
-    write settle bare would surface it at flush as a licensing failure about what
-    is being written — the wrong cause, one layer too late.
+    An Observed State Key is a REFERENCE into the transaction's own weak index of
+    the states its reads saw, so ``tx.write_neutral`` dereferences it at the call
+    rather than carrying it to planning: the defect is about what was read, and
+    letting the write settle bare would surface it at flush as a licensing
+    failure about what is being written — the wrong cause, one layer too late.
 
     A ``LookupError`` because that is what it is: the key resolved to nothing.
     Distinct from the `m-opt-lock` licensing refusals, which report that a

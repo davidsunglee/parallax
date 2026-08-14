@@ -17,9 +17,9 @@ plus the write evidence a read leaves on the values it publishes:
   a decision taken BEFORE any row derivation has to use;
 * the observation record a read leaves behind (:class:`ReadObservations`), its
   retention onto the source values that observed it (:func:`retain_evidence`,
-  :data:`ReadSources`, :func:`retained_observations`), the resolution a keyed
-  verb runs over one such source (:func:`source_hint_of`,
-  :func:`resolve_write_evidence`, :class:`WriteEvidenceError`,
+  :data:`ReadSources`), the resolution a keyed verb runs over one such source
+  (:func:`source_hint_of`, :func:`resolve_write_evidence`,
+  :class:`WriteEvidenceError`,
   :data:`WRITE_EVIDENCE_CODES`), plus the per-row column contributions a
   materializing predicate-write resolve streams into its
   :class:`~parallax.core.unit_work.MaterializedWriteGroup`
@@ -129,7 +129,6 @@ __all__ = [
     "predecessor_payload",
     "resolve_write_evidence",
     "retain_evidence",
-    "retained_observations",
     "source_hint_of",
     "source_pin",
     "validate_source_pin",
@@ -341,16 +340,6 @@ projection it converted into at the same time, and by the time a materializer
 builds the value the row is gone."""
 
 
-def retained_observations(sources: ReadSources) -> tuple[RetainedObservation, ...]:
-    """The evidence ``sources`` retained, in materialization order.
-
-    What the first-party conformance bridge settles its own writes against, so
-    it reads what production filed rather than deriving a second reading that
-    would have to agree with production's by inspection.
-    """
-    return tuple(hint.observation for hint in sources.values() if hint.observation is not None)
-
-
 class ObservationLedger(Protocol):
     """The unit of work an observing read files into, satisfied structurally.
 
@@ -495,10 +484,12 @@ def _observed_object(
 
 
 type WriteEvidenceErrorCode = Literal["write-evidence-unavailable", "write-evidence-consumed"]
-"""The write-evidence refusals a keyed verb raises today.
+"""The write-evidence refusals a keyed verb raises.
 
-The family is not yet complete: the claim algebra that decides whether a second
-intent against one observed state may coalesce adds its own code beside these.
+The two partition what can be wrong with a source's evidence at the verb: there
+is none the target Entity's Effective Concurrency Strategy can use, or the
+evidence there is has been spent. A conflict the database discovers later is a
+different thing entirely and keeps its own flush-time classification.
 """
 
 WRITE_EVIDENCE_CODES: Final[frozenset[str]] = frozenset(
@@ -568,8 +559,10 @@ def resolve_write_evidence(
       proves no held lock.
     * **Optimistic** — the license is the database gate, so the retained
       observation IS the evidence and a standalone ``db.find`` source carries it
-      exactly as a participating read's does. Evidence a successful flush already
-      spent is refused: the state it observed is not the stored state any more.
+      exactly as a participating read's does.
+
+    Evidence a successful flush already spent is refused under BOTH strategies
+    (:func:`_refuse_consumed`).
 
     Absence stays structural: a target that observes no state resolves to
     ``None`` and buffers bare.
@@ -590,6 +583,7 @@ def resolve_write_evidence(
                 ),
                 object_key=object_key,
             )
+        _refuse_consumed(record, observation, object_key)
         return observation
     if observation is None:
         raise WriteEvidenceError(
@@ -601,17 +595,34 @@ def resolve_write_evidence(
             ),
             object_key=object_key,
         )
-    if observation.consumed:
-        raise WriteEvidenceError(
-            code="write-evidence-consumed",
-            message=(
-                f"{record.identity.canonical}: the state this value observed was already "
-                "written by a flush of this unit of work, so its evidence is spent; read the "
-                "row again and write what that read returns"
-            ),
-            object_key=object_key,
-        )
+    _refuse_consumed(record, observation, object_key)
     return observation
+
+
+def _refuse_consumed(
+    record: EntityMetadata, observation: RetainedObservation | None, object_key: ObjectKey
+) -> None:
+    """Refuse evidence a successful flush already spent (`m-unit-work` "A
+    successful flush consumes").
+
+    Strategy-independent, because what consumption says is that the state the
+    value observed is no longer the stored state: this unit of work's own write
+    moved the row on. A held shared row lock does not restore it — the Locking
+    source's own write is what retired it — so a second write off the same
+    source is refused under Locking exactly as under Optimistic, and the caller
+    reads again.
+    """
+    if observation is None or not observation.consumed:
+        return
+    raise WriteEvidenceError(
+        code="write-evidence-consumed",
+        message=(
+            f"{record.identity.canonical}: the state this value observed was already "
+            "written by a flush of this unit of work, so its evidence is spent; read the "
+            "row again and write what that read returns"
+        ),
+        object_key=object_key,
+    )
 
 
 def _observes_a_state(meta: Metamodel, declaring_entity: EntityMetadata) -> bool:

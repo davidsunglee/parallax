@@ -88,6 +88,7 @@ from parallax.snapshot.handle._read import (
     find,
     find_history,
     find_rows,
+    published_claims,
     typed_publication,
     wire_publication,
 )
@@ -96,7 +97,6 @@ from parallax.snapshot.handle._write_inputs import (
     WrittenObject,
     metadata_of_instance,
     resolve_write_evidence,
-    retained_observations,
     source_hint_of,
     source_pin,
     validate_source_pin,
@@ -110,7 +110,7 @@ from parallax.snapshot.handle._write_inputs import (
 
 @dataclass(frozen=True, slots=True)
 class ObservedRead:
-    """A participating Wire read paired with the evidence it retained.
+    """A participating Wire read paired with the claims its published nodes carry.
 
     The conformance bridge's own read value, and nothing a developer holds: a
     Snapshot is the whole public result, and an observed-state address is
@@ -118,7 +118,7 @@ class ObservedRead:
     what keeps a bridge caller from re-deriving evidence that would then have to
     agree with production's by inspection. Holding the retained observations is
     also what keeps them alive for the bridge's later writes, exactly as holding
-    the source values would.
+    the published values would.
     """
 
     snapshot: Snapshot[Any]
@@ -289,8 +289,8 @@ class Transaction:
         into one final-value write (`m-unit-work` "Insert-then-update coalesces
         in place"). The version column, if
         any, is never authored here — it is framework-owned end to end
-        (`m-opt-lock`; ADR 0013): the write seam derives its advance from this
-        unit of work's own recorded observation at lowering
+        (`m-opt-lock`; ADR 0013): the write seam derives its advance from the
+        observation the source value itself retained
         (`parallax.snapshot.handle`'s write finalization), never from the edited copy.
 
         ``valid_from`` is the plain Bitemporal correction's Valid-Time instant
@@ -570,8 +570,7 @@ class Transaction:
         # before either runs.
         construction = _materializing(self._construction)
         node = object_query_node(query)
-        snapshot, _ = self._read(node, typed_publication(self._meta, construction))
-        return snapshot
+        return self._read(node, typed_publication(self._meta, construction))
 
     @property
     def wire(self) -> WireTransactionView:
@@ -589,19 +588,21 @@ class Transaction:
         return self._observed_wire_find(node).snapshot
 
     def _observed_wire_find(self, node: ObjectQueryNode) -> ObservedRead:
-        """One participating Wire read, paired with the observations it filed.
+        """One participating Wire read, paired with the claims its PUBLISHED
+        nodes carry.
 
-        Only this read's producer can pair the two, which is why the bridge's
-        value is built here rather than derived from a Snapshot afterwards.
+        The evidence is read off the published values rather than off the read's
+        own retained sources, because a claim belongs to a published Entity node:
+        a projection nothing published — every node under a non-hydrating root —
+        is a value no caller holds, and holding its evidence here would keep
+        write authority alive for a row this read published nothing for.
         """
-        return ObservedRead(*self._read(node, wire_publication(self._meta)))
+        snapshot = self._read(node, wire_publication(self._meta))
+        return ObservedRead(snapshot, published_claims(snapshot))
 
-    def _read[R](
-        self, node: ObjectQueryNode, publication: ResultPublication[R]
-    ) -> tuple[R, tuple[RetainedObservation, ...]]:
-        """One participating read of ``node``, published through ``publication``
-        and paired with the evidence it retained — the whole composition both
-        read interfaces run.
+    def _read[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
+        """One participating read of ``node``, published through ``publication`` —
+        the whole composition both read interfaces run.
 
         The gate precedes the force-flush ``uow.read`` performs, so a refused
         read flushes nothing; each level derives its own lock from this unit of
@@ -609,8 +610,7 @@ class Transaction:
         Read Trace bracket opens BEFORE that flush, so a batch the flush produces
         is appended first and the trace this read closes lands immediately after
         it — the read-dependency causality the Execution Log states positionally
-        (`m-execution-log`). A milestone-set read retains no evidence at all and
-        answers none, which is why its branch returns before the pairing: its
+        (`m-execution-log`). A milestone-set read retains no evidence at all: its
         roots stand at coordinates no keyed write may address.
         """
         preflight(node, model=self._meta, form="graph")
@@ -621,7 +621,7 @@ class Transaction:
                         node, self._meta, self._dialect, self._conn, recorder=recorder
                     )
                 )
-            return publication.from_history(history_result), ()
+            return publication.from_history(history_result)
         with self._attempt.read_trace() as recorder:
             find_result = self._uow.read(
                 lambda: find(
@@ -634,19 +634,22 @@ class Transaction:
                     recorder=recorder,
                 )
             )
-        return publication.from_find(find_result), retained_observations(find_result.sources)
+        return publication.from_find(find_result)
 
     def observed_read(self, query: ObjectQueryNode) -> ObservedRead:
-        """A participating Wire read paired with the observations it filed — the
-        FIRST-PARTY read half of the conformance bridge, not developer surface.
+        """A participating Wire read paired with the claims its published nodes
+        carry — the FIRST-PARTY read half of the conformance bridge, not
+        developer surface.
 
         ``tx.wire.find`` answers the Snapshot alone, which is everything a
         developer can act on: an observation address is implementation state no
         public surface exposes. The conformance engine settles its own writes
-        against the exact evidence production recorded rather than against a
+        against the exact evidence production retained rather than against a
         second derivation, so it needs the pair, and it holds first-party access
-        to ask for it. Both halves come from ONE read — the same statements, the
-        same lock, the same trace — so nothing here is a second execution path.
+        to ask for it. Holding those claims is also what keeps them alive for its
+        later writes, exactly as holding the published values would. Both halves
+        come from ONE read — the same statements, the same lock, the same trace —
+        so nothing here is a second execution path.
         """
         return self._observed_wire_find(query)
 
@@ -746,7 +749,7 @@ class Transaction:
         self._validate_keyed(instruction)
         if isinstance(observation, VersionedStateKey | TemporalStateKey):
             claim = self._resolved_claim(observation)
-            self._uow.buffer(buffered_write(instruction, claim.evidence), claim=claim)
+            self._uow.buffer(buffered_write(instruction, claim))
             return
         self._uow.buffer(buffered_write(instruction, observation))
 
@@ -817,13 +820,13 @@ class Transaction:
         claim: RetainedObservation | None = None,
     ) -> None:
         # `claim` is the retained evidence the verb resolved for THIS write off
-        # the value it was handed. Its own observation is what
-        # `buffered_write` turns into the buffer variant it implies: an
-        # `ObservedKeyedWrite` when there is one, the bare instruction when there
-        # is not, while the claim itself stays with the unit of work, which keeps
-        # it alive while the write is buffered and spends it at a successful
-        # flush. The observation is never an
-        # instruction field — a
+        # the value it was handed, and is what `buffered_write` turns into the
+        # buffer variant it implies: an `ObservedKeyedWrite` carrying both the
+        # observation and the claim when there is one, the bare instruction when
+        # there is not. Riding the buffered item is what keeps the evidence alive
+        # while the write is buffered and what has a successful flush spend
+        # exactly the claims its surviving writes carried. The observation is
+        # never an instruction field — a
         # `WriteInstruction` is a durable, schema-validated document whose
         # `deserialize` refuses the reserved observation control keys outright —
         # so it rides beside the instruction rather than inside it, exactly as a
@@ -856,9 +859,7 @@ class Transaction:
         instruction = instructions.deserialize(doc)
         assert isinstance(instruction, KeyedWrite)  # `doc` carries `rows`
         self._validate_keyed(instruction)
-        self._uow.buffer(
-            buffered_write(instruction, None if claim is None else claim.evidence), claim=claim
-        )
+        self._uow.buffer(buffered_write(instruction, claim))
 
     # --- set-based write verbs (python.md §5) ----------------------------- #
     def update_where(

@@ -351,7 +351,10 @@ class Database:
         The gate, the milestone-set dispatch, and the executor entry are the
         read; which materializer publishes its result is decided only after
         execution has finished. Non-transactional in the same three ways for
-        both: no read lock, no Concurrency Preference, no observation record.
+        both: no read lock, no Concurrency Preference, and no participation
+        stamped on the values it publishes. Their evidence is their own: a
+        standalone read retains the state each row observed exactly as a
+        participating one does, and differs only in the license that carries.
         """
         preflight(node, model=self._meta, form="graph")
         if scans_an_axis(node):
@@ -373,7 +376,8 @@ class Database:
         itself, exactly as a graph-form root does.
 
         Non-transactional, exactly as :meth:`find` is: no read lock, no
-        Concurrency Preference, and no observation record.
+        Concurrency Preference, and no stamped participation — and, like every
+        row-form read, no retained evidence at all.
         """
         return read_rows(query, self._meta, self._dialect, self._port)
 

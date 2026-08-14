@@ -304,6 +304,22 @@ def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> Non
         )
 
 
+def test_a_carrier_refuses_a_claim_naming_other_evidence() -> None:
+    # The claim a carrier holds is the retained form of the observation it
+    # settles against, and the flush spends the claim while the planner settles
+    # the observation. Two different pieces of evidence in one carrier would let
+    # a write gate on one state and retire another's claim, so the pairing is
+    # refused where the carrier is built.
+    state = VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7)
+    other = RetainedObservation(state, VersionObservation(observed_version=7), None)
+    with pytest.raises(ValueError, match="the retained form of the observation"):
+        ObservedKeyedWrite(
+            instruction=KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},)),
+            observation=VersionObservation(observed_version=7),
+            claim=other,
+        )
+
+
 def test_a_predicate_write_cannot_be_buffered_with_one_observation() -> None:
     # A predicate-selected write settles per RESOLVED row, against a Materialized
     # Write Group's own aligned observation columns. There is no single

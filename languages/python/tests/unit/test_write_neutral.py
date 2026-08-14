@@ -13,6 +13,7 @@ settles against.
 from __future__ import annotations
 
 import datetime as dt
+import gc
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import cast
@@ -29,8 +30,9 @@ from _transact_support import (
 
 from _support import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
-from parallax.core import TX_TIME
+from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import Row
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, entity_by_name
@@ -41,6 +43,7 @@ from parallax.core.unit_work import (
     EscapedTransactionError,
     ObjectKey,
     ObservedStateKey,
+    RetainedObservation,
     TemporalStateKey,
     VersionedStateKey,
     VersionObservation,
@@ -48,6 +51,7 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     instructions,
 )
+from parallax.snapshot import InvalidData
 from parallax.snapshot.handle import (
     Database,
     DeferredFeatureError,
@@ -61,6 +65,22 @@ ACCOUNT_META = model_of(ACCOUNT)
 # the Optimistic strategy and every keyed update binds the observed version last.
 UPDATE_SQL = "update account set balance = %s, version = %s where id = %s and version = %s"
 ACCOUNT_ROW: Row = {"id": 3, "owner": "Grace", "balance": Decimal("10"), "version": 1}
+_TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_INFINITY = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
+_TEMPORAL_BOUNDS: Row = {
+    "from_z": _TX_START,
+    "thru_z": _INFINITY,
+    "in_z": _TX_START,
+    "out_z": _INFINITY,
+}
+
+
+def _policy_row() -> Row:
+    return {"id": 1, "name": "P-1", **_TEMPORAL_BOUNDS}
+
+
+def _coverage_row(amount: object = Decimal("250.00")) -> Row:
+    return {"id": 10, "policy_id": 1, "amount": amount, **_TEMPORAL_BOUNDS}
 
 
 def _account() -> EntityIdentity:
@@ -142,6 +162,48 @@ def test_a_participating_bridge_read_answers_the_state_the_unit_of_work_retained
     assert port.ops == [("begin",), ("read", FIND_SQL_UNLOCKED, (3,)), ("commit",)]
 
 
+def test_a_bridge_read_answers_the_claim_of_every_node_it_published() -> None:
+    # Every independently writable node carries its own claim, included children
+    # among them, so a bridge write against a child settles against the state
+    # that child's own row was read at rather than against its root's.
+    port = RecordingPort(row_queue=([_policy_row()], [_coverage_row()]))
+    query = object_query_node(
+        Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
+    )
+
+    def fn(tx: Transaction) -> tuple[ObservedStateKey, ...]:
+        return tuple(claim.key for claim in tx.observed_read(query).observations)
+
+    keys = db_for(POLICY_MODEL, port).transact(fn).value
+    assert [key.object.entity.name for key in keys] == ["Policy", "Coverage"]
+    assert [key.object.primary_key for key in keys] == [(("id", 1),), (("id", 10),)]
+
+
+def test_a_non_hydrating_root_answers_no_claim_for_the_tree_below_it() -> None:
+    # A claim belongs to a published Entity node. A non-hydrating root publishes
+    # no value at all, and that covers its whole tree: the root's own hydratable
+    # projection is excluded with the child that spoiled it, so the bridge holds
+    # nothing and — once the read result is released — no observed state of that
+    # row is addressable in the unit of work either. Holding the read's raw
+    # sources instead would leave write authority for a row nothing published.
+    port = RecordingPort(row_queue=([_policy_row()], [_coverage_row(amount=None)]))
+    query = object_query_node(
+        Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
+    )
+
+    def fn(tx: Transaction) -> tuple[tuple[RetainedObservation, ...], int]:
+        read = tx.observed_read(query)
+        record = read.snapshot.checked().result()
+        assert isinstance(record, InvalidData)
+        assert cast("InvalidData[object]", record).data is None
+        gc.collect()
+        return read.observations, len(tx._uow._observations)  # pyright: ignore[reportPrivateUsage] - the index is first-party state
+
+    claims, indexed = db_for(POLICY_MODEL, port).transact(fn).value
+    assert claims == ()
+    assert indexed == 0
+
+
 def test_a_participating_read_force_flushes_pending_bridge_writes_first() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
 
@@ -180,6 +242,54 @@ def test_an_explicit_observation_licenses_the_version_advance() -> None:
         ),
     )
     assert port.ops[1][1:] == (UPDATE_SQL, (11, 2, 3, 1))
+
+
+def test_a_write_eliminated_before_dml_leaves_its_claim_unspent() -> None:
+    # Consumption follows the surviving WRITE, never the batch it flushed in. The
+    # key-only update is known no-op work and is eliminated before any DML, so the
+    # claim it carried is still about stored state — even though the insert beside
+    # it in the same flush reached the database and made the plan non-empty.
+    port = RecordingPort(rows=[ACCOUNT_ROW])
+    key_only = instructions.deserialize(
+        {
+            "mutation": "update",
+            "entity": "parallax.compatibility.Account",
+            "rows": [{"id": 3}],
+        }
+    )
+    insert = instructions.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "parallax.compatibility.Account",
+            "rows": [{"id": 7, "owner": "Newton", "balance": 5, "version": 1}],
+        }
+    )
+
+    def fn(tx: Transaction) -> RetainedObservation:
+        read = tx.observed_read(_account_query())
+        claim = read.observations[0]
+        tx.write_neutral(key_only, observation=claim.key)
+        tx.write_neutral(insert)
+        return claim
+
+    spent = _run(port, fn)
+    assert [op[0] for op in port.ops] == ["begin", "read", "write", "commit"]
+    assert spent.consumed is False
+
+
+def test_a_surviving_write_spends_its_own_claim() -> None:
+    # The other half of the same rule: the claim a settled write carried is spent
+    # once the executor returns, so a later transaction handed the same still-live
+    # evidence is refused rather than writing over what this one wrote.
+    port = RecordingPort(rows=[ACCOUNT_ROW])
+
+    def fn(tx: Transaction) -> RetainedObservation:
+        read = tx.observed_read(_account_query())
+        claim = read.observations[0]
+        tx.write_neutral(_update(11), observation=claim.key)
+        return claim
+
+    assert _run(port, fn).consumed is True
 
 
 def test_an_observed_state_key_resolves_against_this_units_own_index() -> None:

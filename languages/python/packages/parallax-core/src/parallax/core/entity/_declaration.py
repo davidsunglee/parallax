@@ -188,7 +188,11 @@ Entity free of every lifecycle's vocabulary.
 
 The value lands in the instance ``__dict__`` through ``object.__setattr__``,
 alongside field values but outside the Pydantic field set, so it is invisible to
-serialization, equality, and ``repr``."""
+canonical serialization, equality, and ``repr``. It is invisible to pickling
+too, and there by an explicit refusal rather than by the field set: the instance
+dictionary is what pickling carries, so ``Entity.__getstate__`` drops this slot
+from it and an unpickled value carries no lifecycle's private record of a read
+it did not come from."""
 
 _ATTR_TEXT = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
 _REL_TEXT = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)

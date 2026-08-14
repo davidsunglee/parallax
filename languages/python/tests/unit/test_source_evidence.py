@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import gc
+import pickle
 from decimal import Decimal
 from typing import Any, cast
 
@@ -24,6 +25,7 @@ from _transact_support import (
     account_db,
     balance_row,
     db_for,
+    new_account,
 )
 
 from _support import mirrored_models as mm
@@ -35,7 +37,7 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot import InvalidData, WireEntity, connect
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import Transaction, WriteEvidenceError
+from parallax.snapshot.handle import KeyedWriteValueError, Transaction, WriteEvidenceError
 from parallax.snapshot.materialize import source_hint_of
 
 _ACCOUNT_ROW: dict[str, object] = {
@@ -68,19 +70,23 @@ def test_a_typed_node_carries_the_state_its_row_observed() -> None:
 
 
 def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() -> None:
-    # Both materializers attach the SAME retained observation, so the two
-    # representations of one row license exactly the same writes. What differs is
-    # the value a caller holds, never the evidence behind it.
-    port = _account_port()
-    db = account_db(port)
-    typed = db.find(mm.Account.where(mm.Account.id == 1)).result()
-    wire = db.wire.find(mm.Account.where(mm.Account.id == 1)).result()
-    assert isinstance(wire, WireEntity)
-    typed_hint = cast("Any", _typed_hint(typed))
-    wire_hint = cast("Any", source_hint_of(wire))
+    # The two representations of one observed state share ONE retained
+    # observation object, not equal copies of one: consumption is the mutable
+    # fact living on that object, so a second copy would keep licensing writes
+    # after the flush that spent the first. Both reads participate and the typed
+    # source stays live across the second, which is what makes them one state.
+    port = RecordingPort(row_queue=([dict(_ACCOUNT_ROW)], [dict(_ACCOUNT_ROW)]))
+
+    def fn(tx: Transaction) -> tuple[object, object]:
+        typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        wire = tx.wire.find(mm.Account.where(mm.Account.id == 1)).result()
+        assert isinstance(wire, WireEntity)
+        return _typed_hint(typed), source_hint_of(wire)
+
+    typed_hint, wire_hint = (cast("Any", hint) for hint in account_db(port).transact(fn).value)
     assert wire_hint is not None
     assert wire_hint.object_key == typed_hint.object_key
-    assert wire_hint.observation.key == typed_hint.observation.key
+    assert wire_hint.observation is typed_hint.observation
 
 
 # --------------------------------------------------------------------------- #
@@ -113,6 +119,36 @@ def test_plain_dict_conversion_strips_a_wire_nodes_keyed_source_status() -> None
     assert type(converted) is dict
     assert not isinstance(converted, WireEntity)
     assert not hasattr(converted, "_source")
+
+
+def test_pickling_a_typed_node_strips_its_keyed_source_status() -> None:
+    # A pickled value crosses a boundary the lifecycle state cannot: the hint and
+    # the claim behind it describe a live read, and a round trip would otherwise
+    # rebuild the claim as a fresh object whose consumed state is whatever the
+    # bytes happened to capture. What comes back is ordinary domain data, so the
+    # verbs refuse it as a value no read of this store produced.
+    port = _account_port()
+    db = account_db(port)
+    node = db.find(mm.Account.where(mm.Account.id == 1)).result()
+
+    restored = cast("mm.Account", pickle.loads(pickle.dumps(node)))
+    assert restored == node
+    assert snapshot_state_of(restored) is None
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        db.transact(lambda tx: tx.update(restored.edit(balance=Decimal("125.00"))))
+    assert refusal.value.code == "write-value-not-stored"
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_pickling_a_plainly_constructed_value_has_nothing_to_strip() -> None:
+    # The other half of the same boundary: a value no read produced carries no
+    # lifecycle state, so its round trip is the ordinary one and the result is
+    # the value it always was.
+    fresh = new_account()
+    restored = cast("mm.Account", pickle.loads(pickle.dumps(fresh)))
+    assert restored == fresh
+    assert snapshot_state_of(restored) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -211,6 +247,26 @@ def test_reusing_a_consumed_source_after_the_flush_is_refused() -> None:
 
     with pytest.raises(WriteEvidenceError) as refusal:
         db.transact(second)
+    assert refusal.value.code == "write-evidence-consumed"
+    assert [op[0] for op in port.ops].count("write") == 1
+
+
+def test_a_locking_source_consumed_by_a_flush_cannot_drive_a_second_write() -> None:
+    # Consumption is strategy-independent. The shared row lock licenses a write
+    # against the state the locked read saw; it says nothing about a state this
+    # unit of work has itself already written past, so the participating source
+    # that drove the surviving write carries no authority for a second one. The
+    # dependent read in the middle is what forces that first write out.
+    port = RecordingPort(row_queue=([dict(_ACCOUNT_ROW)], [dict(_ACCOUNT_ROW)]))
+
+    def fn(tx: Transaction) -> None:
+        node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.find(mm.Account.where(mm.Account.id == 1))
+        tx.update(node.edit(balance=Decimal("150.00")))
+
+    with pytest.raises(WriteEvidenceError) as refusal:
+        account_db(port).transact(fn, concurrency="locking")
     assert refusal.value.code == "write-evidence-consumed"
     assert [op[0] for op in port.ops].count("write") == 1
 

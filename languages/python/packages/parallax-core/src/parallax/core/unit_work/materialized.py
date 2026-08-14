@@ -16,7 +16,14 @@ primary-key shape, one immutable value column per key attribute, and either an
 aligned version column or complete Predecessor Columns.
 
 A keyed write's evidence is resolved once, at the developer verb that holds the
-value being written, and rides beside the instruction from there.
+value being written, and rides beside the instruction from there — the retained
+claim included, so which write spends which evidence is a fact about the buffered
+item rather than a list kept beside it.
+
+:data:`BufferItem` and :func:`buffered_instruction` live here for that reason:
+the envelopes ARE the buffer's shapes, so the alias naming them and the unwrap
+that reads through them belong beside the two rather than in the planning
+foundation that consumes them.
 """
 
 from __future__ import annotations
@@ -31,13 +38,16 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core.unit_work.observe import WriteObservation
+from parallax.core.unit_work.retain import RetainedObservation
 
 __all__ = [
+    "BufferItem",
     "GroupObservations",
     "MaterializedWriteGroup",
     "ObservedKeyedWrite",
     "TemporalColumns",
     "VersionColumns",
+    "buffered_instruction",
     "buffered_write",
 ]
 
@@ -151,10 +161,20 @@ class ObservedKeyedWrite:
     so it is refused here rather than at the far end of planning. Batching never
     reaches this state either: a run of carriers is excluded from merging, and
     the merged instruction a collapsing run produces is always bare.
+
+    ``claim`` is the RETAINED observation this write settles against, present
+    when the evidence came from a read's own claim and absent when the producer
+    held the observation as a bare value with nothing to spend. It rides here
+    rather than in a list kept beside the buffer because consumption follows the
+    write: a carrier the earlier stages retire takes its claim out of the flush
+    with it, and only a carrier that reaches settlement can spend one. Its
+    evidence IS this carrier's observation, so the two can never name different
+    states.
     """
 
     instruction: KeyedWrite
     observation: WriteObservation
+    claim: RetainedObservation | None = None
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:
@@ -169,29 +189,80 @@ class ObservedKeyedWrite:
                 f"{len(self.instruction.rows)} rows (m-unit-work: each observed version "
                 "belongs to exactly one row)"
             )
+        if self.claim is not None and self.claim.evidence is not self.observation:
+            raise ValueError(
+                "a claim is the retained form of the observation its carrier settles against: "
+                f"`{self.instruction.mutation}` on {self.instruction.entity!r} was built with a "
+                "claim naming other evidence (m-unit-work: one resolution serves the address, "
+                "the gate, and the license)"
+            )
 
 
 def buffered_write(
-    instruction: WriteInstruction, observation: WriteObservation | None
+    instruction: WriteInstruction, evidence: WriteObservation | RetainedObservation | None
 ) -> WriteInstruction | ObservedKeyedWrite:
     """``instruction`` as the buffer item it travels to planning as: wrapped in
-    its carrier when its verb resolved an observation for it, bare when it
-    resolved none.
+    its carrier when its verb resolved evidence for it, bare when it resolved
+    none.
 
-    The one place the optional-observation-to-carrier decision is made, so every
+    The one place the optional-evidence-to-carrier decision is made, so every
     producer — the developer verbs, the conformance engine's case translation,
     and the test probes that stand in for both — spells absence the same way and
     inherits the carrier's own refusals: an insert and a multi-row instruction
-    are both refused here, whatever produced the observation.
+    are both refused here, whatever produced the evidence.
+
+    ``evidence`` says which of the two things a producer holds. A
+    :class:`~parallax.core.unit_work.RetainedObservation` is a READ's own claim,
+    and travels whole so the flush that emits its write can spend it; a bare
+    :class:`~parallax.core.unit_work.observe.WriteObservation` is a value the
+    caller holds directly, and claims nothing for a flush to spend.
     """
-    if observation is None:
+    if evidence is None:
         return instruction
     if not isinstance(instruction, KeyedWrite):
         raise TypeError(
             "only a keyed write carries a Write Observation; a predicate-selected write "
             "materializes to a Materialized Write Group with its own observation columns"
         )
-    return ObservedKeyedWrite(instruction=instruction, observation=observation)
+    if isinstance(evidence, RetainedObservation):
+        return ObservedKeyedWrite(
+            instruction=instruction, observation=evidence.evidence, claim=evidence
+        )
+    return ObservedKeyedWrite(instruction=instruction, observation=evidence)
+
+
+# One buffer item: an ordinary write instruction, a keyed write travelling with
+# the observation its verb resolved for it, or a materializing predicate write's
+# compact Materialized Write Group (`m-unit-work` "Materialized Write Groups",
+# ADR 0014). A group is buffered as ONE opaque item at the call
+# position (never split, never reordered internally) — EXEMPT from same-object
+# coalescing (a materializing resolve only ever matches EXISTING rows, which
+# read-your-own-writes has already flushed past any pending same-key insert,
+# so no coalescing candidate can structurally arise) and from cross-unit
+# reordering (dependency ordering moves it as ONE block, ranked by its own
+# target entity, never reordering its rows internally). An observed keyed write
+# coalesces and orders exactly as its bare instruction would, and — like an
+# observed write today — never merges into a multi-row batch, because everything
+# an observation licenses is per-row (the milestone the write addresses, the
+# version it advances from, the gate it binds under optimistic mode, and the
+# single row each expects to affect) while a merged statement holds one address,
+# one assignment shape, and one affected-row total. Both settle directly into
+# Planned Steps at finalization; a frozen Write Plan never carries either type
+# at all.
+BufferItem = WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup
+
+
+def buffered_instruction(item: BufferItem) -> WriteInstruction:
+    """The write instruction ``item`` carries, unwrapped from any envelope.
+
+    A Materialized Write Group answers the predicate write it materialized,
+    which is what dependency ordering ranks it by.
+    """
+    if isinstance(item, MaterializedWriteGroup):
+        return item.mutation
+    if isinstance(item, ObservedKeyedWrite):
+        return item.instruction
+    return item
 
 
 def _observation_length(observations: GroupObservations) -> int:
