@@ -39,10 +39,10 @@ then:
     mariadb: select sup_id, name, in_z, out_z from supplier where in_z <= '2024-04-01 00:00:00' and out_z > '2024-04-01 00:00:00'
   graph:
     Supplier:
-      - sup_id: 1
+      - id: 1
         name: Nordic Foods
-        in_z: "2024-01-01T00:00:00+00:00"
-        out_z: "2024-06-01T00:00:00+00:00"
+        txStart: "2024-01-01T00:00:00+00:00"
+        txEnd: "2024-06-01T00:00:00+00:00"
         address:
           street: 1 Old Street
           city: Oslo
@@ -50,10 +50,10 @@ then:
             country: "NO"
           phones:
             - { type: home, number: '555-0100' }
-      - sup_id: 2
+      - id: 2
         name: Baltic Traders
-        in_z: "2024-02-01T00:00:00+00:00"
-        out_z: infinity
+        txStart: "2024-02-01T00:00:00+00:00"
+        txEnd: infinity
         address:
           street: 5 Port Road
           city: Riga

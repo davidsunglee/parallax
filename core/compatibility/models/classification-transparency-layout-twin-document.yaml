@@ -1,0 +1,65 @@
+# Relational Document Layout member of the stored-data classification twin. This is
+# an ordinary production descriptor consumed without a harness override: the
+# root-owned layout block on each Entity is its only difference from the Columns
+# member, so `profile` is decoded out of the shared `payload` document rather than
+# out of a column of its own. The fixture twin authors the same logical rows — including the stored states that
+# contradict the model — and the case twin authors the same read, so the verdict a
+# read publishes for each result position is what the pair proves layout cannot
+# change.
+#
+# `profile` pairs a REQUIRED `street` with a nullable `city`, which is what lets one
+# occurrence carry both halves of a classification: a stored document omitting
+# `street` collapses to a hydratable verdict, while a `city` no string decoding
+# admits leaves the position unhydrated.
+entities:
+  - name: ClassificationTwinItem
+    namespace: parallax.compatibility
+    table: classification_twin
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+    valueObjects:
+      - name: profile
+        nullable: true
+        attributes:
+          - name: street
+            type: string
+          - name: city
+            type: string
+            nullable: true
+    relationships:
+      - name: children
+        cardinality: one-to-many
+        join:
+          source: id
+          target:
+            entity: parallax.compatibility.ClassificationTwinChild
+            attribute: itemId
+        dependent: true
+        orderBy:
+          - attribute: id
+  - name: ClassificationTwinChild
+    namespace: parallax.compatibility
+    table: classification_twin_child
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: itemId
+        type: int64
+    valueObjects:
+      - name: profile
+        nullable: true
+        attributes:
+          - name: street
+            type: string
+          - name: city
+            type: string
+            nullable: true

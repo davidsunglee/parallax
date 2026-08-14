@@ -7,13 +7,15 @@
 # every row where NO single element carries both fields. Linus (his one element has
 # both) is the only exclusion; everyone else matches — Ada (fields in different
 # elements), Nils (neither field), the empty array (3), the NULL column (4), the
-# missing-`phones` rows (5, 6), the JSON-null occurrence (8), and the empty arrays
-# (9, 10) all vacuously have no satisfying element.
+# missing-`phones` rows (5, 6) and the three NON-ARRAY states (8, 9, 10) all
+# vacuously have no satisfying element.
 #
 # Postgres negates the same-element `exists` (behind the `case`/`jsonb_typeof`
 # array guard of case 015); MariaDB negates the array-type-guarded `json_contains`,
 # wrapped in `coalesce(..., 0)` so a NULL/empty/missing/non-array `phones` still
-# counts as "no element". Rows 9 and 10 are included because their arrays are empty.
+# counts as "no element". The object row (10), whose content matches the candidate,
+# is INCLUDED here (its non-array `phones` collapses to not-present), the negation
+# of the 019 trap.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

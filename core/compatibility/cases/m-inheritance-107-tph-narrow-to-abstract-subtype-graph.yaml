@@ -26,7 +26,7 @@ then:
   referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume from animal where kind in ('cat', 'dog')
   graph:
     Animal:
-      - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, familyVariant: Dog }
-      - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3, familyVariant: Dog }
-      - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, indoor: true, familyVariant: Cat }
+      - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, familyVariant: Dog }
+      - { id: 2, name: Fido, ownerId: 11, licenseId: L-101, barkVolume: 3, familyVariant: Dog }
+      - { id: 3, name: Whiskers, ownerId: 10, licenseId: L-200, indoor: true, familyVariant: Cat }
   roundTrips: 1

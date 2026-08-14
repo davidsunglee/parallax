@@ -29,5 +29,5 @@ then:
   referenceSql: select id, target_id, details from profile_owner
   graph:
     ProfileOwner:
-      - { id: 1, target_id: 10, profile: { label: owner-profile }, details: { id: 10 } }
+      - { id: 1, targetId: 10, profile: { label: owner-profile }, details: { id: 10 } }
   roundTrips: 2

@@ -20,11 +20,11 @@ then:
   graph:
     MemberColumnDefaults:
       - id: 1
-        person_id: person-1
-        tax_i_d: TAX-1
-        line2_item: 2
+        personId: person-1
+        taxID: TAX-1
+        line2Item: 2
         already_snake: ready
-        legacy__i_d: legacy
+        legacy_ID: legacy
         mailingAddress:
           city: Oslo
   roundTrips: 1

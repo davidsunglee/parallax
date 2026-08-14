@@ -380,7 +380,10 @@ The observations object is intentionally shape-flexible because case shapes
 assert different things:
 
 - read cases report `rows`, `graph`, or `graphs`; `graphs` is the ordered
-  per-milestone `{pin, graph}` observation for a milestone-set snapshot read
+  per-milestone `{pin, graph}` observation for a milestone-set snapshot read. A
+  graph-form read additionally reports `storedDataIssues` for the result positions
+  whose stored state contradicted the declared model, and omits the key entirely
+  when every position conformed
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `roundTrips`, plus `stateChecks` for
@@ -464,7 +467,7 @@ golden SQL cannot see, mirroring the explicit-verdict shape of `identityCheck`:
 
 Both are additive and optional: an adapter that observes no lifecycle state or
 raised error simply omits them, so an existing `run` output (`roundTrips` plus
-`rows` / `graph` / `identityChecks`) stays valid unchanged.
+`rows` / `graph` / `identityChecks` / `storedDataIssues`) stays valid unchanged.
 
 An **`identityCheck`'s semantics are the claiming module's identity contract**, not
 a single fixed rule. For a **wire-level** scenario check (the PK-value one-object-

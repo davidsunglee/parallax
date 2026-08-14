@@ -2,10 +2,9 @@
 
 The composition root's own module: :meth:`Database.connect` wires a concrete
 ``m-db-port`` adapter to a metamodel, :meth:`Database.find` runs the shared read
-executor once outside any transaction, :meth:`Database.read_neutral` runs a read
-into the model-neutral form for a caller that composed no Entity Class — the same
-executor entry :meth:`Database.find` takes when the request asks for a graph, and
-the values lane's own entry when it asks for rows — and :meth:`Database.transact` is the
+executor once outside any transaction, :meth:`Database.read_rows` runs the values
+lane's own entry for a caller that wants the transformed row itself, and
+:meth:`Database.transact` is the
 callback demarcation — sentinel-backed options, join with the option-conflict
 check, the ``m-auto-retry`` bounded retry loop, and the flush executor it injects
 into the unit of work.
@@ -95,12 +94,11 @@ from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
-    NeutralReadRequest,
-    NeutralReadResult,
+    RowsResult,
     Snapshot,
     find,
     find_history,
-    read_neutral,
+    read_rows,
     snapshot_from_find_result,
     snapshot_from_history_result,
     wire_from_find_result,
@@ -359,28 +357,22 @@ class Database:
             )
         return wire_from_find_result(find(node, self._meta, self._dialect, self._port), self._meta)
 
-    def read_neutral(self, request: NeutralReadRequest) -> NeutralReadResult:
-        """Execute ``request`` exactly once outside any transaction, materializing
-        fully into the model-neutral form it selected.
+    def read_rows(self, query: ObjectQueryNode) -> RowsResult:
+        """Execute ``query`` exactly once outside any transaction and return its
+        published rows — the values lane, first-party rather than a third public
+        result format.
 
-        The neutral peer of :meth:`find`. A graph-form request runs the SAME
-        executor entry :meth:`find` runs — same canonicalization, same
-        compilation, same Database Call, same deep-fetch loop, same conversion,
-        with the materializer chosen only once execution has finished. A row-form
-        request runs the values lane's own entry instead, which shares the
-        canonicalization, the compilation, and the recorded call but fetches no
-        relationship level and builds no graph at all. What differs from
-        :meth:`find` either way is what a caller must have: :meth:`find` needs a
-        class-backed model to materialize into, and this needs none, which is why
-        a ``Database`` connected to a bare accepted Metamodel answers this and
-        refuses that.
+        It shares the canonicalization, the compilation, and the recorded call
+        with :meth:`find`, and fetches no relationship level and builds no graph
+        at all, because the transformed row is already the representation. A row
+        whose stored state contradicted the model publishes its
+        :class:`~parallax.snapshot.materialize.InvalidData` record in place of
+        itself, exactly as a graph-form root does.
 
         Non-transactional, exactly as :meth:`find` is: no read lock, no
-        participation mode, and no observation record — a read with no unit of
-        work behind it has nothing to observe into, so its nodes carry no
-        Observation Key.
+        participation mode, and no observation record.
         """
-        return read_neutral(request, self._meta, self._dialect, self._port)
+        return read_rows(query, self._meta, self._dialect, self._port)
 
     def transact[T](
         self,

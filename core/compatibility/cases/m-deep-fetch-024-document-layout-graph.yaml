@@ -53,9 +53,9 @@ then:
   graph:
     Traveler:
       - id: 1
-        display_name: Ada
+        displayName: Ada
         score: 7
-        joined_on: '2026-01-15'
+        joinedOn: '2026-01-15'
         note: north wing
         address:
           city: Oslo
@@ -65,12 +65,12 @@ then:
           - { label: founder }
           - { label: staff }
         trips:
-          - { id: 51, traveler_id: 1, destination: Oslo, nights: 3 }
-          - { id: 52, traveler_id: 1, destination: Bergen, nights: 1 }
+          - { id: 51, travelerId: 1, destination: Oslo, nights: 3 }
+          - { id: 52, travelerId: 1, destination: Bergen, nights: 1 }
       - id: 2
-        display_name: Bo
+        displayName: Bo
         score: 30
-        joined_on: '2025-12-31'
+        joinedOn: '2025-12-31'
         note: null
         address:
           city: Bergen
@@ -78,11 +78,11 @@ then:
             country: "NO"
         tags: []
         trips:
-          - { id: 53, traveler_id: 2, destination: Bergen, nights: 7 }
+          - { id: 53, travelerId: 2, destination: Bergen, nights: 7 }
       - id: 3
-        display_name: Cyd
+        displayName: Cyd
         score: null
-        joined_on: null
+        joinedOn: null
         note: null
         address: null
         tags: []

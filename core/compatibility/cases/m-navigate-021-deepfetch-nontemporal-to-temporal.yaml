@@ -30,5 +30,5 @@ then:
       - id: 1
         name: Acme
         leases:
-          - { id: 10, tenant_id: 1, term: "24mo", in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+          - { id: 10, tenantId: 1, term: "24mo", txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
   roundTrips: 2

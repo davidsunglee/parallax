@@ -1,12 +1,17 @@
-# valueObject to-many: an any-element equality over a stored array
-# (m-value-object to-many, m-predicate absence collapse, m-dialect
-# array-traversal form), on Postgres AND MariaDB.
+# valueObject to-many: a NON-ARRAY `many` value collapses to not-present even when
+# its scalar value COLLIDES with the query value (m-value-object to-many,
+# m-predicate absence collapse, m-dialect array-traversal form), on Postgres AND
+# MariaDB.
 #
 # nestedEq(Customer.address.phones.number, '555-0000') matches a row iff SOME
 # element of its `phones` array has number = 555-0000. Only Nils (id 7,
-# {work, 555-0000}) qualifies; Omar and Priya (9, 10) have empty arrays, and Iris
-# (8) has a JSON-null occurrence. This pairs with the type=home any-element case
-# (m-value-object-017) on a different field.
+# {work, 555-0000}) qualifies. The trap is Omar (id 9): his `phones` is the JSON
+# scalar STRING "555-0000" — the exact query value — yet it must NOT match, because
+# a non-array `phones` has no elements. This is the sharpest proof of the
+# array-traversal guard: an implementation that extracts the scalar and compares it
+# directly would wrongly match id 9; the guard collapses it (and the JSON-null 8
+# and object 10) to not-present. This pairs with the type=home any-element case
+# (m-value-object-017) on a different field and a value-colliding scalar.
 #
 # Postgres unnests behind the `case`/`jsonb_typeof` array guard; MariaDB guards
 # `json_contains` with `json_type(json_extract(...)) = 'ARRAY'`. The oracle iterates

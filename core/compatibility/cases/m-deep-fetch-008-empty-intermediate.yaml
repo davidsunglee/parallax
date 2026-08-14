@@ -40,6 +40,6 @@ then:
         qty: 20
         price: 40.00
         active: true
-        ordered_on: 2024-04-20
+        orderedOn: 2024-04-20
         items: []
   roundTrips: 2

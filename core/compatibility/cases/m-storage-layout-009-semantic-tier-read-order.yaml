@@ -40,8 +40,8 @@ then:
       - id: 1
         sensor: north
         celsius: 21.50
-        in_z: "2024-02-01T00:00:00+00:00"
-        out_z: infinity
+        txStart: "2024-02-01T00:00:00+00:00"
+        txEnd: infinity
         probe:
           model: TH-2
         familyVariant: LayoutMeterReading

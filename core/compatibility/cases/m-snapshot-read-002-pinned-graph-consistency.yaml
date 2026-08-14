@@ -40,9 +40,9 @@ then:
     Invoice:
       - id: 100
         name: INV-100
-        in_z: "2024-01-01T00:00:00+00:00"
-        out_z: infinity
+        txStart: "2024-01-01T00:00:00+00:00"
+        txEnd: infinity
         lines:
-          - { id: 1000, invoice_id: 100, amount: 50.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
-          - { id: 1001, invoice_id: 100, amount: 25.00, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
+          - { id: 1000, invoiceId: 100, amount: 50.00, txStart: "2024-01-01T00:00:00+00:00", txEnd: "2024-04-01T00:00:00+00:00" }
+          - { id: 1001, invoiceId: 100, amount: 25.00, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
   roundTrips: 2

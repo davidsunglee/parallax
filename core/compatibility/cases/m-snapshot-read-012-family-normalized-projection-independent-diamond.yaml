@@ -52,8 +52,8 @@ then:
       - id: 10
         name: Alice
         animals:
-          - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, tusk_length: null, familyVariant: Dog }
-          - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, tusk_length: null, familyVariant: Cat }
+          - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, indoor: null, tuskLength: null, familyVariant: Dog }
+          - { id: 3, name: Whiskers, ownerId: 10, licenseId: L-200, barkVolume: null, indoor: true, tuskLength: null, familyVariant: Cat }
         "pets[Dog]":
-          - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7 }
+          - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7 }
   roundTrips: 3

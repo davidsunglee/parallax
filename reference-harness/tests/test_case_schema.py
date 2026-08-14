@@ -615,12 +615,13 @@ def _graphs_read_case() -> dict[str, Any]:
     }
 
 
-def _identity_checks_read_case() -> dict[str, Any]:
-    """A read case carrying a `then.identityChecks` back-reference cycle.
+def _stored_data_issues_read_case() -> dict[str, Any]:
+    """A read case carrying `then.storedDataIssues`.
 
-    A back-reference cycle (`[items, items.order]`) serializes the cycle point as a
-    PK-only stub; the same-node claim rides `then.identityChecks`, an array of
-    `{left, right, same}` entries with JSON-Pointer `left` / `right`.
+    A result position whose stored state contradicted the model carries `null` in
+    `then.graph` when nothing could be hydrated, and its diagnoses ride
+    `then.storedDataIssues` — one `{ordinal, hydrated, issues}` entry per invalid
+    position, each issue naming its closed code, entity, member, and object key.
     """
     return {
         "model": "models/orders.yaml",
@@ -638,12 +639,22 @@ def _identity_checks_read_case() -> dict[str, Any]:
                 {"sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"}, "binds": [1]}
             ],
             "referenceSql": "select id from orders where id = 1",
-            "graph": {"Order": [{"id": 1, "items": [{"id": 11, "order": {"id": 1}}]}]},
-            "identityChecks": [
+            "graph": {"Order": [None]},
+            "storedDataIssues": [
                 {
-                    "left": "/then/graph/Order/0",
-                    "right": "/then/graph/Order/0/items/0/order",
-                    "same": True,
+                    "ordinal": 0,
+                    "hydrated": False,
+                    "issues": [
+                        {
+                            "code": "stored-data-leaf-undecodable",
+                            "entity": "parallax.compatibility.Order",
+                            "member": "parallax.compatibility.Order.name",
+                            "objectKey": {
+                                "entity": "parallax.compatibility.Order",
+                                "key": {"id": 1},
+                            },
+                        }
+                    ],
                 }
             ],
             "roundTrips": 1,
@@ -667,7 +678,7 @@ VALID_CASES = {
     "concurrencySuccess": _concurrency_success_case,
     "boundary": _boundary_case,
     "read-graphs": _graphs_read_case,
-    "read-identity-checks": _identity_checks_read_case,
+    "read-stored-data-issues": _stored_data_issues_read_case,
     "rejected-query": _rejected_query_case,
     "rejected-declaring-its-zero-cost": _rejected_case_declaring_zero_round_trips,
     "rejected-write": _rejected_write_case,
@@ -1111,22 +1122,23 @@ def _graphs_entry_stray_key() -> dict[str, Any]:
     return doc
 
 
-def _identity_check_missing_same() -> dict[str, Any]:
-    """A `then.identityChecks` entry missing `same` — the entry requires it.
+def _stored_data_record_missing_hydration() -> dict[str, Any]:
+    """A `then.storedDataIssues` entry missing `hydrated` — the entry requires it.
 
-    An identity check without its reference verdict asserts nothing, so it is rejected."""
-    doc = _identity_checks_read_case()
-    del doc["then"]["identityChecks"][0]["same"]
+    Whether the collapse produced a value is the one fact the graph position cannot
+    state on its own, so a record that omits it is rejected."""
+    doc = _stored_data_issues_read_case()
+    del doc["then"]["storedDataIssues"][0]["hydrated"]
     return doc
 
 
-def _identity_check_stray_key() -> dict[str, Any]:
-    """A `then.identityChecks` entry with a stray key — the entry is `additionalProperties: false`.
+def _stored_data_issue_unknown_code() -> dict[str, Any]:
+    """A `then.storedDataIssues` diagnosis outside the closed code vocabulary.
 
-    The compatibility `identityCheck` carries only `{left, right, same}` — no optional
-    `identity` witness (that is the adapter-side observation), so a stray key is rejected."""
-    doc = _identity_checks_read_case()
-    doc["then"]["identityChecks"][0]["identity"] = {"pk": 1}
+    The stored-data codes are a closed set (`m-snapshot-read`); a code no seam can
+    ever publish would assert an outcome no implementation could produce."""
+    doc = _stored_data_issues_read_case()
+    doc["then"]["storedDataIssues"][0]["issues"][0]["code"] = "stored-data-made-up"
     return doc
 
 
@@ -1283,8 +1295,8 @@ REJECTED_CASES = {
     "action-on-duplicate-index": _action_on_duplicate_index,
     "graphs-entry-missing-pin": _graphs_entry_missing_pin,
     "graphs-entry-stray-key": _graphs_entry_stray_key,
-    "identity-check-missing-same": _identity_check_missing_same,
-    "identity-check-stray-key": _identity_check_stray_key,
+    "stored-data-record-missing-hydration": _stored_data_record_missing_hydration,
+    "stored-data-issue-unknown-code": _stored_data_issue_unknown_code,
 }
 
 

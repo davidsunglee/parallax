@@ -32,11 +32,11 @@ then:
   graph:
     Lease:
       - id: 10
-        tenant_id: 1
+        tenantId: 1
         term: "24mo"
-        in_z: "2024-04-01T00:00:00+00:00"
-        out_z: infinity
+        txStart: "2024-04-01T00:00:00+00:00"
+        txEnd: infinity
         notes:
-          - { id: 100, lease_id: 10, note_text: signed }
-          - { id: 101, lease_id: 10, note_text: renewed }
+          - { id: 100, leaseId: 10, text: signed }
+          - { id: 101, leaseId: 10, text: renewed }
   roundTrips: 2

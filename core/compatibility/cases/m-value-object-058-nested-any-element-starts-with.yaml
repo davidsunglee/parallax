@@ -6,9 +6,11 @@
 #
 # nestedStartsWith(Customer.address.phones.type, 'ho') binds the derived pattern 'ho%'
 # and emits NO `escape` clause, because escaping changed nothing in the literal — the
-# paired contrast with m-value-object-055, whose literal carried a wildcard. Ada (1)
-# and Linus (2) each carry a `home` element; the remaining rows carry no matching
-# element.
+# paired contrast with m-value-object-055, whose literal carried a wildcard. Ada (1) and
+# Linus (2) each carry a `home` element. Priya (10) is the trap: her non-array OBJECT
+# `phones` is exactly `{type: home, number: '555-9999'}`, so an unguarded traversal
+# would match her and Postgres `jsonb_array_elements` would ERROR on it; the array-type
+# guard collapses her to zero elements, with the JSON null (8) and the scalar (9).
 #
 # The oracle expresses the affix semantics without a pattern at all — `left(..., 2)` —
 # so a mis-derived pattern shows up as a row difference rather than as two spellings of

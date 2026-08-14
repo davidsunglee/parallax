@@ -132,7 +132,7 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
 - **`then`** — everything the case asserts: the golden `statements`, the naive
   `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
-  `roundTrips`), the reference-identity `identityChecks`, the portable boundary
+  `roundTrips`), the classified `storedDataIssues`, the portable boundary
   `outcome`, the execution-provenance `execution`, and the numeric-comparison
   `tolerance`.
 
@@ -340,7 +340,7 @@ keeps the assertion honest across engines.
 | `then.rows` | `then` | read | the rows the query must return (single-statement / flat-result cases) |
 | `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` / `then.graphs` is REQUIRED for a read case) |
 | `then.graphs` | `then` | read | an ORDERED array of per-milestone edge-pinned graphs a `history` / `asOfRange` snapshot read materializes (see *Milestone-set graphs*, below) — each entry `{pin, graph}`; coexists with `then.graph` exactly as `then.rows` does |
-| `then.identityChecks` | `then` | read | declared reference-identity expectations over graph node positions — each `{left, right, same}` with JSON-Pointer `left` / `right` and a boolean `same` — the same-node claim a back-reference cycle's PK-only stub cannot carry by value (see *Back-reference cycles*, below) |
+| `then.storedDataIssues` | `then` | read | the stored-data diagnoses a read publishes for the result positions whose stored state contradicted the declared model — one `{ordinal, hydrated, issues}` entry per invalid position, in result order (see *Classified stored data*, below) |
 | `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence (or conflict) case asserts, keyed by table name (REQUIRED for a write case) |
 | `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall — a gated conflict or an ungated stale write, `1` = success) |
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
@@ -597,15 +597,23 @@ milestone-set graph carries **no** deep-fetch includes — history-with-includes
 (`snapshot-history-includes`) is staged and claimed by neither object-lifecycle
 slice — so each graph is rooted at the read's own query `target`.)
 
-#### Back-reference cycles and `then.identityChecks`
+#### Graph keys and back-reference cycles
+
+Every key in a `then.graph` node is a **declared model member name** — an Attribute
+by the name the model declares, never the physical column it is stored under — and
+every leaf is that member's canonical Wire Value (`m-wire`). A Value Object
+occurrence appears under its own declared name at every depth, a relationship under
+its local name (or its narrowed view key), and an inheritance participant
+additionally carries `familyVariant`.
 
 A snapshot graph is a plain-value tree, but an included **back-reference** can
 reach a node already on the current path — `[items, items.order]` navigates
 `Order → items → order`, and `items[0].order` is the ROOT `Order`. This is a legal
-in-memory cycle (`m-snapshot-read`). To keep the graph JSON a finite value tree,
-recursion stops at a **true cycle** (a relationship reaching an **ancestor node on
-the current path**) and the cycle point carries a **PK-only stub** — ONLY the
-referenced node's primary-key attribute(s), no other scalars, no relationships:
+in-memory cycle (`m-snapshot-read`). What keeps the graph JSON finite is the
+**requested include tree**, not a cycle detector: each level is unwound under the
+subtree still admitted below it, that subtree strictly shrinks with depth, and the
+walk therefore terminates. A back-reference is unwound like any other level — it
+renders its target once, in full, with whatever levels remain below it:
 
 ```yaml
 then:
@@ -614,33 +622,41 @@ then:
       - id: 1
         name: Ada
         items:
-          - { id: 11, order_id: 1, sku: A-100, order: { id: 1 } }   # PK-only stub — recursion stops
+          - id: 11
+            orderId: 1
+            sku: A-100
+            order: { id: 1, name: Ada }   # the last level: rendered whole, no relationship left
 ```
 
-The stub is scoped to **true cycles only**. A **diamond-shared** node at a
-NON-cyclic position (two include paths reaching the same row that is not an
-ancestor, as in `m-snapshot-read-001`) keeps its full-value representation — it is
-not re-goldened to a stub.
+A **diamond-shared** node at a non-cyclic position (two include paths reaching the
+same row that is not an ancestor, as in `m-snapshot-read-001`) is likewise rendered
+in full at each position.
 
-The PK-only stub proves nothing about sameness by itself (a lookalike copy carrying
-the same primary key would serialize identically). The cycle's real claim —
-`items[0].order` is the **same node** as the root, not a copy — rides
-**`then.identityChecks`**, an array of `{left, right, same}` entries mirroring the
-`m-conformance-adapter` `identityCheck`: `left` and `right` are JSON Pointers into
-the case naming the two node positions, and `same` is the asserted reference
-verdict:
+#### Classified stored data
+
+A result position whose stored state contradicted the declared model publishes a
+classification rather than itself (`m-snapshot-read`). Its `then.graph` position
+carries the collapsed node when hydration completed and `null` when no value could
+be produced without inventing one, and the diagnoses ride
+**`then.storedDataIssues`** — one entry per invalid position, in result order:
 
 ```yaml
 then:
-  identityChecks:
-    - { left: /then/graph/Order/0, right: /then/graph/Order/0/items/0/order, same: true }
+  storedDataIssues:
+    - ordinal: 5
+      hydrated: true
+      issues:
+        - code: stored-data-one-wrong-kind
+          entity: parallax.compatibility.Customer
+          member: parallax.compatibility.Customer.address.geo
+          objectKey: { entity: parallax.compatibility.Customer, key: { id: 6 } }
 ```
 
-Reference identity is not wire-observable, so `then.identityChecks` is an
-**adapter-delegated** observable: the harness validates it is well-formed and
-skips grading it, and each language's API Conformance Suite returns and verifies it
-against the `m-conformance-adapter` `identityChecks` observation — exactly as it
-grades a scenario step's `differentObjectFrom`.
+`ordinal` is the position's zero-based place in the ordered result, `hydrated`
+distinguishes a collapsed value from an absent one, and `issues` is the closed
+diagnosis set that position carries — deduplicated within the position and repeated
+in every position that reaches the same invalid node. A conforming read authors the
+key not at all.
 
 ### `then.statements`, `then.referenceSql`, `then.rows` (the oracle question)
 

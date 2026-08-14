@@ -410,6 +410,138 @@
       ]
     }
   },
+  "models/classification-transparency-layout-twin-columns.yaml": {
+    "classification_twin": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.ClassificationTwinItem"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.ClassificationTwinItem.id",
+          "declaringOwner": "parallax.compatibility.ClassificationTwinItem",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.ClassificationTwinItem"
+          ],
+          "column": "profile",
+          "contributor": "valueObject:parallax.compatibility.ClassificationTwinItem.profile",
+          "declaringOwner": "parallax.compatibility.ClassificationTwinItem",
+          "effectiveNullable": true,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "classification_twin_child": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.ClassificationTwinChild"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.ClassificationTwinChild.id",
+          "declaringOwner": "parallax.compatibility.ClassificationTwinChild",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.ClassificationTwinChild"
+          ],
+          "column": "item_id",
+          "contributor": "attribute:parallax.compatibility.ClassificationTwinChild.itemId",
+          "declaringOwner": "parallax.compatibility.ClassificationTwinChild",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.ClassificationTwinChild"
+          ],
+          "column": "profile",
+          "contributor": "valueObject:parallax.compatibility.ClassificationTwinChild.profile",
+          "declaringOwner": "parallax.compatibility.ClassificationTwinChild",
+          "effectiveNullable": true,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/classification-transparency-layout-twin-document.yaml": {
+    "classification_twin": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.ClassificationTwinItem"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.ClassificationTwinItem.id",
+          "declaringOwner": "parallax.compatibility.ClassificationTwinItem",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.ClassificationTwinItem"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.ClassificationTwinItem",
+          "declaringOwner": "parallax.compatibility.ClassificationTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "classification_twin_child": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.ClassificationTwinChild"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.ClassificationTwinChild.id",
+          "declaringOwner": "parallax.compatibility.ClassificationTwinChild",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.ClassificationTwinChild"
+          ],
+          "column": "item_id",
+          "contributor": "attribute:parallax.compatibility.ClassificationTwinChild.itemId",
+          "declaringOwner": "parallax.compatibility.ClassificationTwinChild",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.ClassificationTwinChild"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.ClassificationTwinChild",
+          "declaringOwner": "parallax.compatibility.ClassificationTwinChild",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/contact.yaml": {
     "contact": {
       "columns": [

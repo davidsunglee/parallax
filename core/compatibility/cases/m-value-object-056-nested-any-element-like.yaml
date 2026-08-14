@@ -7,8 +7,11 @@
 # nestedLike(Customer.address.phones.number, '555-0%') matches a row iff SOME element's
 # number matches the pattern, whose `%` is an authored wildcard passed through
 # unescaped — the contrast with the affix forms, which escape their literal and place
-# the wildcards themselves. Only Nils (7) carries 555-0000; the remaining rows carry
-# no matching element.
+# the wildcards themselves. Only Nils (7) carries 555-0000. Omar (9) is the trap: his
+# `phones` is the JSON scalar STRING "555-0000", which the pattern would match
+# character for character, and it must NOT match because a non-array `phones` has no
+# elements — the array-type guard collapses it, along with the JSON null (8) and the
+# object (10).
 #
 # The oracle guards with an outer `jsonb_typeof` instead of the golden's inline `case`
 # and reads the element field with `->>` instead of jsonb_extract_path_text.

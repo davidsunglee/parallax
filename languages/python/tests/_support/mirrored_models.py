@@ -621,6 +621,16 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "`customer`'s top-level Value Object in one descriptor so physical composition can "
             "be witnessed, adding no declaration construct of its own"
         ),
+        "classification-transparency-layout-twin-columns": (
+            "no mirror authored; this production descriptor is the Columns arm of the "
+            "cross-layout stored-data classification proof, and the twin-layout gate compares "
+            "its logical model directly with the Document arm"
+        ),
+        "classification-transparency-layout-twin-document": (
+            "no mirror authored; this production descriptor is the Document arm of the "
+            "cross-layout stored-data classification proof, and the twin-layout gate compares "
+            "its logical model directly with the Columns arm"
+        ),
         "storage-layout-transparency-layout-twin-columns": (
             "no mirror authored; this production descriptor is the Columns arm of the "
             "cross-layout corpus proof, and the twin-layout gate compares its logical model "

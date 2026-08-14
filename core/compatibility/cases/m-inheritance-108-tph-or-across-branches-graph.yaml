@@ -38,6 +38,6 @@ then:
   referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal where (bark_volume > 5 and kind = 'dog') or (indoor = true and kind = 'cat')
   graph:
     Animal:
-      - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, familyVariant: Dog }
-      - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, indoor: true, familyVariant: Cat }
+      - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, familyVariant: Dog }
+      - { id: 3, name: Whiskers, ownerId: 10, licenseId: L-200, indoor: true, familyVariant: Cat }
   roundTrips: 1

@@ -6,16 +6,16 @@
 # `many` nested value object in the address column) has at least one element. Ada
 # (2 phones), Linus (1) and Nils (1) qualify. Every not-present state is excluded:
 # Grace's EMPTY array (3), Mary's NULL column (4), the missing-`phones` rows (5, 6),
-# Iris's JSON-null occurrence (8), and Omar's and Priya's empty arrays (9, 10) all
-# produce zero elements.
+# AND the three NON-ARRAY `phones` states — the JSON `null` (8), the scalar (9) and
+# the object (10) — all collapse to zero elements.
 #
 # The array-traversal spelling diverges. Postgres unnests with the strict
 # `jsonb_array_elements`, but that function ERRORS on a non-array argument, so the
 # array is first reached through a `case` that yields the extracted value only when
 # `jsonb_typeof(...) = 'array'` and an empty `[]` otherwise (the path binds twice).
-# MariaDB counts with `json_length(...) > 0`, so a
-# `json_type(json_extract(...)) = 'ARRAY'` guard precedes it. Both guards retain
-# the contract's wrong-kind collapse without relying on invalid fixture data. The oracle is
+# MariaDB counts with `json_length(...) > 0`, but `json_length` of a scalar/object
+# is >= 1, so an `json_type(json_extract(...)) = 'ARRAY'` guard precedes it. Both
+# guards make a non-array `phones` read as zero elements. The independent oracle is
 # a different formulation per dialect (Postgres `jsonb_array_length`, MariaDB a
 # `json_table` unnest), each itself array-type-guarded.
 model: models/customer.yaml

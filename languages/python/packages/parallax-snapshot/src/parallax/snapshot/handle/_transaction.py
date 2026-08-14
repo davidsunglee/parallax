@@ -6,14 +6,15 @@ keyed verbs (``insert`` / ``update`` / ``delete`` and the typed
 temporal-window family), the participating :meth:`Transaction.find`, and the
 neutral ``_buffer`` instruction seam every keyed verb shares.
 
-It also owns the MODEL-NEUTRAL pair, :meth:`Transaction.read_neutral` and
-:meth:`Transaction.write_neutral`, which a caller holding no Entity Class uses in
-place of the typed verbs. They are not a second lifecycle: the neutral read
-enters the same force-flush, lock derivation, observation recording, and Read
-Trace bracket ``find`` does, and the neutral write enters the same
-``buffered_write`` carrier decision, the same buffer, and the same flush triggers
-the keyed verbs do — one step later, on an instruction already built rather than
-on an instance to derive one from.
+It also owns the row-form read (:meth:`Transaction.read_rows`) and the two
+FIRST-PARTY members of the conformance bridge —
+:meth:`Transaction.observed_read` and :meth:`Transaction.write_neutral` — which
+are not developer surface and end with the Wire write verbs. None of the three is
+a second lifecycle: each read enters the same force-flush, lock derivation,
+observation recording, and Read Trace bracket ``find`` does, and the bridge write
+enters the same ``buffered_write`` carrier decision, the same buffer, and the
+same flush triggers the keyed verbs do — one step later, on an instruction
+already built rather than on an instance to derive one from.
 
 The predicate-selected ``_where`` family is NOT owned here: those five public
 verbs are thin delegates that thread ``(uow, meta, conn, dialect)`` into
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from parallax.core import opt_lock, read_lock
@@ -78,12 +80,11 @@ from parallax.snapshot.handle._predicate_writes import (
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
-    NeutralReadRequest,
-    NeutralReadResult,
+    RowsResult,
     Snapshot,
-    execute_neutral,
     find,
     find_history,
+    find_rows,
     snapshot_from_find_result,
     snapshot_from_history_result,
     wire_from_find_result,
@@ -91,10 +92,10 @@ from parallax.snapshot.handle._read import (
 )
 from parallax.snapshot.handle._wire import WireTransactionView
 from parallax.snapshot.handle._write_inputs import (
+    ObservedRecord,
     ReadObservations,
     WrittenObject,
     metadata_of_instance,
-    observation_keying,
     record_observations,
     source_edge,
     source_pin,
@@ -105,6 +106,21 @@ from parallax.snapshot.handle._write_inputs import (
     written_object,
     written_object_key,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedRead:
+    """A participating Wire read paired with the observations it filed.
+
+    The conformance bridge's own read value, and nothing a developer holds: a
+    Snapshot is the whole public result, and an observation address is
+    implementation state. Both halves come from one read, so pairing them here is
+    what keeps a bridge caller from re-deriving evidence that would then have to
+    agree with production's by inspection.
+    """
+
+    snapshot: Snapshot[Any]
+    observations: tuple[ObservedRecord, ...]
 
 
 class Transaction:
@@ -134,11 +150,13 @@ class Transaction:
     not a second lifecycle, so a Wire read participates exactly as :meth:`find`
     does.
 
-    :meth:`read_neutral` and :meth:`write_neutral` are the same two capabilities
-    for a caller with no Entity Class: a read that participates exactly as
-    :meth:`find` does and publishes each node's Observation Key, and the one
-    neutral write ingress, which takes an already-decoded instruction plus the
-    evidence it settles against.
+    :meth:`read_rows` is the values lane over this same transaction — a
+    first-party row-form read, not a third public result format.
+    :meth:`observed_read` and :meth:`write_neutral` are the first-party
+    conformance bridge: a Wire read that additionally answers the observations it
+    filed, and the write ingress that takes an already-decoded instruction plus
+    the evidence it settles against. Neither is developer surface, and both end
+    when the Wire write verbs land.
     """
 
     __slots__ = (
@@ -636,9 +654,16 @@ class Transaction:
         return WireTransactionView(self._wire_find)
 
     def _wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
+        """One participating Wire read, dropping what only the bridge asks for."""
+        return self._observed_wire_find(node).snapshot
+
+    def _observed_wire_find(self, node: ObjectQueryNode) -> ObservedRead:
         """One participating Wire read, composed exactly as :meth:`find` composes
         a Typed one: the same gate before the force-flush, the same lock
         derivation, the same observation recording, and the same trace bracket.
+
+        It answers the observations that recording filed beside the Snapshot,
+        because the two come from one read and only their producer can pair them.
         """
         preflight(node, model=self._meta, form="graph")
         lock = read_lock.mode_for(self._uow.settings.concurrency)
@@ -649,7 +674,7 @@ class Transaction:
                         node, self._meta, self._dialect, self._conn, recorder=recorder
                     )
                 )
-            return wire_from_history_result(history_result, self._meta)
+            return ObservedRead(wire_from_history_result(history_result, self._meta), ())
         observations = ReadObservations()
         with self._attempt.read_trace() as recorder:
             find_result = self._uow.read(
@@ -664,51 +689,55 @@ class Transaction:
                 )
             )
         snapshot = wire_from_find_result(find_result, self._meta)
-        record_observations(self._uow, self._meta, observations)
-        return snapshot
+        return ObservedRead(snapshot, record_observations(self._uow, self._meta, observations))
 
-    def read_neutral(self, request: NeutralReadRequest) -> NeutralReadResult:
-        """Run a PARTICIPATING neutral read and return its materialized output.
+    def observed_read(self, query: ObjectQueryNode) -> ObservedRead:
+        """A participating Wire read paired with the observations it filed — the
+        FIRST-PARTY read half of the conformance bridge, not developer surface.
 
-        The neutral peer of :meth:`find`, and participating in exactly the same
-        four ways: it force-flushes pending writes first (read-your-own-writes),
-        renders the transaction's own read-lock suffix from its participation
-        mode, records what a later write settles against, and appends its Read
-        Trace to this attempt in the position that states the read-dependency
-        causality. A caller with no Entity Class therefore gets the same
-        transaction semantics a typed reader gets, not a weaker read path beside
-        them.
+        ``tx.wire.find`` answers the Snapshot alone, which is everything a
+        developer can act on: an observation address is implementation state no
+        public surface exposes. The conformance engine settles its own writes
+        against the exact evidence production recorded rather than against a
+        second derivation, so it needs the pair, and it holds first-party access
+        to ask for it. Both halves come from ONE read — the same statements, the
+        same lock, the same trace — so nothing here is a second execution path.
+        """
+        return self._observed_wire_find(query)
 
-        Each materialized node additionally publishes the Observation Key its
-        evidence was filed under, which is how a class-less caller settles a
-        later :meth:`write_neutral` against the row this read actually saw
-        rather than against a key it reconstructed. A row-form request and a
-        milestone-set request each record no evidence and publish no key
-        (`_read.execute_neutral`).
+    def read_rows(self, query: ObjectQueryNode) -> RowsResult:
+        """Run a PARTICIPATING row-form read and return its published rows.
+
+        The values lane's peer of :meth:`find`, participating in three of the
+        same four ways: it force-flushes pending writes first
+        (read-your-own-writes), renders the transaction's own read-lock suffix
+        from its participation mode, and appends its Read Trace to this attempt
+        in the position that states the read-dependency causality.
+
+        It records NO observation. The values lane projects scalars only, so a
+        Predecessor Row read off it would be incomplete under Relational Document
+        Layout while `m-unit-work` requires a complete one. A caller that needs
+        evidence reads the graph form, which is what :meth:`find` and
+        ``tx.wire.find`` always run.
         """
         # The gate precedes `uow.read` deliberately, exactly as `find`'s does:
         # that read force-flushes pending buffered writes, so a refused read must
         # be refused before it or a refusal turns into a write.
-        preflight(request.query, model=self._meta, form=request.form)
+        preflight(query, model=self._meta, form="rows")
         lock = read_lock.mode_for(self._uow.settings.concurrency)
-        observations = ReadObservations()
         # The bracket opens BEFORE the force-flush, exactly as `find`'s does, so
         # a dependency batch lands immediately before the trace it enabled.
         with self._attempt.read_trace() as recorder:
-            result = self._uow.read(
-                lambda: execute_neutral(
-                    request,
+            return self._uow.read(
+                lambda: find_rows(
+                    query,
                     self._meta,
                     self._dialect,
                     self._conn,
                     lock=lock,
-                    observations=observations,
                     recorder=recorder,
-                    observed=observation_keying(self._meta),
                 )
             )
-        record_observations(self._uow, self._meta, observations)
-        return result
 
     def write_neutral(
         self,

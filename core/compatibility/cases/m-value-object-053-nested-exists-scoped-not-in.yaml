@@ -11,8 +11,11 @@
 # unscoped AND of the two flat any-element predicates matches her while this scoped
 # form does not. Nils's element carries neither.
 #
-# Every zero-element form is out: the empty arrays (3, 9, 10), the null column (4),
-# the missing keys (5, 6), and the nested null (8).
+# Priya (10) is the trap: her non-array OBJECT `phones` is {type: home, number:
+# '555-9999'}, which satisfies both element predicates, so an unguarded traversal
+# would match it; the array-type guard collapses it to not-present along with the
+# empty array (3), the null column (4), the missing keys (5, 6) and the other
+# non-array states (8, 9).
 #
 # Both element predicates lower against the SAME unnested alias t1, and the negation
 # is a LEADING `not` over the same `in (?)` fragment the positive form emits, adding

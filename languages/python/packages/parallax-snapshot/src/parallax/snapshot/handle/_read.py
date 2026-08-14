@@ -14,8 +14,9 @@ loop exists exactly once on the developer-facing path.
 Graph levels materialize and convert rows one at a time: a converted node names
 its correlation members, so the next level gathers keys from the converted
 parent rather than a retained row. Flat-row, history, and predicate-write lanes
-instead stage one tuple of SQL-materialized rows while they run the shared
-publication gate before any consumer-specific derivation. The port's raw
+instead stage one tuple of SQL-materialized rows and merge them once, before any
+consumer-specific derivation, so each lane classifies or refuses that one staging
+graph rather than judging rows as it walks them. The port's raw
 `list[Row]` remains one statement's own lifetime, and neither raw nor
 SQL-materialized rows survive into graph input, a Snapshot, or an observation
 record.
@@ -31,19 +32,22 @@ rather than moving to the write side: `_write_inputs` imports this module, so
 the reverse edge would close a cycle.
 
 One executor, two materializers. :func:`snapshot_from_find_result` and
-:func:`neutral_from_find_result` are PEERS over the same
+:func:`wire_from_find_result` are PEERS over the same
 :class:`~parallax.snapshot.materialize.GraphMerge`: which one runs is chosen
-after execution has already finished, neither calls the other, and the typed path
-constructs no ``Neutral*`` value. :func:`find_rows` is the values lane's own
-degenerate case — the transformed row IS the representation, so it publishes the
-neutral result directly and shares with :func:`find` exactly the canonicalization,
-compilation, and call recording that decide behavior.
+after execution has already finished and neither calls the other.
+:func:`find_rows` is the values lane's own degenerate case — the transformed row
+IS the representation, so it publishes rows directly and shares with :func:`find`
+exactly the canonicalization, compilation, and call recording that decide
+behavior.
 
-They differ in what stored state that contradicts the model does to a result. The
-typed lane classifies it: a Snapshot element is ``T | InvalidData[T]``, the
-default accessors here refuse an invalid result after their own arity check, and
-:meth:`Snapshot.checked` reads the same storage in band. Every other lane still
-refuses the whole read at the shared publication gate.
+All three classify stored state that contradicts the model rather than refusing
+it: a Snapshot element is ``T | InvalidData[T]``, a row-form element is
+``Mapping | InvalidData[Mapping]``, the default accessors here refuse an invalid
+result after their own arity check, and :meth:`Snapshot.checked` reads the same
+storage in band. Milestone-set staging and predicate-write staging still refuse
+the whole read at the shared publication gate: a milestone read must decode a
+temporal edge before it can partition, and a write has no in-band channel to
+publish a verdict through.
 
 What a find EXECUTED is `m-execution-log`'s vocabulary, not this module's: each
 call is bracketed into a
@@ -62,7 +66,8 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, cast
+from types import MappingProxyType
+from typing import Any, Protocol, cast
 
 from parallax.core import deep_fetch, inheritance
 from parallax.core import predicate as predicate_algebra
@@ -82,19 +87,24 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, MaterializedReadRow, compile_read
-from parallax.core.temporal_read import Edge, Pin, milestone_edge, query_pin, scans_an_axis
-from parallax.snapshot._read_result import FindResult, HistoryFindResult, NeutralReadResult
+from parallax.core.temporal_read import Edge, Pin, milestone_edge, query_pin
+from parallax.snapshot._read_result import (
+    FindResult,
+    HistoryFindResult,
+    PublishedRow,
+    RowsResult,
+)
 from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMaterializationError
 from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import (
     EMPTY_UNWIND,
+    ClassifiedRoot,
+    GraphMerge,
     InvalidData,
     InvalidDataError,
     LevelContext,
     MergeScope,
-    NeutralGraph,
-    ObservationKeying,
     RelationshipViewKey,
     SnapshotGraphInput,
     SnapshotNodeRef,
@@ -102,11 +112,9 @@ from parallax.snapshot.materialize import (
     WireEntity,
     WireRoot,
     attribute_value,
+    classify_roots,
     convert_row,
     merge_graph_input,
-    neutral_graph,
-    neutral_graphs,
-    neutral_rows,
     observable_columns,
     require_publishable,
     unwind_tree,
@@ -117,18 +125,17 @@ __all__ = [
     "CheckedSnapshot",
     "FindResult",
     "HistoryFindResult",
-    "NeutralReadRequest",
-    "NeutralReadResult",
     "NoResultFound",
     "ObservationCollector",
+    "PublishedRow",
+    "RowsResult",
     "Snapshot",
     "StagedRows",
     "TooManyResultsFound",
-    "execute_neutral",
     "find",
     "find_history",
     "find_rows",
-    "read_neutral",
+    "read_rows",
     "stage_publishable_rows",
     "wire_from_find_result",
     "wire_from_history_result",
@@ -467,58 +474,22 @@ def find(
 
 
 @dataclass(frozen=True, slots=True)
-class NeutralReadRequest:
-    """What a model-neutral read asks for: one canonical Object Query, plus the
-    result form to materialize into.
-
-    A caller with no Entity Class builds the canonical node directly rather than
-    through the generic authoring surface, which is the whole reason the node is
-    a value of its own. Everything downstream — canonical root as-of injection,
-    per-hop navigation canonicalization, deep-fetch planning, compilation,
-    execution, and conversion — is the same production path a typed read takes.
-
-    ``form`` selects the projection lane `m-sql` fixes at compile time:
-    :meth:`rows` is the values lane (scalars only, one statement, no graph), and
-    :meth:`graph` is the object lane (value-object documents projected too, one
-    query per non-empty relationship level). A ``graph`` request whose Temporal
-    Selection SCANS an axis answers the milestone-set form instead, exactly as
-    ``db.find`` does.
-
-    The form is part of what the read gate validates, so a ``rows`` request whose
-    query names Include Paths — a level the values lane cannot materialize — is
-    refused before any I/O and before a participating read's force-flush, like
-    every other refusal a neutral read can meet.
-    """
-
-    query: ObjectQueryNode
-    form: Literal["rows", "graph"]
-
-    @classmethod
-    def rows(cls, query: ObjectQueryNode) -> NeutralReadRequest:
-        """A row-form request: production's transformed rows, in result order."""
-        return cls(query=query, form="rows")
-
-    @classmethod
-    def graph(cls, query: ObjectQueryNode) -> NeutralReadRequest:
-        """A graph-form request: one neutral graph, or one per milestone for a
-        scanning read."""
-        return cls(query=query, form="graph")
-
-
-@dataclass(frozen=True, slots=True)
 class StagedRows:
     """One flat batch after SQL row materialization and publication validation.
 
     ``rows`` and their aligned ``contexts`` remain available for the lane-specific
     work that follows validation. ``scope`` and ``roots`` retain the converted
     projections for the history lane, which repartitions clean nodes by milestone
-    without converting them a second time.
+    without converting them a second time. ``merge`` is the staging graph the
+    lane either classifies or refuses; each row occupies the root position of the
+    same ordinal, so a verdict lands on the row it judged.
     """
 
     rows: tuple[MaterializedReadRow, ...]
     contexts: tuple[LevelContext, ...]
     scope: MergeScope
     roots: tuple[SnapshotNodeRef, ...]
+    merge: GraphMerge
 
 
 def stage_publishable_rows(
@@ -530,10 +501,30 @@ def stage_publishable_rows(
 ) -> StagedRows:
     """Materialize and validate one flat row batch before lane-specific use.
 
+    The refusing peer of :func:`stage_rows`, for the two lanes with nowhere to
+    publish a verdict: a milestone-set read must decode a temporal edge before it
+    can partition its rows at all, and a predicate write has no in-band channel
+    for one. Both apply the publication gate to the staging graph before deriving
+    milestones, observations, or writes.
+    """
+    staged = stage_rows(meta, compiled, rows, pin=pin)
+    require_publishable(staged.merge)
+    return staged
+
+
+def stage_rows(
+    meta: Metamodel,
+    compiled: CompiledRead,
+    rows: Sequence[Mapping[str, object]],
+    *,
+    pin: Pin,
+) -> StagedRows:
+    """Materialize and merge one flat row batch before lane-specific use.
+
     Every caller forwards the compiled transform's findings, family-tag verdict,
-    and classified-member provenance through :func:`convert_row`, then applies
-    the publication gate to the staging graph before deriving rows, milestones,
-    observations, or writes.
+    and classified-member provenance through :func:`convert_row`, so the staging
+    graph carries whatever contradicted the model and each lane decides what to
+    do with it.
     """
     materialized = tuple(compiled.materialize_row(row) for row in rows)
     contexts = tuple(
@@ -556,8 +547,30 @@ def stage_publishable_rows(
         )
         for row, context in zip(materialized, contexts, strict=True)
     )
-    require_publishable(merge_graph_input(scope.build(roots, pin), meta))
-    return StagedRows(materialized, contexts, scope, roots)
+    return StagedRows(
+        materialized, contexts, scope, roots, merge_graph_input(scope.build(roots, pin), meta)
+    )
+
+
+def read_rows(
+    query: ObjectQueryNode,
+    meta: Metamodel,
+    dialect: Dialect,
+    port: DbPort,
+    *,
+    lock: LockMode | None = None,
+    recorder: TraceRecorder | None = None,
+) -> RowsResult:
+    """Preflight ``query`` and run it through the values lane — the STANDALONE
+    row-form read, whole.
+
+    The row-form peer of ``db.find``'s own composition: the shared read gate
+    (:func:`~parallax.snapshot.handle._preflight.preflight`), then
+    :func:`find_rows`. A participating caller composes the same two itself,
+    because it must gate BEFORE the force-flush that stands between them.
+    """
+    preflight(query, model=meta, form="rows")
+    return find_rows(query, meta, dialect, port, lock=lock, recorder=recorder)
 
 
 def find_rows(
@@ -568,13 +581,16 @@ def find_rows(
     *,
     lock: LockMode | None = None,
     recorder: TraceRecorder | None = None,
-) -> NeutralReadResult:
+) -> RowsResult:
     """The row-form read: one statement, its rows transformed, no graph.
 
     The transformed row is the returned representation, so the values lane builds
-    no result graph. It does build a staging graph solely to apply the shared
-    publication gate before returning any row. What it shares with :func:`find`
-    is everything that decides behavior: the same canonical root query
+    no result graph. It does build a staging graph, which is what classification
+    runs over: a row whose own stored state contradicted the model publishes its
+    :class:`~parallax.snapshot.materialize.InvalidData` record in place of itself,
+    carrying the row when the collapse produced one and nothing when no value
+    could be produced without inventing it. What it shares with :func:`find` is
+    everything that decides behavior: the same canonical root query
     (`deep_fetch.plan` injects the as-of predicate and canonicalizes navigation
     for both lanes), the same
     :func:`~parallax.core.sql_gen.compile_read` with the lane selected by
@@ -597,7 +613,7 @@ def find_rows(
         calls,
         document_reads=compiled.document_reads,
     )
-    stage = stage_publishable_rows(
+    stage = stage_rows(
         meta,
         compiled,
         rows,
@@ -606,9 +622,29 @@ def find_rows(
     for item in stage.rows:
         if item.family_variant is not None:
             item.values["familyVariant"] = item.family_variant
-    return NeutralReadResult(
-        output=neutral_rows(item.values for item in stage.rows), execution=calls.read_trace()
-    )
+    return RowsResult(rows=_published_rows(stage, meta), execution=calls.read_trace())
+
+
+def _published_rows(stage: StagedRows, meta: Metamodel) -> tuple[PublishedRow, ...]:
+    """One published element per staged row, in result order.
+
+    The staging graph gives each row the root position of its own ordinal, so a
+    verdict and the row it judged are paired by position rather than by a second
+    identity this lane would have to derive.
+    """
+    published: list[PublishedRow] = []
+    for item, verdict in zip(stage.rows, classify_roots(stage.merge, meta).roots, strict=True):
+        detached = MappingProxyType(dict(item.values))
+        if isinstance(verdict, ClassifiedRoot):
+            published.append(
+                cast(
+                    "InvalidData[Mapping[str, object]]",
+                    verdict.published(None if verdict.node is None else detached),
+                )
+            )
+            continue
+        published.append(detached)
+    return tuple(published)
 
 
 def find_history(
@@ -1045,111 +1081,6 @@ def _edge_pin(edge: Edge) -> Pin:
     rendering needs no per-entity axis list of its own.
     """
     return Pin(tx_time=edge.tx_time_or_none, valid_time=edge.valid_time_or_none)
-
-
-def read_neutral(
-    request: NeutralReadRequest,
-    meta: Metamodel,
-    dialect: Dialect,
-    port: DbPort,
-    *,
-    lock: LockMode | None = None,
-    observations: ObservationCollector | None = None,
-    recorder: TraceRecorder | None = None,
-    observed: ObservationKeying | None = None,
-) -> NeutralReadResult:
-    """Preflight ``request`` and run it — the STANDALONE neutral read, whole.
-
-    The neutral peer of ``db.find``'s own composition: the shared read gate
-    (:func:`~parallax.snapshot.handle._preflight.preflight`), then
-    :func:`execute_neutral`. A participating caller composes the same two itself,
-    because it must gate BEFORE the force-flush that stands between them.
-    """
-    preflight(request.query, model=meta, form=request.form)
-    return execute_neutral(
-        request,
-        meta,
-        dialect,
-        port,
-        lock=lock,
-        observations=observations,
-        recorder=recorder,
-        observed=observed,
-    )
-
-
-def execute_neutral(
-    request: NeutralReadRequest,
-    meta: Metamodel,
-    dialect: Dialect,
-    port: DbPort,
-    *,
-    lock: LockMode | None = None,
-    observations: ObservationCollector | None = None,
-    recorder: TraceRecorder | None = None,
-    observed: ObservationKeying | None = None,
-) -> NeutralReadResult:
-    """Run an ALREADY-PREFLIGHTED neutral read into the form ``request`` selected.
-
-    The one dispatch both neutral entry points share, so ``db.read_neutral`` and
-    ``tx.read_neutral`` differ only in what they pass: locking, the observation
-    collector, the attempt's trace recorder, and the Observation Key rule — the
-    same four things that separate ``db.find`` from ``tx.find``. The gate is the
-    caller's, exactly as it is for :func:`find`, because only the caller knows
-    whether a force-flush stands between the two.
-
-    A row-form read records NO observation even when a collector is supplied: the
-    values lane projects scalars only, so a Predecessor Row read off it would be
-    incomplete under Relational Document Layout, and `m-unit-work` requires a
-    complete one. A participating caller that needs evidence requests the graph
-    form, which is the form ``tx.find`` itself always runs.
-
-    A milestone-set read publishes no Observation Key for the same reason
-    ``tx.find`` records nothing for one: `m-unit-work` files evidence per
-    observed milestone, and a read that answers a whole milestone SET observes
-    none of them, so ``observed`` reaches the graph branch alone.
-    """
-    query = request.query
-    if request.form == "rows":
-        return find_rows(query, meta, dialect, port, lock=lock, recorder=recorder)
-    if scans_an_axis(query):
-        history = find_history(query, meta, dialect, port, recorder=recorder)
-        return neutral_from_history_result(history, meta)
-    result = find(
-        query, meta, dialect, port, lock=lock, observations=observations, recorder=recorder
-    )
-    return neutral_from_find_result(result, meta, observed=observed)
-
-
-def neutral_from_find_result(
-    result: FindResult, meta: Metamodel, *, observed: ObservationKeying | None = None
-) -> NeutralReadResult:
-    """``result``'s graph as class-free nodes and views — the PEER of
-    :func:`snapshot_from_find_result`, not a wrapper of it.
-
-    Both run the same :func:`~parallax.snapshot.materialize.merge_graph_input`
-    over the same executor's own graph input, and neither calls the other: which
-    materializer runs is decided after execution has already finished, so a typed
-    read constructs no ``Neutral*`` value and a neutral read constructs no Entity.
-    """
-    graph = neutral_graph(merge_graph_input(result.graph, meta), meta, observed=observed)
-    return NeutralReadResult(output=graph, execution=result.execution)
-
-
-def neutral_from_history_result(result: HistoryFindResult, meta: Metamodel) -> NeutralReadResult:
-    """``result``'s per-milestone graphs as the neutral milestone-set output,
-    each carrying its own edge pin, in the executor's chronological order.
-
-    Takes no Observation Keying and publishes no key: a milestone-set read
-    records no observation on any unit of work (the peer
-    :func:`snapshot_from_history_result` returns before ``tx.find``'s recording
-    step for the same reason), so a key published here would name a slot nothing
-    ever filed under and would fail every write it was handed to.
-    """
-    graphs: list[NeutralGraph] = [
-        neutral_graph(merge_graph_input(graph, meta), meta) for graph in result.graphs
-    ]
-    return NeutralReadResult(output=neutral_graphs(graphs), execution=result.execution)
 
 
 def wire_from_find_result(result: FindResult, meta: Metamodel) -> Snapshot[WireEntity]:

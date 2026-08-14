@@ -22,6 +22,6 @@ then:
         mariadb: select t0.id, t0.kind, not t0.payload is null, t0.payload from payment_document t0
   graph:
     Payment:
-      - { id: 1, detail: visa-4242, authorization_code: AUTH-7, familyVariant: CardPayment }
+      - { id: 1, detail: visa-4242, authorizationCode: AUTH-7, familyVariant: CardPayment }
       - { id: 2, detail: 12.50, familyVariant: CashPayment }
   roundTrips: 1

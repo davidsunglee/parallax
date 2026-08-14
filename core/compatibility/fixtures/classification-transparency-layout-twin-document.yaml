@@ -1,0 +1,24 @@
+# Logical rows shared by both stored-data classification descriptors. Each row
+# authors declared member names rather than physical cells, so one file describes
+# one logical state under either layout — the conforming states and the
+# contradicting ones alike.
+#
+# `profile.street` is REQUIRED, so a stored profile omitting it contradicts the
+# model while the normative absence collapse still produces the whole value. That
+# is the state this pair varies:
+#
+#   item 1  conforming              child 11 omits `street`   invalid at an INCLUDED node
+#   item 2  omits `street`          child 12 conforming       invalid at the ROOT
+#   item 3  omits `street`          child 13 omits `street`   two diagnoses, one record
+#   item 4  conforming              child 14 conforming       the conforming control
+parallax.compatibility.ClassificationTwinItem:
+  - { id: 1, profile: { street: 1 Main, city: null } }
+  - { id: 2, profile: { city: Oslo } }
+  - { id: 3, profile: { city: Berlin } }
+  - { id: 4, profile: { street: 4 Main, city: Boston } }
+
+parallax.compatibility.ClassificationTwinChild:
+  - { id: 11, itemId: 1, profile: { city: Berlin } }
+  - { id: 12, itemId: 2, profile: { street: 12 Main, city: null } }
+  - { id: 13, itemId: 3, profile: { city: Oslo } }
+  - { id: 14, itemId: 4, profile: { street: 14 Main, city: null } }

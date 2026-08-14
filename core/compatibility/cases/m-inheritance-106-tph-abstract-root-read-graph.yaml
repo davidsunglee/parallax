@@ -23,7 +23,7 @@ then:
         postgres: select t0.id, t0.kind, t0.amount, t0.card_network, t0.tendered from payment t0
   graph:
     Payment:
-      - { id: 1, amount: 100.00, card_network: Visa, familyVariant: CardPayment }
-      - { id: 2, amount: 50.00, card_network: Amex, familyVariant: CardPayment }
+      - { id: 1, amount: 100.00, cardNetwork: Visa, familyVariant: CardPayment }
+      - { id: 2, amount: 50.00, cardNetwork: Amex, familyVariant: CardPayment }
       - { id: 3, amount: 20.00, tendered: 25.00, familyVariant: CashPayment }
   roundTrips: 1

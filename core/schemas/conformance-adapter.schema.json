@@ -12,6 +12,53 @@
     { "$ref": "#/$defs/nonOk" }
   ],
   "$defs": {
+    "storedDataRecord": {
+      "description": "One result position a read classified rather than published as itself. `ordinal` is its zero-based place in the ordered result, `hydrated` states whether the normative collapse produced a value at that position, and `issues` is the deduplicated diagnosis set the position carries.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ordinal", "hydrated", "issues"],
+      "properties": {
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "hydrated": { "type": "boolean" },
+        "issues": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/storedDataIssue" }
+        }
+      }
+    },
+    "storedDataIssue": {
+      "description": "One stored-data violation: its closed `code`, the canonical `entity` it was found on, the dotted `member` path where one is nameable, and the affected `objectKey` where the object's own identity decoded.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "entity"],
+      "properties": {
+        "code": {
+          "enum": [
+            "stored-data-required-member-absent",
+            "stored-data-required-member-null",
+            "stored-data-one-wrong-kind",
+            "stored-data-many-wrong-kind",
+            "stored-data-leaf-undecodable",
+            "stored-data-attribute-null",
+            "stored-data-family-tag-unknown",
+            "stored-data-primary-key-null",
+            "stored-data-primary-key-undecodable"
+          ]
+        },
+        "entity": { "type": "string", "minLength": 1 },
+        "member": { "type": "string", "minLength": 1 },
+        "objectKey": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entity", "key"],
+          "properties": {
+            "entity": { "type": "string", "minLength": 1 },
+            "key": { "type": "object", "minProperties": 1 }
+          }
+        }
+      }
+    },
     "schemaVersion": {
       "type": "string",
       "const": "1"
@@ -476,6 +523,11 @@
         "identityChecks": {
           "type": "array",
           "items": { "$ref": "#/$defs/identityCheck" }
+        },
+        "storedDataIssues": {
+          "description": "The stored-data diagnoses a read published for the result positions whose stored state contradicted the declared model (m-snapshot-read), compared against the case's `then.storedDataIssues`. Optional and additive — a conforming read publishes none and omits it, and existing run outputs stay valid.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/storedDataRecord" }
         },
         "stateChecks": {
           "description": "Lifecycle-state checks (m-detach five-state machine) an adapter reports for scenario steps declaring `expectState`. Optional and additive — an adapter that reports no lifecycle state omits it, and existing run outputs stay valid.",

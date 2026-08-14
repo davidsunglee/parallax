@@ -33,7 +33,8 @@ public-surface check promises. Where the exported names live:
   lane's standalone close probe wired with the same concurrency adapter.
 - :mod:`~parallax.snapshot.handle._transaction` — :class:`Transaction`: the
   developer verbs a ``db.transact`` closure drives, and the participating
-  :meth:`Transaction.find`.
+  :meth:`Transaction.find`; plus :class:`ObservedRead`, the Snapshot-and-evidence
+  pair the first-party conformance bridge reads through.
 - :mod:`~parallax.snapshot.handle._errors` — :class:`QueryTargetError`, the
   refusal of a query whose target the connected model does not declare, raised
   by the shared read-preflight seam and by the write side's target resolution
@@ -58,28 +59,19 @@ public-surface check promises. Where the exported names live:
   :class:`HistoryFindResult`,
   :class:`NoResultFound`, :class:`TooManyResultsFound`) and
   :class:`ObservationCollector`, the optional seam a participating read hands its
-  materialized rows to. :class:`NeutralReadRequest` is what the model-neutral
-  entry points take, and :class:`NeutralReadResult` what they answer.
+  materialized rows to. :class:`RowsResult` is what the values lane answers, and
+  :data:`PublishedRow` is the element it publishes per result position.
 
 The Wire result vocabulary — :class:`WireEntity`, the frozen Entity node every
 Wire read publishes, and :data:`WireValue`, the recursive plain-value shape its
 positions carry — is :mod:`parallax.snapshot.materialize`'s, built by the wire
 materializer beside the merge every materializer consumes, and re-exported here
-beside the views that answer it.
-
-The model-neutral read vocabulary — :class:`NeutralRows`, :class:`NeutralGraph`,
-:class:`NeutralGraphs`, :class:`NeutralNode`, :class:`NeutralNodeView` — is
-:mod:`parallax.snapshot.materialize`'s, built by the second materializer beside
-the merge both materializers consume, and re-exported here beside the entry
-points that answer it. The invalid-result vocabulary a classified root publishes
-— :class:`InvalidData`, :class:`StoredDataIssue`, :class:`InvalidDataError`, and
-:class:`~parallax.core.unit_work.ObjectKey`, the identity a record locates itself
-by — is re-exported for the same reason: a ``Snapshot`` element's own type must
-be nameable beside the accessor that answers it.
-:class:`~parallax.core.unit_work.ObservationKey` is
-re-exported for the same reason the execution-provenance subset is: a caller
-cannot use :meth:`Transaction.write_neutral`'s documented contract, or read the
-key a neutral node publishes, without naming the type.
+beside the views that answer it. The invalid-result vocabulary a classified root
+publishes — :class:`InvalidData`, :class:`StoredDataIssue`,
+:class:`InvalidDataError`, and :class:`~parallax.core.unit_work.ObjectKey`, the
+identity a record locates itself by — is re-exported for the same reason: a
+``Snapshot`` element's own type must be nameable beside the accessor that answers
+it.
 
 Execution provenance is `m-execution-log`'s vocabulary, canonically defined in
 :mod:`parallax.core.execution_log`; the developer-facing subset a `db.find` or
@@ -123,7 +115,7 @@ from parallax.core.execution_log import (
     TransactionNotCommittedError,
     TransactionResult,
 )
-from parallax.core.unit_work import ObjectKey, ObservationKey
+from parallax.core.unit_work import ObjectKey
 from parallax.snapshot.handle._database import (
     Database,
     TransactionOptionConflictError,
@@ -143,17 +135,17 @@ from parallax.snapshot.handle._read import (
     CheckedSnapshot,
     FindResult,
     HistoryFindResult,
-    NeutralReadRequest,
-    NeutralReadResult,
     NoResultFound,
     ObservationCollector,
+    PublishedRow,
+    RowsResult,
     Snapshot,
     TooManyResultsFound,
     find,
     find_history,
 )
 from parallax.snapshot.handle._step_lowering import lower_step
-from parallax.snapshot.handle._transaction import Transaction
+from parallax.snapshot.handle._transaction import ObservedRead, Transaction
 from parallax.snapshot.handle._wire import (
     WireDatabaseView,
     WireQuery,
@@ -162,6 +154,7 @@ from parallax.snapshot.handle._wire import (
 from parallax.snapshot.handle._write_inputs import (
     KEYED_WRITE_VALUE_CODES,
     KeyedWriteValueError,
+    ObservedRecord,
     TransactionTimePinReadOnlyError,
     validate_source_pin,
 )
@@ -170,12 +163,6 @@ from parallax.snapshot.handle._write_types import WriteLoweringError
 from parallax.snapshot.materialize import (
     InvalidData,
     InvalidDataError,
-    NeutralGraph,
-    NeutralGraphs,
-    NeutralNode,
-    NeutralNodeView,
-    NeutralReadOutput,
-    NeutralRows,
     StoredDataIssue,
     WireEntity,
     WireValue,
@@ -193,20 +180,15 @@ __all__ = [
     "InvalidData",
     "InvalidDataError",
     "KeyedWriteValueError",
-    "NeutralGraph",
-    "NeutralGraphs",
-    "NeutralNode",
-    "NeutralNodeView",
-    "NeutralReadOutput",
-    "NeutralReadRequest",
-    "NeutralReadResult",
-    "NeutralRows",
     "NoResultFound",
     "ObjectKey",
     "ObservationCollector",
-    "ObservationKey",
+    "ObservedRead",
+    "ObservedRecord",
+    "PublishedRow",
     "QueryTargetError",
     "ReadTrace",
+    "RowsResult",
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotMaterializationError",

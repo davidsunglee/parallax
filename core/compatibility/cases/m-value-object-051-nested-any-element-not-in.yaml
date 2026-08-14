@@ -16,8 +16,10 @@
 # different things.
 #
 # Absence excludes rather than satisfies: Nils's only element IS `work`, so he does
-# not match, and every zero-element row is out — the empty arrays (3, 9, 10), the
-# null column (4), the missing keys (5, 6), and the nested null (8).
+# not match, and every zero-element row is out — the empty array (3), the null column
+# (4), the missing key (5, 6), and the three non-array states (8, 9, 10). Priya (10)
+# is the trap: her non-array OBJECT `phones` carries type=home, which is not in the
+# list, so an unguarded traversal would wrongly match her.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, notIn, absence-collapse, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

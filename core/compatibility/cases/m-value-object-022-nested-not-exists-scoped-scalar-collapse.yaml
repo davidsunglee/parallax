@@ -1,12 +1,14 @@
-# valueObject to-many: nestedNotExists + `where` includes every empty or absent
+# valueObject to-many: nestedNotExists + `where` INCLUDES every non-array `many`
 # state (m-value-object to-many, m-predicate same-element negation + absence
 # collapse, m-dialect array-traversal form), on Postgres AND MariaDB.
 #
 # nestedNotExists(Customer.address.phones, where: number = '555-0000') matches every
 # row where NO element has number = 555-0000. Only Nils (id 7, {work, 555-0000}) is
 # excluded; everyone else matches — including the empty array (3), the NULL column
-# (4), the missing-`phones` rows (5, 6), the JSON-null occurrence (8), and the
-# empty arrays (9, 10).
+# (4), the missing-`phones` rows (5, 6) and the three NON-ARRAY states (8, 9, 10).
+# Omar (id 9) is the trap on the negated side: his scalar `phones` "555-0000" equals
+# the query value, but a non-array `phones` vacuously has no satisfying element, so
+# he is correctly INCLUDED — the complement of m-value-object-021.
 #
 # Postgres negates the same-element `exists` behind the `case`/`jsonb_typeof` array
 # guard; MariaDB negates the array-type-guarded `json_contains`, wrapped in

@@ -3,13 +3,14 @@
 #
 # Order 1 is materialized with `[items, items.order]`: each OrderItem's `order`
 # back-reference reaches the ROOT order — an ancestor already on the current path, a
-# true cycle. Recursion stops at the cycle point, which carries a PK-only stub
-# (`order: { id: 1 }` — only the primary key, no other scalars, no relationships), so
-# the graph JSON stays a finite value tree in 1 (root) + 1 (items) = 2 round trips;
-# the cycle emits no third query. The stub proves nothing about sameness by itself —
-# the same-node claim (`items[*].order` IS the root node, not a lookalike copy) rides
-# `then.identityChecks`, graded as reference identity by each language's API
-# Conformance Suite (api-conformance lane).
+# true cycle. What makes the graph JSON a finite value tree is the requested include
+# tree, not a cycle detector: `items.order` is the LAST level, so the node it reaches
+# is unwound with no level left to follow and renders its own members in full with no
+# relationship at all. The unwind therefore terminates after 1 (root) + 1 (items) = 2
+# round trips and the cycle emits no third query. The rendered back-reference carries
+# the ancestor's whole value rather than a primary-key stub, so the graph states what
+# was reached instead of deferring the claim to a separate reference-identity
+# assertion.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, back-reference, cycle, relationship, graph, slice-snapshot-1]
 shape: read
@@ -46,11 +47,32 @@ then:
         qty: 5
         price: 10.50
         active: true
-        ordered_on: 2024-01-05
+        orderedOn: 2024-01-05
         items:
-          - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15, order: { id: 1 } }
-          - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null, order: { id: 1 } }
-  identityChecks:
-    - { left: /then/graph/Order/0, right: /then/graph/Order/0/items/0/order, same: true }
-    - { left: /then/graph/Order/0, right: /then/graph/Order/0/items/1/order, same: true }
+          - id: 12
+            orderId: 1
+            sku: B-200
+            quantity: 1
+            shippedOn: 2024-02-15
+            order:
+              id: 1
+              name: Ada
+              sku: A-100
+              qty: 5
+              price: 10.50
+              active: true
+              orderedOn: 2024-01-05
+          - id: 11
+            orderId: 1
+            sku: A-100
+            quantity: 2
+            shippedOn: null
+            order:
+              id: 1
+              name: Ada
+              sku: A-100
+              qty: 5
+              price: 10.50
+              active: true
+              orderedOn: 2024-01-05
   roundTrips: 2
