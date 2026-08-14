@@ -1,18 +1,20 @@
 """Source inventories over Python files, for guards stated over source shape.
 
-Extraction and nothing more: globbing a distribution's sources, matching a
-regular expression against their lines, parsing them with ``ast``, and reading
-the import statements out of the parse. A caller gets paths, ``path:line`` sites,
-parse trees, and `Import` records, and decides for itself what any of it means.
-`synthetic_sources` hands it source to read in place of this tree's, which is how
-a guard is shown to fail for the shape it forbids and to pass source that merely
-resembles it. Two readers ask Python instead of the text — importing every module
-and walking the subclass registry — because ancestry is a runtime fact that no
-spelling settles.
+Two kinds of reader, and no third. What the TEXT settles: globbing a
+distribution's sources, matching a regular expression against their lines,
+parsing them with ``ast``, and reading the import statements and dotted
+expressions out of the parse. What only the RUNTIME settles: importing every
+module and walking Python's subclass registry and module namespaces, because
+ancestry and the names a class is bound under are facts no spelling carries. A
+caller gets paths, ``path:line`` sites, parse trees, `Import` records, and sets
+of names, and decides for itself what any of it means. `synthetic_sources` hands
+it source to read in place of this tree's, which is how a guard is shown to fail
+for the shape it forbids and to pass source that merely resembles it.
 
 Nothing here resolves a name to what it denotes. A relative import's source
-module is completed from the importing file's own position, which the file system
-settles outright; what a name MEANS is a claim behavior grades directly, and
+module is completed from the importing file's own position and an expression's
+root name is read off the parse, both of which the file and the text settle
+outright; what a name MEANS is a claim behavior grades directly, and
 approximating an interpreter to grade it here would be both weaker than that and
 a second implementation to maintain.
 
@@ -26,9 +28,11 @@ from __future__ import annotations
 import ast
 import importlib
 import re
+import sys
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 from _support.distributions import ALL_PACKAGES, PRODUCTION_PACKAGES, TOP_PACKAGE_DIR
 from _support.repo import PY_ROOT
@@ -42,8 +46,11 @@ __all__ = [
     "SNAPSHOT_SRC",
     "Import",
     "all_sources",
+    "bound_root",
     "declared_imports",
+    "first_party_binding_names",
     "first_party_descendants",
+    "foreign_locals",
     "hits",
     "import_every_module",
     "parsed",
@@ -173,6 +180,34 @@ def first_party_descendants(root: type) -> list[type]:
     )
 
 
+def _first_party_modules() -> list[ModuleType]:
+    return [
+        module
+        for module in list(sys.modules.values())
+        if getattr(module, "__name__", "").startswith("parallax.")
+    ]
+
+
+def first_party_binding_names(root: type) -> frozenset[str]:
+    """Every name a shipped module binds a `first_party_descendants` class under.
+
+    A class reached by name is reached under whatever name its holder can import
+    it by, so a re-export under a second name is one of the class's names here.
+    The module namespaces answer that once every module is imported; a class's own
+    ``__name__`` stands whether or not anything re-exports it.
+    """
+    kinds = set(first_party_descendants(root))
+    return frozenset(
+        [kind.__name__ for kind in kinds]
+        + [
+            bound
+            for module in _first_party_modules()
+            for bound, value in list(vars(module).items())
+            if isinstance(value, type) and value in kinds
+        ]
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Import:
     """One name one module imports, at the site the import statement stands.
@@ -245,3 +280,24 @@ def declared_imports(over: Iterator[tuple[Path, str]]) -> Iterator[Import]:
 def snapshot_imports() -> list[Import]:
     """Every import the Snapshot distribution declares."""
     return list(declared_imports(sources(SNAPSHOT_SRC)))
+
+
+def bound_root(node: ast.expr) -> str:
+    """The name a dotted expression starts from: ``a`` for both ``a`` and
+    ``a.b.c``; empty when it starts from anything but a name."""
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else ""
+
+
+def foreign_locals(path: Path, tree: ast.Module) -> frozenset[str]:
+    """Every name the module binds from a distribution other than `parallax`.
+
+    A guard stated over a spelling needs this to tell the name apart from a
+    namesake: an unrelated distribution exporting `WritePlanner` or a same-named
+    exception binds a different object, and source using it resembles the
+    regression without being it.
+    """
+    return frozenset(
+        one.local for one in _module_imports(path, tree) if one.distribution != "parallax"
+    )
