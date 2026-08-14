@@ -36,12 +36,10 @@ no source inventory, and nothing here is to be read as covering them:
   class descending from it reaches Snapshot's code as an imported name or as an
   attribute of a bound module, under any name a shipped module binds it by. A
   SUPERTYPE handler — `RuntimeError`, or a bare `except` — names nothing either
-  reading can list, and a name read from another distribution is passed on that
-  provenance rather than on what it denotes. The
-  ordering it derives from — `spec/python.md` §5 decides a keyed verb's refusal
-  in the shared preamble, ahead of any row derivation, so the refusal a caller
-  observes carries no codec failure as its cause — is graded at the boundary by
-  the compatibility cases
+  reading can list. The ordering it derives from — `spec/python.md` §5 decides a
+  keyed verb's refusal in the shared preamble, ahead of any row derivation, so
+  the refusal a caller observes carries no codec failure as its cause — is graded
+  at the boundary by the compatibility cases
   ``m-unit-work-017-update-of-a-value-no-managed-read-produced`` and
   ``m-unit-work-019-write-of-a-value-another-source-produced``, and by
   `tests/unit/test_write_value_runner.py` and
@@ -67,10 +65,8 @@ from _source_inventory_support import (
     SNAPSHOT_SRC,
     Import,
     all_sources,
-    bound_root,
     declared_imports,
     first_party_binding_names,
-    foreign_locals,
     hits,
     import_every_module,
     parsed,
@@ -138,42 +134,35 @@ def _row_vocabulary_sites(
     in one of ``refusals``, a definition of a row helper the codec replaced, or a
     spelling of Pydantic's own internals.
 
-    The names are the codec's own, so they are held where they come FROM the
-    codec's distribution: an exception another distribution exports under the same
-    spelling is source that resembles the regression rather than source that is
-    it. The Pydantic substrate is held by the distribution it is read from rather
-    than by any name, so no re-export hides it.
+    The names decide alone, wherever they come from: an import of the codec's
+    refusal out of an unrelated distribution is held here just the same, since
+    under Snapshot the spelling has one meaning and a second thing wearing it
+    would be the more alarming find. Which distribution a name is read from is
+    deliberately not consulted — it settled no site in this tree, and it let a
+    refusal re-exported by another distribution, or a foreign binding of the
+    spelling anywhere else in the file, pass as though it were a namesake. The
+    Pydantic substrate is the one arm held by distribution rather than by name, so
+    no re-export hides it.
 
-    `foreign_locals` decides that on provenance alone, and this guard is no
-    stronger than that reading. A refusal reached through a distribution that
-    re-exports `parallax`'s own class passes, as does a genuine reach standing in
-    one scope of a file that binds the spelling from elsewhere in another. Both
-    need a Snapshot module to bind one of these names from outside `parallax`,
-    which its one declared dependency does not export, and the prohibition itself
-    is graded at the boundary by the compatibility cases and write-behavior
-    modules the module docstring names.
+    What survives is over-reach, not a bypass: a distribution Snapshot took a
+    dependency on that exported one of these spellings would be named here, and
+    naming it is the reading to want, since the prohibition itself is graded at
+    the boundary by the compatibility cases and write-behavior modules the module
+    docstring names.
 
     A refusal is looked for as an attribute path's tail as well as an imported
     name, because `import parallax.core.entity as entity` binds a module rather
     than a name and `entity.EntityRowError` then names the refusal while the
     import inventory sees only `entity`. That arm reads the parse, so prose
-    discussing the refusal is left alone, and it skips a path rooted in a name the
-    file binds from another distribution for the same reason the import arm does.
-    The row helpers stay out of it: `self._codec.full_row(...)` IS the codec being
-    consulted.
+    discussing the refusal is left alone. The row helpers stay out of it:
+    `self._codec.full_row(...)` IS the codec being consulted.
     """
     files = list(over)
     imported = list(declared_imports(iter(files)))
     trees = list(parsed(iter(files)))
-    foreign = {path: foreign_locals(path, tree) for path, tree in trees}
     forbidden = FORBIDDEN_ROW_IMPORTS | refusals
     return sorted(
-        [
-            (one.site, held)
-            for one in imported
-            if one.distribution == "parallax"
-            for held in forbidden & {one.name, one.local}
-        ]
+        [(one.site, held) for one in imported for held in forbidden & {one.name, one.local}]
         + [(one.site, one.distribution) for one in imported if one.distribution == "pydantic"]
         + [
             (one.site, one.name)
@@ -184,9 +173,7 @@ def _row_vocabulary_sites(
             (site_of(path, node.lineno), node.attr)
             for path, tree in trees
             for node in ast.walk(tree)
-            if isinstance(node, ast.Attribute)
-            and node.attr in refusals
-            and bound_root(node) not in foreign[path]
+            if isinstance(node, ast.Attribute) and node.attr in refusals
         ]
         + [
             (site_of(path, node.lineno), node.name)
@@ -230,8 +217,11 @@ def test_the_row_vocabulary_guard_names_what_is_held_and_passes_what_resembles_i
     # `RowRefusal` stands for a subclass of the codec's refusal under a name of
     # its own, which catches the refusal exactly as the base does and which
     # `_codec_refusals` supplies from Python's registries; `other_library` stands
-    # for a distribution of another name exporting the same spelling, which the
-    # guard passes on that provenance rather than on what the name denotes.
+    # for the spelling arriving from somewhere the codec does not own, which is
+    # held on the spelling and named as either an import or an attribute path.
+    # The resembling module carries the resemblance that can actually stand under
+    # Snapshot: a longer name, the words in prose and in a comment, an attribute
+    # spelled in snake case, and a row helper whose name merely starts alike.
     held = _row_vocabulary_sites(
         synthetic_sources(
             {
@@ -252,6 +242,11 @@ def test_the_row_vocabulary_guard_names_what_is_held_and_passes_what_resembles_i
                     "def held(f):\n"
                     "    try: f()\n"
                     "    except refusals.RowRefusal: raise\n"
+                    "from other_library import EntityRowError\n"
+                    "import other_library\n"
+                    "def elsewhere(f):\n"
+                    "    try: f()\n"
+                    "    except other_library.EntityRowError: raise\n"
                 ),
                 "parallax.snapshot.handle._resembling": (
                     "from parallax.core.entity import row_codec_of\n"
@@ -263,11 +258,6 @@ def test_the_row_vocabulary_guard_names_what_is_held_and_passes_what_resembles_i
                     "def cause(failure): return failure.entity_row_error\n"
                     "from parallax.core.entity import EntityRowErrors\n"
                     "def unwrap(failure): return failure.row_refusal\n"
-                    "import other_library\n"
-                    "from other_library import EntityRowError\n"
-                    "def elsewhere(f):\n"
-                    "    try: f()\n"
-                    "    except other_library.EntityRowError: raise\n"
                 ),
             }
         ),
@@ -288,6 +278,8 @@ def test_the_row_vocabulary_guard_names_what_is_held_and_passes_what_resembles_i
             (site(12), "EntityRowError"),
             (site(13), "RowRefusal"),
             (site(16), "RowRefusal"),
+            (site(17), "EntityRowError"),
+            (site(21), "EntityRowError"),
         ]
     )
 

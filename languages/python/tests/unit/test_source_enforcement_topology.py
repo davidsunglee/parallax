@@ -24,11 +24,9 @@ demonstrated over classes a test defines.
 
 Two prohibitions the planner contraction carries are decidable neither from the
 source nor from Python's own registries, and nothing here is to be read as
-covering them: a planner constructed under a name this tree's text does not tie
-to `parallax` — an alias, or a re-export read from another distribution — which
-no inventory of a name finds and no subclass registry lists; and an audit value
-stamped by hand onto a row, under a name of its own, which reaches no audit
-strategy at all.
+covering them: a planner constructed through an alias, which no inventory of a
+name finds and no subclass registry lists; and an audit value stamped by hand
+onto a row, under a name of its own, which reaches no audit strategy at all.
 `tests/unit/test_planner_composition.py` narrows both by driving real writes — on
 each lane it drives, every plan reaching the shared write-lowering seam came from
 a planner the composition root built, and the audit port those planners hold is
@@ -47,10 +45,8 @@ from _source_inventory_support import (
     SNAPSHOT_SRC,
     Import,
     all_sources,
-    bound_root,
     declared_imports,
     first_party_descendants,
-    foreign_locals,
     import_every_module,
     parsed,
     production_sources,
@@ -251,28 +247,24 @@ def _write_planner_constructions(over: Iterator[tuple[Path, str]]) -> list[str]:
     call in the parse, so an annotation, a longer class name ending in it, and
     any spelling inside a comment or a docstring are all left alone.
 
-    A qualified callee counts by its tail, since which module a construction is
-    written through is not the question. What the file binds from another
-    distribution is: a callee rooted in a name read from elsewhere is not this
-    class on the text's evidence, and is left alone for the same reason a mention
-    is.
+    The callee's tail is the whole subject, so a call qualified by any module
+    counts — the question is which module holds the construction, and a class of
+    that name reached from somewhere else would be one to answer, not to skip.
+    Which distribution the callee's root is read from is deliberately not
+    consulted: it settled no site in this tree, and it let a planner re-exported
+    by another distribution, or a construction sharing a file with a foreign
+    binding of the spelling, pass as though it were a namesake.
 
-    `foreign_locals` decides that on provenance alone, and this guard is no
-    stronger than that reading: a planner reached through a distribution that
-    re-exports it, or a construction standing in one scope of a file that binds
-    the spelling from elsewhere in another, passes. Both are the alias case this
-    module's own docstring already hands to `test_planner_composition.py`.
+    The evasion left is the alias — `import WritePlanner as P` and `P(model)`,
+    where no spelling of the class stands as a callee at all — which this module's
+    own docstring hands to `test_planner_composition.py`.
     """
-    found: list[tuple[Path, int]] = []
-    for path, tree in parsed(over):
-        foreign = foreign_locals(path, tree)
-        found.extend(
-            (path, node.lineno)
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and _callee(node.func) == "WritePlanner"
-            and bound_root(node.func) not in foreign
-        )
+    found = [
+        (path, node.lineno)
+        for path, tree in parsed(over)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _callee(node.func) == "WritePlanner"
+    ]
     return [site_of(path, line) for path, line in sorted(found)]
 
 
@@ -302,6 +294,12 @@ def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
 
 
 def test_the_construction_guard_names_every_construction_and_passes_a_mention() -> None:
+    # The holding module carries the callee bare, qualified by the module it is
+    # imported from, and qualified by a module of another distribution — the
+    # spelling standing as a callee is the whole subject. The resembling module
+    # carries the spellings that are not a construction of it: an annotation, a
+    # factory whose name merely contains it, a longer class name ending in it, and
+    # a longer attribute tail.
     holding = "parallax.snapshot.handle._holding"
     assert _write_planner_constructions(
         synthetic_sources(
@@ -313,20 +311,18 @@ def test_the_construction_guard_names_every_construction_and_passes_a_mention() 
                     "second = unit_work.WritePlanner(model)\n"
                     "# a second WritePlanner(model) would be a second wiring\n"
                     '"""See :class:`WritePlanner` — built as WritePlanner(model)."""\n'
+                    "import other_library\n"
+                    "third = other_library.WritePlanner(model)\n"
                 ),
                 "parallax.snapshot.handle._resembling": (
-                    "import other_library\n"
-                    "from other_library import WritePlanner\n"
                     "def take(planner: WritePlanner) -> None: ...\n"
                     "build_write_planner(model)\n"
                     "RecordingWritePlanner(model)\n"
                     "planners.WritePlannerFactory(model)\n"
-                    "third = other_library.WritePlanner(model)\n"
-                    "fourth = WritePlanner(model)\n"
                 ),
             }
         )
-    ) == [synthetic_site(holding, line) for line in (3, 4)]
+    ) == [synthetic_site(holding, line) for line in (3, 4, 8)]
 
 
 def test_the_descendant_registry_names_a_shipped_subclass_and_passes_a_test_one() -> None:

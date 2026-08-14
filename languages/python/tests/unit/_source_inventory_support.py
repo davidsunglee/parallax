@@ -2,8 +2,8 @@
 
 Two kinds of reader, and no third. What the TEXT settles: globbing a
 distribution's sources, matching a regular expression against their lines,
-parsing them with ``ast``, and reading the import statements and dotted
-expressions out of the parse. What only the RUNTIME settles: importing every
+parsing them with ``ast``, and reading the import statements out of the parse.
+What only the RUNTIME settles: importing every
 module and walking Python's subclass registry and module namespaces, because
 ancestry and the names a class is bound under are facts no spelling carries. A
 caller gets paths, ``path:line`` sites, parse trees, `Import` records, and sets
@@ -12,9 +12,8 @@ it source to read in place of this tree's, which is how a guard is shown to fail
 for the shape it forbids and to pass source that merely resembles it.
 
 Nothing here resolves a name to what it denotes. A relative import's source
-module is completed from the importing file's own position and an expression's
-root name is read off the parse, both of which the file and the text settle
-outright; what a name MEANS is a claim behavior grades directly, and
+module is completed from the importing file's own position, which the file
+settles outright; what a name MEANS is a claim behavior grades directly, and
 approximating an interpreter to grade it here would be both weaker than that and
 a second implementation to maintain.
 
@@ -46,11 +45,9 @@ __all__ = [
     "SNAPSHOT_SRC",
     "Import",
     "all_sources",
-    "bound_root",
     "declared_imports",
     "first_party_binding_names",
     "first_party_descendants",
-    "foreign_locals",
     "hits",
     "import_every_module",
     "parsed",
@@ -280,31 +277,3 @@ def declared_imports(over: Iterator[tuple[Path, str]]) -> Iterator[Import]:
 def snapshot_imports() -> list[Import]:
     """Every import the Snapshot distribution declares."""
     return list(declared_imports(sources(SNAPSHOT_SRC)))
-
-
-def bound_root(node: ast.expr) -> str:
-    """The name a dotted expression starts from: ``a`` for both ``a`` and
-    ``a.b.c``; empty when it starts from anything but a name."""
-    while isinstance(node, ast.Attribute):
-        node = node.value
-    return node.id if isinstance(node, ast.Name) else ""
-
-
-def foreign_locals(path: Path, tree: ast.Module) -> frozenset[str]:
-    """Every name the module binds from a distribution other than `parallax`.
-
-    A guard stated over a spelling reads this to hold the name only where it is
-    read from the distribution owning it, so another distribution's `WritePlanner`
-    or same-named exception is source that resembles the regression rather than
-    source that is it.
-
-    What this decides is PROVENANCE in the text, and two things follow that a
-    caller states as its own limits. A distribution re-exporting a `parallax`
-    class is read from like any other, so a name taken through one is hidden here.
-    And the set is the module's, not a scope's: a name bound inside one function
-    stands for the whole file, since a per-scope answer is a scope tree and these
-    guards are stated without one.
-    """
-    return frozenset(
-        one.local for one in _module_imports(path, tree) if one.distribution != "parallax"
-    )
