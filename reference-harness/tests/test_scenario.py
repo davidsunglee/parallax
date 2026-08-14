@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from reference_harness.case import Case, Entity, discover_cases, load_model
+from reference_harness.case import Case, Entity, Model, discover_cases, load_model
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_action_on,
@@ -1023,6 +1023,58 @@ def test_a_settled_write_is_not_settled_by_a_sibling_variants_row() -> None:
         _assert_scenario_settled_write(case, "postgres")
 
 
+def test_a_settled_writes_variant_resolution_reads_the_finds_own_discriminator() -> None:
+    # `family_variant` and `familyVariant` are the spellings a DISCRIMINATED read states
+    # its variant in, and both are equally legal PHYSICAL spellings for a model to author
+    # (the corpus maps `catalog.Record.variantMarker` to the column `family_variant`). So
+    # what a field of either spelling means is the origin read's question, not the field's:
+    # a concrete-target find carries no discriminator at all (m-sql), so its row's
+    # `family_variant` is the model's own column and says nothing about the variant; an
+    # abstract find's materialized `familyVariant` is its answer, and the physical column
+    # remapped back beside it is not. Reading the physical column as the tag refuses the
+    # first two settlements outright and, worse, lets a domain value equal to a variant
+    # spelling overrule the read's own answer and license the sibling's rectangle.
+    concrete_target = _physical_variant_column_settled_case(
+        target="parallax.compatibility.DepositRate",
+        discriminators={"family_variant": "catalog-marker"},
+    )
+    _assert_scenario_settled_write(concrete_target, "postgres")
+
+    materialized = _physical_variant_column_settled_case(
+        target="parallax.compatibility.Rate",
+        discriminators={"family_variant": "catalog-marker", "familyVariant": "DepositRate"},
+    )
+    _assert_scenario_settled_write(materialized, "postgres")
+
+    overruled = _physical_variant_column_settled_case(
+        target="parallax.compatibility.Rate",
+        discriminators={"family_variant": "DepositRate", "familyVariant": "LoanRate"},
+    )
+    with pytest.raises(CaseFailure, match="observed 0 row"):
+        _assert_scenario_settled_write(overruled, "postgres")
+
+
+def _physical_variant_column_settled_case(*, target: str, discriminators: dict[str, Any]) -> Case:
+    """The settled bitemporal close of DepositRate 1 over a Rate family that ALSO declares
+    a physical ``family_variant`` column of its own, observed by a find whose queried
+    position is *target* and whose one row carries *discriminators* beside its payload."""
+    model = copy.deepcopy(load_model(COMPATIBILITY_ROOT, "models/rate.yaml"))
+    model.descriptor["entities"][0]["attributes"].append(
+        {"name": "variantMarker", "type": "string", "maxLength": 64, "column": "family_variant"}
+    )
+    row = {
+        "id": 1,
+        "amount": "2.50",
+        "grade": "A",
+        "from_z": "2024-01-01T00:00:00+00:00",
+        "thru_z": "2024-06-01T00:00:00+00:00",
+        "in_z": "2024-02-01T00:00:00+00:00",
+        "out_z": "infinity",
+        **discriminators,
+    }
+    return _settled_close_case(target=target, expect_rows=[row], model=model)
+
+
 def _polymorphic_settled_case(
     *,
     valid_end: str = "2024-06-01T00:00:00+00:00",
@@ -1054,6 +1106,24 @@ def _polymorphic_settled_case(
             "family_variant": "LoanRate",
         },
     }
+    return _settled_close_case(
+        target="parallax.compatibility.Rate",
+        expect_rows=[rows[variant] for variant in observed_variants],
+        valid_end=valid_end,
+        tx_start=tx_start,
+    )
+
+
+def _settled_close_case(
+    *,
+    target: str,
+    expect_rows: list[dict[str, Any]],
+    valid_end: str = "2024-06-01T00:00:00+00:00",
+    tx_start: str = "2024-02-01T00:00:00+00:00",
+    model: Model | None = None,
+) -> Case:
+    """A `uow` group whose find at the queried position *target* observes *expect_rows*
+    and whose write settles a bitemporal close of DepositRate 1 against it."""
     at = "2024-10-01T00:00:00+00:00"
     raw: dict[str, Any] = {
         "model": "models/rate.yaml",
@@ -1064,9 +1134,9 @@ def _polymorphic_settled_case(
             "scenario": [
                 {
                     "uow": "polymorphic",
-                    "objectQuery": {"target": "parallax.compatibility.Rate"},
+                    "objectQuery": {"target": target},
                     "roundTrips": 1,
-                    "expectRows": [rows[variant] for variant in observed_variants],
+                    "expectRows": expect_rows,
                 },
                 {
                     "uow": "polymorphic",
@@ -1098,7 +1168,7 @@ def _polymorphic_settled_case(
     return Case(
         path=COMPATIBILITY_ROOT / "cases" / "m-unit-work-993-synthetic.yaml",
         raw=raw,
-        model=load_model(COMPATIBILITY_ROOT, "models/rate.yaml"),
+        model=model if model is not None else load_model(COMPATIBILITY_ROOT, "models/rate.yaml"),
     )
 
 
