@@ -60,6 +60,7 @@ from parallax.snapshot.materialize import (
     MergeScope,
     convert_row,
     merge_graph_input,
+    source_hint_of,
     wire_roots,
 )
 
@@ -169,6 +170,37 @@ def test_a_document_occurrence_fills_every_declared_member() -> None:
     # declared `one` the row never carried, and it reads null rather than absent.
     assert geo["point"] is None
     assert _sequence(address["phones"])[0] == {"type": "home", "number": "555-1234"}
+
+
+def test_only_an_entity_node_can_carry_a_source_hint() -> None:
+    # A nested Value Object mapping is structurally identical to an Entity node
+    # and answers `isinstance(value, WireEntity)` with false — and it has no slot
+    # to put a hint in, which is what makes "only an Entity node carries one"
+    # structural rather than a rule the materializer has to keep.
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1,
+                    "name": "Ada",
+                    "address": {
+                        "street": "1 Park Ave",
+                        "city": "Oslo",
+                        "geo": {"country": "NO", "elevation": 10.5},
+                        "phones": [{"type": "home", "number": "555-1234"}],
+                    },
+                }
+            ]
+        ]
+    )
+    query = deserialize_query(
+        {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
+    )
+    root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
+    address = _mapping(root["address"])
+    assert not isinstance(address, WireEntity)
+    assert source_hint_of(cast("Any", address)) is None
+    assert source_hint_of(root) is not None
 
 
 def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty() -> None:

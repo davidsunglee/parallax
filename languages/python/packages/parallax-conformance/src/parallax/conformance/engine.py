@@ -87,11 +87,12 @@ from parallax.core.unit_work import (
     KeyedWrite,
     MissingTargetError,
     ObjectKey,
-    ObservationKey,
     ObservedKeyedWrite,
+    ObservedStateKey,
     OptimisticLockConflictError,
     PlanningRequest,
     PredicateWrite,
+    RetainedObservation,
     StaleWriteError,
     SubjectIdentity,
     TemporalObservation,
@@ -952,7 +953,7 @@ _ROW_OBSERVATION_KEYS: Final[tuple[str, ...]] = (
 # What ONE grouped find step observed, in the order production filed it. A later
 # write step of the same group names that step with `on` and settles against the
 # record of its OWN key (`m-case-format` "Settling against a grouped find").
-ObservedNodes = tuple[handle.ObservedRecord, ...]
+ObservedNodes = tuple[RetainedObservation, ...]
 
 # Everything a `uow` group's find steps have observed so far, in step order — the
 # store a grouped write with no `on` reference resolves its own evidence from.
@@ -967,12 +968,12 @@ ObservedNodes = tuple[handle.ObservedRecord, ...]
 # transaction records the version at read time ("the shadow value read earlier")
 # and threads it into the UPDATE bind
 # (`docs/research/reladomo/09-transactions-locking.md:55-59`).
-GroupObservations = list[handle.ObservedRecord]
+GroupObservations = list[RetainedObservation]
 
 # What a write hands `Transaction.write_neutral` as the evidence it settles
 # against: the active unit of work's own Observation Key where a grouped find
 # issued one, the case's own authored or tracked Write Observation otherwise.
-type WriteEvidence = ObservationKey | WriteObservation | None
+type WriteEvidence = ObservedStateKey | WriteObservation | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1259,12 +1260,12 @@ def _settled_against_source(
     from (`m-case-format` *Settling against a grouped find*).
 
     The named find's own record for this key is the evidence the write was handed,
-    so the slot the unit of work filed it under is the one the write settles
-    against — production's own Observation Key, naming the milestone the read
+    so the state the unit of work retained it under is the one the write settles
+    against — production's own Observed State Key, naming the milestone the read
     actually saw, rather than a coordinate this engine re-derived and hoped
     agreed. That is what makes a store keyed by identity alone observably wrong
     here: a key holding several current rectangles has no single answer, while the
-    filed record names exactly one.
+    retained record names exactly one.
 
     Returns the key the real write settles by beside the observation the pure
     re-lowering oracle plans with — one record, so the two can never disagree. A
@@ -1273,7 +1274,7 @@ def _settled_against_source(
     value could have come from — is an authoring defect, refused here where the
     diagnosis can name the step.
     """
-    matched = [record for record in source if record.key.object_key == pk_key]
+    matched = [record for record in source if record.key.object == pk_key]
     if len(matched) != 1:
         raise EngineError(
             f"{entity_name!r}: the find step this write settles against observed "
@@ -1282,10 +1283,10 @@ def _settled_against_source(
             "a grouped find')"
         )
     record = matched[0]
-    # A milestone coordinate files only a Temporal Observation; a versioned row's
-    # evidence has none and can never answer this lookup.
-    assert isinstance(record.observation, TemporalObservation)
-    return record.key, record.observation
+    # A milestone coordinate keys only a Temporal Observation; a versioned row's
+    # evidence carries none and can never answer this lookup.
+    assert isinstance(record.evidence, TemporalObservation)
+    return record.key, record.evidence
 
 
 def _is_predicate_write_step(raw_write: object) -> bool:
@@ -1823,14 +1824,14 @@ def _build_instructions(
             if observation is None and key is not None:
                 observed = _observed_for(group_observations, key)
                 if observed is not None:
-                    evidence, observation = observed.key, observed.observation
+                    evidence, observation = observed.key, observed.evidence
         else:
             evidence, observation = None, None
         out.append(_ResolvedWrite(instruction, evidence, observation))
     return out
 
 
-def _observed_for(observations: GroupObservations, key: ObjectKey) -> handle.ObservedRecord | None:
+def _observed_for(observations: GroupObservations, key: ObjectKey) -> RetainedObservation | None:
     """The LATEST record this group's finds filed for ``key``, or ``None``.
 
     Latest rather than first: a versioned Non-Temporal target holds one row per
@@ -1839,7 +1840,7 @@ def _observed_for(observations: GroupObservations, key: ObjectKey) -> handle.Obs
     observation record performs, expressed over an ordered store instead.
     """
     for record in reversed(observations):
-        if record.key.object_key == key:
+        if record.key.object == key:
             return record
     return None
 

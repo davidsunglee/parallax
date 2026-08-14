@@ -27,9 +27,13 @@ produced it — so they are defined in
 :mod:`~parallax.snapshot._read_result` and re-exported here beside the
 executor that builds them, together with the developer-facing :class:`Snapshot`
 surface they convert into and the pin helpers that carry a query's or a
-milestone's as-of coordinates across that conversion. Those helpers stay here
-rather than moving to the write side: `_write_inputs` imports this module, so
-the reverse edge would close a cycle.
+milestone's as-of coordinates across that conversion.
+
+A graph-form read also retains the write evidence its rows observed, onto the
+values it publishes: this module drives :mod:`parallax.snapshot.handle.
+_write_inputs`'s retention while each row is still live, and hands the resulting
+Source Hints to whichever materializer runs. The dependency goes this way and
+only this way — the write-input module names nothing here.
 
 One executor, two materializers. :func:`snapshot_from_find_result` and
 :func:`wire_from_find_result` are PEERS over the same
@@ -67,7 +71,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
 from parallax.core import predicate as predicate_algebra
@@ -98,6 +102,12 @@ from parallax.snapshot._read_result import (
 from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMaterializationError
 from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.handle._preflight import preflight
+from parallax.snapshot.handle._write_inputs import (
+    ObservationLedger,
+    ReadObservations,
+    ReadSources,
+    retain_evidence,
+)
 from parallax.snapshot.materialize import (
     EMPTY_UNWIND,
     ClassifiedRoot,
@@ -114,6 +124,7 @@ from parallax.snapshot.materialize import (
     attribute_value,
     classify_roots,
     convert_row,
+    hydrates,
     merge_graph_input,
     observable_columns,
     require_publishable,
@@ -126,7 +137,6 @@ __all__ = [
     "FindResult",
     "HistoryFindResult",
     "NoResultFound",
-    "ObservationCollector",
     "PublishedRow",
     "ResultPublication",
     "RowsResult",
@@ -339,37 +349,6 @@ class CheckedSnapshot[T]:
         )
 
 
-class ObservationCollector(Protocol):
-    """Where :func:`find` hands each materialized row's observable state.
-
-    Supplying one *is* the decision to observe: ``Transaction.find`` passes a
-    collector and ``Database.find`` passes ``None``, so a non-transactional read
-    — which has no unit of work to observe into — allocates no observation state
-    at all rather than building a record and discarding it.
-
-    The driver only ever hands rows over; it never reads a collector back. What
-    it hands over is PHYSICAL-column keyed, so the collector snapshots the values
-    a later write may need and retains no row and no node of its own.
-    """
-
-    def observe_row(
-        self, entity: EntityIdentity, columns: Mapping[str, object], document: object | None
-    ) -> None:
-        """Take one materialized row's observable state.
-
-        ``entity`` is the exact Entity that row's own compiled read resolved it
-        to — a per-row fact under table-per-hierarchy, never the position the
-        query targeted and never family-normalized — which is what a subsequent
-        keyed write on that row resolves to as well. ``columns`` is every value
-        the row materialized, keyed by physical column. ``document`` is the raw
-        Structured Column the row arrived with under Relational Document
-        Layout — provenance the member fan-out drops, so a Temporal Observation
-        can retain it without a second read (`m-unit-work`) — and ``None`` under
-        `Columns` layout.
-        """
-        ...
-
-
 def entity_read_lock(
     meta: Metamodel, entity: EntityIdentity, preference: Concurrency | None
 ) -> LockMode | None:
@@ -416,7 +395,7 @@ def find(
     port: DbPort,
     *,
     preference: Concurrency | None = None,
-    observations: ObservationCollector | None = None,
+    ledger: ObservationLedger | None = None,
     recorder: TraceRecorder | None = None,
 ) -> FindResult:
     """The one per-level deep-fetch / snapshot-materialization loop (m-deep-fetch
@@ -448,7 +427,8 @@ def find(
 
     Returns the whole Snapshot Graph Input — every projection, the root
     references in result order, and the query's own lowered pin — plus the
-    read's own sealed Read Trace.
+    read's own sealed Read Trace and the Source Hint each observed projection's
+    value will carry.
 
     ``preference`` is the owning unit of work's Concurrency Preference, and
     EVERY level derives its own read lock from it against that level's own
@@ -457,10 +437,12 @@ def find(
     shared lock. Omitting it is how a non-transactional read locks nothing at
     all.
 
-    ``observations``, when supplied, takes every materialized row (root and each
-    attached level) as the level materializes it, so a caller with a unit of work
-    behind it can record what a later write needs. Omitting it is how a
-    non-transactional read builds no observation state at all.
+    ``ledger`` is the participating unit of work this read's evidence is indexed
+    into and stamped with. Omitting it is what makes a read STANDALONE: its
+    values still carry the evidence they observed — a value's write evidence
+    belongs to the value — and simply name no participation, so an
+    effective-Optimistic write may import that evidence while an
+    effective-Locking one cannot.
 
     ``recorder`` is the trace under construction this read's calls belong to — the
     one an active Transaction Attempt already opened. Omitting it is how a
@@ -473,6 +455,7 @@ def find(
     plan_ = deep_fetch.plan(root_entity, query, meta)
     calls = recorder if recorder is not None else TraceRecorder()
     scope = MergeScope(meta)
+    observations = ReadObservations()
 
     root_compiled = compile_read(
         plan_.root,
@@ -512,6 +495,7 @@ def find(
         graph=scope.build(root_refs, pin),
         execution=calls.read_trace(),
         includes=_include_tree(plan_.levels),
+        sources=retain_evidence(meta, observations, ledger=ledger),
     )
 
 
@@ -771,21 +755,29 @@ def _convert_level(
     dialect: Dialect,
     compiled: CompiledRead,
     recorder: CallRecorder,
-    observations: ObservationCollector | None,
+    observations: ReadObservations,
 ) -> tuple[SnapshotNodeRef, ...]:
     """Execute one level and convert each of its rows as that row materializes.
 
-    The observation, when one is being collected, is taken from the SAME row the
-    conversion reads, while that row is still live. It is deliberately physical:
-    a Predecessor Row is column-keyed by contract, so the write side is served by
-    its own explicitly physical extraction rather than by a converted node
-    carrying columns it has no other use for.
+    The observation is taken from the SAME row the conversion reads, while that
+    row is still live, and paired with the projection that row converted into —
+    the pairing that lets the value built from that projection carry the evidence
+    later. It is deliberately physical: a Predecessor Row is column-keyed by
+    contract, so the write side is served by its own explicitly physical
+    extraction rather than by a converted node carrying columns it has no other
+    use for.
 
     Each row is observed under its OWN resolved concrete Entity — the identity
     the conversion already builds its `LevelContext` from — rather than under
     the level-wide position the query addressed. The root and every level run
     through here, so that one rule reaches an abstract-target root's concrete,
     a polymorphic level's concrete, and an included child alike.
+
+    A NON-HYDRATING projection is observed by nothing: no conforming value exists
+    for it, so it publishes no writable source and can carry no claim. A
+    hydratable one is observed like any other — the collapse produced legal
+    member values, and the row behind it is the ordinary stored row a later write
+    settles against.
     """
     refs: list[SnapshotNodeRef] = []
     for row in _execute_compiled(port, dialect, compiled, recorder):
@@ -803,16 +795,14 @@ def _convert_level(
             classified_members=row.classified_members,
         )
         refs.append(ref)
-        if observations is not None and not scope.node(ref).issues:
-            observations.observe_row(
-                row.resolved_entity,
-                observable_columns(
-                    row.values,
-                    context,
-                    classified_members=row.classified_members,
-                ),
-                row.document,
-            )
+        if not hydrates(scope.node(ref).issues):
+            continue
+        observations.observe_row(
+            ref.node_index,
+            row.resolved_entity,
+            observable_columns(row.values, context, classified_members=row.classified_members),
+            row.document,
+        )
     return tuple(refs)
 
 
@@ -1144,9 +1134,12 @@ def wire_from_find_result(result: FindResult, meta: Metamodel) -> Snapshot[WireE
     over the same executor's own graph input and the same root classification
     over that merge, and neither calls the other: which materializer runs is
     decided after execution has already finished, so a typed read builds no
-    frozen mapping and a wire read constructs no Entity.
+    frozen mapping and a wire read constructs no Entity. Both also attach the
+    same Source Hints the executor retained, so a Wire node and a Typed node of
+    one row carry the identical evidence.
     """
-    roots = wire_roots(merge_graph_input(result.graph, meta), meta, result.includes)
+    merge = merge_graph_input(result.graph, meta)
+    roots = wire_roots(merge, meta, result.includes, sources=merge.by_allocation(result.sources))
     return Snapshot(roots, result.graph.pin, result.execution)
 
 
@@ -1203,7 +1196,7 @@ def wire_publication(meta: Metamodel) -> ResultPublication[Snapshot[WireEntity]]
 def snapshot_from_find_result(
     result: FindResult, meta: Metamodel, construction: EntityGraphConstruction
 ) -> Snapshot[Any]:
-    roots = _materialize_result_graph(result.graph, meta, construction)
+    roots = _materialize_result_graph(result.graph, meta, construction, sources=result.sources)
     return Snapshot(roots, result.graph.pin, result.execution)
 
 
@@ -1231,6 +1224,7 @@ def _materialize_result_graph(
     construction: EntityGraphConstruction,
     *,
     ordinal_offset: int = 0,
+    sources: ReadSources = MappingProxyType({}),
 ) -> tuple[Any, ...]:
     """Translate a graph-construction or lifecycle failure exactly once.
 
@@ -1239,7 +1233,9 @@ def _materialize_result_graph(
     wrapper is only a defect in building the Entity graph a valid row describes.
     """
     try:
-        return materialize_graph(graph, meta, construction, ordinal_offset=ordinal_offset)
+        return materialize_graph(
+            graph, meta, construction, ordinal_offset=ordinal_offset, sources=sources
+        )
     except Exception as exc:
         raise SnapshotMaterializationError(
             "the read succeeded but its Entity graph could not be built "

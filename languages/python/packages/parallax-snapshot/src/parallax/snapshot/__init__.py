@@ -27,7 +27,9 @@ result publication; and
 the Entity graph a successful read's rows describe; and
 :class:`KeyedWriteValueError`, of a value whose provenance the keyed write verb
 it was handed to does not accept, whose three codes are
-:data:`KEYED_WRITE_VALUE_CODES`.
+:data:`KEYED_WRITE_VALUE_CODES`; and :class:`WriteEvidenceError`, of a source
+whose retained write evidence the target Entity's Effective Concurrency Strategy
+cannot use, whose codes are :data:`WRITE_EVIDENCE_CODES`.
 
 The Wire read interface's own result vocabulary is here too: :class:`WireEntity`,
 the frozen Entity node ``db.wire.find`` / ``tx.wire.find`` publishes, and
@@ -59,6 +61,7 @@ from parallax.snapshot._inspection import (
 )
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
+    WRITE_EVIDENCE_CODES,
     CheckedSnapshot,
     DatabaseCall,
     DeferredFeatureError,
@@ -82,12 +85,15 @@ from parallax.snapshot.handle import (
     TransactionResult,
     WireEntity,
     WireValue,
+    WriteEvidenceError,
+    WriteEvidenceErrorCode,
     connect,
 )
 from parallax.snapshot.materialize import SnapshotDecodingError
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
+    "WRITE_EVIDENCE_CODES",
     "CheckedSnapshot",
     "DatabaseCall",
     "DeferredFeatureError",
@@ -114,6 +120,8 @@ __all__ = [
     "UnloadedRelationshipError",
     "WireEntity",
     "WireValue",
+    "WriteEvidenceError",
+    "WriteEvidenceErrorCode",
     "connect",
     "edge_of",
     "is_view_loaded",

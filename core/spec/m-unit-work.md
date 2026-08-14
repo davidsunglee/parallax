@@ -529,30 +529,72 @@ existing state retains. Transaction-Time-Only and Bitemporal entities have
 separate observation variant per temporal flavor — decides which topology
 applies.
 
-An observation is filed under the object it observed **and the milestone it
-observed of that object** — the object's identity plus the observed milestone's
-own coordinate, its start instant on every declared As-Of Axis
-(`m-temporal-read`). A versioned Non-Temporal row names no milestone: it has
-exactly one row per primary key, so identity alone already addresses its
-evidence. A milestone chain does not, so an implementation **MUST NOT** key
-observations by identity alone: two reads of one primary key at as-of
-coordinates resolving to different milestones observe different rows, and a
-slot keyed by identity alone would let the second erase the first — after which
-a write settles against a milestone its own value never came from. The
-coordinate **MUST** be derived from the observation's own Predecessor Row, so a
-recorder cannot file an observation under a milestone other than the one it is
-recording.
+#### Observed State Key
 
-This is deliberately the **converse** of the identity key
+An observation is evidence about **one exact observed state**, and that state is
+what addresses it:
+
+```text
+ObservedStateKey =
+    VersionedStateKey(object, version)
+  | TemporalStateKey(object, milestone)
+```
+
+An **Object Key** is Entity Identity plus ordered primary-key values and
+deliberately carries no version and no temporal coordinate: it addresses the
+object **across** its states, which is what write coalescing, cancellation, and
+buffered-insert recognition each ask about. An **Observed State Key** addresses
+**one** of those states, which is what observation eligibility and consumption
+ask about. Inserts and unversioned Non-Temporal writes observe no state and
+therefore have no Observed State Key at all; the absence is the missing arm,
+never a key with an empty coordinate.
+
+An implementation **MUST NOT** address observations by identity alone. Two reads
+of one primary key may observe two different states — two generations of one
+versioned row, or two milestones of one chain — and a slot keyed by identity
+alone would let the second erase the first, after which a write settles against
+a state its own value never came from. The version or milestone coordinate
+**MUST** be derived from the observation's own evidence, so a recorder cannot
+address an observation by a state other than the one it is recording.
+
+The milestone coordinate is deliberately the **converse** of the identity key
 (`m-identity-map`), and a reader who knows that key will assume it is the same
 one unless told otherwise. The identity triple carries the *query's* lowered
 as-of coordinate and makes **distinct** coordinates denote **distinct pinned
 views**, even when both currently resolve to one milestone row, because each
-view drives its own relationship dereferencing. The observation key carries the
-*observed milestone's own* coordinate, so two **distinct** pins that resolve to
-**one** milestone deliberately share **one** observation: an observation
+view drives its own relationship dereferencing. An Observed State Key carries
+the *observed milestone's own* coordinate, so two **distinct** pins that resolve
+to **one** milestone deliberately name **one** observed state: an observation
 records what was read, not the reading, and a milestone read twice is one piece
 of evidence.
+
+#### Observation ownership and lifetime
+
+A retained observation belongs to the **source values that observed it**, not to
+the transaction that ran the read. A read outside any transaction still produces
+values a later effective-Optimistic write may settle against, so an
+implementation **MUST** make the evidence reachable from the source value and
+**MUST NOT** make eligibility depend on a transaction-scoped store. A
+transaction retains only a **weak index** of the states its own reads have seen,
+plus the **participation** those reads license.
+
+Three rules follow, and an implementation **MUST** exhibit all three:
+
+- **Eligibility is liveness.** An observation stays eligible while at least one
+  live source value or one buffered write reaches it, and becomes unavailable
+  when none does. Liveness means strong reachability; a language runtime MAY
+  discover unreachable values on its own collection schedule rather than at a
+  source-code boundary.
+- **States coexist.** Several observed states of one object are distinct
+  retained observations reached from distinct values, so rereading a row never
+  upgrades or overwrites the evidence an older live value carries. Two reads that
+  resolve to **one** observed state within a transaction share **one** retained
+  observation, exactly as two graph positions reaching one node do.
+- **A successful flush consumes.** Every observation a surviving write used is
+  spent when that write's flush succeeds, and a value still tied to a spent
+  observation cannot drive another write — the caller must read again. Work
+  eliminated before any DML consumes nothing, and a failed flush aborts the
+  transaction, so nothing needs restoring.
 
 Absence is **structural**:
 

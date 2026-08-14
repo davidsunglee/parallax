@@ -2,10 +2,10 @@
 
 The transaction scope's stateful machinery around the pure :class:`~parallax.
 core.unit_work.write_planner.WritePlanner`: the frame stack (a nested scope
-joins the active transaction), the write buffer, the recorded
-observations, call-time reads that force-flush pending writes so a dependent
-read observes them (read-your-own-writes), and abort — which discards buffered
-effects and **withholds** the callback value.
+joins the active transaction), the write buffer, the weak index of the observed
+states its reads have seen, call-time reads that force-flush pending writes so a
+dependent read observes them (read-your-own-writes), and abort — which discards
+buffered effects and **withholds** the callback value.
 
 This is deliberately **not** ``db.transact``: there is no public sentinel-backed
 option surface and no bounded-retry loop. The shell exposes the
@@ -36,14 +36,15 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
+from weakref import WeakValueDictionary
 
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.unit_work.materialized import MaterializedWriteGroup, ObservedKeyedWrite
-from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.plan import WritePlan
-from parallax.core.unit_work.planner import BufferItem, ObservationKey
+from parallax.core.unit_work.planner import BufferItem, ObservedStateKey
+from parallax.core.unit_work.retain import ParticipationToken, RetainedObservation
 from parallax.core.unit_work.strategy import Concurrency
 from parallax.core.unit_work.write_planner import PlanningRequest, SubjectIdentity, WritePlanner
 
@@ -134,15 +135,17 @@ class UnitOfWork:
     """The buffering, observing, flushing transaction scope (m-unit-work).
 
     Construct via :func:`run_unit_of_work` (which owns the frame lifecycle); the
-    body receives the unit of work and drives it with :meth:`buffer`, :meth:`observe`,
+    body receives the unit of work and drives it with :meth:`buffer`, :meth:`retain`,
     and :meth:`read`.
     """
 
     __slots__ = (
         "_buffer",
+        "_claims",
         "_closed",
         "_frame_depth",
         "_observations",
+        "_participation",
         "_planner",
         "_rollback_cause",
         "_rollback_only",
@@ -191,7 +194,23 @@ class UnitOfWork:
         # active binding, which `run_outermost` already clears on every exit.
         self.companion: object | None = None
         self._buffer: list[BufferItem] = []
-        self._observations: dict[ObservationKey, WriteObservation] = {}
+        # The ledger is an INDEX, not an owner: a retained observation lives as
+        # long as some source value or buffered write reaches it, and this entry
+        # disappears with the last of them (`m-unit-work` "Observation lifetime").
+        # What the index is for is recognizing a state this transaction has
+        # already seen, so a reread of one state answers the evidence the earlier
+        # read's values already carry rather than a second copy of it.
+        self._observations: WeakValueDictionary[ObservedStateKey, RetainedObservation] = (
+            WeakValueDictionary()
+        )
+        # The claims the buffered writes carry, in buffer order — the strong
+        # reference that keeps a write's evidence alive after its source value is
+        # released, and what a successful flush spends.
+        self._claims: list[RetainedObservation] = []
+        # This scope's participation identity: what a read of THIS unit of work
+        # stamps on the values it produces, and what an effective-Locking write
+        # tests its source against.
+        self._participation = ParticipationToken()
         self._frame_depth = 0
         self._rollback_only = False
         self._rollback_cause: BaseException | None = None
@@ -203,35 +222,64 @@ class UnitOfWork:
         self._closed = False
 
     # --- caller surface --------------------------------------------------- #
+    @property
+    def participation(self) -> ParticipationToken:
+        """This scope's participation identity — what its own reads stamp on the
+        values they produce, and what an effective-Locking keyed write proves its
+        source against."""
+        self._ensure_open()
+        return self._participation
+
     def buffer(
-        self, instruction: WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup
+        self,
+        instruction: WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup,
+        *,
+        claim: RetainedObservation | None = None,
     ) -> None:
         """Buffer a write instruction — bare, travelling with the observation its
         verb resolved for it
         (:class:`~parallax.core.unit_work.materialized.ObservedKeyedWrite`), or as
         a materializing predicate write's
         :class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup` —
-        for flush at the unit-of-work boundary."""
-        self._ensure_open()
-        self._buffer.append(instruction)
+        for flush at the unit-of-work boundary.
 
-    def observe(self, key: ObservationKey, observation: WriteObservation) -> None:
-        """Record the transaction observation for one observed milestone
-        (resolved at the verb that writes it).
-
-        The key names the milestone the observation is *of*, so a second read of
-        that milestone at another pin lands in this same slot and overwrites it.
-        The overwrite loses nothing: an observation records the row that was read
-        and nothing about the read that reached it, so the two are equal.
+        ``claim`` is the retained observation this write settles against, held
+        here for as long as the write is buffered. That is what keeps a write's
+        evidence alive once the caller releases the source value it came from,
+        and what a successful flush spends.
         """
         self._ensure_open()
-        self._observations[key] = observation
+        self._buffer.append(instruction)
+        if claim is not None:
+            self._claims.append(claim)
 
-    def observation_for(self, key: ObservationKey) -> WriteObservation | None:
-        """The transaction observation recorded for one observed milestone, if
-        any — the read side of :meth:`observe`. The keyed developer verbs resolve
-        it once from the value being written, before buffering, and the resolved
-        observation rides to planning on the buffered write itself."""
+    def retain(self, observation: RetainedObservation) -> RetainedObservation:
+        """Index ``observation`` under the state it observed, answering the
+        evidence this unit of work already holds for that state where it holds
+        any.
+
+        A reread that resolves to a state some live value already observed
+        answers THAT value's evidence, so one observed state has one claim
+        within a transaction however many reads reach it — the same rule
+        graph aliases already follow. A state whose evidence a flush has spent
+        is not reused: the row has moved on, so a fresh read is fresh evidence.
+        """
+        self._ensure_open()
+        held = self._observations.get(observation.key)
+        if held is not None and not held.consumed:
+            return held
+        self._observations[observation.key] = observation
+        return observation
+
+    def retained_for(self, key: ObservedStateKey) -> RetainedObservation | None:
+        """The evidence this unit of work holds for one exact observed state, if
+        any is still reachable — the read side of :meth:`retain`.
+
+        Absence covers both a state no read of this scope observed and one whose
+        every source value and buffered write has been released: liveness is
+        strong reachability, so an index entry never outlives the evidence it
+        names.
+        """
         self._ensure_open()
         return self._observations.get(key)
 
@@ -256,6 +304,12 @@ class UnitOfWork:
         :meth:`run_outermost` finalizes the boundary. It reaches the injected
         :class:`WriteBatchStarting` notification first and the executor second,
         so the batch is announced before planning can fail it.
+
+        Evidence is spent AFTER the executor returns, and only by a flush that
+        emitted DML: a plan finalization eliminated entirely leaves the buffered
+        intent's evidence eligible, because no write of it survived to the
+        database. A flush that fails aborts the transaction, so evidence needs no
+        restoring.
         """
         self._ensure_open()
         if not self._buffer:
@@ -269,8 +323,13 @@ class UnitOfWork:
             buffered_writes=tuple(self._buffer),
         )
         plan = self._planner.plan(request)
+        claims = tuple(self._claims)
         self._buffer.clear()
+        self._claims.clear()
         self.flush_executor(plan, trigger=trigger)
+        if plan.steps:
+            for claim in claims:
+                claim.consume()
 
     def mark_rollback_only(self, cause: BaseException) -> None:
         """Doom the transaction: commit will be refused. The first cause is kept."""
@@ -298,7 +357,10 @@ class UnitOfWork:
     def _discard(self) -> None:
         # Abort: drop buffered + force-flushed in-memory state. The DB rollback the
         # enclosing transaction performs (upstream) erases any force-flushed rows.
+        # Buffered claims are released rather than spent: nothing this scope wrote
+        # survives, so evidence a later scope is handed is still about stored state.
         self._buffer.clear()
+        self._claims.clear()
         self._observations.clear()
 
     def run_outermost[T](self, body: Callable[[UnitOfWork], T]) -> T:

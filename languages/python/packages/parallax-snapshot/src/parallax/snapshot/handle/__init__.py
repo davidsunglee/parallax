@@ -59,9 +59,8 @@ public-surface check promises. Where the exported names live:
   levels through, plus the result surface they build
   (:class:`Snapshot`, :class:`CheckedSnapshot`, :class:`FindResult`,
   :class:`HistoryFindResult`,
-  :class:`NoResultFound`, :class:`TooManyResultsFound`) and
-  :class:`ObservationCollector`, the optional seam a participating read hands its
-  materialized rows to. :class:`RowsResult` is what the values lane answers, and
+  :class:`NoResultFound`, :class:`TooManyResultsFound`).
+  :class:`RowsResult` is what the values lane answers, and
   :data:`PublishedRow` is the element it publishes per result position.
 
 The Wire result vocabulary — :class:`WireEntity`, the frozen Entity node every
@@ -138,7 +137,6 @@ from parallax.snapshot.handle._read import (
     FindResult,
     HistoryFindResult,
     NoResultFound,
-    ObservationCollector,
     PublishedRow,
     RowsResult,
     Snapshot,
@@ -156,9 +154,11 @@ from parallax.snapshot.handle._wire import (
 )
 from parallax.snapshot.handle._write_inputs import (
     KEYED_WRITE_VALUE_CODES,
+    WRITE_EVIDENCE_CODES,
     KeyedWriteValueError,
-    ObservedRecord,
     TransactionTimePinReadOnlyError,
+    WriteEvidenceError,
+    WriteEvidenceErrorCode,
     validate_source_pin,
 )
 from parallax.snapshot.handle._write_lowering import stream_lowered
@@ -173,6 +173,7 @@ from parallax.snapshot.materialize import (
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
+    "WRITE_EVIDENCE_CODES",
     "CheckedSnapshot",
     "Database",
     "DatabaseCall",
@@ -185,9 +186,7 @@ __all__ = [
     "KeyedWriteValueError",
     "NoResultFound",
     "ObjectKey",
-    "ObservationCollector",
     "ObservedRead",
-    "ObservedRecord",
     "PublishedRow",
     "QueryTargetError",
     "ReadTrace",
@@ -211,6 +210,8 @@ __all__ = [
     "WireQuery",
     "WireTransactionView",
     "WireValue",
+    "WriteEvidenceError",
+    "WriteEvidenceErrorCode",
     "WriteLoweringError",
     "build_write_planner",
     "connect",

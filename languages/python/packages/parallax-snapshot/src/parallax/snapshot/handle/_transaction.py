@@ -11,7 +11,7 @@ FIRST-PARTY members of the conformance bridge —
 :meth:`Transaction.observed_read` and :meth:`Transaction.write_neutral` — which
 are not developer surface and end with the Wire write verbs. None of the three is
 a second lifecycle: each read enters the same force-flush, lock derivation,
-observation recording, and Read Trace bracket ``find`` does, and the bridge write
+evidence retention, and Read Trace bracket ``find`` does, and the bridge write
 enters the same ``buffered_write`` carrier decision, the same buffer, and the
 same flush triggers the keyed verbs do — one step later, on an instruction
 already built rather than on an instance to derive one from.
@@ -26,7 +26,7 @@ Depends on :mod:`parallax.snapshot.handle._preflight` (the shared read gate
 :mod:`parallax.snapshot.handle._read` (the shared find executor plus
 the pin / result-conversion helpers ``find`` needs),
 :mod:`parallax.snapshot.handle._write_inputs` (verb-input validation and the
-observation machinery), and
+evidence machinery), and
 :mod:`parallax.snapshot.handle._predicate_writes`. Demarcation — ``Database``,
 ``_Demarcation``, and ``TransactionOptionConflictError`` — lives in
 :mod:`parallax.snapshot.handle._database`, which imports this module, never the
@@ -40,7 +40,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from parallax.core import opt_lock
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
 from parallax.core.entity import (
@@ -57,9 +56,12 @@ from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWrite,
-    ObservationKey,
+    ObservedStateKey,
     PredicateWrite,
+    RetainedObservation,
+    TemporalStateKey,
     UnitOfWork,
+    VersionedStateKey,
     WriteInstruction,
     WriteObservation,
     buffered_write,
@@ -91,12 +93,11 @@ from parallax.snapshot.handle._read import (
 )
 from parallax.snapshot.handle._wire import WireTransactionView
 from parallax.snapshot.handle._write_inputs import (
-    ObservedRecord,
-    ReadObservations,
     WrittenObject,
     metadata_of_instance,
-    record_observations,
-    source_edge,
+    resolve_write_evidence,
+    retained_observations,
+    source_hint_of,
     source_pin,
     validate_source_pin,
     validate_until,
@@ -109,17 +110,19 @@ from parallax.snapshot.handle._write_inputs import (
 
 @dataclass(frozen=True, slots=True)
 class ObservedRead:
-    """A participating Wire read paired with the observations it filed.
+    """A participating Wire read paired with the evidence it retained.
 
     The conformance bridge's own read value, and nothing a developer holds: a
-    Snapshot is the whole public result, and an observation address is
+    Snapshot is the whole public result, and an observed-state address is
     implementation state. Both halves come from one read, so pairing them here is
     what keeps a bridge caller from re-deriving evidence that would then have to
-    agree with production's by inspection.
+    agree with production's by inspection. Holding the retained observations is
+    also what keeps them alive for the bridge's later writes, exactly as holding
+    the source values would.
     """
 
     snapshot: Snapshot[Any]
-    observations: tuple[ObservedRecord, ...]
+    observations: tuple[RetainedObservation, ...]
 
 
 class Transaction:
@@ -152,9 +155,9 @@ class Transaction:
     :meth:`read_rows` is the values lane over this same transaction — a
     first-party row-form read, not a third public result format.
     :meth:`observed_read` and :meth:`write_neutral` are the first-party
-    conformance bridge: a Wire read that additionally answers the observations it
-    filed, and the write ingress that takes an already-decoded instruction plus
-    the evidence it settles against. Neither is developer surface, and both end
+    conformance bridge: a Wire read that additionally answers the evidence it
+    retained, and the write ingress that takes an already-decoded instruction plus
+    the observed state it settles against. Neither is developer surface, and both end
     when the Wire write verbs land.
     """
 
@@ -165,7 +168,6 @@ class Transaction:
         "_construction",
         "_dialect",
         "_execution_log",
-        "_inserted_keys",
         "_inserted_objects",
         "_meta",
         "_uow",
@@ -195,20 +197,13 @@ class Transaction:
         # fresh recorder over the SAME log.
         self._execution_log = execution_log
         self._attempt = attempt
-        # What THIS transaction buffered an insert of, recorded once per insert
-        # (`_record_buffered_insert`) in the two readings the two
-        # read-your-own-writes exemptions need — a same-transaction insert IS the
-        # provenance a subsequent keyed write builds on.
-        #
-        # The observation slots serve the §5 prior-observation license
-        # (`_resolve_observed_milestone`), which runs where a row has already been
-        # derived. An inserted instance names no milestone yet, so the slot
-        # carries no coordinate and a close derived from that instance resolves to
-        # the same one. The written objects serve the keyed-write value provenance
-        # refusal (`_has_buffered_insert`), which is decided before any row is
-        # derived and therefore cannot ask the codec anything — which is why that
-        # slot holds the total reading `written_object` answers for any value.
-        self._inserted_keys: set[ObservationKey] = set()
+        # What THIS transaction buffered an insert of — a same-transaction insert
+        # IS the provenance a subsequent keyed write builds on, so both
+        # read-your-own-writes exemptions (the value-provenance refusal and the
+        # write-evidence resolution) read this one slot. It holds the total
+        # reading `written_object` answers for any value rather than a derived
+        # row's, because the provenance refusal is decided before any row is
+        # derived and therefore cannot ask the codec anything.
         self._inserted_objects: set[WrittenObject | None] = set()
 
     @property
@@ -317,7 +312,7 @@ class Transaction:
             record.identity,
             row,
             valid_from=valid_from_literal,
-            observation=self._resolve_observed_milestone(record, declaring, copy),
+            claim=self._resolve_evidence(record, declaring, copy),
         )
 
     def delete(self, node_or_instance: EntityBase) -> None:
@@ -333,7 +328,7 @@ class Transaction:
             "delete",
             record.identity,
             self._codec.identity_row(node_or_instance),
-            observation=self._resolve_observation(
+            claim=self._resolve_evidence(
                 record, declaring_of(self._meta, record), node_or_instance
             ),
         )
@@ -364,7 +359,7 @@ class Transaction:
             record.identity,
             self._codec.identity_row(node_or_instance),
             valid_from=valid_from_literal,
-            observation=self._resolve_observed_milestone(record, declaring, node_or_instance),
+            claim=self._resolve_evidence(record, declaring, node_or_instance),
         )
 
     def update_until(
@@ -397,7 +392,7 @@ class Transaction:
             row,
             valid_from=valid_from_literal,
             until=until_literal,
-            observation=self._resolve_observed_milestone(record, declaring, copy),
+            claim=self._resolve_evidence(record, declaring, copy),
         )
 
     def terminate_until(
@@ -421,7 +416,7 @@ class Transaction:
             self._codec.identity_row(node_or_instance),
             valid_from=valid_from_literal,
             until=until_literal,
-            observation=self._resolve_observed_milestone(record, declaring, node_or_instance),
+            claim=self._resolve_evidence(record, declaring, node_or_instance),
         )
 
     def _prepare_keyed_write(
@@ -464,17 +459,13 @@ class Transaction:
     def _record_buffered_insert(
         self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
     ) -> None:
-        """Record a buffered insert in both slots the read-your-own-writes
-        exemptions read.
+        """Record the object this transaction just buffered an insert of — the
+        read-your-own-writes exemption's whole state.
 
-        One write site, so the observation slot a temporal close is exempted by
-        and the written object a provenance refusal is exempted by can never
-        describe different inserts. Reached only after the insert's own row is
-        derived, which is why the codec-derived observation key is free here —
-        and why an insert whose value names no object never arrives: deriving
-        that row refused it first.
+        Read as the value itself names it (:func:`written_object`) rather than
+        through a derived row, because the exemption is asked on a branch that
+        must not derive one.
         """
-        self._inserted_keys.add(self._observation_key(record, declaring, instance))
         self._inserted_objects.add(written_object(record, declaring, instance))
 
     def _has_buffered_insert(
@@ -497,91 +488,52 @@ class Transaction:
         object_written = written_object(record, declaring, instance)
         return object_written is not None and object_written in self._inserted_objects
 
-    def _observation_key(
+    def _resolve_evidence(
         self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
-    ) -> ObservationKey:
-        """``instance``'s observation slot: the object it names AND the milestone
-        it came from.
+    ) -> RetainedObservation | None:
+        """The retained evidence a keyed write against existing state settles
+        against — resolved once, here, off the value the verb was handed.
 
-        The identity half is derived through the SAME codec every row this
-        transaction buffers comes from — so the key a verb resolves an
-        observation by and the row it writes can never read the primary key two
-        different ways. The milestone half is the value's own Edge, which the
-        read installed from the same axis-start state it recorded the
-        observation's Predecessor Row from, so a write settles against the
-        milestone the value it was handed actually came from rather than against
-        whichever coordinate of that row was read most recently.
+        One resolution serves the address, the gate, the version advance, and the
+        license, which is what makes it impossible for them to disagree. The
+        evidence comes from the VALUE rather than from a transaction-wide slot:
+        the observation belongs to the source that observed it (`m-unit-work`
+        "Observation lifetime"), so a standalone ``db.find`` value carries its
+        own and a value that came from no read carries none. Which of those
+        licenses this write is
+        :func:`~parallax.snapshot.handle._write_inputs.resolve_write_evidence`'s
+        answer, under the target Entity's own Effective Concurrency Strategy.
+
+        The object a refusal reports comes from the source's own hint where there
+        is one, and is derived through the codec only where there is not — the
+        two agree by construction, because the read keys its hint by the same
+        rule the codec keys a written row by, and deriving it eagerly would cost
+        every accepted write an identity row it never uses.
+
+        An object this SAME transaction buffered an insert for is exempt
+        (read-your-own-writes: the buffered insert IS the provenance; the planner
+        coalesces or orders the pair, `m-unit-work`), and the write that follows
+        it settles bare exactly as the insert does. Callers invoke this AFTER a
+        sparse update's empty-change-set no-op return (the no-op-first ordering
+        `m-opt-lock` fixes: a no-op is dropped before any observation concern)
+        and AFTER window validation (the window rejects first).
         """
-        return ObservationKey(
-            written_object_key(record, declaring, self._codec.identity_row(instance)),
-            source_edge(instance),
-        )
-
-    def _resolve_observation(
-        self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
-    ) -> WriteObservation | None:
-        """The Write Observation a keyed write against existing state settles
-        against — resolved once, here, from the value the verb was handed, and
-        carried to the planner on the buffered write itself.
-
-        One resolution serves the address, the gate, and the version advance,
-        which is what makes it impossible for them to disagree. Absence stays
-        structural: a target needing no observation resolves to ``None`` and
-        buffers bare.
-
-        This resolution refuses nothing of its own. A versioned row has exactly
-        one row per primary key, so identity alone addresses it and a value's
-        provenance is irrelevant; an unobserved versioned write buffers bare and
-        is refused while it is settled
-        (:func:`opt_lock.require_observed`), which is what keeps
-        same-transaction insert-then-update folding to one INSERT, since
-        coalescing decides before any observation concern does. The keyed
-        TEMPORAL verbs resolve through :meth:`_resolve_observed_milestone`
-        instead, where a miss IS the refusal.
-        """
-        return self._uow.observation_for(self._observation_key(record, declaring, instance))
-
-    def _resolve_observed_milestone(
-        self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
-    ) -> WriteObservation | None:
-        """:meth:`_resolve_observation` for the four keyed temporal verbs, where a
-        miss is a refusal rather than a bare buffer.
-
-        The `python.md` §5 prior-observation license
-        (:func:`opt_lock.require_observed_milestone` — the temporal sibling of
-        the versioned ``require_observed`` seam the Write Planner's own settling
-        consults) is this same resolution: the close must target a milestone THIS
-        unit of work observed via a transaction-scoped find, so a miss is the
-        refusal. Enforced HERE at
-        the developer verb, never inside the planner's own temporal settling —
-        the shared planner also serves the neutral engine lane, and demands
-        only the observation a close structurally needs to address, gate, and
-        carry state forward from, which that lane resolves from its own tracked
-        milestone state rather than from a developer's find.
-
-        A value naming NO milestone therefore has no observation to resolve and
-        is refused: a fresh instance, an edit of a fresh instance, and a copy
-        carried in from another transaction all carry no lifecycle state, so none of
-        them can be closed on the strength of some other observation of the same
-        primary key. Closing a milestone is spelled "find it, then close what you
-        found".
-
-        An object this SAME transaction
-        buffered an insert for is exempt (read-your-own-writes: the buffered
-        insert IS the provenance; the planner coalesces or orders the pair,
-        `m-unit-work`), and the write that follows it settles bare exactly as the
-        insert does. Callers invoke this AFTER a sparse update's
-        empty-change-set no-op return (the no-op-first ordering `m-opt-lock`
-        fixes: a no-op is dropped before any observation concern) and AFTER
-        window validation (the window rejects first)."""
-        if not declaring.declared_as_of_axes:
-            return self._resolve_observation(record, declaring, instance)
-        key = self._observation_key(record, declaring, instance)
-        if key in self._inserted_keys:
+        if self._has_buffered_insert(record, declaring, instance):
             return None
-        observation = self._uow.observation_for(key)
-        opt_lock.require_observed_milestone(record.identity.name, observation)
-        return observation
+        hint = source_hint_of(instance)
+        return resolve_write_evidence(
+            self._meta,
+            record,
+            declaring,
+            hint,
+            object_key=(
+                hint.object_key
+                if hint is not None
+                else written_object_key(record, declaring, self._codec.identity_row(instance))
+            ),
+            preference=self._uow.settings.concurrency,
+            participation=self._uow.participation,
+        )
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         """Run a participating read for ``query`` and return ``Snapshot[S]``:
@@ -598,17 +550,19 @@ class Transaction:
         parameter answer: the Snapshot carries the query's RESULT Entity.
 
         Every materialized node of a VERSIONED entity — root and included
-        (deep-fetch) alike — records its observed version on this unit of work
+        (deep-fetch) alike — CARRIES the observed version it was read at
         (`m-opt-lock`; ADR 0013), in EITHER concurrency mode: a later keyed
         update/delete of that SAME object derives its version advance (and,
-        under optimistic concurrency, its gate) from THIS observation, never
-        from an implicit resolving read at write time. Every materialized node
-        of a TEMPORAL entity likewise records its whole observed predecessor
-        milestone, filed under the milestone it observed: a later temporal
-        write's close/chain derives from THIS observation, never a shadow
-        lookup or an implicit resolving read (a MILESTONE-SET read —
-        `.history()` / `.as_of_range()` — records nothing here; its own
-        dispatch branch files no observation at all).
+        under optimistic concurrency, its gate) from THAT value's own retained
+        observation, never from an implicit resolving read at write time. Every
+        materialized node of a TEMPORAL entity likewise carries its whole
+        observed predecessor milestone: a later temporal write's close/chain
+        derives from it, never from a shadow lookup or an implicit resolving
+        read. This transaction additionally stamps its participation on every
+        node such a read publishes, which is the license an effective-Locking
+        write needs. A MILESTONE-SET read — `.history()` / `.as_of_range()` —
+        retains no evidence at all: its roots stand at coordinates no keyed
+        write may address.
         """
         # The classless-connection refusal precedes the read seam deliberately:
         # the gate and the force-flush it stands in front of both live below
@@ -623,9 +577,10 @@ class Transaction:
     def wire(self) -> WireTransactionView:
         """This transaction's Wire read interface (spec §3).
 
-        A lightweight view over the SAME unit of work, observation ledger,
+        A lightweight view over the SAME unit of work, evidence retention,
         locking, and Execution Log the Typed verbs use, so Typed and Wire calls
-        mix within one transaction without any cross-interface bookkeeping.
+        mix within one transaction without any cross-interface bookkeeping — and
+        a Wire node and a Typed node of one row carry the identical claim.
         """
         return WireTransactionView(self._wire_find)
 
@@ -643,9 +598,9 @@ class Transaction:
 
     def _read[R](
         self, node: ObjectQueryNode, publication: ResultPublication[R]
-    ) -> tuple[R, tuple[ObservedRecord, ...]]:
+    ) -> tuple[R, tuple[RetainedObservation, ...]]:
         """One participating read of ``node``, published through ``publication``
-        and paired with the observations it filed — the whole composition both
+        and paired with the evidence it retained — the whole composition both
         read interfaces run.
 
         The gate precedes the force-flush ``uow.read`` performs, so a refused
@@ -654,8 +609,9 @@ class Transaction:
         Read Trace bracket opens BEFORE that flush, so a batch the flush produces
         is appended first and the trace this read closes lands immediately after
         it — the read-dependency causality the Execution Log states positionally
-        (`m-execution-log`). A milestone-set read files no observation at all and
-        answers none, which is why its branch returns before the record.
+        (`m-execution-log`). A milestone-set read retains no evidence at all and
+        answers none, which is why its branch returns before the pairing: its
+        roots stand at coordinates no keyed write may address.
         """
         preflight(node, model=self._meta, form="graph")
         if scans_an_axis(node):
@@ -666,7 +622,6 @@ class Transaction:
                     )
                 )
             return publication.from_history(history_result), ()
-        observations = ReadObservations()
         with self._attempt.read_trace() as recorder:
             find_result = self._uow.read(
                 lambda: find(
@@ -675,14 +630,11 @@ class Transaction:
                     self._dialect,
                     self._conn,
                     preference=self._uow.settings.concurrency,
-                    observations=observations,
+                    ledger=self._uow,
                     recorder=recorder,
                 )
             )
-        return (
-            publication.from_find(find_result),
-            record_observations(self._uow, self._meta, observations),
-        )
+        return publication.from_find(find_result), retained_observations(find_result.sources)
 
     def observed_read(self, query: ObjectQueryNode) -> ObservedRead:
         """A participating Wire read paired with the observations it filed — the
@@ -735,7 +687,7 @@ class Transaction:
         self,
         instruction: WriteInstruction,
         *,
-        observation: ObservationKey | WriteObservation | None = None,
+        observation: ObservedStateKey | WriteObservation | None = None,
     ) -> None:
         """Buffer an already-decoded write instruction — the ONE neutral runtime
         write ingress.
@@ -751,15 +703,15 @@ class Transaction:
         boundary's finalization.
 
         ``observation`` states the evidence three ways, and only three.
-        An :class:`~parallax.core.unit_work.ObservationKey` resolves IMMEDIATELY
-        and exactly against this unit of work — a key naming no recorded
+        An :data:`~parallax.core.unit_work.ObservedStateKey` resolves IMMEDIATELY
+        and exactly against this unit of work — a key naming no reachable
         observation raises
         :class:`~parallax.snapshot.handle._errors.UnobservedWriteError` here, at
         the call that supplied it, rather than settling to a bare write whose
         refusal would surface at flush naming the wrong cause. A
         :class:`~parallax.core.unit_work.WriteObservation` is evidence a caller
-        holds directly and is used as given. ``None`` buffers bare, which is what
-        an insert and an unobserved target need.
+        holds directly and is used as given, and claims nothing. ``None`` buffers
+        bare, which is what an insert and an unobserved target need.
 
         A predicate-selected instruction carries no observation of its own — it
         materializes to a Materialized Write Group with its own observation
@@ -792,7 +744,11 @@ class Transaction:
             )
             return
         self._validate_keyed(instruction)
-        self._uow.buffer(buffered_write(instruction, self._resolved_observation(observation)))
+        if isinstance(observation, VersionedStateKey | TemporalStateKey):
+            claim = self._resolved_claim(observation)
+            self._uow.buffer(buffered_write(instruction, claim.evidence), claim=claim)
+            return
+        self._uow.buffer(buffered_write(instruction, observation))
 
     def _validate_keyed(self, instruction: KeyedWrite) -> None:
         """The whole judgment a keyed write instruction is measured by, in the one
@@ -826,27 +782,27 @@ class Transaction:
                 validate_write(entity, row, self._meta, mutation=instruction.mutation)
         instructions.validate_instruction(instruction, self._meta)
 
-    def _resolved_observation(
-        self, observation: ObservationKey | WriteObservation | None
-    ) -> WriteObservation | None:
-        """The evidence a neutral write settles against, resolving a KEY here.
+    def _resolved_claim(self, key: ObservedStateKey) -> RetainedObservation:
+        """The retained evidence a neutral write claims, resolving a KEY here.
 
-        A key is a reference into this unit of work's own observation record, so
-        it is dereferenced at the call rather than carried to planning: an
-        unresolvable key is a caller error about what was read, and reporting it
-        at flush would report it as a licensing failure about what is being
-        written. The unit of work's own scope fence answers first, so a key used
-        after its transaction ended raises as the escaped reference it is.
+        A key is a reference into this unit of work's own weak index, so it is
+        dereferenced at the call rather than carried to planning: an unresolvable
+        key is a caller error about what was read, and reporting it at flush would
+        report it as a licensing failure about what is being written. The unit of
+        work's own scope fence answers first, so a key used after its transaction
+        ended raises as the escaped reference it is.
+
+        A caller-held :class:`~parallax.core.unit_work.WriteObservation` never
+        reaches here: it is a value rather than a reference into the ledger, so
+        there is no retained evidence for a flush to spend.
         """
-        if not isinstance(observation, ObservationKey):
-            return observation
-        resolved = self._uow.observation_for(observation)
+        resolved = self._uow.retained_for(key)
         if resolved is None:
             raise UnobservedWriteError(
-                "no observation is recorded in this unit of work for "
-                f"{observation.object_key.entity.canonical} under the milestone this key "
+                "no observation is reachable in this unit of work for "
+                f"{key.object.entity.canonical} under the state this key "
                 "names; a neutral write settles against evidence a read of THIS "
-                "transaction recorded"
+                "transaction retained"
             )
         return resolved
 
@@ -858,12 +814,15 @@ class Transaction:
         *,
         valid_from: str | None = None,
         until: str | None = None,
-        observation: WriteObservation | None = None,
+        claim: RetainedObservation | None = None,
     ) -> None:
-        # `observation` is what the verb resolved for THIS write from the value
-        # it was handed, and `buffered_write` turns it into the buffer variant it
-        # implies: an `ObservedKeyedWrite` when there is one, the bare
-        # instruction when there is not. The observation is never an
+        # `claim` is the retained evidence the verb resolved for THIS write off
+        # the value it was handed. Its own observation is what
+        # `buffered_write` turns into the buffer variant it implies: an
+        # `ObservedKeyedWrite` when there is one, the bare instruction when there
+        # is not, while the claim itself stays with the unit of work, which keeps
+        # it alive while the write is buffered and spends it at a successful
+        # flush. The observation is never an
         # instruction field — a
         # `WriteInstruction` is a durable, schema-validated document whose
         # `deserialize` refuses the reserved observation control keys outright —
@@ -897,7 +856,9 @@ class Transaction:
         instruction = instructions.deserialize(doc)
         assert isinstance(instruction, KeyedWrite)  # `doc` carries `rows`
         self._validate_keyed(instruction)
-        self._uow.buffer(buffered_write(instruction, observation))
+        self._uow.buffer(
+            buffered_write(instruction, None if claim is None else claim.evidence), claim=claim
+        )
 
     # --- set-based write verbs (python.md §5) ----------------------------- #
     def update_where(

@@ -52,6 +52,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
+from parallax.core.unit_work import SourceHint
 from parallax.core.wire import encode_wire
 from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
 from parallax.snapshot.materialize._input import RelationshipViewKey
@@ -64,6 +65,7 @@ __all__ = [
     "UnwindTree",
     "WireEntity",
     "WireValue",
+    "source_hint_of",
     "unwind_tree",
     "wire_roots",
 ]
@@ -260,10 +262,18 @@ class _WireEntityNode(_FrozenMapping, WireEntity):
     ENTITY node alone: a nested Value Object mapping is structurally identical
     and must answer ``isinstance(value, WireEntity)`` with false, which is what
     lets a caller ask of any mapping in the result whether the read published it
-    as an Entity.
+    as an Entity. It is also the only node that can carry a Source Hint, and the
+    slot is why: a nested Value Object mapping has no slot to put one in.
+
+    The hint rides a slot rather than a mapping entry, so it is not a key, not
+    iterated, not compared, not serialized, and not carried by ``dict(value)`` —
+    a plain conversion of a Wire node is ordinary domain data with no keyed-source
+    status, which is exactly what it is.
     """
 
-    __slots__ = ()
+    __slots__ = ("_source",)
+
+    _source: SourceHint | None
 
 
 def _frozen_mapping[T: _FrozenMapping](cls: type[T], entries: Mapping[str, WireValue]) -> T:
@@ -284,6 +294,17 @@ def _frozen_sequence(values: Iterable[WireValue]) -> _FrozenSequence:
     value = list.__new__(_FrozenSequence)
     list[Any].extend(value, values)
     return value
+
+
+def source_hint_of(entity: WireEntity) -> SourceHint | None:
+    """The private Source Hint ``entity`` carries, or ``None`` for a mapping no
+    Wire read published.
+
+    The one reader of the slot. A hint is never authority of its own — it names
+    the exact state its read observed and nothing about what may be written —
+    so this answers a fact and the write side draws the conclusion.
+    """
+    return getattr(entity, "_source", None)
 
 
 type _WireRoot = WireEntity | InvalidData[WireEntity]
@@ -319,6 +340,7 @@ def wire_roots(
     includes: UnwindTree = EMPTY_UNWIND,
     *,
     ordinal_offset: int = 0,
+    sources: Mapping[int, SourceHint] = MappingProxyType({}),
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
     """``merge``'s roots as Wire values, in result order.
 
@@ -327,9 +349,14 @@ def wire_roots(
     hydratable one as its record carrying the unwound value, and a non-hydrating
     one as its record carrying nothing. ``ordinal_offset`` is where this graph's
     roots start in the ordered result, nonzero only for a milestone-set read.
+
+    ``sources`` is the Source Hint the read retained per allocation index, which
+    each published Entity node carries privately — the same evidence the typed
+    materializer attaches to the node of the same row, so the two representations
+    license exactly the same writes.
     """
     classification = classify_roots(merge, model, ordinal_offset=ordinal_offset)
-    unwind = _Unwind(merge, model)
+    unwind = _Unwind(merge, model, sources)
     published: list[_WireRoot] = []
     for verdict in classification.roots:
         if not isinstance(verdict, ClassifiedRoot):
@@ -349,11 +376,14 @@ class _Unwind:
     shared. It dies when the pass returns.
     """
 
-    __slots__ = ("_cache", "_merge", "_model")
+    __slots__ = ("_cache", "_merge", "_model", "_sources")
 
-    def __init__(self, merge: GraphMerge, model: Metamodel) -> None:
+    def __init__(
+        self, merge: GraphMerge, model: Metamodel, sources: Mapping[int, SourceHint]
+    ) -> None:
         self._merge = merge
         self._model = model
+        self._sources = sources
         self._cache: dict[tuple[int, int], _WireEntityNode] = {}
 
     def node(self, index: int, subtree: UnwindTree) -> _WireEntityNode:
@@ -362,6 +392,10 @@ class _Unwind:
         if cached is not None:
             return cached
         entity = self._build(self._merge.node(index), subtree)
+        # Two positions reaching one merged node under one subtree answer the
+        # identical object and therefore the identical claim, exactly as two
+        # positions reaching one Entity instance do in the typed lane.
+        object.__setattr__(entity, "_source", self._sources.get(index))
         self._cache[key] = entity
         return entity
 

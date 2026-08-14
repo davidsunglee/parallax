@@ -40,7 +40,9 @@ from parallax.core.object_query._fluent import object_query_node
 from parallax.core.unit_work import (
     EscapedTransactionError,
     ObjectKey,
-    ObservationKey,
+    ObservedStateKey,
+    TemporalStateKey,
+    VersionedStateKey,
     VersionObservation,
     WriteInstruction,
     WriteRejectedError,
@@ -80,8 +82,8 @@ def _latest(*dimensions: str) -> dict[str, object]:
     return {dimension: {"asOf": "latest"} for dimension in dimensions}
 
 
-def _account_slot() -> ObservationKey:
-    return ObservationKey(ObjectKey(_account(), (("id", 3),)), None)
+def _account_state() -> ObservedStateKey:
+    return VersionedStateKey(ObjectKey(_account(), (("id", 3),)), 1)
 
 
 def _update(balance: int) -> WriteInstruction:
@@ -125,17 +127,18 @@ def test_a_standalone_bridge_read_takes_no_lock_and_files_no_record() -> None:
     assert snapshot.execution.round_trips == 1
 
 
-def test_a_participating_bridge_read_answers_the_slot_the_unit_of_work_filed() -> None:
+def test_a_participating_bridge_read_answers_the_state_the_unit_of_work_retained() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
 
     def fn(tx: Transaction) -> object:
         read = tx.observed_read(_account_query())
         assert len(read.observations) == 1
-        # The slot the read filed under is the one the unit of work answers for,
-        # which is what makes the key a REFERENCE rather than a reconstruction.
+        # The state the read retained under is the one the unit of work answers
+        # for, which is what makes the key a REFERENCE rather than a
+        # reconstruction.
         return read.observations[0].key
 
-    assert cast("ObservationKey", _run(port, fn)) == _account_slot()
+    assert cast("ObservedStateKey", _run(port, fn)) == _account_state()
     assert port.ops == [("begin",), ("read", FIND_SQL_UNLOCKED, (3,)), ("commit",)]
 
 
@@ -179,7 +182,7 @@ def test_an_explicit_observation_licenses_the_version_advance() -> None:
     assert port.ops[1][1:] == (UPDATE_SQL, (11, 2, 3, 1))
 
 
-def test_an_observation_key_resolves_against_this_units_own_record() -> None:
+def test_an_observed_state_key_resolves_against_this_units_own_index() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
 
     def fn(tx: Transaction) -> None:
@@ -196,12 +199,12 @@ def test_an_observation_key_resolves_against_this_units_own_record() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_key_naming_no_recorded_observation_fails_at_the_call() -> None:
+def test_a_key_naming_no_retained_observation_fails_at_the_call() -> None:
     port = RecordingPort()
     with pytest.raises(UnobservedWriteError) as raised:
 
         def fn(tx: Transaction) -> None:
-            tx.write_neutral(_update(11), observation=_account_slot())
+            tx.write_neutral(_update(11), observation=_account_state())
 
         _run(port, fn)
     assert raised.value.code == "write-observation-not-recorded"
@@ -218,7 +221,7 @@ def test_a_key_is_invalid_once_its_unit_of_work_has_ended() -> None:
 
     _run(port, fn)
     with pytest.raises(EscapedTransactionError):
-        escaped[0].write_neutral(_update(11), observation=_account_slot())
+        escaped[0].write_neutral(_update(11), observation=_account_state())
 
 
 def test_a_keyed_instruction_reaches_the_model_aware_validator_the_typed_verbs_do() -> None:
@@ -428,7 +431,7 @@ def _policy_insert() -> WriteInstruction:
     )
 
 
-def test_a_milestone_set_bridge_read_files_no_record() -> None:
+def test_a_milestone_set_bridge_read_retains_no_evidence() -> None:
     port = RecordingPort(rows=_balance_history_rows())
     query = object_query_node(mm.Balance.where(mm.Balance.id == 1).history(TX_TIME))
 
@@ -436,29 +439,29 @@ def test_a_milestone_set_bridge_read_files_no_record() -> None:
         read = tx.observed_read(query)
         return read.observations
 
-    # A milestone-set read records no observation on the unit of work, exactly as
-    # `tx.find`'s own history branch does, so it answers no slot to settle
-    # against: a key here would name nothing and fail the write it was handed to.
+    # A milestone-set read retains no evidence at all, exactly as `tx.find`'s own
+    # history branch does, so it answers no state to settle against: a key here
+    # would name nothing and fail the write it was handed to.
     assert _run_on(db_for(BALANCE, port), fn) == ()
 
 
-def test_a_temporal_record_names_the_slot_its_own_milestone_qualifies() -> None:
+def test_a_temporal_record_names_the_state_its_own_milestone_qualifies() -> None:
     port = RecordingPort(rows=[_balance_history_rows()[1]])
     query = object_query_node(mm.Balance.where(mm.Balance.id == 1))
 
     def fn(tx: Transaction) -> object:
         read = tx.observed_read(query)
         key = read.observations[0].key
-        # A milestone chain holds several rows per primary key, so the slot the
-        # recording side files under is qualified by the milestone the row names.
-        assert key.milestone is not None
+        # A milestone chain holds several rows per primary key, so the state the
+        # retaining side addresses is qualified by the milestone the row names.
+        assert isinstance(key, TemporalStateKey)
         return key
 
-    key = cast("ObservationKey", _run_on(db_for(BALANCE, port), fn))
-    assert key.object_key.primary_key == (("id", 1),)
+    key = cast("TemporalStateKey", _run_on(db_for(BALANCE, port), fn))
+    assert key.object.primary_key == (("id", 1),)
 
 
-def test_an_unversioned_non_temporal_read_files_no_record() -> None:
+def test_an_unversioned_non_temporal_read_retains_no_evidence() -> None:
     port = RecordingPort(rows=[_ORDER_ROW])
     query = object_query_node(Order.where(Order.id == 1))
 

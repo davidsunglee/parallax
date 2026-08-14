@@ -35,6 +35,7 @@ from parallax.core.entity._declaration import declaration_of, is_entity_class, m
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Edge, Pin
+from parallax.core.unit_work import SourceHint
 
 __all__ = [
     "SNAPSHOT_INSPECTION_CODES",
@@ -95,12 +96,19 @@ class SnapshotNodeState:
     the unloaded sentinel there is what makes ordinary attribute access raise.
     ``pin`` and ``edge`` are present exactly for a node whose family declares
     as-of axes.
+
+    ``source`` is the private Source Hint the read retained for this node — the
+    object it denotes, the participation its read licensed, and the observation
+    retained for the state it saw. It is how a Typed value reaches its own write
+    evidence, and it is absent for a node no observation was taken of. Nothing
+    here interprets it; the write side decides what it licenses.
     """
 
     entity: EntityIdentity
     views: Mapping[str, object]
     pin: Pin | None = None
     edge: Edge | None = None
+    source: SourceHint | None = None
 
 
 def snapshot_state_of(node: object) -> SnapshotNodeState | None:

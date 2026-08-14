@@ -28,16 +28,17 @@ from parallax.core.unit_work import (
     FixedClock,
     FlushExecutor,
     KeyedWrite,
-    ObservationKey,
     ObservedKeyedWrite,
     PlannedInsert,
     PlannedUpdate,
     PredicateSelection,
     PredicateWrite,
+    RetainedObservation,
     RollbackOnlyError,
     SystemClock,
     TransactionSettings,
     UnitOfWork,
+    VersionedStateKey,
     VersionObservation,
     WriteBatchStarting,
     WriteBatchTrigger,
@@ -252,16 +253,17 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
     # step's own advanced assignment.
     recorder = _Recorder()
     observation = VersionObservation(observed_version=7)
-    slot = ObservationKey(corpus_object_key("Account", ("id", 1)), None)
+    state = VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7)
+    retained = RetainedObservation(state, observation, None)
 
     def body(tx: UnitOfWork) -> None:
-        tx.observe(slot, observation)
-        resolved = tx.observation_for(slot)
+        tx.retain(retained)
+        resolved = tx.retained_for(state)
         assert resolved is not None
         tx.buffer(
             ObservedKeyedWrite(
                 instruction=KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},)),
-                observation=resolved,
+                observation=resolved.evidence,
             )
         )
 
@@ -492,9 +494,12 @@ def test_escaped_reference_raises_on_every_use() -> None:
     with pytest.raises(EscapedTransactionError):
         tx.buffer(_account_insert(1))
     with pytest.raises(EscapedTransactionError):
-        tx.observe(
-            ObservationKey(corpus_object_key("Account", ("id", 1)), None),
-            VersionObservation(observed_version=1),
+        tx.retain(
+            RetainedObservation(
+                VersionedStateKey(corpus_object_key("Account", ("id", 1)), 1),
+                VersionObservation(observed_version=1),
+                None,
+            )
         )
     with pytest.raises(EscapedTransactionError):
         tx.flush(trigger="finalization")

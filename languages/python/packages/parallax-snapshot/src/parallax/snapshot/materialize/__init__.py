@@ -51,6 +51,7 @@ from parallax.snapshot.materialize._classify import (
     GraphClassification,
     RootClassification,
     classify_roots,
+    hydrates,
 )
 from parallax.snapshot.materialize._convert import (
     SNAPSHOT_DECODING_FAILED,
@@ -95,6 +96,7 @@ from parallax.snapshot.materialize._wire import (
     UnwindTree,
     WireEntity,
     WireValue,
+    source_hint_of,
     unwind_tree,
     wire_roots,
 )
@@ -132,10 +134,12 @@ __all__ = [
     "classify_roots",
     "convert_row",
     "has_invalid_key",
+    "hydrates",
     "logical_key",
     "merge_graph_input",
     "observable_columns",
     "require_publishable",
+    "source_hint_of",
     "unwind_tree",
     "validate_graph_input",
     "wire_roots",

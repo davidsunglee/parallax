@@ -308,12 +308,14 @@ class Database:
         Target resolution and query validation are the shared
         :func:`~parallax.snapshot.handle._preflight.preflight` seam's, so this
         and :meth:`Transaction.find` differ only in locking, unit-of-work
-        wrapping, and observation recording. The canonical query is read once
-        here and kept locally through this execution.
+        wrapping, and participation. The canonical query is read once here and
+        kept locally through this execution.
 
-        There being no unit of work to observe into, this passes the executor no
-        observation collector at all, so a non-transactional read builds no
-        observation record rather than building one and discarding it.
+        A STANDALONE read still retains the write evidence its rows observed onto
+        the values it publishes — a value's evidence belongs to the value — and
+        simply stamps no participation on them, which is what lets an
+        effective-Optimistic write import that evidence while an
+        effective-Locking one cannot.
 
         The Snapshot's parameter is the query's RESULT — what ``narrow`` moved
         it to, or the queried Entity itself — so a narrowed find yields the
