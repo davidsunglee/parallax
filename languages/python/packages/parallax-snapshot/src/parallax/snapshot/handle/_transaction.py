@@ -982,8 +982,9 @@ class Transaction:
         transaction holding a claim for a write that was never buffered, against
         which a later legal write of that same scope would be refused, coalesced,
         or superseded. In this order the claim is the last judgment a keyed write
-        passes, and a write refused by any of them leaves nothing behind: the
-        buffer and the claims it could not join are both untouched.
+        passes before it is buffered, and a write refused by any of them leaves
+        nothing behind: the buffer and the claims it could not join are both
+        untouched.
 
         Scope and intent are read off what the write settles against and what its
         verb does, and the two are absent together: an insert opens a row rather
