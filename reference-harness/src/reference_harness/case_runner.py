@@ -3549,11 +3549,6 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
         )
 
 
-# The target table of a DML statement (m-inheritance table-per-concrete-subtype
-# routing): the identifier after `insert into` / `delete from` / `update`, stopping
-# at the following whitespace or `(` (the tight `insert into t(` column list).
-_DML_TARGET_RE = re.compile(r"^(?:insert\s+into|delete\s+from|update)\s+([^\s(]+)", re.IGNORECASE)
-
 # The full-bitemporal `*Until` rectangle-split mutations: a Valid-Time-bounded
 # write whose ① carries the valid-time window (`at`/`until`/`validFrom`).
 _UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
@@ -4073,6 +4068,7 @@ def _assert_inheritance_write_routing(
     entity: Entity,
     step_statements: list[str],
     step_binds: list[list[Any]],
+    dialect: str,
 ) -> None:
     """Assert an inheritance write's golden DML routes and guards correctly.
 
@@ -4085,45 +4081,64 @@ def _assert_inheritance_write_routing(
     :func:`_assert_temporal_input`). For a TABLE-PER-CONCRETE-SUBTYPE concrete subtype
     every write (insert / close / delete) MUST target the subtype's OWN table (no
     shared table, no tag).
+
+    Both facts are read off the golden's PARSE for the executing *dialect*, never off
+    its text: the physical table and the guarded columns are rendered quoted where
+    they are reserved or otherwise non-simple, and the quote character itself diverges
+    per dialect (`m-dialect`).
     """
     tag = _tag(entity)
     if tag is not None:  # table-per-hierarchy concrete subtype
         for statement, binds in zip(step_statements, step_binds, strict=True):
             if _is_existing_row_statement(statement):
-                _assert_existing_row_tag_guard(case, entity, statement, binds)
+                _assert_existing_row_tag_guard(case, entity, statement, binds, dialect)
         return
     if entity.role == "concrete-subtype":  # table-per-concrete-subtype (tag is None)
         for statement in step_statements:
-            _assert_concrete_table_routing(case, entity, statement)
+            _assert_concrete_table_routing(case, entity, statement, dialect)
 
 
 def _assert_existing_row_tag_guard(
-    case: Case, entity: Entity, statement: str, binds: list[Any]
+    case: Case, entity: Entity, statement: str, binds: list[Any], dialect: str
 ) -> None:
     """A table-per-hierarchy existing-row write carries the tag guard after the PK.
 
-    The tag guard is the fragment ``<pk> = ? and <tag.column> = ?`` (the tag equality
-    joins the identity predicates immediately after the primary-key equality,
-    m-inheritance / m-sql; resolved Q9), and its ``?`` binds the concrete subtype's
-    ``tagValue`` — framework-derived, so it is pinned to the model, never authored.
-    The optimistic version gate, when present, still binds LAST (after the tag).
+    The tag guard is the ``<tag.column> = ?`` equality joining the identity predicates
+    immediately after the primary-key equality (m-inheritance / m-sql; resolved Q9),
+    and its ``?`` binds the concrete subtype's ``tagValue`` — framework-derived, so it
+    is pinned to the model, never authored. The optimistic version gate, when present,
+    still binds LAST (after the tag).
+
+    Both halves are read off the statement's own parse — the guard's shape from the
+    predicate's first two conjuncts (:func:`_existing_row_write`), its bind position
+    from the scanned placeholder count (:func:`_predicate_bind_offset`) — because a
+    literal ``<pk> = ? and <tag> = ?`` fragment finds neither a quoted physical column
+    nor a legally reformatted predicate, and a textual ``?`` count includes the ones
+    inside string literals and quoted identifiers, which bind nothing.
     """
     tag_column, tag_value = _tag(entity)  # type: ignore[misc]
     pk_columns = _primary_key_columns(entity)
     if len(pk_columns) != 1:  # the inheritance families key on a single-column pk (`id`)
         return
-    guard = f"{pk_columns[0]} = ? and {tag_column} = ?"
-    if guard not in statement:
+    write = _existing_row_write(statement, dialect)
+    offset = _predicate_bind_offset(statement)
+    guarded = (
+        write is not None
+        and len(write.conjuncts) > 1
+        and _gates_on(write.conjuncts[0], pk_columns[0])
+        and _gates_on(write.conjuncts[1], tag_column)
+    )
+    if not guarded or offset is None:
         raise CaseFailure(
             f"{case.path.name}: a table-per-hierarchy existing-row write of "
             f"{entity.name} MUST carry the tag guard immediately after the primary-key "
-            f"equality (`{guard}`), not found in golden {statement!r}."
+            f"equality (`{pk_columns[0]} = ? and {tag_column} = ?`), not found in golden "
+            f"{statement!r}."
         )
-    # The tag guard's `?` is the (n+1)-th placeholder, where n is the count of `?`
-    # textually preceding it — so its bind index is mode-independent (it lands after
-    # the SET placeholders and the pk, before any opt-lock gate).
-    prefix = statement[: statement.index(guard) + len(f"{pk_columns[0]} = ? and {tag_column} = ")]
-    tag_bind_index = prefix.count("?")
+    # The pk equality opens the predicate and binds one placeholder, so the tag's own
+    # bind lands one past it — after the SET placeholders, before any opt-lock gate,
+    # in either concurrency mode.
+    tag_bind_index = offset + 1
     if tag_bind_index >= len(binds) or not _write_value_equal(tag_value, binds[tag_bind_index]):
         actual = binds[tag_bind_index] if tag_bind_index < len(binds) else "<missing>"
         raise CaseFailure(
@@ -4133,24 +4148,27 @@ def _assert_existing_row_tag_guard(
         )
 
 
-def _assert_concrete_table_routing(case: Case, entity: Entity, statement: str) -> None:
+def _assert_concrete_table_routing(
+    case: Case, entity: Entity, statement: str, dialect: str
+) -> None:
     """A table-per-concrete-subtype write targets the subtype's OWN table.
 
     There is no shared table and no tag column (m-inheritance), so the concrete
     subtype is selected by WHICH table the DML targets: an insert / delete of that
-    subtype MUST name its own table.
+    subtype MUST name its own table. The golden's target is compared to the model by
+    the identifier it SPELLS (:func:`_dml_target`, :func:`_names`), so a reserved
+    physical table routes correctly under the quoting each dialect renders it with.
     """
-    match = _DML_TARGET_RE.match(statement)
-    if match is None:
+    target = _dml_target(statement, dialect)
+    if target is None:
         raise CaseFailure(
-            f"{case.path.name}: could not parse the DML target table from golden {statement!r}."
+            f"{case.path.name}: could not read the DML target table from golden {statement!r}."
         )
-    target = match.group(1)
-    if target != entity.table:
+    if not _names(target, entity.table):
         raise CaseFailure(
             f"{case.path.name}: a table-per-concrete-subtype write of {entity.name} MUST "
             f"target its own table {entity.table!r} (no shared table), but the golden "
-            f"targets {target!r}: {statement!r}."
+            f"targets {target.sql(dialect=sqlglot_dialect(dialect))}: {statement!r}."
         )
 
 
@@ -4463,9 +4481,13 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         if mutation in _UNTIL_MUTATIONS or (
             _is_bitemporal(entity) and mutation in _PLAIN_SPLIT_MUTATIONS
         ):
-            _assert_until_input(case, entity, classified, step, step_statements, step_binds)
+            _assert_until_input(
+                case, entity, classified, step, step_statements, step_binds, dialect
+            )
         elif entity.is_temporal:
-            _assert_temporal_input(case, entity, classified, step, step_statements, step_binds)
+            _assert_temporal_input(
+                case, entity, classified, step, step_statements, step_binds, dialect
+            )
         elif mutation == "insert":
             _assert_insert_input(case, entity, classified, step_statements, step_binds)
         elif mutation in ("delete", "cascadeDelete"):
@@ -4497,7 +4519,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # the subtype's own table. A no-op on a non-inheritance entity and on a chained
         # INSERT (whose tag COLUMN is cross-checked by _assert_insert_statement /
         # _assert_temporal_input).
-        _assert_inheritance_write_routing(case, entity, step_statements, step_binds)
+        _assert_inheritance_write_routing(case, entity, step_statements, step_binds, dialect)
         stmt_index += count
 
 
@@ -4840,6 +4862,7 @@ def _assert_temporal_input(
     step: dict[str, Any],
     step_statements: list[str],
     step_binds: list[list[Any]],
+    dialect: str,
 ) -> None:
     """Cross-check a Transaction-Time-Only write step's ① against its golden DML.
 
@@ -4946,7 +4969,7 @@ def _assert_temporal_input(
         # gate's bind is reconstructed from the case's own history rather than
         # authored on the step (:func:`_observed_milestone_start`).
         expected = [at, *_close_address_binds(case, entity, pk, None)]
-        if _has_temporal_gate(statement, transaction_time["start_column"]):
+        if _has_temporal_gate(statement, transaction_time["start_column"], dialect):
             expected.append(_observed_milestone_start(case, entity, step, pk))
         _assert_write_values(case, expected, binds, statement)
 
@@ -4971,6 +4994,7 @@ def _assert_until_input(
     step: dict[str, Any],
     step_statements: list[str],
     step_binds: list[list[Any]],
+    dialect: str,
 ) -> None:
     """Cross-check a full-bitemporal RECTANGLE-SPLIT step's ① against its golden (②).
 
@@ -5074,7 +5098,7 @@ def _assert_until_input(
         # tolerated as gated, and a gated one pairs its single trailing predicate with
         # EXACTLY one trailing bind.
         expected = [at, *_close_address_binds(case, entity, pk, observed.valid_end)]
-        gated = _has_temporal_gate(statement, in_z)
+        gated = _has_temporal_gate(statement, in_z, dialect)
         if gated:
             expected.append(observed.tx_start)
         placeholders = statement.count("?")
@@ -5309,20 +5333,27 @@ def _current_rectangles(
     return rectangles
 
 
-def _has_temporal_gate(statement: str, in_z: str) -> bool:
+def _has_temporal_gate(statement: str, in_z: str, dialect: str) -> bool:
     """True when a milestone close's SQL carries the OPTIMISTIC gate predicate.
 
     Address and gate are separate facts (`m-bitemp-write` "Address and gate are
     separate"): every close renders the same address in either mode, and an optimistic
     one APPENDS the observed Transaction-Time start (``and <in_z> = ?``) last. The gate
-    signature is therefore that predicate in TRAILING position — matched word-bounded so
-    the address's own ``<out_z> = ?`` is never mistaken for it, and END-ANCHORED so a
-    close that weaves the observed start into the address instead of appending it is
-    reported UNGATED and fails on arity rather than passing as a well-formed gated
-    close. A close is then never mis-read as gated on the strength of a longer bind row
-    alone, nor on a gate predicate that binds anywhere but last.
+    signature is therefore that predicate as the predicate's LAST conjunct, so the
+    address's own ``<out_z> = ?`` is never mistaken for it and a close that weaves the
+    observed start into the address instead of appending it is reported UNGATED and
+    fails on arity rather than passing as a well-formed gated close. A close is then
+    never mis-read as gated on the strength of a longer bind row alone, nor on a gate
+    predicate that binds anywhere but last.
+
+    The temporal peer of :func:`_has_version_gate`, and projected out of the same
+    parsed statement (:func:`_existing_row_write`) for the same reasons: a reserved
+    physical interval column is rendered QUOTED in the executing dialect's own quote
+    character (`m-dialect`), and a nested ``SELECT``'s trailing predicate is a conjunct
+    of that query rather than of this one.
     """
-    return re.search(rf"\b{re.escape(in_z)}\s*=\s*\?\s*\Z", statement) is not None
+    write = _existing_row_write(statement, dialect)
+    return write is not None and _gates_on(write.conjuncts[-1], in_z)
 
 
 def _conflict_versioned_entity(case: Case) -> Entity | None:
@@ -5661,6 +5692,7 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
                 _attempt_statements(attempt, dialect),
                 _entry_binds(attempt.get("statements"), 0, dialect),
                 pointer,
+                dialect,
             )
         return
     _assert_temporal_conflict_close(
@@ -5674,6 +5706,7 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
         case.golden_statements(dialect),
         case.statement_binds(0),
         "write",
+        dialect,
     )
 
 
@@ -5688,6 +5721,7 @@ def _assert_temporal_conflict_close(
     statements: list[str],
     binds: list[Any],
     pointer: str,
+    dialect: str,
 ) -> None:
     """Cross-check one temporal-close attempt's ① binds against its golden close.
 
@@ -5758,6 +5792,7 @@ def _assert_temporal_conflict_close(
         next(a for a in entity.temporal_runtime_axes if a["dimension"] == "transaction-time")[
             "start_column"
         ],
+        dialect,
     )
     if gate_rendered != gated:
         raise CaseFailure(
@@ -5775,7 +5810,7 @@ def _assert_temporal_conflict_close(
             )
         expected.append(observed_tx_start)  # the optimistic in_z gate bind
     _assert_write_values(case, expected, binds, statements[0])
-    _assert_inheritance_write_routing(case, entity, statements, [binds])
+    _assert_inheritance_write_routing(case, entity, statements, [binds], dialect)
 
 
 def _table_layout(case: Case, table: str) -> TableLayout:
@@ -6021,8 +6056,9 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
 
     The observed state is resolved INDEPENDENTLY of the golden, from the named
     find step's own ``expectRows`` — the rows that read returned, which is exactly
-    the evidence the store it filled holds — and by each entry's OWN key, so a
-    find that observed no row of that key names evidence that does not exist.
+    the evidence the store it filled holds — and by each entry's OWN object
+    (:func:`_settled_observed_row`), so a find that observed no row of that object
+    names evidence that does not exist.
     What the resolution then reaches is the target's PROFILE's answer: a temporal
     write's close address (on a Bitemporal target, its Valid-Time exclusive upper
     bound) and its optimistic gate, and a versioned Non-Temporal write's own gate
@@ -6077,7 +6113,7 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
                 case, entity, row, mutation=entry["mutation"], opening=temporal
             )
             statement, binds = _settled_statement(case, index, entity, pk, settling, aligned)
-            _assert_inheritance_write_routing(case, entity, [statement], [binds])
+            _assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
             if not temporal:
                 _assert_settled_version_binds(
                     case, entity, index, origin, pk, binds, statement, dialect
@@ -6295,20 +6331,25 @@ def _settled_observed_row(
     read the write named says which it was handed.
 
     One resolver for both profiles, because the rule they share is the whole of
-    it — the write's own key, exactly one match — and what differs is only the
+    it — the write's own object, exactly one match — and what differs is only the
     state each then projects out of the row (:func:`_settled_generation`,
     :func:`_settled_milestone`). *state* is that profile's own noun, so the
     refusal names what the write would have settled against.
 
-    The key alone resolves the row even when the find is POLYMORPHIC: its rows come
-    from one target's own family, and identity normalizes to that family
-    (`m-identity-map`), so one primary key names one object however many concrete
-    subtypes the read spanned. Two rows of the key are therefore two observed
-    states, which is what the write would have to choose between.
+    A POLYMORPHIC find needs the write's own concrete subtype beside the key
+    (:func:`_row_is_variant_of`): a primary key names one object per TABLE, and only a
+    table-per-hierarchy family shares one, so a discriminated-union read over
+    table-per-concrete-subtype legitimately returns sibling rows of one key from
+    different tables. Two rows the write's own subtype claims are two observed states,
+    which is what the write would have to choose between.
     """
     key_column = _pk_column(entity)
     observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []
-    matched = [row for row in observed_rows if _write_value_equal(row.get(key_column), pk)]
+    matched = [
+        row
+        for row in observed_rows
+        if _write_value_equal(row.get(key_column), pk) and _row_is_variant_of(case, entity, row)
+    ]
     if len(matched) != 1:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] settles against a find that observed "
@@ -6316,6 +6357,29 @@ def _settled_observed_row(
             f"against the ONE {state} the value it was handed came from."
         )
     return matched[0]
+
+
+def _row_is_variant_of(case: Case, entity: Entity, row: dict[str, Any]) -> bool:
+    """Whether an observed row is a row of *entity*'s own concrete subtype.
+
+    A discriminated-union read tags every returned row with the concrete variant it
+    resolved to (`m-inheritance` *Abstract-position reads*), and that tag is what
+    separates two sibling rows a key alone cannot: the raw tag column under
+    table-per-hierarchy, the per-branch ``family_variant`` literal under
+    table-per-concrete-subtype, and the ``familyVariant`` the compatibility rows spell
+    once either has been materialized (`m-sql`). A row carrying none states no variant
+    to contradict — a concrete-target read projects no discriminator, because every
+    row it returns is already the queried subtype's — so it answers for its key alone.
+    """
+    tag = _tag(entity)
+    if tag is not None and tag[0] in row:
+        return _write_value_equal(row[tag[0]], tag[1])
+    for column in (_TPCS_VARIANT_COLUMN, "familyVariant"):
+        if column in row:
+            return row[column] == Family(case.model.entity_defs).variant_spelling(
+                entity.canonical_name
+            )
+    return True
 
 
 def _settled_generation(
@@ -6888,6 +6952,39 @@ def _has_version_gate(statement: str, version_col: str, dialect: str) -> bool:
     return write is not None and any(_gates_on(operand, version_col) for operand in write.conjuncts)
 
 
+def _dml_target(statement: str, dialect: str) -> exp.Identifier | None:
+    """The identifier *statement* names its target table with, or None when it is no
+    table-targeting DML for *dialect*.
+
+    The one reader of WHICH TABLE a write lands in, covering the ``INSERT`` that
+    :func:`_existing_row_write` does not: table-per-concrete-subtype routing asks it of
+    every statement a write emits, because there the table IS the concrete subtype
+    (`m-inheritance`). Taken from the parse so the identifier keeps its own quoting,
+    which is what decides whether the spelling is the model's table (:func:`_names`) —
+    a reserved or otherwise non-simple physical name is rendered QUOTED (`m-dialect`).
+    """
+    with contextlib.suppress(sqlglot.ParseError):
+        return _dml_target_of(sqlglot.parse_one(statement, read=sqlglot_dialect(dialect)))
+    return None
+
+
+def _dml_target_of(tree: Expr) -> exp.Identifier | None:
+    """The target-table identifier of an already-parsed ``INSERT`` / ``UPDATE`` /
+    ``DELETE``, or None for any other statement.
+
+    An ``INSERT`` carries its table inside the column-list schema; the existing-row
+    verbs name it directly.
+    """
+    if not isinstance(tree, (exp.Insert, exp.Update, exp.Delete)):
+        return None
+    target = tree.this
+    if isinstance(target, exp.Schema):
+        target = target.this
+    if not isinstance(target, exp.Table) or not isinstance(target.this, exp.Identifier):
+        return None
+    return target.this
+
+
 class _ExistingRowWrite(NamedTuple):
     """The outer keyed DML a golden statement is: the identifier its ``UPDATE`` /
     ``DELETE`` names the target table with, and its own top-level predicate
@@ -6916,9 +7013,11 @@ def _existing_row_write(statement: str, dialect: str) -> _ExistingRowWrite | Non
     """
     with contextlib.suppress(sqlglot.ParseError):
         tree = sqlglot.parse_one(statement, read=sqlglot_dialect(dialect))
-        where = tree.args.get("where") if isinstance(tree, (exp.Update, exp.Delete)) else None
-        if isinstance(where, exp.Where) and isinstance(tree.this, exp.Table):
-            return _ExistingRowWrite(tree.this.this, tuple(_conjuncts(where.this)))
+        if not isinstance(tree, (exp.Update, exp.Delete)):
+            return None
+        table, where = _dml_target_of(tree), tree.args.get("where")
+        if table is not None and isinstance(where, exp.Where):
+            return _ExistingRowWrite(table, tuple(_conjuncts(where.this)))
     return None
 
 

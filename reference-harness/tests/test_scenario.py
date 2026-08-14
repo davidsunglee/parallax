@@ -997,6 +997,111 @@ def test_a_settled_write_of_a_shared_table_routes_to_its_own_subtype() -> None:
         _assert_scenario_settled_write(sibling, "postgres")
 
 
+def test_a_settled_write_resolves_the_observed_row_of_its_own_variant() -> None:
+    # A primary key names one object per TABLE, and only a table-per-hierarchy family
+    # shares one: under table-per-concrete-subtype each concrete owns its own table, so
+    # one discriminated-union read legitimately returns sibling rows of ONE key from
+    # different tables (m-inheritance-052 authors exactly that result). Which of them a
+    # settled write observed is the variant its own subtype names — resolving by key
+    # alone would refuse this legal case as two observed states.
+    _assert_scenario_settled_write(_polymorphic_settled_case(), "postgres")
+
+    sibling_rectangle = _polymorphic_settled_case(
+        valid_end="infinity", tx_start="2024-03-01T00:00:00+00:00"
+    )
+    with pytest.raises(CaseFailure):
+        _assert_scenario_settled_write(sibling_rectangle, "postgres")
+
+
+def test_a_settled_write_is_not_settled_by_a_sibling_variants_row() -> None:
+    # The other half of the same rule: a find that returned the SIBLING at this key
+    # observed nothing about the written object, so the reference names evidence that
+    # does not exist. Matching by key alone would hand the DepositRate close LoanRate's
+    # own rectangle and grade the golden green against it.
+    case = _polymorphic_settled_case(observed_variants=("LoanRate",))
+    with pytest.raises(CaseFailure, match="observed 0 row"):
+        _assert_scenario_settled_write(case, "postgres")
+
+
+def _polymorphic_settled_case(
+    *,
+    valid_end: str = "2024-06-01T00:00:00+00:00",
+    tx_start: str = "2024-02-01T00:00:00+00:00",
+    observed_variants: tuple[str, ...] = ("DepositRate", "LoanRate"),
+) -> Case:
+    """A `uow` group whose abstract-root find over the table-per-concrete-subtype Rate
+    family observes DepositRate 1 and LoanRate 1 — one key, two tables — and whose
+    write settles a bitemporal close of DepositRate 1 against it."""
+    rows = {
+        "DepositRate": {
+            "id": 1,
+            "amount": "2.50",
+            "grade": "A",
+            "from_z": "2024-01-01T00:00:00+00:00",
+            "thru_z": "2024-06-01T00:00:00+00:00",
+            "in_z": "2024-02-01T00:00:00+00:00",
+            "out_z": "infinity",
+            "family_variant": "DepositRate",
+        },
+        "LoanRate": {
+            "id": 1,
+            "amount": "6.75",
+            "spread": "1.25",
+            "from_z": "2024-01-01T00:00:00+00:00",
+            "thru_z": "infinity",
+            "in_z": "2024-03-01T00:00:00+00:00",
+            "out_z": "infinity",
+            "family_variant": "LoanRate",
+        },
+    }
+    at = "2024-10-01T00:00:00+00:00"
+    raw: dict[str, Any] = {
+        "model": "models/rate.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "when": {
+            "uow": {"concurrency": "optimistic"},
+            "scenario": [
+                {
+                    "uow": "polymorphic",
+                    "objectQuery": {"target": "parallax.compatibility.Rate"},
+                    "roundTrips": 1,
+                    "expectRows": [rows[variant] for variant in observed_variants],
+                },
+                {
+                    "uow": "polymorphic",
+                    "on": 0,
+                    "write": [
+                        {
+                            "mutation": "update",
+                            "entity": "parallax.compatibility.DepositRate",
+                            "rows": [{"id": 1, "amount": "3.00"}],
+                            "validFrom": "2024-03-01T00:00:00+00:00",
+                            "at": at,
+                        }
+                    ],
+                    "roundTrips": 1,
+                    "statements": [
+                        {
+                            "sql": {
+                                "postgres": "update deposit_rate set out_z = ? "
+                                "where id = ? and thru_z = ? and out_z = ? and in_z = ?"
+                            },
+                            "binds": [at, 1, valid_end, "infinity", tx_start],
+                        }
+                    ],
+                },
+            ],
+        },
+        "then": {"roundTrips": 2},
+    }
+    return Case(
+        path=COMPATIBILITY_ROOT / "cases" / "m-unit-work-993-synthetic.yaml",
+        raw=raw,
+        model=load_model(COMPATIBILITY_ROOT, "models/rate.yaml"),
+    )
+
+
 def _shared_table_settled_case(*, tag: str = "dog") -> Case:
     """A `uow` group whose find observes Animal 1 and whose write settles an update
     of the concrete subtype Dog against it, on the family's shared table."""

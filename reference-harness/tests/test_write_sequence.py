@@ -476,6 +476,26 @@ def test_tph_update_wrong_tag_bind_is_rejected() -> None:
         _assert_write_input_columns(case, "postgres")
 
 
+def test_tph_tag_guard_is_read_under_each_dialects_own_quoting() -> None:
+    # A reserved or otherwise non-simple physical column is rendered QUOTED, and the
+    # quote character itself diverges per dialect (m-dialect). The guard is the
+    # `<pk> = ?` / `<tag> = ?` equality pair whatever spelling carries it, so a golden
+    # naming its identity columns the way its dialect must is guarded exactly as the
+    # bare-name one is — and the tag still binds right after the pk.
+    case = copy.deepcopy(_write_case_by_id("m-inheritance-008"))
+    case.then["statements"][0]["sql"] = {
+        "postgres": 'update payment set amount = ? where "id" = ? and "kind" = ?',
+        "mariadb": "update payment set amount = ? where `id` = ? and `kind` = ?",
+    }
+    _assert_write_input_columns(case, "postgres")
+    _assert_write_input_columns(case, "mariadb")
+
+    sibling = copy.deepcopy(case)
+    sibling.then["statements"][0]["binds"][2] = "cash"
+    with pytest.raises(CaseFailure, match="tagValue"):
+        _assert_write_input_columns(sibling, "postgres")
+
+
 def test_tpcs_delete_targets_concrete_table() -> None:
     # m-inheritance-085: the delete hits the concrete subtype's own table, no tag guard.
     case = _write_case_by_id("m-inheritance-085")
@@ -492,6 +512,25 @@ def test_tpcs_write_routed_to_wrong_table_is_rejected() -> None:
     case.then["statements"][0]["sql"]["postgres"] = "delete from receipt where id = ?"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
+
+
+def test_tpcs_routing_is_read_under_each_dialects_own_quoting() -> None:
+    # Under table-per-concrete-subtype the TABLE is the concrete subtype, and a
+    # reserved physical table is rendered quoted in each dialect's own quote character
+    # (m-dialect). The routed table is the identifier the golden spells, so the quoted
+    # spelling of the subtype's own table routes and a sibling's does not.
+    case = copy.deepcopy(_write_case_by_id("m-inheritance-085"))
+    case.then["statements"][0]["sql"] = {
+        "postgres": 'delete from "invoice" where id = ?',
+        "mariadb": "delete from `invoice` where id = ?",
+    }
+    _assert_write_input_columns(case, "postgres")
+    _assert_write_input_columns(case, "mariadb")
+
+    sibling = copy.deepcopy(case)
+    sibling.then["statements"][0]["sql"]["postgres"] = 'delete from "receipt" where id = ?'
+    with pytest.raises(CaseFailure, match="target its own table"):
+        _assert_write_input_columns(sibling, "postgres")
 
 
 # --- cascade delete ordering (m-cascade-delete) ------------------------------

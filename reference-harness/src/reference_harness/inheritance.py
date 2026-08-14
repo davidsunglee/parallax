@@ -318,6 +318,17 @@ class Family:
         local_matches = [item for item in self.order if self.defs[item]["name"] == local_name]
         return key if len(local_matches) > 1 else local_name
 
+    def variant_spelling(self, name: str) -> str:
+        """The ``familyVariant`` spelling of the entity *name* names (m-inheritance).
+
+        The bare local Entity name where it is unique among the family's concrete
+        subtypes, and the canonical qualified spelling where two namespaces declare
+        the same local name — the one spelling a discriminated-union read tags its
+        rows with, whether it is materialized from a table-per-hierarchy tag value or
+        projected as a table-per-concrete-subtype per-branch literal.
+        """
+        return self._render_key(self.defs.canonical_key(name))
+
     def children_of(self, name: str) -> list[str]:
         """Direct subtypes of *name*, in descriptor declaration order.
 
@@ -1295,5 +1306,5 @@ def tag_value_to_subtype(entity_defs: list[dict[str, Any]]) -> dict[Any, str]:
             continue
         block = inheritance_of(definition)
         if block and block.get("role") == ROLE_CONCRETE and block.get("tagValue") is not None:
-            mapping[block["tagValue"]] = family._render_key(family.key_of(definition))
+            mapping[block["tagValue"]] = family.variant_spelling(family.key_of(definition))
     return mapping
