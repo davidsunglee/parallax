@@ -287,11 +287,11 @@ Retain the branch matching the lifecycle profile; do not answer both.
 
 A claim about observable behavior is graded by behavior at the API boundary,
 never by inspecting source structure. The specification constrains structure only
-where it does so in its own right: the enforcement scopes and reaches recorded
-here, §6's oracle-independence and development-only provisioning boundaries, §8's
-artifact source-scope membership, and §10's toolchain contracts. A behavioral
-section that phrases a consequence as a fact about source text has misplaced it —
-restate it as what a caller observes, or record it here.
+where it does so in its own right: §2's Metamodel serde ownership decision, the
+enforcement scopes and reaches recorded here, §6's development-only provisioning
+rule, §8's artifact source-scope membership, and §10's toolchain contracts. A
+behavioral section that phrases a consequence as a fact about source text has
+misplaced it — restate it as what a caller observes, or record it here.
 
 The behavioral-module DAG governs dependencies between source enforcement
 scopes even when many scopes live in one source tree or common-runtime artifact.

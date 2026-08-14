@@ -4,28 +4,28 @@
 policy modules are wired into a Write Planner, so a lane that built a planner of
 its own would plan under a second set of strategies free to drift from
 production's. This grades that as behavior: the factory is made to hand back
-planners this module can recognize, a real write is driven through each lane,
-and every planning the drive performed is required to be one of theirs, in the
-number that lane is expected to perform.
+planners this module can recognize, a real write is driven through each lane, and
+the drive is then held to two things at once — every planning it performed ran on
+one of those planners, and every Write Plan that reached ``stream_lowered``, the
+seam a plan passes through to become statements, is by identity a plan one of
+those plannings returned.
 
-What the grader sees is a planning that runs on a ``WritePlanner``, and that is
-the whole of what it decides. A lane obtaining its plan from an unrelated
-implementation of the same interface — one inheriting nothing, and so absent
-from the subclass registry too — performs no planning this module records, on a
-driven lane as much as on any other. Nothing in the tree closes that shape. The
-count narrows it: a lane planning partly through the factory and partly around
-it comes up short, which is what makes the exact number load-bearing rather than
-incidental.
+Watching the lowering seam is what closes the escape watching ``WritePlanner``
+alone leaves open. An unrelated implementation of the same interface inherits
+nothing, so it performs no planning this module records and appears in no
+subclass registry — but its plan has to reach the lowering seam to become SQL,
+and there it is a plan no recorded planning produced. The two directions are
+graded together, so a plan the factory produced and the lane then discarded is
+caught as well.
 
-The lanes driven here are ENUMERATED — the `Database` lane, and the conformance
-engine's writeSequence, readless predicate write, and conflict entries — and
-that enumeration is this module's other limit: a write lane added later and not
-driven here is not graded here, and this module still passes. What covers the
-shapes that limit admits is `test_source_enforcement_topology.py`, which finds
-the spelling ``WritePlanner(`` in ``_planning.py`` alone and reads
-``WritePlanner.__subclasses__()`` for a second planner class — so a new lane
-reaches a planner through this factory, or else constructs one under an aliased
-name, and that last is what neither module catches.
+What remains uncovered is stated exactly: a lane that produced statements without
+handing a plan to ``stream_lowered`` — rendering settled steps one at a time, as
+``handle.lower_step`` allows — and a write lane this module does not drive. The
+lanes it drives are ENUMERATED — the `Database` lane, and the
+conformance engine's writeSequence, readless predicate write, and conflict
+entries. On an undriven lane, `test_source_enforcement_topology.py` still finds a
+second ``WritePlanner`` construction and a second planner class, but a planner
+constructed through an alias is caught by neither module.
 
 The `Database` lane is graded on identity as well as provenance. One planner
 serves the whole transaction, so a typed verb and ``tx.write_neutral`` are held
@@ -41,7 +41,7 @@ injects is the neutral one, so no planner a write path reaches can decorate.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,12 +51,15 @@ from _transact_support import NEW_ROW, RecordingPort, account_db, new_account
 from _support import mirrored_models as mm
 from _support.repo import REPO_ROOT
 from parallax.conformance import case_format, engine
+from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     NO_AUDIT,
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
+    PlannedWrite,
     PlanningRequest,
     TemporalStrategy,
     VersionObservation,
@@ -65,7 +68,7 @@ from parallax.core.unit_work import (
     WritePlanner,
     instructions,
 )
-from parallax.snapshot.handle import Transaction, _planning
+from parallax.snapshot.handle import Transaction, _database, _planning, stream_lowered
 
 type _CompileCase = Callable[[case_format.Case, str], tuple[list[engine.Emission], int]]
 
@@ -84,41 +87,59 @@ class _Built:
     audit: AuditStrategy
 
 
+@dataclass(frozen=True, slots=True)
+class _Planning:
+    """One planning: its receiver, what it was asked to plan, and what it returned."""
+
+    planner: WritePlanner
+    request: PlanningRequest
+    plan: WritePlan
+
+
 @dataclass(slots=True)
 class _Composition:
     """One drive's planning provenance: the planners the composition root built
-    while it ran, and every planning that ran, each with its receiver."""
+    while it ran, every planning that ran, and every plan that reached the
+    write-lowering seam."""
 
     lane: str
     built: list[_Built]
-    planned: list[tuple[WritePlanner, PlanningRequest]]
+    planned: list[_Planning]
+    lowered: list[WritePlan]
 
     def escaped(self) -> list[PlanningRequest]:
         """The plannings whose receiver the composition root did not build."""
         return [
-            request
-            for planner, request in self.planned
-            if not any(planner is built.planner for built in self.built)
+            one.request
+            for one in self.planned
+            if not any(one.planner is built.planner for built in self.built)
         ]
+
+    def unaccounted(self) -> list[WritePlan]:
+        """The lowered plans no planning recorded here produced."""
+        return [plan for plan in self.lowered if not any(plan is one.plan for one in self.planned)]
 
 
 def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     """Make the composition root hand back recognizable planners for ``lane``, and
-    record every planning any planner performs while it is installed.
+    record every planning any planner performs and every plan the write-lowering
+    seam is handed while it is installed.
 
     What is replaced is the factory's own name for the planner CLASS, not the
     factory: both consumers bind ``build_write_planner`` at import time, so a
     patch of that name would intercept neither, while the class name is read
-    inside the factory body on every call. ``raising`` is left on, so the day
-    ``_planning`` stops holding that name this fails rather than silently
-    watching nothing.
+    inside the factory body on every call. ``stream_lowered`` is the mirror image
+    — both consumers DO bind it at import time, so it is replaced on each of
+    them. ``raising`` is left on throughout, so the day a name moves this fails
+    rather than silently watching nothing.
 
-    ``plan`` is watched on the class rather than on the built planners, because
-    that is what makes a planning that ran on some OTHER planner VISIBLE instead
-    of merely absent — the one way a lane planning partly through the factory and
-    partly around it can be told from one planning wholly through it.
+    ``plan`` is watched on the class rather than on the built planners, so a
+    planning that ran on some OTHER ``WritePlanner`` is visible instead of merely
+    absent; the lowering seam is watched because a plan an unrelated
+    implementation produced runs no watched ``plan`` at all and would otherwise
+    be invisible right up to the statements it emits.
     """
-    seen = _Composition(lane=lane, built=[], planned=[])
+    seen = _Composition(lane=lane, built=[], planned=[], lowered=[])
     planning = WritePlanner.plan
 
     def construct(
@@ -136,11 +157,20 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         return planner
 
     def plan(self: WritePlanner, request: PlanningRequest) -> WritePlan:
-        seen.planned.append((self, request))
-        return planning(self, request)
+        planned = planning(self, request)
+        seen.planned.append(_Planning(planner=self, request=request, plan=planned))
+        return planned
+
+    def lower(
+        plan: WritePlan, meta: Metamodel, dialect: Dialect
+    ) -> Iterator[tuple[PlannedWrite, LoweredStatement]]:
+        seen.lowered.append(plan)
+        return stream_lowered(plan, meta, dialect)
 
     monkeypatch.setattr(_planning, "WritePlanner", construct)
     monkeypatch.setattr(WritePlanner, "plan", plan)
+    monkeypatch.setattr(_database, "stream_lowered", lower)
+    monkeypatch.setattr(engine, "stream_lowered", lower)
     return seen
 
 
@@ -150,6 +180,17 @@ def _assert_planned_only_through_the_factory(seen: _Composition, plannings: int)
         f"{seen.lane}: {len(escaped)} of {len(seen.planned)} plannings ran on a planner the "
         f"composition root did not build (it built {len(seen.built)}); the first of them "
         f"planned {_buffer_shapes(escaped[0])}"
+    )
+    unaccounted = seen.unaccounted()
+    assert not unaccounted, (
+        f"{seen.lane}: {len(unaccounted)} of {len(seen.lowered)} plans reached the write-"
+        f"lowering seam without any planning recorded here having produced them, so something "
+        f"other than this factory's planners planned them"
+    )
+    assert [id(one.plan) for one in seen.planned] == [id(plan) for plan in seen.lowered], (
+        f"{seen.lane}: {len(seen.planned)} plannings produced plans but {len(seen.lowered)} "
+        f"reached the write-lowering seam — a plan this factory produced was discarded, or one "
+        f"was lowered twice"
     )
     assert len(seen.planned) == plannings, (
         f"{seen.lane}: {len(seen.planned)} plannings ran on a planner this factory built, "
@@ -193,7 +234,7 @@ def test_the_database_lane_plans_every_ingress_through_one_factory_planner(
 
     _assert_planned_only_through_the_factory(seen, plannings=2)
     assert len(seen.built) == 1, "one connected Metamodel, one planner"
-    assert all(planner is seen.built[0].planner for planner, _request in seen.planned)
+    assert all(one.planner is seen.built[0].planner for one in seen.planned)
 
 
 def test_the_composition_root_wires_the_audit_port_to_the_neutral_strategy(
@@ -277,4 +318,4 @@ def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
     # is what says the oracle planned on a planner of its own rather than
     # borrowing the transaction's — the shape the other engine entries reach
     # without a `Database` in play.
-    assert len({id(planner) for planner, _request in seen.planned}) == 2
+    assert len({id(one.planner) for one in seen.planned}) == 2

@@ -2,20 +2,16 @@
 
 Extraction and nothing more: globbing a distribution's sources, matching a
 regular expression against their lines, parsing them with ``ast``, and reading
-the import statements out of the parse. A caller gets paths, ``path:line``
-sites, parse trees, and `Import` records, and decides for itself what any of it
-means. Shared by `test_frontend_contraction_guards.py` and
-`test_source_enforcement_topology.py`, which assert about source shape for
-different reasons but read the source the same way.
+the import statements out of the parse. A caller gets paths, ``path:line`` sites,
+parse trees, and `Import` records, and decides for itself what any of it means.
+`synthetic_sources` hands it source to read in place of this tree's, which is how
+a guard is shown to fail for the shape it forbids and to pass source that merely
+resembles it.
 
 Nothing here resolves a name to what it denotes. A claim about what a name MEANS
 rather than about how the source spells it is one behavior grades directly, and
 approximating an interpreter to grade it here would be both weaker than that and
 a second implementation to maintain.
-
-`synthetic_sources` hands a guard source to read in place of this tree's, which
-is how an assertion stated over source shape is shown to fail for the shape it
-forbids and to pass source that merely resembles it.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a `reportPrivateUsage` error under pyright strict, so privacy is
@@ -103,8 +99,7 @@ def synthetic_sources(modules: Mapping[str, str]) -> Iterator[tuple[Path, str]]:
     """Each module's text, at the path a distribution holding it would use.
 
     Nothing is written and nothing needs to exist: every reader here takes a path
-    and its text, so naming the module is enough to hand a guard source this tree
-    does not contain.
+    and its text, so naming the module is enough.
     """
     for module, text in modules.items():
         yield _synthetic_path(module), text
@@ -154,15 +149,13 @@ def import_every_module(over: Iterator[tuple[Path, str]]) -> None:
         importlib.import_module(_dotted(path))
 
 
-# --------------------------------------------------------------------------- #
-# Imports, modelled so that a caller can name the module an import READS from   #
-# and not only the local name it binds. `from pydantic import Field` binds no  #
-# name any inventory of forbidden spellings would list, and a guard stated     #
-# over bound names alone therefore admits it.                                  #
-# --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class Import:
-    """One name one module imports, at the site the import statement stands."""
+    """One name one module imports, at the site the import statement stands.
+
+    Both the module an import READS FROM and the name it BINDS are carried, since
+    a guard stated over bound names alone admits `from pydantic import Field`.
+    """
 
     site: str
     importer: str
