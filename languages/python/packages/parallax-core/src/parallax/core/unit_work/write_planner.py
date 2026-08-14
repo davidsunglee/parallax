@@ -356,11 +356,16 @@ class WritePlanner:
     def _coalesce(self, buffer: BufferedWrites, resolved: Targets) -> list[BufferItem]:
         result: list[BufferItem | None] = []
         pending_insert: dict[ObjectKey, int] = {}
-        # Where each object's still-open observed-state claim sits, so a second
-        # write of that state reaches the carrier it must combine with. One
-        # object holds at most one such entry: a second observed state of it is
-        # a different claim, and the entry it would have joined is replaced.
-        pending_state: dict[ObjectKey, _StateClaim] = {}
+        # Where each object's still-open observed-state claims sit, so a second
+        # write of one of those states reaches the carrier it must combine with.
+        # One entry per exact observed state rather than per object: a key whose
+        # reads resolved to two states — two current rectangles of one Bitemporal
+        # key, or two observed generations of one versioned row — holds two
+        # independent claims, and writes of them interleave freely. Indexing by
+        # object alone would let the second state evict the first, and a later
+        # write of the first would then be emitted beside the write it was
+        # admitted to merge into.
+        pending_state: dict[ObjectKey, list[_StateClaim]] = {}
         for item in buffer:
             if isinstance(item, MaterializedWriteGroup):
                 result.append(item)
@@ -1556,8 +1561,8 @@ def _merge_update_into_insert(
 
 @dataclass(slots=True)
 class _StateClaim:
-    """One object's still-open observed-state claim during coalescing: where its
-    surviving carrier sits, which state it settles against, and what it intends.
+    """One still-open observed-state claim during coalescing: where its surviving
+    carrier sits, which state it settles against, and what it intends.
 
     The observed state is carried as the observation itself rather than as an
     Observed State Key, because the two writes only have to agree — and equal
@@ -1575,36 +1580,44 @@ def _combine_observed(
     item: ObservedKeyedWrite,
     key: ObjectKey,
     result: list[BufferItem | None],
-    pending: dict[ObjectKey, _StateClaim],
+    pending: dict[ObjectKey, list[_StateClaim]],
 ) -> None:
-    """Combine ``item`` with the claim already open on its observed state, or
+    """Combine ``item`` with the claim already open on its OWN observed state, or
     open a new one, extending ``result`` and ``pending`` in place.
 
     The verdict is the one algebra the arriving verb already ran
-    (:func:`~parallax.core.unit_work.claims.admits`), so what happens here is
-    what that verb admitted rather than a second reading of the same buffer:
-    assignments merge in authored order, a destruction supersedes the
-    assignments buffered before it, and a repeated destruction of one state and
-    region adds nothing. An ``incompatible`` pair is one no verb of this
-    transaction admitted — the caller reached the buffer another way — and both
-    writes are left standing rather than combined by a rule neither states.
+    (:func:`~parallax.core.unit_work.claims.admits`), unclaimed row included, so
+    what happens here is what that verb admitted rather than a second reading of
+    the same buffer: assignments merge in authored order, a destruction
+    supersedes the assignments buffered before it, and a repeated destruction of
+    one state and region adds nothing. An ``incompatible`` pair is one no verb of
+    this transaction admitted — the caller reached the buffer another way — and
+    both writes are left standing rather than combined by a rule neither states.
+
+    Which claim ``item`` meets is decided by its evidence and never by its key,
+    exactly as the verb-time table's Observed State Key decides it. An object's
+    other open claims are left where they are, so writes of two states of one key
+    may interleave without either displacing the other.
     """
     intent = keyed_intent(item.instruction)
     assert intent is not None  # a carrier refuses to wrap an insert
-    held = pending.get(key)
-    if held is not None and held.observation == item.observation:
-        verdict = admits(held.intent, intent)
-        if verdict == "coalesce":
-            base = result[held.index]
-            assert isinstance(base, ObservedKeyedWrite)
-            result[held.index] = _merge_observed(base, item)
-            return
-        if verdict == "deduplicate":
-            return
+    claims = pending.setdefault(key, [])
+    held = next((claim for claim in claims if claim.observation == item.observation), None)
+    verdict = admits(None if held is None else held.intent, intent)
+    if verdict == "coalesce":
+        assert held is not None  # an unclaimed state admits
+        base = result[held.index]
+        assert isinstance(base, ObservedKeyedWrite)
+        result[held.index] = _merge_observed(base, item)
+        return
+    if verdict == "deduplicate":
+        return
+    if held is not None:
         if verdict == "supersede":
             result[held.index] = None
+        claims.remove(held)
     result.append(item)
-    pending[key] = _StateClaim(index=len(result) - 1, observation=item.observation, intent=intent)
+    claims.append(_StateClaim(index=len(result) - 1, observation=item.observation, intent=intent))
 
 
 def _merge_observed(base: ObservedKeyedWrite, arriving: ObservedKeyedWrite) -> ObservedKeyedWrite:

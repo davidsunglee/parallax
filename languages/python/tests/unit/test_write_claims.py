@@ -105,6 +105,9 @@ def test_every_other_keyed_mutation_intends_an_assignment_or_a_destruction(
 @pytest.mark.parametrize(
     ("held", "arriving", "verdict"),
     [
+        (None, _ASSIGNMENT, "admit"),
+        (None, _DESTRUCTIVE, "admit"),
+        (None, SELECTION_INTENT, "admit"),
         (_ASSIGNMENT, _ASSIGNMENT, "coalesce"),
         (_ASSIGNMENT, _DESTRUCTIVE, "supersede"),
         (_DESTRUCTIVE, _DESTRUCTIVE, "deduplicate"),
@@ -119,7 +122,7 @@ def test_every_other_keyed_mutation_intends_an_assignment_or_a_destruction(
     ],
 )
 def test_the_claim_algebra_answers_one_verdict_per_pair(
-    held: WriteIntent, arriving: WriteIntent, verdict: str
+    held: WriteIntent | None, arriving: WriteIntent, verdict: str
 ) -> None:
     assert admits(held, arriving) == verdict
 

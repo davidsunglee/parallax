@@ -568,9 +568,11 @@ WRITE_EVIDENCE_CODES: Final[frozenset[str]] = frozenset(
 class WriteEvidenceError(LookupError):
     """A keyed write verb was handed a source whose write evidence it cannot use.
 
-    A ``LookupError`` because every code reports that the evidence the write
-    needs is not there to be found: never recorded for this source, or recorded
-    and already spent. ``object_key`` is the object the write addressed, always
+    A ``LookupError`` because every code reports that the evidence this write
+    needs is not there for it to use: never recorded for this source, recorded
+    and already spent, or still live but claimed by an intent this unit of work
+    already buffered against that exact state, which this one cannot join.
+    ``object_key`` is the object the write addressed, always
     visible so a caller can say WHICH write was refused; the Source Hint and the
     Observed State Key behind it stay implementation state.
 

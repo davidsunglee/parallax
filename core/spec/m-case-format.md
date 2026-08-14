@@ -995,33 +995,35 @@ A `uow`-grouped write step MAY carry **`on: <index>`**, naming the earlier find
 step of its OWN group whose result it settles against. The reference spells one
 thing the write row cannot: which of the group's reads handed over the value being
 written. It reuses the action step's own `on` spelling, and takes only the single
-index form — a keyed write settles against the one milestone its value came from,
-so a set of sources would name none.
+index form — a keyed write settles against the one observed state its value came
+from, so a set of sources would name none.
 
 Everywhere else, a keyed write's observed row comes from **case state**: a
-writeSequence entry and a conflict close alike consume a milestone the case's own
+writeSequence entry and a conflict close alike consume the state the case's own
 fixtures and earlier entries left current, because those shapes carry no read to
 have observed one (*Naming the observed milestone*, above). This reference is the
 one place that rule is displaced. Where it appears, an implementation **MUST**
 resolve the write's observation from the **observation store this unit of work's
 own reads filled** — the evidence the named find recorded when it ran, addressed
-by the object and by the milestone that read observed — and **MUST NOT** substitute
-a milestone derived from case state. Two obligations follow:
+by the object and by the state that read observed — and **MUST NOT** substitute
+an observation derived from case state. Two obligations follow:
 
 - The named find MUST have observed a row of the write's own key, and the write
-  MUST settle against **that** row's milestone. A write whose named find observed
-  no such row is refused; it names evidence that does not exist.
+  MUST settle against **that** row's observed state — its milestone on a temporal
+  target, its version on a versioned one. A write whose named find observed no
+  such row is refused; it names evidence that does not exist.
 - The write MUST reach the store by the coordinate the value it was handed came
   from, never by primary key alone. A group whose finds read one key at as-of
-  coordinates resolving to different milestones fills a distinct slot per
-  milestone; an implementation keying by identity alone holds one slot, and a
-  write naming the earlier find then settles against the later find's row.
+  coordinates resolving to different milestones — or at generations a write of its
+  own moved between — fills a distinct slot per observed state; an implementation
+  keying by identity alone holds one slot, and a write naming the earlier find
+  then settles against the later find's row.
 
 The reference is legal only where every part of it is meaningful: on a step that
 declares `uow` (evidence is transaction-scoped, and an ungrouped write shares a
 unit of work with no find), whose `write` is the **buffered keyed** form (a legacy
 string label carries no instruction and a predicate-selected write consumes no
-single milestone, so neither has anything an observation could reach), naming an
+single observation, so neither has anything an observation could reach), naming an
 EARLIER step of the SAME group that is a find.
 
 Every profile a keyed write settles against is nameable, because on every one of
@@ -1055,8 +1057,8 @@ No profile is the weaker witness; the two whose difference lands on the gate gra
 its derivation, which no conflict case can reach (*Naming the observed milestone*,
 above).
 
-A write settling against a find's result is **query-result-dependent**: the
-milestone it addresses is read off a row no compile lane executes, so such a case
+A write settling against a find's result is **query-result-dependent**: the state
+it settles against is read off a row no compile lane executes, so such a case
 declares `compileEligibility: run-only` (see *Compile eligibility*).
 
 #### Predicate-selected write instruction

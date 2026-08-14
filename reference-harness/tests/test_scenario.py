@@ -26,7 +26,7 @@ from reference_harness.case_runner import (
     _assert_scenario_count_consistency,
     _assert_scenario_normalization,
     _assert_scenario_reference_sql,
-    _assert_scenario_settled_close,
+    _assert_scenario_settled_write,
     _assert_scenario_source_finds,
     _assert_scenario_sql_bookkeeping,
     _relationship_path_target,
@@ -750,18 +750,20 @@ def _uncommitted_write_then_reference_sql_synthetic_case() -> Case:
 #
 # The harness's own arm of the reference: `_assert_scenario_source_finds` decides
 # structurally whether a write step may settle against a find at all, and
-# `_assert_scenario_settled_close` cross-checks the golden close it emits against
-# the milestone that find's `expectRows` declare. The second is what makes the
-# corpus state the settled milestone in two independent places, so each degradation
-# below moves ONE of those places and requires the check to notice.
+# `_assert_scenario_settled_write` cross-checks the golden each profile emits —
+# a temporal close's address and gate, a versioned write's gate and version
+# advance — against the state that find's `expectRows` declare. The second is what
+# makes the corpus state the settled observation in two independent places, so
+# each degradation below moves ONE of those places and requires the check to
+# notice.
 #
-# Two degradations of the harness ITSELF discriminate the close cross-checks.
-# Emptying `_assert_scenario_settled_close` must fail every one of them and
-# nothing else. Resolving `_settled_milestone` from the group's LAST find instead
-# of the named one — the identity-keying mistake the whole reference exists to
-# catch — must fail the authored case's own cross-check while letting the
-# wrong-rectangle golden pass; that pair is what shows the check reads the find
-# the write named rather than any find.
+# Two degradations of the harness ITSELF discriminate the cross-checks. Emptying
+# `_assert_scenario_settled_write` must fail every one of them and nothing else.
+# Resolving `_settled_milestone` from the group's LAST find instead of the named
+# one — the identity-keying mistake the whole reference exists to catch — must
+# fail the authored case's own cross-check while letting the wrong-rectangle
+# golden pass; that pair is what shows the check reads the find the write named
+# rather than any find.
 
 
 def _settled_case():
@@ -771,7 +773,7 @@ def _settled_case():
 def test_settled_close_cross_check_holds_for_the_authored_case() -> None:
     # Must not raise: the golden close's address and gate agree with the milestone
     # the named find's `expectRows` declare.
-    _assert_scenario_settled_close(_settled_case(), "postgres")
+    _assert_scenario_settled_write(_settled_case(), "postgres")
 
 
 def test_settled_close_binding_the_other_current_rectangle_is_rejected() -> None:
@@ -784,7 +786,7 @@ def test_settled_close_binding_the_other_current_rectangle_is_rejected() -> None
     binds = case.when["scenario"][2]["statements"][0]["binds"]
     binds[2] = "infinity"
     with pytest.raises(CaseFailure):
-        _assert_scenario_settled_close(case, "postgres")
+        _assert_scenario_settled_write(case, "postgres")
 
 
 def test_settled_close_binding_another_milestones_gate_is_rejected() -> None:
@@ -794,7 +796,7 @@ def test_settled_close_binding_another_milestones_gate_is_rejected() -> None:
     binds = case.when["scenario"][2]["statements"][0]["binds"]
     binds[4] = "2024-01-01T00:00:00+00:00"
     with pytest.raises(CaseFailure):
-        _assert_scenario_settled_close(case, "postgres")
+        _assert_scenario_settled_write(case, "postgres")
 
 
 def test_settled_close_moving_the_observed_milestone_is_rejected() -> None:
@@ -805,7 +807,7 @@ def test_settled_close_moving_the_observed_milestone_is_rejected() -> None:
     case = _settled_case()
     case.when["scenario"][0]["expectRows"][0]["thru_z"] = "2024-05-01T00:00:00+00:00"
     with pytest.raises(CaseFailure):
-        _assert_scenario_settled_close(case, "postgres")
+        _assert_scenario_settled_write(case, "postgres")
 
 
 def test_settled_close_against_a_find_that_observed_another_key_is_rejected() -> None:
@@ -814,7 +816,7 @@ def test_settled_close_against_a_find_that_observed_another_key_is_rejected() ->
     case = _settled_case()
     case.when["scenario"][0]["expectRows"][0]["pos_id"] = 2
     with pytest.raises(CaseFailure, match="observed 0 row"):
-        _assert_scenario_settled_close(case, "postgres")
+        _assert_scenario_settled_write(case, "postgres")
 
 
 def test_settled_write_source_finds_hold_for_authored_cases() -> None:
@@ -851,22 +853,63 @@ def test_a_settled_versioned_writes_gate_binds_the_named_generation() -> None:
     # optimistic gate is where the difference lands. A golden binding a version
     # the named find never returned is the misresolution this catches.
     case = _versioned_settled_case(version=2)
-    _assert_scenario_settled_close(case, "postgres")
+    _assert_scenario_settled_write(case, "postgres")
 
     stale = _versioned_settled_case(version=1)
     with pytest.raises(CaseFailure, match="observed version 2"):
-        _assert_scenario_settled_close(stale, "postgres")
+        _assert_scenario_settled_write(stale, "postgres")
 
 
-def _versioned_settled_case(*, version: int) -> Case:
+def test_a_settled_versioned_writes_advance_is_graded_under_locking() -> None:
+    # Locking emits no gate, but the version advance is framework-computed from
+    # the SAME observation under either strategy, so a locking golden still states
+    # which generation the write settled against and is still cross-checked. The
+    # advance is located by the version column's position in the golden's own SET
+    # clause, never by assuming where a writer put it.
+    case = _versioned_settled_case(version=2, concurrency="locking")
+    _assert_scenario_settled_write(case, "postgres")
+
+    stale = _versioned_settled_case(version=1, concurrency="locking")
+    with pytest.raises(CaseFailure, match="advances the version to 2"):
+        _assert_scenario_settled_write(stale, "postgres")
+
+
+def test_a_settled_versioned_write_resolves_the_generation_of_its_own_key() -> None:
+    # The named find MUST have observed a row of the WRITE's own key. A find that
+    # returned several keys still answers for the one written — reducing its rows
+    # to a version set would refuse this outright — while a find that returned
+    # none of that key names evidence that does not exist, however many other
+    # rows it carried at the matching version.
+    observed = [
+        {"id": 1, "owner": "Ada", "balance": "125.00", "version": 2},
+        {"id": 2, "owner": "Grace", "balance": "10.00", "version": 7},
+    ]
+    several = _versioned_settled_case(version=2, observed=observed)
+    _assert_scenario_settled_write(several, "postgres")
+
+    unobserved = [{"id": 2, "owner": "Grace", "balance": "10.00", "version": 2}]
+    case = _versioned_settled_case(version=2, observed=unobserved)
+    with pytest.raises(CaseFailure, match="observed 0 row"):
+        _assert_scenario_settled_write(case, "postgres")
+
+
+def _versioned_settled_case(
+    *,
+    version: int,
+    concurrency: str = "optimistic",
+    observed: list[dict[str, Any]] | None = None,
+) -> Case:
     """A `uow` group that observes Account 1 at version 2 and then updates it,
-    with the golden gate binding *version*."""
+    with the golden advancing from — and, under optimistic concurrency, gating
+    on — *version*."""
+    gated = concurrency == "optimistic"
+    sql = "update account set balance = ?, version = ? where id = ?"
     raw: dict[str, Any] = {
         "model": "models/account.yaml",
         "tags": ["m-unit-work"],
         "shape": "scenario",
         "when": {
-            "uow": {"concurrency": "optimistic"},
+            "uow": {"concurrency": concurrency},
             "scenario": [
                 {
                     "uow": "generations",
@@ -877,9 +920,11 @@ def _versioned_settled_case(*, version: int) -> Case:
                         },
                     },
                     "roundTrips": 1,
-                    "expectRows": [
-                        {"id": 1, "owner": "Ada", "balance": "125.00", "version": 2},
-                    ],
+                    "expectRows": (
+                        [{"id": 1, "owner": "Ada", "balance": "125.00", "version": 2}]
+                        if observed is None
+                        else observed
+                    ),
                 },
                 {
                     "uow": "generations",
@@ -894,13 +939,12 @@ def _versioned_settled_case(*, version: int) -> Case:
                     "roundTrips": 1,
                     "statements": [
                         {
-                            "sql": {
-                                "postgres": (
-                                    "update account set balance = ?, version = ? "
-                                    "where id = ? and version = ?"
-                                )
-                            },
-                            "binds": ["175.00", version + 1, 1, version],
+                            "sql": {"postgres": f"{sql} and version = ?" if gated else sql},
+                            "binds": (
+                                ["175.00", version + 1, 1, version]
+                                if gated
+                                else ["175.00", version + 1, 1]
+                            ),
                         }
                     ],
                 },
@@ -1013,7 +1057,7 @@ def test_settled_write_admits_a_transaction_time_only_target() -> None:
     # leaves the same golden gate binding a milestone the write was not handed.
     case = _transaction_time_only_settled_case(on=0)
     _assert_scenario_source_finds(case)
-    _assert_scenario_settled_close(case, "postgres")
+    _assert_scenario_settled_write(case, "postgres")
 
     with pytest.raises(CaseFailure):
-        _assert_scenario_settled_close(_transaction_time_only_settled_case(on=1), "postgres")
+        _assert_scenario_settled_write(_transaction_time_only_settled_case(on=1), "postgres")
