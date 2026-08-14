@@ -3978,12 +3978,16 @@ remains observable rather than making Python its own oracle.
 
 A claim about observable behavior is graded by behavior at the API boundary,
 never by inspecting source structure. This specification constrains structure
-only where it does so in its own right: §2's Metamodel serde ownership, the
-enforcement scopes and reaches recorded here, §6's reference-harness
-independence boundary and its development-only provisioning rule, §8's artifact
-source-scope membership, and §10's toolchain contracts. A behavioral section that
-phrases a consequence as a fact about source text has misplaced it — restate it
-as what a caller observes, or record it here.
+only where a decision is itself about the source: which scope owns a module and
+which artifact ships it, what a surface exports and what it keeps private,
+whether anything is generated and where it lands, and what the toolchain runs.
+That test is the rule, and it is applied to a sentence wherever the sentence
+stands. §§1, 2, 6, 8, and 10 hold such decisions today, and the enforcement
+scopes and reaches are recorded here; that list orients a reader and bounds
+nothing, so a structural decision standing in a section it does not name answers
+to the same test rather than being licensed by its absence from it. A behavioral
+section that phrases a consequence as a fact about source text has misplaced it —
+restate it as what a caller observes, or record it here.
 
 Behavioral modules map onto Python submodules (enforcement scopes) inside the
 distributions of §8. `m-metamodel`, `m-model-formation`, `m-inheritance`,
