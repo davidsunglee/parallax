@@ -3637,7 +3637,11 @@ or descriptor authoring form and performs no audit stamping.
   concrete Entity, the object addressed, the as-of pin, the participation, and
   the observed state all come from the value's own private Source Hint, so
   `insert` — which opens a row and has no source — is the one keyed verb that
-  names an Entity, and it requires the exact canonical spelling. There is no
+  names an Entity, and it resolves that name by the reference-position rule
+  every write target resolves through: the canonical `<namespace>.<name>`, or a
+  bare local name exactly one Entity of the model carries, with a bare spelling
+  two namespaces share refused as `reference-ambiguous-entity-name` rather than
+  resolved to a first match. There is no
   explicit-Entity ordinary-mapping overload: a mapping a caller built, a
   `dict(node)` conversion, a JSON or pickle round trip, an `InvalidData` wrapper,
   and the `None` a non-hydrating root publishes in place of data are all refused
@@ -3648,10 +3652,16 @@ or descriptor authoring form and performs no audit stamping.
   shape, the finite-Transaction-Time refusal, the temporal window, member names,
   values, and assignment legality are judged from the model and the input alone;
   only then is the target Entity's Effective Concurrency Strategy derived and its
-  evidence resolved. Malformed Wire input therefore always earns a
-  `WriteInstructionError` rather than a `WriteEvidenceError`, whichever is also
-  true — and the Typed lane reaches the same order for free, because `edit()`
-  rejects an illegal assignment before `tx.update()` receives a value. Assignment
+  evidence resolved. Malformed Wire input therefore always earns a static refusal
+  rather than a `WriteEvidenceError`, whichever is also true — and the Typed lane
+  reaches the same order for free, because `edit()` rejects an illegal assignment
+  before `tx.update()` receives a value. The static refusal is
+  `WriteInstructionError` for input that states no well-formed write at all —
+  a document position that is not a mapping of names to values, a self-containing
+  container, an unresolvable target, an undeclared or unassignable member — and
+  the closed pre-SQL `WriteRejectedError` vocabulary where a normative payload
+  rule classifies the defect more exactly, which is the same carrier and the same
+  rule names a predicate verb already answers with. Assignment
   legality is `judge_assignment`'s single verdict, reached through the same
   family-effective resolution the canonical predicate assignment uses, so
   identity, optimistic-version, temporal-axis, computed, and read-only members
@@ -4336,7 +4346,7 @@ hatchling.
 |---|---|---|---|---|---|
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `WireValue`, `InvalidData[T]`, `StoredDataIssue`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `ReadTrace`, `DatabaseCall`, `ExecutionLog`, `TransactionAttempt`, `TransactionResult`, `TransactionInProgressError`, `TransactionNotCommittedError`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `WireValue`, `InvalidData[T]`, `StoredDataIssue`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `ReadTrace`, `DatabaseCall`, `ExecutionLog`, `TransactionAttempt`, `TransactionResult`, `TransactionInProgressError`, `TransactionNotCommittedError`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

@@ -141,8 +141,10 @@ class WireTransactionView(WireDatabaseView):
     ) -> None:
         """Buffer a Wire ``insert`` of ``data`` as a fresh ``entity_name`` row.
 
-        ``entity_name`` is the canonical Entity spelling, required because an
-        opening row has no source to infer one from. ``data`` is the Create
+        ``entity_name`` names the Entity the row opens under — required because
+        an opening row has no source to infer one from — and resolves by the rule
+        every write target does: the canonical spelling, or a bare local name no
+        second namespace of this model shares. ``data`` is the Create
         Payload in accepted wire spellings; framework-owned members are refused
         rather than stored, since the interval bounds come from the Clock
         Strategy at flush and the version is derived.

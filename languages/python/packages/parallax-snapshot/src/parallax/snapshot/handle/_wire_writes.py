@@ -25,15 +25,21 @@ shape, the finite-Transaction-Time refusal, the temporal window, member names,
 values, and assignment legality are all judged from the model and the input
 alone; only then does the target Entity's Effective Concurrency Strategy decide
 what evidence licenses the write. Malformed Wire input therefore always earns a
-:class:`~parallax.core.unit_work.WriteInstructionError` rather than a
-:class:`~parallax.snapshot.handle.WriteEvidenceError`, whichever is also true.
+static refusal rather than a
+:class:`~parallax.snapshot.handle.WriteEvidenceError`, whichever is also true —
+:class:`~parallax.core.unit_work.WriteInstructionError` for input that states no
+well-formed write, and the closed pre-SQL
+:class:`~parallax.core.unit_work.WriteRejectedError` vocabulary where a
+normative payload rule classifies the defect more exactly.
 
 **Caller-owned input is snapshotted before the verb returns.** Inserted data,
 changes, the predicate target, and the temporal bounds are copied recursively at
 the call, so later mutation of any nested list or mapping cannot alter buffered
 intent. A keyed source is not copied: it is already deeply frozen, and what the
 verb retains of it is its identity, its resolved evidence, and — only for the
-members the caller explicitly changed — the value it published.
+members the caller explicitly changed — the value it published. Capture is also
+where a document's own shape is judged (:func:`_authored_document`), because the
+copy is the traversal that would otherwise fail on it.
 
 Wire input is stated in the ACCEPTED wire spellings its serde seam admits
 (`m-wire`: one canonical output spelling per Neutral Type, accepted input
@@ -160,11 +166,8 @@ def wire_insert(
     entity = instructions.resolve_target(lane.meta, entity_name)
     _refuse_published_source(entity, data, mutation)
     declaring = declaring_of(lane.meta, entity)
-    valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
-    until_literal = (
-        None if until is None else validate_until(declaring, mutation, _required(valid_from), until)
-    )
-    row = _decoded_row(lane.meta, entity, _snapshot_input(data))
+    valid_from_literal, until_literal = _validated_window(declaring, mutation, valid_from, until)
+    row = _decoded_row(lane.meta, entity, _authored_document(data, f"a Wire `{mutation}` payload"))
     _refuse_framework_owned(lane.meta, entity, row)
     instruction = keyed_instruction(
         mutation, entity.identity, row, valid_from=valid_from_literal, until=until_literal
@@ -203,13 +206,10 @@ def wire_keyed_write(
     record = _concrete_entity(lane.meta, hint)
     declaring = declaring_of(lane.meta, record)
     validate_source_pin(record.identity, hint.pin)
-    valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
-    until_literal = (
-        None if until is None else validate_until(declaring, mutation, _required(valid_from), until)
-    )
+    valid_from_literal, until_literal = _validated_window(declaring, mutation, valid_from, until)
     identity_row = dict(hint.object_key.primary_key)
     members = _row_members(lane.meta, record)
-    assignments = _judged_changes(lane.meta, record, members, _snapshot_input(changes or {}))
+    assignments = _judged_changes(lane.meta, record, members, _authored_changes(mutation, changes))
     row, restorations = _authored_row(
         lane, record, hint, mutation, identity_row, members, assignments, source
     )
@@ -254,18 +254,19 @@ def wire_predicate_write(
     second set-based write semantics are introduced — this ingress only states
     the target and the assignments differently.
     """
-    entity = _selection_entity(lane.meta, target)
+    selection = _authored_document(target, "a predicate-selected write's canonical target")
+    entity = _selection_entity(lane.meta, selection)
     declaring = declaring_of(lane.meta, entity)
-    valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
-    until_literal = (
-        None if until is None else validate_until(declaring, mutation, _required(valid_from), until)
-    )
+    valid_from_literal, until_literal = _validated_window(declaring, mutation, valid_from, until)
     assignments = _judged_changes(
-        lane.meta, entity, _row_members(lane.meta, entity), _snapshot_input(changes or {})
+        lane.meta,
+        entity,
+        _row_members(lane.meta, entity),
+        _authored_changes(mutation, changes),
     )
     doc: dict[str, object] = {
         "mutation": mutation,
-        "target": _snapshot_input(target),
+        "target": selection,
     }
     if assignments:
         doc["assignments"] = [
@@ -369,19 +370,17 @@ def _concrete_entity(meta: Metamodel, hint: SourceHint) -> EntityMetadata:
     return record
 
 
-def _selection_entity(meta: Metamodel, target: WirePredicateTarget) -> EntityMetadata:
+def _selection_entity(meta: Metamodel, target: Mapping[str, object]) -> EntityMetadata:
     """``target``'s resolved Entity, refusing anything but the canonical
     selection shape.
 
     Resolved before the instruction is built because the temporal bounds are
     rendered against the target's own declaring Entity, and a bound has to be
-    canonical from the moment the instruction exists.
+    canonical from the moment the instruction exists. Reads the CAPTURED target,
+    whose keys :func:`_authored_document` has already judged to be names, so the
+    two key sets below compare and sort rather than raising about their own
+    contents.
     """
-    if not isinstance(target, Mapping):  # pyright: ignore[reportUnnecessaryIsInstance]
-        raise instructions.WriteInstructionError(
-            "a predicate-selected write on `tx.wire` takes the canonical "
-            f"{{entity, predicate}} target, got {type(target).__name__}"
-        )
     extra = sorted(set(target) - {"entity", "predicate"})
     if extra or "entity" not in target or "predicate" not in target:
         raise instructions.WriteInstructionError(
@@ -589,8 +588,45 @@ def _decoded_document(container: _VoContainer, value: object) -> object:
     }
 
 
-def _snapshot_input[T](value: T) -> T:
-    """``value`` with every mapping and sequence in it copied.
+def _authored_document(value: object, described: str) -> dict[str, object]:
+    """``value`` as one caller-owned Wire document: judged for shape, and copied.
+
+    A Wire document is a mapping of names to values at every depth — the shape
+    `m-wire` transports and the shape the instruction IR reads — so the three
+    ways a Python value can fail to be one are refused HERE, as
+    :class:`~parallax.core.unit_work.WriteInstructionError`, before any member is
+    resolved and long before the evidence question: a non-mapping, a key that is
+    not a name, and a container that contains itself. Left to the walks
+    downstream they would surface as ``AttributeError``, ``TypeError`` from a
+    key sort, and ``RecursionError`` — none of which is a verdict on the write.
+
+    Shape and capture are one pass because they are one traversal, and neither
+    is a judgement about the model: what this answers is whether a document was
+    stated at all, which is the question every judgement after it presupposes.
+    """
+    if not isinstance(value, Mapping):
+        raise instructions.WriteInstructionError(
+            f"{described} must be a document of names to values, got {type(value).__name__}"
+        )
+    return _captured_mapping(cast("Mapping[str, object]", value), described, ())
+
+
+def _authored_changes(mutation: KeyedMutation, changes: WireChanges | None) -> dict[str, object]:
+    """A write's authored assignments, captured — or the empty set a verb that
+    names no member states by passing nothing.
+
+    Absence and emptiness are the same intent and only ``None`` states absence:
+    a falsy value of any other type is a document the caller failed to state,
+    and reading it as "no changes" would answer a malformed call with a silent
+    no-op instead of a refusal.
+    """
+    if changes is None:
+        return {}
+    return _authored_document(changes, f"a Wire `{mutation}`'s change set")
+
+
+def _captured[T](value: T, described: str, enclosing: tuple[int, ...]) -> T:
+    """``value`` with every mapping and sequence in it copied, keys judged.
 
     A verb's captured intent is its own from the moment it returns, so a caller
     that keeps and mutates the document it passed changes nothing about the
@@ -598,21 +634,69 @@ def _snapshot_input[T](value: T) -> T:
     is write input the pipeline reads exactly as an instruction document's own
     rows are read; the cost is proportional to authored input alone, and a
     keyed source — already frozen, and never copied — is not among it.
+
+    ``enclosing`` is the identity of every container on the path to this one,
+    which is what makes the walk total over caller-owned input: a container
+    reachable from itself is refused rather than descended into. Two siblings
+    referencing one document are not a cycle and are copied twice, exactly as a
+    caller sharing a subdocument between two members would expect.
     """
     if isinstance(value, Mapping):
         mapping = cast("Mapping[str, object]", value)
-        return cast("T", {key: _snapshot_input(nested) for key, nested in mapping.items()})
+        return cast("T", _captured_mapping(mapping, described, enclosing))
     if isinstance(value, list | tuple):
-        return cast("T", [_snapshot_input(nested) for nested in cast("Sequence[object]", value)])
+        sequence = cast("Sequence[object]", value)
+        within = _within(sequence, described, enclosing)
+        return cast("T", [_captured(nested, described, within) for nested in sequence])
     return value
 
 
-def _required(valid_from: dt.datetime | None) -> dt.datetime:
-    """The ``valid_from`` a ``*_until`` verb's signature already required.
+def _captured_mapping(
+    mapping: Mapping[str, object], described: str, enclosing: tuple[int, ...]
+) -> dict[str, object]:
+    within = _within(mapping, described, enclosing)
+    return {
+        _document_key(key, described): _captured(nested, described, within)
+        for key, nested in mapping.items()
+    }
 
-    The two bounds are validated together, and every caller of a bounded verb
-    passes both; this states that pairing for the type checker rather than
-    letting a ``None`` reach the window comparison.
+
+def _within(container: object, described: str, enclosing: tuple[int, ...]) -> tuple[int, ...]:
+    """``enclosing`` extended by ``container``, refusing one that already
+    encloses itself. Identity-based, and sound because every container on the
+    path is held alive by the caller's own value for the whole walk."""
+    address = id(container)
+    if address in enclosing:
+        raise instructions.WriteInstructionError(
+            f"{described} contains itself, so it states no finite document"
+        )
+    return (*enclosing, address)
+
+
+def _document_key(key: object, described: str) -> str:
+    if not isinstance(key, str):
+        raise instructions.WriteInstructionError(
+            f"{described} is keyed by names, and {key!r} is not one"
+        )
+    return key
+
+
+def _validated_window(
+    declaring: EntityMetadata,
+    mutation: KeyedMutation,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
+) -> tuple[str | None, str | None]:
+    """One Wire write's rendered Valid-Time bounds, validated together.
+
+    Stated once for all three ingresses because the ORDER within it is the rule:
+    the target's temporality judges ``valid_from`` first, and ``until`` is
+    measured against the bound that judgement accepted. An unbounded verb passes
+    no ``until`` and receives none; a ``*_until`` verb's signature already
+    required both, which is what lets the pair be read as one.
     """
+    valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
+    if until is None:
+        return valid_from_literal, None
     assert valid_from is not None  # every `*_until` verb requires both bounds together
-    return valid_from
+    return valid_from_literal, validate_until(declaring, mutation, valid_from, until)
