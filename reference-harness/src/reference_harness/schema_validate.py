@@ -31,7 +31,11 @@ from .case import Entity
 from .corpus_yaml import read_corpus_yaml
 from .execution_validate import validate_execution
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
-from .keyed_write_validate import undeclared_row_members, validate_keyed_write
+from .keyed_write_validate import (
+    states_framework_marker,
+    undeclared_row_members,
+    validate_keyed_write,
+)
 from .metamodel import validate_index_identities
 from .predicate_write_validate import (
     PredicateWriteValidationError,
@@ -256,11 +260,13 @@ def _validate_buffered_write(
     label: str,
     errors: list[str],
     registry: Registry | None = None,
+    *,
+    grouped: bool = False,
 ) -> None:
     """Validate a buffered scenario write — the m-unit-work general keyed buffer.
 
     The schema pins the STRUCTURAL shape (an ordered buffer of one-or-more KEYED
-    instructions; predicate-selected entries are excluded). This adds the two
+    instructions; predicate-selected entries are excluded). This adds the three
     model-aware checks JSON Schema cannot express and the wire harness would otherwise
     skip (it executes the flushed golden SQL, never the buffered instructions):
 
@@ -279,6 +285,14 @@ def _validate_buffered_write(
       :func:`~reference_harness.keyed_write_validate.validate_keyed_write` — the
       SAME function the `rejected` lane's keyed `when.write` reaches, so a buffer
       entry and a rejected instruction cannot be judged differently.
+    * **framework provenance** — an entry assigning a DB-computed write marker states a
+      statement the framework issues rather than a write a caller authors
+      (:func:`~reference_harness.keyed_write_validate.states_framework_marker`), so it
+      is a choreography unit of its own: the buffer's only entry, in an ungrouped step
+      (`m-case-format` "Buffered keyed write instructions"). No public verb accepts such
+      a value, so a mixed buffer would state half its DML through the write verbs and
+      half around them, and a grouped one would ask that group's held unit of work to
+      buffer an instruction it has no verb for.
 
     Same-object coalescing is NOT a structural property of the buffer: a general buffer
     legitimately spans different entities and different primary-key identities (a mixed
@@ -289,6 +303,7 @@ def _validate_buffered_write(
     should a schema-invalid case still carry one, the predicate-write validator reports
     it rather than the keyed member check.
     """
+    framework: list[int] = []
     for position, instruction in enumerate(instructions):
         entry_label = f"{label} buffered write[{position}]"
         if not isinstance(instruction, dict):
@@ -316,6 +331,23 @@ def _validate_buffered_write(
             validate_keyed_write(entity, instruction)
         except RejectionError as exc:
             errors.append(f"{entry_label}: {exc.detail}")
+            continue
+        if states_framework_marker(entity, instruction):
+            framework.append(position)
+    if not framework:
+        return
+    if grouped:
+        errors.append(
+            f"{label}: buffered write{framework} carries a DB-computed write marker inside a "
+            f"`uow` group. Such an entry states the framework's own bookkeeping and is a "
+            f"choreography unit of its own, which a group's held unit of work cannot buffer"
+        )
+    elif len(instructions) != 1:
+        errors.append(
+            f"{label}: buffered write{framework} carries a DB-computed write marker among "
+            f"{len(instructions)} entries. Such an entry states the framework's own bookkeeping "
+            f"and is a choreography unit of its own, so it is the buffer's only entry"
+        )
 
 
 # --- compile-eligibility backstop (m-case-format / m-conformance-adapter) -----
@@ -514,6 +546,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         f"case {case_path.name} scenario[{index}]",
                         errors,
                         registry,
+                        grouped=isinstance(step.get("uow"), str),
                     )
         # A coherence case likewise carries read-step queries under
         # `when.coherence[].objectQuery`.

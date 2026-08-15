@@ -824,7 +824,9 @@ state:
 - an entry whose row assigns a **DB-computed write marker** owes none. Such a
   value is the framework's own bookkeeping — a pk-gen block reservation, a
   version advance — and no public verb accepts one, so the entry states a
-  statement the framework issues rather than a write a caller authors;
+  statement the framework issues rather than a write a caller authors. That
+  provenance also makes it a unit of its own, never one entry of a mixed buffer
+  (*Buffered keyed write instructions*);
 - an entry whose mutation is **not a Keyed Mutation** owes none. `cascadeDelete`
   is the only such mutation the corpus authors: no keyed verb states it, so it
   resolves no source.
@@ -1232,6 +1234,20 @@ entries). Both are model-aware, which is why neither is expressible in the JSON
 Schema. Coalescing and
 foreign-key-ordering correctness are proven where they always were — the step's
 golden SQL executed verbatim, plus `tableState` / `expectRows`.
+
+The generality is over **objects and mutations**, not over **provenance**: an
+entry assigning a **DB-computed write marker** states a statement the framework
+issues rather than a write a caller authors (*Resolving reads a write owes*), and
+is therefore a **choreography unit of its own**. Such an entry is the buffer's
+**only** entry and its step is **ungrouped** — a buffer mixing one with
+caller-authored entries would state half its DML through the write verbs and half
+around them, in a unit no verb opened, and a `uow`-grouped one would ask that
+group's held unit of work to buffer an instruction no verb accepts. A framework
+marker is not developer input, so no client can compose either form; refusing
+them is what keeps the corpus's own vocabulary from inventing a write surface.
+This is the buffer's **third** model-aware static check — the marker form is
+scalar-attribute-only and the field's declared role decides it, which the JSON
+Schema cannot see either.
 
 ```yaml
 - write:                                    # an ordered keyed buffer (here, the coalescing special case)

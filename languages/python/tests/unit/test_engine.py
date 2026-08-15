@@ -5677,6 +5677,51 @@ def test_a_unit_mixing_a_framework_marker_with_a_public_verb_write_is_refused() 
         engine.run_scenario_case(case, "postgres", FakeWritePort())
 
 
+def _pk_sequence_advance(**step: object) -> dict[str, object]:
+    return {
+        "write": [
+            {
+                "mutation": "update",
+                "entity": "parallax.compatibility.PkSequence",
+                "rows": [{"name": "badge_seq", "nextVal": {"increment": 1}}],
+            }
+        ],
+        "roundTrips": 1,
+        **step,
+    }
+
+
+def test_an_aborted_framework_write_step_executes_its_dml_and_rolls_back() -> None:
+    # A registry advance runs through the planner rather than a verb, but it is
+    # still a whole choreography unit and answers to the same abort contract: the
+    # statement reaches the wire and counts its round trip, and the provider then
+    # rolls it back. Committing it would leave a `rollback: true` step's DML
+    # durable, which is the one thing the step declares it is not.
+    port = FakeWritePort()
+    _emissions, round_trips, _errors, _log = engine.run_scenario_case(
+        _synthetic_scenario(
+            "models/pk-sequence.yaml", "m-pk-gen-998", [_pk_sequence_advance(rollback=True)]
+        ),
+        "postgres",
+        port,
+    )
+    assert round_trips == 1
+    assert len(port.writes) == 1
+    assert port.rollbacks == 1 and port.commits == 0
+
+
+def test_a_framework_write_step_inside_a_uow_group_is_refused() -> None:
+    # A group's held unit of work buffers each entry through the public verb its
+    # mutation names, and no verb accepts a DB-computed write marker. Refused by
+    # name here rather than left to the verb, whose value-type diagnosis would
+    # describe the marker as a malformed value instead of a misplaced unit.
+    case = _synthetic_scenario(
+        "models/pk-sequence.yaml", "m-pk-gen-997", [_pk_sequence_advance(uow="g")]
+    )
+    with pytest.raises(engine.EngineError, match="choreography unit of its own"):
+        engine.run_scenario_case(case, "postgres", FakeWritePort())
+
+
 def test_a_write_settles_against_a_hydratable_invalid_published_root() -> None:
     # The stored `geo` is a scalar where a `one` occurrence is declared, so the
     # read classifies the row while collapsing the occurrence to null — a

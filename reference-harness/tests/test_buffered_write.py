@@ -8,15 +8,21 @@ pair alike — same-object folding at flush is the RUNTIME coalescing rule, not 
 structural constraint, so no cross-entry same-entity / same-primary-key equality is
 imposed. Predicate-selected instructions inside a buffer stay EXCLUDED (keyed-only).
 
+The generality is over objects and mutations, not over PROVENANCE: an entry
+assigning a DB-computed write marker states a statement the framework issues
+rather than a write a caller authors, so it is a choreography unit of its own —
+the buffer's only entry, in an ungrouped step.
+
 The structural half (one-or-more keyed entries, no predicate entry) is the JSON
-Schema's; the two model-aware per-entry rules JSON Schema cannot express —
-member-name honesty and the temporal singleton (`m-unit-work`: an entry on a
-temporal entity carries exactly one row) — are the harness validator's. These
-DB-free probes pin both halves: the general keyed shapes — a single write, a mixed
-multi-object flush, a buffer over different entities / different keys, and the
-three same-transaction coalescing witnesses — are ACCEPTED; a predicate-in-buffer
-entry is REJECTED (schema); and a row naming a non-member, or a plural temporal
-entry, is REJECTED (harness).
+Schema's; the three model-aware rules JSON Schema cannot express — member-name
+honesty, the temporal singleton (`m-unit-work`: an entry on a temporal entity
+carries exactly one row), and that framework provenance — are the harness
+validator's. These DB-free probes pin both halves: the general keyed shapes — a
+single write, a mixed multi-object flush, a buffer over different entities /
+different keys, and the three same-transaction coalescing witnesses — are
+ACCEPTED; a predicate-in-buffer entry is REJECTED (schema); and a row naming a
+non-member, a plural temporal entry, or a marker entry sharing its buffer or its
+group, is REJECTED (harness).
 """
 
 from __future__ import annotations
@@ -57,6 +63,7 @@ _ACCOUNT = _defs("models/account.yaml")
 _ORDERS = _defs("models/orders.yaml")
 _BALANCE = _defs("models/balance.yaml")
 _POSITION = _defs("models/position.yaml")
+_PK_SEQUENCE = _defs("models/pk-sequence.yaml")
 
 
 def _accepted(instructions: list[Any], entity_defs: list[dict[str, Any]]) -> bool:
@@ -299,3 +306,60 @@ def test_whole_tree_validation_rejects_a_plural_temporal_buffer_entry(tmp_path: 
         "m-txtime-write-008" in error and "exactly one" in error and "Balance" in error
         for error in errors
     )
+
+
+# --- a framework-marker entry is a choreography unit of its own -----------------
+
+_REGISTRY_ADVANCE = {
+    "mutation": "update",
+    "entity": "PkSequence",
+    "rows": [{"name": "badge_seq", "nextVal": {"increment": 1}}],
+}
+
+_BADGE_INSERT = {"mutation": "insert", "entity": "Badge", "rows": [{"id": 1, "holder": "Bo"}]}
+
+
+def test_a_lone_framework_marker_entry_is_accepted() -> None:
+    # The one composition the marker admits: its own buffer, its own unit. The
+    # statement is the PK allocator's, and this is the shape that lets a runner
+    # issue it without pretending a public verb accepted it.
+    assert _accepted([_REGISTRY_ADVANCE], _PK_SEQUENCE)
+
+
+def test_a_framework_marker_beside_a_caller_authored_entry_is_rejected() -> None:
+    # No public verb accepts a DB-computed write marker, so this buffer asks a
+    # single unit to state its registry advance around the write verbs and its
+    # insert through them — half its DML outside the boundary the other half runs
+    # in. Structurally schema-valid, which is why the model-aware layer decides it.
+    probe = [_REGISTRY_ADVANCE, _BADGE_INSERT]
+    assert next(_buffered_validator().iter_errors(probe), None) is None
+    errors: list[str] = []
+    _validate_buffered_write(probe, _PK_SEQUENCE, _OP, "probe", errors)
+    assert any("only entry" in error for error in errors)
+
+
+def test_a_framework_marker_entry_inside_a_uow_group_is_rejected() -> None:
+    # A group's held unit of work buffers each entry through a public verb, so a
+    # marker entry inside one has nothing to be buffered through — the same
+    # entry the ungrouped buffer of one accepts.
+    errors: list[str] = []
+    _validate_buffered_write([_REGISTRY_ADVANCE], _PK_SEQUENCE, _OP, "probe", errors, grouped=True)
+    assert any("`uow` group" in error for error in errors)
+
+
+def test_a_value_object_document_shaped_like_a_marker_is_not_framework_work() -> None:
+    # The field's declared role decides, never the value's shape: `address` is a
+    # value object, so its literal document binds whole even when its only key
+    # spells a marker — and the entry stays an ordinary caller-authored write that
+    # may share its buffer.
+    probe = [
+        {
+            "mutation": "update",
+            "entity": "Customer",
+            "rows": [{"id": 1, "address": {"increment": 1}}],
+        },
+        {"mutation": "delete", "entity": "Customer", "rows": [{"id": 2}]},
+    ]
+    errors: list[str] = []
+    _validate_buffered_write(probe, _defs("models/customer.yaml"), _OP, "probe", errors)
+    assert errors == []
