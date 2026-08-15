@@ -229,7 +229,6 @@ def buffer_predicate(
     valid_from_literal = validate_valid_from(declaring_entity, mutation, valid_from)
     until_literal: str | None = None
     if until is not None:
-        assert valid_from is not None  # `*_until_where` verbs require both together
         until_literal = validate_until(declaring_entity, mutation, valid_from, until)
 
     doc: dict[str, object] = {

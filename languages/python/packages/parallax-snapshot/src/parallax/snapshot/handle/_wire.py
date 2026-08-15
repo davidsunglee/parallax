@@ -250,7 +250,13 @@ class WireTransactionView(WireDatabaseView):
         """A predicate-selected Wire ``update`` over ``target`` — the canonical
         ``{entity, predicate}`` selection, never an Object Query. Readless (one
         statement) for an unversioned Non-Temporal target; a versioned or temporal
-        target materializes to one observation-backed per-row write."""
+        target materializes to one observation-backed per-row write.
+
+        ``changes`` names at least one member. It lowers to the same canonical
+        assignment algebra ``tx.update_where``'s ``.set(...)`` spelling does, and
+        that algebra's list is non-empty, so ``{}`` is refused here rather than
+        being the no-op it is for a keyed update — which has one row's published
+        values to be a no-op against, and a selection has none."""
         wire_predicate_write(self._writes, "update", target, changes, valid_from=valid_from)
 
     def delete_where(self, target: WirePredicateTarget) -> None:
@@ -279,7 +285,8 @@ class WireTransactionView(WireDatabaseView):
     ) -> None:
         """A predicate-selected, Valid-Time-bounded Wire ``updateUntil`` over a
         Bitemporal ``target``: always materializes to a close plus
-        head/middle/tail."""
+        head/middle/tail. ``changes`` names at least one member, for
+        :meth:`update_where`'s reason."""
         wire_predicate_write(
             self._writes, "updateUntil", target, changes, valid_from=valid_from, until=until
         )

@@ -31,9 +31,9 @@ it was handed to does not accept, whose three codes are
 whose retained write evidence the target Entity's Effective Concurrency Strategy
 cannot use, whose codes are :data:`WRITE_EVIDENCE_CODES`; and
 :class:`WriteInstructionError`, of write input that is not a well-formed
-canonical instruction at all — the refusal every static Wire judgement raises,
-and therefore the one a malformed Wire call always earns before any evidence
-question is asked.
+canonical instruction at all — the write verb's OWN static verdict, raised
+before any evidence question, while input breaking a rule another module owns
+keeps that module's class instead.
 
 The Wire read interface's own result vocabulary is here too: :class:`WireEntity`,
 the frozen Entity node ``db.wire.find`` / ``tx.wire.find`` publishes, and
