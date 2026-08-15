@@ -111,7 +111,7 @@ seam's own (the `m-predicate` node encoding, the `m-case-format` fixture forms).
 | `Bytes` | finite octet sequences | byte equality |
 | `Date` | timezone-naive proleptic-Gregorian calendar dates | wall-clock; no timezone normalization (see below) |
 | `Time` | timezone-naive wall-clock times of day at microsecond precision | wall-clock; no timezone normalization (see below) |
-| `Timestamp` | absolute UTC instants at microsecond precision | values normalize to UTC at the framework boundary; non-zero sub-microsecond precision is rejected (see below) |
+| `Timestamp` | absolute UTC instants at microsecond precision, within the range its canonical spelling carries (see below) | values normalize to UTC at the framework boundary; non-zero sub-microsecond precision and an out-of-range instant are rejected (see below) |
 | `Uuid` | 128-bit UUID values | equality on the 128-bit value; text case carries no information |
 | `Json` | structured content: any value of the JSON data model (boolean, number, string, array, object) except a bare top-level `null`; JSON `null` may appear only *inside* a value, as an array element or object member | structural equality |
 
@@ -179,6 +179,14 @@ lowered to a dialect-specific document extraction by `m-sql` / `m-dialect`). A
   already represent an exact microsecond value (trailing zeros beyond the sixth
   digit) or be rejected at the framework boundary. This keeps timestamp equality
   and temporal interval predicates portable across the supported dialects.
+- The `Timestamp` value space is **bounded by what its canonical spelling can
+  carry**: the instants from `0001-01-01T00:00:00.000000Z` through
+  `9999-12-31T23:59:59.999999Z`. An input naming an instant outside that range —
+  which an offset can produce from an in-range local reading, `0001-01-01` east
+  of UTC being the smallest — is **not a member** and MUST be rejected at the
+  framework boundary rather than normalized, stored, or spelled. Every value of
+  a declared type has exactly one Wire Value (`m-wire`), and outside the range
+  there is none to give.
 - `Date` and `Time` are **wall-clock and timezone-naive** by definition; no
   timezone normalization is applied to them.
 - There is **no per-attribute timezone-conversion knob** (Reladomo's

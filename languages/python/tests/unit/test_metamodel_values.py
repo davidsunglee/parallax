@@ -345,6 +345,40 @@ def test_neutral_value_conformance_is_exact_logical_membership(
     assert base.matches_neutral_type(value, declared) is expected
 
 
+class _UnusableOffset(dt.tzinfo):
+    """A ``tzinfo`` answering an offset `datetime` arithmetic refuses. Attaching
+    one asks it nothing, so the value is constructed and reaches membership."""
+
+    def utcoffset(self, dt_: dt.datetime | None) -> dt.timedelta:
+        return dt.timedelta(hours=25)
+
+    def dst(self, dt_: dt.datetime | None) -> dt.timedelta | None:
+        return None
+
+
+@pytest.mark.parametrize(
+    "unusable",
+    [
+        dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=14))),
+        dt.datetime.max.replace(tzinfo=dt.timezone(dt.timedelta(hours=-14))),
+        dt.datetime(2026, 1, 1, tzinfo=_UnusableOffset()),
+    ],
+    ids=["min-east-of-utc", "max-west-of-utc", "offset-beyond-a-day"],
+)
+def test_a_timestamp_member_names_an_instant_a_utc_datetime_holds(unusable: dt.datetime) -> None:
+    # The `timestamp` space is the instants a canonical UTC spelling can carry,
+    # so awareness alone does not make a `datetime` a member: an aware value at
+    # the representational edge names an instant outside `m-wire`'s
+    # four-digit-year range, and an offset beyond a day places its value on no
+    # timeline at all. Admitting either would leave a member with no Wire Value.
+    #
+    # Membership stays a total PREDICATE over both, which is what lets every
+    # write validator ask it of caller input: before this, the first answered
+    # `True` and then overflowed at whichever seam spelled it, and the second
+    # raised out of the membership test itself.
+    assert base.matches_neutral_type(unusable, base.TIMESTAMP) is False
+
+
 # A runtime write validator asks membership of a value that may still carry its
 # portable literal spelling, so it decodes first and then checks membership. That
 # composite must be exact for every space whose literal is a spelling (no value the

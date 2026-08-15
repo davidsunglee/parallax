@@ -57,6 +57,7 @@ __all__ = [
     "coerce_neutral_input",
     "decode_neutral_literal",
     "matches_neutral_type",
+    "utc_instant",
 ]
 
 
@@ -245,14 +246,40 @@ class AuthoredNumber(float):
         return number
 
 
+def utc_instant(value: _dt.datetime) -> _dt.datetime | None:
+    """``value`` as the UTC ``datetime`` naming the same instant, or ``None``
+    when it names no instant the ``timestamp`` space holds.
+
+    Two constructible ``datetime``s name none, and neither is recoverable here.
+    One states no usable UTC offset — a naive value, and equally a ``tzinfo``
+    answering ``None`` or an offset outside the day ``datetime`` arithmetic
+    admits — so it is not on a timeline at all. The other states one that
+    carries it past the ends of the range: ``datetime.min`` east of UTC and
+    ``datetime.max`` west of it name instants no UTC ``datetime`` holds, and
+    that `m-wire`'s four-digit-year UTC spelling therefore cannot write.
+
+    Answering rather than raising is what lets membership stay a predicate, and
+    the ``timestamp`` value space is exactly the instants answered for here:
+    admitting one this function has no answer for would leave a member with no
+    Wire Value, which `m-wire` gives every value of a declared type.
+    """
+    try:
+        if value.utcoffset() is None:
+            return None
+        return value.astimezone(_dt.UTC)
+    except (OverflowError, TypeError, ValueError):
+        return None
+
+
 def matches_neutral_type(value: object, declared: NeutralType) -> bool:
     """Whether ``value`` is a member of ``declared``'s logical value space.
 
     Exact membership, not a category guess: an integer outside its declared
     width, a non-finite float, a decimal the declared precision and scale
-    cannot represent exactly, text with no UTF-8 encoding, and a bare ``None``
-    are all non-members. Null is a member of no space, so a nullable position
-    admits it through its own contract rather than through this check.
+    cannot represent exactly, text with no UTF-8 encoding, an instant no UTC
+    ``datetime`` holds, and a bare ``None`` are all non-members. Null is a
+    member of no space, so a nullable position admits it through its own
+    contract rather than through this check.
 
     The domain is decoded values, one Python carrier per space —
     ``bool``/``int``/``float``/``decimal.Decimal``/``str``/``bytes``/
@@ -290,7 +317,7 @@ def matches_neutral_type(value: object, declared: NeutralType) -> bool:
         case Time():
             return isinstance(value, _dt.time) and value.tzinfo is None
         case Timestamp():
-            return isinstance(value, _dt.datetime) and value.utcoffset() is not None
+            return isinstance(value, _dt.datetime) and utc_instant(value) is not None
         case Uuid():
             return isinstance(value, _uuid.UUID)
         case Json():

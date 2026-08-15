@@ -123,10 +123,17 @@ def test_a_value_outside_its_declared_space_has_no_spelling() -> None:
     # Refused rather than encoded: the table is total over the type algebra but says
     # nothing about a value outside a declared value space, and inventing a spelling
     # for one is what leaves two writers disagreeing.
+    #
+    # The `timestamp` row is the one where a carrier of the right Python type is
+    # still outside the space: an aware `datetime` at the representational edge
+    # names an instant this table's four-digit-year UTC spelling cannot write, so
+    # it is refused HERE rather than overflowing inside the conversion.
     with pytest.raises(LeafEncodingError):
         encode_leaf(DATE, "2026-01-15")
     with pytest.raises(LeafEncodingError):
         encode_leaf(Decimal(4, 2), decimal.Decimal("1.005"))
+    with pytest.raises(LeafEncodingError):
+        encode_leaf(TIMESTAMP, dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=14))))
 
 
 def test_an_exact_decimal_pads_to_its_declared_scale_and_signs_only_below_zero() -> None:
@@ -339,6 +346,7 @@ def test_top_level_occurrence_classification_uses_the_sql_null_aware_carrier() -
         (TIME, "09:30"),
         (TIMESTAMP, "2026-01-15T11:30:00+02:00"),
         (TIMESTAMP, "2026-01-15T09:30:00Z"),
+        (TIMESTAMP, "0001-01-01T00:00:00.000000+14:00"),
         (UUID, "123E4567-E89B-12D3-A456-426614174000"),
         (UUID, "123e4567e89b12d3a456426614174000"),
         (FLOAT32, 1048576.3),
@@ -350,10 +358,13 @@ def test_a_stored_leaf_that_is_not_the_tables_own_spelling_is_refused(
     neutral_type: NeutralType, stored: object
 ) -> None:
     # Every type has exactly ONE document spelling, and it is what a predicate binds
-    # and an ordering compares for the six text-compared types. Each row here decodes
-    # cleanly into its declared value space and is still a DIFFERENT document from the
-    # one a writer of the same value stores, so decoding it would answer with a value
-    # whose own row no comparison against that member finds.
+    # and an ordering compares for the six text-compared types. Almost every row here
+    # decodes cleanly into its declared value space and is still a DIFFERENT document
+    # from the one a writer of the same value stores, so decoding it would answer with
+    # a value whose own row no comparison against that member finds. The offset
+    # `timestamp` at the range edge is the one row that is no spelling of any value:
+    # its instant is outside what the table can write, and it earns the same
+    # invalid-stored-data verdict rather than overflowing inside the decode.
     with pytest.raises(ValueError, match="invalid stored data"):
         decode_path(_one_leaf(neutral_type), {"leaf": stored}, ("leaf",))
 
