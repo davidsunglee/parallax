@@ -1346,23 +1346,23 @@ def _validate_until(
     :class:`~parallax.core.unit_work.WriteInstructionError`, exactly as
     :func:`_validate_valid_from`'s inadmissible bound does; a bound that is no
     ``timestamp`` keeps `m-core`'s :class:`~parallax.core.base.InstantError`,
-    exactly as that function's ``valid_from`` does. BOTH bounds are asked here,
-    because :func:`_validate_valid_from` returns a rendered literal rather than
-    the instant it judged, and a non-Bitemporal target's ``valid_from`` is one
-    it never rendered at all. Neither bound can be ABSENT here — that window is
-    no pair, which :func:`_require_stated_window` refused before either was
-    typed.
+    exactly as that function's ``valid_from`` does.
 
-    NORMALIZES both bounds BEFORE comparing them: comparing raw,
-    un-normalized datetimes let a naive ``until``
-    (compared against an already-aware ``valid_from``, since
-    ``_validate_valid_from`` — this verb's own sibling, called first —
-    already normalizes/rejects a naive ``valid_from``) leak a bare
-    ``TypeError`` from the ``<=`` comparison itself, rather than the
+    Only a Bitemporal target carrying BOTH bounds reaches this stage: ``until``
+    belongs to the bounded verbs alone, :func:`_require_stated_window` has
+    already refused a window stated as one bound, and
+    :func:`_validate_valid_from` has already refused a ``valid_from`` the
+    target's temporality does not admit. ``valid_from`` is re-derived here all
+    the same, because that function hands back the rendered literal rather than
+    the instant behind it, and ordering is a question about instants.
+
+    NORMALIZES both bounds BEFORE comparing them: comparing raw, un-normalized
+    datetimes let a naive ``until`` — measured against a ``valid_from`` its own
+    rendering had already normalized — leak a bare ``TypeError`` from the ``<=``
+    comparison itself, rather than the
     :class:`~parallax.core.base.InstantError`
-    :func:`~parallax.core.base.normalize_instant` raises for
-    any naive datetime (mirroring ``_validate_valid_from``'s own
-    ``instant_literal``-based handling exactly)."""
+    :func:`~parallax.core.base.normalize_instant` raises for any datetime it
+    cannot put in UTC."""
     name = declaring_entity.identity.name
     valid_from_normalized = normalize_instant(
         _stated_instant(name, mutation, "valid_from", valid_from)

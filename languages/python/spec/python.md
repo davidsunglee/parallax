@@ -3694,7 +3694,8 @@ or descriptor authoring form and performs no audit stamping.
   translating its spellings — a Python tuple rewritten as a list would make this
   the one boundary accepting an operand array that serde rejects; and
   `InstantError` where an admitted bound is no `m-core` instant — a naive
-  datetime, or a value of no datetime type at all. All are `ValueError`s and
+  datetime, a value of no datetime type at all, or an aware one whose UTC
+  instant no `datetime` holds. All are `ValueError`s and
   all precede any evidence question. Assignment
   legality is `judge_assignment`'s single verdict, reached through the same
   family-effective resolution the canonical predicate assignment uses, so
