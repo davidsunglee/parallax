@@ -92,6 +92,7 @@ from parallax.conformance.vo_models import (
 from parallax.core.entity import Entity
 from parallax.core.object_query import LATEST
 from parallax.core.unit_work import Clock
+from parallax.snapshot import InvalidData
 from parallax.snapshot.handle import Database, Transaction
 
 __all__ = ["WRITE_STORIES", "WriteStory", "story_snippet"]
@@ -640,6 +641,24 @@ def customer_update_nulls_the_address_document_out(db: Database) -> None:
     db.transact(null_out)
 
 
+def customer_update_settles_against_classified_stored_data(db: Database) -> None:
+    def rename(tx: Transaction) -> None:
+        # Customer 6 stores `address.geo` as a scalar where a `one` occurrence is
+        # declared. The read classifies that row and delivers it IN BAND through
+        # the checked view; the hydration collapsed the occurrence, so the Customer
+        # inside the record carries legal values throughout.
+        found = tx.find(Customer.where(Customer.id == 6)).checked().result()
+        current = found.data if isinstance(found, InvalidData) else found
+        # A hydrated root is an ordinary observed source: editing an unrelated
+        # scalar buffers the ordinary UPDATE, and the malformed document is
+        # neither read as a repair request nor rewritten. A record that could not
+        # hydrate carries no value, and so is no write source at all.
+        if current is not None:
+            tx.update(current.edit(name="Rin Nakamura"))
+
+    db.transact(rename)
+
+
 # --------------------------------------------------------------------------- #
 # Per-story scripted clocks provide one instant per `db.transact` call,       #
 # call above, in entry order, matching each mirrored case's own authored     #
@@ -902,5 +921,12 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "commit",
         "customer",
         customer_update_nulls_the_address_document_out,
+    ),
+    WriteStory(
+        "m-unit-work-028",
+        "A write settles against a row the read classified",
+        "commit",
+        "customer",
+        customer_update_settles_against_classified_stored_data,
     ),
 )

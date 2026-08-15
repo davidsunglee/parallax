@@ -431,6 +431,15 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-inheritance-128",
     }
 )
+# `m-unit-work-028` writes against CLASSIFIED stored data: Customer 6 stores
+# `address.geo` as a scalar where a `one` occurrence is declared, so the entry's own
+# resolving read publishes a hydratable classification rather than a plain node. What
+# both lanes grade is that the classification changes nothing — the emission is the
+# ordinary source-independent `set name = ?`, and the run lane's `tableState`
+# additionally shows the malformed document surviving unrewritten, so the next read
+# classifies it for the same reason. Compile-eligible because no bind depends on what
+# the read returned.
+_CLASSIFIED_SOURCE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset({"m-unit-work-028"})
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
     frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002"})
     | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
@@ -438,6 +447,7 @@ _WRITE_SEQUENCES: Final[frozenset[str]] = (
     | _DECIMAL_PRECISION_WRITE_SEQUENCES
     | _STORAGE_LAYOUT_WRITE_SEQUENCES
     | _DOCUMENT_LAYOUT_WRITE_SEQUENCES
+    | _CLASSIFIED_SOURCE_WRITE_SEQUENCES
 )
 # The `m-snapshot-read-010` mutate scenario emits no write DML. Its two `find`
 # steps' emissions and round trips grade byte-
