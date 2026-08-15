@@ -2856,7 +2856,11 @@ or descriptor authoring form and performs no audit stamping.
   both public materializers publish.
   `tx.observed_read(query)` and `tx.write_neutral(instruction, *, observation:
   ObservedStateKey | WriteObservation | None = None)` are the **conformance
-  bridge**, first-party and scheduled to end with the Wire write verbs.
+  bridge**, first-party and scheduled to end. What ends it is not the existence
+  of the Wire write verbs — those are the developer surface, and they exist —
+  but the corpus write lanes holding published VALUES rather than authored
+  instructions: a case that authors a row and no read cannot state a source, and
+  a keyed verb takes nothing else.
   `observed_read` runs the participating Wire read and answers an `ObservedRead`
   pairing that `Snapshot[WireEntity]` with the `RetainedObservation`s the read
   retained, because only their producer can pair an address with the evidence it
@@ -3595,6 +3599,98 @@ or descriptor authoring form and performs no audit stamping.
   Write Effect Error family `parallax.core.unit_work` owns; each carries only
   the Entity Identity, the Write Target (retained by reference), and the
   expected and actual counts — no SQL, statement index, or driver exception.
+- **The Wire write interface is `tx.wire`, and it shares one pipeline with the
+  Typed verbs.** The same view that answers `tx.wire.find` carries the complete
+  keyed and predicate write families. There is no `tx.write(instruction)`, no
+  flat `wire_*` method, no overload of a Typed verb with a dictionary, and no
+  observation address in any signature.
+
+  ```python
+  tx.wire.insert(entity_name, data, valid_from=...)  # valid_from: Bitemporal only
+  tx.wire.insert_until(entity_name, data, valid_from=..., until=...)
+
+  tx.wire.update(observed, changes, valid_from=...)
+  tx.wire.delete(observed)
+  tx.wire.terminate(observed, valid_from=...)
+  tx.wire.update_until(observed, changes, valid_from=..., until=...)
+  tx.wire.terminate_until(observed, valid_from=..., until=...)
+
+  tx.wire.update_where(target, changes, valid_from=...)
+  tx.wire.delete_where(target)
+  tx.wire.terminate_where(target, valid_from=...)
+  tx.wire.update_until_where(target, changes, valid_from=..., until=...)
+  tx.wire.terminate_until_where(target, valid_from=..., until=...)
+  ```
+
+  Only the representation differs. A Typed verb takes an Entity value whose
+  Change Record already names its effective change; a Wire verb takes the frozen
+  mapping a Wire read published plus an explicit changes document. Everything
+  after that is the one pipeline: the same evidence resolver, the same claim
+  algebra, the same instruction IR, the same buffer, the same planner, the same
+  Execution Log. A Typed write and a Wire write of one object therefore merge,
+  deduplicate, supersede, and conflict by the rules above rather than by any
+  interface-specific one, and the buffered-insert ledger read-your-own-writes
+  consults is one ledger, so an insert through either verb exempts a later write
+  through the other.
+
+  **A keyed source is a Parallax Wire read result, and nothing else.** The
+  concrete Entity, the object addressed, the as-of pin, the participation, and
+  the observed state all come from the value's own private Source Hint, so
+  `insert` — which opens a row and has no source — is the one keyed verb that
+  names an Entity, and it requires the exact canonical spelling. There is no
+  explicit-Entity ordinary-mapping overload: a mapping a caller built, a
+  `dict(node)` conversion, a JSON or pickle round trip, an `InvalidData` wrapper,
+  and the `None` a non-hydrating root publishes in place of data are all refused
+  for the same reason, that provenance was lost. A hydratable `InvalidData.data`
+  passes: classification says what contradicted the model, never who may write.
+
+  **Static validation precedes evidence resolution, always.** Verb and source
+  shape, the finite-Transaction-Time refusal, the temporal window, member names,
+  values, and assignment legality are judged from the model and the input alone;
+  only then is the target Entity's Effective Concurrency Strategy derived and its
+  evidence resolved. Malformed Wire input therefore always earns a
+  `WriteInstructionError` rather than a `WriteEvidenceError`, whichever is also
+  true — and the Typed lane reaches the same order for free, because `edit()`
+  rejects an illegal assignment before `tx.update()` receives a value. Assignment
+  legality is `judge_assignment`'s single verdict, reached through the same
+  family-effective resolution the canonical predicate assignment uses, so
+  identity, optimistic-version, temporal-axis, computed, and read-only members
+  are refused for exactly the reasons their Typed peers are, and a relationship or
+  otherwise undeclared name is refused as naming no member. Every named member is
+  judged whether or not it turns out to be an effective change: legality may not
+  depend on the stored state. An `insert` additionally refuses a framework-owned
+  member, which the Typed Entity constructor refuses one layer earlier, and
+  refuses a published read result as its payload under the same
+  `write-value-already-stored` code the Typed provenance rule uses.
+
+  **Wire values are the accepted wire spellings of their declared types.** A
+  changes document, an insert payload, and a predicate assignment all cross the
+  serde seam once at the verb and reach the instruction IR as the native carriers
+  every other ingress hands it. That is what makes writing back what a read
+  published a no-op: a member whose authored value already equals the source's
+  own is a RESTORATION rather than an assignment, comparison is over decoded
+  values rather than spellings, and a change set that restores everything it names
+  issues no DML at all — the zero-round-trip no-op an empty Typed effective change
+  set is, and the same restoration that cancels an assignment already buffered at
+  the same claim scope. Assigning a Value Object supplies its complete
+  replacement document.
+
+  **Caller-owned input is captured at the call.** Inserted data, changes, the
+  predicate target, and the temporal bounds are snapshotted recursively before
+  the verb returns, so later mutation of any nested list or mapping cannot alter
+  buffered intent. A keyed source is not copied — it is already deeply frozen —
+  and what the verb retains of it is its identity, its resolved evidence, and the
+  published value of the members the caller explicitly changed. The cost is
+  proportional to authored input and never duplicates a read result.
+
+  **A Wire write target is the canonical selection, not an Object Query.** The
+  `_where` family takes exactly `{"entity", "predicate"}`; ordering, the cap,
+  temporal selection, result narrowing, and Include Paths all shape a RESULT, and
+  a set-based write has none to shape, so a target carrying any other key is
+  refused. The changes document lowers to the same canonical assignment algebra
+  the typed `.set(...)` spelling does, and the readless-versus-materializing
+  dispatch is the one stated above.
+
 - **The serialized write instruction has its own ingress family.** Beside the
   typed developer surface, `parallax.core.unit_work` accepts a canonical
   `m-unit-work` write-instruction document — the form the conformance adapter

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.core.metamodel import EntityIdentity
+from parallax.core.temporal_read import Pin
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
 
@@ -94,17 +95,25 @@ class SourceHint:
 
     Never authority of its own: it names the concrete Entity the read resolved
     the row to, the object that row denotes, the participation its read
-    licensed, and the observation retained for its exact state — and a keyed
-    write then decides what those facts license under the target Entity's own
-    Effective Concurrency Strategy.
+    licensed, the as-of coordinates the read stood at, and the observation
+    retained for its exact state — and a keyed write then decides what those
+    facts license under the target Entity's own Effective Concurrency Strategy.
 
     ``observation`` is absent for an unversioned Non-Temporal row, which
-    observes no state at all; ``participation`` is absent for a standalone read.
-    A value that carries no hint carried no read behind it, which is the one
-    answer a caller-built value can ever give.
+    observes no state at all; ``participation`` is absent for a standalone read;
+    ``pin`` is absent for a row whose family declares no As-Of Axis, exactly as
+    a Typed node's own lifecycle state leaves it absent there. A value that
+    carries no hint carried no read behind it, which is the one answer a
+    caller-built value can ever give.
+
+    The pin rides here because a representation with no lifecycle state of its
+    own has nowhere else to keep it: a frozen Wire node's whole provenance is
+    this record, and the Transaction-Time past is read-only through every keyed
+    verb, Typed and Wire alike.
     """
 
     entity: EntityIdentity
     object_key: ObjectKey
     participation: ParticipationToken | None
     observation: RetainedObservation | None
+    pin: Pin | None = None

@@ -53,6 +53,7 @@ def test_top_package_public_surfaces() -> None:
         "WRITE_EVIDENCE_CODES",
         "WriteEvidenceError",
         "WriteEvidenceErrorCode",
+        "WriteInstructionError",
         "NoResultFound",
         "QueryTargetError",
         "SnapshotConnectionError",

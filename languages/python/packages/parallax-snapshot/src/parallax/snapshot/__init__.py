@@ -29,14 +29,18 @@ the Entity graph a successful read's rows describe; and
 it was handed to does not accept, whose three codes are
 :data:`KEYED_WRITE_VALUE_CODES`; and :class:`WriteEvidenceError`, of a source
 whose retained write evidence the target Entity's Effective Concurrency Strategy
-cannot use, whose codes are :data:`WRITE_EVIDENCE_CODES`.
+cannot use, whose codes are :data:`WRITE_EVIDENCE_CODES`; and
+:class:`WriteInstructionError`, of write input that is not a well-formed
+canonical instruction at all — the refusal every static Wire judgement raises,
+and therefore the one a malformed Wire call always earns before any evidence
+question is asked.
 
 The Wire read interface's own result vocabulary is here too: :class:`WireEntity`,
 the frozen Entity node ``db.wire.find`` / ``tx.wire.find`` publishes, and
 :data:`WireValue`, the recursive plain-value shape its positions carry. The
 ``db.wire`` / ``tx.wire`` views themselves are reached off a handle rather than
-imported, so their types stay in :mod:`parallax.snapshot.handle` beside the
-handles that answer them.
+imported, so their types — and the two documents ``tx.wire``'s write verbs take —
+stay in :mod:`parallax.snapshot.handle` beside the handles that answer them.
 
 It also publishes the surface that inspects a node this lifecycle produced —
 :func:`is_view_loaded`, :func:`view`, :func:`pin_of`, :func:`edge_of`, their
@@ -87,6 +91,7 @@ from parallax.snapshot.handle import (
     WireValue,
     WriteEvidenceError,
     WriteEvidenceErrorCode,
+    WriteInstructionError,
     connect,
 )
 from parallax.snapshot.materialize import SnapshotDecodingError
@@ -122,6 +127,7 @@ __all__ = [
     "WireValue",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
+    "WriteInstructionError",
     "connect",
     "edge_of",
     "is_view_loaded",

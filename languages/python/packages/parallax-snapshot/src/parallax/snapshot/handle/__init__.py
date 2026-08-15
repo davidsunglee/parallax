@@ -50,9 +50,14 @@ public-surface check promises. Where the exported names live:
 - :mod:`~parallax.snapshot.handle._preflight` — :func:`preflight`, the one read
   gate every entry point crosses before any I/O.
 - :mod:`~parallax.snapshot.handle._wire` — :class:`WireDatabaseView` and
-  :class:`WireTransactionView`, the ``db.wire`` / ``tx.wire`` views, and
+  :class:`WireTransactionView`, the ``db.wire`` / ``tx.wire`` views,
   :data:`WireQuery`, the three spellings a Wire read accepts for one canonical
-  Object Query.
+  Object Query, and the two documents its write verbs take:
+  :data:`WireChanges`, an authored assignment mapping, and
+  :data:`WirePredicateTarget`, the canonical ``{entity, predicate}`` selection.
+- :mod:`~parallax.snapshot.handle._wire_writes` — the Wire write ingress those
+  verbs delegate to, which shares the evidence resolver, the claim algebra, the
+  instruction IR, and the buffer with the Typed verbs.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, :func:`entity_read_lock`, the composed
   per-Entity read-lock derivation every participating read resolves its own
@@ -116,7 +121,7 @@ from parallax.core.execution_log import (
     TransactionNotCommittedError,
     TransactionResult,
 )
-from parallax.core.unit_work import ObjectKey
+from parallax.core.unit_work import ObjectKey, WriteInstructionError
 from parallax.snapshot.handle._database import (
     Database,
     TransactionOptionConflictError,
@@ -148,7 +153,9 @@ from parallax.snapshot.handle._read import (
 from parallax.snapshot.handle._step_lowering import lower_step
 from parallax.snapshot.handle._transaction import ObservedRead, Transaction
 from parallax.snapshot.handle._wire import (
+    WireChanges,
     WireDatabaseView,
+    WirePredicateTarget,
     WireQuery,
     WireTransactionView,
 )
@@ -205,13 +212,16 @@ __all__ = [
     "TransactionResult",
     "TransactionTimePinReadOnlyError",
     "UnobservedWriteError",
+    "WireChanges",
     "WireDatabaseView",
     "WireEntity",
+    "WirePredicateTarget",
     "WireQuery",
     "WireTransactionView",
     "WireValue",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
+    "WriteInstructionError",
     "WriteLoweringError",
     "build_write_planner",
     "connect",

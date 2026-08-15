@@ -435,12 +435,15 @@ def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
 # --------------------------------------------------------------------------- #
 def test_engine_and_transaction_buffer_share_the_identical_write_validator() -> None:
     # Neither caller forks its own copy of the shared validator, so a rule
-    # dropped from the ONE implementation fails both lanes identically.
+    # dropped from the ONE implementation fails both lanes identically. The
+    # transaction's own side of it is `_write_inputs.validate_keyed_instruction`,
+    # the one keyed judgement every ingress — Typed verb, Wire verb, and the
+    # neutral bridge — runs in one order.
     from parallax.conformance import engine as engine_module
-    from parallax.snapshot.handle import _transaction as transaction_module
+    from parallax.snapshot.handle import _write_inputs as write_inputs_module
 
     assert engine_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage] - asserts both lanes reference the one private write validator
-    assert transaction_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage] - asserts both lanes reference the one private write validator
+    assert write_inputs_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage] - asserts both lanes reference the one private write validator
 
 
 def test_buffer_rejects_a_required_attribute_missing_at_any_depth() -> None:
