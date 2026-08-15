@@ -66,6 +66,7 @@ from .inheritance import (
 )
 from .keyed_write_validate import (
     KEYED_WRITE_REJECTED_RULES,
+    states_framework_marker,
     undeclared_row_members,
     validate_keyed_write,
 )
@@ -3562,30 +3563,6 @@ _KEYED_MUTATIONS = (
     "terminateUntil",
 )
 
-# The DB-computed write markers `m-value-object` "Writing" admits at a scalar
-# attribute leaf: the framework's own pk-gen allocation and version advance.
-_FRAMEWORK_MARKER_KEYS = (frozenset({"computed"}), frozenset({"increment"}))
-
-
-def _is_framework_marker(value: Any) -> bool:
-    return isinstance(value, dict) and frozenset(value) in _FRAMEWORK_MARKER_KEYS
-
-
-def _states_framework_marker(entity: Entity, entry: dict[str, Any]) -> bool:
-    """Whether ``entry`` assigns a DB-computed write marker AT A SCALAR ATTRIBUTE.
-
-    The member's declared metamodel role decides, never the value's shape: a
-    value object binds its whole literal document even when that document is
-    shaped like a marker, and the marker form is scalar-attribute-only
-    (`m-case-format` *Write-sequence cases*).
-    """
-    scalars = {attribute["name"] for attribute in entity.attributes}
-    return any(
-        name in scalars and _is_framework_marker(value)
-        for row in entry.get("rows", [])
-        for name, value in row.items()
-    )
-
 
 def _entry_entity(case: Case, entry: dict[str, Any]) -> Entity:
     """The Entity one write entry targets, resolved from the spelling it authored
@@ -3635,7 +3612,7 @@ def _unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
         if mutation not in _KEYED_MUTATIONS:
             continue
         entity = _entry_entity(case, entry)
-        if _states_framework_marker(entity, entry):
+        if states_framework_marker(entity, entry):
             continue
         if any(key not in opened for key in _entry_object_keys(case, entry)):
             needed.add(entity.canonical_name)

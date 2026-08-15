@@ -2637,6 +2637,19 @@ _MARKER_KEYS: Final[frozenset[frozenset[str]]] = frozenset(
 )
 
 
+def _framework_writes(
+    resolved: Sequence[_ResolvedWrite], model: AcceptedMetamodel
+) -> list[_ResolvedWrite]:
+    """The entries of one buffer stating the FRAMEWORK's own bookkeeping.
+
+    Every write lane asks this, because each one has to decide the same thing:
+    such an entry has no public verb to be stated through, so it is a
+    choreography unit of its own and every other composition of it is a form no
+    case may author (`m-case-format` "Buffered keyed write instructions").
+    """
+    return [write for write in resolved if _is_framework_write(write.instruction, model)]
+
+
 def _execute_framework_write_unit(
     port: DbPort,
     model: AcceptedMetamodel,
@@ -2644,6 +2657,8 @@ def _execute_framework_write_unit(
     concurrency: Concurrency,
     resolved: Sequence[_ResolvedWrite],
     tx_instant: str,
+    *,
+    rollback: bool,
 ) -> int:
     """Execute one choreography unit whose writes are the FRAMEWORK's own, and
     report the calls it cost.
@@ -2657,8 +2672,11 @@ def _execute_framework_write_unit(
     for these entries is the statement the planner renders, which is exactly
     what this executes.
 
-    A unit is wholly one or wholly the other: a `m-pk-gen` registry advance is
-    its own writeSequence entry, and its own transaction with it.
+    A marker entry is a choreography unit of its own (`m-case-format`
+    "Buffered keyed write instructions"), so this lane runs a whole unit. It
+    therefore honours the step's own abort contract like every other write path:
+    a ``rollback: true`` step runs on the aborting port, its statements reach the
+    wire and count their round trips, and the provider then rolls them back.
     """
     plan = build_write_planner(model).plan(
         PlanningRequest(
@@ -2676,7 +2694,8 @@ def _execute_framework_write_unit(
         for statement in statements:
             conn.execute_write(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
 
-    port.transaction(run)
+    with contextlib.suppress(_RollbackStep):
+        _write_port(port, rollback=rollback).transaction(run)
     return len(statements)
 
 
@@ -2800,17 +2819,19 @@ def _execute_write_unit(
 
     A unit whose writes are the framework's own bookkeeping takes
     :func:`_execute_framework_write_unit` instead, which opens no unit of work
-    at all — those statements have no verb to be stated through. That routing is
-    per UNIT, so a unit must be wholly one or wholly the other: a unit mixing the
-    two states half its DML through a public verb and half around it, and is
-    refused here rather than silently routed by its first entry.
+    at all — those statements have no verb to be stated through. A marker entry
+    is a choreography unit of its own (`m-case-format` "Buffered keyed write
+    instructions"), so a buffer mixing one with caller-authored entries states a
+    form no case may author: it is refused here rather than silently routed by
+    its first entry, which would put half its DML through a public verb and half
+    around it.
 
     A ``rollback: true`` step runs on the aborting port (`m-unit-work` abort
     contract): the boundary's own finalization flush still puts the buffered DML
     on the wire — and counts its round trips — before the provider rolls the
     transaction back.
     """
-    framework = [write for write in resolved if _is_framework_write(write.instruction, model)]
+    framework = _framework_writes(resolved, model)
     if framework:
         if len(framework) != len(resolved):
             raise EngineError(
@@ -2820,7 +2841,7 @@ def _execute_write_unit(
                 "public verb states"
             )
         return None, _execute_framework_write_unit(
-            port, model, dialect, concurrency, resolved, tx_instant
+            port, model, dialect, concurrency, resolved, tx_instant, rollback=rollback
         )
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     database = handle.Database(
@@ -3481,7 +3502,11 @@ def _run_group_step(
     other write path uses (:func:`_lower_resolved`) BEFORE the group's flush
     executes anything, and then buffers each resolved write through the PUBLIC
     ``tx.wire`` verb its mutation names, against the value this group published
-    for its key. A FIND step runs through ``tx.wire.find`` — the participating
+    for its key. Every entry a group holds is therefore caller-authored: a
+    DB-computed write marker is a choreography unit of its own and no group step
+    may carry one (`m-case-format` "Buffered keyed write instructions"), which
+    this refuses by name rather than leaving to the verb that would reject the
+    value. A FIND step runs through ``tx.wire.find`` — the participating
     Wire read, which force-flushes any pending buffered write, takes the read
     lock its target Entity's own Effective Concurrency Strategy calls for,
     retains onto each published node what a later write settles against, and
@@ -3501,6 +3526,13 @@ def _run_group_step(
         resolved = _resolve_entries(
             entries, model, context.shadow, _published_claims(state.published), source
         )
+        framework = _framework_writes(resolved, model)
+        if framework:
+            raise EngineError(
+                f"/scenario/{index}/write: {len(framework)} entry(s) carry a DB-computed write "
+                "marker, which states the framework's own bookkeeping and is a choreography unit "
+                "of its own — a `uow` group's held transaction has no verb to buffer one through"
+            )
         statements = _lower_resolved(
             resolved,
             entries,
