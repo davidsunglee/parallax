@@ -49,6 +49,7 @@ from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.predicate import PredicateNode
 
 __all__ = [
+    "BOUNDED_MUTATIONS",
     "INSERT_MUTATIONS",
     "MILESTONE_MUTATIONS",
     "TEMPORAL_KEYED_WRITE_MULTI_ROW",
@@ -105,11 +106,19 @@ _KEYED_MUTATIONS: Final[frozenset[str]] = INSERT_MUTATIONS | frozenset(
 _PREDICATE_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"update", "delete", "terminate", "updateUntil", "terminateUntil"}
 )
-# The bounded `*Until` forms carry BOTH Valid-Time bounds; every other form carries
-# no `until` (its window runs `[validFrom, infinity)` or is non-temporal).
-_BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
+
+BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"insertUntil", "updateUntil", "terminateUntil"}
 )
+"""The mutations whose window is a PAIR of Valid-Time bounds, keyed and
+predicate-selected alike; every other form carries no `until` — its window runs
+`[validFrom, infinity)`, or the target is non-temporal.
+
+Shared so the developer verbs' own pair-presence gate and this module's
+instruction-level check read one definition of which verbs the pairing rule
+binds. The verb-level gate is not redundant with the instruction-level one: a
+keyed update whose change set is wholly restoring buffers no instruction, so a
+window no verb judged is a window nothing judges."""
 # The assignment-bearing predicate verbs; the others name nothing to assign.
 _ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 
@@ -310,7 +319,7 @@ def _check_valid_time_bounds(
     turns out to be non-temporal or Transaction-Time-Only, nor a Bitemporal
     write that omits one.
     """
-    if mutation in _BOUNDED_MUTATIONS:
+    if mutation in BOUNDED_MUTATIONS:
         if valid_from is None or until is None:
             raise WriteInstructionError(
                 f"{shape}: `{mutation}` is bounded and MUST carry both `validFrom` and `until`"

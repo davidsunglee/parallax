@@ -615,7 +615,7 @@ def _position_row_dt() -> Row:
 # own optional bitemporal `valid_from`, `terminate`, `update_until`, and    #
 # `terminate_until` — the KEYED siblings of `update_where` / `terminate_where` #
 # / `update_until_where` / `terminate_until_where`, sharing the SAME           #
-# `_buffer` seam and the SAME `validate_valid_from` gate, so a keyed and a  #
+# `_buffer` seam and the SAME `validate_window` gate, so a keyed and a      #
 # predicate-selected write over the identical bitemporal correction lower to  #
 # the identical rectangle split (`m-bitemp-write-001/002/006/007`'s own       #
 # witnessed shape, replayed here through the KEYED verb instead of `_where`). #
@@ -734,7 +734,7 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
 
 def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -> None:
     # A naive `until` (no tzinfo) must raise the SAME `ValueError` shape
-    # `validate_valid_from`'s own `instant_literal` normalization raises
+    # the shared window gate's own `instant_literal` normalization raises
     # for a naive `valid_from` (never a bare `TypeError` leaked by
     # comparing a naive `until` against an already-aware `valid_from`
     # when comparison runs before normalization).
@@ -763,26 +763,77 @@ def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -
 
 def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does() -> None:
     # A value of no datetime type at all is no `m-core` instant either, and the
-    # shared validators the Typed and Wire verbs run answer it with `m-core`'s own
+    # shared window gate the Typed and Wire verbs run answers it with `m-core`'s own
     # class rather than leaking an `AttributeError` out of instant normalization.
-    # A non-temporal target admits no `valid_from`, so a bounded verb aimed at one
-    # arrives here with half a window — the same missing value, the same verdict.
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
-    )
-    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+    # Either bound reaches that judgement, so both are stated here as strings.
+    port = RecordingPort(rows=[_position_row_dt()])
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         with pytest.raises(InstantError, match="no `timestamp`"):
+            tx.update_until(
+                fetched.edit(value=Decimal("200.00")),
+                valid_from=cast("dt.datetime", "2024-06-01"),
+                until=cast("dt.datetime", "2024-09-01"),
+            )
+        with pytest.raises(InstantError, match="no `timestamp`"):
+            tx.update_until(
+                fetched.edit(value=Decimal("200.00")),
+                valid_from=valid_from,
+                until=cast("dt.datetime", "2024-09-01"),
+            )
+
+    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
+    # A `*_until` verb's window is a PAIR, and half of one states no window at all
+    # — the verb's own `WriteInstructionError`, exactly as its Wire peer answers
+    # the identical call. The pair is asked of the MUTATION and before either bound
+    # is typed, so the missing half is named rather than reported as a value that
+    # is no instant: a non-temporal target admits no `valid_from` to supply, and a
+    # bitemporal one whose `until` is absent hears about `until` rather than about
+    # the malformed `valid_from` beside it.
+    account = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
+    position = RecordingPort(rows=[_position_row_dt()])
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def absent_valid_from(tx: Transaction) -> None:
+        fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
+        with pytest.raises(WriteInstructionError, match="valid_from is absent"):
             tx.update_until(
                 fetched.edit(balance=Decimal("20.00")),
                 valid_from=cast("dt.datetime", None),
                 until=until,
             )
 
-    account_db(port).transact(fn)
-    assert not any(op[0] == "write" for op in port.ops)
+    def absent_until(tx: Transaction) -> None:
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
+        with pytest.raises(WriteInstructionError, match="until is absent"):
+            tx.terminate_until(fetched, valid_from=FIXED, until=cast("dt.datetime", None))
+        with pytest.raises(WriteInstructionError, match="until is absent"):
+            tx.update_until(
+                fetched.edit(value=Decimal("200.00")),
+                valid_from=cast("dt.datetime", "2024-06-01"),
+                until=cast("dt.datetime", None),
+            )
+
+    account_db(account).transact(absent_valid_from)
+    Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+        absent_until, concurrency="optimistic"
+    )
+    assert not any(op[0] == "write" for op in account.ops)
+    assert not any(op[0] == "write" for op in position.ops)
 
 
 def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:

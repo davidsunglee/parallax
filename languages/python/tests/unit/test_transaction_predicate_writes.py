@@ -1325,13 +1325,36 @@ def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -
 
 
 def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None:
-    # A non-temporal target admits no `valid_from`, so a bounded `_where` verb
-    # aimed at one reaches the shared window validator with half a window. The
-    # missing bound is `m-core`'s verdict on a value that is no `timestamp`,
-    # not a bare assertion, and it is the same one the keyed verbs answer with.
+    # A bound of no datetime type is no `m-core` instant, and the shared window
+    # gate answers it with that module's own class rather than with a bare
+    # assertion — the same verdict the keyed verbs answer the same value with.
     port = RecordingPort()
 
     def fn(tx: Transaction) -> None:
+        tx.update_until_where(
+            WherePosition.where(WherePosition.id == 1),
+            WherePosition.value.set(Decimal("300.00")),
+            valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
+            until=cast("dt.datetime", "2024-09-01"),
+        )
+
+    with pytest.raises(InstantError, match="no `timestamp`"):
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
+    assert not any(op[0] in ("read", "write") for op in port.ops)
+
+
+def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
+    # A `_where` `*_until` verb's window is a PAIR, judged by the one gate the
+    # keyed verbs and both representations run, so half of one earns the verb's
+    # own `WriteInstructionError` rather than a complaint about the missing
+    # half's type. A non-temporal target admits no `valid_from` to supply at all,
+    # which is how such a call reaches the gate with one bound.
+    account = RecordingPort()
+    position = RecordingPort()
+
+    def absent_valid_from(tx: Transaction) -> None:
         tx.update_until_where(
             mm.Account.where(mm.Account.id == 1),
             mm.Account.balance.set(Decimal("300.00")),
@@ -1339,9 +1362,21 @@ def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 
-    with pytest.raises(InstantError, match="no `timestamp`"):
-        account_db(port).transact(fn)
-    assert not any(op[0] in ("read", "write") for op in port.ops)
+    def absent_until(tx: Transaction) -> None:
+        tx.terminate_until_where(
+            WherePosition.where(WherePosition.id == 1),
+            valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
+            until=cast("dt.datetime", None),
+        )
+
+    with pytest.raises(instructions.WriteInstructionError, match="valid_from is absent"):
+        account_db(account).transact(absent_valid_from)
+    with pytest.raises(instructions.WriteInstructionError, match="until is absent"):
+        Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+            absent_until, concurrency="optimistic"
+        )
+    assert not any(op[0] in ("read", "write") for op in account.ops)
+    assert not any(op[0] in ("read", "write") for op in position.ops)
 
 
 # --------------------------------------------------------------------------- #
@@ -1528,8 +1563,8 @@ def test_an_unrenderable_bound_is_refused_before_any_buffering(
 
 
 def test_a_non_utc_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> None:
-    # The instruction that reaches the buffering seam carries
-    # `validate_valid_from` / `validate_until`'s own canonical literals, so a
+    # The instruction that reaches the buffering seam carries the shared window
+    # gate's own canonical literals, so a
     # bound authored at a NON-UTC offset lands in the rectangle split as the
     # same instant in UTC, never as the caller's spelling.
     port = RecordingPort(rows=[_position_row()])
