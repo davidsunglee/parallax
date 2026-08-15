@@ -497,7 +497,7 @@ def find(
         graph=scope.build(root_refs, pin),
         execution=calls.read_trace(),
         includes=_include_tree(plan_.levels),
-        sources=retain_evidence(meta, observations, ledger=ledger),
+        sources=retain_evidence(meta, observations, ledger=ledger, pin=pin),
     )
 
 

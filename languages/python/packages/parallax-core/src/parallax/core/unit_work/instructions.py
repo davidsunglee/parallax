@@ -63,6 +63,7 @@ __all__ = [
     "WriteInstructionError",
     "deserialize",
     "non_temporal_milestone_refusal",
+    "resolve_target",
     "serialize",
     "validate_instruction",
 ]
@@ -634,7 +635,7 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     omits the one it requires.
     """
     if isinstance(instruction, KeyedWrite):
-        entity = _entity(model, instruction.entity)
+        entity = resolve_target(model, instruction.entity)
         members = _declared_members(model, entity)
         for row in instruction.rows:
             unknown = sorted(key for key in row if key not in members)
@@ -643,7 +644,7 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
                     f"{entity.identity.name}: keyed write row names undeclared member(s) {unknown}"
                 )
     else:
-        entity = _entity(model, instruction.target.entity)
+        entity = resolve_target(model, instruction.target.entity)
         predicate_algebra.validate_predicate(entity, instruction.target.predicate, model)
         inheritance.reject_predicate_write(entity)
         members = _declared_members(model, entity)
@@ -679,7 +680,7 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
             raise WriteInstructionError(refusal)
 
 
-def _entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
+def resolve_target(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     """The accepted Metadata a write's bare-or-canonical target names, by
     :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting rule.
 
@@ -693,6 +694,12 @@ def _entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     :class:`WriteInstructionError`. Classifying here is also what keeps an
     ambiguous instruction out of the planner, whose own target lookup would
     answer the same miss by leaving the write unbound to any observation.
+
+    Exported because an ingress that must resolve a target BEFORE it can build
+    an instruction — a Wire insert, which decodes its payload against the Entity
+    it names, and a Wire predicate write, which renders its bounds against the
+    target's declaring Entity — has to reach the same two classifications the
+    instruction itself would have earned one step later.
     """
     entity = entity_by_name(model, name)
     if entity is not None:

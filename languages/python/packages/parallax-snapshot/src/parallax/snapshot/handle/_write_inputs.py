@@ -1,7 +1,10 @@
 """``parallax.snapshot.handle._write_inputs`` — verb-input preparation and evidence.
 
-Everything a write verb needs BEFORE an instruction reaches the unit of work,
-plus the write evidence a read leaves on the values it publishes:
+Everything a keyed write needs from the moment a verb is called to the moment
+the buffer holds it, plus the write evidence a read leaves on the values it
+publishes. Both keyed ingresses — the Typed verbs and ``tx.wire``'s — reach the
+whole of it, which is what keeps one judgement and one buffer behind two
+representations:
 
 * build-time window validation every keyed AND ``_where`` temporal verb shares
   (:func:`validate_valid_from`, :func:`validate_until`), the
@@ -27,7 +30,16 @@ plus the write evidence a read leaves on the values it publishes:
   :class:`~parallax.core.unit_work.MaterializedWriteGroup`
   (:func:`is_no_op_assignment`, :func:`key_column_values`,
   :func:`predecessor_payload`), which share their payload extraction with
-  :func:`retain_evidence` through the module-local ``_row_payload``.
+  :func:`retain_evidence` through the module-local ``_row_payload``;
+* the keyed seam itself, in the order every ingress runs it: the canonical
+  single-row instruction a verb holding a value builds
+  (:func:`keyed_instruction`), the whole judgement it is then measured by
+  (:func:`validate_keyed_instruction`), the claim-then-buffer step that ends it
+  (:func:`admit_and_buffer`, :func:`instruction_identity`), the question a
+  wholly restoring edit asks before it decides whether it cancels anything
+  (:func:`cancels_a_pending_assignment`), and the read-your-own-writes ledger
+  both ingresses record into and read (:class:`BufferedInserts`,
+  :func:`written_object_of_row`).
 
 Semantic family facts come from the accepted Metamodel and its facets, resolved
 through :mod:`parallax.snapshot.handle._family` (the declaring root,
@@ -39,11 +51,12 @@ columns. The read executor drives :class:`ReadObservations` and
 only that way, so nothing here names :mod:`parallax.snapshot.handle._read`. The
 participating unit of work reaches this module as two structural protocols —
 :class:`ObservationLedger`, the two answers retention needs from a transaction,
-and :class:`ClaimLedger`, the one answer a keyed write needs — rather than as
-the whole scope.
+and :class:`ClaimLedger`, the three a keyed write needs — rather than as the
+whole scope.
 
-Names crossing a module boundary (read from ``_transaction`` / ``_predicate_writes``)
-are spelled bare; a helper whose every caller lives here keeps its underscore.
+Names crossing a module boundary (read from ``_transaction``, ``_wire_writes``,
+or ``_predicate_writes``) are spelled bare; a helper whose every caller lives
+here keeps its underscore.
 Privacy is carried by this MODULE's leading underscore and by the package's
 frozen ``__all__``, never by per-name underscores —
 :class:`TransactionTimePinReadOnlyError` and :func:`validate_source_pin` are
@@ -82,16 +95,19 @@ from parallax.core.metamodel import (
     PrimaryKey,
     TemporalDimension,
     ValueObjectMetadata,
+    entity_by_name,
 )
 from parallax.core.object_query import Latest
 from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
+    BufferItem,
     ClaimScope,
     ClaimVerdict,
     Concurrency,
     KeyedMutation,
+    KeyedWrite,
     ObjectKey,
     ObservedStateKey,
     ParticipationToken,
@@ -103,9 +119,14 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteIntent,
     WriteObservation,
+    buffered_write,
+    claim_scope,
     claimed_object,
     instant_literal,
+    instructions,
+    keyed_intent,
     observed_state_key,
+    validate_write,
 )
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle._family import (
@@ -122,6 +143,7 @@ from parallax.snapshot.handle._family import (
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
     "WRITE_EVIDENCE_CODES",
+    "BufferedInserts",
     "ClaimLedger",
     "KeyedWriteValueError",
     "ObservationLedger",
@@ -131,9 +153,13 @@ __all__ = [
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
     "WrittenObject",
+    "admit_and_buffer",
     "admit_write_claim",
+    "cancels_a_pending_assignment",
+    "instruction_identity",
     "is_no_op_assignment",
     "key_column_values",
+    "keyed_instruction",
     "metadata_of_instance",
     "normalize_assignment_values",
     "predecessor_payload",
@@ -141,12 +167,14 @@ __all__ = [
     "retain_evidence",
     "source_hint_of",
     "source_pin",
+    "validate_keyed_instruction",
     "validate_source_pin",
     "validate_until",
     "validate_valid_from",
     "validate_write_value",
     "written_object",
     "written_object_key",
+    "written_object_of_row",
 ]
 
 _UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
@@ -286,6 +314,34 @@ def written_object(
     return (record.identity, tuple(pairs))
 
 
+def written_object_of_row(
+    record: EntityMetadata, declaring_entity: EntityMetadata, row: Mapping[str, object]
+) -> WrittenObject | None:
+    """Which object a written ROW names — :func:`written_object`'s peer for an
+    ingress holding a row rather than an Entity value.
+
+    A Wire verb never holds an instance, so the read-your-own-writes exemption
+    has to be answerable from the canonical row an insert buffers. Both readings
+    key by the SAME declared primary-key members in the SAME declaring-entity
+    order and carry the values as the caller supplied them, so a Typed insert and
+    a Wire update of one object name one member of
+    :class:`BufferedInserts` — which is what makes the exemption span both
+    representations rather than one each.
+
+    ``None`` for a row short of a primary-key member, which names no object at
+    all. Defensive rather than reachable: an insert's row is judged complete
+    before this is asked, and a keyed write's identity row comes from the object
+    key its source's own read filed.
+    """
+    pairs: list[tuple[str, object]] = []
+    for attribute in _declared_primary_key(declaring_entity):
+        name = attribute.identity.name
+        if name not in row:  # pragma: no cover - both callers hold a complete key already
+            return None
+        pairs.append((name, row[name]))
+    return (record.identity, tuple(pairs))
+
+
 @dataclass(frozen=True, slots=True)
 class _ObservedRow:
     """One materialized row's observable state, keyed by PHYSICAL column.
@@ -366,14 +422,227 @@ class ObservationLedger(Protocol):
 
 
 class ClaimLedger(Protocol):
-    """The unit of work a keyed write takes its claim from, satisfied structurally.
+    """The unit of work a keyed write settles into, satisfied structurally.
 
-    A verb needs one answer from the transaction before it buffers — what its
-    intent becomes against whatever the buffer already claimed at that exact
-    scope — so it names that one rather than the whole scope.
+    Three answers, and nothing wider: what a new intent becomes against whatever
+    the buffer already claimed at that exact scope, what it already claims there
+    (which is what a restoring edit asks before it decides whether it has
+    anything to cancel), and the buffer itself. Naming them rather than the whole
+    scope is what lets both keyed ingresses share one seam without either
+    reaching into a transaction.
     """
 
     def claim(self, key: ClaimScope, intent: WriteIntent, /) -> ClaimVerdict: ...
+
+    def claimed(self, key: ClaimScope, /) -> WriteIntent | None: ...
+
+    def buffer(self, item: BufferItem, /) -> None: ...
+
+
+class BufferedInserts:
+    """The objects one transaction has buffered an insert of.
+
+    Shared by BOTH keyed ingresses rather than kept per representation: a
+    Typed insert followed by a Wire update of the same object is one
+    read-your-own-writes pair, and so is the reverse, so the exemption has to be
+    one ledger or the two verbs would disagree about what this transaction
+    stores.
+
+    A member is the total reading :func:`written_object` (or
+    :func:`written_object_of_row`) answers for a value, never a row and never an
+    :class:`~parallax.core.unit_work.ObjectKey`: the provenance refusal that
+    reads this is decided before any row is derived. ``None`` is a legitimate
+    member — a value whose own class can name no object — and it matches nothing,
+    which is exactly what leaves that value's provenance refusal standing.
+    """
+
+    __slots__ = ("_objects",)
+
+    def __init__(self) -> None:
+        self._objects: set[WrittenObject | None] = set()
+
+    def record(self, written: WrittenObject | None) -> None:
+        """Record the object a just-buffered insert opens."""
+        self._objects.add(written)
+
+    def holds(self, written: WrittenObject | None) -> bool:
+        """Whether this transaction already buffered an insert of ``written``.
+
+        ``None`` never matches: a value that names no object is no object this
+        transaction inserted.
+        """
+        return written is not None and written in self._objects
+
+    def __bool__(self) -> bool:
+        """Whether this transaction has buffered any insert at all — the cheap
+        answer that lets a caller skip deriving what a value names."""
+        return bool(self._objects)
+
+
+def validate_keyed_instruction(meta: Metamodel, instruction: KeyedWrite) -> None:
+    """The whole judgment a keyed write instruction is measured by, in the one
+    order every ingress runs it in.
+
+    The model-aware :func:`~parallax.core.unit_work.validate_write` per row
+    FIRST: its inheritance payload-shape rules
+    (``subtype-write-metadata-field`` / ``-sibling-attribute`` /
+    ``-set-based-unsupported``, `m-inheritance`) classify a framework-owned
+    metadata key or a cross-branch field MORE SPECIFICALLY than the generic
+    member-name honesty gate ever could. Then
+    :func:`~parallax.core.unit_work.instructions.validate_instruction`, which
+    still catches any OTHERWISE-unknown member the row walk left unexamined
+    (it walks only DECLARED members, never flags a stray key itself).
+
+    Stated once rather than at each ingress because the ORDER is the rule: two
+    ingresses that classified one defect differently would make the ingress,
+    not the model, decide what a write violated.
+
+    A spelling naming no single declared Entity is left entirely to
+    ``validate_instruction``, which owns that classification and refuses it one
+    step later: a row judgment presupposes the target whose members it is
+    measured against, so an unresolvable target has no row question to answer,
+    and answering it here would report a member complaint about an Entity the
+    model does not have.
+    """
+    entity = entity_by_name(meta, instruction.entity)
+    if entity is not None:
+        for row in instruction.rows:
+            validate_write(entity, row, meta, mutation=instruction.mutation)
+    instructions.validate_instruction(instruction, meta)
+
+
+def keyed_instruction(
+    mutation: KeyedMutation,
+    entity: EntityIdentity,
+    row: Mapping[str, object],
+    *,
+    valid_from: str | None = None,
+    until: str | None = None,
+) -> KeyedWrite:
+    """One single-row keyed instruction, built through the durable IR's own door.
+
+    The document route buys the IR's structural validation — no ``at`` alias, no
+    reserved observation control key — before anything measures the row against
+    the model, so every ingress that holds a value rather than an instruction
+    reaches planning through the same canonical shape a serialized instruction
+    does.
+
+    ``valid_from`` / ``until`` are the already-rendered instant literals a
+    temporal write carries; a non-temporal or Transaction-Time-Only target's
+    caller passes neither. They ride the instruction's own dimension-explicit
+    fields, never the row (`m-txtime-write` / `m-bitemp-write`; ADR 0010/0013).
+    """
+    doc: dict[str, object] = {
+        "mutation": mutation,
+        "entity": entity.canonical,
+        "rows": [dict(row)],
+    }
+    if valid_from is not None:
+        doc["validFrom"] = valid_from
+    if until is not None:
+        doc["until"] = until
+    instruction = instructions.deserialize(doc)
+    assert isinstance(instruction, KeyedWrite)  # `doc` carries `rows`
+    return instruction
+
+
+def admit_and_buffer(
+    ledger: ClaimLedger,
+    meta: Metamodel,
+    instruction: KeyedWrite,
+    evidence: SettledEvidence | None,
+    *,
+    restorations: frozenset[str] = frozenset(),
+) -> None:
+    """Take this write's claim at the scope it settles against, then buffer it.
+
+    The buffer item is built FIRST, because the carriers' own structural
+    refusals are judgments about this write alone — an insert or an instruction
+    naming several rows cannot hold the evidence it was handed — while a claim
+    is a mutation of state the transaction survives. Taking the claim first
+    would leave a caller who catches such a refusal in an open transaction
+    holding a claim for a write that was never buffered, against which a later
+    legal write of that same scope would be refused, coalesced, or superseded.
+    In this order the claim is the last judgment a keyed write passes before it
+    is buffered, and a write refused by either of them leaves nothing behind:
+    the buffer and the claims it could not join are both untouched.
+
+    Scope and intent are read off what the write settles against and what its
+    verb does, and the two are absent together: an insert opens a row rather
+    than writing against one, so it has neither. A caller-HELD Write
+    Observation carries an intent but no scope, for the reason it spends
+    nothing at the flush — it is a value rather than a reference into this
+    scope's ledger, so there is no retained evidence a second intent could be
+    competing for. Finalization still combines two such writes when they
+    address one object and carry equal evidence, because what it coalesces is
+    the intent rather than the claim.
+    """
+    item = buffered_write(instruction, evidence, restorations=restorations)
+    admit_write_claim(
+        ledger,
+        instruction_identity(meta, instruction),
+        keyed_intent(instruction),
+        scope=claim_scope(evidence),
+    )
+    ledger.buffer(item)
+
+
+def instruction_identity(meta: Metamodel, instruction: KeyedWrite) -> EntityIdentity:
+    """The Entity Identity ``instruction``'s own spelling names.
+
+    Read by a claim refusal's message, which runs after validation has already
+    resolved the spelling; the fallback keeps that message honest for a spelling
+    this model somehow does not carry, rather than raising a second failure while
+    reporting the first.
+    """
+    entity = entity_by_name(meta, instruction.entity)
+    if entity is None:  # pragma: no cover - validation resolved the spelling already
+        return EntityIdentity(namespace="", name=instruction.entity)
+    return entity.identity
+
+
+def cancels_a_pending_assignment(
+    ledger: ClaimLedger,
+    meta: Metamodel,
+    record: EntityMetadata,
+    hint: SourceHint | None,
+    mutation: KeyedMutation,
+) -> bool:
+    """Whether this transaction already buffered an ASSIGNMENT at the scope the
+    write about to be authored would claim.
+
+    Read off the source value's own hint rather than off a derived row, and at
+    whatever scope the target Entity's Optimistic Key names, so the question is
+    asked exactly where the verb about to buffer would take its claim: a
+    versioned write settling against a different generation of the same row is a
+    different claim and taking it back is not something this value said, while an
+    unversioned Non-Temporal row has one claim per object because that is the
+    grain its shared row lock is held at.
+
+    Asked before the write's evidence is resolved, which is what keeps the
+    no-op-first ordering `m-opt-lock` fixes: a net-zero chain off a value the
+    verb would refuse still buffers nothing rather than raising.
+
+    A value carrying no hint came from no read and can cancel nothing. A hint
+    that IS there always reaches a scope for an update verb: it names an Object
+    Key unconditionally, and it retains an observation for exactly the
+    state-keyed targets whose arm needs one
+    (:class:`~parallax.core.unit_work.SourceHint`).
+    """
+    if hint is None:
+        return False
+    scope = claim_scope(
+        opt_lock.settled_evidence(
+            opt_lock.optimistic_key(meta, record.identity),
+            mutation,
+            object_key=hint.object_key,
+            observation=hint.observation,
+        )
+    )
+    if scope is None:  # pragma: no cover - a hint reaches its target's own arm
+        return False
+    held = ledger.claimed(scope)
+    return held is not None and held.kind == "assignment"
 
 
 def admit_write_claim(
@@ -430,7 +699,11 @@ def admit_write_claim(
 
 
 def retain_evidence(
-    meta: Metamodel, observations: ReadObservations, *, ledger: ObservationLedger | None
+    meta: Metamodel,
+    observations: ReadObservations,
+    *,
+    ledger: ObservationLedger | None,
+    pin: Pin | None = None,
 ) -> ReadSources:
     """Retain the observed version/temporal-milestone of every VERSIONED or
     TEMPORAL row :func:`find` materialized, onto the values that observed them
@@ -476,6 +749,12 @@ def retain_evidence(
     Its two answers are the participation each hint carries and the evidence it
     already holds for a state this read saw again; a standalone read stamps no
     participation and shares nothing beyond this one pass.
+
+    ``pin`` is the read's own whole-graph as-of coordinate, which each hint
+    carries for a TEMPORAL row and leaves absent otherwise — the same rule the
+    typed materializer applies to a node's own lifecycle state, so a Typed node
+    and a Wire node of one row answer the same pin to the finite-Transaction-Time
+    refusal every keyed verb runs.
     """
     participation = None if ledger is None else ledger.participation
     hints: dict[int, SourceHint] = {}
@@ -487,8 +766,11 @@ def retain_evidence(
         if resolved is None:  # pragma: no cover - defends a malformed model/projection
             continue
         object_key, declaring_entity, observation = resolved
+        observed_pin = pin if _is_temporal(declaring_entity) else None
         if observation is None:
-            hints[observed.node] = SourceHint(observed.entity, object_key, participation, None)
+            hints[observed.node] = SourceHint(
+                observed.entity, object_key, participation, None, observed_pin
+            )
             continue
         key = observed_state_key(object_key, observation, declaring_entity)
         held = pass_states.get(key)
@@ -497,7 +779,9 @@ def retain_evidence(
             if ledger is not None:
                 held = ledger.retain(held)
             pass_states[key] = held
-        hints[observed.node] = SourceHint(observed.entity, object_key, participation, held)
+        hints[observed.node] = SourceHint(
+            observed.entity, object_key, participation, held, observed_pin
+        )
     return MappingProxyType(hints)
 
 
