@@ -113,8 +113,7 @@ from parallax.snapshot.handle._write_inputs import (
     key_column_values,
     normalize_assignment_values,
     predecessor_payload,
-    validate_until,
-    validate_valid_from,
+    validate_window,
 )
 from parallax.snapshot.materialize import observable_columns
 
@@ -190,15 +189,16 @@ def buffer_predicate(
        against the connected model, so a query whose own target that model does
        not declare is named as the target failure it is rather than as a
        composition failure of every Assignment addressing it.
-    4. **Valid-Time-bound validation and rendering** — a Bitemporal target
-       requires ``valid_from``; a Transaction-Time-Only or non-temporal target
-       takes none; the ``*Until`` forms additionally require ``until``, with
+    4. **Valid-Time-bound validation and rendering** — the ``*Until`` forms
+       state their window as a PAIR, and half of one is refused before either
+       bound is measured; a Bitemporal target then requires ``valid_from`` and a
+       Transaction-Time-Only or non-temporal target takes none; and
        ``valid_from < until`` — an equal or reversed window rejects HERE, at
-       build, before any buffering (:func:`validate_until`). Typed-only: only
+       build, before any buffering (:func:`validate_window`, the one gate the
+       keyed verbs and both representations run). Typed-only: only
        this ingress takes ``dt.datetime`` arguments, and this step is the sole
-       place one is touched — :func:`validate_valid_from` and
-       :func:`validate_until` normalize each bound to UTC and RETURN the
-       canonical instant literal step 5 writes into the instruction. It runs
+       place one is touched — the gate normalizes each bound to UTC and RETURNS
+       the canonical instant literal step 5 writes into the instruction. It runs
        BEFORE that build so a :class:`~parallax.core.unit_work.PredicateWrite`
        is canonical from the moment it exists: a bound slot only ever holds
        what `write-instruction.schema.json` defines an instant to be — an
@@ -226,11 +226,9 @@ def buffer_predicate(
     entity = entity_of(meta, selection.target.canonical)
     _reject_uncomposable_assignments(meta, selection.target, mutation, assignments)
     declaring_entity = declaring(meta, entity)
-    valid_from_literal = validate_valid_from(declaring_entity, mutation, valid_from)
-    until_literal: str | None = None
-    if until is not None:
-        until_literal = validate_until(declaring_entity, mutation, valid_from, until)
-
+    valid_from_literal, until_literal = validate_window(
+        declaring_entity, mutation, valid_from, until
+    )
     doc: dict[str, object] = {
         "mutation": mutation,
         "target": {

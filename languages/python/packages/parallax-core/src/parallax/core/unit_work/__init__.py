@@ -60,6 +60,7 @@ from parallax.core.unit_work.effects import (
     enforce_affected_rows,
 )
 from parallax.core.unit_work.instructions import (
+    BOUNDED_MUTATIONS,
     INSERT_MUTATIONS,
     TEMPORAL_KEYED_WRITE_MULTI_ROW,
     InstructionRejectedError,
@@ -227,6 +228,7 @@ __all__ = [
     "AUTHORED_FROM",
     "AUTHORED_STATE",
     "AUTHORED_UNTIL",
+    "BOUNDED_MUTATIONS",
     "CARRIED_STATE",
     "CHANGED_STATE",
     "INFINITY",

@@ -109,8 +109,7 @@ from parallax.snapshot.handle._write_inputs import (
     source_pin,
     validate_keyed_instruction,
     validate_source_pin,
-    validate_until,
-    validate_valid_from,
+    validate_window,
     validate_write_value,
     written_object,
     written_object_key,
@@ -241,10 +240,10 @@ class Transaction:
         ``valid_from`` is the plain Bitemporal insert's Valid-Time instant — the
         open rectangle's lower bound ``[valid_from, infinity)`` (`m-bitemp-write` "insert /
         insertUntil — a single open rectangle, no close"); mirrors ``update``'s
-        own Bitemporal-only-required :func:`validate_valid_from`: a
+        own Bitemporal-only-required :func:`validate_window`: a
         Transaction-Time-Only or non-temporal target takes none (no Valid-Time dimension to
         bound)."""
-        record, declaring, valid_from_literal = self._prepare_keyed_write(
+        record, declaring, valid_from_literal, _ = self._prepare_keyed_write(
             instance, "insert", valid_from
         )
         self._buffer(
@@ -266,15 +265,14 @@ class Transaction:
         ``update_until``'s own required ``valid_from`` / ``until``). A window
         that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
-        (:func:`validate_until`, `python.md` §5 "all validated at build").
+        (:func:`validate_window`, `python.md` §5 "all validated at build").
         The window bounds come from THESE verb arguments, never from instance
         fields: an As-Of Axis endpoint is framework-owned and the temporal write
         path derives every interval bound itself (`python.md` §2), which is why
         the Entity constructor refuses an authored one outright."""
-        record, declaring, valid_from_literal = self._prepare_keyed_write(
-            instance, "insertUntil", valid_from
+        record, declaring, valid_from_literal, until_literal = self._prepare_keyed_write(
+            instance, "insertUntil", valid_from, until
         )
-        until_literal = validate_until(declaring, "insertUntil", valid_from, until)
         self._buffer(
             "insertUntil",
             record.identity,
@@ -311,9 +309,9 @@ class Transaction:
         (the old value) + a new tail (the new value) running to infinity, the
         two-way degenerate of ``update_until``'s three-way rectangle split).
         Mirrors ``update_where``'s own bitemporal-only-required
-        :func:`validate_valid_from`: a Transaction-Time-Only or non-temporal target
+        :func:`validate_window`: a Transaction-Time-Only or non-temporal target
         takes none (no Valid-Time dimension to bound)."""
-        record, declaring, valid_from_literal = self._prepare_keyed_write(
+        record, declaring, valid_from_literal, _ = self._prepare_keyed_write(
             copy, "update", valid_from
         )
         authored = self._authored_assignments(record, copy, "update")
@@ -364,8 +362,8 @@ class Transaction:
         `m-bitemp-write`). Transaction-Time-Only takes no ``valid_from``;
         Bitemporal requires it (the mutation's own Valid-Time
         instant, mirrors ``terminate_where``'s own
-        :func:`validate_valid_from`)."""
-        record, declaring, valid_from_literal = self._prepare_keyed_write(
+        :func:`validate_window`)."""
+        record, declaring, valid_from_literal, _ = self._prepare_keyed_write(
             node_or_instance, "terminate", valid_from
         )
         self._buffer(
@@ -386,17 +384,16 @@ class Transaction:
         ``update_until_where``'s own required ``valid_from`` / ``until``). A
         window that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
-        (:func:`validate_until`, `python.md` §5 "all validated at build") —
+        (:func:`validate_window`, `python.md` §5 "all validated at build") —
         checked BEFORE the empty-effective-change-set no-op return below:
         window validation runs first for every window verb, never after;
         equal bounds reject even when the
         edited copy's own Change Record nets to zero). An EMPTY effective
         change set (once the window is confirmed valid) issues no DML at all,
         exactly like keyed ``update``."""
-        record, declaring, valid_from_literal = self._prepare_keyed_write(
-            copy, "updateUntil", valid_from
+        record, declaring, valid_from_literal, until_literal = self._prepare_keyed_write(
+            copy, "updateUntil", valid_from, until
         )
-        until_literal = validate_until(declaring, "updateUntil", valid_from, until)
         authored = self._authored_assignments(record, copy, "updateUntil")
         if authored is None:
             return
@@ -420,12 +417,11 @@ class Transaction:
         alone (`m-bitemp-write`) — bitemporal-only (mirrors
         ``terminate_until_where``). A window that does not satisfy
         ``valid_from < until`` (equal or reversed bounds) raises at THIS
-        call, before any buffering (:func:`validate_until`, `python.md`
+        call, before any buffering (:func:`validate_window`, `python.md`
         §5)."""
-        record, declaring, valid_from_literal = self._prepare_keyed_write(
-            node_or_instance, "terminateUntil", valid_from
+        record, declaring, valid_from_literal, until_literal = self._prepare_keyed_write(
+            node_or_instance, "terminateUntil", valid_from, until
         )
-        until_literal = validate_until(declaring, "terminateUntil", valid_from, until)
         self._buffer(
             "terminateUntil",
             record.identity,
@@ -440,7 +436,8 @@ class Transaction:
         node_or_instance: EntityBase,
         mutation: KeyedMutation,
         valid_from: dt.datetime | None,
-    ) -> tuple[EntityMetadata, EntityMetadata, str | None]:
+        until: dt.datetime | None = None,
+    ) -> tuple[EntityMetadata, EntityMetadata, str | None, str | None]:
         """The keyed-verb prep every verb above (``delete`` excepted — it takes
         no Valid-Time bound) opens with: resolve the written instance's own
         accepted Metadata and its family's DECLARING entity (the entity that
@@ -453,13 +450,17 @@ class Transaction:
         (:func:`validate_write_value`, before any row is derived — with the
         object this transaction already buffered an insert for exempted, so an
         insert-then-update pair coalesces rather than being refused), then
-        validate +
-        render ``valid_from`` against that declaring entity's own
-        temporality (:func:`validate_valid_from`, spec §5). Returns the
-        record (``_buffer``'s own entity-name argument), the declaring entity
-        (a ``*Until`` verb's own :func:`validate_until` needs it too, for
-        its error message), and the rendered instant literal (``None`` for a
-        non-temporal/audit-only target)."""
+        validate + render the whole Valid-Time window against that declaring
+        entity's own temporality (:func:`validate_window`, spec §5).
+
+        The window is validated HERE for every verb, bounded and plain alike,
+        rather than leaving a ``*Until`` verb to add its own ``until`` step
+        afterwards: a bounded window is a PAIR, and asking half of it first is
+        what let an absent half be reported as something other than the missing
+        bound it is. Returns the record (``_buffer``'s own entity-name
+        argument), the declaring entity (the evidence resolution below needs
+        it), and the two rendered instant literals (``None`` where the target
+        or the verb states no such bound)."""
         record = metadata_of_instance(self._meta, node_or_instance)
         declaring = declaring_of(self._meta, record)
         validate_source_pin(record.identity, source_pin(node_or_instance))
@@ -469,8 +470,8 @@ class Transaction:
             mutation,
             inserted_here=lambda: self._has_buffered_insert(record, declaring, node_or_instance),
         )
-        valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
-        return record, declaring, valid_from_literal
+        valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
+        return record, declaring, valid_from_literal, until_literal
 
     def _authored_assignments(
         self, record: EntityMetadata, copy: EntityBase, mutation: KeyedMutation

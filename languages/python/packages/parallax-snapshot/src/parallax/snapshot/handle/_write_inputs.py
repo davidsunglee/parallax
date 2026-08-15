@@ -7,7 +7,7 @@ whole of it, which is what keeps one judgement and one buffer behind two
 representations:
 
 * build-time window validation every keyed AND ``_where`` temporal verb shares
-  (:func:`validate_valid_from`, :func:`validate_until`), the
+  (:func:`validate_window`), the
   finite-Transaction-Time-pin refusal every keyed verb runs on its source
   instance (:class:`TransactionTimePinReadOnlyError`,
   :func:`validate_source_pin`, :func:`source_pin`), and the provenance refusal
@@ -101,6 +101,7 @@ from parallax.core.object_query import Latest
 from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
+    BOUNDED_MUTATIONS,
     INSERT_MUTATIONS,
     BufferItem,
     ClaimScope,
@@ -169,8 +170,7 @@ __all__ = [
     "source_pin",
     "validate_keyed_instruction",
     "validate_source_pin",
-    "validate_until",
-    "validate_valid_from",
+    "validate_window",
     "validate_write_value",
     "written_object",
     "written_object_key",
@@ -1090,7 +1090,7 @@ def _row_payload(
 # Predicate-write materialization (m-opt-lock                                 #
 # "Predicate-selected writes materialize when observations are needed";       #
 # ADR 0014) — plus the build-time window/no-op validators every keyed AND     #
-# `_where` temporal verb shares (`validate_valid_from` / `validate_until`).   #
+# `_where` temporal verb shares (`validate_window`).                          #
 # `is_no_op_assignment` / `key_column_values` / `predecessor_payload` below   #
 # are pure per-row functions the SOLE caller                                  #
 # (`_predicate_writes._materialize_predicate_write`) drives against its OWN   #
@@ -1243,7 +1243,58 @@ def _stated_instant(name: str, mutation: KeyedMutation, bound: str, value: objec
     return value
 
 
-def validate_valid_from(
+def validate_window(
+    declaring_entity: EntityMetadata,
+    mutation: KeyedMutation,
+    valid_from: object,
+    until: object,
+) -> tuple[str | None, str | None]:
+    """One write verb's rendered Valid-Time bounds, validated together — the
+    single window gate every keyed AND ``_where`` temporal verb runs, in both
+    representations.
+
+    Three questions in a fixed order, because each presupposes the one before
+    it. **Is the window stated?** A ``*_until`` verb's window is a PAIR, and a
+    call stating one bound without the other has stated no window at all, so it
+    is refused whatever else the call turns out to be — before the target's
+    temporality is consulted and before either bound's type is. Which bound is
+    missing is asked of the MUTATION rather than of the other bound, because a
+    keyed update whose change set is wholly restoring buffers no instruction:
+    the window this seam waves through is a window the instruction build never
+    sees. **Does the target admit it?** (:func:`_validate_valid_from`.) **Is
+    each bound an instant, and is the window ordered?**
+    (:func:`_validate_until`, measuring ``until`` against the ``valid_from``
+    that judgement accepted.)
+
+    Which refusal follows from whose rule was broken. A half-stated window, a
+    bound the target's temporality does not admit, and an unordered window are
+    all the verb's OWN verdict on caller input
+    (:class:`~parallax.core.unit_work.WriteInstructionError`); a bound that is
+    no instant keeps `m-core`'s :class:`~parallax.core.base.InstantError`. All
+    are ``ValueError``s, and all precede any evidence question.
+    """
+    _require_stated_window(declaring_entity, mutation, valid_from, until)
+    valid_from_literal = _validate_valid_from(declaring_entity, mutation, valid_from)
+    if until is None:
+        return valid_from_literal, None
+    return valid_from_literal, _validate_until(declaring_entity, mutation, valid_from, until)
+
+
+def _require_stated_window(
+    declaring_entity: EntityMetadata, mutation: KeyedMutation, valid_from: object, until: object
+) -> None:
+    if mutation not in BOUNDED_MUTATIONS:
+        return
+    missing = "valid_from" if valid_from is None else "until" if until is None else None
+    if missing is None:
+        return
+    raise instructions.WriteInstructionError(
+        f"{declaring_entity.identity.name}: a bounded {mutation!r} states its window as a pair, "
+        f"and {missing} is absent"
+    )
+
+
+def _validate_valid_from(
     declaring_entity: EntityMetadata, mutation: KeyedMutation, valid_from: object
 ) -> str | None:
     """Validate and render a write verb's ``valid_from`` (`python.md` §5):
@@ -1278,7 +1329,7 @@ def validate_valid_from(
     return None
 
 
-def validate_until(
+def _validate_until(
     declaring_entity: EntityMetadata,
     mutation: KeyedMutation,
     valid_from: object,
@@ -1289,32 +1340,28 @@ def validate_until(
     `*_until` trio additionally requires `until`, with `valid_from <
     until` ... all validated at build"): reject an equal or reversed window
     — ``until`` must be strictly later than ``valid_from`` — at the verb
-    call, before any buffering (never at flush time). Shared by every keyed
-    AND ``_where`` ``*Until`` verb (``update_until`` / ``terminate_until`` /
-    ``update_until_where`` / ``terminate_until_where``) — one validator,
-    so none of the four can drift
-    from the others.
+    call, before any buffering (never at flush time).
 
     An unordered window is the verb's own verdict on caller input and raises
     :class:`~parallax.core.unit_work.WriteInstructionError`, exactly as
-    :func:`validate_valid_from`'s inadmissible bound does; an ``until`` that is
-    no ``timestamp`` keeps `m-core`'s
-    :class:`~parallax.core.base.InstantError`, exactly as that function's
-    ``valid_from`` does. BOTH bounds are asked here, because
-    :func:`validate_valid_from` returns a rendered literal rather than the
-    instant it judged and passes a NON-Bitemporal target's absent ``valid_from``
-    through untouched — so a bounded verb aimed at such a target arrives with
-    half a window, and comparing it would leak where a verdict belongs.
+    :func:`_validate_valid_from`'s inadmissible bound does; a bound that is no
+    ``timestamp`` keeps `m-core`'s :class:`~parallax.core.base.InstantError`,
+    exactly as that function's ``valid_from`` does. BOTH bounds are asked here,
+    because :func:`_validate_valid_from` returns a rendered literal rather than
+    the instant it judged, and a non-Bitemporal target's ``valid_from`` is one
+    it never rendered at all. Neither bound can be ABSENT here — that window is
+    no pair, which :func:`_require_stated_window` refused before either was
+    typed.
 
     NORMALIZES both bounds BEFORE comparing them: comparing raw,
     un-normalized datetimes let a naive ``until``
     (compared against an already-aware ``valid_from``, since
-    ``validate_valid_from`` — this verb's own sibling, called first —
+    ``_validate_valid_from`` — this verb's own sibling, called first —
     already normalizes/rejects a naive ``valid_from``) leak a bare
     ``TypeError`` from the ``<=`` comparison itself, rather than the
     :class:`~parallax.core.base.InstantError`
     :func:`~parallax.core.base.normalize_instant` raises for
-    any naive datetime (mirroring ``validate_valid_from``'s own
+    any naive datetime (mirroring ``_validate_valid_from``'s own
     ``instant_literal``-based handling exactly)."""
     name = declaring_entity.identity.name
     valid_from_normalized = normalize_instant(

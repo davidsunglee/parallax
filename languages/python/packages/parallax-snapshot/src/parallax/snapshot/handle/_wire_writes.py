@@ -104,8 +104,7 @@ from parallax.snapshot.handle._write_inputs import (
     resolve_write_evidence,
     validate_keyed_instruction,
     validate_source_pin,
-    validate_until,
-    validate_valid_from,
+    validate_window,
     written_object_of_row,
 )
 from parallax.snapshot.materialize import WireEntity, source_hint_of
@@ -141,8 +140,6 @@ temporal selection, result narrowing, and Include Paths all shape a RESULT and a
 set-based write has none to shape."""
 
 _UPDATE_MUTATIONS = frozenset({"update", "updateUntil"})
-
-_BOUNDED_MUTATIONS = frozenset({"insertUntil", "updateUntil", "terminateUntil"})
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
@@ -197,7 +194,7 @@ def wire_insert(
     entity = instructions.resolve_target(lane.meta, entity_name)
     _refuse_published_source(entity, data, mutation)
     declaring = declaring_of(lane.meta, entity)
-    valid_from_literal, until_literal = _validated_window(declaring, mutation, valid_from, until)
+    valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
     row = _decoded_row(lane.meta, entity, payload)
     _refuse_framework_owned(lane.meta, entity, row)
     instruction = keyed_instruction(
@@ -241,7 +238,7 @@ def wire_keyed_write(
     record = _concrete_entity(lane.meta, hint)
     declaring = declaring_of(lane.meta, record)
     validate_source_pin(record.identity, hint.pin)
-    valid_from_literal, until_literal = _validated_window(declaring, mutation, valid_from, until)
+    valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
     identity_row = dict(hint.object_key.primary_key)
     members = _row_members(lane.meta, record)
     assignments = _judged_changes(lane.meta, record, members, authored)
@@ -303,7 +300,7 @@ def wire_predicate_write(
     authored = _authored_changes(mutation, changes)
     entity = instructions.resolve_target(lane.meta, entity_name)
     declaring = declaring_of(lane.meta, entity)
-    valid_from_literal, until_literal = _validated_window(declaring, mutation, valid_from, until)
+    valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
     assignments = _judged_changes(lane.meta, entity, _row_members(lane.meta, entity), authored)
     doc: dict[str, object] = {
         "mutation": mutation,
@@ -495,8 +492,11 @@ def _refuse_published_source(entity: EntityMetadata, data: object, mutation: Key
 
     The Wire peer of the Typed provenance refusal, under the same code: a node a
     read returned names a row this store already holds, so the verb that writes
-    it is ``tx.wire.update``. Asked before anything is derived from the payload,
-    exactly as the Typed refusal is.
+    it is ``tx.wire.update``. It follows the payload's own shape judgement and
+    the Entity spelling's resolution — shape leads because a call that states no
+    document hears that first, and the Identity this verdict carries is the
+    resolved one — and precedes every judgement about the payload's MEMBERS, so
+    a published value is refused as one rather than measured member by member.
     """
     if isinstance(data, WireEntity) and source_hint_of(data) is not None:
         raise KeyedWriteValueError(
@@ -748,39 +748,3 @@ def _document_key(key: object, described: str) -> str:
             f"{described} is keyed by names, and {key!r} is not one"
         )
     return key
-
-
-def _validated_window(
-    declaring: EntityMetadata,
-    mutation: KeyedMutation,
-    valid_from: dt.datetime | None,
-    until: dt.datetime | None,
-) -> tuple[str | None, str | None]:
-    """One Wire write's rendered Valid-Time bounds, validated together.
-
-    Stated once for all three ingresses because the ORDER within it is the rule:
-    the target's temporality judges ``valid_from`` first, and ``until`` is
-    measured against the bound that judgement accepted. An unbounded verb passes
-    no ``until`` and receives none; a ``*_until`` verb's signature requires both,
-    and a caller that states one bound without the other is refused rather than
-    given the unbounded window it did not ask for.
-
-    Which bound is missing is asked of the MUTATION rather than of the other
-    bound, because the instruction build is not always downstream of this: a
-    keyed update whose change set turns out wholly restoring buffers nothing,
-    so a window this seam waves through is a window nothing else ever judges.
-    """
-    valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
-    if until is None:
-        if mutation in _BOUNDED_MUTATIONS:
-            raise instructions.WriteInstructionError(
-                f"{declaring.identity.name}: a bounded {mutation!r} states its window as a pair, "
-                "and until is absent"
-            )
-        return valid_from_literal, None
-    if valid_from is None:
-        raise instructions.WriteInstructionError(
-            f"{declaring.identity.name}: a bounded {mutation!r} states its window as a pair, "
-            "and valid_from is absent"
-        )
-    return valid_from_literal, validate_until(declaring, mutation, valid_from, until)
