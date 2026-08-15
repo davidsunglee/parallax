@@ -52,6 +52,7 @@ from parallax.core.base._neutral import (
     coerce_neutral_input,
     decode_neutral_literal,
     matches_neutral_type,
+    utc_instant,
 )
 
 __all__ = [
@@ -218,7 +219,7 @@ INFINITY: Final[TemporalBound] = TemporalBound.INFINITY
 
 class InstantError(ValueError):
     """A ``timestamp`` value violates the m-core UTC / precision rules, or names
-    an instant no UTC ``datetime`` holds."""
+    no instant a UTC ``datetime`` holds."""
 
 
 def is_neutral_type(name: str) -> bool:
@@ -255,18 +256,20 @@ def normalize_instant(value: dt.datetime) -> dt.datetime:
     possible for a ``datetime`` input.
 
     Total over every :class:`datetime.datetime`, which is what makes this a
-    boundary rather than a step on the way to one: an aware value at the
-    representational edge — ``datetime.min`` east of UTC, ``datetime.max`` west
-    of it — names an instant that has no UTC ``datetime`` at all, and it earns
-    the same verdict every other unusable ``timestamp`` does rather than
-    escaping as the ``OverflowError`` the conversion itself raises.
+    boundary rather than a step on the way to one. A value the ``timestamp``
+    space has no member for earns the same verdict every other unusable one
+    does rather than escaping as whatever the conversion itself raises: an
+    aware value at the representational edge — ``datetime.min`` east of UTC,
+    ``datetime.max`` west of it — names an instant no UTC ``datetime`` holds,
+    and a ``tzinfo`` answering no offset or one outside the day ``datetime``
+    arithmetic admits places its value on no timeline at all.
     """
-    if value.utcoffset() is None:
+    instant = utc_instant(value)
+    if instant is not None:
+        return instant
+    if value.tzinfo is None:
         raise InstantError("a naive datetime is not a valid `timestamp`; attach a tzinfo")
-    try:
-        return value.astimezone(dt.UTC)
-    except OverflowError as overflow:
-        raise InstantError(
-            f"{value!r} is not a valid `timestamp`; its UTC instant is outside the "
-            "representable datetime range"
-        ) from overflow
+    raise InstantError(
+        f"{value!r} is not a valid `timestamp`: no UTC datetime names its instant — an aware "
+        "value at the representational edge, or a tzinfo answering no usable offset"
+    )

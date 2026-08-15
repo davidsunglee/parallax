@@ -87,18 +87,34 @@ def test_normalize_instant_rejects_naive() -> None:
         base.normalize_instant(dt.datetime(2026, 7, 12, 8, 30, 0))
 
 
+class _UnusableOffset(dt.tzinfo):
+    """A ``tzinfo`` answering an offset `datetime` arithmetic refuses.
+
+    Constructible and attachable — the constructor asks a ``tzinfo`` for
+    nothing — so a value carrying one reaches the boundary like any other.
+    """
+
+    def utcoffset(self, dt_: dt.datetime | None) -> dt.timedelta:
+        return dt.timedelta(hours=25)
+
+    def dst(self, dt_: dt.datetime | None) -> dt.timedelta | None:
+        return None
+
+
 @pytest.mark.parametrize(
-    "edge",
+    "unusable",
     [
         dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=14))),
         dt.datetime.max.replace(tzinfo=dt.timezone(dt.timedelta(hours=-14))),
+        dt.datetime(2026, 7, 12, tzinfo=_UnusableOffset()),
     ],
-    ids=["min-east-of-utc", "max-west-of-utc"],
+    ids=["min-east-of-utc", "max-west-of-utc", "offset-beyond-a-day"],
 )
-def test_normalize_instant_rejects_an_instant_no_utc_datetime_holds(edge: dt.datetime) -> None:
-    # An aware value at the representational edge is a `datetime` and carries an
-    # offset, so it passes every check short of the conversion itself, which
-    # overflows. The boundary is total over `datetime`: this is a `timestamp`
-    # verdict like any other, not an arithmetic accident reaching the caller.
+def test_normalize_instant_rejects_a_datetime_naming_no_instant(unusable: dt.datetime) -> None:
+    # Each of these is a `datetime` that answers no UTC instant, and each fails
+    # in its own primitive: the two edges overflow the conversion, while an
+    # offset beyond a day is refused by the offset accessor before any
+    # conversion runs. The boundary is total over `datetime`, so all three are
+    # `timestamp` verdicts rather than arithmetic accidents reaching the caller.
     with pytest.raises(base.InstantError):
-        base.normalize_instant(edge)
+        base.normalize_instant(unusable)

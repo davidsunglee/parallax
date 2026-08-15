@@ -35,6 +35,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core.base import InstantError
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.predicate import CanonicalDocumentError
@@ -82,6 +83,34 @@ _PERSON_TARGET: dict[str, object] = {
     "entity": "parallax.compatibility.Person",
     "predicate": {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}},
 }
+
+
+class Sample(Entity, table="sample", namespace="parallax.compatibility"):
+    """A LOCAL entity declaring a plain, assignable `timestamp` member.
+
+    Every corpus `timestamp` is a framework-owned axis bound, which no write may
+    assign, so an authored instant reaches the member judgement only through a
+    model declared here.
+    """
+
+    id: Attr[int] = attr(primary_key=True)
+    taken: Attr[dt.datetime]
+
+
+SAMPLE_META = DomainModel(Sample)
+
+_SAMPLE_ROW: Row = {"id": 1, "taken": dt.datetime(2024, 5, 1, tzinfo=dt.UTC)}
+_SAMPLE_QUERY: dict[str, object] = {
+    "target": "parallax.compatibility.Sample",
+    "predicate": {"eq": {"attr": "parallax.compatibility.Sample.id", "value": 1}},
+}
+_SAMPLE_TARGET: dict[str, object] = {
+    "entity": "parallax.compatibility.Sample",
+    "predicate": {"eq": {"attr": "parallax.compatibility.Sample.id", "value": 1}},
+}
+# `datetime.min` fourteen hours east of UTC: an accepted wire spelling naming an
+# instant before the first one a canonical UTC spelling can write.
+_UNSPELLABLE_INSTANT = "0001-01-01T00:00:00.000000+14:00"
 _POSITION_TARGET: dict[str, object] = {
     "entity": "parallax.compatibility.WherePosition",
     "predicate": {"eq": {"attr": "parallax.compatibility.WherePosition.id", "value": 1}},
@@ -458,6 +487,41 @@ def test_a_bound_carries_the_refusal_of_whichever_rule_it_broke() -> None:
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
     assert _writes(port) == []
+
+
+def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -> None:
+    # A member VALUE is judged before it is buffered, and for a `timestamp`
+    # awareness is not membership: this spelling decodes into an aware
+    # `datetime` whose instant no UTC one holds, so the value space has no
+    # member for it and neither does any Wire Value. Buffering it would leave an
+    # instruction every later encode overflows on — the stored document, the
+    # Wire read of what was written, the bind — with the verb long returned.
+    #
+    # Which refusal is whose rule, exactly as for every other bad value here: an
+    # assignment is the member judgement's, and an insert payload is the
+    # normative payload rule's.
+    keyed = RecordingPort(rows=[dict(_SAMPLE_ROW)])
+    inserted = RecordingPort(rows=[])
+    selected = RecordingPort(rows=[])
+
+    def update(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="does not match the declared"):
+            tx.wire.update(_node(tx, _SAMPLE_QUERY), {"taken": _UNSPELLABLE_INSTANT})
+
+    def insert(tx: Transaction) -> None:
+        with pytest.raises(WriteRejectedError) as caught:
+            tx.wire.insert(
+                "parallax.compatibility.Sample", {"id": 2, "taken": _UNSPELLABLE_INSTANT}
+            )
+        assert caught.value.rule == "write-value-type-mismatch"
+
+    def update_where(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="does not match the declared"):
+            tx.wire.update_where(_SAMPLE_TARGET, {"taken": _UNSPELLABLE_INSTANT})
+
+    for port, fn in ((keyed, update), (inserted, insert), (selected, update_where)):
+        Database.connect(port, SAMPLE_META, clock=FixedClock(FIXED)).transact(fn)
+        assert _writes(port) == []
 
 
 def test_a_non_temporal_target_takes_no_valid_from() -> None:

@@ -1480,11 +1480,12 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 # what the conformance ingress gives the same instruction (it takes no          #
 # `dt.datetime` at all, so it has no other candidate).                          #
 #                                                                               #
-# The three kinds below stand for the whole argument space — a bound whose      #
-# rendering rejects it as naive, one whose UTC normalization overflows the      #
-# representable range, one that renders cleanly — on each of the two bound      #
-# slots. The first two are ONE refusal: an unusable bound is `InstantError`     #
-# whichever way it fails to render.                                             #
+# The kinds below stand for the whole argument space by VERDICT — a bound whose #
+# rendering refuses it as naive and one whose UTC normalization has no          #
+# representable answer, against one that renders cleanly — on each of the two   #
+# bound slots. The refusing kinds are ONE refusal, and rendering is total over  #
+# `datetime`, so every other way a bound can fail to render (a tzinfo answering #
+# no usable offset) joins them rather than adding a verdict.                    #
 # --------------------------------------------------------------------------- #
 _NAIVE = dt.datetime(2024, 7, 1)
 _AWARE = dt.datetime(2024, 8, 1, tzinfo=dt.UTC)

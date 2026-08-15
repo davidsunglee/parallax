@@ -1820,7 +1820,7 @@ or descriptor authoring form and performs no audit stamping.
   | `bytes` | `bytes` | `bytes` | driver bytea via dialect bind seam |
   | `decimal(p,s)` | `decimal.Decimal` | `Decimal` or `int`; `float` rejected; precision/scale validated | driver numeric → `Decimal` on read |
   | `date` / `time` | `datetime.date` / `datetime.time` | wall-clock; `time` with `tzinfo` rejected | driver date/time, no instant semantics |
-  | `timestamp` | tz-aware `datetime` | naive rejected; normalized UTC; microseconds | `timestamptz`; aware UTC on read |
+  | `timestamp` | tz-aware `datetime` | naive rejected; an instant no UTC `datetime` holds rejected; normalized UTC; microseconds | `timestamptz`; aware UTC on read |
   | `uuid` | `uuid.UUID` | `UUID` or canonical string | driver uuid |
   | `json` (value object only — `m-core` admits no direct `json` member) | nested frozen value-object class | the VO class instance; never a raw dict | structured column per dialect |
 
@@ -3694,8 +3694,8 @@ or descriptor authoring form and performs no audit stamping.
   translating its spellings — a Python tuple rewritten as a list would make this
   the one boundary accepting an operand array that serde rejects; and
   `InstantError` where an admitted bound is no `m-core` instant — a naive
-  datetime, a value of no datetime type at all, or an aware one whose UTC
-  instant no `datetime` holds. All are `ValueError`s and
+  datetime, a value of no datetime type at all, or an aware one naming no
+  instant a UTC `datetime` holds. All are `ValueError`s and
   all precede any evidence question. Assignment
   legality is `judge_assignment`'s single verdict, reached through the same
   family-effective resolution the canonical predicate assignment uses, so
