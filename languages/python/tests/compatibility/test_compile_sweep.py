@@ -128,10 +128,19 @@ def _pointer_ok(shape: str, pointer: str) -> bool:
 
 def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) -> None:
     """Grade a keyed unit-of-work write case: per-step emissions == the golden DML,
-    round trips == ``then.roundTrips``, and every casePointer well-formed for the shape."""
+    round trips == the DML statement count, and every casePointer well-formed for
+    the shape.
+
+    The compile lane lowers a write buffer and issues nothing, so what it can
+    report is the DML it emitted. `then.roundTrips` counts the RESOLVING READS a
+    keyed write verb's source requires beside that DML (`m-case-format`
+    *Resolving reads a write owes*), which only the run lane performs — so the
+    two numbers coincide for a case whose writes open rows and differ by exactly
+    those reads for a case whose writes address existing ones.
+    """
     assert envelope["status"] == "ok", envelope
     golden_statements = write_golden_statements(case)
-    assert envelope["roundTrips"] == case_document(case)["then"]["roundTrips"], case.case_id
+    assert envelope["roundTrips"] == len(golden_statements), case.case_id
     emissions = envelope["emissions"]
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
     for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):

@@ -14,7 +14,7 @@ carried by this MODULE's underscore — the same convention the private
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Final, cast
 
@@ -26,9 +26,10 @@ from parallax.core.base import PresentDocument, SqlNull
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, DocumentReadOrdinals, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.unit_work import FixedClock
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Database
+from parallax.core.unit_work import FixedClock, RetainedObservation
+from parallax.snapshot import InvalidData, connect
+from parallax.snapshot.handle import Database, Snapshot
+from parallax.snapshot.materialize import WireEntity, source_hint_of
 
 __all__ = [
     "ACCOUNT",
@@ -55,6 +56,7 @@ __all__ = [
     "deadlock",
     "grace",
     "new_account",
+    "published_claims",
 ]
 
 
@@ -216,6 +218,40 @@ def account_db(port: RecordingPort) -> Database:
 
 def db_for(meta: DomainModel, port: RecordingPort) -> Database:
     return Database.connect(port, meta, clock=FixedClock(FIXED))
+
+
+def published_claims(snapshot: Snapshot[WireEntity]) -> tuple[RetainedObservation, ...]:
+    """The retained claims the Entity nodes ``snapshot`` PUBLISHED carry, each
+    once, in the order the walk reaches them.
+
+    What a first-party holder of a Wire result reads off `source_hint_of`, and
+    the same walk the conformance engine runs over a grouped find's own output.
+    Publication is what settles ownership: a claim belongs to a value a caller
+    was handed, so a projection no published root reaches contributes none. A
+    frozen Wire node is a ``dict`` and therefore unhashable, which is why the
+    visited set is identity-keyed over objects the Snapshot holds throughout.
+    """
+    claims: list[RetainedObservation] = []
+    visited: set[int] = set()
+    frontier: list[object] = list(snapshot.checked().results())
+    cursor = 0
+    while cursor < len(frontier):
+        value = frontier[cursor]
+        cursor += 1
+        if isinstance(value, InvalidData):
+            frontier.append(cast("InvalidData[object]", value).data)
+            continue
+        if isinstance(value, list):
+            frontier.extend(cast("list[object]", value))
+            continue
+        if not isinstance(value, WireEntity) or id(value) in visited:
+            continue
+        visited.add(id(value))
+        hint = source_hint_of(value)
+        if hint is not None and hint.observation is not None:
+            claims.append(hint.observation)
+        frontier.extend(cast("Mapping[str, object]", value).values())
+    return tuple(claims)
 
 
 # --------------------------------------------------------------------------- #

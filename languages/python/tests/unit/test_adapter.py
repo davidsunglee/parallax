@@ -849,22 +849,24 @@ def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> N
 
 class _WriteAndReadBackPort:
     """A no-Docker port that accepts writes (never raising) and answers every
-    read with empty rows — enough for a writeSequence case's trailing
-    ``read_table_state`` call-back, which this test does not inspect.
+    read with ``rows`` — the resolving read a keyed write's source needs, and
+    enough for a writeSequence case's trailing ``read_table_state`` call-back,
+    which this test does not inspect.
 
     ``affected`` scripts the row count each successive write reports, defaulting
     to one. A batched keyed write expects every row its target addresses, so a
     collapsed statement that reported a single row would read as a shortfall.
     """
 
-    def __init__(self, affected: Sequence[int] = ()) -> None:
+    def __init__(self, affected: Sequence[int] = (), rows: Sequence[Row] = ()) -> None:
         self.writes = 0
         self._affected = list(affected)
+        self._rows = list(rows)
 
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return []
+        return list(self._rows)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         self.writes += 1
@@ -883,11 +885,22 @@ def test_run_case_runs_a_genuine_batch_collapse_write() -> None:
     # engine passes each row list through as one multi-row instruction, and
     # the lowering seam renders it end to end — two `execute_write` calls total,
     # reporting the three and two rows their targets respectively address.
+    #
+    # The canned rows are what the update entry's own resolving read publishes:
+    # one membership read over the keys that entry addresses, which is what keeps
+    # the collapse intact — a read between the two writes would flush the first
+    # alone (`m-case-format` *Resolving reads a write owes*).
     case_path = case_format.default_cases_dir() / "m-batch-write-001-set-based-flush.yaml"
-    port = _WriteAndReadBackPort([3, 2])
+    port = _WriteAndReadBackPort(
+        [3, 2],
+        rows=[
+            {"id": 10, "owner": "Mira", "balance": Decimal("100.00")},
+            {"id": 11, "owner": "Omar", "balance": Decimal("20.00")},
+        ],
+    )
     envelope = adapter.run_case(case_path, "postgres", port)
     assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["roundTrips"] == 2
+    assert envelope["observations"]["roundTrips"] == 3
     assert port.writes == 2
 
 

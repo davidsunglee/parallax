@@ -9,20 +9,18 @@ holding grants can define it for both. A module that reaches nothing at all is
 the only place left, which is why this one imports nothing but the standard
 library.
 
-The other three are raised from the parent ``parallax.snapshot.handle`` scope
+The other two are raised from the parent ``parallax.snapshot.handle`` scope
 alone — :class:`SnapshotConnectionError` from ``_database`` and
-``_transaction``, :class:`SnapshotMaterializationError` from ``_read``,
-:class:`UnobservedWriteError` from ``_transaction`` — so nothing about their
-raise sites compels this module, and their membership is a placement decision
-rather than a structural one. Only the first of the three lacks a single home
-of its own: class-backed capability is checked at both read doors, so either
-module defining it would have the other import a sibling for a class neither
-owns. The remaining two each have one raiser and one deciding surface — the
-materialization boundary ``_read`` translates at, and the Observation-Key
-dereference ``tx.write_neutral`` performs — and are here for one reason only,
-which is that the scope's four developer-facing refusals are then read in one
-place. Nothing structural rules on those two, and moving either beside its
-surface would cost this module nothing.
+``_transaction``, :class:`SnapshotMaterializationError` from ``_read`` — so
+nothing about their raise sites compels this module, and their membership is a
+placement decision rather than a structural one. Only the first of the two lacks
+a single home of its own: class-backed capability is checked at both read doors,
+so either module defining it would have the other import a sibling for a class
+neither owns. The second has one raiser and one deciding surface — the
+materialization boundary ``_read`` translates at — and is here for one reason
+only, which is that the scope's three developer-facing refusals are then read in
+one place. Nothing structural rules on it, and moving it beside its surface
+would cost this module nothing.
 
 The package's other developer-facing refusals are declared with the surface
 that decides them: ``DeferredFeatureError`` by the Feature inventory it reports
@@ -60,7 +58,6 @@ __all__ = [
     "QueryTargetError",
     "SnapshotConnectionError",
     "SnapshotMaterializationError",
-    "UnobservedWriteError",
 ]
 
 
@@ -102,26 +99,6 @@ class SnapshotMaterializationError(RuntimeError):
     def __init__(self, message: str, *, cause: BaseException) -> None:
         super().__init__(message)
         self.cause = cause
-
-
-class UnobservedWriteError(LookupError):
-    """A neutral write named an Observed State Key no evidence of this unit of
-    work's is reachable under.
-
-    An Observed State Key is a REFERENCE into the transaction's own weak index of
-    the states its reads saw, so ``tx.write_neutral`` dereferences it at the call
-    rather than carrying it to planning: the defect is about what was read, and
-    letting the write settle bare would surface it at flush as a licensing
-    failure about what is being written — the wrong cause, one layer too late.
-
-    A ``LookupError`` because that is what it is: the key resolved to nothing.
-    Distinct from the `m-opt-lock` licensing refusals, which report that a
-    settled write lacks evidence it structurally requires, rather than that a
-    caller's reference missed. :data:`code` and the message are its whole public
-    state; the key itself is not retained.
-    """
-
-    code: Final[str] = "write-observation-not-recorded"
 
 
 class QueryTargetError(RuntimeError):

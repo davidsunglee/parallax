@@ -104,4 +104,4 @@ then:
         out_z: infinity
         probe:
           model: TH-2
-  roundTrips: 3
+  roundTrips: 4

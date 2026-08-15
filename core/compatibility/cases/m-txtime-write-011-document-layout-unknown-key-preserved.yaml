@@ -98,4 +98,4 @@ then:
             cargo: grain
             sealNumber: S-4021
           legs: []
-  roundTrips: 2
+  roundTrips: 3

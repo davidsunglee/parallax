@@ -33,17 +33,15 @@ public-surface check promises. Where the exported names live:
   lane's standalone close probe wired with the same concurrency adapter.
 - :mod:`~parallax.snapshot.handle._transaction` — :class:`Transaction`: the
   developer verbs a ``db.transact`` closure drives, and the participating
-  :meth:`Transaction.find`; plus :class:`ObservedRead`, the Snapshot-and-evidence
-  pair the first-party conformance bridge reads through.
+  :meth:`Transaction.find`.
 - :mod:`~parallax.snapshot.handle._errors` — :class:`QueryTargetError`, the
   refusal of a query whose target the connected model does not declare, raised
   by the shared read-preflight seam and by the write side's target resolution
   alike, :class:`SnapshotConnectionError`, the refusal of a model that names
-  no Entity Class to materialize into, :class:`SnapshotMaterializationError`,
-  the one translation of a graph-construction or lifecycle failure at the
-  materialization boundary, and :class:`UnobservedWriteError`, the refusal of an
-  Observed State Key naming no evidence this unit of work can reach. All four are
-  defined in a dependency-free leaf so every raiser can name them.
+  no Entity Class to materialize into, and
+  :class:`SnapshotMaterializationError`, the one translation of a
+  graph-construction or lifecycle failure at the materialization boundary. All
+  three are defined in a dependency-free leaf so every raiser can name them.
 - :mod:`~parallax.snapshot.handle._features` — :class:`DeferredFeatureError`,
   beside the fixed inventory of Deferred Execution Features it reports and the
   recognizer that matches a canonical Object Query against them.
@@ -132,7 +130,6 @@ from parallax.snapshot.handle._errors import (
     QueryTargetError,
     SnapshotConnectionError,
     SnapshotMaterializationError,
-    UnobservedWriteError,
 )
 from parallax.snapshot.handle._features import DeferredFeatureError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
@@ -151,7 +148,7 @@ from parallax.snapshot.handle._read import (
     find_history,
 )
 from parallax.snapshot.handle._step_lowering import lower_step
-from parallax.snapshot.handle._transaction import ObservedRead, Transaction
+from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import (
     WireChanges,
     WireDatabaseView,
@@ -193,7 +190,6 @@ __all__ = [
     "KeyedWriteValueError",
     "NoResultFound",
     "ObjectKey",
-    "ObservedRead",
     "PublishedRow",
     "QueryTargetError",
     "ReadTrace",
@@ -211,7 +207,6 @@ __all__ = [
     "TransactionOwnershipError",
     "TransactionResult",
     "TransactionTimePinReadOnlyError",
-    "UnobservedWriteError",
     "WireChanges",
     "WireDatabaseView",
     "WireEntity",

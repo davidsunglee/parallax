@@ -38,4 +38,4 @@ then:
       - { id: 1, owner: Ada, balance: 111.00 }
       - { id: 2, owner: Linus, balance: 222.00 }
       - { id: 3, owner: Grace, balance: 10.00 }
-  roundTrips: 2
+  roundTrips: 3

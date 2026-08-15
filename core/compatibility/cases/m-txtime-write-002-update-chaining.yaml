@@ -51,4 +51,4 @@ then:
     balance:
       - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
       - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
-  roundTrips: 3
+  roundTrips: 4

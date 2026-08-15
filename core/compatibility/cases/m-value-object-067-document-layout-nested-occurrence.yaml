@@ -65,4 +65,4 @@ then:
               country: "NO"
           tags:
             - { label: pilot }
-  roundTrips: 2
+  roundTrips: 3

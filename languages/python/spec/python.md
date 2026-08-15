@@ -2835,8 +2835,8 @@ or descriptor authoring form and performs no audit stamping.
   A participating `tx.find` shares its `ReadTrace` object with the attempt that
   issued it, so `snapshot.execution` and `tx.execution_log` never disagree about
   what a level cost.
-- **The first-party seams beside the developer surface.** Two capabilities live
-  on the handles without being developer surface, and neither has a `Neutral*`
+- **The first-party seam beside the developer surface.** One capability lives on
+  the handles without being developer surface, and it has no `Neutral*`
   vocabulary: the public read interfaces are `db.find` / `tx.find` and
   `db.wire.find` / `tx.wire.find`, and nothing else answers a result.
   `db.read_rows(query)` / `tx.read_rows(query)` are the **values lane** — one
@@ -2854,40 +2854,16 @@ or descriptor authoring form and performs no audit stamping.
   Document Layout. It is not a third public result format: it exists for a
   first-party caller grading flat results, and its element type is the same union
   both public materializers publish.
-  `tx.observed_read(query)` and `tx.write_neutral(instruction, *, observation:
-  ObservedStateKey | WriteObservation | None = None)` are the **conformance
-  bridge**, first-party and scheduled to end. What ends it is not the existence
-  of the Wire write verbs — those are the developer surface, and they exist —
-  but the corpus write lanes holding published VALUES rather than authored
-  instructions: a case that authors a row and no read cannot state a source, and
-  a keyed verb takes nothing else.
-  `observed_read` runs the participating Wire read and answers an `ObservedRead`
-  pairing that `Snapshot[WireEntity]` with the `RetainedObservation`s the read
-  retained, because only their producer can pair an address with the evidence it
-  names, and holding them is what keeps that evidence alive for a later bridge
-  write; `write_neutral` validates and buffers one already-decoded write
-  instruction for the same Write Planner the typed verbs feed and reaches no read
-  executor. `observation` states that evidence three ways and only three. An
-  `ObservedStateKey` is a REFERENCE into this unit of work's own weak index and
-  dereferences immediately — a key naming no reachable observation raises
-  `UnobservedWriteError` (`write-observation-not-recorded`) at the call rather
-  than settling bare, and a key outlives no unit of work. A `WriteObservation`
-  is evidence the caller HOLDS and is used as given: this is the one licensed
-  way a keyed write settles against a row no read of this unit of work
-  materialized (see *Versioned keyed writes require prior observation* below),
-  and a target entitled to none refuses it exactly where a resolved one is
-  refused rather than having it dropped; an instruction naming several rows can
-  carry neither shape at all and is refused before it takes any claim, one
-  observation being evidence about one row. `None` states that the caller holds
-  none, and what the write then settles against is the claim-scope derivation's
-  answer for its target and mutation — nothing for an insert, its `ObjectKey`
-  for an unversioned non-temporal existing-row write naming ONE row, and nothing
-  for an instruction naming several, which addresses no single object — so this
-  ingress claims what the typed verb for the same write would claim. A
-  `PredicateWrite` resolves its own per-row evidence, so supplying any
-  observation with one raises `TypeError` rather than silently dropping it.
-  `Database(port, accepted_metamodel)` is the advanced connection these seams are
-  reachable through; `Database.connect(...)` additionally admits every Domain
+  There is **no write peer of it**. A caller holding no Entity Class states its
+  writes through `tx.wire.*` exactly as a developer does: an existing row is
+  addressed and licensed by a value `tx.wire.find` published, a fresh row by the
+  payload `tx.wire.insert` opens it with — which answers the frozen node it
+  buffered, so a pure Wire caller can revise the row it just opened — and a set
+  by a selection plus its assignments. There is no ingress taking an
+  already-decoded write instruction, and therefore no way to name an observed
+  state as an address: evidence is what a value carries, never an argument.
+  `Database(port, accepted_metamodel)` is the advanced connection the values lane
+  is reachable through; `Database.connect(...)` additionally admits every Domain
   Model. There is no `read_neutral`, `connect_neutral`, `plan_neutral`,
   `compile_neutral`, neutral write on `Database`, or public flush: runtime returns
   and retains no `WritePlan`, and a buffered write executes only when a dependency
@@ -3081,14 +3057,12 @@ or descriptor authoring form and performs no audit stamping.
   answers nothing for it and — its caller having supplied nothing either — it
   claims nothing and buffers bare. Evidence supplied WITH such an instruction is
   refused by the single-row carrier instead, before the write takes any claim,
-  because one observation is evidence about one row. Both write ingresses run
-  the derivation for a write whose
-  caller holds no evidence of its own, so what a `tx.update` claims and what the
-  conformance bridge's `write_neutral` claims for the same instruction cannot
-  differ; and every caller holding the instruction rather than the value it came
-  from — `write_neutral` and the pure re-lowering oracle — reads the whole
-  ingress rule, supplied evidence used as given and the derivation otherwise,
-  from one `opt_lock.instruction_evidence`. The write travels to planning as the
+  because one observation is evidence about one row. No runtime ingress builds a
+  plural keyed instruction — every verb, Typed and Wire, addresses one row — so
+  that shape is reachable only by a caller holding an instruction rather than the
+  value it came from, and such a caller reads the whole ingress rule, supplied
+  evidence used as given and the derivation otherwise, from one
+  `opt_lock.instruction_evidence`. The write travels to planning as the
   carrier its answer implies: `ObservedKeyedWrite` with the retained observation,
   `ObjectClaimedWrite` with the members its author restored, or the bare
   instruction.
@@ -3440,9 +3414,7 @@ or descriptor authoring form and performs no audit stamping.
   the verb that does accept the value rather than reporting only that evidence
   was missing. The **insert** side does not overlap at all: an insert observes no
   state, so `write-value-already-stored` is the only refusal a stored value earns
-  there. `UnobservedWriteError` stays separate from both for the same reason it
-  is raised where it is: it reports an unresolvable reference to what was READ,
-  not a judgement about the value being written. The
+  there. The
   refusal is decided in the shared keyed-verb preamble, **before** any row is
   derived, so a refused value reaches no codec, no buffer, no plan, and no
   adapter — it is never a translation of a lower-level failure, and no

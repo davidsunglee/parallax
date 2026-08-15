@@ -1590,23 +1590,23 @@ def test_a_non_utc_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> No
     assert "2024-09-01T00:00:00+00:00" in middle_binds  # the authored `until`, in UTC
 
 
-def test_no_typed_bound_reaches_the_neutral_ingress_uncanonicalized() -> None:
+def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     # WHAT THIS PINS. A `PredicateWrite` this lane builds never carries a
     # non-canonical value in a canonical field, proved on the shape that binds
     # BOTH Valid-Time slots into SQL — a bitemporal `updateUntil`, whose
     # rectangle split emits four statements:
     #
-    #   - a bound that cannot render never becomes an instruction, so
-    #     `write_neutral` is never reached and no statement is ever issued;
+    #   - a bound that cannot render never becomes an instruction, so nothing is
+    #     buffered and no statement is ever issued;
     #   - a bound that can render arrives already normalized, so the four
     #     statements a typed call produces are INDISTINGUISHABLE from the ones
-    #     `write_neutral` produces for the canonical instruction the
-    #     conformance engine would hand it. Anything other than the canonical
-    #     literal in either slot would show up as a differing bind.
+    #     the WIRE peer produces for the canonical target and bounds the
+    #     conformance engine hands it. Anything other than the canonical literal
+    #     in either slot would show up as a differing bind.
     #
-    # WHAT IT DOES NOT PIN: what the seam itself tolerates. Neither
-    # `write_neutral` nor `validate_instruction` reads a bound,
-    # and `write-instruction.schema.json` types a Valid-Time instant as a
+    # WHAT IT DOES NOT PIN: what the shared lowering itself tolerates.
+    # `validate_instruction` reads no bound, and
+    # `write-instruction.schema.json` types a Valid-Time instant as a
     # non-empty string with no pattern, so a caller that hand-authors a document
     # containing a malformed instant still deserializes and still reaches SQL
     # through this same seam. Refusing that belongs to the instruction serde;
@@ -1640,26 +1640,21 @@ def test_no_typed_bound_reaches_the_neutral_ingress_uncanonicalized() -> None:
         typed, concurrency="optimistic"
     )
 
-    canonical = instructions.deserialize(
-        {
-            "mutation": "updateUntil",
-            "target": {
+    seam_port = RecordingPort(rows=[_position_row()])
+
+    def wire(tx: Transaction) -> None:
+        tx.wire.update_until_where(
+            {
                 "entity": "WherePosition",
                 "predicate": {"eq": {"attr": "WherePosition.id", "value": 1}},
             },
-            "assignments": [{"attr": "WherePosition.value", "value": Decimal("300.00")}],
-            "validFrom": "2024-07-01T00:00:00+00:00",
-            "until": "2024-09-01T00:00:00+00:00",
-        }
-    )
-    assert isinstance(canonical, PredicateWrite)
-    seam_port = RecordingPort(rows=[_position_row()])
-
-    def neutral(tx: Transaction) -> None:
-        tx.write_neutral(canonical)
+            {"value": Decimal("300.00")},
+            valid_from=dt.datetime.fromisoformat("2024-07-01T00:00:00+00:00"),
+            until=dt.datetime.fromisoformat("2024-09-01T00:00:00+00:00"),
+        )
 
     Database.connect(seam_port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        neutral, concurrency="optimistic"
+        wire, concurrency="optimistic"
     )
     typed_writes = [op for op in typed_port.ops if op[0] == "write"]
     assert len(typed_writes) == 4  # close + head + middle + tail
@@ -1682,13 +1677,13 @@ def _bounded_write(
 # --------------------------------------------------------------------------- #
 # The conformance engine's OWN ingress, driven as the engine drives it. Both    #
 # engine entry points are exercised as functions — the readless one             #
-# (`_run_readless_predicate_write`, which opens the transaction itself) and     #
-# the materializing one (`_is_materializing_write_step`, which classifies the   #
-# step AND validates it before `_run_materializing_pair` executes anything) —   #
-# so deleting either function's own `validate_instruction` call fails these     #
-# cases. Driving `validate_instruction` from the test instead would leave that  #
-# regression unpinned: the refusal would then come from the test, not from the  #
-# engine.                                                                       #
+# (`_run_readless_predicate_write`, which opens the transaction itself and      #
+# states its write through `tx.wire.*_where`) and the materializing one         #
+# (`_is_materializing_write_step`, which classifies the step AND validates it   #
+# before `_run_materializing_pair` executes anything) — so a lane that stopped  #
+# judging its own target fails these cases. Driving `validate_instruction` from #
+# the test instead would leave that regression unpinned: the refusal would then #
+# come from the test, not from the engine.                                      #
 #                                                                               #
 # The models are the corpus's own, the exact pair the two dispatches are        #
 # authored over: `models/wallet.yaml` (unversioned, non-temporal -> READLESS,   #
@@ -1730,9 +1725,13 @@ _MATERIALIZING_REFUSALS = _refused_predicates("Account")
     [(message, predicate) for _id, message, predicate in _READLESS_REFUSALS],
     ids=[case_id for case_id, _message, _predicate in _READLESS_REFUSALS],
 )
-def test_the_engines_readless_predicate_ingress_refuses_before_it_opens_a_transaction(
+def test_the_engines_readless_predicate_ingress_refuses_before_any_statement(
     message: str, predicate: dict[str, object]
 ) -> None:
+    # The verb the lane states its write through judges the selection at its own
+    # target-shape gate, so the refusal happens inside the transaction the lane
+    # opened and nothing but demarcation reaches the wire. Unjudged, the
+    # instruction would merely buffer and the call would return.
     port = RecordingPort()
     with pytest.raises(ValueError, match=re.escape(message)):
         engine._run_readless_predicate_write(  # pyright: ignore[reportPrivateUsage] - the conformance engine's own readless predicate-write ingress
@@ -1744,7 +1743,7 @@ def test_the_engines_readless_predicate_ingress_refuses_before_it_opens_a_transa
             _ENGINE_TX_INSTANT,
             rollback=False,
         )
-    assert port.ops == []
+    assert port.ops == [("begin",), ("rollback",)]
 
 
 @pytest.mark.parametrize(
@@ -1766,43 +1765,44 @@ def test_the_engines_materializing_predicate_ingress_refuses_before_it_resolves(
         engine._is_materializing_write_step(step, _MATERIALIZING_ENGINE_META)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own materializing predicate-write ingress
 
 
-# The neutral ingress's OWN validation, driven the way the conformance engine
-# drives it — an instruction NOTHING pre-validated, straight into
-# `Transaction.write_neutral`. The ingress "validates and buffers one write
-# instruction" (`python.md` §5) for a predicate-selected instruction exactly as
-# for a keyed one, so deleting its `validate_instruction` call fails BOTH cases.
+# The WIRE predicate ingress's OWN validation, driven the way the conformance
+# engine drives it — a canonical target NOTHING pre-validated, straight into
+# `tx.wire.*_where`. That ingress lowers to the same `PredicateWrite` the Typed
+# verbs build and validates it exactly as they do, so deleting its
+# `validate_instruction` call fails BOTH cases.
 #
-# The refusal is asserted at the ingress CALL, inside the transaction body,
-# which is what makes each half discriminating. Unvalidated, the readless family
+# The refusal is asserted at the verb CALL, inside the transaction body, which
+# is what makes each half discriminating. Unvalidated, the readless family
 # instruction is merely buffered and the call returns — the planner's flush-time
 # refusal would come later, and never at all on the abandoned transaction here.
 # And the materializing one reaches the resolving read, real SQL on the caller's
 # connection, which `port.ops` then shows.
 @pytest.mark.parametrize(
-    ("model", "entity"),
-    [(PAYMENT, "CardPayment"), (RATE, "DepositRate")],
+    ("model", "entity", "temporal"),
+    [(PAYMENT, "CardPayment", False), (RATE, "DepositRate", True)],
     ids=["readless-unversioned-family", "materializing-bitemporal-family"],
 )
-def test_the_neutral_write_ingress_refuses_an_unvalidated_inheritance_family_instruction(
-    model: DomainModel, entity: str
+def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_target(
+    model: DomainModel, entity: str, temporal: bool
 ) -> None:
-    instruction = instructions.deserialize(
-        {
-            "mutation": "delete",
-            "target": {
-                "entity": entity,
-                "predicate": {"eq": {"attr": f"{entity}.id", "value": 1}},
-            },
-        }
-    )
-    assert isinstance(instruction, PredicateWrite)
+    # Each family takes the destructive verb its own temporality admits — a
+    # Bitemporal target is closed by `terminate_where` and states the window that
+    # close opens at — so both calls clear the shared window gate and the family
+    # refusal is what each one reaches.
+    target: dict[str, object] = {
+        "entity": entity,
+        "predicate": {"eq": {"attr": f"{entity}.id", "value": 1}},
+    }
     port = RecordingPort(rows=[])
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(
             inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
         ):
-            tx.write_neutral(instruction)
+            if temporal:
+                tx.wire.terminate_where(target, valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC))
+            else:
+                tx.wire.delete_where(target)
         assert port.ops == [("begin",)]
         raise _Abandon
 
@@ -1812,35 +1812,48 @@ def test_the_neutral_write_ingress_refuses_an_unvalidated_inheritance_family_ins
 
 # The ingress's second refusal, driven the same way: a milestone verb the
 # target's temporal profile does not admit. `Account` is versioned and
-# non-temporal, so the instruction MATERIALIZES — without this refusal it
-# reaches the resolving read (real SQL, which `port.ops` would show) and then
-# settles as an ordinary versioned update that consumes each matched row's
-# version while dropping the window the caller bounded. A zero-match resolve
-# would not even reach that: it buffers no group, so the flush would refuse
-# nothing at all. The `updateUntil` assignment carries its member's DECLARED
-# carrier: the target-profile quadrant is the LAST rule `validate_instruction`
-# asks, so a wire-spelled value would classify as an unassignable one first and
-# this case would stop proving anything about the verb.
-@pytest.mark.parametrize("mutation", ["updateUntil", "terminate", "terminateUntil"])
-def test_the_neutral_write_ingress_refuses_a_milestone_verb_on_a_non_temporal_target(
-    mutation: str,
+# non-temporal, so the instruction MATERIALIZES — without a refusal it reaches
+# the resolving read (real SQL, which `port.ops` would show) and then settles as
+# an ordinary versioned update that consumes each matched row's version while
+# dropping the window the caller bounded. A zero-match resolve would not even
+# reach that: it buffers no group, so the flush would refuse nothing at all.
+#
+# WHICH refusal fires depends on what the call states, and both are the fixed
+# order working. A bounded verb states a Valid-Time window, and a target
+# declaring no Valid-Time dimension takes none — judged at the shared window
+# gate, before the model is asked anything about the verb. Plain `terminate`
+# states no window at all, so nothing precedes `validate_instruction`'s own
+# target-profile quadrant, which is the rule this shape reaches.
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("updateUntil", "takes no valid_from"),
+        ("terminate", "temporal milestone verb"),
+        ("terminateUntil", "takes no valid_from"),
+    ],
+)
+def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_target(
+    mutation: str, message: str
 ) -> None:
-    document: dict[str, object] = {
-        "mutation": mutation,
-        "target": {"entity": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 1}}},
+    target: dict[str, object] = {
+        "entity": "Account",
+        "predicate": {"eq": {"attr": "Account.id", "value": 1}},
     }
-    if mutation == "updateUntil":
-        document["assignments"] = [{"attr": "Account.balance", "value": Decimal("5.00")}]
-    if mutation != "terminate":
-        document["validFrom"] = "2024-01-01T00:00:00+00:00"
-        document["until"] = "2024-06-01T00:00:00+00:00"
-    instruction = instructions.deserialize(document)
-    assert isinstance(instruction, PredicateWrite)
+    window = {
+        "valid_from": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "until": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+    }
     port = RecordingPort(rows=[])
 
     def fn(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="temporal milestone verb"):
-            tx.write_neutral(instruction)
+        with pytest.raises(instructions.WriteInstructionError, match=message):
+            match mutation:
+                case "updateUntil":
+                    tx.wire.update_until_where(target, {"balance": Decimal("5.00")}, **window)
+                case "terminate":
+                    tx.wire.terminate_where(target)
+                case _:
+                    tx.wire.terminate_until_where(target, **window)
         assert port.ops == [("begin",)]
         raise _Abandon
 
@@ -1848,8 +1861,8 @@ def test_the_neutral_write_ingress_refuses_a_milestone_verb_on_a_non_temporal_ta
         Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
 
 
-# The buffering seam's OWN contract, below every ingress: `buffer_predicate`
-# and `write_neutral` both validate first, so this drives the free function
+# The buffering seam's OWN contract, below every ingress: `buffer_predicate` and
+# the Wire `_where` lane both validate first, so this drives the free function
 # DIRECTLY with an instruction nothing measured. Without the seam's own
 # `inheritance.reject_predicate_write` the bitemporal family instruction reaches
 # `_materialize_predicate_write`'s resolving read — real SQL on the caller's

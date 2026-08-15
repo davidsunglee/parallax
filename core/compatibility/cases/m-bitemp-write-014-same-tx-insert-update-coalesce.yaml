@@ -12,9 +12,11 @@
 # fully-Latest rectangle INSERT (thru_z = out_z = infinity) at the FINAL value 150 —
 # no inactivation UPDATE, no head/tail split. Step 1's bitemporal Latest find on BOTH
 # dimensions (an optimistic-mode object find, so it omits the shared read lock) observes that one rectangle. In the
-# neutral write input `validFrom` is the canonical Valid-Time lower bound (from_z), a
-# plain insert omits `until` (the window runs to infinity), and `at` is the
-# Clock-supplied Transaction-Time instant (in_z), never an instruction field.
+# write input `validFrom` is the canonical Valid-Time lower bound (from_z), which
+# every plain bitemporal write states and the coalescing then consumes from the
+# surviving insert alone; a plain write omits `until` (the window runs to
+# infinity), and `at` is the Clock-supplied Transaction-Time instant (in_z),
+# never an instruction field.
 model: models/position.yaml
 tags: [m-bitemp-write, m-unit-work, m-temporal-read, bitemporal, same-transaction-coalescing, scenario, slice-snapshot-1]
 shape: scenario
@@ -33,6 +35,7 @@ when:
           entity: parallax.compatibility.Position
           rows:
             - { id: 9, value: 150.00 }
+          validFrom: "2024-01-01T00:00:00+00:00"
           at: "2024-01-01T00:00:00+00:00"
       roundTrips: 1
       note: the buffered plain INSERT (value 100) then the buffered UPDATE (value 150) of the SAME new position 9 coalesce IN PLACE to ONE fully-Latest rectangle INSERT carrying the final value 150 — no inactivation, no head/tail split
