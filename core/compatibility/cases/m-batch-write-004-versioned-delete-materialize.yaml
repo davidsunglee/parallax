@@ -21,10 +21,12 @@
 # Fixtures are loaded first (accounts 1/2/3 at version 1). The materialize deletes
 # accounts 1 and 2, leaving account 3 untouched. The harness applies the ordered DML
 # and reads the table back — the per-key materialize is proven by the rows it
-# removes (1 and 2 gone, 3 intact), never collapsed into an IN list. The materialize
-# READ round trip that resolves the predicate to rows is proven separately by the
-# versioned set-based UPDATE scenarios (m-opt-lock-003/004); this case pins the
-# versioned DELETE *write* shape.
+# removes (1 and 2 gone, 3 intact), never collapsed into an IN list. `roundTrips: 3`
+# is what the entry costs whole: the ONE membership read that resolves both keys to
+# the rows the deletes are addressed and licensed by, then the two keyed deletes.
+# That read is the unit's own; the resolve a SET-BASED predicate performs inside
+# materialization is the versioned set-based UPDATE scenarios' subject
+# (m-opt-lock-003/004), while this case pins the versioned DELETE *write* shape.
 model: models/account.yaml
 tags: [m-batch-write, m-opt-lock, m-sql, write-sequence, materialize, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

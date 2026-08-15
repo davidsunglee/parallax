@@ -32,6 +32,7 @@ from reference_harness.case_runner import (
     _read_table,
     _table_layout,
     _tag,
+    _unit_resolving_reads,
     _write_column_order,
 )
 from reference_harness.ddl_builder import contributor_types, ddl_for
@@ -79,6 +80,42 @@ def test_write_step_count_mismatch_is_rejected() -> None:
     case.when["writeSequence"][0]["statements"] += 1
     with pytest.raises(CaseFailure):
         _assert_write_step_count(case, "postgres")
+
+
+def test_one_entity_spelled_two_ways_owes_one_resolving_read() -> None:
+    # A bare local name and its canonical form name ONE Entity, so a unit writing
+    # both spellings reads that Entity once. Counting the authored string would
+    # charge the case a read it never issues.
+    case = _synthetic_case({})
+    entries = [
+        {"mutation": "update", "entity": "Customer", "rows": [{"id": 1, "name": "Ada"}]},
+        {
+            "mutation": "delete",
+            "entity": "parallax.compatibility.Customer",
+            "rows": [{"id": 2}],
+        },
+    ]
+    assert _unit_resolving_reads(case, entries) == 1
+
+
+def test_a_value_object_document_shaped_like_a_marker_still_owes_its_read() -> None:
+    # A DB-computed write marker is a scalar-attribute-only form: a value object
+    # binds its whole literal document even when that document is shaped like
+    # one, so the entry states a write a public verb accepts and owes the
+    # resolving read every such write owes.
+    case = _synthetic_case({})
+    document_entry = {
+        "mutation": "update",
+        "entity": "parallax.compatibility.Customer",
+        "rows": [{"id": 1, "address": {"increment": 1}}],
+    }
+    assert _unit_resolving_reads(case, [document_entry]) == 1
+    marker_entry = {
+        "mutation": "update",
+        "entity": "parallax.compatibility.Customer",
+        "rows": [{"id": 1, "name": {"increment": 1}}],
+    }
+    assert _unit_resolving_reads(case, [marker_entry]) == 0
 
 
 def _non_temporal_row_step(case) -> dict | None:

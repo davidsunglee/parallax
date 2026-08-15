@@ -3544,13 +3544,17 @@ def _authored_many_path(occurrence: dict[str, Any], authored: object) -> tuple[s
 # --- write sequences (m-txtime-write) ---------------------------------------------------
 
 
-_INSERT_MUTATIONS = ("insert", "insertUntil")
+# The mutations that OPEN a row with no prior state to close: the unbounded
+# `insert` and its Valid-Time-bounded `insertUntil` sibling. Such an entry
+# resolves no source — there is no row for a read to return — and on a temporal
+# target it opens a rectangle rather than splitting one.
+_OPENING_MUTATIONS = ("insert", "insertUntil")
 
 # The keyed write mutations a public verb states. `cascadeDelete` is deliberately
 # absent: it is not a Keyed Mutation, no verb states it, and an entry writing one
 # therefore resolves no source.
 _KEYED_MUTATIONS = (
-    *_INSERT_MUTATIONS,
+    *_OPENING_MUTATIONS,
     "update",
     "delete",
     "terminate",
@@ -3567,15 +3571,42 @@ def _is_framework_marker(value: Any) -> bool:
     return isinstance(value, dict) and frozenset(value) in _FRAMEWORK_MARKER_KEYS
 
 
+def _states_framework_marker(entity: Entity, entry: dict[str, Any]) -> bool:
+    """Whether ``entry`` assigns a DB-computed write marker AT A SCALAR ATTRIBUTE.
+
+    The member's declared metamodel role decides, never the value's shape: a
+    value object binds its whole literal document even when that document is
+    shaped like a marker, and the marker form is scalar-attribute-only
+    (`m-case-format` *Write-sequence cases*).
+    """
+    scalars = {attribute["name"] for attribute in entity.attributes}
+    return any(
+        name in scalars and _is_framework_marker(value)
+        for row in entry.get("rows", [])
+        for name, value in row.items()
+    )
+
+
+def _entry_entity(case: Case, entry: dict[str, Any]) -> Entity:
+    """The Entity one write entry targets, resolved from the spelling it authored
+    — canonical or an unambiguous bare local name, which name one Entity."""
+    return case.model.entity(entry.get("entity", ""))
+
+
 def _entry_object_keys(case: Case, entry: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
     """Which object each of ``entry``'s rows names, by its declared primary key.
 
     The entity's flattened definition carries the family's key, so a concrete
-    subtype resolves the same key its root declares.
+    subtype resolves the same key its root declares, and each object is named by
+    the CANONICAL Entity spelling, so two entries spelling one target differently
+    name one object rather than two.
     """
-    entity = entry.get("entity", "")
-    names = [a["name"] for a in case.model.entity(entity).attributes if a.get("primaryKey")]
-    return [(entity, tuple(repr(row.get(name)) for name in names)) for row in entry.get("rows", [])]
+    entity = _entry_entity(case, entry)
+    names = [a["name"] for a in entity.attributes if a.get("primaryKey")]
+    return [
+        (entity.canonical_name, tuple(repr(row.get(name)) for name in names))
+        for row in entry.get("rows", [])
+    ]
 
 
 def _unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
@@ -3590,20 +3621,24 @@ def _unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
     OPENS its row, a row an earlier entry of the same unit opened is
     read-your-own-writes, and an entry carrying a DB-computed write marker states
     the framework's own bookkeeping, which no public verb accepts.
+
+    Targets are counted by their canonical spelling, so two entries naming one
+    Entity two ways owe one read between them.
     """
     opened: set[tuple[str, tuple[Any, ...]]] = set()
     needed: set[str] = set()
     for entry in entries:
         mutation = entry.get("mutation")
-        if mutation in _INSERT_MUTATIONS:
+        if mutation in _OPENING_MUTATIONS:
             opened.update(_entry_object_keys(case, entry))
             continue
         if mutation not in _KEYED_MUTATIONS:
             continue
-        if any(_is_framework_marker(v) for row in entry.get("rows", []) for v in row.values()):
+        entity = _entry_entity(case, entry)
+        if _states_framework_marker(entity, entry):
             continue
         if any(key not in opened for key in _entry_object_keys(case, entry)):
-            needed.add(entry.get("entity", ""))
+            needed.add(entity.canonical_name)
     return len(needed)
 
 
@@ -3646,10 +3681,6 @@ _UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
 # the original on the Transaction-Time dimension and chain head / (new-)tail milestones, but
 # the residual window runs to the open bound (thru_z), so ① carries no `until`.
 _PLAIN_SPLIT_MUTATIONS = ("update", "terminate")
-
-# The mutations that OPEN a rectangle with no prior row to close: the unbounded
-# `insert` and its Valid-Time-bounded `insertUntil` sibling.
-_OPENING_MUTATIONS = ("insert", "insertUntil")
 
 # The rectangle-split mutations that END coverage rather than carrying a changed
 # value forward: they re-open the head (and, when windowed, the tail) but no slice

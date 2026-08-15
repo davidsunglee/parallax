@@ -1,11 +1,10 @@
 """A zero-row keyed write in Locking mode, and what must NOT happen to it.
 
-The corpus used to prove this end to end, through cases that reached zero rows
-by deleting the target out of band while the Locking-mode read that licenses
-the write was holding its shared lock. Correct locking makes that state
-unreachable in any real client, so those cases described a write no public verb
-can author; what survives them is the one durable claim, pinned here with no
-database, no interference, and no write ingress:
+The state has no end-to-end witness because no client can reach it: a
+Locking-mode keyed write settles zero rows only if its target disappeared while
+the read that licenses the write held that row's shared lock, which correct
+locking prevents. The claim is therefore pinned here, with no database, no
+interference, and no write ingress:
 
 * a versioned keyed write settled UNGATED (the Locking arm) carries the
   never-retriable stale write as its shortfall class, and an unversioned one

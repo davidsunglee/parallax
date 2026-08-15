@@ -682,11 +682,12 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # not the runtime auto-retry loop, which `m-opt-lock-011`'s boundary case      #
 # proves instead). Every non-temporal conflict case here settles against a     #
 # state a REAL read of this lane observed, so the concurrent writer commits    #
-# between that read and the write it invalidates; the zero-row shapes whose    #
+# between that read and the write it invalidates. The zero-row shapes whose    #
 # interference no correct client can reach — a Locking-mode target whose row   #
 # a concurrent writer deleted while the required participating read held its   #
-# shared lock — are retired, and the classification they carried is pinned by  #
-# `tests/unit/test_zero_row_write_classification.py` instead.                  #
+# shared lock — are absent from this lane for that reason, and the             #
+# classification they would carry is pinned without a database by              #
+# `tests/unit/test_zero_row_write_classification.py`.                          #
 # `m-bitemp-write-017`/`-018` close the BOUNDED current rectangle whose        #
 # Valid-Time end is finite, in each concurrency mode: only a real execution    #
 # distinguishes an address that binds the observed rectangle's own `thru_z`    #

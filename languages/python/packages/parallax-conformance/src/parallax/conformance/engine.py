@@ -2592,26 +2592,44 @@ def _seed_shadow_from_fixtures(
         )
 
 
-def _is_framework_write(instruction: WriteInstruction) -> bool:
+def _is_framework_write(instruction: WriteInstruction, model: AcceptedMetamodel) -> bool:
     """Whether ``instruction`` states the FRAMEWORK's own bookkeeping rather than
     a write a developer authors.
 
-    The signal is a DB-computed write marker at a scalar attribute — the
+    The signal is a DB-computed write marker AT A SCALAR ATTRIBUTE — the
     ``{"increment": n}`` a `m-pk-gen` sequence-registry block reservation
-    carries, and the ``{"computed": …}`` shape beside it (`m-value-object`
-    "Writing"). Such a value is the framework's to produce, so no public verb
-    accepts it: the instruction-level validator exempts it at a scalar leaf,
-    while the assignment judgement every verb reaches does not, and those two
-    rules disagreeing is exactly what says the value is not developer input.
+    carries, and the ``{"computed": …}`` a `max` allocation carries beside it
+    (`m-value-object` "Writing"). Such a value is the framework's to produce, so
+    no public verb accepts it: the instruction-level validator exempts it at a
+    scalar leaf, while the assignment judgement every verb reaches does not, and
+    those two rules disagreeing is exactly what says the value is not developer
+    input.
+
+    The attribute's DECLARED ROLE is what decides, never the value's shape: a
+    Value Object member binds its whole literal document even when that document
+    is shaped like a marker, and only a scalar Attribute can carry the marker
+    form at all (`m-case-format` "Write-sequence cases").
     """
     if not isinstance(instruction, KeyedWrite):  # pragma: no cover - this lane resolves keyed only
         return False
+    scalars = _scalar_attribute_names(model, instruction.entity)
     return any(
-        isinstance(value, Mapping)
+        name in scalars
+        and isinstance(value, Mapping)
         and frozenset(cast("Mapping[str, object]", value)) in _MARKER_KEYS
         for row in instruction.rows
-        for value in row.values()
+        for name, value in row.items()
     )
+
+
+def _scalar_attribute_names(model: AcceptedMetamodel, entity_name: str) -> frozenset[str]:
+    """Every Attribute name applicable to ``entity_name``, its inherited ones
+    included — the positions a DB-computed write marker may occupy, and the
+    complement of the Value Object slots that never may."""
+    view = inheritance.view(model).entity(case_entity(model, entity_name).identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return frozenset()
+    return frozenset(attribute.identity.name for attribute in view.applicable_attributes)
 
 
 _MARKER_KEYS: Final[frozenset[frozenset[str]]] = frozenset(
@@ -2671,8 +2689,9 @@ _LATEST_SELECTION: Final[Mapping[TemporalDimension, str]] = {
 def _unit_source_query(
     model: AcceptedMetamodel, entity_name: str, keys: Sequence[ObjectKey]
 ) -> dict[str, object]:
-    """The canonical Object Query resolving every row of ``entity_name`` one
-    choreography unit writes against existing state.
+    """The canonical Object Query resolving every row of ``entity_name`` — a
+    CANONICAL Entity spelling — one choreography unit writes against existing
+    state.
 
     Membership over the family-declared primary key, one read per target Entity
     however many rows the unit addresses, which is what a caller holding several
@@ -2731,6 +2750,11 @@ def _unit_source_reads(
     object and contribute one key. A row naming no whole object is gathered for
     no read at all, because the write it states is addressed by nothing and is
     refused where the diagnosis can name the key.
+
+    Both the object identity and the TARGET are canonical, never the spelling the
+    case authored: a bare local name and its canonical form name one Entity
+    (`m-case-format`), so two entries spelling one target differently owe one
+    read between them rather than one each.
     """
     opened: set[ObjectKey] = set()
     for write in resolved:
@@ -2746,7 +2770,8 @@ def _unit_source_reads(
         key = object_key(instruction, model)
         if key is None or key in opened:
             continue
-        needed.setdefault(instruction.entity, {})[key] = None
+        canonical = case_entity(model, instruction.entity).identity.canonical
+        needed.setdefault(canonical, {})[key] = None
     return [_unit_source_query(model, entity, tuple(keys)) for entity, keys in needed.items()]
 
 
@@ -2775,14 +2800,25 @@ def _execute_write_unit(
 
     A unit whose writes are the framework's own bookkeeping takes
     :func:`_execute_framework_write_unit` instead, which opens no unit of work
-    at all — those statements have no verb to be stated through.
+    at all — those statements have no verb to be stated through. That routing is
+    per UNIT, so a unit must be wholly one or wholly the other: a unit mixing the
+    two states half its DML through a public verb and half around it, and is
+    refused here rather than silently routed by its first entry.
 
     A ``rollback: true`` step runs on the aborting port (`m-unit-work` abort
     contract): the boundary's own finalization flush still puts the buffered DML
     on the wire — and counts its round trips — before the provider rolls the
     transaction back.
     """
-    if any(_is_framework_write(write.instruction) for write in resolved):
+    framework = [write for write in resolved if _is_framework_write(write.instruction, model)]
+    if framework:
+        if len(framework) != len(resolved):
+            raise EngineError(
+                "a choreography unit states either the framework's own bookkeeping or the writes "
+                f"a caller authors, never both: this one holds {len(framework)} entry(s) carrying "
+                f"a DB-computed write marker beside {len(resolved) - len(framework)} that a "
+                "public verb states"
+            )
         return None, _execute_framework_write_unit(
             port, model, dialect, concurrency, resolved, tx_instant
         )
@@ -3186,10 +3222,22 @@ def _published_nodes(snapshot: handle.Snapshot[handle.WireEntity]) -> tuple[hand
     retained sources. A frozen Wire node is a ``dict`` and therefore unhashable,
     which is why the visited set is identity-keyed over objects the Snapshot
     holds for the walk's whole duration.
+
+    The roots come from the CHECKED view, because invalid stored data is a fact
+    about a root rather than a refusal of the read: a HYDRATABLE record's
+    collapse produced legal member values, so the node in its ``data`` is an
+    ordinary observed source and enters the walk unwrapped, while a
+    NON-HYDRATING record carries no value to publish and contributes none — which
+    is what leaves the wrapper itself unwritable.
     """
     nodes: list[handle.WireEntity] = []
     visited: set[int] = set()
-    frontier: list[object] = list(snapshot.results())
+    frontier: list[object] = [
+        cast("handle.InvalidData[object]", root).data
+        if isinstance(root, handle.InvalidData)
+        else root
+        for root in snapshot.checked().results()
+    ]
     cursor = 0
     while cursor < len(frontier):
         value = frontier[cursor]
@@ -3386,12 +3434,12 @@ def _wire_insert_payload(
 ) -> dict[str, object]:
     """One insert entry's row as the Create Payload a public verb accepts.
 
-    A case authors the framework-owned optimistic-lock version on an insert
-    because the instruction lane's own required-attribute check historically
-    wanted it (:func:`_seed_insert_version`), and the framework derives it at
-    lowering whatever the row carries. A public verb refuses it outright — the
-    Typed Entity constructor and the Wire insert alike — so the value the case
-    states is dropped here rather than smuggled through a door built to close it.
+    A case authors the framework-owned optimistic-lock version on an insert to
+    satisfy the instruction lane's own required-attribute check
+    (:func:`_seed_insert_version`), and the framework derives it at lowering
+    whatever the row carries. A public verb refuses it outright — the Typed
+    Entity constructor and the Wire insert alike — so the value the case states
+    is dropped here rather than smuggled through a door built to close it.
     """
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
