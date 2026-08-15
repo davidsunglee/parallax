@@ -3652,14 +3652,25 @@ or descriptor authoring form and performs no audit stamping.
   shape, the finite-Transaction-Time refusal, the temporal window, member names,
   values, and assignment legality are judged from the model and the input alone;
   only then is the target Entity's Effective Concurrency Strategy derived and its
-  evidence resolved. Within that static half, what an argument alone answers
-  comes first — whether a document was stated at all, and which source produced a
-  value — before anything the target Entity or the model decides, so a call
+  evidence resolved. Within that static half, the authored documents' own shape
+  comes first — it needs neither a source nor the model — so a call
   passing both a malformed change set and a source that lost its provenance hears
-  about the change set. A change set is a document the update verbs require: only
+  about the change set, an `insert` whose payload is no document hears that
+  before its Entity spelling is resolved, and a selection's shape runs all the way
+  through the predicate node, whose `m-predicate` algebra is judged before the
+  Entity, the window, or the assignments beside it are. Each verb then reads its
+  remaining argument — the source a keyed verb was handed, the Entity spelling an
+  `insert` names — before anything the target Entity or the model decides.
+  A change set is a document the update verbs require: only
   the destructive and close verbs, which name no member, state one by passing
-  none, and an empty document is the ordinary no-op rather than an absent
-  argument. Malformed Wire input therefore always earns a static refusal
+  none, and `{}` is a document naming no member rather than an absent argument.
+  What that states differs by family. A keyed update addresses one row whose
+  values its source published, so `{}` is the ordinary no-op — the same one an
+  empty Typed effective change set is. A predicate update lowers to the canonical
+  assignment algebra, whose list must be non-empty (above), and a selection has no
+  published values to be a no-op against, so `{}` is refused there exactly as
+  `tx.update_where(query)` with no assignments is. Malformed Wire input therefore
+  always earns a static refusal
   rather than a `WriteEvidenceError`, whichever is also true — and the Typed lane
   reaches the same order for free, because `edit()` rejects an illegal assignment
   before `tx.update()` receives a value.
@@ -3669,7 +3680,11 @@ or descriptor authoring form and performs no audit stamping.
   well-formed write at all — a document position that is not a mapping of names
   to values, a self-containing container, an unresolvable target, an undeclared
   or unassignable member, a temporal bound the target's own temporality does not
-  admit, an unordered `[valid_from, until)` window. A rule another module owns
+  admit, a `[valid_from, until)` window stated as one bound rather than as a pair,
+  an unordered one. A `*_until` verb requires both bounds whatever else the call
+  turns out to be, because a keyed update whose change set is wholly restoring
+  buffers no instruction, so the window no verb judged is a window nothing
+  judges. A rule another module owns
   keeps that module's classification instead, so one input is classified one way
   at every boundary that accepts it: the closed pre-SQL `WriteRejectedError`
   vocabulary where a normative payload rule classifies the defect more exactly,
@@ -3678,7 +3693,8 @@ or descriptor authoring form and performs no audit stamping.
   a predicate node, which is also why a verb captures caller input without
   translating its spellings — a Python tuple rewritten as a list would make this
   the one boundary accepting an operand array that serde rejects; and
-  `InstantError` where a bound is no `m-core` instant. All are `ValueError`s and
+  `InstantError` where an admitted bound is no `m-core` instant — a naive
+  datetime, or a value of no datetime type at all. All are `ValueError`s and
   all precede any evidence question. Assignment
   legality is `judge_assignment`'s single verdict, reached through the same
   family-effective resolution the canonical predicate assignment uses, so

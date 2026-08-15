@@ -1324,6 +1324,26 @@ def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -
     assert not any(op[0] in ("read", "write") for op in port.ops)  # never reached the resolve
 
 
+def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None:
+    # A non-temporal target admits no `valid_from`, so a bounded `_where` verb
+    # aimed at one reaches the shared window validator with half a window. The
+    # missing bound is `m-core`'s verdict on a value that is no `timestamp`,
+    # not a bare assertion, and it is the same one the keyed verbs answer with.
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_until_where(
+            mm.Account.where(mm.Account.id == 1),
+            mm.Account.balance.set(Decimal("300.00")),
+            valid_from=cast("dt.datetime", None),
+            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+        )
+
+    with pytest.raises(InstantError, match="no `timestamp`"):
+        account_db(port).transact(fn)
+    assert not any(op[0] in ("read", "write") for op in port.ops)
+
+
 # --------------------------------------------------------------------------- #
 # The behavioral mutation-compatibility rejection is covered end to end.        #
 # `mutation_selection` refusing a clause-bearing query in `test_where_verbs.py` #

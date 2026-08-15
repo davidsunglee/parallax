@@ -398,11 +398,16 @@ def test_a_reversed_window_is_refused_before_any_member_is_measured() -> None:
 
 def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
     # Half a window states nothing, and reading the absent bound as "unbounded"
-    # would buffer a rectangle the caller never asked for.
-    port = _account_port()
+    # would buffer a rectangle the caller never asked for. Which bound is missing
+    # is asked of the VERB rather than of the other bound, because the instruction
+    # build is not always downstream: the restoring change set below buffers no
+    # instruction at all, so a window this seam waves through is a window nothing
+    # else ever judges.
+    account = _account_port()
+    position = RecordingPort(rows=[_position_row()])
 
-    def fn(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="as a pair"):
+    def absent_valid_from(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="valid_from is absent"):
             tx.wire.update_until(
                 _node(tx, _ACCOUNT_QUERY),
                 {"balance": "125.00"},
@@ -410,8 +415,22 @@ def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
                 until=_UNTIL,
             )
 
-    db_for(ACCOUNT, port).transact(fn)
-    assert _writes(port) == []
+    def absent_until(tx: Transaction) -> None:
+        node = _node(tx, _POSITION_QUERY)
+        with pytest.raises(instructions.WriteInstructionError, match="until is absent"):
+            tx.wire.update_until(
+                node,
+                {"value": node["value"]},
+                valid_from=_VALID_FROM,
+                until=cast("dt.datetime", None),
+            )
+        with pytest.raises(instructions.WriteInstructionError, match="until is absent"):
+            tx.wire.terminate_until(node, valid_from=_VALID_FROM, until=cast("dt.datetime", None))
+
+    db_for(ACCOUNT, account).transact(absent_valid_from)
+    Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(absent_until)
+    assert _writes(account) == []
+    assert _writes(position) == []
 
 
 def test_a_bound_carries_the_refusal_of_whichever_rule_it_broke() -> None:
@@ -419,14 +438,22 @@ def test_a_bound_carries_the_refusal_of_whichever_rule_it_broke() -> None:
     # on caller input, so it carries the static refusal every other one does. A
     # bound that is no instant broke `m-core`'s rule instead, and keeps that
     # module's classification — one input, one classification, at every boundary.
+    # A value of no datetime type at all is the same rule as a naive datetime:
+    # both are answered rather than left to leak out of instant normalization.
     port = RecordingPort(rows=[_position_row()])
 
     def fn(tx: Transaction) -> None:
+        node = _node(tx, _POSITION_QUERY)
         with pytest.raises(InstantError, match="naive datetime"):
-            tx.wire.update(
-                _node(tx, _POSITION_QUERY),
+            tx.wire.update(node, {"value": "300.00"}, valid_from=_NAIVE_INSTANT)
+        with pytest.raises(InstantError, match="no `timestamp`"):
+            tx.wire.update(node, {"value": "300.00"}, valid_from=cast("dt.datetime", "2024-07-01"))
+        with pytest.raises(InstantError, match="no `timestamp`"):
+            tx.wire.update_until(
+                node,
                 {"value": "300.00"},
-                valid_from=_NAIVE_INSTANT,
+                valid_from=_VALID_FROM,
+                until=cast("dt.datetime", "2024-11-01"),
             )
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
@@ -534,14 +561,64 @@ def test_a_tuple_is_not_a_wire_array_the_predicate_algebra_accepts() -> None:
 
 
 def test_an_insert_payload_that_is_not_a_document_is_refused() -> None:
+    # The second call states neither a payload nor an Entity this model declares,
+    # and the one answered is the payload: whether a document was stated needs
+    # nothing from the model, so it leads the spelling an insert has to resolve.
     port = RecordingPort(rows=[])
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
             tx.wire.insert("parallax.compatibility.Person", cast("dict[str, object]", [("id", 9)]))
+        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+            tx.wire.insert("Unknown", cast("dict[str, object]", []))
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == []
+
+
+def test_a_malformed_predicate_is_judged_before_anything_the_model_decides() -> None:
+    # A selection's shape runs to the bottom of its predicate, so a node
+    # `m-predicate`'s algebra does not admit is that module's refusal rather than
+    # whatever the model would have said about the Entity or the assignments
+    # standing beside it. The envelope around the node stays the verb's own.
+    port = RecordingPort(rows=[])
+    malformed: dict[str, object] = {"entity": "Unknown", "predicate": {"nonsense": {}}}
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(CanonicalDocumentError, match="unknown predicate node"):
+            tx.wire.delete_where(malformed)
+        with pytest.raises(CanonicalDocumentError, match="unknown predicate node"):
+            tx.wire.update_where(
+                {**malformed, "entity": "parallax.compatibility.Person"},
+                {"undeclared": 1},
+            )
+        with pytest.raises(instructions.WriteInstructionError, match="must be a mapping"):
+            tx.wire.delete_where({**_PERSON_TARGET, "predicate": []})
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_an_empty_change_document_is_a_keyed_no_op_and_a_predicate_refusal() -> None:
+    # `{}` is a document naming no member, never an absent argument, and what it
+    # states differs by family. A keyed update addresses one row whose values its
+    # source published, so naming none is the ordinary no-op. A selection has no
+    # published values to be a no-op against, and its change set lowers to the
+    # canonical assignment algebra, whose list must name at least one assignment.
+    keyed = _account_port()
+    predicate = RecordingPort(rows=[])
+
+    def keyed_fn(tx: Transaction) -> None:
+        tx.wire.update(_node(tx, _ACCOUNT_QUERY), {})
+
+    def predicate_fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="MUST carry `assignments`"):
+            tx.wire.update_where(_PERSON_TARGET, {})
+
+    db_for(ACCOUNT, keyed).transact(keyed_fn)
+    db_for(PERSON, predicate).transact(predicate_fn)
+    assert _writes(keyed) == []
+    assert _writes(predicate) == []
 
 
 def test_a_document_key_that_is_not_a_name_is_refused() -> None:

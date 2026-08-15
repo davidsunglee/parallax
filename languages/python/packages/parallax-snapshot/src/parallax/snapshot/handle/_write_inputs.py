@@ -75,7 +75,7 @@ from types import MappingProxyType
 from typing import Final, Literal, Protocol, cast
 
 from parallax.core import opt_lock
-from parallax.core.base import normalize_instant
+from parallax.core.base import InstantError, normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.document_codec import (
     mask_managed_members,
@@ -1225,20 +1225,41 @@ def validate_write_value(
         )
 
 
+def _stated_instant(name: str, mutation: KeyedMutation, bound: str, value: object) -> dt.datetime:
+    """``value`` as the ``timestamp`` a Valid-Time bound has to be.
+
+    Total over what a caller can actually pass, which a type annotation is not:
+    a value of another type is no `m-core` instant at all, so it keeps
+    `m-core`'s :class:`~parallax.core.base.InstantError` — the same class a
+    naive datetime earns one step later — rather than reaching
+    :func:`~parallax.core.base.normalize_instant` and leaving an
+    ``AttributeError`` where a verdict belongs.
+    """
+    if not isinstance(value, dt.datetime):
+        raise InstantError(
+            f"{name}: {mutation!r} takes an aware datetime for {bound}, "
+            f"and {type(value).__name__} is no `timestamp`"
+        )
+    return value
+
+
 def validate_valid_from(
-    declaring_entity: EntityMetadata, mutation: KeyedMutation, valid_from: dt.datetime | None
+    declaring_entity: EntityMetadata, mutation: KeyedMutation, valid_from: object
 ) -> str | None:
     """Validate and render a write verb's ``valid_from`` (`python.md` §5):
     a Bitemporal target requires it (the mutation's own Valid-Time instant
     ``B``, `m-bitemp-write` "Plain (unbounded) bitemporal writes"); a
     non-temporal or Transaction-Time-Only target takes none.
 
-    A bound the target's temporality does not admit is the verb's OWN verdict on
-    caller input, so it raises
-    :class:`~parallax.core.unit_work.WriteInstructionError` — the refusal every
-    static write judgement carries — while a bound that is no instant at all
-    keeps `m-core`'s :class:`~parallax.core.base.InstantError`, whose rule that
-    is. Both are ``ValueError``s, and both precede any evidence question.
+    Which refusal follows from whose rule the bound broke. A bound the target's
+    temporality does not admit — stated where none is taken, absent where one is
+    required — is the verb's OWN verdict on caller input and raises
+    :class:`~parallax.core.unit_work.WriteInstructionError`; a bound the target
+    does admit but that is no instant keeps `m-core`'s
+    :class:`~parallax.core.base.InstantError`, whose rule that is. Admissibility
+    leads because it is the more specific complaint: a target declaring no
+    Valid-Time dimension takes no bound whatever type the caller spelled it as.
+    Both are ``ValueError``s, and both precede any evidence question.
     """
     name = declaring_entity.identity.name
     if _is_bitemporal(declaring_entity):
@@ -1247,7 +1268,7 @@ def validate_valid_from(
                 f"{name}: a bitemporal {mutation!r} requires valid_from "
                 "(the mutation's own Valid-Time instant)"
             )
-        return instant_literal(valid_from)
+        return instant_literal(_stated_instant(name, mutation, "valid_from", valid_from))
     if valid_from is not None:
         shape = "a Transaction-Time-Only" if _is_temporal(declaring_entity) else "a non-temporal"
         raise instructions.WriteInstructionError(
@@ -1260,8 +1281,8 @@ def validate_valid_from(
 def validate_until(
     declaring_entity: EntityMetadata,
     mutation: KeyedMutation,
-    valid_from: dt.datetime,
-    until: dt.datetime,
+    valid_from: object,
+    until: object,
 ) -> str:
     """Validate + render a ``*Until`` verb's window bound (`python.md` §5:
     "both aware-UTC-microsecond datetimes, all validated at build" ... "the
@@ -1276,7 +1297,14 @@ def validate_until(
 
     An unordered window is the verb's own verdict on caller input and raises
     :class:`~parallax.core.unit_work.WriteInstructionError`, exactly as
-    :func:`validate_valid_from`'s inadmissible bound does.
+    :func:`validate_valid_from`'s inadmissible bound does; an ``until`` that is
+    no ``timestamp`` keeps `m-core`'s
+    :class:`~parallax.core.base.InstantError`, exactly as that function's
+    ``valid_from`` does. BOTH bounds are asked here, because
+    :func:`validate_valid_from` returns a rendered literal rather than the
+    instant it judged and passes a NON-Bitemporal target's absent ``valid_from``
+    through untouched — so a bounded verb aimed at such a target arrives with
+    half a window, and comparing it would leak where a verdict belongs.
 
     NORMALIZES both bounds BEFORE comparing them: comparing raw,
     un-normalized datetimes let a naive ``until``
@@ -1288,11 +1316,14 @@ def validate_until(
     :func:`~parallax.core.base.normalize_instant` raises for
     any naive datetime (mirroring ``validate_valid_from``'s own
     ``instant_literal``-based handling exactly)."""
-    valid_from_normalized = normalize_instant(valid_from)
-    until_normalized = normalize_instant(until)
+    name = declaring_entity.identity.name
+    valid_from_normalized = normalize_instant(
+        _stated_instant(name, mutation, "valid_from", valid_from)
+    )
+    until_normalized = normalize_instant(_stated_instant(name, mutation, "until", until))
     if until_normalized <= valid_from_normalized:
         raise instructions.WriteInstructionError(
-            f"{declaring_entity.identity.name}: {mutation!r} requires valid_from < until "
+            f"{name}: {mutation!r} requires valid_from < until "
             f"(python.md §5) — got valid_from={valid_from!r}, until={until!r}"
         )
     return until_normalized.isoformat()

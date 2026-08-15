@@ -24,9 +24,13 @@ before any evidence is resolved.
 shape, the finite-Transaction-Time refusal, the temporal window, member names,
 values, and assignment legality are all judged from the model and the input
 alone; only then does the target Entity's Effective Concurrency Strategy decide
-what evidence licenses the write. Within the static half, what an argument alone
-answers comes first — whether a document was stated at all, and which source
-produced a value — and only then what the target Entity and the model decide.
+what evidence licenses the write. Within the static half, the authored
+documents' own shape leads, because it needs neither a source nor the model: a
+call that states no document hears that rather than a complaint about its other
+argument, and a selection's shape runs all the way through the predicate node
+`m-predicate`'s algebra admits. Each verb then reads its remaining argument —
+the source a keyed verb was handed, the Entity spelling an insert names — and
+only afterwards does anything the target Entity and the model decide run.
 
 Malformed Wire input therefore always earns a static refusal rather than a
 :class:`~parallax.snapshot.handle.WriteEvidenceError`, whichever is also true.
@@ -67,6 +71,7 @@ from functools import partial
 from typing import Any, cast
 
 from parallax.core import inheritance
+from parallax.core import predicate as predicate_algebra
 from parallax.core.base import NeutralType, decode_neutral_literal
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
@@ -118,8 +123,16 @@ type WireChanges = Mapping[str, object]
 """A Wire write's authored assignments: declared member names to accepted wire
 values. Identity, version, temporal-axis, computed, read-only, and relationship
 members are refused rather than assigned. Required wherever a verb's signature
-names it — an empty document is the ordinary no-op, and the verbs that name no
-member are the destructive and close ones, which take no change set at all."""
+names it — the verbs that name no member are the destructive and close ones,
+which take no change set at all.
+
+``{}`` is a stated document, never an absent argument, and what it states
+differs by family for the reason the two families differ. A keyed update
+addresses one row whose values the source already published, so naming no
+member is the ordinary no-op — the same one an empty Typed effective change set
+is. A predicate update lowers to the canonical assignment algebra, whose list
+must name at least one assignment, so ``{}`` is refused there exactly as
+``tx.update_where(query)`` with no assignments is."""
 
 type WirePredicateTarget = Mapping[str, object]
 """A Wire predicate write's target: exactly ``{"entity", "predicate"}``, the
@@ -128,6 +141,8 @@ temporal selection, result narrowing, and Include Paths all shape a RESULT and a
 set-based write has none to shape."""
 
 _UPDATE_MUTATIONS = frozenset({"update", "updateUntil"})
+
+_BOUNDED_MUTATIONS = frozenset({"insertUntil", "updateUntil", "terminateUntil"})
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
@@ -168,18 +183,22 @@ def wire_insert(
     is no prior observation, no hint, and nothing else that could say which
     Entity a fresh document is a document OF.
 
-    ``data`` is the Create Payload in accepted wire spellings. A framework-owned
-    member is refused rather than stored: the interval bounds are stamped at
-    flush from the Clock Strategy and the version is derived, exactly as the
-    Typed Entity constructor refuses a caller-authored one. A value a Wire read
-    published is refused too — it names a row this store already holds, and
-    ``tx.wire.update`` is the verb for that.
+    ``data`` is the Create Payload in accepted wire spellings, and its own shape
+    is the first thing judged: a payload that is no document is refused before
+    the Entity spelling is resolved, so a call that states neither hears about
+    the payload. A framework-owned member is refused rather than stored: the
+    interval bounds are stamped at flush from the Clock Strategy and the version
+    is derived, exactly as the Typed Entity constructor refuses a caller-authored
+    one. A value a Wire read published is refused too — it names a row this store
+    already holds, and ``tx.wire.update`` is the verb for that — under the
+    Identity the resolved Entity spelling supplies.
     """
+    payload = _authored_document(data, f"a Wire `{mutation}` payload")
     entity = instructions.resolve_target(lane.meta, entity_name)
     _refuse_published_source(entity, data, mutation)
     declaring = declaring_of(lane.meta, entity)
     valid_from_literal, until_literal = _validated_window(declaring, mutation, valid_from, until)
-    row = _decoded_row(lane.meta, entity, _authored_document(data, f"a Wire `{mutation}` payload"))
+    row = _decoded_row(lane.meta, entity, payload)
     _refuse_framework_owned(lane.meta, entity, row)
     instruction = keyed_instruction(
         mutation, entity.identity, row, valid_from=valid_from_literal, until=until_literal
@@ -271,11 +290,18 @@ def wire_predicate_write(
     the target and the assignments differently.
 
     Both caller documents are captured and judged for shape before anything is
-    resolved from the model, the same lead the keyed verb gives them.
+    resolved from the model, the same lead the keyed verb gives them — and a
+    selection's shape runs to the bottom of its predicate, so a malformed node
+    is `m-predicate`'s own refusal rather than whatever the model happens to say
+    about the Entity, the window, or the assignments beside it. The Entity is
+    then resolved HERE rather than left to the instruction build, because the
+    temporal bounds are rendered against the target's own declaring Entity and a
+    bound has to be canonical from the moment the instruction exists.
     """
     selection = _authored_document(target, "a predicate-selected write's canonical target")
+    entity_name = _selection_shape(selection)
     authored = _authored_changes(mutation, changes)
-    entity = _selection_entity(lane.meta, selection)
+    entity = instructions.resolve_target(lane.meta, entity_name)
     declaring = declaring_of(lane.meta, entity)
     valid_from_literal, until_literal = _validated_window(declaring, mutation, valid_from, until)
     assignments = _judged_changes(lane.meta, entity, _row_members(lane.meta, entity), authored)
@@ -385,16 +411,23 @@ def _concrete_entity(meta: Metamodel, hint: SourceHint) -> EntityMetadata:
     return record
 
 
-def _selection_entity(meta: Metamodel, target: Mapping[str, object]) -> EntityMetadata:
-    """``target``'s resolved Entity, refusing anything but the canonical
+def _selection_shape(target: Mapping[str, object]) -> str:
+    """The Entity spelling ``target`` states, refusing anything but the canonical
     selection shape.
 
-    Resolved before the instruction is built because the temporal bounds are
-    rendered against the target's own declaring Entity, and a bound has to be
-    canonical from the moment the instruction exists. Reads the CAPTURED target,
-    whose keys :func:`_authored_document` has already judged to be names, so the
-    two key sets below compare and sort rather than raising about their own
-    contents.
+    Judged whole before the model is consulted, which is why the predicate node
+    is deserialized here and not left to the instruction build: a selection that
+    states no well-formed predicate has stated no target, and answering it with
+    an unknown-Entity, inadmissible-bound, or illegal-assignment verdict would
+    report the defect the fixed order places later. The node is `m-predicate`'s
+    to judge — the same serde the instruction build reaches for the identical
+    document — so a malformed one carries that module's
+    :class:`~parallax.core.predicate.CanonicalDocumentError` while the selection
+    envelope around it stays this verb's own verdict.
+
+    Reads the CAPTURED target, whose keys :func:`_authored_document` has already
+    judged to be names, so the two key sets below compare and sort rather than
+    raising about their own contents.
     """
     extra = sorted(set(target) - {"entity", "predicate"})
     if extra or "entity" not in target or "predicate" not in target:
@@ -408,7 +441,13 @@ def _selection_entity(meta: Metamodel, target: Mapping[str, object]) -> EntityMe
         raise instructions.WriteInstructionError(
             "predicate write: `target.entity` must be a non-empty entity name"
         )
-    return instructions.resolve_target(meta, name)
+    node = target["predicate"]
+    if not isinstance(node, Mapping):
+        raise instructions.WriteInstructionError(
+            "predicate write: `target.predicate` must be a mapping"
+        )
+    predicate_algebra.deserialize(cast("Mapping[str, object]", node))
+    return name
 
 
 def _judged_changes(
@@ -634,10 +673,11 @@ def _authored_changes(mutation: KeyedMutation, changes: WireChanges | None) -> d
     ``delete`` / ``terminate`` / ``terminateUntil`` passes no change set and its
     ``None`` is that absence, while the update family's signature requires the
     document, so a ``None`` there is a caller that stated none. Neither an empty
-    document nor a falsy value of another type says "no changes": ``{}`` is the
-    ordinary no-op, and everything else is a document the caller failed to
-    state, which reading as absence would answer with a silent no-op instead of
-    a refusal.
+    document nor a falsy value of another type says "no changes": ``{}`` is a
+    document that names no member — whose meaning :data:`WireChanges` states,
+    and which the two families answer differently — and everything else is a
+    document the caller failed to state, which reading as absence would answer
+    with a silent no-op instead of a refusal.
     """
     if changes is None and mutation not in _UPDATE_MUTATIONS:
         return {}
@@ -724,9 +764,19 @@ def _validated_window(
     no ``until`` and receives none; a ``*_until`` verb's signature requires both,
     and a caller that states one bound without the other is refused rather than
     given the unbounded window it did not ask for.
+
+    Which bound is missing is asked of the MUTATION rather than of the other
+    bound, because the instruction build is not always downstream of this: a
+    keyed update whose change set turns out wholly restoring buffers nothing,
+    so a window this seam waves through is a window nothing else ever judges.
     """
     valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
     if until is None:
+        if mutation in _BOUNDED_MUTATIONS:
+            raise instructions.WriteInstructionError(
+                f"{declaring.identity.name}: a bounded {mutation!r} states its window as a pair, "
+                "and until is absent"
+            )
         return valid_from_literal, None
     if valid_from is None:
         raise instructions.WriteInstructionError(

@@ -45,6 +45,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, Payment, Person
 from parallax.conformance.vo_models import Contact, Shipment
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
+from parallax.core.base import InstantError
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
@@ -758,6 +759,30 @@ def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
+
+
+def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does() -> None:
+    # A value of no datetime type at all is no `m-core` instant either, and the
+    # shared validators the Typed and Wire verbs run answer it with `m-core`'s own
+    # class rather than leaking an `AttributeError` out of instant normalization.
+    # A non-temporal target admits no `valid_from`, so a bounded verb aimed at one
+    # arrives here with half a window — the same missing value, the same verdict.
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
+        with pytest.raises(InstantError, match="no `timestamp`"):
+            tx.update_until(
+                fetched.edit(balance=Decimal("20.00")),
+                valid_from=cast("dt.datetime", None),
+                until=until,
+            )
+
+    account_db(port).transact(fn)
+    assert not any(op[0] == "write" for op in port.ops)
 
 
 def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
