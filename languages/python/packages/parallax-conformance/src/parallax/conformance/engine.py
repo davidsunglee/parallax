@@ -63,6 +63,7 @@ from parallax.core.metamodel import (
     MemberIdentity,
     Multiplicity,
     NestedValueObjectMetadata,
+    PrimaryKey,
     TemporalDimension,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
@@ -124,6 +125,7 @@ from parallax.snapshot.handle import (
     stream_lowered,
     validate_source_pin,
 )
+from parallax.snapshot.materialize import source_hint_of
 
 __all__ = [
     "Emission",
@@ -4285,20 +4287,20 @@ class _ConflictWrite:
     both the pure re-lowering and the real execution: the durable row, the
     single-row instruction a unit of work buffers for it, that instruction's
     coalescing identity, and the Version Observation the row's reserved
-    ``observedVersion`` described."""
+    ``observedVersion`` described.
+
+    The observation is a DECLARED FACT the case states, never the evidence the
+    write settles against: the real execution reads its own source and settles
+    against what that read observed (:func:`_conflict_source_nodes`), and this
+    value is what that observation is cross-checked against
+    (:func:`_refuse_unobserved_conflict_version`). The pure oracle plans with it
+    directly, having no read behind it.
+    """
 
     row: dict[str, object]
     instruction: WriteInstruction
     key: ObjectKey | None
     observation: VersionObservation | None
-
-    @property
-    def resolved(self) -> _ResolvedWrite:
-        """This row as the buffer item both write consumers take. Its Version
-        Observation is evidence the case authored and this lane holds directly,
-        so the real write and the pure oracle settle against the same value and
-        no Observed State Key stands between them."""
-        return _ResolvedWrite(self.instruction, self.observation, self.observation)
 
 
 def _resolve_conflict_writes(
@@ -4459,6 +4461,116 @@ def _admitted_affected(implied: type[WriteEffectError], run: Callable[[], int]) 
         return exc.actual
 
 
+def _conflict_key_predicate(
+    model: AcceptedMetamodel, target: str, resolved: Sequence[_ConflictWrite]
+) -> dict[str, object]:
+    """A predicate selecting exactly the rows one conflict attempt addresses.
+
+    Membership over the family-declared primary key, whatever the attempt's row
+    count, so one read resolves the whole attempt and a single-key attempt takes
+    no different path from a multi-key one. The key is family-declared for the
+    reason every write-side key resolution is: a concrete subtype inherits it.
+    """
+    declaring = _family_declarer(model, case_entity(model, target))
+    keys = [
+        attr for attr in declaring.declared_attributes if isinstance(attr.primary_key, PrimaryKey)
+    ]
+    if len(keys) != 1:  # pragma: no cover - no witnessed conflict target is composite-keyed
+        raise EngineError(
+            f"{target!r}: a conflict attempt's source read selects by a single-attribute "
+            f"primary key, and this Entity declares {len(keys)}"
+        )
+    name = keys[0].identity.name
+    return {
+        "in": {
+            "attr": f"{declaring.identity.canonical}.{name}",
+            "values": [write.row[name] for write in resolved],
+        }
+    }
+
+
+def _conflict_source_nodes(
+    port: DbPort,
+    dialect: Dialect,
+    model: AcceptedMetamodel,
+    target: str,
+    resolved: Sequence[_ConflictWrite],
+) -> dict[ObjectKey, handle.WireEntity]:
+    """The published rows one NON-TEMPORAL conflict attempt's keyed writes are
+    addressed and licensed by, read through a real ``db.wire.find``.
+
+    STANDALONE rather than participating, because the read has to happen where
+    the case says it does: a conflict case's ``given.apply`` is a concurrent
+    writer that commits BETWEEN the read and the write it invalidates, and a
+    read inside the attempt's own transaction could only observe the state that
+    writer already left. An effective-Optimistic target licenses exactly this —
+    the retained observation IS the evidence, and a standalone source carries it
+    as a participating read's does (`m-opt-lock`), which is also why every
+    conflict shape reachable through public verbs is an optimistic one.
+
+    A row the read does not answer is absent from the mapping; the write that
+    wanted it is refused where its diagnosis can name the key
+    (:func:`_conflict_source_node`).
+    """
+    instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
+    database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
+    snapshot = database.wire.find(
+        {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
+    )
+    nodes: dict[ObjectKey, handle.WireEntity] = {}
+    for root in snapshot.results():
+        hint = source_hint_of(root)
+        assert hint is not None  # a Wire read files a hint on every published Entity node
+        nodes[hint.object_key] = root
+    return nodes
+
+
+def _conflict_source_node(
+    target: str, write: _ConflictWrite, nodes: Mapping[ObjectKey, handle.WireEntity]
+) -> handle.WireEntity:
+    """The published node ``write`` settles against, or the authoring refusal.
+
+    A conflict case describes a write a caller could actually issue, so the row
+    it addresses has to be one the case's own state holds when the source read
+    runs. A key the read answered nothing for describes a write no verb can
+    author — the state the evidence model exists to make unreachable — and is
+    refused here rather than executed as a blind statement.
+    """
+    node = None if write.key is None else nodes.get(write.key)
+    if node is None:
+        raise EngineError(
+            f"{target!r}: a conflict attempt writes {write.row!r}, which its own source read "
+            "found no row for — a keyed write is addressed and licensed by a value a read "
+            "published, so a case whose target is already gone describes a write no verb can "
+            "author (m-unit-work 'Write evidence')"
+        )
+    return node
+
+
+def _refuse_unobserved_conflict_version(
+    target: str, write: _ConflictWrite, node: handle.WireEntity
+) -> None:
+    """Refuse an attempt whose declared ``observedVersion`` is not the version its
+    own source read observed.
+
+    The declared fact and the real observation are two spellings of one state,
+    and the case's golden gate bind is derived from the declared one while the
+    write settles against the observed one. Letting them differ would grade a
+    statement against a version no read of this lane ever saw.
+    """
+    declared = None if write.observation is None else write.observation.observed_version
+    hint = source_hint_of(node)
+    assert hint is not None  # the node came from :func:`_conflict_source_nodes`
+    retained = None if hint.observation is None else hint.observation.evidence
+    observed = retained.observed_version if isinstance(retained, VersionObservation) else None
+    if declared != observed:
+        raise EngineError(
+            f"{target!r}: a conflict attempt declares `observedVersion: {declared!r}` and its "
+            f"own source read observed {observed!r} — the gate this case grades binds the "
+            "declared version, so the two must name one state"
+        )
+
+
 def _run_conflict_write(
     port: DbPort,
     dialect: Dialect,
@@ -4467,47 +4579,62 @@ def _run_conflict_write(
     concurrency: Concurrency,
     write_rows: Sequence[Mapping[str, object]],
     mutation: Literal["update", "delete"],
+    nodes: Mapping[ObjectKey, handle.WireEntity],
 ) -> tuple[tuple[LoweredStatement, ...], int, ExecutionLog | None, int]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
     ``db.transact`` — ONE
     transaction, an inert Clock (never consumed by a non-temporal write).
-    Buffers EVERY row through the neutral ``Transaction.write_neutral`` ingress, each
-    carrying the observation its own row authored, so a MULTI-KEY attempt
-    reaches the flush the same way
-    a unit of work's own buffered writes do and the batching rule — not this
-    function — decides how many statements they become; the PRODUCTION flush
-    executor's OWN affected-row enforcer raises on a violation, and this lane
-    admits only the class the case's own declared facts imply
+
+    Every row is written through the PUBLIC keyed Wire verb its mutation names,
+    against the node ``nodes`` published for its key, so a MULTI-KEY attempt
+    reaches the flush exactly as that many developer calls would and the batching
+    rule — not this function — decides how many statements they become. The
+    PRODUCTION flush executor's OWN affected-row enforcer raises on a violation,
+    and this lane admits only the class the case's own declared facts imply
     (:func:`_implied_shortfall_error`), rendering it as the ``affectedRows``
-    observation the case asserts. A failure classified any other way — an ungated
-    locking-mode versioned DELETE surfacing as an optimistic conflict, or an
-    unversioned keyed UPDATE against a missing row surfacing as anything but a
-    missing target — propagates and fails the case.
+    observation the case asserts. A failure classified any other way — a gated
+    shortfall surfacing as a stale write, or the reverse — propagates and fails
+    the case.
 
     ``statements`` (the reported golden-comparable emission) is
     :func:`_lower_conflict_write`'s own SEPARATE, PURE re-lowering of the
-    ORIGINAL, undecoded rows — the rows this function actually
-    buffers are decoded to native carriers (:func:`decode_write_row`) only for
-    THIS real execution, so a case-authored wire spelling (`m-opt-lock-013`'s
-    own decimal `balance`) validates at the coercion-only developer boundary
-    without the reported emission's bind ever drifting from the case-authored
-    literal.
+    ORIGINAL, undecoded rows: a case-authored wire spelling (`m-opt-lock-013`'s
+    own decimal `balance`) crosses the Wire verb's serde on the way to the real
+    write without the reported emission's bind ever drifting from the
+    case-authored literal.
     """
     resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
     statements = _lower_conflict_write(model, dialect, concurrency, resolved)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
     landed = _landed_conflict_rows(resolved)
+    sources = [_conflict_source_node(target, write, nodes) for write in resolved]
+    for write, node in zip(resolved, sources, strict=True):
+        _refuse_unobserved_conflict_version(target, write, node)
 
     def body(tx: handle.Transaction) -> int:
-        for write in resolved:
-            _buffer_execution_instruction(tx, model, write.resolved)
+        for write, node in zip(resolved, sources, strict=True):
+            if mutation == "delete":
+                tx.wire.delete(node)
+            else:
+                tx.wire.update(node, _conflict_changes(write))
         return landed  # the expectation machinery already verified this on success
 
     observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
     implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
     affected, log = _conflict_attempt_affected(database, concurrency, implied, body)
     return statements, affected, log, log.round_trips if log is not None else 0
+
+
+def _conflict_changes(write: _ConflictWrite) -> dict[str, object]:
+    """One conflict attempt row's authored assignments — its durable row less the
+    identity the source node already carries, in authored order.
+
+    Order is what the golden's SET clause is rendered in, so it is the case's own
+    rather than the model's declaration order.
+    """
+    identity = dict(write.key.primary_key) if write.key is not None else {}
+    return {name: value for name, value in write.row.items() if name not in identity}
 
 
 # A temporal conflict attempt's verb. The case names none (`when.mutation` is
@@ -4805,8 +4932,16 @@ def run_conflict_case(
     `handle.plan_temporal_close` directly, one milestone row at a time.
 
     Loads no fixtures itself (the caller's own lifecycle does, per
-    `m-case-format`'s conflict-shape default); applies `given.apply` verbatim
-    and out-of-band FIRST (the concurrent writer, `_apply_given_apply`).
+    `m-case-format`'s conflict-shape default). `given.apply`'s concurrent writer
+    commits BETWEEN the FIRST attempt's source read and the write that read
+    licenses (`_apply_given_apply`), which is the ordering a non-temporal
+    conflict case describes: the state its write settles against is one a real
+    read of this lane observed, and the writer that invalidated it committed
+    afterwards. A retry attempt reads again, after the attempt before it ran, so
+    it observes the state that writer left. A TEMPORAL attempt needs no source —
+    its close settles against a coordinate the case names — so for it the writer
+    still commits first.
+
     Returns the ordered emissions, the FINAL (single-attempt or last-retry)
     affected-row count — the schema's one `affectedRows` slot,
     `m-conformance-adapter` — and the resulting table state when the case
@@ -4832,7 +4967,6 @@ def run_conflict_case(
     round_trips = 0
     logs: list[ExecutionLog | None] = []
     try:
-        _apply_given_apply(case, dialect, port, shadow)
         raw_attempts = when.get("attempts")
         attempts: list[tuple[str, Mapping[str, object]]] = (
             [
@@ -4842,6 +4976,20 @@ def run_conflict_case(
             if isinstance(raw_attempts, list)
             else [("/when/write", when)]
         )
+
+        def sources_for(attempt: Mapping[str, object]) -> dict[ObjectKey, handle.WireEntity]:
+            return _conflict_source_nodes(
+                port,
+                dialect,
+                model,
+                target,
+                _resolve_conflict_writes(model, target, mutation, _conflict_write_rows(attempt)),
+            )
+
+        # Taken before the concurrent writer commits, and spent by the first
+        # attempt; every later attempt reads again, after the one before it ran.
+        sources = None if is_temporal else sources_for(attempts[0][1])
+        _apply_given_apply(case, dialect, port, shadow)
         for pointer, attempt in attempts:
             if is_temporal:
                 statements, affected, log, attempt_trips = _run_conflict_close(
@@ -4865,7 +5013,9 @@ def run_conflict_case(
                     concurrency,
                     _conflict_write_rows(attempt),
                     mutation,
+                    sources_for(attempt) if sources is None else sources,
                 )
+                sources = None
             emissions.extend(Emission(pointer, s.sql, s.binds) for s in statements)
             logs.append(log)
             round_trips += attempt_trips

@@ -64,6 +64,7 @@ from parallax.core.unit_work import (
     WriteEffectError,
 )
 from parallax.snapshot import DeferredFeatureError
+from parallax.snapshot.handle import WriteEvidenceError
 
 
 def _rows(row: Row | None, key: str) -> list[Row]:
@@ -3289,9 +3290,21 @@ def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
 # driven against the fake in-memory port (no Docker; the real conflict/retry   #
 # semantics against a reset database are the Docker-gated pg-full proof,       #
 # `tests/compatibility/test_run_sweep.py::test_conflict_run_sweep`).           #
+#                                                                             #
+# Every attempt now takes a REAL source read, so each port here answers the    #
+# rows the attempt writes against; the fake serves one canned result to every  #
+# read, which is enough because a conflict attempt reads exactly once.         #
 # --------------------------------------------------------------------------- #
+_ACCOUNT_ROW_2: Final[Row] = {
+    "id": 2,
+    "owner": "Linus",
+    "balance": decimal.Decimal("250.00"),
+    "version": 1,
+}
+
+
 def test_run_conflict_case_single_attempt() -> None:
-    port = FakeWritePort()
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-006"), "postgres", port
     )
@@ -3301,14 +3314,21 @@ def test_run_conflict_case_single_attempt() -> None:
     assert table_state is not None and "account" in table_state
 
 
-def test_run_conflict_case_applies_given_apply_out_of_band_first() -> None:
-    port = FakeWritePort()
+def test_run_conflict_case_reads_its_source_before_applying_given_apply() -> None:
+    # The concurrent writer commits BETWEEN the source read and the write it
+    # invalidates: a read taken after it would observe the state it left, and
+    # the stale gate the case grades would never be reachable.
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-005"), "postgres", port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
+    assert port.reads[0][0].startswith("select")  # the source read ran first
     # given.apply's naive out-of-band bump, THEN the gated update.
-    assert len(port.writes) == 2
+    assert [sql for sql, _binds in port.writes] == [
+        "update account set balance = 999.00, version = 2 where id = 2",
+        "update account set balance = %s, version = %s where id = %s and version = %s",
+    ]
     assert affected == 1  # the fake port always reports 1; the real 0-row
     # conflict proof runs against a reset database (test_conflict_run_sweep).
     assert table_state is not None
@@ -3320,29 +3340,57 @@ class _ZeroAffectedPort(FakeWritePort):
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         super().execute_write(sql, binds)
-        return 0 if sql.startswith(("update account set", "delete from account where")) else 1
-
-
-def test_run_conflict_case_renders_an_ungated_zero_row_delete_as_a_stale_write() -> None:
-    # m-opt-lock-016: a locking-mode versioned DELETE renders no gate, so its
-    # zero-row shortfall raises the NON-retriable StaleWriteError rather than an
-    # optimistic conflict. The lane catches ONLY the class the case's own mode
-    # implies, so the case's `affectedRows: 0` observation is reachable exactly
-    # when the write classified its shortfall the way the mode requires.
-    port = _ZeroAffectedPort()
-    emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
-        _load_case("m-opt-lock-016"), "postgres", port
-    )
-    assert [e.sql for e in emissions] == ["delete from account where id = ?"]
-    assert affected == 0
+        return (
+            0 if sql.startswith(("update account set balance = %s", "delete from account")) else 1
+        )
 
 
 def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> None:
-    port = _ZeroAffectedPort()
+    port = _ZeroAffectedPort(find_rows=[_ACCOUNT_ROW_2])
     _emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-005"), "postgres", port
     )
     assert affected == 0
+
+
+def test_a_conflict_attempt_whose_source_read_finds_no_row_is_refused() -> None:
+    # The retired impossible-state shape: a target `given.apply` already removed
+    # leaves the attempt with no value to write, which is what makes such a case
+    # unauthorable through public verbs rather than merely unpleasant.
+    port = FakeWritePort(find_rows=[])
+    with pytest.raises(engine.EngineError, match="found no row for"):
+        engine.run_conflict_case(_load_case("m-opt-lock-006"), "postgres", port)
+
+
+def test_a_conflict_attempt_declaring_a_version_its_read_did_not_observe_is_refused() -> None:
+    # The declared `observedVersion` renders the golden's gate bind while the
+    # real write settles against what the read saw, so the two must name one
+    # state or the case grades a statement no read of this lane produced.
+    port = FakeWritePort(find_rows=[{**_ACCOUNT_ROW_2, "version": 7}])
+    with pytest.raises(engine.EngineError, match="its own source read observed 7"):
+        engine.run_conflict_case(_load_case("m-opt-lock-006"), "postgres", port)
+
+
+def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> None:
+    # `when.mutation: delete` reaches `tx.wire.delete`, keyed off the node the
+    # source read published — the destructive arm of the same one ingress the
+    # update arm takes.
+    case = _synthetic_write(
+        "conflict",
+        {
+            "when": {
+                "uow": {"concurrency": "optimistic"},
+                "mutation": "delete",
+                "write": {"id": 2, "observedVersion": 1},
+            }
+        },
+    )
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
+        case, "postgres", port
+    )
+    assert [e.sql for e in emissions] == ["delete from account where id = ? and version = ?"]
+    assert affected == 1
 
 
 class _ZeroAffectedClosePort(FakeWritePort):
@@ -3359,8 +3407,9 @@ class _ZeroAffectedClosePort(FakeWritePort):
 
 def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() -> None:
     # m-temporal-read-012: the locking-mode close renders its address and no gate,
-    # so its shortfall is the non-retriable stale write — the temporal sibling of
-    # the ungated versioned DELETE above, caught by the same one implied class.
+    # so its shortfall is the non-retriable stale write. The close lane settles
+    # against a coordinate the case names rather than a source a read published,
+    # which is why a Locking-mode conflict survives here and nowhere else.
     _emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-temporal-read-012"), "postgres", _ZeroAffectedClosePort()
     )
@@ -3379,13 +3428,9 @@ def _unversioned_conflict_case(rows: list[dict[str, object]]) -> case_format.Cas
 
 def test_a_conflict_attempt_row_authoring_an_unobservable_observed_version_is_refused() -> None:
     # A conflict attempt authors its `write` rows in the same `writeRow`
-    # vocabulary a writeSequence entry does, and unversioned conflict targets are
-    # a supported surface (m-unit-work-013/-014, m-batch-write-008). Accepted, the
-    # key wraps each row in an observation carrier the planner ignores (there is
-    # no version to advance) but batching still excludes, so the multi-key attempt
-    # emits one statement per key instead of the single `IN`-list statement
-    # `m-batch-write`'s uniform-value update collapse yields for these same rows
-    # without the key — the collapse this lane exists to exercise.
+    # vocabulary a writeSequence entry does, so the licensing rule that entitles
+    # exactly a versioned Non-Temporal update or delete to name an observed
+    # version is the same one, and it is refused before any read runs.
     case = _unversioned_conflict_case(
         [
             {"id": 1, "balance": 500.00, "observedVersion": 1},
@@ -3396,15 +3441,20 @@ def test_a_conflict_attempt_row_authoring_an_unobservable_observed_version_is_re
         engine.run_conflict_case(case, "postgres", FakeWritePort())
 
 
-def test_a_multi_key_unversioned_conflict_attempt_collapses_to_one_statement() -> None:
-    emissions, _affected, _table_state, _log, _round_trips = engine.run_conflict_case(
-        _unversioned_conflict_case([{"id": 1, "balance": 500.00}, {"id": 2, "balance": 500.00}]),
-        "postgres",
-        FakeWritePort(),
+def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_read() -> None:
+    # An unversioned Non-Temporal target resolves to the Locking strategy under
+    # either preference, and Locking licenses a keyed write only through a read
+    # of the writing transaction. This lane's source read is standalone — it has
+    # to be, because the concurrent writer commits after it — so an unversioned
+    # conflict case cannot be expressed at all, which is exactly what retired the
+    # impossible-state cases that used to author one.
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00")}]
     )
-    assert [(e.sql, e.binds) for e in emissions] == [
-        ("update wallet set balance = ? where id in (?, ?)", (500.00, 1, 2))
-    ]
+    with pytest.raises(WriteEvidenceError, match="write-evidence-unavailable"):
+        engine.run_conflict_case(
+            _unversioned_conflict_case([{"id": 1, "balance": 500.00}]), "postgres", port
+        )
 
 
 def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
@@ -3484,45 +3534,25 @@ class TestConflictShortfallClassification:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # The regression this pins: a lane admitting the retriable conflict where
-        # the ungated locking-mode DELETE's shortfall is the stale write. The real
+        # the ungated locking-mode close's shortfall is the stale write. The real
         # failure must NOT be swallowed into the same `affectedRows: 0`
-        # observation m-opt-lock-016 asserts.
+        # observation m-temporal-read-012 asserts.
         monkeypatch.setattr(
             engine, "_implied_shortfall_error", _always_implying(OptimisticLockConflictError)
         )
         with pytest.raises(StaleWriteError):
-            engine.run_conflict_case(_load_case("m-opt-lock-016"), "postgres", _ZeroAffectedPort())
+            engine.run_conflict_case(
+                _load_case("m-temporal-read-012"), "postgres", _ZeroAffectedClosePort()
+            )
 
     def test_a_gated_shortfall_admitted_as_a_stale_write_propagates(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(engine, "_implied_shortfall_error", _always_implying(StaleWriteError))
         with pytest.raises(OptimisticLockConflictError):
-            engine.run_conflict_case(_load_case("m-opt-lock-005"), "postgres", _ZeroAffectedPort())
-
-
-class _CollapsedDeletePort(FakeWritePort):
-    """A port whose collapsed multi-key DELETE reports every key the statement
-    named, so the write lands and the lane reports its own aggregate."""
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        super().execute_write(sql, binds)
-        return len(binds) if sql.startswith("delete from wallet where id in") else 1
-
-
-def test_run_conflict_case_collapses_a_multi_key_write_into_one_statement() -> None:
-    # m-batch-write-008 authors `when.write` as an ORDERED ARRAY of keyed rows.
-    # One unit of work buffers all three and the batching rule collapses them
-    # into ONE set-based DELETE — so the lane's own pure re-lowering must inject
-    # the same collapse policy the execution runs under, or it would report three
-    # statements where one was emitted. The count it reports is the aggregate the
-    # single complete Key Target owns, never a per-row 1.
-    emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
-        _load_case("m-batch-write-008"), "postgres", _CollapsedDeletePort()
-    )
-    assert [e.sql for e in emissions] == ["delete from wallet where id in (?, ?, ?)"]
-    assert [e.binds for e in emissions] == [(1, 2, 3)]
-    assert affected == 3
+            engine.run_conflict_case(
+                _load_case("m-opt-lock-005"), "postgres", _ZeroAffectedPort([_ACCOUNT_ROW_2])
+            )
 
 
 def test_run_conflict_case_refuses_a_multi_key_write_against_a_temporal_target() -> None:
@@ -3547,8 +3577,29 @@ def test_run_conflict_case_refuses_a_multi_key_write_against_a_temporal_target()
         engine.run_conflict_case(case, "postgres", FakeWritePort())
 
 
+class _ScriptedReadPort(FakeWritePort):
+    """A port answering each read from an ordered script rather than one constant
+    result, so a retry sequence's successive source reads can observe successive
+    generations of one row."""
+
+    def __init__(self, results: list[list[Row]]) -> None:
+        super().__init__()
+        self._results = list(results)
+
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
+        self.reads.append((sql, list(binds)))
+        return self._results.pop(0) if self._results else []
+
+
 def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() -> None:
-    port = FakeWritePort()
+    # Each attempt takes its OWN source read, so the retry observes the generation
+    # the concurrent writer left rather than reusing the stale one the first
+    # attempt settled against.
+    port = _ScriptedReadPort(
+        [[_ACCOUNT_ROW_2], [{**_ACCOUNT_ROW_2, "balance": decimal.Decimal("999.00"), "version": 2}]]
+    )
     emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-007"), "postgres", port
     )

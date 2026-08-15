@@ -667,14 +667,13 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # SAME `when.attempts` retry lane `m-opt-lock-007` already exercises (pinned   #
 # semantics #7: the attempts sequence is caller-visible choreography here,    #
 # not the runtime auto-retry loop, which `m-opt-lock-011`'s boundary case      #
-# proves instead). `m-opt-lock-016`/`-017` are the non-temporal siblings of    #
-# the locking-mode zero-row close: an UNGATED versioned keyed DELETE and the   #
-# UNGATED versioned keyed UPDATE, each against a row a concurrent transaction  #
-# already removed, whose shortfall the executor classifies as the              #
-# never-retriable stale write rather than a conflict. Only a real execution    #
-# distinguishes the two classes — both render the same `0` count, and the      #
-# case passes only because the run lane catches the class its declared mode    #
-# implies and lets the other propagate.                                        #
+# proves instead). Every non-temporal conflict case here settles against a     #
+# state a REAL read of this lane observed, so the concurrent writer commits    #
+# between that read and the write it invalidates; the zero-row shapes whose    #
+# interference no correct client can reach — a Locking-mode target whose row   #
+# a concurrent writer deleted while the required participating read held its   #
+# shared lock — are retired, and the classification they carried is pinned by  #
+# `tests/unit/test_zero_row_write_classification.py` instead.                  #
 # `m-bitemp-write-017`/`-018` close the BOUNDED current rectangle whose        #
 # Valid-Time end is finite, in each concurrency mode: only a real execution    #
 # distinguishes an address that binds the observed rectangle's own `thru_z`    #
@@ -686,21 +685,6 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # always picking the same rectangle. Neither grades where the gate came from   #
 # — both rectangles share `in_z`, and that `in_z` is the authored edge's own   #
 # Transaction-Time half — which each header states as a bare negative.         #
-# `m-unit-work-013`/`-014` are the first UNVERSIONED keyed shortfalls: the     #
-# target of a keyed UPDATE and of a keyed DELETE is simply gone, and since     #
-# the model declares no version, no gate could have failed and no shared read  #
-# lock was holding anything still. Only a real execution tells that            #
-# never-retriable missing target apart from the stale write the versioned      #
-# `m-opt-lock-016`/`-017` earn — the counts are identical and only the class   #
-# differs. `m-batch-write-008` is the MULTI-KEY form of the same shortfall:    #
-# `when.write` names three keys, one unit of work buffers them, the batching   #
-# rule collapses them into one `delete ... where id in (?, ?, ?)`, and the     #
-# aggregate that ONE complete Key Target owns is what the count is held to —   #
-# a partial match is refused rather than accepted on the grounds that the      #
-# statement was set-based. It authors no `then.tableState`: its write is       #
-# refused, so this lane's unit of work rolls back where the reference          #
-# harness's bare golden does not, and the two lanes legitimately disagree on   #
-# the rows that remain.                                                        #
 # --------------------------------------------------------------------------- #
 _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
@@ -709,12 +693,6 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-opt-lock-007",
         "m-opt-lock-009",
         "m-opt-lock-013",
-        "m-opt-lock-016",
-        "m-opt-lock-017",
-        "m-execution-log-006",
-        "m-unit-work-013",
-        "m-unit-work-014",
-        "m-batch-write-008",
         "m-temporal-read-009",
         "m-temporal-read-010",
         "m-temporal-read-011",

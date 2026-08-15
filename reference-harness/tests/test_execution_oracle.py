@@ -540,4 +540,4 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         if isinstance(then, dict) and "execution" in then:
             authored += 1
         assert validate_execution(case) == [], case_path.name
-    assert authored == 7
+    assert authored == 6

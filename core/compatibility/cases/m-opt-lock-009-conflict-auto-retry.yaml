@@ -14,11 +14,16 @@
 # The API Conformance Suite additionally proves the auto-retry-via-flag path (no
 # caller catch/re-read).
 #
-# Account 2 (Linus) is read at version 1. A concurrent transaction commits first
-# (the `precondition`: balance 999.00, version 2). Then the automatic loop:
+# Account 2 (Linus) is read at version 1 — a REAL read whose retained observation
+# licenses the first attempt. A concurrent transaction then commits (the
+# `given.apply`: balance 999.00, version 2), BETWEEN that read and the write it
+# invalidates. Then the automatic loop:
 #   attempt 0 (stale) : UPDATE gates on the observed version (1) => 0 rows — conflict.
 #   attempt 1 (retry) : the loop re-reads the fresh version (2), re-applies => 1 row,
 #                       advancing the version to 3.
+#
+# The new balance (275.00) differs from what either read observed, so each
+# attempt's write is an effective change rather than a restoration.
 #
 # `roundTrips: 2` is what the two authored attempts cost between them — one gated
 # UPDATE each. The first REACHED the database and reported zero rows, so it counts
@@ -43,20 +48,20 @@ when:
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [250.00, 2, 2, 1]
-      write: { id: 2, balance: 250.00, observedVersion: 1 }
+          binds: [275.00, 2, 2, 1]
+      write: { id: 2, balance: 275.00, observedVersion: 1 }
       affectedRows: 0
     - note: automatic retry — the loop re-reads the fresh version (2) and re-applies => 1 row
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [250.00, 3, 2, 2]
-      write: { id: 2, balance: 250.00, observedVersion: 2 }
+          binds: [275.00, 3, 2, 2]
+      write: { id: 2, balance: 275.00, observedVersion: 2 }
       affectedRows: 1
 then:
   roundTrips: 2
   tableState:
     account:
       - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-      - { id: 2, owner: Linus, balance: 250.00, version: 3 }
+      - { id: 2, owner: Linus, balance: 275.00, version: 3 }
       - { id: 3, owner: Grace, balance: 10.00, version: 1 }

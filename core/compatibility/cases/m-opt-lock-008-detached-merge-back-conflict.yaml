@@ -10,8 +10,11 @@
 # detect the concurrent writer: an offline detached copy holds no locking-mode shared
 # lock, so an ungated merge-back would silently overwrite that writer instead.
 #
-# Account id 1 (Ada) was detached at version 1. Before the merge-back flushes, a
-# concurrent transaction commits (the `precondition`: balance 888.00, version 2).
+# Account id 1 (Ada) was detached at version 1 — a real read whose retained
+# observation the detached copy carries. Before the merge-back flushes, a
+# concurrent transaction commits (`given.apply`: balance 888.00, version 2),
+# BETWEEN that read and the write it invalidates, which is the ordering every
+# non-temporal conflict case describes.
 # The merge-back UPDATE gates on the detachment-time version (1), which now
 # matches NO row, so it affects ZERO rows — the conflict signal. The resulting
 # state confirms our stale write never applied: id 1 still carries the concurrent
