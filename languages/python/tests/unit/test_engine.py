@@ -3345,9 +3345,9 @@ def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
 # semantics against a reset database are the Docker-gated pg-full proof,       #
 # `tests/compatibility/test_run_sweep.py::test_conflict_run_sweep`).           #
 #                                                                             #
-# Every attempt now takes a REAL source read, so each port here answers the    #
-# rows the attempt writes against; the fake serves one canned result to every  #
-# read, which is enough because a conflict attempt reads exactly once.         #
+# Every attempt takes a REAL source read, so each port here answers the rows   #
+# the attempt writes against; the fake serves one canned result to every read, #
+# which is enough because a conflict attempt reads exactly once.               #
 # --------------------------------------------------------------------------- #
 _ACCOUNT_ROW_2: Final[Row] = {
     "id": 2,
@@ -3408,9 +3408,9 @@ def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> No
 
 
 def test_a_conflict_attempt_whose_source_read_finds_no_row_is_refused() -> None:
-    # The retired impossible-state shape: a target `given.apply` already removed
-    # leaves the attempt with no value to write, which is what makes such a case
-    # unauthorable through public verbs rather than merely unpleasant.
+    # A target `given.apply` already removed leaves the attempt with no value to
+    # write, so a case authoring that state is unauthorable through the public
+    # verbs rather than merely unpleasant.
     port = FakeWritePort(find_rows=[])
     with pytest.raises(engine.EngineError, match="found no row for"):
         engine.run_conflict_case(_load_case("m-opt-lock-006"), "postgres", port)
@@ -3463,7 +3463,8 @@ def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() 
     # m-temporal-read-012: the locking-mode close renders its address and no gate,
     # so its shortfall is the non-retriable stale write. The close lane settles
     # against a coordinate the case names rather than a source a read published,
-    # which is why a Locking-mode conflict survives here and nowhere else.
+    # which is why a Locking-mode conflict is expressible here and nowhere else
+    # in this lane.
     _emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-temporal-read-012"), "postgres", _ZeroAffectedClosePort()
     )
@@ -3500,8 +3501,7 @@ def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_r
     # either preference, and Locking licenses a keyed write only through a read
     # of the writing transaction. This lane's source read is standalone — it has
     # to be, because the concurrent writer commits after it — so an unversioned
-    # conflict case cannot be expressed at all, which is exactly what retired the
-    # impossible-state cases that used to author one.
+    # conflict case is inexpressible, whatever state it would assert.
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00")}]
     )
@@ -5393,8 +5393,8 @@ def test_decoded_assignment_value_leaves_an_undeclared_member_unchanged() -> Non
 # The write lanes' own verb dispatch, driven database-free against the fake     #
 # port. Every keyed and predicate mutation the corpus authors reaches its own   #
 # `tx.wire` verb, and the value each write is addressed by is resolved from     #
-# what this unit's own reads published — the two questions the migration off    #
-# the instruction ingress made this engine's rather than production's.          #
+# what this unit's own reads published — the two questions this engine answers  #
+# for itself, since production only ever sees the verb call it makes.           #
 # --------------------------------------------------------------------------- #
 
 
@@ -5593,3 +5593,130 @@ def test_a_transaction_time_past_reading_is_skipped_as_a_write_source() -> None:
     port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
     engine.run_scenario_case(case, "postgres", port)
     assert next(sql for sql, _binds in port.writes).startswith("update ledger set out_z")
+
+
+def _synthetic_scenario(
+    model: str, case_id: str, steps: list[dict[str, object]]
+) -> case_format.Case:
+    from pathlib import Path
+
+    return case_format.Case(
+        path=Path(f"{case_id}-synthetic.yaml"),
+        case_id=case_id,
+        shape="scenario",
+        tags=(case_id.rsplit("-", 1)[0], "slice-snapshot-1"),
+        model=model,
+        document={"model": model, "shape": "scenario", "when": {"scenario": steps}},
+    )
+
+
+def test_one_entity_spelled_two_ways_owes_one_membership_read() -> None:
+    # A bare local name and its canonical form name ONE Entity, so a unit writing
+    # both spellings reads that Entity once — the same rule the object identity
+    # itself resolves by. Counting the authored string would issue two reads and
+    # put the first write on the wire before the second could be buffered.
+    port = FakeWritePort(
+        find_rows=[
+            {"id": 21, "order_id": 2, "sku": "A-300", "quantity": 4, "shipped_on": None},
+            {"id": 22, "order_id": 2, "sku": "A-400", "quantity": 1, "shipped_on": None},
+        ]
+    )
+    case = _synthetic_scenario(
+        "models/orders.yaml",
+        "m-unit-work-997",
+        [
+            {
+                "write": [
+                    {
+                        "mutation": "update",
+                        "entity": "OrderItem",
+                        "rows": [{"id": 21, "quantity": 9}],
+                    },
+                    {
+                        "mutation": "delete",
+                        "entity": "parallax.compatibility.OrderItem",
+                        "rows": [{"id": 22}],
+                    },
+                ],
+                "roundTrips": 3,
+            }
+        ],
+    )
+    engine.run_scenario_case(case, "postgres", port)
+    assert len(port.reads) == 1
+    assert port.reads[0][0].endswith("where t0.id in (%s, %s) for share of t0")
+
+
+def test_a_unit_mixing_a_framework_marker_with_a_public_verb_write_is_refused() -> None:
+    # A pk-gen registry advance has no verb to be stated through and an ordinary
+    # insert has nothing else, so a unit holding both would put half its DML
+    # through the public surface and half around it. Refused rather than routed
+    # by whichever entry was looked at first.
+    case = _synthetic_scenario(
+        "models/pk-sequence.yaml",
+        "m-pk-gen-999",
+        [
+            {
+                "write": [
+                    {
+                        "mutation": "update",
+                        "entity": "parallax.compatibility.PkSequence",
+                        "rows": [{"name": "badge_seq", "nextVal": {"increment": 1}}],
+                    },
+                    {
+                        "mutation": "insert",
+                        "entity": "parallax.compatibility.Badge",
+                        "rows": [{"id": 1, "holder": "Bo"}],
+                    },
+                ],
+                "roundTrips": 2,
+            }
+        ],
+    )
+    with pytest.raises(engine.EngineError, match="never both"):
+        engine.run_scenario_case(case, "postgres", FakeWritePort())
+
+
+def test_a_write_settles_against_a_hydratable_invalid_published_root() -> None:
+    # The stored `geo` is a scalar where a `one` occurrence is declared, so the
+    # read classifies the row while collapsing the occurrence to null — a
+    # hydratable violation, whose collapse left every member value legal. The
+    # node inside that record is an ordinary observed source: the group's write
+    # settles against it exactly as it would against a conforming row, while the
+    # record itself is never what the verb is handed.
+    port = FakeWritePort(
+        find_rows=[
+            {
+                "id": 6,
+                "name": "Rin",
+                "address": {"street": "6 Kastanien Allee", "city": "Berlin", "geo": "unknown"},
+            }
+        ]
+    )
+    case = _synthetic_scenario(
+        "models/customer.yaml",
+        "m-value-object-999",
+        [
+            {
+                "uow": "g",
+                "objectQuery": {
+                    "target": "parallax.compatibility.Customer",
+                    "predicate": {"eq": {"attr": "parallax.compatibility.Customer.id", "value": 6}},
+                },
+                "roundTrips": 1,
+            },
+            {
+                "uow": "g",
+                "write": [
+                    {
+                        "mutation": "update",
+                        "entity": "parallax.compatibility.Customer",
+                        "rows": [{"id": 6, "name": "Rin II"}],
+                    }
+                ],
+                "roundTrips": 1,
+            },
+        ],
+    )
+    engine.run_scenario_case(case, "postgres", port)
+    assert [sql for sql, _binds in port.writes] == ["update customer set name = %s where id = %s"]

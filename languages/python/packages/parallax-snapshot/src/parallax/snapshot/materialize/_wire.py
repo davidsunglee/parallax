@@ -33,10 +33,10 @@ and dies with it, so its scope IS the materialization unit.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Self, SupportsIndex, cast
+from typing import Any, Final, Self, SupportsIndex, cast
 
 from parallax.core.base import INFINITY_LITERAL, TemporalBound
 from parallax.core.entity._graph_input import ValueObjectRecord
@@ -417,7 +417,7 @@ class _Unwind:
             occurrence = declared_occurrences.get(entry.identity)
             if occurrence is None:  # pragma: no cover - conversion walks the same declaration
                 continue
-            _put(rendered, entry.identity.path[-1], _occurrence(entry.value, occurrence))
+            _put(rendered, entry.identity.path[-1], _occurrence(entry.value, occurrence, _STORED))
         loaded = {entry.view: entry.value for entry in merged.views}
         for view, child in subtree.children.items():
             # A view the node never received is a level a path-root guard excluded
@@ -468,17 +468,62 @@ def _wire_scalar(neutral_type: object, value: object) -> WireValue:
     return cast("WireValue", encode_wire(cast("Any", neutral_type), value))
 
 
-def _occurrence(
-    value: ValueObjectRecord | tuple[ValueObjectRecord, ...] | None, declared: _VoContainer
-) -> WireValue:
+@dataclass(frozen=True, slots=True)
+class _Carrier:
+    """How one kind of occurrence carrier answers the two questions the
+    declared-member fill asks of it: what a ``many`` value's elements are, and
+    what one record holds under each declared member name.
+
+    A stored :class:`ValueObjectRecord` and an authored write document hold the
+    same value differently — identity-keyed entries against a plain mapping —
+    and nothing else about the fill differs, so the walk is shared and only the
+    lookup varies. That is what keeps the node a Wire insert answers and the node
+    a read publishes describing one row the same way.
+    """
+
+    elements: Callable[[object], Sequence[object]]
+    entries: Callable[[object], Mapping[str, object]]
+
+
+def _stored_elements(value: object) -> Sequence[object]:
+    return cast("Sequence[object]", value) if isinstance(value, tuple) else ()
+
+
+def _stored_entries(record: object) -> Mapping[str, object]:
+    """One stored record's members by declared name — empty for anything that is
+    not a record, which is what fills an occurrence the carrier never held."""
+    return (
+        {
+            **{entry.identity.name: entry.value for entry in record.attributes},
+            **{entry.identity.path[-1]: entry.value for entry in record.value_objects},
+        }
+        if isinstance(record, ValueObjectRecord)
+        else {}
+    )
+
+
+def _authored_elements(value: object) -> Sequence[object]:
+    return cast("Sequence[object]", value) if isinstance(value, list | tuple) else ()
+
+
+def _authored_entries(document: object) -> Mapping[str, object]:
+    return cast("Mapping[str, object]", document) if isinstance(document, Mapping) else {}
+
+
+_STORED: Final = _Carrier(elements=_stored_elements, entries=_stored_entries)
+_AUTHORED: Final = _Carrier(elements=_authored_elements, entries=_authored_entries)
+
+
+def _occurrence(value: object, declared: _VoContainer, carrier: _Carrier) -> WireValue:
     """One occurrence entry as its declared-member-filled Wire value."""
     if declared.multiplicity is Multiplicity.MANY:
-        records = value if isinstance(value, tuple) else ()
-        return _frozen_sequence(_members(record, declared) for record in records)
-    return None if value is None else _members(value, declared)
+        return _frozen_sequence(
+            _filled_members(record, declared, carrier) for record in carrier.elements(value)
+        )
+    return None if value is None else _filled_members(value, declared, carrier)
 
 
-def _members(record: ValueObjectRecord | object, declared: _VoContainer) -> WireValue:
+def _filled_members(record: object, declared: _VoContainer, carrier: _Carrier) -> WireValue:
     """One occurrence record as every DECLARED member, absence filled.
 
     The walk is over the declared member lists rather than the record's own
@@ -487,23 +532,13 @@ def _members(record: ValueObjectRecord | object, declared: _VoContainer) -> Wire
     ``one`` occurrence reads ``None``, and an absent ``many`` reads ``[]`` —
     while the carrier keeps recording that it held none of them.
     """
-    leaves = (
-        {entry.identity: entry.value for entry in record.attributes}
-        if isinstance(record, ValueObjectRecord)
-        else {}
-    )
-    nested = (
-        {entry.identity: entry.value for entry in record.value_objects}
-        if isinstance(record, ValueObjectRecord)
-        else {}
-    )
+    held = carrier.entries(record)
     filled: dict[str, WireValue] = {}
     for leaf in declared.attributes:
-        filled[leaf.identity.name] = _wire_scalar(leaf.type, leaves.get(leaf.identity))
+        filled[leaf.identity.name] = _wire_scalar(leaf.type, held.get(leaf.identity.name))
     for occurrence in declared.value_objects:
-        filled[occurrence.identity.path[-1]] = _occurrence(
-            nested.get(occurrence.identity), occurrence
-        )
+        name = occurrence.identity.path[-1]
+        filled[name] = _occurrence(held.get(name), occurrence, carrier)
     return _frozen_mapping(_FrozenMapping, filled)
 
 
@@ -542,42 +577,13 @@ def opened_wire_entity(
             continue
         occurrence = declared_occurrences.get(name)
         if occurrence is not None:  # pragma: no branch - the payload names declared members only
-            _put(rendered, name, _authored_occurrence(value, occurrence))
+            _put(rendered, name, _occurrence(value, occurrence, _AUTHORED))
     variant = _family_variant(model, entity)
     if variant is not None:
         _put(rendered, FAMILY_VARIANT_KEY, variant)
     node = _frozen_mapping(_WireEntityNode, rendered)
     object.__setattr__(node, "_source", hint)
     return node
-
-
-def _authored_occurrence(value: object, declared: _VoContainer) -> WireValue:
-    """One AUTHORED occurrence value as its declared-member-filled Wire value.
-
-    :func:`_occurrence`'s peer over a write row rather than a stored record: the
-    two read different carriers — an authored document is a plain mapping keyed
-    by member name — while filling absence by the identical rule, so a node an
-    insert answers and a node a read publishes describe one row the same way.
-    """
-    if declared.multiplicity is Multiplicity.MANY:
-        elements: Sequence[object] = (
-            cast("Sequence[object]", value) if isinstance(value, list | tuple) else ()
-        )
-        return _frozen_sequence(_authored_members(element, declared) for element in elements)
-    return None if value is None else _authored_members(value, declared)
-
-
-def _authored_members(document: object, declared: _VoContainer) -> WireValue:
-    entries: Mapping[str, object] = (
-        cast("Mapping[str, object]", document) if isinstance(document, Mapping) else {}
-    )
-    filled: dict[str, WireValue] = {}
-    for leaf in declared.attributes:
-        filled[leaf.identity.name] = _wire_scalar(leaf.type, entries.get(leaf.identity.name))
-    for occurrence in declared.value_objects:
-        name = occurrence.identity.path[-1]
-        filled[name] = _authored_occurrence(entries.get(name), occurrence)
-    return _frozen_mapping(_FrozenMapping, filled)
 
 
 def _declared_attributes(
