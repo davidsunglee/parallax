@@ -85,3 +85,20 @@ def test_normalize_instant_converts_aware_to_utc_microsecond() -> None:
 def test_normalize_instant_rejects_naive() -> None:
     with pytest.raises(base.InstantError):
         base.normalize_instant(dt.datetime(2026, 7, 12, 8, 30, 0))
+
+
+@pytest.mark.parametrize(
+    "edge",
+    [
+        dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=14))),
+        dt.datetime.max.replace(tzinfo=dt.timezone(dt.timedelta(hours=-14))),
+    ],
+    ids=["min-east-of-utc", "max-west-of-utc"],
+)
+def test_normalize_instant_rejects_an_instant_no_utc_datetime_holds(edge: dt.datetime) -> None:
+    # An aware value at the representational edge is a `datetime` and carries an
+    # offset, so it passes every check short of the conversion itself, which
+    # overflows. The boundary is total over `datetime`: this is a `timestamp`
+    # verdict like any other, not an arithmetic accident reaching the caller.
+    with pytest.raises(base.InstantError):
+        base.normalize_instant(edge)

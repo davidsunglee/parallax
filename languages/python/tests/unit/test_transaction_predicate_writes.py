@@ -1481,8 +1481,10 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 # `dt.datetime` at all, so it has no other candidate).                          #
 #                                                                               #
 # The three kinds below stand for the whole argument space — a bound whose      #
-# rendering rejects, one whose rendering overflows, one that renders cleanly —  #
-# on each of the two bound slots.                                               #
+# rendering rejects it as naive, one whose UTC normalization overflows the      #
+# representable range, one that renders cleanly — on each of the two bound      #
+# slots. The first two are ONE refusal: an unusable bound is `InstantError`     #
+# whichever way it fails to render.                                             #
 # --------------------------------------------------------------------------- #
 _NAIVE = dt.datetime(2024, 7, 1)
 _AWARE = dt.datetime(2024, 8, 1, tzinfo=dt.UTC)
@@ -1496,7 +1498,7 @@ _NON_UTC_UNTIL = dt.datetime(2024, 9, 1, 2, tzinfo=dt.timezone(dt.timedelta(hour
     [
         (_NAIVE, None, InstantError, None),
         (_AWARE, None, ModelRejectedError, "between-bounds-inverted"),
-        (_EXTREME_OFFSET, None, OverflowError, None),
+        (_EXTREME_OFFSET, None, InstantError, None),
         (_AWARE, _NAIVE, InstantError, None),
         (
             _AWARE,
@@ -1504,7 +1506,7 @@ _NON_UTC_UNTIL = dt.datetime(2024, 9, 1, 2, tzinfo=dt.timezone(dt.timedelta(hour
             ModelRejectedError,
             "between-bounds-inverted",
         ),
-        (_AWARE, _EXTREME_OFFSET, OverflowError, None),
+        (_AWARE, _EXTREME_OFFSET, InstantError, None),
     ],
     ids=[
         "naive-valid-from",
@@ -1534,9 +1536,9 @@ def test_a_temporal_bound_is_judged_before_an_invalid_predicate(
     ("valid_from", "until", "expected"),
     [
         (_NAIVE, None, InstantError),
-        (_EXTREME_OFFSET, None, OverflowError),
+        (_EXTREME_OFFSET, None, InstantError),
         (_AWARE, _NAIVE, InstantError),
-        (_AWARE, _EXTREME_OFFSET, OverflowError),
+        (_AWARE, _EXTREME_OFFSET, InstantError),
     ],
     ids=[
         "naive-valid-from",
@@ -1619,7 +1621,7 @@ def test_no_typed_bound_reaches_the_neutral_ingress_uncanonicalized() -> None:
             until=_NON_UTC_UNTIL,
         )
 
-    with pytest.raises(OverflowError):
+    with pytest.raises(InstantError):
         Database.connect(idle, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(unrenderable)
     assert idle.ops == [("begin",), ("rollback",)]
 

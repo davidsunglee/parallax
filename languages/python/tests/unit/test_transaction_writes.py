@@ -891,8 +891,8 @@ def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
 # REVERSED window both reject, at the verb call, before any buffering, for    #
 # BOTH the KEYED (`update_until`/`terminate_until`) and `_where`              #
 # (`update_until_where`/`terminate_until_where`) verb families — the ONE      #
-# shared `validate_until` validator (`parallax.snapshot.handle`) makes all    #
-# four converge.                                                              #
+# shared `validate_window` gate (`parallax.snapshot.handle._write_inputs`)    #
+# makes all four converge.                                                    #
 # --------------------------------------------------------------------------- #
 def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
     port = RecordingPort(rows=[_position_row_dt()])

@@ -217,7 +217,8 @@ INFINITY: Final[TemporalBound] = TemporalBound.INFINITY
 
 
 class InstantError(ValueError):
-    """A ``timestamp`` value violates the m-core UTC / precision rules."""
+    """A ``timestamp`` value violates the m-core UTC / precision rules, or names
+    an instant no UTC ``datetime`` holds."""
 
 
 def is_neutral_type(name: str) -> bool:
@@ -252,7 +253,20 @@ def normalize_instant(value: dt.datetime) -> dt.datetime:
     input policy); an aware value is converted to UTC. ``datetime`` already
     caps precision at the microsecond, so no sub-microsecond truncation is
     possible for a ``datetime`` input.
+
+    Total over every :class:`datetime.datetime`, which is what makes this a
+    boundary rather than a step on the way to one: an aware value at the
+    representational edge — ``datetime.min`` east of UTC, ``datetime.max`` west
+    of it — names an instant that has no UTC ``datetime`` at all, and it earns
+    the same verdict every other unusable ``timestamp`` does rather than
+    escaping as the ``OverflowError`` the conversion itself raises.
     """
     if value.utcoffset() is None:
         raise InstantError("a naive datetime is not a valid `timestamp`; attach a tzinfo")
-    return value.astimezone(dt.UTC)
+    try:
+        return value.astimezone(dt.UTC)
+    except OverflowError as overflow:
+        raise InstantError(
+            f"{value!r} is not a valid `timestamp`; its UTC instant is outside the "
+            "representable datetime range"
+        ) from overflow
