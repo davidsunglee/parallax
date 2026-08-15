@@ -731,11 +731,13 @@ def retain_evidence(
     entity is never also temporal (`m-opt-lock`/`m-descriptor`: the two are
     mutually exclusive), so each row takes exactly one branch.
 
-    The statement's own as-of coordinates are deliberately NOT recorded. What a
-    write settles against is the state its value came from, and that state is
-    what the key names; the pin that selected it is a property of the read, so
-    two pins selecting one milestone retain one indistinguishable piece of
-    evidence.
+    The statement's own as-of coordinates are deliberately no part of that
+    EVIDENCE. What a write settles against is the state its value came from, and
+    that state is what the key names; the pin that selected it is a property of
+    the read, so two pins selecting one milestone retain one indistinguishable
+    piece of evidence. The pin rides each hint instead (``pin`` below), where it
+    answers a different question — whether this value may be written at all —
+    rather than which state a write settles against.
 
     ``find`` is always INSTANCE-form, which projects every applicable Column, so
     an observed row's columns are the COMPLETE persisted row a Predecessor Row

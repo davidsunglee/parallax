@@ -14,8 +14,8 @@ judgement and one buffer for both.
 It also owns the row-form read (:meth:`Transaction.read_rows`) and the two
 FIRST-PARTY members of the conformance bridge —
 :meth:`Transaction.observed_read` and :meth:`Transaction.write_neutral` — which
-are not developer surface and are scheduled to end. None of the three is
-a second lifecycle: each read enters the same force-flush, lock derivation,
+the conformance harness reaches and no developer surface does. None of the three
+is a second lifecycle: each read enters the same force-flush, lock derivation,
 evidence retention, and Read Trace bracket ``find`` does, and the bridge write
 enters the same ``buffered_write`` carrier decision, the same buffer, and the
 same flush triggers the keyed verbs do — one step later, on an instruction
@@ -167,10 +167,11 @@ class Transaction:
     :meth:`observed_read` and :meth:`write_neutral` are the first-party
     conformance bridge: a Wire read that additionally answers the evidence it
     retained, and the write ingress that takes an already-decoded instruction plus
-    whatever observed state a caller holds for it. Neither is developer surface,
-    and both are scheduled to end — not when the Wire write verbs exist, which
-    they do, but when the corpus write lanes hold published values rather than
-    authored instructions, since a keyed verb takes nothing else.
+    whatever observed state a caller holds for it. Neither is developer surface —
+    a developer states a write through the keyed and predicate verbs, Typed or
+    Wire, which take a value a read published and nothing else. What the bridge
+    adds is the ingress for a caller that HOLDS an instruction and has no read to
+    state a source from.
     """
 
     __slots__ = (

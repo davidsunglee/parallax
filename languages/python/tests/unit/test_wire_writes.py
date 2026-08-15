@@ -414,6 +414,70 @@ def test_a_predicate_target_carries_exactly_entity_and_predicate() -> None:
     assert _writes(port) == []
 
 
+@pytest.mark.parametrize("changes", [["balance"], [], 0, ""])
+def test_a_change_set_that_is_not_a_document_is_refused(changes: object) -> None:
+    # The falsy spellings are the interesting half: read as "no changes stated"
+    # they would answer a malformed call with a silent no-op instead of a
+    # refusal, and only an omitted argument states that intent.
+    port = _account_port()
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+            tx.wire.update(_node(tx, _ACCOUNT_QUERY), cast("dict[str, object]", changes))
+
+    db_for(ACCOUNT, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_an_insert_payload_that_is_not_a_document_is_refused() -> None:
+    port = RecordingPort(rows=[])
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+            tx.wire.insert("parallax.compatibility.Person", cast("dict[str, object]", [("id", 9)]))
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_a_document_key_that_is_not_a_name_is_refused() -> None:
+    # Every walk downstream reads a document's keys as names — sorting them into
+    # a refusal message among them — so a key that is not one is refused at the
+    # verb rather than reaching the comparison that cannot order it.
+    port = RecordingPort(rows=[dict(_PERSON_ROW)])
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="keyed by names"):
+            tx.wire.insert(
+                "parallax.compatibility.Person",
+                cast("dict[str, object]", {"id": 9, "name": "Newton", 3: "x"}),
+            )
+        with pytest.raises(instructions.WriteInstructionError, match="keyed by names"):
+            tx.wire.update(_node(tx, _PERSON_QUERY), cast("dict[str, object]", {3: "x"}))
+        with pytest.raises(instructions.WriteInstructionError, match="keyed by names"):
+            tx.wire.delete_where(cast("dict[str, object]", {**_PERSON_TARGET, 3: "x"}))
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_a_document_that_contains_itself_is_refused() -> None:
+    port = RecordingPort(rows=[dict(_PERSON_ROW)])
+    data: dict[str, Any] = {"id": 9, "name": "Newton"}
+    data["self"] = data
+    target: dict[str, Any] = dict(_PERSON_TARGET)
+    target["predicate"] = {"and": {"operands": [target]}}
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="contains itself"):
+            tx.wire.insert("parallax.compatibility.Person", data)
+        with pytest.raises(instructions.WriteInstructionError, match="contains itself"):
+            tx.wire.delete_where(target)
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
 def test_an_insert_refuses_a_value_a_read_published() -> None:
     port = _account_port()
 
@@ -450,6 +514,18 @@ def test_an_unresolvable_entity_spelling_is_refused_at_the_verb() -> None:
     db_for(ACCOUNT, port).transact(fn)
 
 
+def test_a_bare_entity_spelling_resolves_when_one_entity_carries_it() -> None:
+    # `insert` names its Entity by the reference-position rule every write
+    # target resolves through, so an unambiguous bare local name reaches the
+    # same Entity the canonical spelling does; a shared one refuses instead.
+    port = RecordingPort(rows=[])
+    db_for(PERSON, port).transact(lambda tx: tx.wire.insert("Person", {"id": 9, "name": "Newton"}))
+
+    assert _writes(port) == [
+        ("write", "insert into person(id, name) values (%s, %s)", (9, "Newton"))
+    ]
+
+
 def test_a_finite_transaction_time_pinned_source_is_read_only() -> None:
     port = RecordingPort(rows=[balance_row(in_z=_TX_START)])
     pinned: dict[str, object] = {
@@ -466,7 +542,7 @@ def test_a_finite_transaction_time_pinned_source_is_read_only() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Evidence: the Phase 5 concurrency matrix, through Wire writes.              #
+# Evidence: what a Wire source licenses under each Concurrency Strategy.      #
 # --------------------------------------------------------------------------- #
 def test_an_unversioned_participating_wire_source_licenses_an_ungated_write() -> None:
     port = RecordingPort(rows=[dict(_PERSON_ROW)])
@@ -805,6 +881,29 @@ def test_an_authored_occurrence_is_captured_at_the_call() -> None:
     document = _bound_address(port)
     assert cast("dict[str, Any]", document["geo"])["country"] == "US"
     assert len(cast("list[object]", document["phones"])) == 1
+
+
+def test_two_positions_sharing_one_document_are_captured_rather_than_refused() -> None:
+    # Sharing is not a cycle: the capture refuses only a container reachable
+    # from itself, so a caller reusing one subdocument at two positions has it
+    # copied at each and mutating the original reaches neither.
+    port = RecordingPort(rows=[])
+    phone: dict[str, Any] = {"type": "home", "number": "555"}
+    address: dict[str, Any] = {**copy.deepcopy(_ADDRESS), "phones": [phone, phone]}
+
+    def fn(tx: Transaction) -> None:
+        tx.wire.insert(
+            "parallax.compatibility.Contact", {"id": 1, "name": "Ada", "address": address}
+        )
+        phone["number"] = "999"
+
+    db_for(CONTACT, port).transact(fn)
+
+    numbers = [
+        cast("dict[str, Any]", entry)["number"]
+        for entry in cast("list[object]", _bound_address(port)["phones"])
+    ]
+    assert numbers == ["555", "555"]
 
 
 def test_a_nullable_occurrence_may_be_authored_absent() -> None:
