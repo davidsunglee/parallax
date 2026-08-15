@@ -1095,6 +1095,29 @@ def a_close_settles_against_the_milestone_its_own_find_observed(db: Database) ->
     db.transact(fn, concurrency="optimistic")
 ```
 
+## A write settles against a row the read classified
+
+Corpus case: `m-unit-work-028`
+
+```python
+def customer_update_settles_against_classified_stored_data(db: Database) -> None:
+    def rename(tx: Transaction) -> None:
+        # Customer 6 stores `address.geo` as a scalar where a `one` occurrence is
+        # declared. The read classifies that row and delivers it IN BAND through
+        # the checked view; the hydration collapsed the occurrence, so the Customer
+        # inside the record carries legal values throughout.
+        found = tx.find(Customer.where(Customer.id == 6)).checked().result()
+        current = found.data if isinstance(found, InvalidData) else found
+        # A hydrated root is an ordinary observed source: editing an unrelated
+        # scalar buffers the ordinary UPDATE, and the malformed document is
+        # neither read as a repair request nor rewritten. A record that could not
+        # hydrate carries no value, and so is no write source at all.
+        if current is not None:
+            tx.update(current.edit(name="Rin Nakamura"))
+
+    db.transact(rename)
+```
+
 ## A nested equality predicate through a value-object attribute
 
 Corpus case: `m-value-object-001`

@@ -173,6 +173,18 @@ _SEED_ROWS_BY_CASE: Final[dict[str, list[Row]]] = {
             "address": {"street": "7 Fjord Vei", "city": "Alesund", "geo": {"country": "NO"}},
         }
     ],
+    # `m-unit-work-028`: the fixture row whose stored `geo` is a SCALAR where a
+    # `one` occurrence is declared. Its story's find delivers the classification
+    # in band, so this seed has to carry the invalid document verbatim — a
+    # conforming stand-in would take the story down the ordinary branch and grade
+    # nothing the case is about.
+    "m-unit-work-028": [
+        {
+            "id": 6,
+            "name": "Rin",
+            "address": {"street": "6 Kastanien Allee", "city": "Berlin", "geo": "unknown"},
+        }
+    ],
 }
 
 

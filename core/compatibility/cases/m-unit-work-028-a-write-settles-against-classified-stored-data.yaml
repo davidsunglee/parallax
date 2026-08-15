@@ -1,0 +1,131 @@
+# Invalid stored data is an observed SOURCE, not a repair command (m-unit-work write
+# evidence over m-snapshot-read classified data).
+#
+# Customer 6 (Rin) stores `address.geo` as the scalar string "unknown" where a `one`
+# occurrence is declared — a wrong-kind intermediate the read classifies while
+# collapsing it, so the value it publishes is HYDRATABLE: every member the collapse
+# left is legal, and the node inside the classification is an ordinary observed row.
+# The entry settles a keyed update against that node and changes one unrelated scalar.
+#
+# The semantic distinction this case pins down is that the classification changes
+# NOTHING about the write. The emitted DML is the ordinary source-independent
+# `set name = ?` an update of any conforming row emits — one statement, no repair
+# bookkeeping, no rewrite of the malformed document — and `then.tableState` shows the
+# `geo` scalar surviving byte for byte, so the next read of the row classifies it
+# again for the same reason. An implementation that refused the classified source
+# would fail the write outright; one that treated the assignment as permission to
+# repair the document would emit a second statement or a different one.
+#
+# `roundTrips: 2` is the entry's whole cost: one resolving read publishing the
+# classified row, then the UPDATE it licenses. `given.fixtures` loads the model's
+# rows so the malformed document is the state the entry writes against.
+model: models/customer.yaml
+tags: [m-unit-work, m-value-object, write-sequence, update, json, invalid-stored-data, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: parallax.compatibility.Customer
+      statements: 1
+      note: settle a keyed update against the classified row, changing one unrelated scalar
+      rows:
+        - { id: 6, name: Rin Nakamura }
+then:
+  statements:
+    - sql:
+        postgres: update customer set name = ? where id = ?
+        mariadb: update customer set name = ? where id = ?
+      binds: [Rin Nakamura, 6]
+  tableState:
+    customer:
+      - id: 1
+        name: Ada
+        address:
+          street: 1 Park Ave
+          city: Oslo
+          geo:
+            country: "NO"
+            zip: "0150"
+            elevation: 10.5
+            point:
+              lat: 59.9
+              lon: 10.7
+          phones:
+            - { type: home, number: '555-1234' }
+            - { type: work, number: '555-9999' }
+      - id: 2
+        name: Linus
+        address:
+          street: 2 Main St
+          city: Oslo
+          geo:
+            country: "NO"
+            zip: "0151"
+            elevation: 20.0
+            point:
+              lat: 59.9
+              lon: 10.8
+          phones:
+            - { type: home, number: '555-9999' }
+      - id: 3
+        name: Grace
+        address:
+          street: 9 Beacon St
+          city: Boston
+          geo:
+            country: US
+            zip: "02108"
+            elevation: 5.0
+            point:
+              lat: 42.3
+              lon: -71.0
+          phones: []
+      - id: 4
+        name: Mary
+        address: null
+      - id: 5
+        name: Kavi
+        address:
+          street: 5 Harbour Rd
+          geo:
+            zip: "3000"
+      - id: 6
+        name: Rin Nakamura
+        address:
+          street: 6 Kastanien Allee
+          city: Berlin
+          geo: unknown
+      - id: 7
+        name: Nils
+        address:
+          street: 7 Fjord Vei
+          city: null
+          geo:
+            country: null
+            zip: "0152"
+            elevation: null
+            point:
+              lat: null
+              lon: null
+          phones:
+            - { type: work, number: '555-0000' }
+      - id: 8
+        name: Iris
+        address:
+          street: 8 Null Way
+          phones: null
+      - id: 9
+        name: Omar
+        address:
+          street: 9 Scalar Rd
+          phones: "555-0000"
+      - id: 10
+        name: Priya
+        address:
+          street: 10 Object Ct
+          phones:
+            type: home
+            number: '555-9999'
+  roundTrips: 2
