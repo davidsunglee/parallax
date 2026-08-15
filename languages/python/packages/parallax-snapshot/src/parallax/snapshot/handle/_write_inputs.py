@@ -1231,18 +1231,26 @@ def validate_valid_from(
     """Validate and render a write verb's ``valid_from`` (`python.md` §5):
     a Bitemporal target requires it (the mutation's own Valid-Time instant
     ``B``, `m-bitemp-write` "Plain (unbounded) bitemporal writes"); a
-    non-temporal or Transaction-Time-Only target takes none."""
+    non-temporal or Transaction-Time-Only target takes none.
+
+    A bound the target's temporality does not admit is the verb's OWN verdict on
+    caller input, so it raises
+    :class:`~parallax.core.unit_work.WriteInstructionError` — the refusal every
+    static write judgement carries — while a bound that is no instant at all
+    keeps `m-core`'s :class:`~parallax.core.base.InstantError`, whose rule that
+    is. Both are ``ValueError``s, and both precede any evidence question.
+    """
     name = declaring_entity.identity.name
     if _is_bitemporal(declaring_entity):
         if valid_from is None:
-            raise ValueError(
+            raise instructions.WriteInstructionError(
                 f"{name}: a bitemporal {mutation!r} requires valid_from "
                 "(the mutation's own Valid-Time instant)"
             )
         return instant_literal(valid_from)
     if valid_from is not None:
         shape = "a Transaction-Time-Only" if _is_temporal(declaring_entity) else "a non-temporal"
-        raise ValueError(
+        raise instructions.WriteInstructionError(
             f"{name}: {shape} {mutation!r} takes no valid_from "
             f"({name!r} declares no Valid-Time dimension to bound)"
         )
@@ -1266,19 +1274,24 @@ def validate_until(
     so none of the four can drift
     from the others.
 
+    An unordered window is the verb's own verdict on caller input and raises
+    :class:`~parallax.core.unit_work.WriteInstructionError`, exactly as
+    :func:`validate_valid_from`'s inadmissible bound does.
+
     NORMALIZES both bounds BEFORE comparing them: comparing raw,
     un-normalized datetimes let a naive ``until``
     (compared against an already-aware ``valid_from``, since
     ``validate_valid_from`` — this verb's own sibling, called first —
     already normalizes/rejects a naive ``valid_from``) leak a bare
-    ``TypeError`` from the ``<=`` comparison itself, rather than the proper
-    ``ValueError`` :func:`~parallax.core.base.normalize_instant` raises for
+    ``TypeError`` from the ``<=`` comparison itself, rather than the
+    :class:`~parallax.core.base.InstantError`
+    :func:`~parallax.core.base.normalize_instant` raises for
     any naive datetime (mirroring ``validate_valid_from``'s own
     ``instant_literal``-based handling exactly)."""
     valid_from_normalized = normalize_instant(valid_from)
     until_normalized = normalize_instant(until)
     if until_normalized <= valid_from_normalized:
-        raise ValueError(
+        raise instructions.WriteInstructionError(
             f"{declaring_entity.identity.name}: {mutation!r} requires valid_from < until "
             f"(python.md §5) — got valid_from={valid_from!r}, until={until!r}"
         )

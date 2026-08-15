@@ -24,13 +24,23 @@ before any evidence is resolved.
 shape, the finite-Transaction-Time refusal, the temporal window, member names,
 values, and assignment legality are all judged from the model and the input
 alone; only then does the target Entity's Effective Concurrency Strategy decide
-what evidence licenses the write. Malformed Wire input therefore always earns a
-static refusal rather than a
-:class:`~parallax.snapshot.handle.WriteEvidenceError`, whichever is also true —
-:class:`~parallax.core.unit_work.WriteInstructionError` for input that states no
-well-formed write, and the closed pre-SQL
-:class:`~parallax.core.unit_work.WriteRejectedError` vocabulary where a
-normative payload rule classifies the defect more exactly.
+what evidence licenses the write. Within the static half, what an argument alone
+answers comes first — whether a document was stated at all, and which source
+produced a value — and only then what the target Entity and the model decide.
+
+Malformed Wire input therefore always earns a static refusal rather than a
+:class:`~parallax.snapshot.handle.WriteEvidenceError`, whichever is also true.
+Which static refusal follows from whose rule was broken:
+:class:`~parallax.core.unit_work.WriteInstructionError` is this ingress's own
+verdict — input that states no well-formed write — while a rule another module
+owns keeps that module's classification, so one input is classified one way at
+every boundary that accepts it. Those are the closed pre-SQL
+:class:`~parallax.core.unit_work.WriteRejectedError` vocabulary for a normative
+payload rule, `m-predicate`'s
+:class:`~parallax.core.predicate.CanonicalDocumentError` for a malformed
+predicate node, and `m-core`'s :class:`~parallax.core.base.InstantError` for a
+bound that is no instant. All are ``ValueError``s raised before the evidence
+question.
 
 **Caller-owned input is snapshotted before the verb returns.** Inserted data,
 changes, the predicate target, and the temporal bounds are copied recursively at
@@ -107,7 +117,9 @@ __all__ = [
 type WireChanges = Mapping[str, object]
 """A Wire write's authored assignments: declared member names to accepted wire
 values. Identity, version, temporal-axis, computed, read-only, and relationship
-members are refused rather than assigned."""
+members are refused rather than assigned. Required wherever a verb's signature
+names it — an empty document is the ordinary no-op, and the verbs that name no
+member are the destructive and close ones, which take no change set at all."""
 
 type WirePredicateTarget = Mapping[str, object]
 """A Wire predicate write's target: exactly ``{"entity", "predicate"}``, the
@@ -195,13 +207,17 @@ def wire_keyed_write(
     assignment document for the update family and absent for the destructive
     and close verbs, which key off the source alone.
 
-    The fixed order is the whole contract: source shape, the finite
-    Transaction-Time refusal, the window, then every named member's legality and
-    value — all before the strategy is derived or any evidence resolved. A write
-    whose every named member already holds the value the source published is the
-    ordinary no-op, dropped before the evidence question is asked at all, exactly
-    as an empty Typed effective change set is.
+    The fixed order is the whole contract: the change document's own shape,
+    then source shape, the finite Transaction-Time refusal, the window, then
+    every named member's legality and value — all before the strategy is derived
+    or any evidence resolved. Shape leads because it is the one question that
+    needs neither the source nor the model, so a call that states no document
+    hears that rather than a provenance complaint about its other argument. A
+    write whose every named member already holds the value the source published
+    is the ordinary no-op, dropped before the evidence question is asked at all,
+    exactly as an empty Typed effective change set is.
     """
+    authored = _authored_changes(mutation, changes)
     source, hint = _keyed_source(mutation, observed)
     record = _concrete_entity(lane.meta, hint)
     declaring = declaring_of(lane.meta, record)
@@ -209,7 +225,7 @@ def wire_keyed_write(
     valid_from_literal, until_literal = _validated_window(declaring, mutation, valid_from, until)
     identity_row = dict(hint.object_key.primary_key)
     members = _row_members(lane.meta, record)
-    assignments = _judged_changes(lane.meta, record, members, _authored_changes(mutation, changes))
+    assignments = _judged_changes(lane.meta, record, members, authored)
     row, restorations = _authored_row(
         lane, record, hint, mutation, identity_row, members, assignments, source
     )
@@ -253,17 +269,16 @@ def wire_predicate_write(
     and handed to the one seam that dispatches readless or materializing. No
     second set-based write semantics are introduced — this ingress only states
     the target and the assignments differently.
+
+    Both caller documents are captured and judged for shape before anything is
+    resolved from the model, the same lead the keyed verb gives them.
     """
     selection = _authored_document(target, "a predicate-selected write's canonical target")
+    authored = _authored_changes(mutation, changes)
     entity = _selection_entity(lane.meta, selection)
     declaring = declaring_of(lane.meta, entity)
     valid_from_literal, until_literal = _validated_window(declaring, mutation, valid_from, until)
-    assignments = _judged_changes(
-        lane.meta,
-        entity,
-        _row_members(lane.meta, entity),
-        _authored_changes(mutation, changes),
-    )
+    assignments = _judged_changes(lane.meta, entity, _row_members(lane.meta, entity), authored)
     doc: dict[str, object] = {
         "mutation": mutation,
         "target": selection,
@@ -612,15 +627,19 @@ def _authored_document(value: object, described: str) -> dict[str, object]:
 
 
 def _authored_changes(mutation: KeyedMutation, changes: WireChanges | None) -> dict[str, object]:
-    """A write's authored assignments, captured — or the empty set a verb that
-    names no member states by passing nothing.
+    """A write's authored assignments, captured — or the empty set a destructive
+    or close verb states by naming no member at all.
 
-    Absence and emptiness are the same intent and only ``None`` states absence:
-    a falsy value of any other type is a document the caller failed to state,
-    and reading it as "no changes" would answer a malformed call with a silent
-    no-op instead of a refusal.
+    Which verb was called is what decides whether ``None`` means anything: a
+    ``delete`` / ``terminate`` / ``terminateUntil`` passes no change set and its
+    ``None`` is that absence, while the update family's signature requires the
+    document, so a ``None`` there is a caller that stated none. Neither an empty
+    document nor a falsy value of another type says "no changes": ``{}`` is the
+    ordinary no-op, and everything else is a document the caller failed to
+    state, which reading as absence would answer with a silent no-op instead of
+    a refusal.
     """
-    if changes is None:
+    if changes is None and mutation not in _UPDATE_MUTATIONS:
         return {}
     return _authored_document(changes, f"a Wire `{mutation}`'s change set")
 
@@ -635,6 +654,13 @@ def _captured[T](value: T, described: str, enclosing: tuple[int, ...]) -> T:
     rows are read; the cost is proportional to authored input alone, and a
     keyed source — already frozen, and never copied — is not among it.
 
+    Copying preserves each container's authored TYPE. Rewriting a tuple as a
+    list would be a spelling translation rather than a copy, and it would make
+    this the one boundary that admits an array `m-predicate`'s own serde
+    refuses: the captured target reaches that serde verbatim, and a laundered
+    tuple would be accepted here and rejected for the identical document
+    elsewhere.
+
     ``enclosing`` is the identity of every container on the path to this one,
     which is what makes the walk total over caller-owned input: a container
     reachable from itself is refused rather than descended into. Two siblings
@@ -646,22 +672,25 @@ def _captured[T](value: T, described: str, enclosing: tuple[int, ...]) -> T:
         return cast("T", _captured_mapping(mapping, described, enclosing))
     if isinstance(value, list | tuple):
         sequence = cast("Sequence[object]", value)
-        within = _within(sequence, described, enclosing)
-        return cast("T", [_captured(nested, described, within) for nested in sequence])
+        ancestry = _entered_ancestry(sequence, described, enclosing)
+        elements = [_captured(nested, described, ancestry) for nested in sequence]
+        return cast("T", tuple(elements) if isinstance(value, tuple) else elements)
     return value
 
 
 def _captured_mapping(
     mapping: Mapping[str, object], described: str, enclosing: tuple[int, ...]
 ) -> dict[str, object]:
-    within = _within(mapping, described, enclosing)
+    ancestry = _entered_ancestry(mapping, described, enclosing)
     return {
-        _document_key(key, described): _captured(nested, described, within)
+        _document_key(key, described): _captured(nested, described, ancestry)
         for key, nested in mapping.items()
     }
 
 
-def _within(container: object, described: str, enclosing: tuple[int, ...]) -> tuple[int, ...]:
+def _entered_ancestry(
+    container: object, described: str, enclosing: tuple[int, ...]
+) -> tuple[int, ...]:
     """``enclosing`` extended by ``container``, refusing one that already
     encloses itself. Identity-based, and sound because every container on the
     path is held alive by the caller's own value for the whole walk."""
@@ -692,11 +721,16 @@ def _validated_window(
     Stated once for all three ingresses because the ORDER within it is the rule:
     the target's temporality judges ``valid_from`` first, and ``until`` is
     measured against the bound that judgement accepted. An unbounded verb passes
-    no ``until`` and receives none; a ``*_until`` verb's signature already
-    required both, which is what lets the pair be read as one.
+    no ``until`` and receives none; a ``*_until`` verb's signature requires both,
+    and a caller that states one bound without the other is refused rather than
+    given the unbounded window it did not ask for.
     """
     valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
     if until is None:
         return valid_from_literal, None
-    assert valid_from is not None  # every `*_until` verb requires both bounds together
+    if valid_from is None:
+        raise instructions.WriteInstructionError(
+            f"{declaring.identity.name}: a bounded {mutation!r} states its window as a pair, "
+            "and valid_from is absent"
+        )
     return valid_from_literal, validate_until(declaring, mutation, valid_from, until)

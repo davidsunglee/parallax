@@ -169,9 +169,10 @@ class Transaction:
     retained, and the write ingress that takes an already-decoded instruction plus
     whatever observed state a caller holds for it. Neither is developer surface —
     a developer states a write through the keyed and predicate verbs, Typed or
-    Wire, which take a value a read published and nothing else. What the bridge
-    adds is the ingress for a caller that HOLDS an instruction and has no read to
-    state a source from.
+    Wire: an existing row is addressed by a value a read published, a fresh row
+    by the payload an insert opens it with, and a set by a selection plus its
+    assignments. What the bridge adds is the ingress for a caller that HOLDS an
+    instruction and has no read to state a source from.
     """
 
     __slots__ = (
