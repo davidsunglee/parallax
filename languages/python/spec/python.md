@@ -3652,16 +3652,34 @@ or descriptor authoring form and performs no audit stamping.
   shape, the finite-Transaction-Time refusal, the temporal window, member names,
   values, and assignment legality are judged from the model and the input alone;
   only then is the target Entity's Effective Concurrency Strategy derived and its
-  evidence resolved. Malformed Wire input therefore always earns a static refusal
+  evidence resolved. Within that static half, what an argument alone answers
+  comes first — whether a document was stated at all, and which source produced a
+  value — before anything the target Entity or the model decides, so a call
+  passing both a malformed change set and a source that lost its provenance hears
+  about the change set. A change set is a document the update verbs require: only
+  the destructive and close verbs, which name no member, state one by passing
+  none, and an empty document is the ordinary no-op rather than an absent
+  argument. Malformed Wire input therefore always earns a static refusal
   rather than a `WriteEvidenceError`, whichever is also true — and the Typed lane
   reaches the same order for free, because `edit()` rejects an illegal assignment
-  before `tx.update()` receives a value. The static refusal is
-  `WriteInstructionError` for input that states no well-formed write at all —
-  a document position that is not a mapping of names to values, a self-containing
-  container, an unresolvable target, an undeclared or unassignable member — and
-  the closed pre-SQL `WriteRejectedError` vocabulary where a normative payload
-  rule classifies the defect more exactly, which is the same carrier and the same
-  rule names a predicate verb already answers with. Assignment
+  before `tx.update()` receives a value.
+
+  **Which static refusal follows from whose rule was broken.**
+  `WriteInstructionError` is the write verb's OWN verdict: input that states no
+  well-formed write at all — a document position that is not a mapping of names
+  to values, a self-containing container, an unresolvable target, an undeclared
+  or unassignable member, a temporal bound the target's own temporality does not
+  admit, an unordered `[valid_from, until)` window. A rule another module owns
+  keeps that module's classification instead, so one input is classified one way
+  at every boundary that accepts it: the closed pre-SQL `WriteRejectedError`
+  vocabulary where a normative payload rule classifies the defect more exactly,
+  which is the same carrier and the same rule names a predicate verb already
+  answers with; `CanonicalDocumentError` where `m-predicate`'s own serde refuses
+  a predicate node, which is also why a verb captures caller input without
+  translating its spellings — a Python tuple rewritten as a list would make this
+  the one boundary accepting an operand array that serde rejects; and
+  `InstantError` where a bound is no `m-core` instant. All are `ValueError`s and
+  all precede any evidence question. Assignment
   legality is `judge_assignment`'s single verdict, reached through the same
   family-effective resolution the canonical predicate assignment uses, so
   identity, optimistic-version, temporal-axis, computed, and read-only members

@@ -35,7 +35,9 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from parallax.core.base import InstantError
 from parallax.core.db_port import DbPort, JsonDocument, Row
+from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.unit_work import FixedClock, WriteRejectedError, instructions
 from parallax.snapshot import connect
 from parallax.snapshot.handle import (
@@ -51,6 +53,7 @@ _ACCOUNT_ROW: Row = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "ver
 _PERSON_ROW: Row = {"id": 1, "name": "Ada"}
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _VALID_FROM = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+_NAIVE_INSTANT = dt.datetime(2024, 7, 1)  # no tzinfo: not an instant at all
 _OTHER_FROM = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 _UNTIL = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
 
@@ -78,6 +81,10 @@ _POSITION_QUERY: dict[str, object] = {
 _PERSON_TARGET: dict[str, object] = {
     "entity": "parallax.compatibility.Person",
     "predicate": {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}},
+}
+_POSITION_TARGET: dict[str, object] = {
+    "entity": "parallax.compatibility.WherePosition",
+    "predicate": {"eq": {"attr": "parallax.compatibility.WherePosition.id", "value": 1}},
 }
 
 
@@ -377,7 +384,7 @@ def test_a_reversed_window_is_refused_before_any_member_is_measured() -> None:
     port = RecordingPort(rows=[_position_row()])
 
     def fn(tx: Transaction) -> None:
-        with pytest.raises(ValueError, match="valid_from < until"):
+        with pytest.raises(instructions.WriteInstructionError, match="valid_from < until"):
             tx.wire.update_until(
                 _node(tx, _POSITION_QUERY),
                 {"value": "300.00"},
@@ -389,11 +396,48 @@ def test_a_reversed_window_is_refused_before_any_member_is_measured() -> None:
     assert _writes(port) == []
 
 
+def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
+    # Half a window states nothing, and reading the absent bound as "unbounded"
+    # would buffer a rectangle the caller never asked for.
+    port = _account_port()
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="as a pair"):
+            tx.wire.update_until(
+                _node(tx, _ACCOUNT_QUERY),
+                {"balance": "125.00"},
+                valid_from=cast("dt.datetime", None),
+                until=_UNTIL,
+            )
+
+    db_for(ACCOUNT, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_a_bound_carries_the_refusal_of_whichever_rule_it_broke() -> None:
+    # A bound the target's temporality does not admit is the verb's own verdict
+    # on caller input, so it carries the static refusal every other one does. A
+    # bound that is no instant broke `m-core`'s rule instead, and keeps that
+    # module's classification — one input, one classification, at every boundary.
+    port = RecordingPort(rows=[_position_row()])
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(InstantError, match="naive datetime"):
+            tx.wire.update(
+                _node(tx, _POSITION_QUERY),
+                {"value": "300.00"},
+                valid_from=_NAIVE_INSTANT,
+            )
+
+    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    assert _writes(port) == []
+
+
 def test_a_non_temporal_target_takes_no_valid_from() -> None:
     port = _account_port()
 
     def fn(tx: Transaction) -> None:
-        with pytest.raises(ValueError, match="takes no valid_from"):
+        with pytest.raises(instructions.WriteInstructionError, match="takes no valid_from"):
             tx.wire.update(_node(tx, _ACCOUNT_QUERY), {"balance": "125.00"}, valid_from=_VALID_FROM)
 
     db_for(ACCOUNT, port).transact(fn)
@@ -414,11 +458,13 @@ def test_a_predicate_target_carries_exactly_entity_and_predicate() -> None:
     assert _writes(port) == []
 
 
-@pytest.mark.parametrize("changes", [["balance"], [], 0, ""])
+@pytest.mark.parametrize("changes", [["balance"], [], 0, "", None])
 def test_a_change_set_that_is_not_a_document_is_refused(changes: object) -> None:
-    # The falsy spellings are the interesting half: read as "no changes stated"
-    # they would answer a malformed call with a silent no-op instead of a
-    # refusal, and only an omitted argument states that intent.
+    # The falsy spellings are the interesting half, `None` among them: read as
+    # "no changes stated" they would answer a malformed call with a silent no-op
+    # instead of a refusal. No argument states that intent to an update verb —
+    # its signature requires the document, and the verbs that name no member are
+    # the destructive and close ones, which take no change set at all.
     port = _account_port()
 
     def fn(tx: Transaction) -> None:
@@ -427,6 +473,64 @@ def test_a_change_set_that_is_not_a_document_is_refused(changes: object) -> None
 
     db_for(ACCOUNT, port).transact(fn)
     assert _writes(port) == []
+
+
+def test_every_update_verb_requires_the_change_document_its_signature_states() -> None:
+    port = RecordingPort(rows=[_position_row()])
+
+    def fn(tx: Transaction) -> None:
+        node = _node(tx, _POSITION_QUERY)
+        none_changes = cast("dict[str, object]", None)
+        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+            tx.wire.update(node, none_changes, valid_from=_VALID_FROM)
+        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+            tx.wire.update_until(node, none_changes, valid_from=_VALID_FROM, until=_UNTIL)
+        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+            tx.wire.update_where(_POSITION_TARGET, none_changes, valid_from=_VALID_FROM)
+        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+            tx.wire.update_until_where(
+                _POSITION_TARGET, none_changes, valid_from=_VALID_FROM, until=_UNTIL
+            )
+
+    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    assert _writes(port) == []
+
+
+def test_a_malformed_change_set_is_judged_before_the_source_is_required() -> None:
+    # Both arguments are wrong, and the one answered is the one no other input
+    # is needed to judge: whether a document was stated at all needs neither the
+    # source's provenance nor the Entity that source names.
+    port = _account_port()
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+            tx.wire.update(cast("WireEntity", {}), cast("dict[str, object]", []))
+
+    db_for(ACCOUNT, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_a_tuple_is_not_a_wire_array_the_predicate_algebra_accepts() -> None:
+    # Capture copies caller input; it does not translate its spellings. A tuple
+    # rewritten as a list would make this verb accept an operand list the
+    # canonical predicate serde refuses for the identical document.
+    port = RecordingPort(rows=[dict(_PERSON_ROW)])
+    operands = (
+        {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}},
+        {"eq": {"attr": "parallax.compatibility.Person.name", "value": "Ada"}},
+    )
+    target: dict[str, object] = {
+        "entity": "parallax.compatibility.Person",
+        "predicate": {"and": {"operands": operands}},
+    }
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(CanonicalDocumentError, match="operands"):
+            tx.wire.delete_where(target)
+        tx.wire.delete_where({**target, "predicate": {"and": {"operands": list(operands)}}})
+
+    db_for(PERSON, port).transact(fn)
+    assert len(_writes(port)) == 1
 
 
 def test_an_insert_payload_that_is_not_a_document_is_refused() -> None:
@@ -926,7 +1030,10 @@ def test_a_nullable_occurrence_may_be_authored_absent() -> None:
 )
 def test_a_malformed_occurrence_document_is_refused_by_the_judgement(address: object) -> None:
     # Decoding is total and nonthrowing, so a value no declared decoding
-    # recognizes reaches the type verdict rather than a decoding failure.
+    # recognizes reaches the type verdict rather than a decoding failure. The
+    # verdict is the normative payload rule's own, which is why it carries that
+    # rule's class rather than the verb's: one input, one classification, at
+    # every ingress that accepts it.
     port = RecordingPort(rows=[])
 
     def fn(tx: Transaction) -> None:
