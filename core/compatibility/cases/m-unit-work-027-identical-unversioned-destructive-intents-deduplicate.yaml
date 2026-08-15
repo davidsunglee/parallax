@@ -32,8 +32,8 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 21 }
-      roundTrips: 1
-      note: the second delete says what the first already said, so ONE DELETE is emitted
+      roundTrips: 2
+      note: both deletes settle against the row this step's own resolving read published, and the second says what the first already said, so ONE DELETE is emitted
       statements:
         - sql:
             postgres: delete from order_item where id = ?
@@ -52,4 +52,4 @@ when:
           binds: [21]
       expectRows: []
 then:
-  roundTrips: 2
+  roundTrips: 3

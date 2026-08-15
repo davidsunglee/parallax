@@ -48,4 +48,4 @@ then:
   tableState:
     reading:
       - { id: 1, kind: meter, celsius: 20.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }
-  roundTrips: 2
+  roundTrips: 3

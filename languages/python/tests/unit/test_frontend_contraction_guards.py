@@ -1041,6 +1041,7 @@ def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
     ]
     assert _write_planner_descendants() == ["parallax.core.unit_work.write_planner.WritePlanner"]
     assert _factory_call_sites() == [
+        ("parallax.conformance.engine", "_execute_framework_write_unit"),
         ("parallax.conformance.engine", "_lower_conflict_write"),
         ("parallax.conformance.engine", "_lower_predicate_write_step"),
         ("parallax.conformance.engine", "_lower_resolved"),

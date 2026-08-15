@@ -46,4 +46,4 @@ then:
   tableState:
     spot_quote:
       - { id: 1, price: 50.00, symbol: ACME, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }
-  roundTrips: 2
+  roundTrips: 3

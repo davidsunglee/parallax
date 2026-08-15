@@ -382,7 +382,7 @@ class FakeWritePort:
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
         self.reads.append((sql, list(binds)))
-        return list(self.find_rows)
+        return fold_mapping_rows(self.find_rows, document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         self.writes.append((sql, list(binds)))
@@ -396,6 +396,66 @@ class FakeWritePort:
             raise
         self.commits += 1
         return result
+
+
+# The rows a fake port answers the RESOLVING READ a keyed write owes
+# (`m-case-format` *Resolving reads a write owes*). A write against existing
+# state is addressed and licensed by a value a read published, so a fake driving
+# one of these lanes has to publish that value — the canned run stands in for the
+# one current milestone the real database holds, keyed by the projection's own
+# physical column names.
+_OPEN_MILESTONE: Final[dt.datetime] = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
+
+
+def _ledger_row(row_id: int, value: str, *, in_z: str) -> Row:
+    return {
+        "led_id": row_id,
+        "acct_num": "B",
+        "val": decimal.Decimal(value),
+        "in_z": dt.datetime.fromisoformat(in_z),
+        "out_z": _OPEN_MILESTONE,
+    }
+
+
+def _balance_row(row_id: int, value: str, *, in_z: str) -> Row:
+    return {
+        "bal_id": row_id,
+        "acct_num": "A",
+        "val": decimal.Decimal(value),
+        "in_z": dt.datetime.fromisoformat(in_z),
+        "out_z": _OPEN_MILESTONE,
+    }
+
+
+def _position_row(row_id: int, value: str, *, from_z: str, in_z: str) -> Row:
+    return {
+        "pos_id": row_id,
+        "acct_num": "A",
+        "val": decimal.Decimal(value),
+        "from_z": dt.datetime.fromisoformat(from_z),
+        "thru_z": _OPEN_MILESTONE,
+        "in_z": dt.datetime.fromisoformat(in_z),
+        "out_z": _OPEN_MILESTONE,
+    }
+
+
+def _voyage_row(row_id: int, payload: dict[str, object], *, in_z: str) -> Row:
+    return {
+        "id": row_id,
+        "in_z": dt.datetime.fromisoformat(in_z),
+        "out_z": _OPEN_MILESTONE,
+        "payload": payload,
+    }
+
+
+# The milestone `m-txtime-write-010`'s own insert entry leaves current, as its
+# update entry's resolving read publishes it: one Structured Column carrying
+# every member, which is what a document-mapped chain carries forward.
+_VOYAGE_MILESTONE: Final[Row] = _voyage_row(
+    1,
+    {"title": "Northern Run", "crew": 4, "manifest": {"cargo": "timber"}, "legs": []},
+    in_z="2026-01-01T00:00:00+00:00",
+)
 
 
 def _synthetic_write(shape: str, document: dict[str, object]) -> case_format.Case:
@@ -563,7 +623,12 @@ def test_run_scenario_case_discards_an_aborted_ungrouped_temporal_writes_case_st
     # temporal write must therefore consume the ORIGINAL milestone again —
     # gating its own close on the fixture's Transaction-Time start (2024-02-01),
     # not on the aborted successor's (2026-01-01), which would match zero rows.
-    port = FakeWritePort()
+    #
+    # The canned row is the fixture milestone each step's own resolving read
+    # publishes — the value a keyed write is addressed by — so what this asserts
+    # is the observation the PURE re-lowering oracle plans with, which is where
+    # the tracked case state lives.
+    port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
     case = _synthetic_ledger_scenario(
         [
             _ledger_update("999.00", "2026-01-01T00:00:00+00:00", rollback=True),
@@ -579,30 +644,6 @@ def test_run_scenario_case_discards_an_aborted_ungrouped_temporal_writes_case_st
     # The successor is chained off the ORIGINAL row too — `acct_num` is the
     # fixture's own B, never the aborted write's carried-forward value.
     assert successor.binds[1] == "B"
-
-
-def test_run_scenario_case_stages_a_doomed_uow_groups_temporal_case_state() -> None:
-    # Staging is not simply "do not advance": `m-case-format` requires a step
-    # later in the SAME doomed group to observe the mid-transaction state the
-    # eventual abort then erases. Step 1 therefore closes step 0's own
-    # successor (gating on 2026-01-01, the milestone only this doomed
-    # transaction ever opened), while the UNGROUPED step 2, running after the
-    # group aborted, is back on the fixture milestone (2024-02-01).
-    port = FakeWritePort()
-    case = _synthetic_ledger_scenario(
-        [
-            _ledger_update("999.00", "2026-01-01T00:00:00+00:00", uow="doomed", rollback=True),
-            _ledger_update("888.00", "2026-01-01T00:00:00+00:00", uow="doomed"),
-            _ledger_update("300.00", "2026-02-01T00:00:00+00:00"),
-        ]
-    )
-    emissions, _round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
-    assert port.rollbacks == 1 and port.commits == 1
-    doomed_close, _doomed_successor, own_write_close, _own_successor, close, _successor = emissions
-    assert doomed_close.binds[3] == "2024-02-01T00:00:00+00:00"
-    assert own_write_close.binds[3] == "2026-01-01T00:00:00+00:00"
-    assert close.case_pointer == "/scenario/2/write"
-    assert close.binds[3] == "2024-02-01T00:00:00+00:00"
 
 
 def _ledger_insert(at: str) -> dict[str, object]:
@@ -654,7 +695,11 @@ def test_scenario_compile_lane_discards_an_aborted_ungrouped_writes_case_state()
     assert close.case_pointer == "/scenario/2/write"
     assert close.binds[3] == "2025-01-01T00:00:00+00:00"
     assert successor.binds[2] == decimal.Decimal("400.00")
-    run, _rt, _errors, _log = engine.run_scenario_case(case, "postgres", FakeWritePort())
+    # Each update step is its own transaction, so each owes a resolving read of
+    # the milestone the insert left current — the value its keyed verb is
+    # addressed by.
+    port = FakeWritePort(find_rows=[_ledger_row(9, "100.00", in_z="2025-01-01T00:00:00+00:00")])
+    run, _rt, _errors, _log = engine.run_scenario_case(case, "postgres", port)
     assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
         (e.case_pointer, e.sql, e.binds) for e in run
     ]
@@ -665,6 +710,13 @@ def test_scenario_compile_lane_stages_a_doomed_uow_groups_case_state() -> None:
     # closes step 1's own successor because both belong to the SAME doomed
     # group (gating on 2026-01-01), while the ungrouped step 3 that follows the
     # group's rollback is back on the insert's milestone (2025-01-01).
+    #
+    # The compile lane is where a chained pair like this can be stated at all:
+    # the run lane writes through the public keyed verbs, where two writes
+    # settling against one observed state COALESCE rather than chain
+    # (`m-unit-work-025`), so a later write settling against an earlier write's
+    # own successor is not something a caller can express. Both lanes stage a
+    # doomed group by the same rule, which is what this asserts.
     case = _synthetic_ledger_scenario(
         [
             _ledger_insert("2025-01-01T00:00:00+00:00"),
@@ -1919,14 +1971,13 @@ def _settled(source: Any) -> Any:
 def test_a_settled_write_settles_against_the_node_the_named_find_observed() -> None:
     # A milestone chain holds more than one row per primary key, so one find may
     # return several and each is evidence about the milestone it actually is. The
-    # write settles against the ONE its own `on` reference named — carrying the
-    # slot the unit of work filed that node under, so the real write reaches
-    # production's own record rather than a coordinate this engine re-derived.
+    # pure oracle plans with the ONE the write step's own `on` reference named —
+    # production's own retained record rather than a coordinate this engine
+    # re-derived.
     head = _policy_node(_JAN, _JUN, "head")
     tail = _policy_node(_JUN, INFINITY, "tail")
     for node, expected in ((head, "head"), (tail, "tail")):
-        key, observation = _settled((node,))
-        assert key == node.key
+        observation = _settled((node,))
         assert isinstance(observation, TemporalObservation)
         assert observation.predecessor.members["name"] == expected
 
@@ -1947,7 +1998,7 @@ def test_a_settled_write_refuses_a_find_that_observed_several_rows_of_its_key() 
 
 def test_a_write_step_naming_no_find_settles_against_tracked_state() -> None:
     assert (
-        engine._source_find_observations(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._source_find_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"write": []}, 2, {}
         )
         is None
@@ -1956,18 +2007,17 @@ def test_a_write_step_naming_no_find_settles_against_tracked_state() -> None:
 
 def test_a_source_find_reference_names_one_index() -> None:
     with pytest.raises(engine.EngineError, match="settles against ONE find step"):
-        engine._source_find_observations(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._source_find_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"write": [], "on": [0, 1]}, 2, {}
         )
 
 
-def test_a_source_find_reference_answers_what_that_find_observed() -> None:
-    # A find of the same group that observed nothing observable — an unversioned
-    # Non-Temporal target — still answers, with an empty record: the reference
-    # resolved, and it is the WRITE's own resolution that then finds no observed
-    # state.
+def test_a_source_find_reference_answers_what_that_find_published() -> None:
+    # A find of the same group that published no row still answers, with an empty
+    # record: the reference resolved, and it is the WRITE's own source resolution
+    # that then finds no value to be addressed by.
     assert (
-        engine._source_find_observations(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._source_find_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"write": [], "on": 1}, 2, {1: ()}
         )
         == ()
@@ -1979,7 +2029,7 @@ def test_a_source_find_reference_names_a_find_of_its_own_group() -> None:
     # outside the group, one that is not a find, or one that has not run yet —
     # refused rather than resolved to "the find observed nothing".
     with pytest.raises(engine.EngineError, match="not an EARLIER find step"):
-        engine._source_find_observations(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._source_find_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"write": [], "on": 0}, 2, {}
         )
 
@@ -2009,10 +2059,10 @@ def test_a_settled_write_names_a_versioned_targets_own_read_generation() -> None
             [],
             (node,),
         )[0]
-        return write.execution_evidence
+        return write.oracle_observation
 
-    assert settle(_account_node(1)) == _account_node(1).key
-    assert settle(_account_node(4)) == _account_node(4).key
+    assert settle(_account_node(1)) == _account_node(1).evidence
+    assert settle(_account_node(4)) == _account_node(4).evidence
 
 
 def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -> None:
@@ -2070,7 +2120,6 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
             [],
             (node,),
         )[0]
-        assert write.execution_evidence == node.key
         observation = write.oracle_observation
         assert isinstance(observation, TemporalObservation)
         return observation.predecessor.members["txStart"]
@@ -2151,11 +2200,12 @@ def test_a_tracked_milestone_of_a_document_target_chains_when_the_case_authored_
     # statement: every key in the stored document came from the case's own insert,
     # so the tracked milestone IS the whole stored row and the successor chains.
     # This is what keeps the refusal above narrow enough to leave the corpus alone.
-    port = FakeWritePort()
+    port = FakeWritePort(find_rows=[_VOYAGE_MILESTONE])
     emissions, _table_state, round_trips = engine.run_write_sequence_case(
         _load_case("m-txtime-write-010"), "postgres", port
     )
-    assert round_trips == 3
+    # Three DML statements plus the update entry's own resolving read.
+    assert round_trips == 4
     assert [e.case_pointer for e in emissions] == [
         "/writeSequence/0",
         "/writeSequence/1",
@@ -2179,11 +2229,11 @@ def test_a_document_milestone_opened_after_out_of_band_statements_still_chains()
             "given": {"apply": [{"sql": "insert into unrelated(id) values (1)"}]},
         },
     )
-    port = FakeWritePort()
+    port = FakeWritePort(find_rows=[_VOYAGE_MILESTONE])
     emissions, _table_state, round_trips = engine.run_write_sequence_case(
         with_apply, "postgres", port
     )
-    assert round_trips == 3
+    assert round_trips == 4
     assert [e.case_pointer for e in emissions] == [
         "/writeSequence/0",
         "/writeSequence/1",
@@ -2272,16 +2322,16 @@ def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() ->
     }
 
 
-def test_run_write_sequence_case_carries_the_temporal_observation_on_the_buffered_write() -> None:
-    # m-txtime-write-002: the update entry's shadow-resolved observation rides to
-    # planning on the buffered write itself, through the documented neutral seam
-    # (`Transaction.write_neutral`'s `observation=` route, `_execute_write_unit`)
-    # — exactly what a real caller's own prior find would have resolved for it.
-    port = FakeWritePort()
+def test_run_write_sequence_case_settles_a_temporal_write_against_its_resolving_read() -> None:
+    # m-txtime-write-002: the update entry is its own choreography unit, so the
+    # milestone it closes comes from the read that unit issues for it — the value
+    # `tx.wire.update` is addressed and licensed by — and the round trips count
+    # that read beside the three DML statements.
+    port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
     emissions, table_state, round_trips = engine.run_write_sequence_case(
         _load_case("m-txtime-write-002"), "postgres", port
     )
-    assert round_trips == 3
+    assert round_trips == 4
     assert [e.case_pointer for e in emissions] == [
         "/writeSequence/0",
         "/writeSequence/1",
@@ -2292,15 +2342,20 @@ def test_run_write_sequence_case_carries_the_temporal_observation_on_the_buffere
 
 
 def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window() -> None:
-    # m-bitemp-write-001: the updateUntil entry's
-    # canonical instruction carries BOTH `validFrom` and `until`
-    # (its bounded rectangle-split window) — `_execute_write_unit` threads both
-    # onto the neutral `Transaction.write_neutral` route unchanged.
-    port = FakeWritePort()
+    # m-bitemp-write-001: the updateUntil entry's canonical instruction carries
+    # BOTH `validFrom` and `until` (its bounded rectangle-split window), which
+    # `_execute_write_unit` hands `tx.wire.update_until` unchanged.
+    port = FakeWritePort(
+        find_rows=[
+            _position_row(
+                1, "100.00", from_z="2024-01-01T00:00:00+00:00", in_z="2024-01-01T00:00:00+00:00"
+            )
+        ]
+    )
     _emissions, table_state, round_trips = engine.run_write_sequence_case(
         _load_case("m-bitemp-write-001"), "postgres", port
     )
-    assert round_trips == 5
+    assert round_trips == 6
     assert len(port.writes) == 5 and port.commits == 2
     assert table_state is not None and "position" in table_state
 
@@ -2521,9 +2576,9 @@ def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execut
     # m-batch-write-001's own insert shape, run for real (never through the
     # separate pure re-lowering `test_uniform_multi_row_update_collapses_to_
     # one_in_list_statement` grades): the case authors `decimal` balances as
-    # wire-spelled floats, and `Transaction.write_neutral` takes an ALREADY-decoded
-    # instruction, so each row must be decoded before it is buffered — the
-    # collapse into one statement happens afterwards, in the planner.
+    # wire-spelled floats, and the engine decodes each row to its native carrier
+    # before handing it to `tx.wire.insert` — the collapse into one statement
+    # happens afterwards, in the planner.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -2889,9 +2944,9 @@ def test_canonical_predicate_doc_preserves_valid_time_bounds_and_drops_at() -> N
 
 def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
     # `m-batch-write-005`'s own shape, run end to end (no Docker): an
-    # unversioned, non-temporal target's predicate delete buffers through
-    # `Transaction.write_neutral` and lowers to ONE readless
-    # statement — `_run_readless_predicate_write`'s own production seam.
+    # unversioned, non-temporal target's predicate delete is stated through
+    # `tx.wire.delete_where` and lowers to ONE readless statement —
+    # `_run_readless_predicate_write`'s own production seam.
     case = _synthetic_write(
         "scenario",
         {
@@ -3081,18 +3136,15 @@ def _ledger_materializing_pair(at: str, *, rollback: bool = False) -> list[dict[
     ]
 
 
-def _ledger_resolve_port() -> FakeWritePort:
-    return FakeWritePort(
-        find_rows=[
-            {
-                "led_id": 2,
-                "acct_num": "B",
-                "val": decimal.Decimal("200.00"),
-                "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
-                "out_z": INFINITY,
-            }
-        ]
-    )
+def _ledger_resolve_port(*rows: Row) -> FakeWritePort:
+    fixture: Row = {
+        "led_id": 2,
+        "acct_num": "B",
+        "val": decimal.Decimal("200.00"),
+        "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+        "out_z": INFINITY,
+    }
+    return FakeWritePort(find_rows=[fixture, *rows])
 
 
 def test_run_scenario_case_refuses_a_keyed_temporal_write_after_a_materializing_pair() -> None:
@@ -3147,7 +3199,9 @@ def test_run_scenario_case_chains_a_key_inserted_after_a_materializing_pair() ->
         ]
     )
     emissions, _round_trips, _errors, _log = engine.run_scenario_case(
-        case, "postgres", _ledger_resolve_port()
+        case,
+        "postgres",
+        _ledger_resolve_port(_ledger_row(9, "100.00", in_z="2025-06-01T00:00:00+00:00")),
     )
     close = emissions[-2]
     assert close.case_pointer == "/scenario/3/write"
@@ -5333,3 +5387,209 @@ def test_decoded_assignment_value_leaves_an_undeclared_member_unchanged() -> Non
         )
         == 42
     )
+
+
+# --------------------------------------------------------------------------- #
+# The write lanes' own verb dispatch, driven database-free against the fake     #
+# port. Every keyed and predicate mutation the corpus authors reaches its own   #
+# `tx.wire` verb, and the value each write is addressed by is resolved from     #
+# what this unit's own reads published — the two questions the migration off    #
+# the instruction ingress made this engine's rather than production's.          #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_unit_reads_each_entity_it_writes_once_however_many_entries_address_it() -> None:
+    # m-unit-work-026 updates then deletes ONE OrderItem in one step, so the two
+    # entries share a single membership read. Reading per entry would put the
+    # update on the wire before the delete could supersede it.
+    port = FakeWritePort(
+        find_rows=[{"id": 21, "order_id": 2, "sku": "A-300", "quantity": 4, "shipped_on": None}]
+    )
+    _emissions, round_trips, _errors, _log = engine.run_scenario_case(
+        _case("m-unit-work-026"), "postgres", port
+    )
+    assert round_trips == 3  # the step's own read + its one DELETE + the dependent find
+    assert next(sql for sql, _binds in port.reads) == (
+        "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on"
+        " from order_item t0 where t0.id in (%s) for share of t0"
+    )
+    assert [sql for sql, _binds in port.writes] == ["delete from order_item where id = %s"]
+
+
+def test_a_temporal_terminate_entry_reaches_its_own_wire_verb() -> None:
+    port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
+    _emissions, _table_state, round_trips = engine.run_write_sequence_case(
+        _load_case("m-txtime-write-003"), "postgres", port
+    )
+    assert round_trips == 3  # insert, then the terminate entry's own read + its close
+    assert port.writes[-1][0].startswith("update balance set out_z")
+
+
+def test_a_bounded_bitemporal_terminate_entry_reaches_its_own_wire_verb() -> None:
+    port = FakeWritePort(
+        find_rows=[
+            _position_row(
+                1, "100.00", from_z="2024-01-01T00:00:00+00:00", in_z="2024-01-01T00:00:00+00:00"
+            )
+        ]
+    )
+    _emissions, _table_state, round_trips = engine.run_write_sequence_case(
+        _load_case("m-bitemp-write-002"), "postgres", port
+    )
+    assert round_trips == 5  # four statements plus the terminateUntil entry's own read
+    assert port.writes[1][0].startswith("update position set out_z")
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "m-bitemp-write-010",
+        "m-bitemp-write-011",
+        "m-bitemp-write-012",
+        "m-bitemp-write-013",
+    ],
+)
+def test_every_materializing_predicate_mutation_reaches_its_own_wire_verb(case_id: str) -> None:
+    # The four bitemporal predicate shapes — plain update, plain terminate, and
+    # the bounded pair — each dispatch to the `tx.wire.*_where` verb their own
+    # mutation names. The canned row is what the pair's resolving find publishes.
+    port = FakeWritePort(
+        find_rows=[
+            _position_row(
+                1, "200.00", from_z="2024-06-01T00:00:00+00:00", in_z="2024-04-01T00:00:00+00:00"
+            )
+        ]
+    )
+    emissions, _round_trips, errors, _log = engine.run_scenario_case(
+        _load_case(case_id), "postgres", port
+    )
+    assert errors == []
+    assert any(e.sql.startswith("update position set out_z") for e in emissions)
+
+
+def test_a_write_settles_against_a_row_its_own_unit_opened() -> None:
+    # Read-your-own-writes inside ONE step: no read could return the inserted row,
+    # so the node `tx.wire.insert` answered is what the update is addressed by.
+    case = _synthetic_ledger_scenario(
+        [
+            {
+                "write": [
+                    {
+                        "mutation": "insert",
+                        "entity": "parallax.compatibility.Ledger",
+                        "rows": [{"id": 9, "acctNum": "D", "value": decimal.Decimal("100.00")}],
+                        "at": "2025-01-01T00:00:00+00:00",
+                    },
+                    {
+                        "mutation": "update",
+                        "entity": "parallax.compatibility.Ledger",
+                        "rows": [{"id": 9, "value": decimal.Decimal("150.00")}],
+                        "at": "2025-01-01T00:00:00+00:00",
+                    },
+                ],
+                "roundTrips": 1,
+            }
+        ]
+    )
+    port = FakeWritePort()
+    engine.run_scenario_case(case, "postgres", port)
+    # The pair coalesces in place: one INSERT carrying the final value, no read.
+    assert port.reads == []
+    assert [sql for sql, _binds in port.writes] == [
+        "insert into ledger(led_id, acct_num, val, in_z, out_z) values (%s, %s, %s, %s, %s)"
+    ]
+
+
+def test_a_grouped_write_addressing_a_key_no_read_published_is_refused() -> None:
+    # The group's find answered nothing, so the write it precedes is addressed by
+    # no value at all — refused where the diagnosis can name the key rather than
+    # issued as a blind statement.
+    case = _synthetic_ledger_scenario(
+        [
+            {
+                "uow": "g",
+                "objectQuery": {
+                    "target": "parallax.compatibility.Ledger",
+                    "predicate": {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}},
+                    "temporal": {"transaction-time": {"asOf": "latest"}},
+                },
+                "roundTrips": 1,
+            },
+            _ledger_update("300.00", "2026-02-01T00:00:00+00:00", uow="g"),
+        ]
+    )
+    with pytest.raises(engine.EngineError, match="which no read of its own choreography unit"):
+        engine.run_scenario_case(case, "postgres", FakeWritePort())
+
+
+def test_a_named_find_publishing_no_row_of_a_writes_key_settles_nothing() -> None:
+    # The row states its own `observedVersion`, so the entry needs no evidence
+    # from the named find and reaches the ADDRESSING question with a reference
+    # that resolved to no value. A write addressed by nothing is an authoring
+    # defect, refused where the diagnosis can name the step.
+    case = _synthetic_write(
+        "scenario",
+        {
+            "when": {
+                "scenario": [
+                    {
+                        "uow": "g",
+                        "objectQuery": {
+                            "target": "Account",
+                            "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+                        },
+                        "roundTrips": 1,
+                    },
+                    {
+                        "uow": "g",
+                        "write": [
+                            {
+                                "mutation": "update",
+                                "entity": "Account",
+                                "rows": [{"id": 1, "balance": 5.00, "observedVersion": 1}],
+                            }
+                        ],
+                        "on": 0,
+                        "roundTrips": 1,
+                    },
+                ]
+            }
+        },
+    )
+    with pytest.raises(engine.EngineError, match="published 0 rows"):
+        engine.run_scenario_case(case, "postgres", FakeWritePort())
+
+
+def test_a_transaction_time_past_reading_is_skipped_as_a_write_source() -> None:
+    # A group may publish several milestones of one key. Only the current one is
+    # writable — the Transaction-Time past records what the system knew — so the
+    # unreferenced scan steps over the pinned reading rather than reaching for the
+    # refusal the verb would raise.
+    case = _synthetic_ledger_scenario(
+        [
+            {
+                "uow": "g",
+                "objectQuery": {
+                    "target": "parallax.compatibility.Ledger",
+                    "predicate": {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}},
+                    "temporal": {"transaction-time": {"asOf": "latest"}},
+                },
+                "roundTrips": 1,
+            },
+            {
+                "uow": "g",
+                "objectQuery": {
+                    "target": "parallax.compatibility.Ledger",
+                    "predicate": {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}},
+                    "temporal": {
+                        "transaction-time": {"asOf": "2024-03-01T00:00:00+00:00"},
+                    },
+                },
+                "roundTrips": 1,
+            },
+            _ledger_update("300.00", "2026-02-01T00:00:00+00:00", uow="g"),
+        ]
+    )
+    port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
+    engine.run_scenario_case(case, "postgres", port)
+    assert next(sql for sql, _binds in port.writes).startswith("update ledger set out_z")

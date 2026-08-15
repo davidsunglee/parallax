@@ -49,4 +49,4 @@ then:
       - { id: 10, owner: Mira, balance: 500.00 }
       - { id: 11, owner: Omar, balance: 500.00 }
       - { id: 12, owner: Nell, balance: 30.00 }
-  roundTrips: 2
+  roundTrips: 3

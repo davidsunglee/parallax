@@ -379,11 +379,10 @@ def instruction_evidence(
     the evidence such a caller did supply being dropped for it.
 
     The rule is stated here, once, because every caller that holds an instruction
-    must decide identically: a runtime's neutral write ingress buffers into a
-    real unit of work while a conformance oracle re-lowers the same instruction
-    purely, and an oracle settling a write differently from the ingress would
-    grade a coalescing no program gets. Nothing here reads a database, so the
-    pure caller keeps that property.
+    must decide identically to the verbs that hold values: a conformance oracle
+    re-lowers an instruction purely, and an oracle settling a write differently
+    from the verb the same write goes through would grade a coalescing no program
+    gets. Nothing here reads a database, so the pure caller keeps that property.
 
     The target is resolved against ``model`` first, so the derivation is handed
     the Optimistic Key of an Entity this model carries; a spelling it does not

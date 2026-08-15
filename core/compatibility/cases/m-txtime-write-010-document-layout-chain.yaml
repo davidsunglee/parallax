@@ -100,4 +100,4 @@ then:
           manifest:
             cargo: timber
           legs: []
-  roundTrips: 3
+  roundTrips: 4

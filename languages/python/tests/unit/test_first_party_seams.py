@@ -1,13 +1,13 @@
-"""The first-party seams beside the developer surface: the values lane
-(``db.read_rows`` / ``tx.read_rows``) and the conformance bridge
-(``tx.observed_read`` / ``tx.write_neutral``).
+"""The first-party seam beside the developer surface — the values lane
+(``db.read_rows`` / ``tx.read_rows``) — and the Wire read the conformance engine
+settles its writes against.
 
 Docker-free, against the shared recording port. What these pin is that a caller
 holding no Entity Class reaches the SAME unit of work a typed caller does — the
 same read gate, the same force-flush, the same lock suffix, the same observation
-record, the same carrier decision, the same flush triggers — and that the record
-a participating bridge read answers with is the exact slot a bridge write then
-settles against.
+record, the same flush triggers — and that the claim a participating Wire read
+files onto each node it published is the exact slot a keyed write off that node
+then settles against.
 """
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ from _transact_support import (
     ACCOUNT,
     BALANCE,
     FIND_SQL_UNLOCKED,
-    PERSON,
     RecordingPort,
     account_db,
     db_for,
+    published_claims,
 )
 
 from _support import mirrored_models as mm
@@ -41,17 +41,12 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.unit_work import (
-    EscapedTransactionError,
     ObjectKey,
     ObservedStateKey,
     RetainedObservation,
     TemporalStateKey,
     VersionedStateKey,
-    VersionObservation,
-    WriteInstruction,
-    WritePlanningError,
     WriteRejectedError,
-    instructions,
 )
 from parallax.snapshot import InvalidData
 from parallax.snapshot.handle import (
@@ -59,7 +54,7 @@ from parallax.snapshot.handle import (
     DeferredFeatureError,
     QueryTargetError,
     Transaction,
-    UnobservedWriteError,
+    WireEntity,
 )
 
 ACCOUNT_META = model_of(ACCOUNT)
@@ -69,7 +64,6 @@ UPDATE_SQL = "update account set balance = %s, version = %s where id = %s and ve
 ACCOUNT_ROW: Row = {"id": 3, "owner": "Grace", "balance": Decimal("10"), "version": 1}
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _INFINITY = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
-_OBSERVED_VERSION = VersionObservation(observed_version=1)
 _TEMPORAL_BOUNDS: Row = {
     "from_z": _TX_START,
     "thru_z": _INFINITY,
@@ -109,14 +103,8 @@ def _account_state() -> ObservedStateKey:
     return VersionedStateKey(ObjectKey(_account(), (("id", 3),)), 1)
 
 
-def _update(balance: int) -> WriteInstruction:
-    return instructions.deserialize(
-        {
-            "mutation": "update",
-            "entity": "parallax.compatibility.Account",
-            "rows": [{"id": 3, "balance": balance}],
-        }
-    )
+def _node(tx: Transaction, query: ObjectQueryNode | None = None) -> WireEntity:
+    return tx.wire.find(query if query is not None else _account_query()).result()
 
 
 def _run[T](port: RecordingPort, fn: Callable[[Transaction], T]) -> T:
@@ -124,7 +112,7 @@ def _run[T](port: RecordingPort, fn: Callable[[Transaction], T]) -> T:
 
 
 # --------------------------------------------------------------------------- #
-# The values lane and the bridge read participate exactly as find does.        #
+# The values lane and the Wire read participate exactly as find does.          #
 # --------------------------------------------------------------------------- #
 
 
@@ -143,39 +131,39 @@ def test_a_published_row_is_detached_from_the_mapping_it_was_built_from() -> Non
         cast("dict[str, object]", row)["owner"] = "mutated"
 
 
-def test_a_standalone_bridge_read_takes_no_lock_and_files_no_record() -> None:
+def test_a_standalone_wire_read_takes_no_lock_and_files_no_record() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
     snapshot = account_db(port).wire.find(_account_query())
     assert port.ops == [("read", FIND_SQL_UNLOCKED, (3,))]
     assert snapshot.execution.round_trips == 1
 
 
-def test_a_participating_bridge_read_answers_the_state_the_unit_of_work_retained() -> None:
+def test_a_participating_wire_read_answers_the_state_the_unit_of_work_retained() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
 
     def fn(tx: Transaction) -> object:
-        read = tx.observed_read(_account_query())
-        assert len(read.observations) == 1
+        claims = published_claims(tx.wire.find(_account_query()))
+        assert len(claims) == 1
         # The state the read retained under is the one the unit of work answers
         # for, which is what makes the key a REFERENCE rather than a
         # reconstruction.
-        return read.observations[0].key
+        return claims[0].key
 
     assert cast("ObservedStateKey", _run(port, fn)) == _account_state()
     assert port.ops == [("begin",), ("read", FIND_SQL_UNLOCKED, (3,)), ("commit",)]
 
 
-def test_a_bridge_read_answers_the_claim_of_every_node_it_published() -> None:
+def test_a_wire_read_answers_the_claim_of_every_node_it_published() -> None:
     # Every independently writable node carries its own claim, included children
-    # among them, so a bridge write against a child settles against the state
-    # that child's own row was read at rather than against its root's.
+    # among them, so a write against a child settles against the state that
+    # child's own row was read at rather than against its root's.
     port = RecordingPort(row_queue=([_policy_row()], [_coverage_row()]))
     query = object_query_node(
         Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
     )
 
     def fn(tx: Transaction) -> tuple[ObservedStateKey, ...]:
-        return tuple(claim.key for claim in tx.observed_read(query).observations)
+        return tuple(claim.key for claim in published_claims(tx.wire.find(query)))
 
     keys = db_for(POLICY_MODEL, port).transact(fn).value
     assert [key.object.entity.name for key in keys] == ["Policy", "Coverage"]
@@ -185,7 +173,7 @@ def test_a_bridge_read_answers_the_claim_of_every_node_it_published() -> None:
 def test_a_non_hydrating_root_answers_no_claim_for_the_tree_below_it() -> None:
     # A claim belongs to a published Entity node. A non-hydrating root publishes
     # no value at all, and that covers its whole tree: the root's own hydratable
-    # projection is excluded with the child that spoiled it, so the bridge holds
+    # projection is excluded with the child that spoiled it, so a caller holds
     # nothing and — once the read result is released — no observed state of that
     # row is addressable in the unit of work either. Holding the read's raw
     # sources instead would leave write authority for a row nothing published.
@@ -195,148 +183,58 @@ def test_a_non_hydrating_root_answers_no_claim_for_the_tree_below_it() -> None:
     )
 
     def fn(tx: Transaction) -> tuple[tuple[RetainedObservation, ...], int]:
-        read = tx.observed_read(query)
-        record = read.snapshot.checked().result()
+        snapshot = tx.wire.find(query)
+        record = snapshot.checked().result()
         assert isinstance(record, InvalidData)
         assert cast("InvalidData[object]", record).data is None
+        claims = published_claims(snapshot)
         gc.collect()
-        return read.observations, len(tx._uow._observations)  # pyright: ignore[reportPrivateUsage] - the index is first-party state
+        return claims, len(tx._uow._observations)  # pyright: ignore[reportPrivateUsage] - the index is first-party state
 
     claims, indexed = db_for(POLICY_MODEL, port).transact(fn).value
     assert claims == ()
     assert indexed == 0
 
 
-def test_a_participating_read_force_flushes_pending_bridge_writes_first() -> None:
+def test_a_participating_row_read_force_flushes_a_pending_write_first() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
 
     def fn(tx: Transaction) -> None:
-        tx.write_neutral(_update(11), observation=VersionObservation(observed_version=1))
+        tx.wire.update(_node(tx), {"balance": 11})
         tx.read_rows(_account_query())
 
     _run(port, fn)
-    assert [op[0] for op in port.ops] == ["begin", "write", "read", "commit"]
+    assert [op[0] for op in port.ops] == ["begin", "read", "write", "read", "commit"]
 
 
 # --------------------------------------------------------------------------- #
-# The three observation forms.                                                 #
+# What a published node's own claim is spent on.                               #
 # --------------------------------------------------------------------------- #
-
-
-def test_a_bare_instruction_buffers_with_no_evidence() -> None:
-    port = RecordingPort()
-    insert = instructions.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "parallax.compatibility.Account",
-            "rows": [{"id": 7, "owner": "Newton", "balance": 5, "version": 1}],
-        }
-    )
-    _run(port, lambda tx: tx.write_neutral(insert))
-    assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
-
-
-def test_an_unversioned_instruction_claims_its_object_through_this_ingress_too() -> None:
-    # A bridge caller holds an instruction rather than the value a verb derives
-    # one from, so what its write settles against is derived here from the same
-    # two declared facts a typed verb's own resolution reads. Without that, an
-    # unversioned Non-Temporal write would claim nothing through this ingress and
-    # a case would witness a coalescing a program never gets: two deletes of one
-    # key reach the batch collapse as a repeated authored key.
-    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
-    delete = instructions.deserialize(
-        {
-            "mutation": "delete",
-            "entity": "parallax.compatibility.Person",
-            "rows": [{"id": 1}],
-        }
-    )
-
-    def fn(tx: Transaction) -> None:
-        tx.write_neutral(delete)
-        tx.write_neutral(delete)
-
-    db_for(PERSON, port).transact(fn)
-    assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
-
-
-def test_an_observation_supplied_for_an_insert_is_refused_not_dropped() -> None:
-    # Evidence the caller holds is used as given, so a write that settles against
-    # none refuses it: an opening row has no prior state for an observation to be
-    # about, and dropping it would let the call claim to have settled against a
-    # milestone that does not yet exist.
-    port = RecordingPort()
-    insert = instructions.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "parallax.compatibility.Account",
-            "rows": [{"id": 7, "owner": "Newton", "balance": 5}],
-        }
-    )
-    with pytest.raises(ValueError, match="an insert carries no Write Observation"):
-        _run(port, lambda tx: tx.write_neutral(insert, observation=_OBSERVED_VERSION))
-
-
-def test_an_observation_supplied_for_an_unversioned_target_is_refused_not_dropped() -> None:
-    # The object arm is what a write against an unversioned Non-Temporal row
-    # settles against when its caller holds nothing — never a place to put
-    # evidence such a row cannot carry. The refusal is the model-aware one every
-    # settled carrier crosses, rather than a silently unobserved write.
-    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
-    update = instructions.deserialize(
-        {
-            "mutation": "update",
-            "entity": "parallax.compatibility.Person",
-            "rows": [{"id": 1, "name": "Grace"}],
-        }
-    )
-    with pytest.raises(WritePlanningError, match="carries no Write Observation"):
-        db_for(PERSON, port).transact(
-            lambda tx: tx.write_neutral(update, observation=_OBSERVED_VERSION)
-        )
-
-
-def test_an_explicit_observation_licenses_the_version_advance() -> None:
-    port = RecordingPort()
-    _run(
-        port,
-        lambda tx: tx.write_neutral(
-            _update(11), observation=VersionObservation(observed_version=1)
-        ),
-    )
-    assert port.ops[1][1:] == (UPDATE_SQL, (11, 2, 3, 1))
 
 
 def test_a_write_eliminated_before_dml_leaves_its_claim_unspent() -> None:
     # Consumption follows the surviving WRITE, never the batch it flushed in. The
-    # key-only update is known no-op work and is eliminated before any DML, so the
-    # claim it carried is still about stored state — even though the insert beside
-    # it in the same flush reached the database and made the plan non-empty.
+    # second update restores the value the source published, which cancels the
+    # assignment buffered before it, so nothing of account 3 reaches the wire and
+    # the claim it carried is still about stored state — even though the insert
+    # beside it in the same flush reached the database and made the plan
+    # non-empty.
     port = RecordingPort(rows=[ACCOUNT_ROW])
-    key_only = instructions.deserialize(
-        {
-            "mutation": "update",
-            "entity": "parallax.compatibility.Account",
-            "rows": [{"id": 3}],
-        }
-    )
-    insert = instructions.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "parallax.compatibility.Account",
-            "rows": [{"id": 7, "owner": "Newton", "balance": 5, "version": 1}],
-        }
-    )
 
     def fn(tx: Transaction) -> RetainedObservation:
-        read = tx.observed_read(_account_query())
-        claim = read.observations[0]
-        tx.write_neutral(key_only, observation=claim.key)
-        tx.write_neutral(insert)
+        snapshot = tx.wire.find(_account_query())
+        claim = published_claims(snapshot)[0]
+        node = snapshot.result()
+        tx.wire.update(node, {"balance": 125})
+        tx.wire.update(node, {"balance": node["balance"]})
+        tx.wire.insert(
+            "parallax.compatibility.Account", {"id": 7, "owner": "Newton", "balance": "5.00"}
+        )
         return claim
 
     spent = _run(port, fn)
     assert [op[0] for op in port.ops] == ["begin", "read", "write", "commit"]
+    assert cast("str", port.ops[2][1]).startswith("insert into account")
     assert spent.consumed is False
 
 
@@ -347,23 +245,12 @@ def test_a_surviving_write_spends_its_own_claim() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
 
     def fn(tx: Transaction) -> RetainedObservation:
-        read = tx.observed_read(_account_query())
-        claim = read.observations[0]
-        tx.write_neutral(_update(11), observation=claim.key)
+        snapshot = tx.wire.find(_account_query())
+        claim = published_claims(snapshot)[0]
+        tx.wire.update(snapshot.result(), {"balance": 11})
         return claim
 
     assert _run(port, fn).consumed is True
-
-
-def test_an_observed_state_key_resolves_against_this_units_own_index() -> None:
-    port = RecordingPort(rows=[ACCOUNT_ROW])
-
-    def fn(tx: Transaction) -> None:
-        read = tx.observed_read(_account_query())
-        tx.write_neutral(_update(11), observation=read.observations[0].key)
-
-    _run(port, fn)
-    assert [op[0] for op in port.ops] == ["begin", "read", "write", "commit"]
     assert port.ops[2][1:] == (UPDATE_SQL, (11, 2, 3, 1))
 
 
@@ -372,89 +259,29 @@ def test_an_observed_state_key_resolves_against_this_units_own_index() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_key_naming_no_retained_observation_fails_at_the_call() -> None:
-    port = RecordingPort()
-    with pytest.raises(UnobservedWriteError) as raised:
-
-        def fn(tx: Transaction) -> None:
-            tx.write_neutral(_update(11), observation=_account_state())
-
-        _run(port, fn)
-    assert raised.value.code == "write-observation-not-recorded"
-    # Nothing was buffered, so the doomed transaction emitted no DML at all.
-    assert [op[0] for op in port.ops] == ["begin", "rollback"]
-
-
-def test_a_key_is_invalid_once_its_unit_of_work_has_ended() -> None:
-    port = RecordingPort(rows=[ACCOUNT_ROW])
-    escaped: list[Transaction] = []
-
-    def fn(tx: Transaction) -> None:
-        escaped.append(tx)
-
-    _run(port, fn)
-    with pytest.raises(EscapedTransactionError):
-        escaped[0].write_neutral(_update(11), observation=_account_state())
-
-
-def test_a_keyed_instruction_reaches_the_model_aware_validator_the_typed_verbs_do() -> None:
+def test_an_insert_payload_reaches_the_model_aware_validator_the_typed_verbs_do() -> None:
     # An insert omitting a required attribute is a MODEL judgment, invisible to
-    # the member-name honesty gate: the row names nothing undeclared. The neutral
-    # ingress runs `validate_write` for it, so it is refused with the same
-    # classified rule `Transaction._buffer` and the rejected run lane report.
+    # the member-name honesty gate: the payload names nothing undeclared. The
+    # Wire verb runs `validate_write` for it, so it is refused with the same
+    # classified rule the Typed keyed verbs and the rejected run lane report.
     port = RecordingPort()
-    incomplete = instructions.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "parallax.compatibility.Account",
-            "rows": [{"id": 7, "balance": 5}],
-        }
-    )
     with pytest.raises(WriteRejectedError) as raised:
-        _run(port, lambda tx: tx.write_neutral(incomplete))
+        _run(
+            port,
+            lambda tx: tx.wire.insert(
+                "parallax.compatibility.Account", {"id": 7, "balance": "5.00"}
+            ),
+        )
     assert raised.value.rule == "write-required-attribute-missing"
     assert [op[0] for op in port.ops] == ["begin", "rollback"]
 
 
-def test_an_unresolvable_entity_spelling_is_refused_as_a_naming_defect() -> None:
-    # The row judgment presupposes a target, so a spelling naming no declared
-    # Entity is left to `validate_instruction`, which owns that classification —
-    # never reported as a member complaint about an Entity the model lacks.
-    port = RecordingPort()
-    unknown = instructions.deserialize(
-        {"mutation": "update", "entity": "NoSuchEntity", "rows": [{"id": 3, "balance": 11}]}
-    )
-    with pytest.raises(instructions.WriteInstructionError, match="NoSuchEntity"):
-        _run(port, lambda tx: tx.write_neutral(unknown))
-    assert [op[0] for op in port.ops] == ["begin", "rollback"]
-
-
-def test_a_predicate_instruction_takes_no_observation() -> None:
-    port = RecordingPort()
-    predicate = instructions.deserialize(
-        {
-            "mutation": "update",
-            "target": {
-                "entity": "parallax.compatibility.Account",
-                "predicate": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 3}},
-            },
-            "assignments": [{"attr": "parallax.compatibility.Account.balance", "value": 11}],
-        }
-    )
-    with pytest.raises(TypeError, match="resolves its own per-row evidence"):
-
-        def fn(tx: Transaction) -> None:
-            tx.write_neutral(predicate, observation=VersionObservation(observed_version=1))
-
-        _run(port, fn)
-
-
-def test_a_predicate_instruction_buffers_through_the_shared_predicate_seam() -> None:
+def test_a_predicate_write_buffers_through_the_shared_predicate_seam() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
-    _run(port, lambda tx: tx.write_neutral(_predicate_update()))
+    _run(port, lambda tx: tx.wire.update_where(_predicate_target(), {"balance": 11}))
     # A versioned target materializes: the resolving read, then one keyed write
     # per resolved row (`m-opt-lock`, ADR 0014) — the readless template is not
-    # available and the neutral ingress does not invent one.
+    # available and the Wire ingress does not invent one.
     assert [op[0] for op in port.ops] == ["begin", "read", "write", "commit"]
 
 
@@ -476,7 +303,7 @@ def test_a_refused_participating_read_flushes_nothing() -> None:
     query = _account_query("parallax.compatibility.NoSuchEntity")
 
     def fn(tx: Transaction) -> None:
-        tx.write_neutral(_update(11), observation=VersionObservation(observed_version=1))
+        tx.wire.insert("parallax.compatibility.Account", {"id": 7, "owner": "N", "balance": "5.00"})
         tx.read_rows(query)
 
     with pytest.raises(QueryTargetError):
@@ -484,7 +311,7 @@ def test_a_refused_participating_read_flushes_nothing() -> None:
     assert [op[0] for op in port.ops] == ["begin", "rollback"]
 
 
-def test_the_bridge_read_reports_a_deferred_feature_by_name() -> None:
+def test_the_wire_read_reports_a_deferred_feature_by_name() -> None:
     query = deserialize_query(
         {
             "target": "parallax.compatibility.Policy",
@@ -519,8 +346,8 @@ def test_a_deferred_participating_read_flushes_nothing() -> None:
     )
 
     def fn(tx: Transaction) -> None:
-        tx.write_neutral(_policy_insert())
-        tx.observed_read(query)
+        _insert_policy(tx)
+        tx.wire.find(query)
 
     with pytest.raises(DeferredFeatureError) as raised:
         _policy_db(port).transact(fn)
@@ -556,7 +383,7 @@ def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
     )
 
     def fn(tx: Transaction) -> None:
-        tx.write_neutral(_order_update())
+        tx.wire.insert("parallax.compatibility.Order", _ORDER_PAYLOAD)
         tx.read_rows(query)
 
     with pytest.raises(ValueError, match="row-form read materializes no relationships"):
@@ -579,38 +406,24 @@ def test_an_ordered_capped_query_carrying_no_includes_still_answers() -> None:
     assert db_for(MODELS["orders"], port).read_rows(query).rows == (_ORDER_ROW,)
 
 
-def _order_update() -> WriteInstruction:
-    return instructions.deserialize(
-        {
-            "mutation": "update",
-            "entity": "parallax.compatibility.Order",
-            "rows": [{"id": 1, "qty": 7}],
-        }
-    )
-
-
 def _policy_db(port: RecordingPort) -> Database:
     return db_for(MODELS["policy"], port)
 
 
-def _policy_insert() -> WriteInstruction:
-    return instructions.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "parallax.compatibility.Policy",
-            "rows": [{"id": 1, "name": "Fleet"}],
-            "validFrom": "2024-07-01T00:00:00+00:00",
-        }
+def _insert_policy(tx: Transaction) -> None:
+    tx.wire.insert(
+        "parallax.compatibility.Policy",
+        {"id": 1, "name": "Fleet"},
+        valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
     )
 
 
-def test_a_milestone_set_bridge_read_retains_no_evidence() -> None:
+def test_a_milestone_set_wire_read_retains_no_evidence() -> None:
     port = RecordingPort(rows=_balance_history_rows())
     query = object_query_node(mm.Balance.where(mm.Balance.id == 1).history(TX_TIME))
 
     def fn(tx: Transaction) -> object:
-        read = tx.observed_read(query)
-        return read.observations
+        return published_claims(tx.wire.find(query))
 
     # A milestone-set read retains no evidence at all, exactly as `tx.find`'s own
     # history branch does, so it answers no state to settle against: a key here
@@ -623,8 +436,7 @@ def test_a_temporal_record_names_the_state_its_own_milestone_qualifies() -> None
     query = object_query_node(mm.Balance.where(mm.Balance.id == 1))
 
     def fn(tx: Transaction) -> object:
-        read = tx.observed_read(query)
-        key = read.observations[0].key
+        key = published_claims(tx.wire.find(query))[0].key
         # A milestone chain holds several rows per primary key, so the state the
         # retaining side addresses is qualified by the milestone the row names.
         assert isinstance(key, TemporalStateKey)
@@ -639,7 +451,7 @@ def test_an_unversioned_non_temporal_read_retains_no_evidence() -> None:
     query = object_query_node(Order.where(Order.id == 1))
 
     def fn(tx: Transaction) -> object:
-        return tx.observed_read(query).observations
+        return published_claims(tx.wire.find(query))
 
     assert _run_on(db_for(MODELS["orders"], port), fn) == ()
 
@@ -648,17 +460,11 @@ def _run_on[T](db: Database, fn: Callable[[Transaction], T]) -> T:
     return db.transact(fn).value
 
 
-def _predicate_update() -> WriteInstruction:
-    return instructions.deserialize(
-        {
-            "mutation": "update",
-            "target": {
-                "entity": "parallax.compatibility.Account",
-                "predicate": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 3}},
-            },
-            "assignments": [{"attr": "parallax.compatibility.Account.balance", "value": 11}],
-        }
-    )
+def _predicate_target() -> dict[str, object]:
+    return {
+        "entity": "parallax.compatibility.Account",
+        "predicate": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 3}},
+    }
 
 
 def _balance_history_rows() -> list[Row]:
@@ -688,4 +494,15 @@ _ORDER_ROW: Row = {
     "price": Decimal("9.99"),
     "active": True,
     "ordered_on": dt.date(2024, 7, 1),
+}
+
+
+_ORDER_PAYLOAD: dict[str, object] = {
+    "id": 2,
+    "name": "Order2",
+    "sku": "X-2",
+    "qty": 1,
+    "price": "9.99",
+    "active": True,
+    "orderedOn": "2024-07-01",
 }

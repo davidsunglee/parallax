@@ -34,4 +34,4 @@ then:
       - { id: 1, owner: Adele, balance: 175.00, version: 2 }
       - { id: 2, owner: Linus, balance: 250.00, version: 1 }
       - { id: 3, owner: Grace, balance: 10.00, version: 1 }
-  roundTrips: 1
+  roundTrips: 2

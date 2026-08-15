@@ -72,4 +72,4 @@ then:
           city: Stavanger
           phones:
             - { type: work, number: '555-2222' }
-  roundTrips: 2
+  roundTrips: 3

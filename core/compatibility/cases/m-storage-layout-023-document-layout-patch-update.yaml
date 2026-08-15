@@ -96,4 +96,4 @@ then:
               country: "NO"
           tags:
             - { label: scout }
-  roundTrips: 2
+  roundTrips: 3

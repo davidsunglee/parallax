@@ -52,4 +52,4 @@ then:
   tableState:
     account:
       - { id: 3, owner: Grace, balance: 10.00, version: 1 }
-  roundTrips: 2
+  roundTrips: 3

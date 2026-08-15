@@ -56,4 +56,4 @@ then:
       - id: 300
         name: Bjorn
         address: null
-  roundTrips: 2
+  roundTrips: 3

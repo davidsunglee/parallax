@@ -65,6 +65,7 @@ __all__ = [
     "UnwindTree",
     "WireEntity",
     "WireValue",
+    "opened_wire_entity",
     "source_hint_of",
     "unwind_tree",
     "wire_roots",
@@ -503,6 +504,79 @@ def _members(record: ValueObjectRecord | object, declared: _VoContainer) -> Wire
         filled[occurrence.identity.path[-1]] = _occurrence(
             nested.get(occurrence.identity), occurrence
         )
+    return _frozen_mapping(_FrozenMapping, filled)
+
+
+def opened_wire_entity(
+    model: Metamodel, entity: EntityIdentity, row: Mapping[str, object], hint: SourceHint
+) -> WireEntity:
+    """The frozen Wire node for a row a Wire insert has just OPENED.
+
+    A Wire insert's caller holds nothing afterwards — the Typed peer leaves the
+    caller holding the instance it passed — so the verb answers the row it
+    buffered, in the one representation that can be handed straight back to a
+    keyed verb. The node carries ``hint``, which is what makes it a keyed source
+    at all; the values are the payload's own, rendered through the SAME
+    canonical encoding a read publishes, so writing a member back is the
+    restoration it would be off a read result.
+
+    What it publishes is what this transaction STATED, not what a later read of
+    the stored row will: the framework-owned members are stamped at flush and
+    are absent here, and the walk is over the authored positions rather than the
+    declared ones. That is exact for the payload an insert takes, which is a
+    complete Create Payload by `m-unit-work`'s own full-document rule.
+    """
+    declared_attributes = {
+        attribute.identity.name: attribute
+        for attribute in _declared_attributes(model, entity).values()
+    }
+    declared_occurrences = {
+        occurrence.identity.path[-1]: occurrence
+        for occurrence in _declared_value_objects(model, entity).values()
+    }
+    rendered: dict[str, WireValue] = {}
+    for name, value in row.items():
+        attribute = declared_attributes.get(name)
+        if attribute is not None:
+            _put(rendered, name, _wire_scalar(attribute.type, value))
+            continue
+        occurrence = declared_occurrences.get(name)
+        if occurrence is not None:  # pragma: no branch - the payload names declared members only
+            _put(rendered, name, _authored_occurrence(value, occurrence))
+    variant = _family_variant(model, entity)
+    if variant is not None:
+        _put(rendered, FAMILY_VARIANT_KEY, variant)
+    node = _frozen_mapping(_WireEntityNode, rendered)
+    object.__setattr__(node, "_source", hint)
+    return node
+
+
+def _authored_occurrence(value: object, declared: _VoContainer) -> WireValue:
+    """One AUTHORED occurrence value as its declared-member-filled Wire value.
+
+    :func:`_occurrence`'s peer over a write row rather than a stored record: the
+    two read different carriers — an authored document is a plain mapping keyed
+    by member name — while filling absence by the identical rule, so a node an
+    insert answers and a node a read publishes describe one row the same way.
+    """
+    if declared.multiplicity is Multiplicity.MANY:
+        elements: Sequence[object] = (
+            cast("Sequence[object]", value) if isinstance(value, list | tuple) else ()
+        )
+        return _frozen_sequence(_authored_members(element, declared) for element in elements)
+    return None if value is None else _authored_members(value, declared)
+
+
+def _authored_members(document: object, declared: _VoContainer) -> WireValue:
+    entries: Mapping[str, object] = (
+        cast("Mapping[str, object]", document) if isinstance(document, Mapping) else {}
+    )
+    filled: dict[str, WireValue] = {}
+    for leaf in declared.attributes:
+        filled[leaf.identity.name] = _wire_scalar(leaf.type, entries.get(leaf.identity.name))
+    for occurrence in declared.value_objects:
+        name = occurrence.identity.path[-1]
+        filled[name] = _authored_occurrence(entries.get(name), occurrence)
     return _frozen_mapping(_FrozenMapping, filled)
 
 

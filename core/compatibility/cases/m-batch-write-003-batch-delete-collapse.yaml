@@ -38,4 +38,4 @@ then:
       binds: [1, 2, 3]
   tableState:
     wallet: []
-  roundTrips: 1
+  roundTrips: 2

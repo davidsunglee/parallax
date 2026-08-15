@@ -92,6 +92,7 @@ from parallax.core.unit_work import (
     SourceHint,
     UnitOfWork,
     instructions,
+    object_key,
 )
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
@@ -107,7 +108,7 @@ from parallax.snapshot.handle._write_inputs import (
     validate_window,
     written_object_of_row,
 )
-from parallax.snapshot.materialize import WireEntity, source_hint_of
+from parallax.snapshot.materialize import WireEntity, opened_wire_entity, source_hint_of
 
 __all__ = [
     "WireChanges",
@@ -172,8 +173,9 @@ def wire_insert(
     mutation: KeyedMutation,
     valid_from: dt.datetime | None = None,
     until: dt.datetime | None = None,
-) -> None:
-    """Buffer a Wire ``insert`` / ``insertUntil`` of ``data`` under ``entity_name``.
+) -> WireEntity:
+    """Buffer a Wire ``insert`` / ``insertUntil`` of ``data`` under
+    ``entity_name``, and answer the frozen node it opened.
 
     An opening row has no source to infer a concrete Entity from, which is why
     this verb — alone among the keyed family — takes the Entity spelling: there
@@ -189,6 +191,15 @@ def wire_insert(
     one. A value a Wire read published is refused too — it names a row this store
     already holds, and ``tx.wire.update`` is the verb for that — under the
     Identity the resolved Entity spelling supplies.
+
+    The returned node is what closes the one Typed/Wire parity gap on the write
+    surface: ``tx.insert(a)`` leaves the Typed caller holding ``a``, so a pure
+    Wire caller must be handed something too or it can never revise the row it
+    just opened. It carries a Source Hint naming the object and this
+    transaction's participation and NO observation, which is exactly what an
+    opening row has observed — the write off it is licensed by the buffered
+    insert instead, through the ledger this call records into, and the two
+    coalesce.
     """
     payload = _authored_document(data, f"a Wire `{mutation}` payload")
     entity = instructions.resolve_target(lane.meta, entity_name)
@@ -203,6 +214,21 @@ def wire_insert(
     validate_keyed_instruction(lane.meta, instruction)
     admit_and_buffer(lane.uow, lane.meta, instruction, None)
     lane.inserts.record(written_object_of_row(entity, declaring, row))
+    opened = object_key(instruction, lane.meta)
+    # A Create Payload is a complete document, so the row it buffers always
+    # names its own object by the time validation has admitted it.
+    assert opened is not None
+    return opened_wire_entity(
+        lane.meta,
+        entity.identity,
+        row,
+        SourceHint(
+            entity=entity.identity,
+            object_key=opened,
+            participation=lane.uow.participation,
+            observation=None,
+        ),
+    )
 
 
 def wire_keyed_write(

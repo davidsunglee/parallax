@@ -16,9 +16,9 @@ Temporal, and Optimistic Lock facets through :mod:`parallax.snapshot.handle._fam
 and every physical column comes from the target's Storage Layout view, resolved
 once here and carried into the per-row column builders
 :func:`_materialize_predicate_write` streams into.
-``Transaction`` keeps five thin ``_where`` delegates and routes a caller-built
-predicate instruction here from ``write_neutral``, so this module buffers through
-``uow.buffer`` directly and never reaches back into ``Transaction``.
+``Transaction`` keeps five thin ``_where`` delegates and the Wire lane keeps its
+own five, both routing the instruction they built here, so this module buffers
+through ``uow.buffer`` directly and never reaches back into ``Transaction``.
 
 Depends on :mod:`parallax.snapshot.handle._family` (the declaring root, version
 attribute, and the layout member-to-column map),
@@ -325,8 +325,8 @@ def buffer_predicate_instruction(
     :func:`~parallax.core.unit_work.instructions.validate_instruction` against
     ``meta`` first** — :func:`buffer_predicate` at its step 5 for the typed
     ``_where`` verbs, and
-    :meth:`~parallax.snapshot.handle.Transaction.write_neutral` at its own
-    ingress for everyone else, the conformance engine included. EVERY
+    :func:`~parallax.snapshot.handle._wire_writes.wire_predicate_write` for the
+    Wire ones, the conformance engine included. EVERY
     model-aware rule is stated there, in the
     order `m-case-format` fixes: the whole ``validate_predicate`` vocabulary
     over the selecting predicate, the
@@ -348,10 +348,8 @@ def buffer_predicate_instruction(
     it at all. The planner's own structural refusal is the last line before SQL
     for what IS buffered; this one is the first line before the resolve.
 
-    :meth:`~parallax.snapshot.handle.Transaction.write_neutral` routes a
-    predicate-selected instruction here — the one neutral runtime write ingress,
-    which a caller holding no Entity Class enters exactly as it enters a keyed
-    write.
+    The Wire ``_where`` verbs route their instruction here too, so a caller
+    holding no Entity Class reaches this seam exactly as a typed caller does.
     """
     entity = entity_of(meta, instruction.target.entity)
     inheritance.reject_predicate_write(entity)

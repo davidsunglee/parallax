@@ -33,8 +33,8 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 21 }
-      roundTrips: 1
-      note: the delete supersedes the buffered assignment, so the flush emits ONE DELETE and no UPDATE
+      roundTrips: 2
+      note: the two writes settle against the row this step's own resolving read published, and the delete supersedes the buffered assignment, so the flush emits ONE DELETE and no UPDATE
       statements:
         - sql:
             postgres: delete from order_item where id = ?
@@ -53,4 +53,4 @@ when:
           binds: [21]
       expectRows: []
 then:
-  roundTrips: 2
+  roundTrips: 3

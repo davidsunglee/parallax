@@ -59,4 +59,4 @@ then:
         payload:
           balance: '40.00'
           details: { code: settled }
-  roundTrips: 1
+  roundTrips: 2

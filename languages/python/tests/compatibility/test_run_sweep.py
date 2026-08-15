@@ -249,7 +249,7 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # The materializing predicate-write run-only scenarios
 # (`m-opt-lock` "Predicate-selected writes materialize when observations are
 # needed", ADR 0014): each resolves through its OWN internal read
-# (`Transaction.write_neutral`, paired with its immediately
+# (`tx.wire.update_where` and its family, paired with the immediately
 # preceding find step in ONE transaction, `engine._run_materializing_pair`) —
 # query-result-dependent (`compileEligibility: run-only`), so `compile` never
 # grades them, but NONE of them declare `uow` grouping (unlike
@@ -363,15 +363,29 @@ class _ReadCapturePort:
 
 
 def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] | None]:
-    """Each FIND step's declared ``expectRows`` in step order (None asserts nothing)."""
+    """Each FIND step's declared ``expectRows`` in step order (None asserts nothing).
+
+    For a lane that reports one row list per find step. The port-capture lane
+    reads :func:`_scenario_read_schedule` instead, because a port sees every read
+    a step makes rather than only the find steps'.
+    """
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
     return [step.get("expectRows") for step in steps if "objectQuery" in step]
 
 
-def _scenario_find_row_transforms(
+def _scenario_read_schedule(
     case: case_format.Case, model: Metamodel
-) -> list[Callable[[Row], Row]]:
-    """Each FIND step's own row transform, in step order.
+) -> list[tuple[list[dict[str, Any]] | None, Callable[[Row], Row] | None]]:
+    """Every read the scenario issues, in order, paired with what grades it.
+
+    A find step contributes ONE graded read: its declared ``expectRows`` (``None``
+    asserts nothing) and its own row transform. A write step contributes the
+    RESOLVING READS its keyed verbs owe (`m-case-format` *Resolving reads a write
+    owes*), which grade nothing here — the values they publish are graded by the
+    DML the write then emits. How many it owes is the case's own arithmetic: a
+    step's declared round trips less the golden statements it lists, which is
+    exactly what the reference harness's own count gate asserts, so this reads the
+    number rather than re-deriving the rule.
 
     The port seam these rows are captured at sits BELOW the read's own transform,
     so a captured document is still a provider-neutral ``DocumentRead``. The
@@ -380,16 +394,18 @@ def _scenario_find_row_transforms(
     ``expectRows``. Compiling a bare ``all()`` read of the same target recovers
     exactly the projection metadata the executed read carried.
     """
-    transforms: list[Callable[[Row], Row]] = []
+    schedule: list[tuple[list[dict[str, Any]] | None, Callable[[Row], Row] | None]] = []
     for step in cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"]):
         if "objectQuery" not in step:
+            emitted = len(cast("list[Any]", step.get("statements", [])))
+            schedule.extend([(None, None)] * (step.get("roundTrips", 1) - emitted))
             continue
         entity = engine.case_entity(model, step["objectQuery"]["target"])
         compiled = compile_read(
             predicate_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
         )
-        transforms.append(_logical_row_transform(compiled, model))
-    return transforms
+        schedule.append((step.get("expectRows"), _logical_row_transform(compiled, model)))
+    return schedule
 
 
 def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], Row]:
@@ -490,13 +506,10 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     _grade_execution(case, cast("dict[str, Any]", case_document(case)["then"]), envelope)
 
     if case.shape == "scenario":
-        expected_per_find = _scenario_expect_rows(case)
-        transforms = _scenario_find_row_transforms(case, model)
-        assert len(port.reads) == len(expected_per_find), (case.case_id, port.reads)
-        for observed, expected, transform in zip(
-            port.reads, expected_per_find, transforms, strict=True
-        ):
-            if expected is not None:
+        schedule = _scenario_read_schedule(case, model)
+        assert len(port.reads) == len(schedule), (case.case_id, port.reads)
+        for observed, (expected, transform) in zip(port.reads, schedule, strict=True):
+            if expected is not None and transform is not None:
                 compare_rows([engine.wire_row(transform(row)) for row in observed], expected)
         # `expectError` steps grade through the adapter's `errors` observation
         # (`m-conformance-adapter` / `errorObservation.errorClass`): one entry

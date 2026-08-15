@@ -56,4 +56,4 @@ then:
       - { id: 40, payload: { displayName: absent, address: { city: Alta } } }
       - { id: 41, payload: { displayName: null, address: { city: Bodo } } }
       - { id: 42, payload: { displayName: scalar, address: { city: Tromso } } }
-  roundTrips: 3
+  roundTrips: 4

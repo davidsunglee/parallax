@@ -73,4 +73,4 @@ then:
         thru_z: "2024-06-01T00:00:00+00:00"
         in_z: "2024-07-01T00:00:00+00:00"
         out_z: infinity
-  roundTrips: 3
+  roundTrips: 4

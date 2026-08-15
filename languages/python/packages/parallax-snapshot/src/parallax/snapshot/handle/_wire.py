@@ -138,8 +138,9 @@ class WireTransactionView(WireDatabaseView):
         data: Mapping[str, object],
         *,
         valid_from: dt.datetime | None = None,
-    ) -> None:
-        """Buffer a Wire ``insert`` of ``data`` as a fresh ``entity_name`` row.
+    ) -> WireEntity:
+        """Buffer a Wire ``insert`` of ``data`` as a fresh ``entity_name`` row,
+        and return the frozen node it opened.
 
         ``entity_name`` names the Entity the row opens under — required because
         an opening row has no source to infer one from — and resolves by the rule
@@ -149,11 +150,21 @@ class WireTransactionView(WireDatabaseView):
         rather than stored, since the interval bounds come from the Clock
         Strategy at flush and the version is derived.
 
+        The returned node is the Wire peer of the instance ``tx.insert`` leaves
+        its caller holding: it publishes the payload's own members in canonical
+        Wire spelling and is a keyed source, so a pure Wire caller can revise the
+        row it just opened without re-reading it — which it could not do anyway,
+        since a participating read force-flushes and an insert-then-delete pair
+        is required to emit no DML at all. The pair coalesces through the same
+        read-your-own-writes ledger a Typed insert records into.
+
         ``valid_from`` is the plain Bitemporal insert's own Valid-Time instant —
         the open rectangle ``[valid_from, infinity)`` — and mirrors ``tx.insert``
         exactly: a Transaction-Time-Only or non-temporal target takes none.
         """
-        wire_insert(self._writes, entity_name, data, mutation="insert", valid_from=valid_from)
+        return wire_insert(
+            self._writes, entity_name, data, mutation="insert", valid_from=valid_from
+        )
 
     def insert_until(
         self,
@@ -162,12 +173,13 @@ class WireTransactionView(WireDatabaseView):
         *,
         valid_from: dt.datetime,
         until: dt.datetime,
-    ) -> None:
+    ) -> WireEntity:
         """Buffer a Valid-Time-bounded Wire ``insertUntil``: one bitemporal
         rectangle bounded to ``[valid_from, until)`` with no prior row to close
-        (`m-bitemp-write`). A window that does not satisfy ``valid_from < until``
-        raises at THIS call, before any buffering."""
-        wire_insert(
+        (`m-bitemp-write`), returning the frozen node it opened as
+        :meth:`insert` does. A window that does not satisfy
+        ``valid_from < until`` raises at THIS call, before any buffering."""
+        return wire_insert(
             self._writes,
             entity_name,
             data,

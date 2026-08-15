@@ -348,7 +348,7 @@ keeps the assertion honest across engines.
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind) |
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
 | `then.execution` | `then` | no | the execution-provenance oracle (`m-execution-log`) — exactly one `readTrace` or `transactionLog` describing the attempts, traces, calls, and completions the run produced (see *The execution oracle*, below); disallowed on a `rejected` case, which reaches no database |
-| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-log` counts them, so a case authoring both this and `then.execution` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count; for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two are the only shapes admitting `0`: every other shape asserts one operation that reaches the database |
+| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-log` counts them, so a case authoring both this and `then.execution` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two are the only shapes admitting `0`: every other shape asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 #### How a case spells an Entity
@@ -776,8 +776,9 @@ the resulting rows equal `then.tableState`. This covers milestone-chaining
 temporal writes (`insert` / `update` / `terminate` and the bitemporal `*Until`
 trio), batched non-temporal writes, ordinary `delete`, and the minimal
 `cascadeDelete` witness over dependent relationships. The DML statement count MUST
-equal the sum of the `when.writeSequence` steps' declared statement counts and the
-case's `then.roundTrips`. A step on a **temporal** entity carries **exactly one**
+equal the sum of the `when.writeSequence` steps' declared statement counts, and
+`then.roundTrips` MUST equal that total plus the resolving reads the sequence owes
+(*Resolving reads a write owes*, below). A step on a **temporal** entity carries **exactly one**
 neutral write input row (`m-unit-work`: each row closes its own milestone and
 chains its own successors, and a temporal entity never collapses into a set-based
 statement), so a chain per key is authored as a **step per key**. The model descriptor's serde round-trip (layer 4b) still
@@ -799,6 +800,38 @@ can mutate a *pre-existing* persisted row. This is the `m-detach` detached-updat
 or detached-delete merge-back case, and the minimal dependent cascade-delete
 witness: the original rows exist, the ordered DML mutates them, and the asserted
 table state shows which rows changed or were removed.
+
+#### Resolving reads a write owes
+
+A keyed write verb is **addressed and licensed by a value a read published**
+(`m-unit-work` *Write evidence*), so a choreography unit writing against existing
+state **reads that state first**, and `then.roundTrips` — which counts every call
+that reached the database — counts those reads beside the DML.
+
+The count is structural, derivable from the case document and its model alone.
+For each choreography unit — one `writeSequence` entry, or one ungrouped scenario
+write step — it is **one read per target Entity** the unit writes against existing
+state:
+
+- **one per Entity, not per row**: one read resolves every row of that Entity the
+  unit addresses, which is what a caller holding several writes of one Entity
+  does. A read *interleaved between* two writes would force-flush the first and
+  destroy the batch collapse the goldens pin, so all of a unit's reads precede
+  all of its writes.
+- an **insert OPENS** its row, so it owes none;
+- a row an **earlier entry of the same unit inserted** owes none: that is
+  read-your-own-writes, and no read could return a row the flush has not written;
+- an entry whose row assigns a **DB-computed write marker** owes none. Such a
+  value is the framework's own bookkeeping — a pk-gen block reservation, a
+  version advance — and no public verb accepts one, so the entry states a
+  statement the framework issues rather than a write a caller authors;
+- an entry whose mutation is **not a Keyed Mutation** owes none. `cascadeDelete`
+  is the only such mutation the corpus authors: no keyed verb states it, so it
+  resolves no source.
+
+A **grouped** scenario write step owes none of its own: its group's find steps
+are what publish the values it settles against, and those finds already declare
+their own `roundTrips`.
 
 ### Conflict cases (`m-opt-lock`)
 

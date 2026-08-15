@@ -11,15 +11,10 @@ claim cannot absorb is refused. That seam is `_write_inputs`' rather than this
 class's, because the Wire verbs reach it too: one ingress per representation, one
 judgement and one buffer for both.
 
-It also owns the row-form read (:meth:`Transaction.read_rows`) and the two
-FIRST-PARTY members of the conformance bridge —
-:meth:`Transaction.observed_read` and :meth:`Transaction.write_neutral` — which
-the conformance harness reaches and no developer surface does. None of the three
-is a second lifecycle: each read enters the same force-flush, lock derivation,
-evidence retention, and Read Trace bracket ``find`` does, and the bridge write
-enters the same ``buffered_write`` carrier decision, the same buffer, and the
-same flush triggers the keyed verbs do — one step later, on an instruction
-already built rather than on an instance to derive one from.
+It also owns the row-form read (:meth:`Transaction.read_rows`), which the
+conformance harness reaches and no developer surface does. It is not a second
+lifecycle: the read enters the same force-flush, lock derivation, evidence
+retention, and Read Trace bracket ``find`` does.
 
 The predicate-selected ``_where`` family is NOT owned here: those five public
 verbs are thin delegates that thread ``(uow, meta, conn, dialect)`` into
@@ -42,10 +37,8 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any
 
-from parallax.core import opt_lock
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
 from parallax.core.entity import (
@@ -61,16 +54,8 @@ from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
     KeyedMutation,
-    ObservedStateKey,
-    PredicateWrite,
-    RetainedObservation,
     SettledEvidence,
-    TemporalStateKey,
     UnitOfWork,
-    VersionedStateKey,
-    WriteInstruction,
-    WriteObservation,
-    instructions,
 )
 
 # Sibling implementation modules. None of these names carries a leading
@@ -78,11 +63,10 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.snapshot.handle._errors import SnapshotConnectionError, UnobservedWriteError
+from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
-    buffer_predicate_instruction,
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
@@ -92,7 +76,6 @@ from parallax.snapshot.handle._read import (
     find,
     find_history,
     find_rows,
-    published_claims,
     typed_publication,
     wire_publication,
 )
@@ -114,23 +97,6 @@ from parallax.snapshot.handle._write_inputs import (
     written_object,
     written_object_key,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class ObservedRead:
-    """A participating Wire read paired with the claims its published nodes carry.
-
-    The conformance bridge's own read value, and nothing a developer holds: a
-    Snapshot is the whole public result, and an observed-state address is
-    implementation state. Both halves come from one read, so pairing them here is
-    what keeps a bridge caller from re-deriving evidence that would then have to
-    agree with production's by inspection. Holding the retained observations is
-    also what keeps them alive for the bridge's later writes, exactly as holding
-    the published values would.
-    """
-
-    snapshot: Snapshot[Any]
-    observations: tuple[RetainedObservation, ...]
 
 
 class Transaction:
@@ -162,16 +128,11 @@ class Transaction:
     do.
 
     :meth:`read_rows` is the values lane over this same transaction — a
-    first-party row-form read, not a third public result format.
-    :meth:`observed_read` and :meth:`write_neutral` are the first-party
-    conformance bridge: a Wire read that additionally answers the evidence it
-    retained, and the write ingress that takes an already-decoded instruction plus
-    whatever observed state a caller holds for it. Neither is developer surface —
-    a developer states a write through the keyed and predicate verbs, Typed or
-    Wire: an existing row is addressed by a value a read published, a fresh row
-    by the payload an insert opens it with, and a set by a selection plus its
-    assignments. What the bridge adds is the ingress for a caller that HOLDS an
-    instruction and has no read to state a source from.
+    first-party row-form read, not a third public result format. There is no
+    write peer of it: every write, first-party callers included, is stated
+    through the keyed and predicate verbs, Typed or Wire — an existing row
+    addressed by a value a read published, a fresh row by the payload an insert
+    opens it with, and a set by a selection plus its assignments.
     """
 
     __slots__ = (
@@ -648,21 +609,13 @@ class Transaction:
         )
 
     def _wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
-        """One participating Wire read, dropping what only the bridge asks for."""
-        return self._observed_wire_find(node).snapshot
+        """One participating Wire read, published as its Wire Snapshot.
 
-    def _observed_wire_find(self, node: ObjectQueryNode) -> ObservedRead:
-        """One participating Wire read, paired with the claims its PUBLISHED
-        nodes carry.
-
-        The evidence is read off the published values rather than off the read's
-        own retained sources, because a claim belongs to a published Entity node:
-        a projection nothing published — every node under a non-hydrating root —
-        is a value no caller holds, and holding its evidence here would keep
-        write authority alive for a row this read published nothing for.
+        What a caller may later write off it rides on the published values
+        themselves — each Entity node carries its own Source Hint — so the read
+        answers the result and nothing beside it.
         """
-        snapshot = self._read(node, wire_publication(self._meta))
-        return ObservedRead(snapshot, published_claims(snapshot))
+        return self._read(node, wire_publication(self._meta))
 
     def _read[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
         """One participating read of ``node``, published through ``publication`` —
@@ -700,23 +653,6 @@ class Transaction:
             )
         return publication.from_find(find_result)
 
-    def observed_read(self, query: ObjectQueryNode) -> ObservedRead:
-        """A participating Wire read paired with the claims its published nodes
-        carry — the FIRST-PARTY read half of the conformance bridge, not
-        developer surface.
-
-        ``tx.wire.find`` answers the Snapshot alone, which is everything a
-        developer can act on: an observation address is implementation state no
-        public surface exposes. The conformance engine settles its own writes
-        against the exact evidence production retained rather than against a
-        second derivation, so it needs the pair, and it holds first-party access
-        to ask for it. Holding those claims is also what keeps them alive for its
-        later writes, exactly as holding the published values would. Both halves
-        come from ONE read — the same statements, the same lock, the same trace —
-        so nothing here is a second execution path.
-        """
-        return self._observed_wire_find(query)
-
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Run a PARTICIPATING row-form read and return its published rows.
 
@@ -749,118 +685,6 @@ class Transaction:
                     recorder=recorder,
                 )
             )
-
-    def write_neutral(
-        self,
-        instruction: WriteInstruction,
-        *,
-        observation: ObservedStateKey | WriteObservation | None = None,
-    ) -> None:
-        """Buffer an already-decoded write instruction — the ONE neutral runtime
-        write ingress.
-
-        The neutral peer of the typed verbs, entered one step later: a typed verb
-        derives an instruction from an instance and resolves that instance's own
-        observation, and this takes both already built. Everything downstream is
-        identical — the same carrier decision
-        (:func:`~parallax.core.unit_work.buffered_write`), the same unit of work,
-        the same planner, the same flush triggers. There is no neutral write on
-        ``Database`` and no developer-controlled flush: a buffered write executes
-        only when production semantics require a dependency batch or the outer
-        boundary's finalization.
-
-        ``observation`` states the evidence three ways, and only three.
-        An :data:`~parallax.core.unit_work.ObservedStateKey` resolves IMMEDIATELY
-        and exactly against this unit of work — a key naming no reachable
-        observation raises
-        :class:`~parallax.snapshot.handle._errors.UnobservedWriteError` here, at
-        the call that supplied it, rather than settling to a bare write whose
-        refusal would surface at flush naming the wrong cause. A
-        :class:`~parallax.core.unit_work.WriteObservation` is evidence a caller
-        holds directly and is used as given, and claims nothing; a target
-        entitled to none refuses it where a resolved one is refused, rather than
-        having it dropped in favour of a claim the call never stated. ``None`` is
-        what an insert and an unversioned Non-Temporal write supply, which is not
-        the same answer: what each of them settles against is derived from the
-        target Entity's own Optimistic Key here, exactly as a typed verb derives
-        it (:func:`~parallax.core.opt_lock.instruction_evidence`, the rule this
-        ingress shares with every other caller holding an instruction), so an
-        unversioned existing-row write naming ONE row claims its object through
-        this ingress too and an insert claims nothing through either. An
-        instruction naming SEVERAL rows — the one write shape no typed verb can
-        author — addresses no single object and no single observed state, so
-        supplied nothing it reaches no arm, claims nothing, and buffers bare;
-        supplied either of the other two shapes it is refused by the single-row
-        carrier, before it takes any claim, because one observation is evidence
-        about one row.
-
-        A predicate-selected instruction carries no observation of its own — it
-        materializes to a Materialized Write Group with its own observation
-        columns — so supplying one with a
-        :class:`~parallax.core.unit_work.PredicateWrite` is refused rather than
-        silently dropped. That refusal is about the CALL rather than about the
-        model, so it precedes validation: an instruction and an evidence
-        argument that cannot go together are answered before either is measured.
-
-        Each shape then reaches the SAME judgments its typed peer does, which is
-        what makes this ingress classify an instruction exactly as the typed
-        verbs do rather than leave a class-less caller to pre-validate for
-        itself. A predicate-selected instruction reaches
-        :func:`~parallax.core.unit_work.instructions.validate_instruction`, the
-        whole of what the ``_where`` verbs measure through
-        :func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`'s
-        own step 5. A KEYED instruction reaches
-        :func:`~parallax.snapshot.handle._write_inputs.validate_keyed_instruction`,
-        which is exactly what the typed verbs' own ``_buffer`` and the Wire verbs'
-        own ingress each run on the instruction they build.
-        """
-        if isinstance(instruction, PredicateWrite):
-            if observation is not None:
-                raise TypeError(
-                    "a predicate-selected write resolves its own per-row evidence and takes "
-                    "no observation; buffer the keyed writes it materializes to instead"
-                )
-            instructions.validate_instruction(instruction, self._meta)
-            buffer_predicate_instruction(
-                self._uow, self._meta, self._conn, self._dialect, instruction, self._attempt
-            )
-            return
-        validate_keyed_instruction(self._meta, instruction)
-        resolved = (
-            self._resolved_claim(observation)
-            if isinstance(observation, VersionedStateKey | TemporalStateKey)
-            else observation
-        )
-        admit_and_buffer(
-            self._uow,
-            self._meta,
-            instruction,
-            opt_lock.instruction_evidence(self._meta, instruction, supplied=resolved),
-        )
-
-    def _resolved_claim(self, key: ObservedStateKey) -> RetainedObservation:
-        """The retained evidence a neutral write claims, resolving a KEY here.
-
-        A key is a reference into this unit of work's own weak index, so it is
-        dereferenced at the call rather than carried to planning: an unresolvable
-        key is a caller error about what was read, and reporting it at flush would
-        report it as a licensing failure about what is being written. The unit of
-        work's own scope fence answers first, so a key used after its transaction
-        ended raises as the escaped reference it is.
-
-        A caller-held :class:`~parallax.core.unit_work.WriteObservation` never
-        reaches here: it is a value rather than a reference into the ledger, so
-        there is no retained evidence for a flush to spend.
-        """
-        resolved = self._uow.retained_for(key)
-        if resolved is None:
-            raise UnobservedWriteError(
-                "no observation is reachable in this unit of work for "
-                f"{key.object.entity.canonical} under the state this key "
-                "names; a neutral write settles against evidence a read of THIS "
-                "transaction retained"
-            )
-        return resolved
 
     def _buffer(
         self,

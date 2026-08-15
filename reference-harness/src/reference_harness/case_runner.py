@@ -3544,12 +3544,80 @@ def _authored_many_path(occurrence: dict[str, Any], authored: object) -> tuple[s
 # --- write sequences (m-txtime-write) ---------------------------------------------------
 
 
+_INSERT_MUTATIONS = ("insert", "insertUntil")
+
+# The keyed write mutations a public verb states. `cascadeDelete` is deliberately
+# absent: it is not a Keyed Mutation, no verb states it, and an entry writing one
+# therefore resolves no source.
+_KEYED_MUTATIONS = (
+    *_INSERT_MUTATIONS,
+    "update",
+    "delete",
+    "terminate",
+    "updateUntil",
+    "terminateUntil",
+)
+
+# The DB-computed write markers `m-value-object` "Writing" admits at a scalar
+# attribute leaf: the framework's own pk-gen allocation and version advance.
+_FRAMEWORK_MARKER_KEYS = (frozenset({"computed"}), frozenset({"increment"}))
+
+
+def _is_framework_marker(value: Any) -> bool:
+    return isinstance(value, dict) and frozenset(value) in _FRAMEWORK_MARKER_KEYS
+
+
+def _entry_object_keys(case: Case, entry: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
+    """Which object each of ``entry``'s rows names, by its declared primary key.
+
+    The entity's flattened definition carries the family's key, so a concrete
+    subtype resolves the same key its root declares.
+    """
+    entity = entry.get("entity", "")
+    names = [a["name"] for a in case.model.entity(entity).attributes if a.get("primaryKey")]
+    return [(entity, tuple(repr(row.get(name)) for name in names)) for row in entry.get("rows", [])]
+
+
+def _unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
+    """The resolving reads ONE choreography unit owes: one per target Entity whose
+    existing-row keyed writes address a row this unit did not itself open.
+
+    A keyed write verb is addressed and licensed by a value a read published, so
+    a unit writing against existing state reads it first — once per Entity,
+    resolving every row of that Entity the unit addresses, because a read
+    interleaved between two writes would force-flush the first and destroy the
+    batch collapse the goldens pin. Three kinds of entry owe nothing: an insert
+    OPENS its row, a row an earlier entry of the same unit opened is
+    read-your-own-writes, and an entry carrying a DB-computed write marker states
+    the framework's own bookkeeping, which no public verb accepts.
+    """
+    opened: set[tuple[str, tuple[Any, ...]]] = set()
+    needed: set[str] = set()
+    for entry in entries:
+        mutation = entry.get("mutation")
+        if mutation in _INSERT_MUTATIONS:
+            opened.update(_entry_object_keys(case, entry))
+            continue
+        if mutation not in _KEYED_MUTATIONS:
+            continue
+        if any(_is_framework_marker(v) for row in entry.get("rows", []) for v in row.values()):
+            continue
+        if any(key not in opened for key in _entry_object_keys(case, entry)):
+            needed.add(entry.get("entity", ""))
+    return len(needed)
+
+
 def _assert_write_step_count(case: Case, dialect: str) -> None:
-    """The DML statement count MUST equal the sum of the steps' declared counts.
+    """The DML statement count MUST equal the sum of the steps' declared counts,
+    and the round trips MUST be that plus every resolving read the sequence owes.
 
     Each ``writeSequence`` step declares how many golden DML statements it emits
-    (default 1); the total over the sequence is the round-trip count, which MUST
-    equal the number of then.statements for the dialect (and ``roundTrips``).
+    (default 1); the total over the sequence is the DML statement count, which
+    MUST equal the number of then.statements for the dialect. ``roundTrips``
+    counts every call that reached the database, so it is that total plus one
+    resolving read per entry writing against existing state
+    (:func:`_unit_resolving_reads`) — the read a keyed write verb's source
+    requires, which is work the framework genuinely does.
     """
     statements = case.golden_statements(dialect)
     step_total = sum(step.get("statements", 1) for step in case.write_sequence)
@@ -3559,10 +3627,12 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
             f"statement(s) but the writeSequence declares {step_total} "
             f"(sum of per-step statement counts). They MUST be equal."
         )
-    if len(statements) != case.round_trips:
+    reads = sum(_unit_resolving_reads(case, [entry]) for entry in case.write_sequence)
+    if len(statements) + reads != case.round_trips:
         raise CaseFailure(
             f"{case.path.name}: then.statements ({dialect}) has {len(statements)} DML "
-            f"statement(s) but roundTrips is {case.round_trips}."
+            f"statement(s) and the sequence owes {reads} resolving read(s), but roundTrips "
+            f"is {case.round_trips}."
         )
 
 
@@ -5974,25 +6044,44 @@ def _assert_scenario_normalization(case: Case, dialect: str) -> None:
                 )
 
 
+def _scenario_step_resolving_reads(case: Case, step: dict[str, Any]) -> int:
+    """The resolving reads ONE scenario step owes beside the SQL it lists.
+
+    An UNGROUPED write step is its own choreography unit, so it owes what any
+    unit owes (:func:`_unit_resolving_reads`). A GROUPED one owes none of its
+    own: its group's find steps are what publish the values it settles against,
+    and those finds already declare their own round trips (`m-case-format`
+    *Resolving reads a write owes*). A find step owes none either — a read IS
+    the SQL it lists.
+    """
+    if "write" not in step or isinstance(step.get("uow"), str):
+        return 0
+    return _unit_resolving_reads(case, _scenario_write_entries(step))
+
+
 def _assert_scenario_count_consistency(case: Case, dialect: str) -> None:
-    """Each step's declared roundTrips MUST equal its golden SQL statement count.
+    """Each step's declared roundTrips MUST equal its golden SQL statement count
+    plus the resolving reads it owes.
 
     A cache HIT lists no golden SQL and declares ``roundTrips: 0``; a cache MISS
-    that executes one statement declares ``roundTrips: 1``. The steps' total MUST
-    equal the case-level ``roundTrips``. This is the round-trip contract proven
-    from the fixture's own declared counts — the harness never compiles a query
-    to SQL.
+    that executes one statement declares ``roundTrips: 1``. An ungrouped write
+    step declares its DML beside the read its keyed verbs' sources require, which
+    it lists no SQL for — the framework composes that read from the model rather
+    than from the case. The steps' total MUST equal the case-level
+    ``roundTrips``. This is the round-trip contract proven from the fixture's own
+    declared counts — the harness never compiles a query to SQL.
     """
     total = 0
     for index, step in enumerate(case.scenario):
         declared = step["roundTrips"]
         statements = _step_statements(step, dialect)
-        if len(statements) != declared:
+        reads = _scenario_step_resolving_reads(case, step)
+        if len(statements) + reads != declared:
             raise CaseFailure(
                 f"{case.path.name}: scenario[{index}] declares roundTrips "
                 f"{declared} but lists {len(statements)} golden SQL statement(s) "
-                f"for {dialect}. A step's declared round trips MUST equal the "
-                f"number of golden SQL statements it emits (a cache hit = 0)."
+                f"for {dialect} and owes {reads} resolving read(s). A step's declared "
+                f"round trips MUST equal the number of calls it makes (a cache hit = 0)."
             )
         total += declared
     if total != case.round_trips:

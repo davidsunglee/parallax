@@ -30,4 +30,4 @@ then:
       - { id: 1, kind: card, amount: 100.00, card_network: Discover, tendered: null }
       - { id: 2, kind: card, amount: 50.00, card_network: Amex, tendered: null }
       - { id: 3, kind: cash, amount: 20.00, card_network: null, tendered: 25.00 }
-  roundTrips: 1
+  roundTrips: 2

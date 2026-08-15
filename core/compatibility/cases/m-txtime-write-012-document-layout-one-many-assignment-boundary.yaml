@@ -90,4 +90,4 @@ then:
             sealNumber: S-9930
           legs:
             - port: Bergen
-  roundTrips: 2
+  roundTrips: 3

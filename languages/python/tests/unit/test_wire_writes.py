@@ -26,6 +26,7 @@ from _transact_support import (
     CONTACT,
     FIXED,
     INFINITY_INSTANT,
+    PAYMENT,
     PERSON,
     WHERE_POSITION_META,
     NoIoPort,
@@ -981,6 +982,79 @@ def test_a_wire_update_then_delete_of_one_object_emits_one_delete() -> None:
     assert _writes(port) == [("write", "delete from person where id = %s", (1,))]
 
 
+def test_an_insert_answers_the_frozen_node_it_opened() -> None:
+    # The Typed peer leaves its caller holding the instance it passed, so a pure
+    # Wire caller must be handed something too. The node publishes the payload's
+    # own members in canonical Wire spelling and refuses mutation like any other.
+    port = RecordingPort(rows=[])
+    opened: list[object] = []
+
+    def fn(tx: Transaction) -> None:
+        opened.append(tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"}))
+
+    db_for(PERSON, port).transact(fn)
+    node = opened[0]
+    assert isinstance(node, WireEntity)
+    assert dict(node) == {"id": 9, "name": "Newton"}
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", node)["name"] = "Mallory"
+
+
+def test_a_wire_update_of_a_row_the_same_unit_inserted_coalesces_in_place() -> None:
+    # The parity gap this return closes: with no node to hand back, a pure Wire
+    # caller could not revise the row it just opened, and re-reading is not an
+    # option — a participating read force-flushes.
+    port = RecordingPort(rows=[])
+
+    def fn(tx: Transaction) -> None:
+        opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
+        tx.wire.update(opened, {"name": "Grace"})
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == [
+        ("write", "insert into person(id, name) values (%s, %s)", (9, "Grace"))
+    ]
+
+
+def test_a_wire_delete_of_a_row_the_same_unit_inserted_cancels_to_no_dml() -> None:
+    port = RecordingPort(rows=[])
+
+    def fn(tx: Transaction) -> None:
+        tx.wire.delete(tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "N"}))
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_writing_back_what_an_insert_published_is_the_ordinary_no_op() -> None:
+    # The node is rendered through the SAME canonical encoding a read publishes,
+    # so a member written back off it restores rather than assigns — which is
+    # what makes the returned value interchangeable with a read result.
+    port = RecordingPort(rows=[])
+
+    def fn(tx: Transaction) -> None:
+        opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
+        tx.wire.update(opened, {"name": opened["name"]})
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == [
+        ("write", "insert into person(id, name) values (%s, %s)", (9, "Newton"))
+    ]
+
+
+def test_an_insert_refuses_the_node_a_previous_insert_answered() -> None:
+    # It names a row this unit of work already opened, so the verb for it is
+    # `tx.wire.update` — the same provenance refusal a read result earns.
+    port = RecordingPort(rows=[])
+
+    def fn(tx: Transaction) -> None:
+        opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
+        tx.wire.insert("parallax.compatibility.Person", opened)
+
+    with pytest.raises(KeyedWriteValueError, match="write-value-already-stored"):
+        db_for(PERSON, port).transact(fn)
+
+
 def test_a_typed_update_of_a_row_a_wire_insert_opened_coalesces_in_place() -> None:
     # The buffered-insert ledger is ONE ledger: the Typed provenance refusal
     # exempts a value naming an object the WIRE verb inserted, so the pair
@@ -1210,3 +1284,28 @@ def test_an_insert_naming_an_undeclared_member_reaches_the_honesty_gate() -> Non
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == []
+
+
+def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> None:
+    # The node an insert answers describes the row the SAME way a read publishes
+    # it, which for a family participant includes the variant tag: a caller that
+    # revises the row it just opened, or that grades what the verb answered, sees
+    # the concrete subtype rather than having to infer it from the members.
+    port = RecordingPort(rows=[])
+    opened: list[WireEntity] = []
+
+    def fn(tx: Transaction) -> None:
+        opened.append(
+            tx.wire.insert(
+                "parallax.compatibility.CardPayment",
+                {"id": 9, "amount": "10.00", "cardNetwork": "Visa"},
+            )
+        )
+
+    db_for(PAYMENT, port).transact(fn)
+    assert dict(opened[0]) == {
+        "id": 9,
+        "amount": "10.00",
+        "cardNetwork": "Visa",
+        "familyVariant": "CardPayment",
+    }

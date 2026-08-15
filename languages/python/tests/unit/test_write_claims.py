@@ -36,7 +36,6 @@ from parallax.core import LATEST, opt_lock
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.object_query._fluent import object_query_node
 from parallax.core.unit_work import (
     SELECTION_INTENT,
     ClaimTable,
@@ -469,52 +468,11 @@ def test_an_instruction_holding_no_evidence_reaches_its_targets_own_arm() -> Non
 
 def test_an_instruction_naming_several_rows_settles_against_nothing() -> None:
     # A claim addresses one object and an observation is evidence about one row,
-    # so a plural instruction — the one shape no keyed verb can author — reaches
-    # neither grain and buffers bare.
+    # so a plural instruction — the one shape no keyed verb can author, and which
+    # therefore reaches no runtime ingress at all — reaches neither grain and
+    # buffers bare. Evidence supplied WITH one is refused by the single-row
+    # carrier (`test_uow_shell`), never dropped for this answer.
     assert opt_lock.instruction_evidence(_PERSON_META, _person_delete(1, 2), supplied=None) is None
-
-
-def test_evidence_supplied_with_a_plural_instruction_is_refused_before_it_claims() -> None:
-    # Deriving nothing for a plural instruction is not the same as dropping the
-    # evidence its caller supplied: the single-row carrier refuses that pairing,
-    # and the refusal judges this write alone, while a claim is state the
-    # transaction survives. Taking the claim first would leave a caller who
-    # catches the refusal holding a destructive claim at the observed state for a
-    # write nothing buffered, and the legal single-row update that follows would
-    # be refused against that ghost.
-    port = _account_port()
-    plural = instructions.deserialize(
-        {
-            "mutation": "delete",
-            "entity": "parallax.compatibility.Account",
-            "rows": [{"id": 1}, {"id": 2}],
-        }
-    )
-    update = instructions.deserialize(
-        {
-            "mutation": "update",
-            "entity": "parallax.compatibility.Account",
-            "rows": [{"id": 1, "balance": 125}],
-        }
-    )
-
-    def fn(tx: Transaction) -> None:
-        query = object_query_node(mm.Account.where(mm.Account.id == 1))
-        retained = tx.observed_read(query).observations[0]
-        with pytest.raises(ValueError, match="evidence about one row"):
-            tx.write_neutral(plural, observation=retained.key)
-        tx.write_neutral(update, observation=retained.key)
-
-    account_db(port).transact(fn)
-    assert _writes(port) == [
-        (
-            "write",
-            POSTGRES.to_driver_sql(
-                "update account set balance = ?, version = ? where id = ? and version = ?"
-            ),
-            (125, 5, 1, 4),
-        )
-    ]
 
 
 def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:
