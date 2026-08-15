@@ -607,20 +607,6 @@ _OBSERVED_GENERATION_REASON: Final[str] = (
     "exists because the corpus holds instructions rather than values"
 )
 
-# The classifications a write earns when the rows it addressed are not the rows
-# it found. Every one of them needs a second writer to reach, so the spelling a
-# story could show is the ordinary keyed verb it already shows; what these add
-# is the refusal riding on it.
-_WRITE_EFFECT_CLASSIFICATION_REASON: Final[str] = (
-    "an affected-row classification witness: an unversioned keyed update or delete whose "
-    "addressed row is gone earns the never-retriable missing target, reachable only "
-    "through an out-of-band concurrent mutation (`given.apply`) and graded end-to-end by "
-    "the run conformance lane, whose `conflict` shape admits only the class the case's "
-    "own declared facts imply. The developer spelling is the ordinary keyed update / "
-    "delete an idiomatic story already shows — what these add is a refusal no "
-    "single-session story can stage"
-)
-
 # Remaining active cases under graph and inheritance modules use case-scoped
 # reasons grouped by identical justification.
 
@@ -1271,7 +1257,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-execution-log-003": _EXECUTION_LOG_SWEEP_GRADED_REASON,
     "m-execution-log-004": _EXECUTION_LOG_BOUNDARY_RUNNER_REASON,
     "m-execution-log-005": _EXECUTION_LOG_BOUNDARY_RUNNER_REASON,
-    "m-execution-log-006": _EXECUTION_LOG_SWEEP_GRADED_REASON,
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
     "m-unit-work-021": _OBSERVED_STATE_COALESCING_REASON,
@@ -1285,8 +1270,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-018": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-019": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-020": _WRITE_VALUE_PROVENANCE_REASON,
-    "m-unit-work-013": _WRITE_EFFECT_CLASSIFICATION_REASON,
-    "m-unit-work-014": _WRITE_EFFECT_CLASSIFICATION_REASON,
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     # (the locking-mode advance has an idiomatic story, m-opt-lock-002)        #

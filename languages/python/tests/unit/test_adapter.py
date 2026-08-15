@@ -189,13 +189,23 @@ class _WritePort:
         return body(self)
 
 
+class _AccountWritePort(_WritePort):
+    """``_WritePort`` answering the Account row a conflict attempt's source read
+    resolves, which is the value its keyed write is addressed and licensed by."""
+
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
+        return [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
+
+
 def test_run_case_conflict_reports_affected_rows_and_table_state() -> None:
     # m-opt-lock's run-only conflict shape: the
     # adapter's own `run` dispatch wraps `engine.run_conflict_case`'s tuple
     # into the schema's one `affectedRows` observation slot, plus
     # `tableState` when the case authors it.
     case_path = case_format.default_cases_dir() / "m-opt-lock-006-success.yaml"
-    envelope = adapter.run_case(case_path, "postgres", _WritePort())
+    envelope = adapter.run_case(case_path, "postgres", _AccountWritePort())
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["affectedRows"] == 1

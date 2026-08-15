@@ -5,17 +5,26 @@
 # fresh version and re-applies affects exactly 1 row. The `attempts` retry
 # sequence makes the two-step observable (0 then 1) expressible in one case.
 #
-# Account 2 (Linus) is read at version 1. A concurrent transaction commits first
-# (the `precondition`: balance 999.00, version 2). Then:
-#   attempt 0 (stale) : UPDATE gates on the version we read (1) ⇒ 0 rows — conflict.
-#   attempt 1 (retry) : re-read the fresh version (2), re-apply gating on 2 ⇒ 1 row,
+# Account 2 (Linus) is read at version 1 — a REAL read whose retained
+# observation licenses the first attempt's write. A concurrent transaction then
+# commits (the `given.apply`: balance 999.00, version 2), BETWEEN that read and
+# the write it invalidates. Then:
+#   attempt 0 (stale) : UPDATE gates on the version the read observed (1) ⇒ 0 rows — conflict.
+#   attempt 1 (retry) : re-read — a real second read, which now observes the fresh
+#                       version (2) — and re-apply gating on 2 ⇒ 1 row,
 #                       advancing the version to 3.
 # The resulting state confirms the retried write landed: account 2 carries the
-# retried balance 250.00 at version 3, not the concurrent writer's 999.00.
+# retried balance 275.00 at version 3, not the concurrent writer's 999.00.
+#
+# The new balance (275.00) differs from what either read observed, so each
+# attempt's write is an effective change rather than a restoration of what the
+# row already held.
 #
 # `roundTrips: 2` is what the two authored attempts cost between them — one gated
 # UPDATE each. The first REACHED the database and reported zero rows, so it counts
 # exactly as the second does; the count spans every attempt rather than the last.
+# Each attempt's own resolving read stands outside its transaction and is no part
+# of the attempt it licenses, which is what `then.roundTrips` sums.
 #
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, conflict, success, slice-snapshot-1, slice-managed-1]
@@ -35,20 +44,20 @@ when:
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [250.00, 2, 2, 1]
-      write: { id: 2, balance: 250.00, observedVersion: 1 }
+          binds: [275.00, 2, 2, 1]
+      write: { id: 2, balance: 275.00, observedVersion: 1 }
       affectedRows: 0
     - note: retry — re-read the fresh version (2) and re-apply ⇒ 1 row, version 2 -> 3
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [250.00, 3, 2, 2]
-      write: { id: 2, balance: 250.00, observedVersion: 2 }
+          binds: [275.00, 3, 2, 2]
+      write: { id: 2, balance: 275.00, observedVersion: 2 }
       affectedRows: 1
 then:
   roundTrips: 2
   tableState:
     account:
       - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-      - { id: 2, owner: Linus, balance: 250.00, version: 3 }
+      - { id: 2, owner: Linus, balance: 275.00, version: 3 }
       - { id: 3, owner: Grace, balance: 10.00, version: 1 }

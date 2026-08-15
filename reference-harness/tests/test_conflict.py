@@ -124,17 +124,19 @@ def test_conflict_case_apply_is_optional_but_present_for_the_conflict() -> None:
 
 
 def test_conflict_write_rows_normalizes_both_authored_forms() -> None:
-    multi = [c for c in _conflict_cases() if isinstance(c.when.get("write"), list)]
-    assert multi, "no multi-key (array-form) conflict case discovered"
-    for case in multi:
-        # The array form denotes an ORDERED row list one unit of work buffers
-        # together and the batching rule may collapse into one statement, so it
-        # normalizes to that list rather than to any one row standing for it.
-        assert case.write_rows == list(case.when["write"])
     single = [c for c in _conflict_cases() if isinstance(c.when.get("write"), dict)]
     assert single, "no single-row conflict case discovered"
     for case in single:
         assert case.write_rows == [case.when["write"]]
+    # The array form has no corpus witness: a conflict attempt is settled
+    # against a value a read published, and a multi-key shortfall needs the
+    # read to have answered fewer rows than the write addresses — a state
+    # correct locking makes unreachable. The normalization stays, because it is
+    # what makes "one authored form per row count" true of the reader rather
+    # than of the cases that happen to exist.
+    case = copy.deepcopy(single[0])
+    case.when["write"] = [dict(single[0].when["write"]), {"id": 999}]
+    assert case.write_rows == list(case.when["write"])
 
 
 def test_conflict_input_holds_for_authored_versioned_cases() -> None:
@@ -166,22 +168,20 @@ def test_conflict_input_observed_version_corruption_is_rejected() -> None:
 
 def test_conflict_input_gate_presence_follows_the_declared_mode() -> None:
     cases = _versioned_conflict_cases()
-    # Both keyed verbs and both modes must be present, or flipping the mode below
-    # would prove the rule for only half the shapes it governs.
-    assert {c.conflict_mutation for c in cases} == {"update", "delete"}
-    assert {c.concurrency_mode for c in cases} == {"locking", "optimistic"}
+    # Every versioned conflict the corpus still authors runs in `optimistic`: a
+    # conflict attempt settles against a value a read published, and a Locking
+    # target's write is licensed only by a read of its own transaction, which no
+    # concurrent writer can be interposed after. The Locking arm of gate presence
+    # is graded by the writeSequence cases that render it (`m-opt-lock-002`) and
+    # by the Python interface's own planner suites.
+    assert {c.concurrency_mode for c in cases} == {"optimistic"}
     for case in cases:
         flipped = copy.deepcopy(case)
-        flipped.when["uow"] = {
-            **flipped.uow,
-            "concurrency": "locking" if case.concurrency_mode == "optimistic" else "optimistic",
-        }
-        # Gate presence is decided by the declared concurrency mode ALONE, uniformly
-        # for the versioned UPDATE and the versioned DELETE, so flipping the mode
-        # desyncs ① from ② for EVERY authored versioned conflict whichever verb it
-        # writes — the golden now renders a gate the mode forbids, or omits one it
-        # requires. A derivation that read gate presence off the verb would leave the
-        # locking-mode UPDATE passing under either mode.
+        flipped.when["uow"] = {**flipped.uow, "concurrency": "locking"}
+        # Gate presence is decided by the declared concurrency mode ALONE, so
+        # flipping the mode desyncs ① from ② for EVERY authored versioned
+        # conflict whichever verb it writes: the golden now renders a gate the
+        # mode forbids.
         with pytest.raises(CaseFailure):
             _assert_conflict_input(flipped, "postgres")
 

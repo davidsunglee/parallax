@@ -342,7 +342,7 @@ keeps the assertion honest across engines.
 | `then.graphs` | `then` | read | an ORDERED array of per-milestone edge-pinned graphs a `history` / `asOfRange` snapshot read materializes (see *Milestone-set graphs*, below) — each entry `{pin, graph}`; coexists with `then.graph` exactly as `then.rows` does |
 | `then.storedDataIssues` | `then` | read | the stored-data diagnoses a read publishes for the result positions whose stored state contradicted the declared model — one `{ordinal, hydrated, issues}` entry per invalid position, in result order (see *Classified stored data*, below) |
 | `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence (or conflict) case asserts, keyed by table name (REQUIRED for a write case) |
-| `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall — a gated conflict or an ungated stale write, `1` = success) |
+| `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall — a gated conflict, or the ungated stale write only a temporal close can author, `1` = success) |
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind) |
@@ -814,14 +814,31 @@ too, confirming a conflicting write did not apply. As with writeSequence cases,
 only the descriptor serde round-trip and the golden-SQL normalization layers
 apply (there is no `when.objectQuery`).
 
+**The interference a conflict case describes must be one a correct client can
+meet.** A NON-temporal conflict write is settled against a value a real read
+published, and `given.apply`'s concurrent writer commits BETWEEN that read and
+the write it invalidates — which is why `when.write`'s `observedVersion` is a
+declared fact cross-checked against the read rather than evidence handed to the
+write. That ordering is reachable only under the **Optimistic** strategy, whose
+evidence is the retained observation and which therefore admits a source read
+outside the writing transaction. A Locking target's keyed write is licensed by
+the shared row lock a read of its OWN transaction holds, so nothing can commit
+against it in between: a case that stages one is describing a write no client
+can issue, and the zero-row outcome it would grade says only that the framework's
+own locking failed. The non-temporal conflict shape is therefore Optimistic-only,
+and the Locking arm of the zero-row classification — the non-retriable stale
+write, and the never-retriable missing target an unversioned target earns — is a
+language-internal claim about the planner, the affected-row enforcer, and the
+retry loop rather than a corpus observable.
+
 The written verb is **`when.mutation`** — `update` (the default) or `delete` —
 for a NON-temporal target; a temporal target's conflict write is always the
 milestone close, so it ignores the field. The verb does not decide whether the
 golden carries a gate: `when.uow.concurrency` does, uniformly across update,
-delete, and close (`m-opt-lock`). A `delete` case therefore pins both halves of
-that rule — the optimistic golden appends `and <version> = ?`, the locking golden
-appends nothing — and a locking-mode zero-row outcome is the non-retriable stale
-write rather than a retriable conflict.
+delete, and close (`m-opt-lock`). A temporal close is the one conflict write that
+settles against a coordinate the case NAMES rather than one a read published, so
+it alone can author a `locking` case: the ungated close's zero-row outcome is the
+non-retriable stale write rather than a retriable conflict.
 
 A conflict case MAY instead carry a **`when.attempts`** retry sequence — an ordered
 list of golden `UPDATE`s, each with its own `statements` + `affectedRows` + `write`
@@ -1906,10 +1923,11 @@ The header follows a fixed house style:
 ```yaml
 # Optimistic-lock conflict (m-opt-lock): a stale-version UPDATE affects ZERO rows.
 #
-# Account id 2 (Linus) is read at version 1. Before our UPDATE flushes, a
-# concurrent transaction commits a change to the same row, bumping its version to
-# 2 — modeled here by the out-of-band `given.apply` (a naive UPDATE the harness
-# applies verbatim after loading the fixtures, simulating the other writer). Our
+# Account id 2 (Linus) is read at version 1 — a real read, whose retained
+# observation licenses the write. Between that read and the flush, a concurrent
+# transaction commits a change to the same row, bumping its version to 2 —
+# modeled by the out-of-band `given.apply` (a naive UPDATE the harness applies
+# verbatim, simulating the other writer). Our
 # golden UPDATE gates on the version we read EARLIER (1), so its `... and version =
 # ?` predicate matches NO row: it affects ZERO rows — the `updatedRows != 1`
 # conflict signal. The harness asserts `then.affectedRows` is 0, and the resulting
