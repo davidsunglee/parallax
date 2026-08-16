@@ -43,7 +43,7 @@ from _transact_support import (
 from _support import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, Payment, Person
-from parallax.conformance.vo_models import Contact, Shipment
+from parallax.conformance.vo_models import CUSTOMER_MODEL, Contact, Customer, Shipment
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core.base import InstantError
 from parallax.core.db_port import Row
@@ -68,6 +68,7 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     validate_write,
 )
+from parallax.snapshot import InvalidData
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
     Database,
@@ -1080,6 +1081,55 @@ def test_a_temporal_update_after_an_audit_read_of_the_same_milestone_commits(
     assert cast("tuple[object, ...]", close[2])[:3] == ("2024-06-01T00:00:00+00:00", 1, "infinity")
     assert Decimal("150.00") in cast("tuple[object, ...]", chained[2])
     assert port.ops[-1] == ("commit",)
+
+
+# --------------------------------------------------------------------------- #
+# A same-transaction reread of a row a keyed write just settled against: the   #
+# classification a hydratable root carries is judged fresh from each read's    #
+# own bytes, never served from write-path state — the retained evidence a     #
+# keyed write settles against, or the read-your-own-writes flush the reread    #
+# itself forces.                                                               #
+# --------------------------------------------------------------------------- #
+def test_a_reread_after_settling_a_write_against_a_classified_row_still_classifies_it() -> None:
+    # Customer 6 stores `address.geo` as the scalar "unknown" where a `one`
+    # occurrence is declared — `m-unit-work-028`'s own wrong-kind row. The first
+    # read publishes it as a hydratable `InvalidData`, and a keyed update settles
+    # against the hydrated root and changes only `name`. `row_queue` scripts the
+    # SAME `geo` bytes for both reads, so a correct reread — forced by the
+    # buffered write's read-your-own-writes flush — answers the identical
+    # diagnosis rather than one the write repaired, suppressed, or worsened.
+    address = {"street": "6 Kastanien Allee", "city": "Berlin", "geo": "unknown"}
+    port = RecordingPort(
+        row_queue=[
+            [{"id": 6, "name": "Rin", "address": dict(address)}],
+            [{"id": 6, "name": "Rin Nakamura", "address": dict(address)}],
+        ]
+    )
+    db = db_for(CUSTOMER_MODEL, port)
+
+    def fn(tx: Transaction) -> InvalidData[Customer]:
+        first = tx.find(Customer.where(Customer.id == 6)).checked().result()
+        assert isinstance(first, InvalidData)
+        current = cast("Customer", first.data)
+        assert current is not None
+        tx.update(current.edit(name="Rin Nakamura"))
+        reread = tx.find(Customer.where(Customer.id == 6)).checked().result()
+        assert isinstance(reread, InvalidData)
+        return reread
+
+    reread = db.transact(fn).value
+    assert {issue.code for issue in reread.issues} == {"stored-data-one-wrong-kind"}
+    assert reread.data is not None
+    assert reread.data.name == "Rin Nakamura"
+    assert [op[0] for op in port.ops] == ["begin", "read", "write", "read", "commit"]
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert write_ops == [
+        (
+            "write",
+            POSTGRES.to_driver_sql("update customer set name = ? where id = ?"),
+            ("Rin Nakamura", 6),
+        )
+    ]
 
 
 # --------------------------------------------------------------------------- #
