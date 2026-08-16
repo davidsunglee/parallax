@@ -40,7 +40,6 @@ from parallax.core.document_codec._document import (
     encode_document,
     encode_many,
     locate_entity_member,
-    mask_managed_members,
     reduce_declared_members,
     reduce_declared_members_classified,
 )
@@ -96,7 +95,6 @@ __all__ = [
     "entity_shape",
     "is_text_compared",
     "locate_entity_member",
-    "mask_managed_members",
     "occurrence_shape",
     "reduce_declared_members",
     "reduce_declared_members_classified",

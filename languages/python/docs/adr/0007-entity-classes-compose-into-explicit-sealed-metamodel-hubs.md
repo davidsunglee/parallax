@@ -462,7 +462,10 @@ mapping, recursive Value Object construction, private-state installation, and
 atomic publication. Snapshot owns graph-local identity and projection merging,
 loaded/unloaded and narrowed relationship decisions, whole-graph pins,
 milestone edges, its private `SnapshotNodeState`, and its transient merge
-index. The state contains narrowed views, pin, and optional edge; broad
+index. The state contains narrowed views, pin, optional edge, and the private
+Source Hint the read retained for the node — the object it denotes, the
+participation its read licensed, and the observation retained for the state it
+saw, which is how a value reaches its own write evidence; broad
 relationship values remain structural Entity slots. Snapshot emits
 construction operations directly through the writer; no second whole-graph
 `EntityGraphPlan` crosses the seam. The separate Entity Row Codec remains the

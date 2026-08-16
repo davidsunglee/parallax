@@ -1017,10 +1017,13 @@ def _refuse_unaccounted_document_milestone(
     whose observation would be rebuilt from a tracked milestone the tracker can no
     longer account for whole.
 
-    The peer of :func:`_refuse_document_layout_milestone` for the lanes that take
-    their milestone from tracked case state rather than from a find — every
-    writeSequence entry and every scenario write step not settling against a
-    grouped find. Under ``Columns`` the tracked members ARE the whole stored row.
+    It governs the lanes that take their milestone from tracked case state rather
+    than from a find — every writeSequence entry and every scenario write step
+    not settling against a grouped find. A step that DOES settle against a
+    grouped find needs no such refusal: its observation is the one production
+    filed for the read, which retains the row's raw Structured Column, so nothing
+    is rebuilt from declared members there.
+    Under ``Columns`` the tracked members ARE the whole stored row.
     Under ``Document`` they are the whole stored document too, but only while
     every key in it came from this case's own fixtures and authored writes: a
     fixture row is authored member by member, and a successor this engine tracked

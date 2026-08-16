@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-70**.
+Entry numbering is continuous and never reused. The next new number is **D-73**.
 
 ## Entries
 
@@ -257,6 +257,87 @@ landed an unreviewed restructuring of the very surface the boundary review was
 measuring. Until it is taken the residue is reader-facing only: no case id enters
 or leaves the skip map, no case changes lane, and no grade moves.
 
+### D-70 — A transaction's own buffered insert leaves a later keyed write of that object with no evidence once a flush intervenes
+
+*High — a correct program earns a refusal it cannot avoid.* Relates to
+`parallax.snapshot.handle._write_inputs.resolve_write_evidence`,
+`parallax.snapshot.handle.Transaction`'s buffered-insert ledger.
+
+**What.** `tx.insert(a)` exempts a later keyed write of `a` from the
+provenance rule, because a row this unit of work inserted is a row it stores. The
+exemption is keyed by the object and is never retired. So the sequence
+`tx.insert(a)`, then a participating read that force-flushes the buffer, then a
+keyed write of that same object, resolves **no** evidence: the insert is no
+longer pending, the value the caller still holds carries no Source Hint, and the
+write reaches settlement with nothing to advance from or gate on. A versioned
+target fails at settlement despite the transaction holding a perfectly fresh
+observation of the row the flush just wrote. It reproduces identically through
+both representations, because they share one buffer and one ledger.
+
+**Why it is deferred rather than fixed.** It is an evidence-**lifetime** question
+rather than an ingress one: what has to be decided is when an insert's exemption
+ends, and what the transaction owes the caller at that moment — re-reading the
+row itself is one answer, retiring the exemption at the flush and requiring the
+caller to write what the post-flush read returned is another, and they differ in
+whether the framework is permitted to issue a read on a keyed write's behalf,
+which every other rule in this area says it is not. The gap predates the write
+surface's own rework and no acceptance criterion reaches it.
+
+### D-71 — A Typed keyed occurrence assignment compares as a mask over authored members while the write it emits replaces the occurrence whole
+
+*High — the same authored value stores two different documents depending on
+whether some other member changed, and the two representations disagree.* Relates
+to `parallax.core.entity._row_codec._assignment_matches_original`,
+`parallax.snapshot.handle._wire_writes._authored_row`,
+`languages/python/spec/python.md` *Provenance comparison*, `docs/adr/0003`.
+
+**What.** Assigning a Value Object occurrence replaces its subtree whole under
+every Storage Layout, so a declared member the authored value omits is absent
+afterwards. The Typed lane's net-zero comparison did not follow: it compares a
+`one` value as a **mask over the keys the caller authored**, so an authored
+occurrence that omits a member the stored value holds compares **equal** and the
+write is eliminated. Against a stored `{street: "A", city: "Oslo"}`:
+
+- `edit(profile=Profile(street="A"))` yields no row at all, so `city` survives;
+- `edit(profile=Profile(street="B"))` yields a row, replaces whole, and `city` is
+  gone.
+
+The Wire peer already compares the whole decoded occurrence against the whole
+published one, so it emits the first write and removes `city`. Two peer
+interfaces therefore answer one authored value differently, which is exactly what
+the peer-interface contract forbids. The predicate lane's own comparison was the
+third instance of the mask and was corrected to compare both sides
+presence-preserving and whole; the change-record lane was not.
+
+**Why it is deferred rather than fixed.** It is a behavior change to a rule three
+documents state normatively — `python.md`'s provenance-comparison paragraph, the
+copy-provenance ADR's own restatement of it, and the no-drift pin over
+`edited_row` — and its blast radius is every Typed idiom that restates an
+occurrence, including the API Conformance Suite's rendered stories. Deciding it
+also settles the sibling question the mask was originally protecting: whether an
+occurrence differing only in **undeclared** keys should stay the conservative
+eliminated arm, which is a deliberate choice rather than an oversight.
+
+### D-72 — Milestone-set staging and predicate-write staging still refuse an issue-bearing read instead of classifying it
+
+*Medium — one stored state is classified on the ordinary read lane and refused on
+two others.* Relates to `parallax.snapshot.materialize` staging seams,
+`core/spec/m-snapshot-read.md`.
+
+**What.** A read whose stored state contradicts the declared model is classified
+at the result root and published as an ordinary union member. Two staging paths
+keep the older shared publication refusal instead: milestone-set staging, which
+must decode a temporal edge before it can partition, and predicate-write staging,
+which has no channel to put a classified verdict on. So the same row reads as a
+classified result through one door and raises through the other two.
+
+**Why it is deferred rather than fixed.** Converting either now would move a
+refusal without giving the verdict anywhere to go: a milestone partition needs an
+edge it cannot decode from an unhydratable row, and a predicate-selected write
+needs a decision about what selecting an invalid row even means, which is a write
+contract rather than a read one. Only the values lane was required, and it was
+converted.
+
 ## Forwarding pointers
 
 Removed entries whose number a live document still cites. One line each; drop a
@@ -267,7 +348,7 @@ prose.
 - **D-40** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P4. Eager `fetchall` at the adapter boundary; port-level streaming is [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory).
 - **D-44** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P2. Deep-fetch depth beyond two hops.
 - **D-45** → [COR-86](https://linear.app/flimflam/issue/COR-86/implement-history-with-includes-execution-and-empty-the-deferred). History-with-includes execution.
-- **D-46**, **D-48** → [COR-85](https://linear.app/flimflam/issue/COR-85/report-nodes-whose-stored-state-violates-the-declared-model-instead-of). Stored state violating the declared model.
+- **D-46**, **D-48** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/report-nodes-whose-stored-state-violates-the-declared-model-instead-of). Stored state violating the declared model is detected once, carried as data through graph input and merge, and classified at the result root as a `T | InvalidData[T]` union identically under both Storage Layouts; what still refuses is two staging paths, which D-72 carries.
 - **D-47** → fixed. `reduce_declared_members` gained `preserve_presence`, orthogonal to the `named_by` authored-member mask; `snapshot.materialize._convert._decode_element` passes it. Presence survives materialization at every containment depth, as `python.md` §3 and `core/spec/m-document-codec.md` state.
 - **D-51** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P6, item 6d. A defining to-one whose foreign key sits on the target side.
 - **D-52** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). The silent unbinding it describes was already gone: [COR-89](https://linear.app/flimflam/issue/COR-89/let-an-operation-reference-name-a-namespaced-entity-and-migrate-the) made `targets(model)` register canonical spellings unconditionally and every serialized surface emit `identity.canonical`, so no in-tree producer can supply an ambiguous one. What COR-51 added is classification at the external-producer boundary — `unit_work.instructions._entity` and `snapshot.handle._read._metadata` both raise `reference-ambiguous-entity-name` — so a spelling arriving from outside is one refusal naming both candidates rather than a missing observation binding.
@@ -278,7 +359,7 @@ prose.
 - **D-61** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). The envelope half: `validate_execution_observation` has no envelope-grading seam, and `core/spec/m-conformance-adapter.md` *Execution provenance* binds the adapter regardless.
 - **D-62** → closed by [COR-96](https://linear.app/flimflam/issue/COR-96/decide-what-a-row-returning-wrapper-over-a-deep-fetch-means). The shape is retired rather than answered: an Object Query's Includes and its cap are sibling clauses, so a row-returning wrapper OVER a deep fetch has no spelling to reach execution with, on the typed surface or the neutral one. What remains of the neighbourhood is stated positively — a row-form request naming Include Paths is refused by the shared read gate (`handle.preflight`'s `form` argument), and Includes over a scanned temporal axis stay the `snapshot-history-includes` Deferred Execution Feature. That classification is now two field reads over the canonical query — `includes` is non-empty AND some dimension's Temporal Selection is `history` or `asOfRange` (`handle._features`) — rather than a walk looking for a deep fetch under or over a scan, so no clause can stand between a scan and its own classification.
 - **D-63** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). The round-trip half: the eleven `then.roundTrips` authored on `boundary` and retry-shaped `conflict` cases have only this target's suites as a reader, because the harness runs no `api-conformance` lane and a retry-shaped conflict never reaches its round-trip assertion.
-- **D-64** → [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout). A temporal milestone this engine rebuilds carries declared members and no Structured Column, so under Relational Document Layout the write is refused rather than chained: `engine._refuse_document_layout_milestone` for a milestone a grouped find returned, `engine._refuse_unaccounted_document_milestone` for one tracked case state supplies but out-of-band statements may have overtaken. COR-85's own Phase 3 successor rule deletes both.
+- **D-64** → half closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout), half live. A temporal milestone this engine rebuilds carries declared members and no Structured Column, so under Relational Document Layout the write was refused rather than chained in two places. The grouped-find half is gone: the engine's bridge now reads the observation PRODUCTION filed rather than rebuilding one from a published graph, and production's own observation retains the raw Structured Column, so there is nothing left to refuse. The case-state half — `engine._refuse_unaccounted_document_milestone` — is still live and still called, because a milestone the tracker cannot account for whole is a doubt about what out-of-band statements left in the document, which no change to the write rule removes.
 - **D-65** → [COR-97](https://linear.app/flimflam/issue/COR-97/give-a-transaction-a-supported-abandon-and-the-execution-log-an-abort). A `rollback: true` step's abort sentinel records a `commit`-phase failure and an unclassified retry verdict, which no oracle reads; `engine._AbortingPort` states the untruth and its bound, and COR-97's `Transaction.abandon()` plus an `aborted` attempt status removes the decorator.
 - **D-66** → [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would). A keyed temporal write settling against case state a committed materializing predicate write of the same case moved is refused (`engine._refuse_materialized_case_state`, marked by `temporal_state.TemporalShadow.note_materialized_write`): production resolves and plans that write internally and returns neither, so the adapter would issue a zero-row close where a real caller — who could only reach the step by reading — gets a stale write. COR-99 is the systematic pass over adapter/production divergences of that kind and cites this composition as its motivating example; this refusal is the one hand-placed instance of what that audit generalizes.
 - **D-68** → closed by [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production). `parallax.conformance` reaches a corpus model through the public `domain_model_from_document` door alone and reads the accepted Metamodel's own vocabulary, so no `parallax.descriptor` private import and no `parallax.core._formation_profile` reach survives; `ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at three `parallax.core.entity` entries that `spec/python.md` §7 states as a rebuttal rather than an exemption. One question the accepted model cannot answer survives the conversion, and it is not a model question: the order a document declared its Entities in, which `m-case-format` makes load-bearing for a case naming no target and which `conformance.models.declared_entity_spellings` therefore reads off the decoded document. This target pins that order in a unit assertion of its own (`tests/unit/test_corpus_models.py`), but no compatibility case distinguishes it from the accepted model's canonical order: exactly one case resolves the convention over a model whose two orders disagree (`m-predicate-048`), and it is refused by the same rule under either root. Which order `m-case-format` means is therefore ungated across targets, and [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would) carries it.

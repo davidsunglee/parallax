@@ -498,17 +498,15 @@ materialization and write comparison. It decodes leaves by declared Neutral Type
 reduces a `one` recursively and a `many` element-wise, and excludes every key the
 shape does not declare. Consumers MUST NOT implement another local reduction.
 
-The reduction takes two independent options that each narrow its result, and they
-are not interchangeable because they answer different questions. The
-**authored-member mask** asks which members a *caller* authored: it is supplied
-from outside the source document, and only the members it names contribute,
-recursively through `one` occurrences. **Presence preservation** asks which
-members *this document* holds, which the source answers by itself: a member the
-source omits contributes nothing, at every containment depth, including inside a
-`many` element, while a member stored as JSON null still contributes its null. A
-reduction that preserves presence therefore carries the missing-versus-explicitly-null
-distinction this module already keeps at the interface, instead of collapsing it
-onto the declared member list. Neither option is the other's default.
+The reduction takes one option that narrows its result. **Presence preservation**
+asks which members *this document* holds, which the source answers by itself: a
+member the source omits contributes nothing, at every containment depth,
+including inside a `many` element, while a member stored as JSON null still
+contributes its null. A reduction that preserves presence therefore carries the
+missing-versus-explicitly-null distinction this module already keeps at the
+interface, instead of collapsing it onto the declared member list. It is not the
+default: an ordinary reduction answers the declared composite, which is what a
+read publishes.
 
 Presence preservation is what a mutation comparison uses on both sides. An
 assignment states the complete value its occurrence will hold, so the document it
@@ -516,7 +514,7 @@ would store — presence preserved, a member the author omits contributing no ke
 exactly as an unstored one does — is what a stored occurrence's own
 presence-preserving reduction is compared against. Narrowing the stored side to
 the members the assignment happens to name would call a write that removes a
-member no change at all.
+member no change at all, so no authored-member mask over the reduction exists.
 
 Patches apply in the order given, left to right, each over the result of the
 last. `m-storage-layout` fixes that order for a Parallax write: canonical logical

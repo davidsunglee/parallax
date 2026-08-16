@@ -58,7 +58,6 @@ __all__ = [
     "encode_document",
     "encode_many",
     "locate_entity_member",
-    "mask_managed_members",
     "reduce_declared_members",
     "reduce_declared_members_classified",
 ]
@@ -590,43 +589,30 @@ def reduce_declared_members(
     shape: DocumentShape,
     document: object,
     *,
-    named_by: object | None = None,
     preserve_presence: bool = False,
-    collapse_invalid_occurrences: bool = False,
 ) -> object:
     """Reduce stored content to one codec-owned view of the shape's declared members.
 
     A ``one`` is reduced recursively, a ``many`` element-wise in stored order, and
     absent or JSON-null members reduce to ``None``. Undeclared keys never contribute.
 
-    ``named_by`` and ``preserve_presence`` both drop members from the result and
-    are not interchangeable, because they answer different questions. ``named_by``
-    asks which members the **caller** authored: when it is a mapping it is that
-    external authored-presence mask, and only members it names contribute,
-    recursively through ``one`` occurrences. ``preserve_presence`` asks which
-    members **this document** holds, which the source answers by itself: a member
-    the source omits contributes no key at all, at every containment depth,
-    including inside a ``many`` element. A member the source holds as JSON null
-    still contributes ``None``, so the omitted-versus-explicit-null distinction
-    survives the reduction rather than collapsing into it.
-
-    ``collapse_invalid_occurrences`` is reserved for logical read materialization,
-    where Predicate-algebra absence collapse treats a wrong-kind occurrence as
-    not present. Mutation comparison leaves it false so invalid storage cannot
-    compare equal to a replacement value. A wrong-kind occurrence the source does
-    hold collapses to its empty form rather than vanishing, so the two options
-    stay independent.
+    ``preserve_presence`` asks which members **this document** holds, which the
+    source answers by itself: a member the source omits contributes no key at all,
+    at every containment depth, including inside a ``many`` element. A member the
+    source holds as JSON null still contributes ``None``, so the
+    omitted-versus-explicit-null distinction survives the reduction rather than
+    collapsing into it. It is what a mutation comparison uses on BOTH sides,
+    because an assignment states the complete value its occurrence will hold:
+    narrowing the stored side to the members the assignment happens to name would
+    call a write that removes a member no change at all.
     """
     if document is None:
         return None
     if not isinstance(document, Mapping):
         raise LeafEncodingError(f"expected object, got {type(document).__name__}")
     source = cast("Mapping[str, object]", document)
-    names = cast("Mapping[str, object]", named_by) if isinstance(named_by, Mapping) else None
     reduced: dict[str, object] = {}
     for member in shape.members:
-        if names is not None and member.name not in names:
-            continue
         if preserve_presence and member.name not in source:
             continue
         raw = source.get(member.name)
@@ -643,8 +629,6 @@ def reduce_declared_members(
                 values: Sequence[object] = ()
             elif isinstance(raw, list):
                 values = cast("Sequence[object]", raw)
-            elif collapse_invalid_occurrences:
-                values = ()
             else:
                 raise LeafEncodingError(
                     f"expected array, got {type(raw).__name__}", path=(member.name,)
@@ -652,50 +636,19 @@ def reduce_declared_members(
             try:
                 reduced[member.name] = [
                     reduce_declared_members(
-                        member.shape,
-                        value,
-                        preserve_presence=preserve_presence,
-                        collapse_invalid_occurrences=collapse_invalid_occurrences,
+                        member.shape, value, preserve_presence=preserve_presence
                     )
                     for value in values
                 ]
             except LeafEncodingError as exc:
                 raise exc.under(member.name) from exc
         else:
-            nested_names = None if names is None else names.get(member.name)
             try:
-                if (
-                    raw is not None
-                    and not isinstance(raw, Mapping)
-                    and collapse_invalid_occurrences
-                ):
-                    reduced[member.name] = None
-                else:
-                    reduced[member.name] = reduce_declared_members(
-                        member.shape,
-                        cast("object", raw),
-                        named_by=nested_names,
-                        preserve_presence=preserve_presence,
-                        collapse_invalid_occurrences=collapse_invalid_occurrences,
-                    )
+                reduced[member.name] = reduce_declared_members(
+                    member.shape,
+                    cast("object", raw),
+                    preserve_presence=preserve_presence,
+                )
             except LeafEncodingError as exc:
                 raise exc.under(member.name) from exc
     return reduced
-
-
-def mask_managed_members(managed: object, named_by: object) -> object:
-    """Apply an authored-member mask to an already-decoded document value.
-
-    The mask is normally the managed result of :func:`reduce_declared_members`
-    over an encoded assignment. Mapping keys select recursively through ``one``
-    occurrences; every other value, including a ``many`` array, is selected whole.
-    No leaf is decoded again.
-    """
-    if not isinstance(managed, Mapping) or not isinstance(named_by, Mapping):
-        return cast("object", managed)
-    managed_members = cast("Mapping[str, object]", managed)
-    named_members = cast("Mapping[str, object]", named_by)
-    return {
-        member: mask_managed_members(managed_members.get(member), nested_names)
-        for member, nested_names in named_members.items()
-    }

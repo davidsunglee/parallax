@@ -74,3 +74,35 @@ Everything else recorded above is unchanged: the complete immutable predecessor
 row, the authored close cause, the Write Target and gate remaining separate
 facts, the shared variant across Transaction-Time-only and Bitemporal writes, and
 the Relational Document Layout raw-document retention.
+
+## Amendment (2026-08): an assigned occurrence replaces its subtree whole
+
+The Relational Document Layout paragraph above records that "a `one` Value Object
+assignment with an authored document recursively patches only the declared
+members it names".
+
+**Superseding decision:** an assignment of a Value Object occurrence **replaces**
+that occurrence's subtree whole, at any depth, under every Storage Layout.
+Nothing inside the replaced subtree survives: a declared member the authored
+document omits is absent afterwards, and a key no member declares is gone. A
+`many` assignment already replaced its array whole, and both cardinalities now
+answer the same way, because an author stating an occurrence has stated a
+complete value either way.
+
+The patch rule made assignment mean two different things depending on a physical
+decision the developer may not have made — a top-level occurrence's own column
+was bound atomically under conventional Columns while the same assignment patched
+member by member under Relational Document Layout. Round-trip is what decides it:
+a Value Object is defined entirely by its content, so a write of `A` that does not
+make the stored value equal `A` breaks the abstraction. Assigning null still
+replaces the occurrence with JSON null and discards its descendants, which the
+collapse leaves untouched.
+
+The retention decision this ADR exists for is unchanged, and the collapse depends
+on it: a temporal successor still starts from the retained raw Structured Column
+document and still preserves unknown keys written by a newer model version
+without another database read. What narrows is the scope of that preservation.
+The unit of replacement is the **assigned occurrence**, never the row, so every
+undeclared key outside every assigned occurrence still rides forward exactly as
+recorded above — and every key inside one is gone, which is what the authored
+assignment says.

@@ -147,3 +147,40 @@ The consequence for concurrency is that the workflow no longer depends on a
 mode. Staleness before the submit read is caught by the comparison; staleness
 between the read and the flush is caught by optimistic mode's observed-`in_z`
 gate or prevented by locking mode's shared read lock on the compared row.
+
+## Amendment (2026-08, COR-85): the copy verb and its sealed doors hold on both class kinds
+
+The COR-63 amendment above states the copy verb and the sealed doors of an
+**Entity** Class. They now hold on a **Value Object** Class identically, and the
+extension is what makes the surrounding write contract safe rather than a
+convenience.
+
+Assigning a Value Object occurrence replaces its subtree whole under every
+Storage Layout, so restating a whole occurrence to change one field is what
+deletes the fields the restatement forgets. Deriving the new value from the old
+one is the correct spelling, and giving a Value Object the same `edit` verb makes
+that spelling also the shortest one. It is the same verb rather than an analogue:
+one `EditError`, one closed code set, and the same assignment judgement over the
+member's own accepted metadata, reached through the same resolve-judge-rebuild
+core. Every inherited copy path is refused on a Value Object Class exactly as on
+an Entity Class, closing the same validation bypass on the shape a write actually
+stores.
+
+Three things follow from a Value Object having no identity and no Entity, and
+they are the whole difference. A violation locates at `ModelRoot`, because a
+Value Object Class is a reusable shape rather than a position in a model — the
+same class composes into occurrences of many Entities and none of them owns its
+members — so no `EntityLocation` would be honest; `member_name` and the message
+still name the member under its class. Four codes are structurally unreachable
+from this surface, because a primary key, a read-only mark, a framework-owned
+designation, and a relationship cannot be declared on a Value Object member at
+all. And the copy restores the receiver's **populated** set plus the named
+members, rather than marking every passed member populated the way the Entity
+verb does: a Value Object's document is serialized by that set, so expanding it
+would fabricate nulls for members storage never held and break the round trip
+replacement rests on.
+
+The verb's own name is consequently reserved on **both** class kinds, joining the
+prefix and namespace reservations that already were. A Value Object Class
+declaring a member of that name would install an attribute descriptor over the
+verb and leave the class with no way to derive a copy at all.
