@@ -212,11 +212,12 @@ def reduce_declared_members_classified(
     This is the reduction a READ applies, so which members it keys is the read
     contract (`m-snapshot-read` *What a materialized value carries*) rather than an
     option: a member the document holds contributes its decoded value, a member it
-    omits contributes nothing, and a classified position contributes what its
-    verdict collapses to. The one entry that is not a value is an undecodable leaf,
-    keyed as `UNAVAILABLE` so a materializing caller can tell it from a decoded one
-    and leave that member out. Presence preservation belongs to the plain reduction,
-    whose consumer is the mutation comparison's authored side.
+    omits contributes nothing unless it is a ``many`` — whose omitted and JSON-null
+    spellings are one zero value keyed as ``[]`` — and a classified position
+    contributes what its verdict collapses to. The one entry that is not a value is
+    an undecodable leaf, keyed as `UNAVAILABLE` so a materializing caller can tell it
+    from a decoded one and leave that member out. Presence preservation belongs to
+    the plain reduction, whose consumer is the mutation comparison's authored side.
     """
     if document is None:
         return None, ()

@@ -111,8 +111,10 @@ the stored document held: a member the document omits is absent from the
 materialized value, and a member it stores as JSON null is carried, as null. That
 is the presence distinction `m-document-codec` keeps inside a Value Object
 subtree, and materialization neither collapses nor fills it, so a conforming
-occurrence serializes back to the document it came from. The same stored state
-answers the same way under every Storage Layout.
+occurrence serializes back to the document it came from at every position but the
+`Many` zero below, whose three stored spellings are one value and serialize as the
+single canonical `[]`. The same stored state answers the same way under every
+Storage Layout.
 
 Held and carried are nevertheless two different questions, and stored state the
 hydration table collapses is where they part — in both directions. Two positions
@@ -139,9 +141,9 @@ these four round trips, and none is meant to.
 
 **What a member reads as and which members a value carries are two questions.** A
 leaf or a `One` occurrence the document omits *reads* as not present, and both a
-query's absence collapse (`m-predicate`) and a typed getter (`m-value-object`)
-answer null for it. A `Many` has no absent state to collapse, so it reads as the
-empty ordered collection its zero value already is — never null. Neither
+query's absence collapse (`m-predicate`) and a typed getter over the materialized
+value answer null for it. A `Many` has no absent state to collapse, so it reads as
+the empty ordered collection its zero value already is — never null. Neither
 reading says anything about which keys a value carries, and a representation that
 IS a document — a Wire Snapshot, whose leaves this module's member names key —
 answers the second question rather than the first. A representation with getters
@@ -174,9 +176,10 @@ Within **one materialized graph**, one row is **one node**:
 - Resolution is **graph-local**: two *separate* materializations make no
   same-node promise, and no node is ever interned beyond its own graph. There is
   no scope wider than the graph in this module.
-- A **value object** (`m-value-object`) is not a node: it has no identity and
-  materializes *with* its owning entity as a plain nested value, exactly as its
-  materialization contract specifies.
+- A **value object** (`m-value-object`) is not a node: it has no identity, adds
+  no relationship hop, and materializes *with* its owning entity as a plain
+  nested value carrying the members *What a materialized value carries* fixes
+  above.
 
 ## The whole-graph pin
 
