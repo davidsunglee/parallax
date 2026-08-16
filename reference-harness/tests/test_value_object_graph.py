@@ -339,6 +339,22 @@ def test_projection_drops_undeclared_keys_and_publishes_what_the_document_held()
     assert _project_value_object(address, None) is None
 
 
+def test_a_many_holding_a_non_object_element_collapses_as_a_whole() -> None:
+    # A `many` is conforming only when EVERY element is an object document, so an
+    # array holding a scalar is one wrong-kind `many` at the occurrence position
+    # rather than a per-element verdict: the whole collection collapses to `[]` and
+    # no element is projected (m-document-codec). The conforming sibling element is
+    # what makes the distinction observable — a per-element reading would keep it
+    # and give the scalar an empty object of its own.
+    address = _address_decl()
+
+    assert _project_value_object(address, {"phones": ["bad"]}) == {"phones": []}
+    assert _project_value_object(address, {"phones": [{"type": "home"}, "bad"]}) == {"phones": []}
+    assert _project_value_object(address, {"phones": [{"type": "home"}]}) == {
+        "phones": [{"type": "home"}]
+    }
+
+
 def test_projection_decodes_every_leaf_by_its_declared_type() -> None:
     # A document stores the codec's portable spelling for each declared type, and a
     # getter yields what a Column of that type reads back as. Six of the twelve rows
