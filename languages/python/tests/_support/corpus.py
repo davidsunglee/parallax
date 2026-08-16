@@ -8,10 +8,18 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Final, cast
 
 if TYPE_CHECKING:
     from parallax.core.entity import Entity
+    from parallax.core.inheritance import InheritanceEntityView
+    from parallax.core.metamodel import (
+        EntityIdentity,
+        Metamodel,
+        NestedValueObjectMetadata,
+        ValueObjectMetadata,
+    )
 
 
 def case_document(case: Any) -> dict[str, Any]:
@@ -215,14 +223,162 @@ def wire_value_deep(value: object) -> object:
     return engine.wire_value(value)
 
 
-def _values_equal(observed: object, expected: object) -> bool:
+@dataclass(frozen=True, slots=True)
+class CollectionKinds:
+    """The model a graph observation is graded against, and where it sits in it.
+
+    `m-case-format` ("Graph comparison distinguishes collection kinds") compares a
+    root result set and a relationship collection as MULTISETS and a Value Object
+    `many` occurrence POSITIONALLY, because that occurrence's element order is
+    semantic (`m-value-object`) and its duplicates stay distinct. Both are arrays
+    of objects in an assembled graph, so nothing in the value tells them apart:
+    only the declaration at the key does, and comparison walks the model beside
+    the value.
+
+    ``entity`` names the Entity whose own node the observation IS, for a lane that
+    grades one node at a time; absent, the observation is the root-keyed whole
+    graph, whose keys name the read's own result Entities.
+    """
+
+    model: Metamodel
+    entity: str | None = None
+
+
+type _Level = _Roots | _Node | _Occurrence
+"""What one graph position's keys mean — the model position a mapping occupies."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Key:
+    """How the value under one key compares, and what its own keys mean.
+
+    ``ordered`` is absent where the model declares no collection at the key, which
+    is what turns a list arriving there into a named grading gap rather than a
+    silently chosen rule.
+    """
+
+    ordered: bool | None
+    level: _Level | None
+
+
+_UNDECLARED: Final = _Key(None, None)
+
+
+@dataclass(frozen=True, slots=True)
+class _Roots:
+    """A root-keyed graph: each key one Entity's own name, each value its result set."""
+
+    model: Metamodel
+
+    def key(self, name: str) -> _Key:
+        level = _entity_level(self.model, name)
+        return _UNDECLARED if level is None else _Key(False, level)
+
+
+@dataclass(frozen=True, slots=True)
+class _Node:
+    """One Entity node: its declared members, plus the relationship views a deep
+    fetch keys onto it — the plain relationship name or the narrowed
+    ``<rel>[<Concrete>,…]`` derived key (`m-case-format`)."""
+
+    model: Metamodel
+    view: InheritanceEntityView
+
+    def key(self, name: str) -> _Key:
+        occurrence = self._occurrence(name)
+        if occurrence is not None:
+            return _occurrence_key(self.model, occurrence)
+        related = self._related(name)
+        return _UNDECLARED if related is None else _Key(False, related)
+
+    def _occurrence(self, name: str) -> ValueObjectMetadata | None:
+        """The occurrence ``name`` denotes, family-wide: an abstract position's node
+        is a concrete variant, so the projection superset answers where the
+        position's own applicable set cannot."""
+        own = self.view.applicable_value_object(name)
+        if own is not None:
+            return own
+        return next(
+            (
+                occurrence
+                for occurrence in self.view.superset_value_objects
+                if occurrence.identity.path[-1] == name
+            ),
+            None,
+        )
+
+    def _related(self, name: str) -> _Node | None:
+        """The node level one relationship view key reaches, broad or narrowed."""
+        from parallax.core.relationship import view as relationship_view
+
+        declared = self.view.applicable_relationship(name.split("[", 1)[0])
+        if declared is None:
+            return None
+        direction = relationship_view(self.model).relationship(declared.identity)
+        return None if direction is None else _node_level(self.model, direction.join.target.entity)
+
+
+@dataclass(frozen=True, slots=True)
+class _Occurrence:
+    """One Value Object occurrence's document: its leaves and nested occurrences."""
+
+    model: Metamodel
+    declared: ValueObjectMetadata | NestedValueObjectMetadata
+
+    def key(self, name: str) -> _Key:
+        nested = self.declared.value_object(name)
+        return _UNDECLARED if nested is None else _occurrence_key(self.model, nested)
+
+
+def _occurrence_key(
+    model: Metamodel, declared: ValueObjectMetadata | NestedValueObjectMetadata
+) -> _Key:
+    """One occurrence key: a `many` holds the ordered element documents the stored
+    order is, a `one` a single document and never a collection."""
+    from parallax.core.metamodel import Multiplicity
+
+    ordered = True if declared.multiplicity is Multiplicity.MANY else None
+    return _Key(ordered, _Occurrence(model, declared))
+
+
+def _entity_level(model: Metamodel, name: str) -> _Node | None:
+    """The node level a graph key's Entity spelling denotes, absent for a name the
+    model declares no Entity under."""
+    from parallax.core.metamodel import entity_by_name
+
+    entity = entity_by_name(model, name)
+    return None if entity is None else _node_level(model, entity.identity)
+
+
+def _node_level(model: Metamodel, identity: EntityIdentity) -> _Node | None:
+    """One Entity's node level, absent only for an Identity the model lacks."""
+    from parallax.core.inheritance import view as inheritance_view
+
+    view = inheritance_view(model).entity(identity)
+    return None if view is None else _Node(model, view)
+
+
+def _member_key(key: _Key, name: str) -> _Key:
+    return _UNDECLARED if key.level is None else key.level.key(name)
+
+
+def _element_key(key: _Key) -> _Key:
+    """One element of a graph collection: the level its own key names, carrying no
+    collection of its own."""
+    return _Key(None, key.level)
+
+
+def _values_equal(observed: object, expected: object, key: _Key, path: str) -> bool:
     if isinstance(expected, Mapping):
         expected_map = cast("Mapping[str, object]", expected)
         if not isinstance(observed, Mapping):
             return False
         observed_map = cast("Mapping[str, object]", observed)
         return set(observed_map) == set(expected_map) and all(
-            _values_equal(observed_map[key], expected_map[key]) for key in expected_map
+            _values_equal(
+                observed_map[name], expected_map[name], _member_key(key, name), f"{path}.{name}"
+            )
+            for name in expected_map
         )
     if isinstance(expected, list):
         expected_items = cast("list[object]", expected)
@@ -231,15 +387,23 @@ def _values_equal(observed: object, expected: object) -> bool:
         observed_items = cast("list[object]", observed)
         if len(observed_items) != len(expected_items):
             return False
-        if all(_values_equal(o, e) for o, e in zip(observed_items, expected_items, strict=True)):
-            return True
-        # A to-many value-object member's element order is UNSPECIFIED
-        # (m-value-object); fall back to order-insensitive multiset matching —
-        # a declared relationship `orderBy`'s exact order already matched above.
+        if key.ordered is None:
+            raise AssertionError(
+                f"{path}: the model declares no collection at this position, so neither "
+                "graph comparison rule (m-case-format) decides its elements"
+            )
+        element = _element_key(key)
+        if key.ordered:
+            return all(
+                _values_equal(item, candidate, element, f"{path}[{index}]")
+                for index, (item, candidate) in enumerate(
+                    zip(observed_items, expected_items, strict=True)
+                )
+            )
         remaining = list(expected_items)
         for item in observed_items:
             for index, candidate in enumerate(remaining):
-                if _values_equal(item, candidate):
+                if _values_equal(item, candidate, element, path):
                     del remaining[index]
                     break
             else:
@@ -248,13 +412,24 @@ def _values_equal(observed: object, expected: object) -> bool:
     return _scalar_equal(observed, expected)
 
 
-def compare_graph(observed: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
+def _root_key(kinds: CollectionKinds) -> _Key:
+    if kinds.entity is None:
+        return _Key(None, _Roots(kinds.model))
+    level = _entity_level(kinds.model, kinds.entity)
+    assert level is not None, f"{kinds.entity!r} names no Entity the graded model declares"
+    return _Key(None, level)
+
+
+def compare_graph(
+    observed: Mapping[str, Any], expected: Mapping[str, Any], kinds: CollectionKinds
+) -> None:
     """Assert one assembled `then.graph` / `then.graphs` leaf equals ``expected``
     (m-case-format), both sides normalized through the same wire-value rules
-    `compare_rows` uses for a flat row."""
+    `compare_rows` uses for a flat row, and every collection compared by the kind
+    ``kinds`` reads off the model."""
     observed_wire = wire_value_deep(dict(observed))
     expected_wire = wire_value_deep(dict(expected))
-    assert _values_equal(observed_wire, expected_wire), (
+    assert _values_equal(observed_wire, expected_wire, _root_key(kinds), kinds.entity or "graph"), (
         f"graph mismatch:\n  observed: {observed_wire!r}\n  expected: {expected_wire!r}"
     )
 

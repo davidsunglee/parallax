@@ -20,6 +20,7 @@ import jsonschema
 import pytest
 
 from _support.corpus import (
+    CollectionKinds,
     case_document,
     case_fixtures,
     compare_binds,
@@ -205,7 +206,7 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     if "rows" in then:
         compare_rows(observations["rows"], then["rows"])
     elif "graph" in then and case.case_id not in _CHILD_LEVEL_GRAPH_SHAPE_DEFERRED:
-        compare_graph(observations["graph"], then["graph"])
+        compare_graph(observations["graph"], then["graph"], CollectionKinds(model))
         compare_stored_data_issues(
             observations.get("storedDataIssues"), then.get("storedDataIssues")
         )
@@ -217,7 +218,7 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
             assert wire_value_deep(observed_entry["pin"]) == wire_value_deep(
                 expected_entry["pin"]
             ), case.case_id
-            compare_graph(observed_entry["graph"], expected_entry["graph"])
+            compare_graph(observed_entry["graph"], expected_entry["graph"], CollectionKinds(model))
 
 
 # `m-opt-lock-012`'s scenario ALSO declares `compileEligibility: run-only` and

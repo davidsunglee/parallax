@@ -34,6 +34,7 @@ from typing import Any, cast
 import pytest
 
 from _support.corpus import (
+    CollectionKinds,
     case_document,
     case_fixtures,
     compare_binds,
@@ -490,10 +491,11 @@ def _assert_vo_owner_graph(case_id: str, snapshot: Any, entity_name: str, pk_mem
             "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"][entity_name]
         )
     }
+    kinds = CollectionKinds(engine.load_case_metamodel(_CASES[case_id]), entity_name)
     observed = [_hydrated(root) for root in snapshot.checked().results()]
     assert {instance.id for instance in observed} == set(expected_by_pk)
     for instance in observed:
-        compare_graph(_vo_owner_row(instance), expected_by_pk[instance.id])
+        compare_graph(_vo_owner_row(instance), expected_by_pk[instance.id], kinds)
 
 
 def test_transaction_time_only_vo_owner_as_of_latest(provisioner: Any) -> None:
@@ -670,12 +672,13 @@ def _assert_customer_locations_graph(case_id: str, snapshot: Any) -> None:
             "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"]["Customer"]
         )
     }
+    kinds = CollectionKinds(engine.load_case_metamodel(_CASES[case_id]), "Customer")
     observed = [_hydrated(root) for root in snapshot.checked().results()]
     assert {customer.id for customer in observed} == set(expected_by_id)
     for customer in observed:
         row = _vo_owner_row(customer)
         row["locations"] = [_vo_owner_row(location) for location in customer.locations]
-        compare_graph(row, expected_by_id[customer.id])
+        compare_graph(row, expected_by_id[customer.id], kinds)
 
 
 def test_customer_locations_deep_fetch_materializes_the_child_document_too(

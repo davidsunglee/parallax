@@ -16,7 +16,8 @@
 # (Postgres native `'infinity'::timestamptz`, MariaDB the max-sentinel), so `binds` is
 # one shared flat array. The dialect-neutral referenceSql ranges `out_z > '9000-01-01'`
 # (a different formulation selecting the same current rows on both dialects) and pins
-# the matched owner identities; `then.graph`'s to-many `phones` compares order-insensitively.
+# the matched owner identities; `then.graph`'s to-many `phones` compares positionally,
+# its element order being semantic (m-value-object).
 model: models/supplier.yaml
 tags: [m-value-object, m-object-query, m-temporal-read, m-sql, nested, json, temporal, as-of, audit-only, materialization, graph, slice-snapshot-1, slice-managed-1]
 shape: read

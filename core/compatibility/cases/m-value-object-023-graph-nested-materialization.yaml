@@ -17,21 +17,24 @@
 # here. Two shapes this model declares still carry a key without one in the
 # document, both by the codec's own algebra (m-document-codec): a WRONG-KIND `one`
 # is a member the document holds, so it appears, collapsed to null; and a `many`
-# has no absent state, so an omitted key, a JSON null, and a non-array value are
-# three stored spellings of the empty collection and `phones` is present for all
-# three. A wrong-kind occurrence collapses AND is classified: the graph carries
-# the collapsed value while `then.storedDataIssues` carries the diagnosis for that
-# result position, which is what makes hydration and classification one pass
-# rather than a refusal (m-snapshot-read). Per id: 4 a SQL-NULL address column
+# has no absent state, so an omitted key, a JSON null, and `[]` are three stored
+# spellings of one zero value and `phones` is present for all three. A non-array
+# `phones` is a fourth state and NOT a fourth spelling of that zero: it is invalid
+# stored data (`ManyWrongKind`), which hydrates to the empty collection through
+# its own collapse and is classified. A wrong-kind occurrence collapses AND is
+# classified: the graph carries the collapsed value while `then.storedDataIssues`
+# carries the diagnosis for that result position, which is what makes hydration
+# and classification one pass rather than a refusal (m-snapshot-read).
+# Per id: 3 phones stored as `[]`; 4 a SQL-NULL address column
 # (whole object null); 5 missing city + phones and a geo holding only an undeclared
 # key (so an empty geo composite); 6 a wrong-kind geo scalar; 7 explicit JSON-null
 # point leaves beside a real one-element phones array; 8 phones an explicit JSON
 # null; 9/10 phones a wrong-kind scalar / object — still []. Golden SQL is
 # dialect-identical (a presence-plus-document projection; MariaDB
 # returns the `json` column as text, Postgres the `jsonb` parsed — the same
-# composite). Element order in a to-many member is UNSPECIFIED (m-value-object):
-# `then.graph` arrays compare as multisets (multiplicity enforced, order not), so
-# a reordered `phones` array still passes.
+# composite). Element order in a to-many member is SEMANTIC (m-value-object), so
+# each `phones` array below compares POSITIONALLY — a reordered array is a
+# mismatch, and duplicate elements remain distinct.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many, slice-snapshot-1, slice-managed-1]
 shape: read

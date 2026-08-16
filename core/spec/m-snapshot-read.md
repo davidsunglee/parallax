@@ -129,16 +129,17 @@ element included — as the empty collection. None of these four round trips, an
 none is meant to.
 
 **What a member reads as and which members a value carries are two questions.** A
-member the document omits *reads* as not present — the absence collapse
-`m-predicate` fixes for a query and `m-value-object` fixes for a typed getter, both
-of which answer null for it. That collapse says nothing about which keys a value
-carries, and a representation that IS a document — a Wire Snapshot, whose leaves
-this module's member names key — answers the second question rather than the first.
-A representation with getters answers both, from one materialization: its getter
-answers null for the omitted member and — at every position but the two carried
-above — its document does not carry it. So the two representations of one read
-observe one value, and neither turns a stored absence into a stored null the
-other leaves absent.
+leaf or a `One` occurrence the document omits *reads* as not present — the absence
+collapse `m-predicate` fixes for a query and `m-value-object` fixes for a typed
+getter, both of which answer null for it. A `Many` has no absent state to collapse,
+so it reads as the empty ordered collection its zero value already is. Neither
+reading says anything about which keys a value carries, and a representation that
+IS a document — a Wire Snapshot, whose leaves this module's member names key —
+answers the second question rather than the first. A representation with getters
+answers both, from one materialization: its getter answers the reading above, and
+— at every position but the two carried ones — its document does not carry the
+omitted member. So the two representations of one read observe one value, and
+neither turns a stored absence into a stored null the other leaves absent.
 
 ## Graph-local identity resolution
 
