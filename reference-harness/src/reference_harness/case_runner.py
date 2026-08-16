@@ -3135,21 +3135,16 @@ def _project_members(vo: dict[str, Any], obj: Any) -> dict[str, Any]:
 
     Undeclared keys are omitted and each declared member the document HOLDS is
     decoded by its declared type (:func:`decode_leaf`) rather than copied out,
-    because the document stores the codec's portable spelling. What the projection
-    does not do is fill: a leaf or a nullable ``one`` the document omits contributes
-    no key, so re-serializing a conforming projection stores what was stored, and a
-    document short of a member stays distinguishable from one holding that member's
-    JSON null (m-document-codec "Presence inside a Value Object subtree is not
-    collapsed"). Absence is what a member READS as — the collapse the read
-    predicates apply — and that is a different question from which keys a document
-    carries.
-
-    Two declarations put a key back regardless. A non-nullable ``one`` the document
-    omits is the required-member-absent state, whose normative collapse gives the
-    position its null, and a ``many`` always publishes because it has no absent
-    state. Stored state a hydration rule collapses does not round trip either: a
-    wrong-kind ``one`` projects to ``None``, and a wrong-kind ``many`` — a
-    non-array, or an array holding any non-object element — to ``[]``, whole.
+    because the document stores the codec's portable spelling. Which declared
+    members become keys is not decided here: this projection realizes the read
+    contract (m-snapshot-read "What a materialized value carries") and is graded
+    against a language implementation of the same contract, so each position where a
+    key survives a document that did not hold it is read from there rather than
+    restated (:func:`_publishes_when_omitted`). The one position that runs the other
+    way has no case here, because :func:`decode_leaf` raises on an undecodable leaf
+    instead of classifying it. What the projection adds of its own is the decoding
+    alone, which is why a stored state a hydration rule collapses projects that
+    collapse whole rather than element by element.
     """
     source = obj if isinstance(obj, dict) else {}
     node: dict[str, Any] = {}

@@ -1960,33 +1960,28 @@ or descriptor authoring form and performs no audit stamping.
   an omitted entry stays outside the frozen Value Object's `model_fields_set`
   and an entry present as `None` sits inside it — which is what lets canonical
   document serialization omit the former and emit the latter as explicit null.
-  **Presence survives materialization at every containment depth.** A Value
-  Object read back from storage reports as present each **conforming** member the
-  stored document carried, whether it is a top-level occurrence, a nested One, or
-  an element of a Many at any depth; the document reduction the read path performs
-  takes its presence from the source document rather than from the declared
-  member list. Held and reported part in both directions, at the positions
-  `m-snapshot-read` fixes. Two are reported present whatever the document held: a
-  Many, holding `()` where the document supplied no elements, and a non-nullable
-  One, holding `None` under the required-member-absent collapse. One runs the
-  other way: a leaf the document DOES hold in a spelling its declared type cannot
-  decode is unavailable, so the record leaves it unpopulated and its root is
-  classified. So a Value Object built by ordinary construction and one
-  materialized from storage draw the same distinction, and re-serializing a
-  materialized occurrence adds no key beyond those two and drops none the document
-  held and could decode. A mutation comparison reduces differently, and
-  deliberately: the document an assignment would store is reduced with presence
-  preserved, so a member the author omits contributes no key — except a Many,
-  which has no absent state to preserve and contributes the `[]` the store will
-  hold either way — and it is compared whole against the document the row holds.
-  A Many occurrence is an ordered immutable
-  `tuple` of non-null Value Object records and is never nullable: `()` is its
-  sole zero-element value, and a present entry holding `None` or holding a
-  `None` element is invalid. Omission is not invalid — it is that occurrence's
-  own absence form, which materialization carries as `()` rather than leaving
-  out, the same value absence collapse answers with
-  (**Document-resident nullability** below). The same rules apply recursively at
-  every nesting depth.
+  **Presence survives materialization at every containment depth**, whether the
+  member is a top-level occurrence, a nested One, or an element of a Many at any
+  depth: the document reduction the read path performs takes its presence from the
+  source document rather than from the declared member list. Which members that
+  reduction populates is the core read contract (`m-snapshot-read`, *What a
+  materialized value carries*), and `model_fields_set` is this target's whole
+  realization of it — a member the contract says the value carries is inside it and
+  one it says the value does not carry is outside it, including at each position
+  where carried and held part. So a Value Object built by ordinary construction and
+  one materialized from storage draw the same distinction, and re-serializing a
+  materialized occurrence emits exactly the members that contract carries. A
+  mutation comparison reduces differently, and deliberately: the document an
+  assignment would store is reduced with presence preserved, so a member the
+  author omits contributes no key — except a Many, which has no absent state to
+  preserve and contributes the `[]` the store will hold either way — and it is
+  compared whole against the document the row holds.
+  A Many occurrence is an ordered immutable `tuple` of non-null Value Object
+  records and is never nullable: `()` is its sole zero-element value, and a
+  present entry holding `None` or holding a `None` element is invalid. A stored
+  document omitting one is not invalid, and materialization populates the field
+  as `()` for it under the read contract above. The same rules apply recursively
+  at every nesting depth.
 - **Exact immutable Graph Input carriers.** Snapshot Graph Input is a private
   first-party graph of frozen slotted records and exact built-in tuples:
 
@@ -2850,19 +2845,15 @@ or descriptor authoring form and performs no audit stamping.
   inheritance participant additionally carries its stable variant spelling under
   `familyVariant`. Leaves are canonical Wire Values (`m-wire`), the same
   spelling the document codec stores; a temporal end's open bound carries
-  `m-core`'s `infinity` literal. A Value Object occurrence carries the conforming
-  members the stored document HELD, at every depth (`m-snapshot-read`): a leaf or
-  a nullable `one` the document omitted is not a key of the published mapping,
-  while one stored as JSON null is a key whose value is `None`. So a consumer
-  reads presence off the node rather than assuming every declared name is there,
-  and the node is exactly the document `to_document` derives from the Typed value
-  of the same row. Two positions carry a member the document does not hold, and
-  neither is a fill: a `many` always publishes, as `[]` where the document
-  supplied no elements, because it has no absent state; and a non-nullable `one`
-  the document omits publishes `None` under the required-member-absent collapse,
-  with its root classified. One position runs the other way: a leaf the document
-  DOES hold in a spelling its declared type cannot decode is unavailable, so it is
-  no key of the published mapping either, with its root classified.
+  `m-core`'s `infinity` literal. A Value Object occurrence in it is a mapping
+  whose keys are the members the read contract carries, at every depth
+  (`m-snapshot-read`, *What a materialized value carries*) — a member that
+  contract does not carry is no key of it at all, rather than a key holding a
+  `None` the document never stored. So a consumer reads presence off the node
+  rather than assuming every declared name is there, and the node is exactly the
+  document `to_document` derives from the Typed value of the same row: one
+  materialization published two ways, never two answers about one stored
+  occurrence.
 - **Finite unwind.** Relationships render along the requested Include Paths
   rather than the merged identity graph, so a back-reference renders its target
   once, in full, and terminates — never a primary-key stub. A relationship no

@@ -14,12 +14,11 @@ Conversion owns Value Object occurrence reduction after that boundary:
 stored-document presence, container shape, and leaf decoding resolve into
 :class:`~parallax.core.entity._graph_input.ValueObjectOccurrenceInput` /
 :class:`~parallax.core.entity._graph_input.ValueObjectAttributeInput` keyed by
-structured identity. An undeclared stored key never contributes; a leaf or a
-nullable ``one`` the stored document omits contributes no input at all, while one
-stored as JSON null contributes ``None`` — the presence distinction the carriers
-reconstruct. The two positions `m-snapshot-read` carries whatever the document
-held — a ``many``, and a non-nullable ``one`` — contribute their collapse. No raw
-document mapping continues past here.
+structured identity. An undeclared stored key never contributes, and every declared
+one contributes an input exactly where the read contract says the value carries it
+(`m-snapshot-read` *What a materialized value carries*) — this is the seam that
+realizes that contract, so a member present here is the same member a getter and a
+published node agree the value has. No raw document mapping continues past here.
 
 :func:`observable_columns` is the deliberate exception, and it is not below the
 seam: an observation is a physical record by contract (`m-unit-work`'s Predecessor
@@ -517,24 +516,16 @@ def _decode_document(
 def _decode_element(
     raw: object, declared: _VoContainer, entity: EntityIdentity
 ) -> tuple[dict[str, object] | None, tuple[DocumentFinding, ...]]:
-    """One ``one``-shaped document (or array element) reduced to the DECLARED
-    members the stored document holds: a non-mapping collapses to ``None`` — the
-    whole composite absent — never a partial mapping, and a JSON-null leaf answers
+    """One ``one``-shaped document (or array element) reduced to the members the
+    read contract carries: a non-mapping collapses to ``None`` — the whole
+    composite absent — never a partial mapping, and a JSON-null leaf answers
     ``None`` while a present one decodes by its declared Neutral Type.
 
-    A leaf or a nullable ``one`` the stored document omits contributes no key, at
-    every containment depth, so what a read carries forward is the document's own
-    presence rather than the declared member list. That is what lets a
-    materialized occurrence be re-serialized without inventing a key storage never
-    held.
-
-    Two positions are keyed regardless (`m-snapshot-read`), which is why this
-    reduction preserves no presence of its own. A ``many`` has no absent state, so
-    it reduces to the empty collection wherever the document supplied no elements;
-    and a non-nullable ``one`` the document omits is the required-member-absent
-    state, which reduces to the null its collapse gives the position and
-    classifies the root. That is the same reduction the classified row transform
-    applies, so a document decoded here and one decoded there answer alike."""
+    Which declared members become keys is the read contract itself
+    (`m-snapshot-read` *What a materialized value carries*), which is why this
+    reduction takes no presence option of its own: it is the classified reduction,
+    and the same one the classified row transform applies, so a document decoded
+    here and one decoded there answer alike."""
     reduced, findings = reduce_declared_members_classified(occurrence_shape(declared), raw)
     return cast("dict[str, object] | None", reduced), findings
 

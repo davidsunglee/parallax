@@ -415,15 +415,13 @@ def _scenario_read_schedule(
 def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], Row]:
     """A captured port row as the observation ``expectRows`` grades.
 
-    An instance-form step's occurrence is the one the read PUBLISHES, which
-    carries the conforming members the stored document held and drops every
-    undeclared key, exactly as `then.graph` renders the same value. So it comes
-    from the materializer rather than from the row: a direct Column's
-    ``DocumentRead`` carrier never reaches a comparison, an undeclared stored key
-    never enters one, a declared member the document omitted enters one only at
-    the two positions `m-snapshot-read` carries whatever the document held, and a
-    leaf the document held in an undecodable spelling enters none, because it is
-    unavailable rather than a value.
+    An instance-form step's occurrence is the one the read PUBLISHES, exactly as
+    `then.graph` renders the same value. So it comes from the materializer rather
+    than from the row: a direct Column's ``DocumentRead`` carrier never reaches a
+    comparison, an undeclared stored key never enters one, and a declared member
+    enters one exactly where the read contract carries it (`m-snapshot-read` *What
+    a materialized value carries*) rather than wherever the row happens to store
+    something.
     """
 
     def transform(row: Row) -> Row:

@@ -100,6 +100,12 @@ carry this classification are language-surface concerns built over this contract
 
 ## What a materialized value carries
 
+Three questions meet at a materialized Value Object occurrence — **which members
+the value carries**, **what a member reads as**, and **which stored spellings are
+one member's zero** — and this section answers all three. Every other statement of
+them, in this specification or in any surface built over it, is a consequence of
+what is stated here rather than an independent rule.
+
 For a **conforming** member, a materialized Value Object occurrence carries what
 the stored document held: a member the document omits is absent from the
 materialized value, and a member it stores as JSON null is carried, as null. That
@@ -113,8 +119,12 @@ hydration table collapses is where they part — in both directions. Two positio
 are carried though the document held nothing there, and neither is a fill:
 
 - A `Many` occurrence has no absent state. An omitted key, JSON null, and `[]` are
-  three stored spellings of one zero value (`m-document-codec`), so a `Many` is
+  its three stored spellings of one zero value (`m-document-codec`), so a `Many` is
   always carried, as the empty collection where the document supplied no elements.
+  There is no fourth spelling: a non-null value that is not an array of object
+  documents is `ManyWrongKind`, invalid stored data whose root is classified, and
+  hydrating it through the empty collapse below does not make it an alias of the
+  zero.
 - A **non-nullable** `One` occurrence the document omits is the
   `stored-data-required-member-absent` state, whose normative absence collapse is
   what the hydration table above admits. That position is carried as null, and its
@@ -124,15 +134,14 @@ One position runs the other way: a non-null **undecodable leaf** is unavailable,
 so no value of its declared Neutral Type exists to put there, and the materialized
 occurrence omits a key the document did hold, with its root classified. The
 remaining collapses keep their key and lose their content — a wrong-kind `One` is
-carried as its collapse and a wrong-kind `Many` — an array holding a non-object
-element included — as the empty collection. None of these four round trips, and
-none is meant to.
+carried as its collapse, and a wrong-kind `Many` as the empty collection. None of
+these four round trips, and none is meant to.
 
 **What a member reads as and which members a value carries are two questions.** A
-leaf or a `One` occurrence the document omits *reads* as not present — the absence
-collapse `m-predicate` fixes for a query and `m-value-object` fixes for a typed
-getter, both of which answer null for it. A `Many` has no absent state to collapse,
-so it reads as the empty ordered collection its zero value already is. Neither
+leaf or a `One` occurrence the document omits *reads* as not present, and both a
+query's absence collapse (`m-predicate`) and a typed getter (`m-value-object`)
+answer null for it. A `Many` has no absent state to collapse, so it reads as the
+empty ordered collection its zero value already is — never null. Neither
 reading says anything about which keys a value carries, and a representation that
 IS a document — a Wire Snapshot, whose leaves this module's member names key —
 answers the second question rather than the first. A representation with getters
