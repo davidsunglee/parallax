@@ -85,9 +85,11 @@ and eventually consumes the observation once. Effective-change elimination runs
 after this merge. A winning Typed assignment is compared with its Change Record
 original, and a winning Wire assignment is compared with the corresponding
 value in its frozen observed source. Those two originals are one observed value:
-a Wire read publishes the members the stored document held, exactly as a
-hydrated Typed value keeps them, so the peer interfaces cannot reach different
-verdicts about one authored value by observing the same row differently. A
+a Wire read publishes what one materialization carries, position for position
+with a hydrated Typed value — the members the stored document held, plus and
+minus what `m-snapshot-read` fixes at each — so the peer interfaces cannot reach
+different verdicts about one authored value by observing the same row
+differently. A
 wholly eliminated Typed, Wire, or mixed intent emits no DML and consumes no
 observation.
 

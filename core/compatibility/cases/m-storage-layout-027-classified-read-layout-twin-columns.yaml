@@ -7,8 +7,9 @@
 # `profile.street` is required, so a stored profile omitting it contradicts the
 # model and still hydrates: nothing has to be invented, because the normative
 # absence collapse answers what the member reads as. The published occurrence
-# carries the members the document held, so `street` is absent from it rather than
-# rendered as a null the document never stored — the hydratable half of
+# carries the members the document held, and a required leaf is not one of the two
+# positions publication carries regardless, so `street` is absent from it rather
+# than rendered as a null the document never stored — the hydratable half of
 # classification, at both positions a root can carry it. Position
 # 0 is invalid through an INCLUDED node (child 11), position 1 at the ROOT itself,
 # and position 2 through both at once, which is what shows one record carrying the

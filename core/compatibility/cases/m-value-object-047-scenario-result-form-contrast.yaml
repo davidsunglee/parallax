@@ -60,8 +60,8 @@
 # members the stored document held, undeclared keys dropped, the same materialization
 # the graph-read path performs — so every expectRows compares identically on both
 # dialects. Every Supplier fixture stores all four declared members, so nothing here
-# turns on presence; a document short of one publishes an occurrence short of it
-# (m-snapshot-read). Total roundTrips 4 = managed find (1) + resolve read
+# turns on presence; a document short of a member publishes an occurrence short of
+# it wherever that member has an absent state to publish (m-snapshot-read). Total roundTrips 4 = managed find (1) + resolve read
 # (1) + close (1) + verify read (1).
 model: models/supplier.yaml
 tags: [m-value-object, m-txtime-write, m-opt-lock, m-sql, m-unit-work, temporal, audit-only, json, nested, materialize, predicate-write, scenario, slice-snapshot-1]

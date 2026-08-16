@@ -238,9 +238,11 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
     assert root["address"] is None
 
-    # A `many` has no absent state, so a document omitting `phones` HELD the empty
-    # collection and publishing `[]` for it carries the stored value rather than
-    # inventing one — the verdict a leaf and a `one` do not share.
+    # A `many` has no absent state, so a document omitting `phones` stored that
+    # member's one zero value under a spelling that carries no key, and publishing
+    # `[]` for it renders what was stored rather than inventing a value — the
+    # verdict a leaf and a `one` do not share, because for them an omitted key and
+    # a stored null are two states.
     port = QueuePort([[{"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}}]])
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 3}}}
@@ -569,7 +571,10 @@ def test_either_model_provenance_publishes_a_hydratable_record(provenance: str) 
     record = cast("InvalidData[object]", published)
     assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
     # The collapse a hydratable root is published under answers what the required
-    # member READS as; the published document still carries only what was stored.
+    # member READS as; it puts no key back. A required LEAF the document omits
+    # therefore stays absent from the published node, unlike the two positions
+    # publication carries whatever the document held — a `many` and a non-nullable
+    # nested `one`.
     assert "street" not in _mapping(cast("Mapping[str, object]", record.data)["address"])
 
 
