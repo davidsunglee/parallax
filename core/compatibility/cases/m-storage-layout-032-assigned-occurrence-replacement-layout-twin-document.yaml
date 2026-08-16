@@ -1,0 +1,102 @@
+# Relational Document Layout half of the assigned-occurrence replacement proof: the
+# same update assigns both occurrences of item 1 and each is REPLACED whole, at
+# either cardinality, while the member outside them rides forward as stored. Only the
+# physical mutation differs — one flat assignment per occurrence path inside the
+# shared `payload` document instead of one bind per Column.
+#
+# The stored `spec` carries `title`, `note`, a nested `one` `origin`, and a nested
+# `many` `stops`; the assignment names `title` alone. Afterwards `note` and `origin`
+# are gone and `stops` is the empty array, because the author stated a complete value
+# and no stored member is merged back into it — replacement reaches every depth of
+# the occurrence, not just its own level. `marks` shows the same rule at the top
+# level: the two stored elements are gone and the assigned one-element array is the
+# whole of it. `label` was never mentioned, so it is still `north` — and under this
+# layout it survives inside the very document the assignment patches, which is what
+# separates replacing an occurrence from rewriting the Structured Column.
+#
+# The semantic distinction this pair pins down is that the unit of replacement is the
+# ASSIGNED OCCURRENCE — narrower than the row, wider than the members the assignment
+# named. An implementation that patched `payload.spec` member by member would keep
+# `origin`; one that bound a rebuilt whole document would lose `label`.
+# `WriteTwinItem` declares no version and no As-Of Axis, so its Effective Concurrency
+# Strategy is Locking: the write's own resolving read takes the shared row lock that
+# licenses it, and the dependent find takes it again.
+model: models/write-transparency-layout-twin-document.yaml
+tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-opt-lock, m-read-lock, m-sql, scenario, update, json, nested, to-many, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        - mutation: update
+          entity: parallax.compatibility.WriteTwinItem
+          rows:
+            - id: 1
+              spec:
+                title: Pilot
+              marks:
+                - { code: Z }
+      roundTrips: 2
+      note: assign both occurrences, naming one leaf of the `one` and one element of the `many`
+      statements:
+        - sql:
+            postgres: update write_twin set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+            mariadb: update write_twin set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
+          binds:
+            postgres:
+              - '{spec}'
+              - { title: Pilot, stops: [] }
+              - '{marks}'
+              - [{ code: Z }]
+              - 1
+            mariadb:
+              - '$.spec'
+              - { title: Pilot, stops: [] }
+              - '$.marks'
+              - [{ code: Z }]
+              - 1
+    - objectQuery:
+        target: parallax.compatibility.WriteTwinItem
+        predicate:
+          eq:
+            attr: parallax.compatibility.WriteTwinItem.id
+            value: 1
+      roundTrips: 1
+      note: the dependent find observes the replaced occurrences and the untouched `label`
+      statements:
+        - sql:
+            postgres: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id = ? for share of t0
+            mariadb: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id = ? lock in share mode
+          binds: [1]
+      expectRows:
+        - id: 1
+          label: north
+          spec:
+            title: Pilot
+            note: null
+            origin: null
+            stops: []
+          marks:
+            - { code: Z }
+then:
+  roundTrips: 3
+  tableState:
+    write_twin:
+      - id: 1
+        payload:
+          label: north
+          spec:
+            title: Pilot
+            stops: []
+          marks:
+            - { code: Z }
+      - id: 2
+        payload:
+          label: south
+          spec:
+            title: Meridian
+            note: second
+            origin: { country: SE }
+            stops:
+              - { port: Bergen }
+          marks:
+            - { code: C }

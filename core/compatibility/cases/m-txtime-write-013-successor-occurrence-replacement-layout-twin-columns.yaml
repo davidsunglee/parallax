@@ -1,0 +1,75 @@
+# Columns half of the temporal successor proof: a Transaction-Time close chains a
+# successor in which the ASSIGNED occurrence is replaced whole, at depth. Its twin
+# authors the same write and the same round trips under Relational Document Layout.
+#
+# `given.fixtures` loads log 5's single open milestone, whose `spec` carries `title`
+# and a nested `one` `origin`. A temporal step's neutral write input states the whole
+# successor row, so the entry restates `label` and `marks` unchanged and assigns
+# `spec` naming `title` alone. The chained successor therefore holds `spec` with no
+# `origin` at all: the occurrence the author stated is the whole of what is stored
+# there, on the milestone-chaining path exactly as on the in-place one.
+#
+# The semantic distinction this pair pins down is that a successor is not an escape
+# from replacement. An implementation that built the successor by merging the
+# assignment into the milestone it closes would chain a row still carrying `origin`
+# — which would describe a place the new `spec` never named. `when.uow.concurrency`
+# is `locking`, so the close is addressed by the key and the open bound with no
+# observed-milestone gate, and `then.roundTrips` counts the entry's own resolving
+# read beside the two statements.
+model: models/write-transparency-layout-twin-columns.yaml
+tags: [m-txtime-write, m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-sql, write-sequence, update, temporal, audit-only, json, nested, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  writeSequence:
+    - mutation: update
+      entity: parallax.compatibility.WriteTwinLog
+      statements: 2
+      note: restate the unchanged members and assign `spec` naming one leaf — the successor drops the nested `origin` the closed milestone held
+      rows:
+        - id: 5
+          label: voyager
+          spec:
+            title: Coal Run
+          marks:
+            - { code: X }
+      at: "2026-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: update write_twin_log set out_z = ? where id = ? and out_z = ?
+        mariadb: update write_twin_log set out_z = ? where id = ? and out_z = ?
+      binds: ["2026-06-01T00:00:00+00:00", 5, infinity]
+    - sql:
+        postgres: insert into write_twin_log(id, label, in_z, out_z, spec, marks) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into write_twin_log(id, label, in_z, out_z, spec, marks) values (?, ?, ?, ?, ?, ?)
+      binds:
+        - 5
+        - voyager
+        - "2026-06-01T00:00:00+00:00"
+        - infinity
+        - title: Coal Run
+        - - { code: X }
+  tableState:
+    write_twin_log:
+      - id: 5
+        label: voyager
+        in_z: "2026-01-01T00:00:00+00:00"
+        out_z: "2026-06-01T00:00:00+00:00"
+        spec:
+          title: Ore Run
+          origin: { country: "NO" }
+        marks:
+          - { code: X }
+      - id: 5
+        label: voyager
+        in_z: "2026-06-01T00:00:00+00:00"
+        out_z: infinity
+        spec:
+          title: Coal Run
+        marks:
+          - { code: X }
+  roundTrips: 3
