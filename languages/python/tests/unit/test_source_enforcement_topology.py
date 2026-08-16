@@ -89,7 +89,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.materialize._merge", "_graph_input"): frozenset(
         {"EntityAttributeInput", "ValueObjectOccurrenceInput"}
     ),
-    ("parallax.snapshot.materialize._neutral", "_graph_input"): frozenset({"ValueObjectRecord"}),
+    ("parallax.snapshot.materialize._wire", "_graph_input"): frozenset({"ValueObjectRecord"}),
 }
 
 
