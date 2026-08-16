@@ -65,6 +65,20 @@ def build_framework_slot_annotated_value_object() -> type[ValueObject]:
     return BadAnnotatedSlot
 
 
+def build_copy_verb_value_object() -> type[ValueObject]:
+    """A member taking the instance-level copy verb name ``edit``.
+
+    The same harm the Entity reservation prevents, now that a Value Object has a
+    copy verb of its own: this body's descriptor would win the lookup and leave
+    the class with no way to derive an edited copy at all.
+    """
+
+    class BadCopyVerb(ValueObject):
+        edit: Attr[str]  # pyright: ignore[reportIncompatibleMethodOverride] - probe shadows the reserved copy verb `edit` with an attribute
+
+    return BadCopyVerb
+
+
 def build_pydantic_namespace_value_object() -> type[ValueObject]:
     """An unannotated class-body binding in the ``model_*`` namespace."""
 

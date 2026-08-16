@@ -1137,19 +1137,21 @@ supported import path.
 
 **Reserved member names.** A member name may not collide with a name the class
 object already carries, because class-level access is where the typed expression
-surface lives and the class-level name would win. Five families are reserved,
-and a collision fails at class creation (`entity-reserved-member-name`). Two of
-them — the `model_*` namespace and the `__parallax_` prefix — hold over every
-declared class body, an Entity Class and a Value Object Class alike, because
-what they protect is owned by neither declaration surface. The other three are
-the Entity surface itself and hold on an Entity Class only: a Value Object has
-no query root, no declaration protocol, no copy verb, and no temporal member, so
-those spellings are ordinary Value Object members.
+surface lives and the class-level name would win. Six families are reserved,
+and a collision fails at class creation (`entity-reserved-member-name`). Three of
+them — the `model_*` namespace, the `__parallax_` prefix, and the copy verb
+`edit` — hold over every declared class body, an Entity Class and a Value Object
+Class alike, because both kinds carry what they protect. The other three are the
+Entity surface itself and hold on an Entity Class only: a Value Object has no
+query root, no declaration protocol, and no temporal member, so those spellings
+are ordinary Value Object members.
 
 - the query-root and introspection classmethods — `where`, `narrow`, `include`,
-  `as_of`, `as_of_range`, `history`, `meta`, `descriptor` — together with the
-  instance-level copy verb `edit` (§3), which a declared `edit` member would
-  otherwise overwrite, silently disabling editing for that Entity;
+  `as_of`, `as_of_range`, `history`, `meta`, `descriptor`;
+- the instance-level copy verb `edit` (§3), on either kind, because both install
+  one. A declared `edit` member installs its descriptor over the verb and
+  silently disables editing for that class, which is the same harm whichever kind
+  authors it;
 - the `model_*` namespace Pydantic reserves, on either kind, since both are
   Pydantic models;
 - the framework temporal members, on a class whose family extends `TxTemporal`
@@ -1320,10 +1322,10 @@ members `attr(...)` admits the naming and type-shaping options — `name=`,
 together on a `decimal.Decimal` member). Entity-only options fail at class
 creation: storage, keys, generation, locking, and `max_length=` (the schema
 gives a Value Object attribute no length bound). Of the reserved member-name
-families above, the two that are not the Entity surface — `model_*` and the
-`__parallax_` prefix, the latter covering the renderer a Value Object
-serializes itself through — hold over a Value Object class body as well, on a
-declared member and on an unannotated binding alike. An
+families above, the three that are not the Entity surface — `model_*`, the
+`__parallax_` prefix (which covers the renderer a Value Object serializes itself
+through), and the copy verb `edit` (§3) — hold over a Value Object class body as
+well, on a declared member and on an unannotated binding alike. An
 Entity-level occurrence member additionally admits `column=`, the occurrence's
 Structured Column override. When it is omitted, the already-resolved canonical
 occurrence name flows through `default_column_name()` exactly like a scalar
@@ -2520,9 +2522,60 @@ or descriptor authoring form and performs no audit stamping.
   something already represented as "nothing to write", and it would draw a line
   a caller cannot predict: a net-zero edit means the same thing and is not
   detectable at the call site, so only one of the two could ever be refused.
+- **A Value Object has the same copy verb, and the same sealed doors.**
+  `ValueObject.edit(**changes)` returns a validated copy carrying every member the
+  value populates and the caller did not name, changing only what `changes` names:
+
+  ```python
+  customer.edit(address=customer.address.edit(city="Springfield"))
+  ```
+
+  Assigning an occurrence replaces its subtree whole under every Storage Layout
+  (`core/spec/m-storage-layout.md`), so restating a whole address to change one
+  field is what deletes the fields the restatement forgets. This derives the new
+  value from the old one instead, which makes the safe spelling also the shortest
+  one. `edit-nested-path` still refuses reaching *into* an occurrence from
+  outside it, so composing edits is the only spelling of a nested change.
+
+  It is the same verb, not an analogue: one `EditError`, one closed code set, and
+  the same `judge_assignment` verdict over the member's own accepted metadata,
+  reached through the same resolve-judge-rebuild core `Entity.edit` uses. Three
+  things follow from a Value Object having no identity and no Entity, and they are
+  the whole difference:
+
+  - **No Change Record.** None is stamped and none is carried. Provenance answers
+    "what did this object's caller touch", which is a question about an identity a
+    Value Object does not have — an occurrence reaches storage only as part of the
+    Entity containing it, so it is never independently written and the Entity Row
+    Codec never reads one off it.
+  - **Half the code set is unreachable**, structurally rather than by policy.
+    `edit-primary-key`, `edit-read-only`, `edit-framework-owned`, and
+    `edit-relationship-member` each report something `m-value-object` does not
+    have: the declaration engine refuses `primary_key=` and `read_only=` on a
+    Value Object member, framework ownership is derived from an Entity's version
+    Attribute and As-Of Axes, and a Value Object declares no relationships. The
+    reachable subset is therefore `edit-use-edit`, `edit-unknown-member`,
+    `edit-nested-path`, and `edit-value-mismatch`. That is a statement about what
+    this door can raise, not a narrower error class: minting one would give a
+    single rule family two names and two chances to drift.
+  - **Presence is carried forward member by member.** A member the value never
+    populated stays unpopulated and so stays absent from the serialized document,
+    rather than becoming an explicit null; a member named as `None` becomes one.
+    That distinction is what lets a value read from storage be written back
+    unchanged, which is what replacement semantics rest on.
+
+  The inherited copy doors are sealed exactly as an Entity's are — `model_copy`
+  with or without `update=`, `copy`, `__copy__`, `__deepcopy__`, each raising
+  `EditError(edit-use-edit)` before any argument is examined — for a reason of
+  their own. `model_copy(update=...)` writes its values in **without validating
+  them**, so it can build a Value Object no declaration admits: a required member
+  cleared, a leaf holding a value of another type. A structurally invalid
+  occurrence then serializes into the stored document exactly as a valid one does,
+  and under replacement that document is the persisted truth.
 - **Edit refusals are aggregated, coded, and canonically ordered.** One
-  `EditError(ValueError)` covers both authoring surfaces — `edit(...)` here and
-  a predicate write's `Attr.set(...)` (§2) — because the assignment rules are
+  `EditError(ValueError)` covers all three authoring surfaces — `Entity.edit(...)`
+  and `ValueObject.edit(...)` here and a predicate write's `Attr.set(...)` (§2) —
+  because the assignment rules are
   one set with one home. There is no `ModelCopyError` and no `ProvenanceError`;
   the shared judgement carrier stays internal to `parallax.core.metamodel` and
   is never re-exported from top-level `parallax.core`.
@@ -2556,10 +2609,29 @@ or descriptor authoring form and performs no audit stamping.
   `member_name` carrying the authored name; the location degrades to the Entity
   rather than becoming absent, because a member location would have to name a
   member the model does not declare. `edit-use-edit` examines no member, so it
-  carries that same `EntityLocation` and a `member_name` of `None`. The Entity
-  is known at every one of these surfaces, so no violation is ever located at
-  `ModelRoot`. There is deliberately no `.code` attribute: selecting one
+  carries that same `EntityLocation` and a `member_name` of `None`. There is
+  deliberately no `.code` attribute: selecting one
   violation to expose would misreport the others, which is what `codes` is for.
+
+  Every violation of an **Entity** surface locates that way, because the Entity is
+  known at all of them. `ValueObject.edit(...)` is the one surface where none of
+  it holds: a Value Object Class is a reusable shape rather than a position in a
+  model — the same class composes into occurrences of many Entities, and no one of
+  them owns its members — so its violations locate at `ModelRoot`, whatever they
+  refuse and whether or not a member resolved. `member_name` still carries the
+  member, and the message still names it under the class it was addressed
+  through, so a report is no less diagnosable; what it does not do is claim a
+  model position this door never reaches.
+
+  An authored **dotted** name is refused as `edit-nested-path` rather than as an
+  unknown member, on either edit surface. `customer.edit(**{"address.city": ...})`
+  and `address.edit(**{"geo.country": ...})` both name a path below a member's own
+  boundary, which is exactly what `Customer.address.city.set(...)` is refused for:
+  an edit assigns whole members, and a Value Object binds its whole document, so
+  there is no sparse write beneath an occurrence through any door. Reporting the
+  member as unknown would misdiagnose a member the declaration carries perfectly
+  well. Both codes locate the same way, since a dotted name reaches no member
+  either way.
 
   Reporting is **aggregated, not first-failure**, as core ADR 0001 requires.
   Every member the call names is examined and each contributes **at most one**

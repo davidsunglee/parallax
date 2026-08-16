@@ -216,13 +216,21 @@ DECLARATION_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
 """The ``UnresolvedEntityDeclaration`` members the Entity metaclass publishes on
 the class object itself."""
 
-# The reserved query-root and introspection spellings, the instance-level copy
-# verb, plus the declaration members above. A member reusing one either loses to
-# the metaclass declaration at class level or wins over the frontend's own
-# binding — a declared `edit` installs its descriptor over the copy verb and
-# silently disables editing — so the collision is rejected where it is authored.
-# Every name here is part of the Entity surface; a Value Object Class carries no
-# query root, no declaration, and no copy verb, so the family is Entity-only.
+_COPY_VERB_NAME: Final = "edit"
+"""The instance-level copy verb both frontends install.
+
+A declared member of this name installs its descriptor over the verb and silently
+disables editing for that class, which is the same harm on either kind — so this
+is the one public framework binding reserved against an Entity Class and a Value
+Object Class alike.
+"""
+
+# The reserved query-root and introspection spellings plus the declaration
+# members above. A member reusing one either loses to the metaclass declaration at
+# class level or wins over the frontend's own binding, so the collision is
+# rejected where it is authored. Every name here is part of the Entity surface: a
+# Value Object Class carries no query root and no declaration, so the family is
+# Entity-only, and only the copy verb beside it holds on both kinds.
 RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
     {
         "all",
@@ -234,7 +242,7 @@ RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
         "history",
         "meta",
         "descriptor",
-        "edit",
+        _COPY_VERB_NAME,
         *DECLARATION_MEMBER_NAMES,
     }
 )
@@ -1426,11 +1434,12 @@ def _reject_shadowed_class_names(
 def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
     """Why a class body of ``kind`` may not author ``py_name``, or ``None``.
 
-    The framework's own prefix (:data:`FRAMEWORK_NAME_PREFIX`) is answered first
-    and separately, because what a binding under it takes is not a member surface
-    but one of the framework's own private bindings — which both kinds carry, so
-    the two reservations that hold whatever a declaration is come first, and only
-    the Entity surface names follow.
+    The reservations that hold whatever a declaration is come first: the
+    framework's own prefix (:data:`FRAMEWORK_NAME_PREFIX`), because what a binding
+    under it takes is one of the framework's own private bindings rather than a
+    member surface; Pydantic's namespace, because both kinds are Pydantic models;
+    and the copy verb, because both kinds install one. Only the Entity surface
+    names follow.
     """
     if py_name.startswith(FRAMEWORK_NAME_PREFIX):
         return (
@@ -1440,6 +1449,11 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
         )
     if py_name.startswith("model_"):
         return "the `model_*` namespace is reserved by Pydantic"
+    if py_name == _COPY_VERB_NAME:
+        return (
+            f"reuses the instance-level copy verb `{_COPY_VERB_NAME}`, which a declared member "
+            "of that name would overwrite"
+        )
     if kind is DeclarationKind.ENTITY and py_name in RESERVED_MEMBER_NAMES:
         return "reuses a reserved query-root or introspection name"
     return None
