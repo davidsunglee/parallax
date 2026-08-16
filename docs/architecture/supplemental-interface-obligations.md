@@ -4,10 +4,18 @@ Status: provisional and non-normative. Parallax specifications remain authoritat
 
 This note catalogues behaviors the compatibility corpus **structurally cannot
 state**, so that a second language implementation does not have to rediscover
-each one by reasoning its way to the same dead end. Every entry here is real
-shipped behavior; what it lacks is a case, and the reason it lacks a case is a
-property of the case format, the conformance adapter contract, or the reference
+each one by reasoning its way to the same dead end. Every **obligation** here is
+real shipped behavior; what it lacks is a case, and the reason it lacks a case is
+a property of the case format, the conformance adapter contract, or the reference
 harness — never an authoring gap someone forgot to fill.
+
+Not every id here is an obligation. An entry whose stated reason does not survive
+inspection is **withdrawn** and keeps its id as a tombstone, so that the failed
+claim stays visible and the number is never reused. A tombstone obliges nothing
+and the sentences above do not describe it: `SIO-014` was withdrawn because its
+reason was an authoring gap after all, and `SIO-020` because an ordinary
+single-layout case already states its assertion. Both are read apart from an
+obligation mechanically, by the schema below.
 
 ## What this is for
 
@@ -32,7 +40,7 @@ case field (most obligations have no case).
 
 ## How to read an entry
 
-Each entry carries five things:
+Each **obligation** carries five things:
 
 - **Id** — stable. Never reused, never renumbered. A retired obligation keeps its
   id and says what retired it, and so does one withdrawn because its reason did
