@@ -3351,9 +3351,20 @@ or descriptor authoring form and performs no audit stamping.
   member the write removes, so it makes the edit effective rather than passing
   as un-authored; an explicit null and an omitted key stay distinct on both
   sides, the same explicit-versus-defaulted distinction canonical document
-  serialization draws (§3). One authored value therefore earns one answer from
-  this comparison and from the Wire keyed verb's own effective-change set, which
-  weighs the same value against the source its read published.
+  serialization draws (§3). The Wire keyed verb applies that identical rule to
+  its own effective-change set, so one authored value earns one answer from both
+  peer interfaces wherever they weigh it against the same observed value. What
+  the two can disagree about is that value rather than the rule: this comparison
+  weighs the authored member against the hydrated original, whose populated set
+  is what storage held, while the Wire verb weighs it against the node its read
+  published, which fills an absent declared member with null (§4). Against a row
+  storing an occurrence short of a declared member, authoring that member's
+  explicit null is therefore an effective change here and a restoration there —
+  a difference in the DML issued and in what the document then holds, never in
+  the value either stored state hydrates to or the node either publishes.
+  Closing it decides whether a Wire read may distinguish absent from null at
+  all, which is a read contract rather than a comparison, so it is carried open
+  in [`docs/deferred-ledger.md`](../docs/deferred-ledger.md).
 
   **The codec is an authoring codec, never a provenance decorator.** It emits
   only caller-authored identity and domain values in canonical Attribute-keyed

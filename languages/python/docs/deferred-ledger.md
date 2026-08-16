@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-74**.
+Entry numbering is continuous and never reused. The next new number is **D-75**.
 
 ## Entries
 
@@ -331,6 +331,31 @@ contract change across every language target — rather than adjusting a
 comparison. Neither an acceptance criterion nor a corpus case reaches it: no case
 stores a document short of a declared member and then writes that member's null.
 
+### D-74 — No corpus model pairs a versioned root with an unversioned relationship target, so one preference resolving two ways has a single grader
+
+*Medium — shipped behavior proven at one interface instead of two.* **Owned by
+the compatibility corpus, not this target**, and kept here because Python work
+surfaced it and nothing else tracks it. Relates to `core/compatibility/models`,
+`tests/unit/_mixed_strategy_model.py`.
+
+**What.** An Effective Concurrency Strategy is a property of the target Entity,
+so one `optimistic` preference over one connected model resolves per Entity: a
+deep read whose root declares a version and whose related Entity does not emits
+no row lock at the versioned level, the shared row lock at the unversioned one,
+and gates only the versioned target's write. No corpus model pairs a versioned
+root with an unversioned relationship target, so the derivation is witnessed
+only by this target's own model twin
+(`_mixed_strategy_model.py`, read through `test_transaction_reads.py` and
+written through `test_transaction_writes.py`). `m-opt-lock-023` proves the
+one-preference-one-Entity arm alone.
+
+**Why it is deferred rather than fixed.** The shape is perfectly authorable, so
+this is corpus work rather than a limit: a descriptor pairing the two Entities,
+its fixtures, and regenerated storage and table-layout baselines, for an
+observation an interface test already pins exactly. Nothing in the write or read
+contract depends on it, and no acceptance criterion reaches it — what it buys is
+the second grader every other claimed observable has.
+
 ## Forwarding pointers
 
 Removed entries whose number a live document still cites. One line each; drop a
@@ -341,8 +366,8 @@ prose.
 - **D-40** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P4. Eager `fetchall` at the adapter boundary; port-level streaming is [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory).
 - **D-44** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P2. Deep-fetch depth beyond two hops.
 - **D-45** → [COR-86](https://linear.app/flimflam/issue/COR-86/implement-history-with-includes-execution-and-empty-the-deferred). History-with-includes execution.
-- **D-46**, **D-48** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/report-nodes-whose-stored-state-violates-the-declared-model-instead-of). Stored state violating the declared model is detected once, carried as data through graph input and merge, and classified at the result root as a `T | InvalidData[T]` union identically under both Storage Layouts; what still refuses is two staging paths, which D-72 carries.
-- **D-47** → fixed. `reduce_declared_members` gained `preserve_presence`, orthogonal to the `named_by` authored-member mask; `snapshot.materialize._convert._decode_element` passes it. Presence survives materialization at every containment depth, as `python.md` §3 and `core/spec/m-document-codec.md` state.
+- **D-46**, **D-48** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/report-nodes-whose-stored-state-violates-the-declared-model-instead-of). Stored state violating the declared model; the staging residue is D-72.
+- **D-47** → fixed. `reduce_declared_members` preserves member presence at every containment depth, as `python.md` §3 and `core/spec/m-document-codec.md` state.
 - **D-51** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P6, item 6d. A defining to-one whose foreign key sits on the target side.
 - **D-52** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). The silent unbinding it describes was already gone: [COR-89](https://linear.app/flimflam/issue/COR-89/let-an-operation-reference-name-a-namespaced-entity-and-migrate-the) made `targets(model)` register canonical spellings unconditionally and every serialized surface emit `identity.canonical`, so no in-tree producer can supply an ambiguous one. What COR-51 added is classification at the external-producer boundary — `unit_work.instructions._entity` and `snapshot.handle._read._metadata` both raise `reference-ambiguous-entity-name` — so a spelling arriving from outside is one refusal naming both candidates rather than a missing observation binding.
 - **D-57** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). `_identity_row` applies `serialize_member`, so all three Entity Row Codec operations carry one form; `python.md` §5 states that uniform contract in place of the asymmetry, and no golden moved, because a primary key is structurally a scalar Attribute that `serialize_member` passes through unchanged.
@@ -352,11 +377,11 @@ prose.
 - **D-61** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). The envelope half: `validate_execution_observation` has no envelope-grading seam, and `core/spec/m-conformance-adapter.md` *Execution provenance* binds the adapter regardless.
 - **D-62** → closed by [COR-96](https://linear.app/flimflam/issue/COR-96/decide-what-a-row-returning-wrapper-over-a-deep-fetch-means). The shape is retired rather than answered: an Object Query's Includes and its cap are sibling clauses, so a row-returning wrapper OVER a deep fetch has no spelling to reach execution with, on the typed surface or the neutral one. What remains of the neighbourhood is stated positively — a row-form request naming Include Paths is refused by the shared read gate (`handle.preflight`'s `form` argument), and Includes over a scanned temporal axis stay the `snapshot-history-includes` Deferred Execution Feature. That classification is now two field reads over the canonical query — `includes` is non-empty AND some dimension's Temporal Selection is `history` or `asOfRange` (`handle._features`) — rather than a walk looking for a deep fetch under or over a scan, so no clause can stand between a scan and its own classification.
 - **D-63** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). The round-trip half: the eleven `then.roundTrips` authored on `boundary` and retry-shaped `conflict` cases have only this target's suites as a reader, because the harness runs no `api-conformance` lane and a retry-shaped conflict never reaches its round-trip assertion.
-- **D-64** → half closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout), half live. A temporal milestone this engine rebuilds carries declared members and no Structured Column, so under Relational Document Layout the write was refused rather than chained in two places. The grouped-find half is gone: the engine's bridge now reads the observation PRODUCTION filed rather than rebuilding one from a published graph, and production's own observation retains the raw Structured Column, so there is nothing left to refuse. The case-state half — `engine._refuse_unaccounted_document_milestone` — is still live and still called, because a milestone the tracker cannot account for whole is a doubt about what out-of-band statements left in the document, which no change to the write rule removes.
+- **D-64** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout). Both Relational Document Layout milestone refusals it named: the grouped-find one is gone, and the case-state one survives as a settled adapter contract stated at `engine._refuse_unaccounted_document_milestone` rather than as deferred work.
 - **D-65** → [COR-97](https://linear.app/flimflam/issue/COR-97/give-a-transaction-a-supported-abandon-and-the-execution-log-an-abort). A `rollback: true` step's abort sentinel records a `commit`-phase failure and an unclassified retry verdict, which no oracle reads; `engine._AbortingPort` states the untruth and its bound, and COR-97's `Transaction.abandon()` plus an `aborted` attempt status removes the decorator.
 - **D-66** → [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would). A keyed temporal write settling against case state a committed materializing predicate write of the same case moved is refused (`engine._refuse_materialized_case_state`, marked by `temporal_state.TemporalShadow.note_materialized_write`): production resolves and plans that write internally and returns neither, so the adapter would issue a zero-row close where a real caller — who could only reach the step by reading — gets a stale write. COR-99 is the systematic pass over adapter/production divergences of that kind and cites this composition as its motivating example; this refusal is the one hand-placed instance of what that audit generalizes.
 - **D-68** → closed by [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production). `parallax.conformance` reaches a corpus model through the public `domain_model_from_document` door alone and reads the accepted Metamodel's own vocabulary, so no `parallax.descriptor` private import and no `parallax.core._formation_profile` reach survives; `ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at three `parallax.core.entity` entries that `spec/python.md` §7 states as a rebuttal rather than an exemption. One question the accepted model cannot answer survives the conversion, and it is not a model question: the order a document declared its Entities in, which `m-case-format` makes load-bearing for a case naming no target and which `conformance.models.declared_entity_spellings` therefore reads off the decoded document. This target pins that order in a unit assertion of its own (`tests/unit/test_corpus_models.py`), but no compatibility case distinguishes it from the accepted model's canonical order: exactly one case resolves the convention over a model whose two orders disagree (`m-predicate-048`), and it is refused by the same rule under either root. Which order `m-case-format` means is therefore ungated across targets, and [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would) carries it.
-- **D-71** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout) Phase 9. `_row_codec._assignment_matches_original` compares both sides whole and presence-preserving, the fourth and last seam the occurrence collapse falsified; `python.md`'s *Provenance comparison* paragraph and `docs/adr/0003` state the whole comparison, and `test_wire_writes.py` pins the peer agreement the mask broke. The sibling question is unchanged rather than settled: neither side of this comparison can hold a key no member declares, so an occurrence differing only there stays the conservative eliminated arm `m-unit-work` already states.
+- **D-71** → fixed. `_row_codec._assignment_matches_original` compares both sides whole and presence-preserving, as `python.md`'s *Provenance comparison* paragraph and `docs/adr/0003` state.
 
 ## History
 
