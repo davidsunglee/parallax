@@ -77,11 +77,7 @@ from typing import Final, Literal, Protocol, cast
 from parallax.core import opt_lock
 from parallax.core.base import InstantError, normalize_instant
 from parallax.core.db_port import Row
-from parallax.core.document_codec import (
-    mask_managed_members,
-    occurrence_shape,
-    reduce_declared_members,
-)
+from parallax.core.document_codec import occurrence_shape, reduce_declared_members
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import lifecycle_state_of
 from parallax.core.entity._declaration import declaration_of
@@ -1382,9 +1378,12 @@ def normalize_assignment_values(
 ) -> dict[str, object]:
     """Decode each encoded occurrence assignment once into its managed value.
 
-    Scalar assignments already carry managed values. A ``one`` keeps the caller's
-    authored-member mask, while a ``many`` decodes every replacement element whole.
-    The returned mapping is reusable across every row resolved by one predicate write.
+    Scalar assignments already carry managed values. An occurrence decodes to the
+    complete document the assignment would STORE — presence preserved, so a member
+    the author omits contributes no key exactly as an unstored one does — because
+    assigning an occurrence replaces its subtree whole and the comparison below is
+    against a resolved row's own presence-preserving reduction. The returned
+    mapping is reusable across every row resolved by one predicate write.
     """
     occurrence_index: Mapping[str, ValueObjectMetadata] = (
         cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
@@ -1399,11 +1398,11 @@ def normalize_assignment_values(
         if occurrence.multiplicity is Multiplicity.MANY:
             encoded = list(cast("tuple[object, ...]", value)) if isinstance(value, tuple) else value
             normalized[member] = [
-                reduce_declared_members(shape, element, named_by=element)
+                reduce_declared_members(shape, element, preserve_presence=True)
                 for element in cast("Sequence[object]", encoded)
             ]
         else:
-            normalized[member] = reduce_declared_members(shape, value, named_by=value)
+            normalized[member] = reduce_declared_members(shape, value, preserve_presence=True)
     return normalized
 
 
@@ -1426,9 +1425,12 @@ def is_no_op_assignment(
     is a no-op in either spelling.
 
     ``assignments`` has already crossed :func:`normalize_assignment_values` once
-    for the whole predicate write. A ``one`` comparison applies that codec-owned
-    authored-member mask to the managed row; a ``many`` compares its whole ordered
-    replacement without decoding either side again.
+    for the whole predicate write, so an occurrence arrives as the complete
+    document the assignment would store and is compared against the row's whole
+    decoded occurrence, without decoding either side again. Nothing is masked by
+    the members the author named: assigning an occurrence replaces its subtree,
+    so an omitted declared member the row does hold is a change like any other,
+    and eliminating that write would leave stored state the assignment removes.
 
     This is the ONE narrow result-dependent normalization a materializing
     resolve performs while streaming: a resolved row an assignment-bearing
@@ -1442,14 +1444,13 @@ def is_no_op_assignment(
     for member, value in assignments.items():
         stored = row.get(member_columns[member][0])
         occurrence = occurrence_index.get(member)
-        if occurrence is None:
-            compared = stored
-        elif occurrence.multiplicity is Multiplicity.MANY:
-            compared = (
-                list(cast("tuple[object, ...]", stored)) if isinstance(stored, tuple) else stored
-            )
-        else:
-            compared = mask_managed_members(stored, value)
+        compared = (
+            list(cast("tuple[object, ...]", stored))
+            if occurrence is not None
+            and occurrence.multiplicity is Multiplicity.MANY
+            and isinstance(stored, tuple)
+            else stored
+        )
         if value != compared:
             return False
     return True

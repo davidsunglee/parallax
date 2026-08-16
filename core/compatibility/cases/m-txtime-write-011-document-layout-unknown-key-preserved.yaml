@@ -18,8 +18,8 @@
 # successor from `title`, `crew`, and `manifest` would produce a document that reads
 # back identically for every declared member and has silently destroyed the rest.
 #
-# The contrast is m-txtime-write-012, which assigns both occurrence kinds and pins
-# preservation inside a `one` against whole-array replacement for a `many`.
+# The contrast is m-txtime-write-012, which ASSIGNS `manifest` and therefore replaces
+# its subtree whole, destroying the same `sealNumber` this case carries forward.
 model: models/document-layout.yaml
 tags: [m-txtime-write, m-storage-layout, m-document-codec, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

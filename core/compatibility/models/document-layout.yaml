@@ -203,8 +203,8 @@ entities:
             nullable: true
   # Charter: the Bitemporal member. Four bound Attributes stay direct and the
   # rectangle split chains head / middle / tail milestones, each carrying a whole
-  # document. Assigning `terms` recursively patches only its named declared members,
-  # so undeclared and omitted keys inside it survive along with keys outside it.
+  # document. Assigning `terms` replaces that occurrence's subtree whole, so nothing
+  # stored inside it survives; keys outside it ride forward as stored.
   - name: Charter
     namespace: parallax.compatibility
     table: charter

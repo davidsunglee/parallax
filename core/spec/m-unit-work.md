@@ -655,14 +655,19 @@ anyway, and this rule says only that the observation path carries the value
 forward instead of discarding it once known members are decoded.
 
 The successor is then built by patching that retained document
-(`m-document-codec`) rather than by re-encoding decoded members. That is what
-preserves keys a newer application version wrote: an application that predates a
-key it never declares still carries that key across a close-and-insert. An
-explicitly assigned `one` occurrence follows the same rule recursively: it
-patches only the declared members its authored document names. An omitted
-nullable member remains stored, an explicitly null occurrence stores JSON null,
-and a key no member declares is untouched. A `many` assignment replaces its
-ordered array whole because its elements have no identity by which to merge.
+(`m-document-codec`) **at the assigned paths alone** rather than by re-encoding
+decoded members. That is what preserves keys a newer application version wrote:
+an application that predates a key it never declares still carries that key
+across a close-and-insert, and so does every member the mutation left alone.
+
+An assigned occurrence is where the carry-forward stops. Assigning one replaces
+the subtree stored at its path, whole and at either cardinality, so an omitted
+declared member is absent in the successor and a key no member declares does not
+survive inside it — the author stated a complete value, and no stored member is
+merged back into it. An explicitly null occurrence stores JSON null. Everything
+outside an assigned occurrence — every unassigned occurrence, every unassigned
+document-resident Attribute, and every undeclared key at any position the
+mutation did not name — rides forward exactly as stored.
 
 ### Comparing an assigned member with its persisted value
 
@@ -680,12 +685,18 @@ is therefore a no-op — it issues no DML, advances no version, and consults no
 clock — exactly as assigning null to an already-null Column is.
 
 A **whole Value Object occurrence** compares through `m-document-codec`'s one
-declared-member reduction: recursively for a `one` and element-wise in stored
-order for a `many`. A key no member declares takes no part on either side. A
-`one` member omitted by the authored document takes no part either, because the
-assignment leaves it untouched. An occurrence that differs only in undeclared
-keys is therefore equal, matching the mutation's observable effect. Key order
-and insignificant whitespace never make two otherwise equal documents differ.
+declared-member reduction, presence preserved on both sides: recursively for a
+`one` and element-wise in stored order for a `many`. A key no member declares
+takes no part on either side, so an occurrence that differs only in undeclared
+keys is equal and its write is eliminated. That leaves the undeclared key
+standing where issuing the write would have replaced the subtree and removed it,
+and the elimination is deliberately the conservative direction: an assignment
+cannot name such a key, so a write with nothing declared to say is not the place
+to destroy one. A declared member the authored document omits DOES take part,
+because the assignment removes it: the two sides compared are the complete
+document the assignment would store and the complete document the row holds. Key
+order and insignificant whitespace never make two otherwise equal documents
+differ.
 
 ### Write Gate and the concurrency decision
 

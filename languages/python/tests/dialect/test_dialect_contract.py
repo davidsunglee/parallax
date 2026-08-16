@@ -38,8 +38,7 @@ from parallax.core.dialect import (
     POSTGRES,
     Dialect,
     DocumentLeafAssignment,
-    DocumentManyAssignment,
-    DocumentOneAssignment,
+    DocumentValueAssignment,
     dialect_for,
 )
 
@@ -218,8 +217,8 @@ def test_document_mutation_carries_a_composite_as_the_document_and_a_scalar_as_j
     _, binds = dialect.document_mutation(
         "payload",
         [
-            DocumentLeafAssignment(("address",), {"city": "Oslo"}),
-            DocumentManyAssignment(("tags",), [{"label": "x"}]),
+            DocumentValueAssignment(("address",), {"city": "Oslo"}),
+            DocumentValueAssignment(("tags",), [{"label": "x"}]),
             DocumentLeafAssignment(("score",), None),
             DocumentLeafAssignment(("active",), True),
         ],
@@ -231,39 +230,21 @@ def test_document_mutation_carries_a_composite_as_the_document_and_a_scalar_as_j
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_occurrence_mutation_guards_and_writes_back_each_parent(dialect: Dialect) -> None:
+def test_an_occurrence_assignment_is_one_call_over_its_own_path(dialect: Dialect) -> None:
+    # The seam renders both nodes of the algebra identically, because an assigned
+    # occurrence hands it one already-encoded document for one absolute path. There
+    # is no type test and no write-back: only the FINAL path segment has to be
+    # created, and a top-level occurrence's parent is the document root itself.
     sql, binds = dialect.document_mutation(
         "payload",
         [
-            DocumentOneAssignment(
-                ("manifest",),
-                (
-                    DocumentOneAssignment(
-                        ("origin",),
-                        (DocumentLeafAssignment(("city",), "Oslo"),),
-                    ),
-                ),
-            )
+            DocumentValueAssignment(("manifest",), {"origin": {"city": "Oslo"}}),
+            DocumentValueAssignment(("berths",), None),
         ],
     )
-    assert sql.count("jsonb_typeof") == 2
-    assert sql.count("else cast(? as jsonb) end") == 2
-    assert sql.startswith("jsonb_set(payload, ?, ")
-    assert "jsonb_set(case when" in sql
-    assert binds == [
-        "{manifest}",
-        "{manifest}",
-        "object",
-        "{manifest}",
-        "{}",
-        "{origin}",
-        "{manifest,origin}",
-        "object",
-        "{manifest,origin}",
-        "{}",
-        "{city}",
-        '"Oslo"',
-    ]
+    assert "jsonb_typeof" not in sql
+    assert sql == ("jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb))")
+    assert binds == ["{manifest}", {"origin": {"city": "Oslo"}}, "{berths}", "null"]
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

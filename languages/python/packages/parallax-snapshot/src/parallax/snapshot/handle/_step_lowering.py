@@ -31,8 +31,7 @@ from parallax.core.dialect import (
     Dialect,
     DocumentAssignment,
     DocumentLeafAssignment,
-    DocumentManyAssignment,
-    DocumentOneAssignment,
+    DocumentValueAssignment,
 )
 from parallax.core.document_codec import (
     NULL,
@@ -42,8 +41,7 @@ from parallax.core.document_codec import (
     Presence,
     Present,
     SetLeaf,
-    SetMany,
-    SetOccurrence,
+    SetValue,
     apply_patches,
     encode_document,
     encode_leaf,
@@ -101,12 +99,12 @@ __all__ = ["lower_step"]
 
 @dataclass(frozen=True, slots=True)
 class _DocumentAssignments:
-    """The ordered mutation trees for one revising statement's Structured Column.
+    """The ordered path assignments for one revising statement's Structured Column.
 
-    A revising statement PATCHES rather than replaces (`m-storage-layout`): leaf
-    and ``many`` entries assign encoded values, while ``one`` entries recursively
-    guard and patch nested occurrences. The sequence is canonical logical
-    placement order, which both dialects apply left to right (`m-dialect`).
+    A revising statement never rewrites the Column whole (`m-storage-layout`): it
+    assigns one complete encoded value per path the step names, and every other
+    key of the document stands. The sequence is canonical logical placement order,
+    which both dialects apply left to right (`m-dialect`).
     """
 
     assignments: tuple[DocumentAssignment, ...]
@@ -590,13 +588,14 @@ def _successor_document(
     """One opening row's Structured Column, given the milestone it succeeds.
 
     A row that succeeds a milestone whose observation retained the predecessor's
-    raw document is composed by PATCHING that document, so every key it carries
-    survives the close-and-insert — a key a newer application version wrote
-    included (`m-document-codec`, `m-unit-work`). Only the members whose value the
-    mutation actually changed are patched: a member the successor carries forward
-    is already spelled in the retained document, and re-encoding it from its
-    decoded value would rebuild the subtree an occurrence holds and drop the
-    unknown keys inside it.
+    raw document is composed by PATCHING that document at the assigned paths
+    alone, so every key it carries outside them survives the close-and-insert — a
+    key a newer application version wrote included (`m-document-codec`,
+    `m-unit-work`). Only the members whose value the mutation actually changed are
+    patched: a member the successor carries forward is already spelled in the
+    retained document, and re-encoding it from its decoded value would rebuild the
+    subtree an occurrence holds and drop the unknown keys inside it — an
+    assignment the author never made.
 
     Without a retained document there is nothing to preserve — a new lineage opens
     no predecessor, and an observation that read no row knows no key this model
@@ -631,8 +630,8 @@ def _successor_patches(
     provenance, while the document is a value the observation's two paths spell
     differently (a materialized occurrence carries the declared members decoded by
     type, the stored subtree carries every key as written), and a carried
-    occurrence misread as changed would be rebuilt from declared members and drop
-    every key no member names.
+    occurrence misread as changed would be REPLACED by its declared members and
+    lose every key no member names.
 
     Order is canonical logical placement order, which both the in-memory patch and
     the equivalent path-patched `UPDATE` apply left to right (`m-storage-layout`).
@@ -657,12 +656,9 @@ def _successor_patches(
         ):
             continue
         raw = value_objects[occurrence.identity]
-        if occurrence.multiplicity is Multiplicity.MANY:
-            patches.append(SetMany(path, _occurrence_document(occurrence, raw)))
-        else:
-            patches.append(
-                SetOccurrence(path, None if raw is None else _occurrence_document(occurrence, raw))
-            )
+        patches.append(
+            SetValue(path, None if raw is None else _occurrence_document(occurrence, raw))
+        )
     return tuple(patches)
 
 
@@ -673,12 +669,13 @@ def _patches(
 ) -> tuple[DocumentAssignment, ...]:
     """The ordered path assignments a revising statement applies.
 
-    A revising statement patches only the paths it assigns, so every key it does
+    A revising statement writes only the paths it assigns, so every key it does
     not name survives — a model member the step left alone and a key a newer
     application version wrote alike (`m-storage-layout`). An assigned ``None``
     writes JSON null rather than removing the key, which is the one not-present
-    state a NULL Column also has. A ``one`` recursively patches only named declared
-    members, while a ``many`` replaces its ordered array whole.
+    state a NULL Column also has. An assigned occurrence binds its WHOLE document
+    at its own path, whatever its cardinality, so nothing inside the subtree it
+    replaces survives.
     """
     patches: list[DocumentAssignment] = []
     for attribute, path in resident.attributes:
@@ -690,55 +687,12 @@ def _patches(
     for occurrence, path in resident.value_objects:
         if occurrence.identity in value_objects:
             raw = value_objects[occurrence.identity]
-            patches.append(_occurrence_assignment(occurrence, path, raw))
+            patches.append(
+                DocumentValueAssignment(
+                    path, None if raw is None else _occurrence_document(occurrence, raw)
+                )
+            )
     return tuple(patches)
-
-
-def _occurrence_assignment(
-    occurrence: ValueObjectMetadata, path: tuple[str, ...], raw: object
-) -> DocumentAssignment:
-    if occurrence.multiplicity is Multiplicity.MANY:
-        return DocumentManyAssignment(path, _occurrence_document(occurrence, raw))
-    if raw is None:
-        return DocumentOneAssignment(path, None)
-    shape = occurrence_shape(occurrence)
-    return DocumentOneAssignment(path, _element_assignments(shape, raw))
-
-
-def _element_assignments(shape: DocumentShape, value: object) -> tuple[DocumentAssignment, ...]:
-    raw: Mapping[str, object] = (
-        cast("Mapping[str, object]", value)
-        if isinstance(value, Mapping)
-        else cast("Mapping[str, object]", {})
-    )
-    assignments: list[DocumentAssignment] = []
-    for member in shape.members:
-        if member.name not in raw:
-            continue
-        nested = raw[member.name]
-        path = (member.name,)
-        if isinstance(member, Leaf):
-            assignments.append(
-                DocumentLeafAssignment(path, None if nested is None else _leaf(member.type, nested))
-            )
-        elif member.multiplicity is Multiplicity.MANY:
-            elements = cast("Sequence[object]", nested)
-            assignments.append(
-                DocumentManyAssignment(
-                    path,
-                    encode_many(
-                        member.shape,
-                        [_element_presences(member.shape, element) for element in elements],
-                    ),
-                )
-            )
-        else:
-            assignments.append(
-                DocumentOneAssignment(
-                    path, None if nested is None else _element_assignments(member.shape, nested)
-                )
-            )
-    return tuple(assignments)
 
 
 def _occurrence_of(placed: PlacedMembers, identity: ValueObjectIdentity) -> ValueObjectMetadata:

@@ -287,11 +287,12 @@ mutations, exceptions, or exports.
   an assignment-bearing mutation checks nonemptiness, duplicates, and exact
   target compatibility when combining already-valid Assignments with its
   Object Query.
-  Under Relational Document Layout, assigning a `one` recursively patches only
-  the declared members that rendered document names; omitted nullable members
-  remain stored and explicit `None` stores JSON null. Assigning a `many` replaces
-  its ordered array whole. This changes physical mutation granularity without
-  making a nested member independently assignable.
+  Under Relational Document Layout, assigning an occurrence binds the whole
+  document that rendered assignment states at the occurrence's own Document Path,
+  at either cardinality, and replaces the subtree stored there; an explicit `None`
+  stores JSON null. Every path the statement does not assign is left standing.
+  This changes physical mutation granularity without making a nested member
+  independently assignable.
 - **Opaque immutable Object Query.** `ObjectQuery[E, S]` — the Entity QUERIED and
   the Entity the result RETURNS, which `narrow` and only `narrow` moves — is
   exported for annotations
@@ -1965,10 +1966,9 @@ or descriptor authoring form and performs no audit stamping.
   declared member list. So a Value Object built by ordinary construction and one
   materialized from storage draw the same distinction, and re-serializing a
   materialized occurrence neither invents a key storage omitted nor drops one it
-  held. Preserving presence is a distinct option on the reduction from the
-  authored-member mask a mutation comparison supplies, and the two are not
-  interchangeable: one asks which members **this document** holds, the other asks
-  which members the **caller** authored.
+  held. A mutation comparison reduces the same way, on both sides: an assignment
+  states the complete value its occurrence will hold, so the document it would
+  store is compared whole against the document the row holds.
   A Many occurrence is an ordered immutable
   `tuple` of non-null Value Object records and is never nullable: `()` is its
   sole zero-element value, and a present entry holding `None` or holding a

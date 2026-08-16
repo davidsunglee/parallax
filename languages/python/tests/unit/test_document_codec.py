@@ -48,8 +48,7 @@ from parallax.core.document_codec import (
     Occurrence,
     Present,
     SetLeaf,
-    SetMany,
-    SetOccurrence,
+    SetValue,
     apply_patches,
     comparison_text,
     decode_located_member_classified,
@@ -619,17 +618,17 @@ def test_a_leaf_patch_spells_its_value_through_the_encoding_table() -> None:
     assert apply_patches(_SHAPE, {"flag": True}, [SetLeaf(("flag",), MISSING)]) == {}
 
 
-def test_an_occurrence_patch_preserves_omitted_and_undeclared_members() -> None:
+def test_an_occurrence_patch_replaces_the_whole_subtree_it_names() -> None:
     stored = {"unknown": 1, "origin": {"city": "Oslo", "unknown": 2}}
     replaced = apply_patches(
         _SHAPE,
         stored,
-        [SetOccurrence(("origin",), encode_document(shape_of_declaration(_ORIGIN), {}))],
+        [SetValue(("origin",), encode_document(shape_of_declaration(_ORIGIN), {}))],
     )
-    assert replaced == {"unknown": 1, "origin": {"city": "Oslo", "unknown": 2}}
+    assert replaced == {"unknown": 1, "origin": {}}
 
 
-def test_occurrence_patch_arms_keep_one_and_many_semantics_distinct() -> None:
+def test_both_cardinalities_replace_their_subtree_and_null_stores_json_null() -> None:
     stored = {
         "origin": {"city": "Oslo", "unknown": 2},
         "entries": [{"kind": "old", "unknown": 3}],
@@ -638,21 +637,21 @@ def test_occurrence_patch_arms_keep_one_and_many_semantics_distinct() -> None:
         _SHAPE,
         stored,
         [
-            SetOccurrence(("origin",), {"city": "Bergen"}),
-            SetMany(("entries",), [{"kind": "new"}]),
+            SetValue(("origin",), {"city": "Bergen"}),
+            SetValue(("entries",), [{"kind": "new"}]),
         ],
     )
     assert patched == {
-        "origin": {"city": "Bergen", "unknown": 2},
+        "origin": {"city": "Bergen"},
         "entries": [{"kind": "new"}],
     }
-    assert apply_patches(_SHAPE, stored, [SetOccurrence(("origin",), None)]) == {
+    assert apply_patches(_SHAPE, stored, [SetValue(("origin",), None)]) == {
         "origin": None,
         "entries": [{"kind": "old", "unknown": 3}],
     }
 
 
-def test_an_occurrence_document_recursively_selects_one_and_many_patch_arms() -> None:
+def test_replacement_reaches_every_depth_of_the_subtree_it_names() -> None:
     wrapper = DocumentShape(
         (
             Occurrence(
@@ -672,7 +671,7 @@ def test_an_occurrence_document_recursively_selects_one_and_many_patch_arms() ->
             }
         },
         [
-            SetOccurrence(
+            SetValue(
                 ("profile",),
                 {"origin": {"city": "Bergen"}, "entries": [{"kind": "new"}]},
             )
@@ -680,17 +679,10 @@ def test_an_occurrence_document_recursively_selects_one_and_many_patch_arms() ->
     )
     assert patched == {
         "profile": {
-            "origin": {"city": "Bergen", "unknown": 1},
+            "origin": {"city": "Bergen"},
             "entries": [{"kind": "new"}],
         }
     }
-
-
-def test_occurrence_patch_kind_mismatches_are_refused() -> None:
-    with pytest.raises(ValueError, match="many"):
-        apply_patches(_SHAPE, {}, [SetMany(("day",), [])])
-    with pytest.raises(ValueError, match="SetMany"):
-        apply_patches(_SHAPE, {}, [SetOccurrence(("entries",), [])])
 
 
 def test_declared_member_reduction_is_recursive_and_assignment_scoped() -> None:
@@ -777,10 +769,10 @@ def test_a_patch_whose_kind_contradicts_its_member_is_refused_both_ways() -> Non
     # The pairing is exclusive both ways. Applying either mismatch would build a
     # document the same shape reads back as invalid stored data — a leaf holding an
     # object, or an occurrence holding a scalar.
-    with pytest.raises(ValueError, match="SetOccurrence"):
+    with pytest.raises(ValueError, match="SetValue"):
         apply_patches(_SHAPE, {}, [SetLeaf(("origin",), Present("Oslo"))])
     with pytest.raises(ValueError, match="SetLeaf"):
-        apply_patches(_SHAPE, {}, [SetOccurrence(("day",), {})])
+        apply_patches(_SHAPE, {}, [SetValue(("day",), {})])
 
 
 def test_a_returned_document_shares_no_mutable_state_with_one_passed_in() -> None:
@@ -793,7 +785,7 @@ def test_a_returned_document_shares_no_mutable_state_with_one_passed_in() -> Non
     cast("list[dict[str, object]]", patched["entries"])[0]["kind"] = "work"
     assert stored == {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]}
     # The same holds for the occurrence documents `encode` composes and the subtrees
-    # `decode` and `SetOccurrence` hand back.
+    # `decode` and `SetValue` hand back.
     origin = {"city": "Oslo"}
     encoded = encode_document(_SHAPE, {"origin": Present(origin)})
     cast("dict[str, object]", encoded["origin"])["city"] = "Bergen"
@@ -802,9 +794,7 @@ def test_a_returned_document_shares_no_mutable_state_with_one_passed_in() -> Non
     assert isinstance(answered, Present)
     cast("dict[str, object]", answered.value)["city"] = "Tromso"
     assert origin == {"city": "Oslo"}
-    replaced = cast(
-        "dict[str, object]", apply_patches(_SHAPE, {}, [SetOccurrence(("origin",), origin)])
-    )
+    replaced = cast("dict[str, object]", apply_patches(_SHAPE, {}, [SetValue(("origin",), origin)]))
     cast("dict[str, object]", replaced["origin"])["city"] = "Alta"
     assert origin == {"city": "Oslo"}
 
