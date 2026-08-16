@@ -183,6 +183,8 @@ _Avoid_: Neutral API, Wire transaction, format selector, descriptor mode
 **Wire Entity Mapping**:
 The mapping-shaped Python representation of one Entity node in a Wire Snapshot,
 keyed by declared member names and carrying no serialized framework metadata.
+Its Value Object occurrences carry the members the stored document held, so a
+declared member the row never stored is a key the mapping does not have.
 It may retain a core Source Hint privately without changing its mapping value.
 The hint identifies the concrete Entity and original Object Key and optionally
 an exact observed state; an unversioned Non-Temporal source has no observed
