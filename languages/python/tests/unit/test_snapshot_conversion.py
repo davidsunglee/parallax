@@ -477,18 +477,26 @@ def test_a_null_top_level_document_collapses_to_an_absent_occurrence() -> None:
     assert _occurrence(node, "address") is None
 
 
-def test_a_nested_member_the_document_omits_contributes_no_input_at_all() -> None:
+def test_an_omitted_nested_one_contributes_nothing_while_an_omitted_many_is_carried_empty() -> None:
     # Presence is the stored document's own fact, so a key it never held reaches
     # the graph input as nothing rather than as an entry holding the collapse.
     # That is what keeps the member outside the frozen carrier's
     # `model_fields_set`, so re-serializing the occurrence cannot spell an
     # omission as an explicit null. What a caller READS for such a member is
-    # still `None` / `()`; that collapse belongs to construction and is pinned
-    # where the frozen value is built.
+    # still `None`; that collapse belongs to construction and is pinned where the
+    # frozen value is built.
+    #
+    # `phones` is the position that rule does not reach: a `many` has no absent
+    # state, so an omitted key is one of its three zero spellings and the value
+    # carries it as the empty collection (`m-snapshot-read`). This decode is the
+    # fallback one — no member of the row arrives preclassified — and it has to
+    # answer exactly as the classified row transform does.
     node = _converted(
         CUSTOMER, "Customer", {"id": 5, "name": "Kavi", "address": {"street": "x", "city": "y"}}
     )
-    assert _names(cast("ValueObjectRecord", _occurrence(node, "address"))) == {"street", "city"}
+    address = cast("ValueObjectRecord", _occurrence(node, "address"))
+    assert _names(address) == {"street", "city", "phones"}
+    assert _nested(address, "phones") == ()
 
 
 def test_a_nested_occurrence_stored_in_a_kind_it_forbids_collapses_while_present() -> None:

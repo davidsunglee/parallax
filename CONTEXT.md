@@ -535,9 +535,10 @@ A plain-value tree returned by a Wire read, keyed by declared model member names
 encoded with canonical Wire Values, and unwound only along the finite requested
 Include Paths. It exposes no graph identity or framework metadata. A Value Object
 occurrence in it carries the members the stored document held rather than one key
-per declared member, so a consumer reads presence off it and re-serializing it
-stores what was stored; the exceptions are the two positions `m-snapshot-read`
-carries regardless of the document, a `many` and a non-nullable `one`.
+per declared member, so a consumer reads presence off it and re-serializing a
+conforming one stores what was stored; the exceptions are the two positions
+`m-snapshot-read` carries regardless of the document, a `many` and a non-nullable
+`one`. Stored state a hydration rule collapses reserializes as that collapse.
 _Avoid_: Domain Snapshot, Neutral Graph, serialized Snapshot Graph, physical row
 
 **StoredDataIssue**:

@@ -206,10 +206,17 @@ def _classify_member(
 def reduce_declared_members_classified(
     shape: DocumentShape,
     document: object,
-    *,
-    preserve_presence: bool = False,
 ) -> tuple[object, tuple[DocumentFinding, ...]]:
-    """Reduce one requested occurrence while returning every shape finding as data."""
+    """Reduce one requested occurrence while returning every shape finding as data.
+
+    This is the reduction a READ applies, so which members it keys is the read
+    contract rather than an option: a member the document holds contributes its
+    decoded value, a member it omits contributes nothing, and the two positions
+    `m-snapshot-read` carries whatever the document held contribute their collapse
+    — a `many` its empty collection, a non-nullable `one` its null. Presence
+    preservation belongs to the plain reduction, whose consumer is the mutation
+    comparison's authored side.
+    """
     if document is None:
         return None, ()
     if not isinstance(document, Mapping):
@@ -221,8 +228,6 @@ def reduce_declared_members_classified(
         held = member.name in source
         classified = _classify_member(member, source.get(member.name, MISSING), (member.name,))
         findings.extend(classified.findings)
-        if preserve_presence and not held and not classified.findings:
-            continue
         if isinstance(classified.presence, Unavailable):
             reduced[member.name] = UNAVAILABLE
             continue
@@ -240,9 +245,7 @@ def reduce_declared_members_classified(
             )
             elements: list[object] = []
             for index, item in enumerate(documents):
-                nested, nested_findings = reduce_declared_members_classified(
-                    member.shape, item, preserve_presence=preserve_presence
-                )
+                nested, nested_findings = reduce_declared_members_classified(member.shape, item)
                 elements.append(nested)
                 findings.extend(
                     DocumentFinding(finding.code, (member.name, index, *finding.path))
@@ -252,9 +255,7 @@ def reduce_declared_members_classified(
             continue
         if isinstance(classified.presence, Present):
             nested, nested_findings = reduce_declared_members_classified(
-                member.shape,
-                classified.presence.value,
-                preserve_presence=preserve_presence,
+                member.shape, classified.presence.value
             )
             reduced[member.name] = nested
             findings.extend(

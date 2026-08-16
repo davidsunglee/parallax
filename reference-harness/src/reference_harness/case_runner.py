@@ -3132,18 +3132,21 @@ def _project_members(vo: dict[str, Any], obj: Any) -> dict[str, Any]:
     Undeclared keys are omitted and each declared member the document HOLDS is
     decoded by its declared type (:func:`decode_leaf`) rather than copied out,
     because the document stores the codec's portable spelling. What the projection
-    does not do is fill: a leaf or a ``one`` the document omits contributes no key,
-    so re-serializing the projection stores what was stored, and a document short
-    of a member stays distinguishable from one holding that member's JSON null
-    (m-document-codec "Presence inside a Value Object subtree is not collapsed").
-    Absence is what a member READS as — the collapse the read predicates apply —
-    and that is a different question from which keys a document carries.
+    does not do is fill: a leaf or a nullable ``one`` the document omits contributes
+    no key, so re-serializing a conforming projection stores what was stored, and a
+    document short of a member stays distinguishable from one holding that member's
+    JSON null (m-document-codec "Presence inside a Value Object subtree is not
+    collapsed"). Absence is what a member READS as — the collapse the read
+    predicates apply — and that is a different question from which keys a document
+    carries.
 
     Two declarations put a key back regardless. A non-nullable ``one`` the document
     omits is the required-member-absent state, whose normative collapse gives the
     position its null, and a ``many`` always publishes because it has no absent
-    state. A non-object element inside a ``many`` array holds no member of any
-    name and projects to the empty object.
+    state. Stored state a hydration rule collapses does not round trip either: a
+    wrong-kind ``one`` projects to ``None``, a wrong-kind ``many`` to ``[]``, and a
+    non-object element inside a ``many`` array holds no member of any name and
+    projects to the empty object.
     """
     source = obj if isinstance(obj, dict) else {}
     node: dict[str, Any] = {}

@@ -541,8 +541,10 @@ def _held_members(record: object, declared: _VoContainer, carrier: _Carrier) -> 
     the carrier decides which of those positions become keys: a member it does not
     hold is absent from the published mapping rather than filled with a value the
     document never carried. Absence is therefore something a consumer reads, and
-    re-serializing a published occurrence stores what was stored, apart from the
-    two collapsed positions below.
+    re-serializing an occurrence published from a CONFORMING document stores what
+    was stored, apart from the two carried positions below. Stored state the
+    hydration rules collapse — a wrong-kind ``one`` or ``many``, an undecodable
+    leaf — reserializes as its collapse instead, with its root classified.
 
     Presence is the carrier's whole answer, so nothing here re-derives it — which
     is also why the two positions `m-snapshot-read` carries regardless of the

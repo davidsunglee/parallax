@@ -1961,21 +1961,26 @@ or descriptor authoring form and performs no audit stamping.
   and an entry present as `None` sits inside it — which is what lets canonical
   document serialization omit the former and emit the latter as explicit null.
   **Presence survives materialization at every containment depth.** A Value
-  Object read back from storage reports as present exactly the members the
-  stored document carried, whether it is a top-level occurrence, a nested One,
-  or an element of a Many at any depth; the document reduction the read path
-  performs takes its presence from the source document rather than from the
-  declared member list. So a Value Object built by ordinary construction and one
-  materialized from storage draw the same distinction, and re-serializing a
-  materialized occurrence neither invents a key storage omitted nor drops one it
-  held. A mutation comparison reduces the same way, on both sides: an assignment
-  states the complete value its occurrence will hold, so the document it would
-  store is compared whole against the document the row holds.
+  Object read back from storage reports as present the members the stored
+  document carried, whether it is a top-level occurrence, a nested One, or an
+  element of a Many at any depth; the document reduction the read path performs
+  takes its presence from the source document rather than from the declared
+  member list. Two positions are reported present whatever the document held
+  (`m-snapshot-read`): a Many, holding `()` where the document supplied no
+  elements, and a non-nullable One, holding `None` under the
+  required-member-absent collapse. So a Value Object built by ordinary
+  construction and one materialized from storage draw the same distinction, and
+  re-serializing a materialized occurrence adds no key beyond those two and drops
+  none the document held. A mutation comparison reduces differently, and
+  deliberately: the document an assignment would store is reduced with presence
+  preserved, so a member the author omits contributes no key, and it is compared
+  whole against the document the row holds.
   A Many occurrence is an ordered immutable
   `tuple` of non-null Value Object records and is never nullable: `()` is its
   sole zero-element value, and a present entry holding `None` or holding a
   `None` element is invalid. Omission is not invalid — it is that occurrence's
-  own absence form, which absence collapse resolves to `()`
+  own absence form, which materialization carries as `()` rather than leaving
+  out, the same value absence collapse answers with
   (**Document-resident nullability** below). The same rules apply recursively at
   every nesting depth.
 - **Exact immutable Graph Input carriers.** Snapshot Graph Input is a private
@@ -2847,11 +2852,11 @@ or descriptor authoring form and performs no audit stamping.
   stored as JSON null is a key whose value is `None`. So a consumer reads presence
   off the node rather than assuming every declared name is there, and the node is
   exactly the document `to_document` derives from the Typed value of the same row.
-  Two
-  positions carry a member the document does not hold, and neither is a fill: a
-  `many` always publishes, as `[]` where the document supplied no elements, because
-  it has no absent state; and a non-nullable `one` the document omits publishes
-  `None` under the required-member-absent collapse, with its root classified.
+  Two positions carry a member the document does not hold, and neither is a fill:
+  a `many` always publishes, as `[]` where the document supplied no elements,
+  because it has no absent state; and a non-nullable `one` the document omits
+  publishes `None` under the required-member-absent collapse, with its root
+  classified.
 - **Finite unwind.** Relationships render along the requested Include Paths
   rather than the merged identity graph, so a back-reference renders its target
   once, in full, and terminates — never a primary-key stub. A relationship no
