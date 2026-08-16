@@ -445,3 +445,24 @@ compatibility case is.
   assigned an occurrence edited away and then back to the value its own read
   published has an empty effective change set and emits no statement, because the
   owner's record is the only provenance in play.
+
+### SIO-022 — Two write ingresses of one implementation emit one answer for one authored value
+
+- **Module tag**: `m-unit-work`
+- **Supplements**: *standalone*
+- **Why the corpus cannot state it**: the conformance adapter contract fixes
+  **one** conformance surface per implementation, and a case states a write rather
+  than the representation that authored it. A case therefore grades whichever
+  ingress the adapter routes it through and can never observe that a second
+  ingress of the same implementation reaches the same verdict. This is not the
+  single-grader observable: both graders agree on every case here, and what is
+  ungraded is a second *ingress* rather than a second grader.
+- **Required assertion**: an implementation shipping more than one write ingress
+  over one unit of work owes agreement between them. One authored value against
+  one stored row earns the same effective change set, the same statement, and the
+  same stored document whichever ingress states it. It binds at the shape where
+  the two are most easily divergent: the ingresses observe the row through
+  different representations, so each must weigh an authored occurrence against
+  the **same** observed value — the members the stored document held. An
+  implementation shipping one ingress owes nothing here, exactly as one whose host
+  runtime supplies no inherited copy doors owes nothing for SIO-016.
