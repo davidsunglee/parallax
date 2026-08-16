@@ -3109,16 +3109,20 @@ def _project_value_object(vo: dict[str, Any], decoded: Any) -> Any:
       ``None`` — a SQL-NULL column, a JSON ``null``, and a non-object intermediate
       all collapse the composite (m-document-codec);
     * a ``many`` member is the collection of its element projections when the
-      slot is a JSON array, else ``[]``, because a ``many`` has no absent state:
-      an omitted key, a JSON ``null``, and ``[]`` are three stored spellings of
-      one zero value.
+      slot is a JSON array of objects, else ``[]``, because a ``many`` has no
+      absent state: an omitted key, a JSON ``null``, and ``[]`` are three stored
+      spellings of one zero value. A non-array, and an array holding any
+      non-object element, are one wrong-kind ``many`` AT THE OCCURRENCE
+      POSITION — the whole collection collapses and no element is projected, so
+      a conforming sibling element never survives a malformed one
+      (m-document-codec).
 
     Element order within a ``many`` member is semantic (m-value-object), so this
     projection preserves JSON document order and metadata-aware graph comparison
     checks those elements positionally.
     """
     if vo.get("multiplicity", "one") == "many":
-        if isinstance(decoded, list):
+        if isinstance(decoded, list) and all(isinstance(element, dict) for element in decoded):
             return [_project_members(vo, element) for element in decoded]
         return []
     if isinstance(decoded, dict):
@@ -3144,9 +3148,8 @@ def _project_members(vo: dict[str, Any], obj: Any) -> dict[str, Any]:
     omits is the required-member-absent state, whose normative collapse gives the
     position its null, and a ``many`` always publishes because it has no absent
     state. Stored state a hydration rule collapses does not round trip either: a
-    wrong-kind ``one`` projects to ``None``, a wrong-kind ``many`` to ``[]``, and a
-    non-object element inside a ``many`` array holds no member of any name and
-    projects to the empty object.
+    wrong-kind ``one`` projects to ``None``, and a wrong-kind ``many`` — a
+    non-array, or an array holding any non-object element — to ``[]``, whole.
     """
     source = obj if isinstance(obj, dict) else {}
     node: dict[str, Any] = {}
