@@ -84,6 +84,16 @@ _PERSON_TARGET: dict[str, object] = {
     "entity": "parallax.compatibility.Person",
     "predicate": {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}},
 }
+# The one document-mapped mirror, whose `address` occurrence is what an
+# assignment replaces whole.
+_TRAVELER_ROW: Row = {
+    "id": 1,
+    "payload": {"address": {"city": "Oslo", "geo": {"country": "NO"}}, "tags": []},
+}
+_TRAVELER_QUERY: dict[str, object] = {
+    "target": "parallax.compatibility.Traveler",
+    "predicate": {"eq": {"attr": "parallax.compatibility.Traveler.id", "value": 1}},
+}
 
 
 class Sample(Entity, table="sample", namespace="parallax.compatibility"):
@@ -170,6 +180,31 @@ def test_a_wire_update_emits_what_the_typed_update_emits() -> None:
 
     db_for(ACCOUNT, typed_port).transact(typed)
 
+    assert _writes(wire_port) == _writes(typed_port)
+
+
+def test_a_wire_occurrence_assignment_emits_what_the_typed_one_emits() -> None:
+    # The authored occurrence restates `city` and omits the stored `geo`, so the
+    # write it emits REMOVES `geo` — an assignment replaces its subtree whole.
+    # The two interfaces reach that verdict through different machinery, the
+    # Wire lane against the source it read and the Typed lane against its Change
+    # Record, and one authored value must still get one answer from both.
+    wire_port = RecordingPort(rows=[dict(_TRAVELER_ROW)])
+
+    def wire(tx: Transaction) -> None:
+        tx.wire.update(_node(tx, _TRAVELER_QUERY), {"address": {"city": "Oslo"}})
+
+    db_for(mm.DOCUMENT_LAYOUT_MODEL, wire_port).transact(wire)
+
+    typed_port = RecordingPort(rows=[dict(_TRAVELER_ROW)])
+
+    def typed(tx: Transaction) -> None:
+        node = tx.find(mm.Traveler.where(mm.Traveler.id == 1)).result()
+        tx.update(node.edit(address=mm.TravelerAddress(city="Oslo")))
+
+    db_for(mm.DOCUMENT_LAYOUT_MODEL, typed_port).transact(typed)
+
+    assert len(_writes(wire_port)) == 1
     assert _writes(wire_port) == _writes(typed_port)
 
 

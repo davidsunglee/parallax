@@ -420,23 +420,15 @@ def _is_change_record(candidate: object) -> bool:
 
 
 def _assignment_matches_original(assigned: object, original: object) -> bool:
-    """Compare authored ``one`` members as a mask and ``many`` values as wholes.
+    """Whether an authored member restores the original the chain first recorded.
 
-    Mapping omission represents un-authored nested ``one`` state. Lists have no
-    element identity, so their complete serialized elements must match rather
-    than inheriting the mapping subset rule.
+    Both sides render to their canonical documents and compare **whole**, with
+    presence preserved at every depth: a member one side omits is a member the
+    other side does not match. Assigning an occurrence replaces its subtree, so
+    a declared member the authored value leaves out is one the write removes,
+    and comparing only the keys the caller happened to name would drop a write
+    that changes what storage holds. A ``many`` compares whole for the older
+    reason that its elements carry no identity, and the two cardinalities now
+    answer one rule.
     """
-    assigned_value = serialize_member(assigned)
-    original_value = serialize_member(original)
-    if isinstance(assigned_value, Mapping):
-        if not isinstance(original_value, Mapping):
-            return False
-        assigned_items = cast("Mapping[object, object]", assigned_value)
-        original_items = cast("Mapping[object, object]", original_value)
-        return all(
-            name in original_items and _assignment_matches_original(value, original_items[name])
-            for name, value in assigned_items.items()
-        )
-    if isinstance(assigned_value, list):
-        return isinstance(original_value, list) and assigned_value == original_value
-    return assigned_value == original_value
+    return serialize_member(assigned) == serialize_member(original)
