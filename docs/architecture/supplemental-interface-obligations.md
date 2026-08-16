@@ -35,7 +35,10 @@ case field (most obligations have no case).
 Each entry carries five things:
 
 - **Id** — stable. Never reused, never renumbered. A retired obligation keeps its
-  id and says what retired it.
+  id and says what retired it, and so does one withdrawn because its reason did
+  not survive inspection — an entry whose behavior the corpus turns out to be
+  able to state is not an obligation, and reusing its number would hide that it
+  was ever claimed.
 - **Module tag** — the `core/spec/modules.md` tag that drives applicability. An
   implementation owes the obligation when that module is in its claimed
   `capabilities.modules` set.
@@ -275,23 +278,17 @@ compatibility case is.
   of a declared type exactly one Wire Value and admitting a value it cannot spell
   is what opens the gap.
 
-### SIO-014 — One Concurrency Preference resolves two ways across one connected model
+### SIO-014 — Withdrawn: one Concurrency Preference resolving two ways is authorable
 
 - **Module tag**: `m-opt-lock`
-- **Supplements**: `m-opt-lock-023` (one preference, one Entity)
-- **Why the corpus cannot state it**: no corpus model declares the shape. Proving
-  one preference resolving two ways needs a versioned root related to an
-  unversioned target in one read; authoring one costs a descriptor, fixtures, and
-  regenerated storage and table-layout baselines for an observation an interface
-  test already pins exactly.
-- **Required assertion**: under a single `optimistic` preference and a single
-  transaction over one connected model, a deep read whose root Entity declares a
-  version and whose related Entity does not emits **no** row lock at the versioned
-  level and **does** emit the shared row lock at the unversioned one; the
-  subsequent keyed writes are gated for the versioned target and ungated for the
-  unversioned one; and both land in one commit and one Execution Log. The
-  Effective Concurrency Strategy is a property of the target Entity, never of the
-  transaction.
+- **Withdrawn**: its stated reason was that no corpus model declares the shape —
+  a versioned root related to an unversioned target in one read. That is an
+  authoring gap, not a structural limit: the shape is perfectly authorable, and
+  what it costs is a descriptor, its fixtures, and regenerated storage and
+  table-layout baselines. An obligation records what the corpus *cannot* say, so
+  work it merely has not done yet does not belong here. The gap itself is open
+  and tracked as `D-74` in the Python target's deferred-work ledger, which names
+  the corpus as its owner.
 
 ---
 
@@ -314,7 +311,11 @@ compatibility case is.
   assignment rules the model's other assignment surfaces use, all violations are
   reported together rather than the first, and a dotted authored name is refused
   as a nested path rather than as an unknown member, because there is no sparse
-  write beneath an occurrence through any door.
+  write beneath an occurrence through any door. Naming **no** member is legal and
+  answers a value equal to the receiver under the receiver's own populated set:
+  the verb is total over its argument list rather than a request that must change
+  something, so a caller deriving a copy from a computed set of changes needs no
+  empty-set special case and gets no refusal for one.
 
 ### SIO-016 — Every inherited copy door on a model class is sealed
 
@@ -389,22 +390,38 @@ compatibility case is.
   framework issues no resolving read on a keyed write's behalf under either
   Effective Concurrency Strategy.
 
-### SIO-020 — Adjacent single-row inserts collapse by physical column set
+### SIO-020 — Withdrawn: batch collapse by physical column set is statable per layout
 
 - **Module tag**: `m-batch-write`
-- **Supplements**: `m-storage-layout-029` / `m-storage-layout-030` (the round-trip
-  twin pair, which authors one insert per step to stay pairable)
-- **Why the corpus cannot state it**: this is a **twin-gate** limit rather than a
-  corpus-wide one, and it is worth naming because it shapes how cross-layout write
-  cases can be authored at all. Batch collapse groups adjacent single-row inserts
-  by physical column set, which Relational Document Layout makes uniform — four
-  inserts whose authored members differ emit three statements under Columns (one
-  per distinct column list) and one under Document Layout. A twin pair's round-trip
-  count is layout-invariant by construction, so a twin can never buffer rows with
-  differing member sets in one unit.
-- **Required assertion**: a unit of work buffering several single-row inserts of
-  one Entity collapses adjacent runs sharing a physical column set into one
-  statement, and starts a new statement where the column set changes. The
-  statement count is therefore a function of the **physical** column sets, which
-  makes it a layout-dependent observation that must be asserted per layout rather
-  than paired across layouts.
+- **Withdrawn**: its stated reason was the twin gate, which its own text admitted
+  is not a corpus-wide limit. An ordinary single-layout case states the assertion
+  directly — `m-batch-write-001` already witnesses the collapse arm — so nothing
+  structural stops the corpus from saying it, and an authoring choice inside one
+  gate is not an obligation on a second implementation.
+- **What is true here** is an authoring constraint on twin pairs, recorded so the
+  next cross-layout write case does not rediscover it: batch collapse groups
+  adjacent single-row inserts by physical column set, which Relational Document
+  Layout makes uniform, so four inserts whose authored members differ emit three
+  statements under Columns and one under Document Layout. A twin pair's
+  round-trip count is layout-invariant by construction, which is why
+  `m-storage-layout-029` / `-030` author one insert per step.
+
+### SIO-021 — A Value Object copy records no provenance
+
+- **Module tag**: `m-value-object`
+- **Supplements**: *standalone*
+- **Why the corpus cannot state it**: the in-memory authoring door, plus the
+  absence of any independent write. A Value Object reaches storage only inside
+  its owner's row, and what that row states is decided by the **owner's** own
+  provenance record, so no case can distinguish a copy verb that recorded what it
+  changed from one that recorded nothing — the owner emits the same statement
+  either way.
+- **Required assertion**: deriving a copy of a Value Object records nothing about
+  what the derivation touched. A Value Object has no identity and is never
+  independently written, so it carries no counterpart of the provenance record an
+  Entity copy carries, and a copy is indistinguishable from a value constructed
+  whole with the same members and the same populated set. The behavioral
+  consequence is that occurrence copies contribute no write of their own: an owner
+  assigned an occurrence edited away and then back to the value its own read
+  published has an empty effective change set and emits no statement, because the
+  owner's record is the only provenance in play.
