@@ -523,9 +523,15 @@ def _decode_element(
     A member the stored document omits contributes no key, at every containment
     depth, so what a read carries forward is the document's own presence rather
     than the declared member list. That is what lets a materialized occurrence be
-    re-serialized without inventing a key storage never held, and it is the same
-    reduction a mutation comparison applies to the document an assignment would
-    store — one occurrence value, compared whole against another."""
+    re-serialized without inventing a key storage never held, and it is the
+    presence-preserving reduction a mutation comparison applies to the document an
+    assignment would store — one occurrence value, compared whole against another.
+
+    One position is keyed regardless: a non-nullable ``one`` occurrence the
+    document omits is the required-member-absent state, and the classified
+    reduction answers it with the null its collapse gives the position
+    (`m-snapshot-read`), which is why the root a read publishes it under is
+    classified."""
     reduced, findings = reduce_declared_members_classified(
         occurrence_shape(declared), raw, preserve_presence=True
     )

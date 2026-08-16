@@ -3151,13 +3151,12 @@ def _project_members(vo: dict[str, Any], obj: Any) -> dict[str, Any]:
         if attribute["name"] in source:
             node[attribute["name"]] = decode_leaf(attribute["type"], source[attribute["name"]])
     for nested in vo.get("valueObjects", []):
-        if _projects_absent(nested) or nested["name"] in source:
+        if _publishes_when_omitted(nested) or nested["name"] in source:
             node[nested["name"]] = _project_value_object(nested, source.get(nested["name"]))
     return node
 
 
-def _projects_absent(nested: dict[str, Any]) -> bool:
-    """Whether ``nested`` carries a key even where the document holds none."""
+def _publishes_when_omitted(nested: dict[str, Any]) -> bool:
     return nested.get("multiplicity", "one") == "many" or not nested.get("nullable", False)
 
 
