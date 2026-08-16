@@ -65,7 +65,7 @@ instruction IR as the native carrier every other ingress hands it.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, cast
@@ -195,7 +195,10 @@ def wire_insert(
     The returned node is what closes the one Typed/Wire parity gap on the write
     surface: ``tx.insert(a)`` leaves the Typed caller holding ``a``, so a pure
     Wire caller must be handed something too or it can never revise the row it
-    just opened. It carries a Source Hint naming the object and this
+    just opened. What it publishes is the buffered ROW rather than the payload —
+    a ``many`` the payload left out is answered as the empty collection that row
+    stores — so writing a member back off it is the restoration it is off a read
+    result. It carries a Source Hint naming the object and this
     transaction's participation and NO observation, which is exactly what an
     opening row has observed — the write off it is licensed by the buffered
     insert instead, through the ledger this call records into, and the two
@@ -587,14 +590,24 @@ def _member_name(member: _DeclaredMember) -> str:
 def _decoded_row(
     meta: Metamodel, entity: EntityMetadata, data: Mapping[str, object]
 ) -> dict[str, object]:
-    """One authored Wire document as a canonical write row.
+    """One authored Create Payload as the canonical row an insert OPENS.
 
     The walk is over the AUTHORED keys rather than the declared members, so a key
     the model declares no member for passes through untouched and the member-name
     honesty gate — rather than a decoding failure — is what names it.
+
+    A `many` occurrence is then filled in wherever the payload omitted one, at the
+    Entity's own level exactly as :func:`_decoded_document` does at every level
+    below it. Only an OPENING row is canonical this way, which is why this walk
+    and not the change set's: a payload states a complete document, so a `many` it
+    does not name is that occurrence's zero rather than a member left alone, while
+    a revising write's unnamed member is untouched.
     """
     members = _row_members(meta, entity)
-    return {key: _decoded_member(members.get(key), value) for key, value in data.items()}
+    row = {key: _decoded_member(members.get(key), value) for key, value in data.items()}
+    return _with_zero_state_occurrences(
+        row, (member for member in members.values() if not isinstance(member, AttributeMetadata))
+    )
 
 
 def _decoded_member(member: _DeclaredMember | None, value: object) -> object:
@@ -653,12 +666,7 @@ def _decoded_document(container: _VoContainer, value: object) -> object:
     two levels share is the resolved decoder rather than the member.
 
     A nested ``many`` is the one position the authored keys do not decide, because
-    it has no absent state: an omitted key, a null, and ``[]`` are three spellings
-    of one zero value, and the document this assignment stores carries ``[]`` at
-    that position whichever was authored. Decoding it to the empty collection is
-    what makes the value compared here the value that will be stored — otherwise
-    an author who omits it writes DML against a row already holding that zero, and
-    the node an insert answers omits a key its own buffered row stores.
+    it has no absent state (:func:`_with_zero_state_occurrences`).
     """
     if not isinstance(value, Mapping):
         return value
@@ -676,9 +684,31 @@ def _decoded_document(container: _VoContainer, value: object) -> object:
         key: _decoded(decoders.get(key), nested)
         for key, nested in cast("Mapping[str, object]", value).items()
     }
-    for nested in container.value_objects:
-        name = nested.identity.path[-1]
-        if nested.multiplicity is Multiplicity.MANY and name not in decoded:
+    return _with_zero_state_occurrences(decoded, container.value_objects)
+
+
+def _with_zero_state_occurrences(
+    decoded: dict[str, object], occurrences: Iterable[_VoContainer]
+) -> dict[str, object]:
+    """``decoded`` plus the empty collection at every ``many`` it does not name.
+
+    A ``many`` is the one occurrence a complete document may leave out, because it
+    has no absent state: omission and an empty collection are the two authored
+    spellings of one zero value, and ``[]`` is what a write stores for both, at
+    every depth and under either Storage Layout. Naming one as an explicit null is
+    refused rather than read as that zero — the model gives a ``many`` no null
+    state — so a null reaching here is left as authored for the assignment
+    judgement to name. Only a STORED document has a third zero spelling, the JSON
+    null the codec reads on the way out and no author may write.
+
+    Supplying the omitted zero is what makes the decoded document the document the
+    row will hold: otherwise an author who omits the member writes DML against a
+    row already holding that zero, and the node an insert answers omits a key its
+    own buffered row stores.
+    """
+    for occurrence in occurrences:
+        name = occurrence.identity.path[-1]
+        if occurrence.multiplicity is Multiplicity.MANY and name not in decoded:
             decoded[name] = []
     return decoded
 
