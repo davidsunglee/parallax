@@ -27,9 +27,11 @@
 # `locations` list (the fan-out attaches by key, never dropping childless parents).
 #
 # Both dialects project an adjacent SQL-presence discriminator before each
-# document and decode to the same composite. The
-# `phones` arrays are authored readably, but to-many value-object element order is
-# UNSPECIFIED (m-value-object), so `then.graph` array comparison is a multiset.
+# document and decode to the same composite. The two collection kinds this graph
+# carries compare differently (m-case-format): each `locations` set is a
+# relationship collection and compares as a multiset, while every `phones` array
+# is a to-many value-object member whose element order is semantic
+# (m-value-object) and compares positionally.
 #
 # compileEligibility is run-only / query-result-dependent: the child level's
 # IN-list binds are the distinct parent keys gathered from the root query result,
