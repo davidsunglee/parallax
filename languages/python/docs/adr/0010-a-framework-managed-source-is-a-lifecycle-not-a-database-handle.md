@@ -97,3 +97,58 @@ equivalence is held instead by Python unit tests, which pin that a second
 `Database` over one store and a non-transactional `Database.find` on the writing
 handle classify identically — the second being what fails first if handle identity
 is ever threaded through the read path.
+
+## Amendment (2026-08): evidence rides on the source value, and the target Entity decides
+
+The decision above is unchanged — a source is a lifecycle rather than a
+`Database` handle, provenance answers which lifecycle produced a value, and a
+cross-handle arrangement is definitionally not another source. What this
+amendment replaces is the mechanism it illustrated the decision with, and the
+three outcomes it derived from that mechanism.
+
+**Where evidence lives.** The paragraph above locates the framework's axis of
+guarantee in a per-unit-of-work observation ledger, populated only by a
+transaction-scoped read, and states that `Database.find` "deliberately records
+nothing". Evidence now rides on the **source value** itself, behind a private
+Source Hint that names the object the value denotes, the participation its read
+licensed, and the observation retained for the state it saw. A standalone
+`Database.find` builds exactly the same hints and retains exactly the same
+observations a participating read does — a value's evidence belongs to the value
+whether or not a transaction is in sight — and what makes a read standalone is
+only that it stamps no participation. The unit of work holds a weak index of what
+the live sources hold, not a second copy. `SnapshotNodeState`'s field list gains
+that hint beside `entity`, `views`, `pin`, and `edge`; it still carries no handle
+identity, which is the claim this ADR makes about it.
+
+**What decides the outcome.** The three-outcome list above derives from what the
+target *declares*. It now derives from the target Entity's **Effective
+Concurrency Strategy** (ADR 0059) — its declaration combined with the unit of
+work's one Concurrency Preference — and the refusal is one family raised
+synchronously at the verb rather than two families raised at two different times:
+
+- Under a target's effective **Locking** strategy the license is the shared row
+  lock, so the source read must have run in *this* transaction. A standalone
+  source proves no held lock and the verb raises the write-evidence refusal for
+  unavailable evidence, before anything is buffered. This holds for every
+  effective-Locking target, unversioned Non-Temporal ones included: the lock is
+  the whole of an unversioned row's evidence, and exempting it would admit a
+  keyed write that proves nothing about the row it addresses. Unconditional
+  intent has its own spelling, `tx.delete_where(query)`.
+- Under a target's effective **Optimistic** strategy the license is the database
+  gate, so the retained observation *is* the evidence and a standalone
+  `db.find` source carries it exactly as a participating read's does. Such a
+  write succeeds.
+- Evidence a successful flush already spent is refused under **both** strategies:
+  the state the value observed is no longer the stored state, and a held lock
+  does not restore it.
+
+So the arrangement this ADR examines — `db.find(...)` followed by
+`db.transact(...)` — no longer has one answer per declared shape. A versioned or
+temporal target under the default `optimistic` preference **succeeds**, gated on
+the observation its standalone source retained; the same target under an explicit
+`locking` preference is **refused** at the verb; and an unversioned Non-Temporal
+target, which falls back to Locking under either preference, is refused at the
+verb too. The identity of the two arrangements the ADR is about is untouched:
+`dbA.find(...)` then `dbB.transact(...)` still reaches the identical outcome as
+`db.find(...)` then `db.transact(...)`, because neither the strategy nor the
+retained observation is a fact about a handle.

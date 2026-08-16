@@ -61,7 +61,6 @@ from parallax.core.document_codec import (
     encode_many,
     entity_shape,
     is_text_compared,
-    mask_managed_members,
     occurrence_shape,
     reduce_declared_members,
     reduce_declared_members_classified,
@@ -686,7 +685,7 @@ def test_replacement_reaches_every_depth_of_the_subtree_it_names() -> None:
     }
 
 
-def test_declared_member_reduction_is_recursive_and_assignment_scoped() -> None:
+def test_declared_member_reduction_is_recursive_and_drops_undeclared_keys() -> None:
     stored = {
         "flag": True,
         "day": "2026-01-15",
@@ -694,10 +693,9 @@ def test_declared_member_reduction_is_recursive_and_assignment_scoped() -> None:
         "entries": [{"kind": "home", "unknown": 2}],
         "unknown": 3,
     }
-    assert reduce_declared_members(_SHAPE, stored, named_by={"origin": {"city": "Bergen"}}) == {
-        "origin": {"city": "Oslo"}
-    }
     reduced = cast("dict[str, object]", reduce_declared_members(_SHAPE, stored))
+    assert "unknown" not in reduced
+    assert reduced["origin"] == {"city": "Oslo"}
     assert reduced["entries"] == [{"kind": "home", "price": None}]
     with pytest.raises(LeafEncodingError, match=r"origin\.city"):
         reduce_declared_members(_SHAPE, {"origin": {"city": 7}})
@@ -706,11 +704,11 @@ def test_declared_member_reduction_is_recursive_and_assignment_scoped() -> None:
 
 
 def test_declared_member_reduction_can_take_its_presence_from_the_source_document() -> None:
-    # The two narrowing options answer different questions, so the same source
-    # reduces differently under each. `named_by` names what a caller authored;
-    # `preserve_presence` lets the document answer for itself, at every depth —
+    # Presence preservation lets the document answer for itself, at every depth —
     # `entries`' element omits `price`, and the preserved reduction omits it too
-    # rather than fabricating the null a re-serialization would then store.
+    # rather than fabricating the null a re-serialization would then store. The
+    # unpreserved reduction is the declared composite, which is what a read
+    # publishes.
     stored: dict[str, object] = {
         "flag": None,
         "origin": {},
@@ -728,48 +726,18 @@ def test_declared_member_reduction_can_take_its_presence_from_the_source_documen
         "origin": {"city": None},
         "entries": [{"kind": "home", "price": None}],
     }
-    assert (
-        reduce_declared_members(
-            _SHAPE, stored, named_by={"day": "2026-01-15"}, preserve_presence=True
-        )
-        == {}
-    )
-
-
-def test_preserved_presence_and_occurrence_collapse_narrow_independently() -> None:
-    # A member stored in a kind its multiplicity does not admit is HELD by the
-    # document, so presence preservation keeps it and the collapse decides its
-    # value. Dropping it instead would let invalid storage read as an omission.
-    stored = {"origin": "Oslo", "entries": {"kind": "home"}}
-    assert reduce_declared_members(
-        _SHAPE, stored, preserve_presence=True, collapse_invalid_occurrences=True
-    ) == {"origin": None, "entries": []}
-    with pytest.raises(LeafEncodingError, match="expected object"):
-        reduce_declared_members(_SHAPE, stored, preserve_presence=True)
 
 
 def test_declared_member_reduction_refuses_wrong_occurrence_kinds() -> None:
+    # Invalid storage can never compare equal to a replacement value, so the
+    # reduction refuses a wrong-kind occurrence instead of collapsing it —
+    # under presence preservation too, where the member IS held by the document.
     with pytest.raises(LeafEncodingError, match="expected object"):
         reduce_declared_members(_SHAPE, {"origin": "Oslo"})
     with pytest.raises(LeafEncodingError, match="expected array"):
         reduce_declared_members(_SHAPE, {"entries": {"kind": "home"}})
-
-
-def test_a_managed_mask_selects_recursively_through_one_occurrences_alone() -> None:
-    # The exported mask operation, kept while no production comparison reaches it:
-    # an occurrence assignment now replaces its subtree whole, so both sides of a
-    # write comparison reduce presence-preserving and compare whole rather than
-    # masking the stored document by the members the assignment authored. What the
-    # operation still says is where the recursion stops — a mapping selects member
-    # by member, and every other value, an array included, is taken whole.
-    managed = {"flag": True, "origin": {"city": "Oslo", "zone": 1}, "entries": [{"kind": "home"}]}
-    assert mask_managed_members(managed, {"origin": {"city": "Bergen"}, "entries": []}) == {
-        "origin": {"city": "Oslo"},
-        "entries": [{"kind": "home"}],
-    }
-    assert mask_managed_members("Oslo", {"city": "Bergen"}) == "Oslo"
-    assert mask_managed_members(managed, "Oslo") == managed
-    assert mask_managed_members({"origin": {"city": "Oslo"}}, {"absent": {}}) == {"absent": None}
+    with pytest.raises(LeafEncodingError, match="expected object"):
+        reduce_declared_members(_SHAPE, {"origin": "Oslo"}, preserve_presence=True)
 
 
 def test_patches_apply_left_to_right_each_over_the_result_of_the_last() -> None:

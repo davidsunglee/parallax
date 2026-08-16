@@ -62,7 +62,8 @@ cardinality. The typed path constructs no neutral rows, nodes, views,
 relationship wrappers, or copied bind collections. Verification uses structural
 and allocation-focused regression tests rather than a wall-clock threshold.
 
-Typed Snapshots and Neutral Read Results both expose their Read Trace directly.
+Typed Snapshots and Wire read results both expose their Read Trace directly
+(ADR 0057).
 When either read participates in a transaction, its result and the current
 Transaction Attempt reference the exact same trace object; there is no result
 wrapper around the trace and no duplicate transaction record.

@@ -843,9 +843,9 @@ def _coverage_row(from_z: dt.datetime) -> Row:
 
 
 def test_an_included_temporal_nodes_own_observation_licenses_its_keyed_close() -> None:
-    # The included level's observation is exactly what
-    # `require_observed_milestone` demands, so the close it licenses reaches
-    # DML: the level is observed under the row's own `Coverage`, which is what
+    # The included level's observation is exactly what the write-evidence rule
+    # demands of a keyed close, so the close it licenses reaches DML: the level
+    # is observed under the row's own `Coverage`, which is what
     # `tx.terminate(policy.coverages[0], ...)` looks up.
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     port = RecordingPort(row_queue=([_policy_row(from_z)], [_coverage_row(from_z)]))
