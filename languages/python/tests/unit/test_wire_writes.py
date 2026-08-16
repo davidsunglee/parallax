@@ -38,7 +38,7 @@ from _transact_support import (
 
 from _support import mirrored_models as mm
 from parallax.conformance import vo_models as vo
-from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import InstantError
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.predicate import CanonicalDocumentError
@@ -115,6 +115,25 @@ class Sample(Entity, table="sample", namespace="parallax.compatibility"):
 
 
 SAMPLE_META = DomainModel(Sample)
+
+
+class RosterMember(ValueObject):
+    label: Attr[str | None]
+
+
+class Roster(Entity, table="wire_roster", namespace="parallax.compatibility"):
+    """A LOCAL entity whose TOP-LEVEL `many` occurrence has a Column of its own.
+
+    Every corpus `many` these suites reach is either nested inside a `one` or
+    document-resident, and a top-level `many` under `Columns` is where an opening
+    row's canonical member set differs from its payload's authored keys.
+    """
+
+    id: Attr[int] = attr(primary_key=True)
+    members: Attr[tuple[RosterMember, ...]]
+
+
+ROSTER_META = DomainModel(Roster)
 
 _SAMPLE_ROW: Row = {"id": 1, "taken": dt.datetime(2024, 5, 1, tzinfo=dt.UTC)}
 _SAMPLE_QUERY: dict[str, object] = {
@@ -318,6 +337,42 @@ def test_an_insert_answers_the_nested_many_its_own_buffered_row_stores() -> None
     db_for(CONTACT, port).transact(body)
     stored = cast("JsonDocument", cast("tuple[object, ...]", _writes(port)[0][2])[2])
     assert cast("dict[str, Any]", stored.value)["phones"] == []
+
+
+def test_an_insert_answers_the_top_level_many_its_own_buffered_row_stores() -> None:
+    # A Create Payload may omit a top-level `many` — omission and `[]` are one zero
+    # state — and the row the insert composes carries `[]` there whether the
+    # occurrence has a Column of its own or rides a Structured Column. Both layouts
+    # are asserted because the two lowerings supply that zero independently, and
+    # what the node answers has to be the row under either: a caller revising a key
+    # the answer omitted while the row stored it would author a change against a
+    # value the row does not hold.
+    columns_port = RecordingPort(rows=[])
+
+    def columns(tx: Transaction) -> None:
+        opened = tx.wire.insert("parallax.compatibility.Roster", {"id": 7})
+        assert opened["members"] == []
+
+    db_for(ROSTER_META, columns_port).transact(columns)
+    assert _bound_documents(columns_port) == [[]]
+
+    document_port = RecordingPort(rows=[])
+
+    def document(tx: Transaction) -> None:
+        opened = tx.wire.insert("parallax.compatibility.Traveler", {"id": 7})
+        assert opened["tags"] == []
+
+    db_for(mm.DOCUMENT_LAYOUT_MODEL, document_port).transact(document)
+    assert _bound_documents(document_port) == [{"tags": []}]
+
+
+def _bound_documents(port: RecordingPort) -> list[object]:
+    return [
+        bind.value
+        for op in _writes(port)
+        for bind in cast("tuple[object, ...]", op[2])
+        if isinstance(bind, JsonDocument)
+    ]
 
 
 def _address(node: WireEntity) -> Mapping[str, Any]:

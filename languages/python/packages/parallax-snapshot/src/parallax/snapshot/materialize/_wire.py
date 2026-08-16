@@ -583,9 +583,10 @@ def opened_wire_entity(
 
     What it publishes is what this transaction STATED, not what a later read of
     the stored row will: the framework-owned members are stamped at flush and
-    are absent here, and the walk is over the authored positions rather than the
-    declared ones. That is exact for the payload an insert takes, which is a
-    complete Create Payload by `m-unit-work`'s own full-document rule.
+    are absent here, and the walk is over the positions ``row`` names rather than
+    the declared ones. That is exact because ``row`` is an opening row's canonical
+    member set — a complete Create Payload by `m-unit-work`'s own full-document
+    rule, carrying the empty collection at every ``many`` the payload omitted.
     """
     declared_attributes = {
         attribute.identity.name: attribute
