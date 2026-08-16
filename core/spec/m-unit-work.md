@@ -694,9 +694,13 @@ and the elimination is deliberately the conservative direction: an assignment
 cannot name such a key, so a write with nothing declared to say is not the place
 to destroy one. A declared member the authored document omits DOES take part,
 because the assignment removes it: the two sides compared are the complete
-document the assignment would store and the complete document the row holds. Key
-order and insignificant whitespace never make two otherwise equal documents
-differ.
+document the assignment would store and the complete document the row holds. A
+`many` member is the one omission that removes nothing — the document the
+assignment stores holds `[]` there whether or not the author spelled it, which is
+that reduction's own `many` rule — so an authored occurrence short of a `many` and
+a stored one carrying its empty collection are equal and that write is eliminated,
+issuing no DML, advancing no version, and consulting no clock. Key order and
+insignificant whitespace never make two otherwise equal documents differ.
 
 ### Write Gate and the concurrency decision
 

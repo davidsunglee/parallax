@@ -429,6 +429,9 @@ def _assignment_matches_original(assigned: object, original: object) -> bool:
     and comparing only the keys the caller happened to name would drop a write
     that changes what storage holds. A ``many`` compares whole for the older
     reason that its elements carry no identity, and the two cardinalities now
-    answer one rule.
+    answer one rule. A ``many`` also has no absence for either side to preserve:
+    canonical serialization always contributes it, so an unpopulated one renders
+    as the empty collection the store holds and a value authored short of it
+    matches an original carrying that zero.
     """
     return serialize_member(assigned) == serialize_member(original)

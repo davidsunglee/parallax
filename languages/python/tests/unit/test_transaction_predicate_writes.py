@@ -140,6 +140,27 @@ class WhereSubscriber(Entity, table="where_subscriber", namespace="parallax.comp
 _WHERE_SUBSCRIBER_META = DomainModel(WhereSubscriber)
 
 
+# A versioned entity whose occurrence carries a nested `many`. That member is the
+# one position an authored document may leave out and still state the value the
+# row already holds, because a `many` has no absent state.
+class WhereRosterPhone(ValueObject):
+    number: Attr[str | None]
+
+
+class WhereRosterAddress(ValueObject):
+    city: Attr[str | None]
+    phones: Attr[tuple[WhereRosterPhone, ...]]
+
+
+class WhereRoster(Entity, table="where_roster", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    address: Attr[WhereRosterAddress | None]
+
+
+_WHERE_ROSTER_META = DomainModel(WhereRoster)
+
+
 class WhereManagedOccurrence(ValueObject):
     amount: Attr[Decimal] = attr(precision=18, scale=2)
     payload: Attr[bytes]
@@ -1170,6 +1191,46 @@ def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_ro
     # No DML and no version advance: the reassigned document is IDENTICAL to
     # the resolved row's own stored value, so the row is eliminated entirely.
     assert [op[0] for op in port.ops] == ["begin", "read", "commit"]
+
+
+def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds() -> None:
+    # The stored document omits `phones` and the classified reduction the resolving
+    # read applies answers `[]` for it, because a `many` has no absent state. An
+    # authored document that omits the same member states that same zero — storing
+    # it writes `[]` there — so the assignment changes nothing and the row is
+    # eliminated. Preserving the omission on the authored side alone would compare
+    # two spellings of one value unequal and advance the version for no change.
+    def rows() -> list[Row]:
+        return [{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
+
+    typed_port = RecordingPort(rows=rows())
+
+    def typed(tx: Transaction) -> None:
+        tx.update_where(
+            WhereRoster.where(WhereRoster.id == 1),
+            WhereRoster.address.set(WhereRosterAddress(city="Bergen")),
+        )
+
+    Database.connect(typed_port, _WHERE_ROSTER_META, clock=FixedClock(FIXED)).transact(
+        typed, concurrency="optimistic"
+    )
+    assert [op[0] for op in typed_port.ops] == ["begin", "read", "commit"]
+
+    # The same value spelled as the rendered document `set` equally accepts, which
+    # reaches the comparison without a Value Object's own serialization filling the
+    # member in on the way.
+    document_port = RecordingPort(rows=rows())
+
+    def document(tx: Transaction) -> None:
+        tx.update_where(
+            WhereRoster.where(WhereRoster.id == 1),
+            WhereRoster.address.set(cast("Any", {"city": "Bergen"})),
+        )
+
+    Database.connect(document_port, _WHERE_ROSTER_META, clock=FixedClock(FIXED)).transact(
+        document, concurrency="optimistic"
+    )
+    assert [op[0] for op in document_port.ops] == ["begin", "read", "commit"]
 
 
 def test_no_op_comparison_normalizes_production_encoded_one_and_many_assignments() -> None:

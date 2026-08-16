@@ -1382,8 +1382,13 @@ def normalize_assignment_values(
     complete document the assignment would STORE — presence preserved, so a member
     the author omits contributes no key exactly as an unstored one does — because
     assigning an occurrence replaces its subtree whole and the comparison below is
-    against a resolved row's own presence-preserving reduction. The returned
-    mapping is reusable across every row resolved by one predicate write.
+    against a resolved row's own reduction of what it holds. A nested ``many`` is
+    the one member presence preservation leaves alone, because it has no absence to
+    preserve: the stored document carries ``[]`` there whichever of the three zero
+    spellings was written, and so does the document this assignment would store, so
+    the reduction answers ``[]`` for an omitted one rather than dropping the key
+    and calling a stored zero a change. The returned mapping is reusable across
+    every row resolved by one predicate write.
     """
     occurrence_index: Mapping[str, ValueObjectMetadata] = (
         cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
@@ -1431,6 +1436,9 @@ def is_no_op_assignment(
     the members the author named: assigning an occurrence replaces its subtree,
     so an omitted declared member the row does hold is a change like any other,
     and eliminating that write would leave stored state the assignment removes.
+    A nested ``many`` is the one omission that removes nothing — both sides read
+    it as the empty collection the store holds either way — so an occurrence
+    authored short of one is a no-op rather than a change.
 
     This is the ONE narrow result-dependent normalization a materializing
     resolve performs while streaming: a resolved row an assignment-bearing
