@@ -16,11 +16,17 @@ publishes the members its carrier HELD: the walk follows the declared member lis
 which is what fixes key order and decodes each position by its declared type, but a
 member the carrier does not hold contributes no key. So a consumer reads presence
 off the published node rather than assuming every declared name is a key, and the
-node and the hydrated Entity value observe one document — a leaf or a ``one`` the
-stored document omitted is absent from both, while one stored as JSON null is
-``None`` in both. A ``many`` is not an exception to that: the codec gives it no
-absent state at all (`m-document-codec`), so an omitted key, JSON null, and ``[]``
-are one stored zero value and the carrier holds the empty collection for all three.
+node and the hydrated Entity value observe one document — a leaf or a nullable
+``one`` the stored document omitted is absent from both, while one stored as JSON
+null is ``None`` in both.
+
+Two positions carry a member the document did not hold, and neither is a fill
+(`m-snapshot-read`). A ``many`` always publishes: the codec gives it no absent
+state at all (`m-document-codec`), so an omitted key, JSON null, and ``[]`` are one
+stored zero value and the carrier holds the empty collection for all three. A
+**non-nullable** ``one`` the document omits publishes null, because that omission
+is the required-member-absent state whose collapse the hydration table admits as a
+value, and its root is classified.
 
 **The include tree bounds the walk, not the identity graph.** A merged node keeps
 every view any level loaded onto it, so following a node's own views would revisit
@@ -535,13 +541,17 @@ def _held_members(record: object, declared: _VoContainer, carrier: _Carrier) -> 
     the carrier decides which of those positions become keys: a member it does not
     hold is absent from the published mapping rather than filled with a value the
     document never carried. Absence is therefore something a consumer reads, and
-    re-serializing a published occurrence stores what was stored.
+    re-serializing a published occurrence stores what was stored, apart from the
+    two collapsed positions below.
 
-    Presence is the carrier's whole answer, so nothing here re-derives it. A
-    stored record already carries the codec's verdicts — a leaf or a ``one`` the
-    document omitted contributes no entry, one stored as JSON null contributes
-    ``None``, and a ``many`` contributes its ordered elements whichever of the
-    three zero spellings the document used.
+    Presence is the carrier's whole answer, so nothing here re-derives it — which
+    is also why the two positions `m-snapshot-read` carries regardless of the
+    document need no branch here. A stored record already carries the codec's
+    verdicts: a leaf or a nullable ``one`` the document omitted contributes no
+    entry, one stored as JSON null contributes ``None``, a ``many`` contributes its
+    ordered elements whichever of the three zero spellings the document used, and a
+    non-nullable ``one`` the document omitted contributes the null its collapse
+    answers with.
     """
     held = carrier.entries(record)
     published: dict[str, WireValue] = {}

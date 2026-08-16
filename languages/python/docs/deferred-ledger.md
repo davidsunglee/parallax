@@ -365,3 +365,7 @@ this file does not hold:
 
 - `.humanlayer/tasks/cor-3-build-python-slice/05-deferred-ledger.md` — D-1 … D-37.
 - `.humanlayer/tasks/cor-47-build-python-declarations/09-deferred-ledger.md` — D-36 … D-48.
+
+Entries from D-53 on have lived in this file itself, so a removed one's full text
+is in this file's version history rather than in a per-ticket copy. The forwarding
+pointers above are what a citation of such an entry resolves against.

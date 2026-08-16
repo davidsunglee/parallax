@@ -105,8 +105,9 @@ A materialized Value Object occurrence carries the members the stored document
 member the document stores as JSON null is carried, as null. That is the presence
 distinction `m-document-codec` keeps inside a Value Object subtree, and
 materialization neither collapses nor fills it, so a materialized occurrence
-serializes back to the document it came from. The same stored state answers the
-same way under every Storage Layout.
+serializes back to the document it came from — apart from the two positions
+below, which are the only ones whose round trip changes a stored spelling. The
+same stored state answers the same way under every Storage Layout.
 
 Two positions carry a member the document does not hold, and neither is a fill:
 

@@ -2842,11 +2842,12 @@ or descriptor authoring form and performs no audit stamping.
   `familyVariant`. Leaves are canonical Wire Values (`m-wire`), the same
   spelling the document codec stores; a temporal end's open bound carries
   `m-core`'s `infinity` literal. A Value Object occurrence carries the members the
-  stored document HELD, at every depth (`m-snapshot-read`): a leaf or a `one` the
-  document omitted is not a key of the published mapping, while one stored as JSON
-  null is a key whose value is `None`. So a consumer reads presence off the node
-  rather than assuming every declared name is there, and the node is exactly the
-  document `to_document` derives from the Typed value of the same row. Two
+  stored document HELD, at every depth (`m-snapshot-read`): a leaf or a nullable
+  `one` the document omitted is not a key of the published mapping, while one
+  stored as JSON null is a key whose value is `None`. So a consumer reads presence
+  off the node rather than assuming every declared name is there, and the node is
+  exactly the document `to_document` derives from the Typed value of the same row.
+  Two
   positions carry a member the document does not hold, and neither is a fill: a
   `many` always publishes, as `[]` where the document supplied no elements, because
   it has no absent state; and a non-nullable `one` the document omits publishes
