@@ -358,14 +358,10 @@ prose.
 
 ## History
 
-Entries D-1 … D-51 were kept in per-ticket task directories under
-`.humanlayer/tasks/`, which hold the full text of every resolved, closed, and
-graduated entry. Consult them when a commit message or document cites a D-number
-this file does not hold:
+Per-ticket files under `.humanlayer/tasks/` hold the full text of entries this
+file no longer carries, each named for the ticket that closed them. Consult them
+when a commit message or document cites a D-number this file does not hold:
 
 - `.humanlayer/tasks/cor-3-build-python-slice/05-deferred-ledger.md` — D-1 … D-37.
 - `.humanlayer/tasks/cor-47-build-python-declarations/09-deferred-ledger.md` — D-36 … D-48.
-
-Entries from D-53 on have lived in this file itself, so a removed one's full text
-is in this file's version history rather than in a per-ticket copy. The forwarding
-pointers above are what a citation of such an entry resolves against.
+- `.humanlayer/tasks/cor-85-typed-and-wire-apis/19-deferred-ledger.md` — D-71, D-73.

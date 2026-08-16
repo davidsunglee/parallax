@@ -105,9 +105,12 @@ A materialized Value Object occurrence carries the members the stored document
 member the document stores as JSON null is carried, as null. That is the presence
 distinction `m-document-codec` keeps inside a Value Object subtree, and
 materialization neither collapses nor fills it, so a materialized occurrence
-serializes back to the document it came from — apart from the two positions
-below, which are the only ones whose round trip changes a stored spelling. The
-same stored state answers the same way under every Storage Layout.
+serializes back to the **conforming** document it came from, apart from the two
+positions below. Stored state the hydration table collapses does not round trip
+and is not meant to: a wrong-kind `One` serializes as its collapse, a wrong-kind
+`Many` — an array holding a non-object element included — as the empty
+collection, and an undecodable leaf as absence, each with its root classified.
+The same stored state answers the same way under every Storage Layout.
 
 Two positions carry a member the document does not hold, and neither is a fill:
 
@@ -126,9 +129,10 @@ of which answer null for it. That collapse says nothing about which keys a value
 carries, and a representation that IS a document — a Wire Snapshot, whose leaves
 this module's member names key — answers the second question rather than the first.
 A representation with getters answers both, from one materialization: its getter
-answers null for the omitted member and its document does not carry it. So the two
-representations of one read observe one value, and neither can turn a stored
-absence into a stored null.
+answers null for the omitted member and — at every position but the two carried
+above — its document does not carry it. So the two representations of one read
+observe one value, and neither turns a stored absence into a stored null the
+other leaves absent.
 
 ## Graph-local identity resolution
 

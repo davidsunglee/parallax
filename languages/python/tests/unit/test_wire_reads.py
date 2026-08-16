@@ -25,6 +25,7 @@ from typing import Any, cast
 
 import pytest
 from _metamodel_support import Declaration, key, source
+from _snapshot_graph_support import documents_of, identity_of
 from _transact_support import NoIoPort
 
 from _support.document_reads import fold_mapping_rows
@@ -246,6 +247,22 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     )
     root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
     assert _mapping(root["address"])["phones"] == []
+
+
+def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() -> None:
+    # The same document reaching conversion with no member preclassified, which is
+    # the arm `convert_row` takes for a caller that supplies no classified set. Its
+    # occurrence reduction has to answer exactly as the row transform's does, or
+    # one stored state publishes two nodes depending on which door it came in by.
+    identity = identity_of(CUSTOMER, "Customer")
+    scope = MergeScope(CUSTOMER)
+    ref = convert_row(
+        {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
+        LevelContext(identity, documents_of(CUSTOMER, identity)),
+        scope,
+    )
+    (published,) = wire_roots(merge_graph_input(scope.build((ref,), Pin()), CUSTOMER), CUSTOMER)
+    assert _mapping(_entity(published)["address"]) == {"street": "9 Beacon St", "phones": []}
 
 
 # --------------------------------------------------------------------------- #

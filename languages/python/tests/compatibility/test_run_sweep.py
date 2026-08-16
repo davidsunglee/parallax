@@ -418,8 +418,9 @@ def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], R
     carries the members the stored document held and drops every undeclared key,
     exactly as `then.graph` renders the same value. So it comes from the
     materializer rather than from the row: a direct Column's ``DocumentRead``
-    carrier never reaches a comparison, and neither an undeclared stored key nor
-    a declared member the document omitted enters one.
+    carrier never reaches a comparison, an undeclared stored key never enters one,
+    and a declared member the document omitted enters one only at the two
+    positions `m-snapshot-read` carries whatever the document held.
     """
 
     def transform(row: Row) -> Row:

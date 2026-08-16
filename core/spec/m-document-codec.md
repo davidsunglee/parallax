@@ -509,8 +509,9 @@ default: an ordinary reduction answers the declared composite, which is what a
 consumer needing one entry per declared position asks for. Which members a
 materialized read carries is a separate contract, stated where the read is
 (`m-snapshot-read`): a materialized occurrence carries the members the stored
-document held, so this distinction survives materialization rather than being
-collapsed by it.
+document held plus the two positions that module carries whatever the document
+held, so this distinction survives materialization rather than being collapsed by
+it.
 
 Presence preservation is what a mutation comparison uses on both sides. An
 assignment states the complete value its occurrence will hold, so the document it

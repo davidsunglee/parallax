@@ -707,8 +707,8 @@ def test_declared_member_reduction_can_take_its_presence_from_the_source_documen
     # Presence preservation lets the document answer for itself, at every depth —
     # `entries`' element omits `price`, and the preserved reduction omits it too
     # rather than fabricating the null a re-serialization would then store. The
-    # unpreserved reduction is the declared composite, which is what a read
-    # publishes.
+    # unpreserved reduction answers the declared composite instead — one entry per
+    # declared position — which is what a consumer needing that shape asks for.
     stored: dict[str, object] = {
         "flag": None,
         "origin": {},
