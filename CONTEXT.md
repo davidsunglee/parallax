@@ -534,11 +534,13 @@ _Avoid_: domain snapshot, JSON output, serialization form, lazy collection
 A plain-value tree returned by a Wire read, keyed by declared model member names,
 encoded with canonical Wire Values, and unwound only along the finite requested
 Include Paths. It exposes no graph identity or framework metadata. A Value Object
-occurrence in it carries the members the stored document held rather than one key
-per declared member, so a consumer reads presence off it and re-serializing a
-conforming one stores what was stored; the exceptions are the two positions
-`m-snapshot-read` carries regardless of the document, a `many` and a non-nullable
-`one`. Stored state a hydration rule collapses reserializes as that collapse.
+occurrence in it carries the conforming members the stored document held rather
+than one key per declared member, so a consumer reads presence off it and
+re-serializing a conforming one stores what was stored. Held and carried differ in
+both directions at the positions `m-snapshot-read` fixes: a `many` and a
+non-nullable `one` are carried whatever the document held, and an undecodable leaf
+the document DID hold is unavailable and carried nowhere. Stored state a hydration
+rule collapses reserializes as that collapse.
 _Avoid_: Domain Snapshot, Neutral Graph, serialized Snapshot Graph, physical row
 
 **StoredDataIssue**:

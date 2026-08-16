@@ -100,19 +100,17 @@ carry this classification are language-surface concerns built over this contract
 
 ## What a materialized value carries
 
-A materialized Value Object occurrence carries the members the stored document
-**held**. A member the document omits is absent from the materialized value; a
-member the document stores as JSON null is carried, as null. That is the presence
-distinction `m-document-codec` keeps inside a Value Object subtree, and
-materialization neither collapses nor fills it, so a materialized occurrence
-serializes back to the **conforming** document it came from, apart from the two
-positions below. Stored state the hydration table collapses does not round trip
-and is not meant to: a wrong-kind `One` serializes as its collapse, a wrong-kind
-`Many` — an array holding a non-object element included — as the empty
-collection, and an undecodable leaf as absence, each with its root classified.
-The same stored state answers the same way under every Storage Layout.
+For a **conforming** member, a materialized Value Object occurrence carries what
+the stored document held: a member the document omits is absent from the
+materialized value, and a member it stores as JSON null is carried, as null. That
+is the presence distinction `m-document-codec` keeps inside a Value Object
+subtree, and materialization neither collapses nor fills it, so a conforming
+occurrence serializes back to the document it came from. The same stored state
+answers the same way under every Storage Layout.
 
-Two positions carry a member the document does not hold, and neither is a fill:
+Held and carried are nevertheless two different questions, and stored state the
+hydration table collapses is where they part — in both directions. Two positions
+are carried though the document held nothing there, and neither is a fill:
 
 - A `Many` occurrence has no absent state. An omitted key, JSON null, and `[]` are
   three stored spellings of one zero value (`m-document-codec`), so a `Many` is
@@ -121,6 +119,14 @@ Two positions carry a member the document does not hold, and neither is a fill:
   `stored-data-required-member-absent` state, whose normative absence collapse is
   what the hydration table above admits. That position is carried as null, and its
   root is classified.
+
+One position runs the other way: a non-null **undecodable leaf** is unavailable,
+so no value of its declared Neutral Type exists to put there, and the materialized
+occurrence omits a key the document did hold, with its root classified. The
+remaining collapses keep their key and lose their content — a wrong-kind `One` is
+carried as its collapse and a wrong-kind `Many` — an array holding a non-object
+element included — as the empty collection. None of these four round trips, and
+none is meant to.
 
 **What a member reads as and which members a value carries are two questions.** A
 member the document omits *reads* as not present — the absence collapse
