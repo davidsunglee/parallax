@@ -5,8 +5,11 @@
 # physical projection differs.
 #
 # `profile.street` is required, so a stored profile omitting it contradicts the
-# model while the normative absence collapse still produces the whole value — the
-# hydratable half of classification, at both positions a root can carry it. Position
+# model and still hydrates: nothing has to be invented, because the normative
+# absence collapse answers what the member reads as. The published occurrence
+# carries the members the document held, so `street` is absent from it rather than
+# rendered as a null the document never stored — the hydratable half of
+# classification, at both positions a root can carry it. Position
 # 0 is invalid through an INCLUDED node (child 11), position 1 at the ROOT itself,
 # and position 2 through both at once, which is what shows one record carrying the
 # diagnoses of every node its own include tree reached. Position 3 conforms and
@@ -44,15 +47,15 @@ then:
       - id: 1
         profile: { street: 1 Main, city: null }
         children:
-          - { id: 11, itemId: 1, profile: { street: null, city: Berlin } }
+          - { id: 11, itemId: 1, profile: { city: Berlin } }
       - id: 2
-        profile: { street: null, city: Oslo }
+        profile: { city: Oslo }
         children:
           - { id: 12, itemId: 2, profile: { street: 12 Main, city: null } }
       - id: 3
-        profile: { street: null, city: Berlin }
+        profile: { city: Berlin }
         children:
-          - { id: 13, itemId: 3, profile: { street: null, city: Oslo } }
+          - { id: 13, itemId: 3, profile: { city: Oslo } }
       - id: 4
         profile: { street: 4 Main, city: Boston }
         children:

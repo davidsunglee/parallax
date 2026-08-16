@@ -17,9 +17,13 @@
 #
 # The semantic distinction this pair pins down is that presence belongs to the
 # WRITTEN VALUE and not to the layout, on both sides of the round trip. The closing
-# find's `expectRows` shows the read side: an omitted leaf and an explicit null
-# collapse to one answer while an absent occurrence answers null and an unset `many`
-# answers `[]`, and the twin publishes those same four rows. `then.tableState` shows
+# find's `expectRows` shows the read side, and the trip is exact: an omitted leaf is
+# omitted again and an explicit null reads back as that null, so all three
+# not-present spellings survive the read as three. The two answers that are not
+# presence states of a stored member stay what they were — an absent occurrence
+# answers null, because a `one` the row never held composes nothing, and an unset
+# `many` answers `[]`, its only zero-element representation. The twin publishes
+# those same four rows. `then.tableState` shows
 # the write side under this layout: an absent occurrence is a key the shared document
 # never carries where the Columns member has a NULL Column, and an omitted leaf is a
 # key missing from `payload.spec` rather than from a `spec` Column — three spellings
@@ -155,8 +159,6 @@ when:
           label: null
           spec:
             title: Beta
-            note: null
-            origin: null
             stops: []
           marks: []
         - id: 12
@@ -164,7 +166,6 @@ when:
           spec:
             title: Gamma
             note: null
-            origin: null
             stops: []
           marks: []
         - id: 13

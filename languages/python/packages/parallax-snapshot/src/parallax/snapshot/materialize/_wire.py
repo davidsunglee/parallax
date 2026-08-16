@@ -11,11 +11,16 @@ Two rules give the result its shape.
 
 **Declared names, canonical values.** Every key is the model's own declared member
 name — never a physical column — and every leaf is its canonical Wire Value
-(`m-wire`), the same spelling the document codec stores. Value Object occurrences
-are **declared-member filled**: the projection walks the declared member lists
-rather than the stored carrier's keys, writing ``None`` for an absent leaf or
-``one`` and ``()`` for an absent ``many``, because a consumer renders what it is
-handed and owns no projection rule of its own.
+(`m-wire`), the same spelling the document codec stores. A Value Object occurrence
+publishes the members its carrier HELD: the walk follows the declared member lists,
+which is what fixes key order and decodes each position by its declared type, but a
+member the carrier does not hold contributes no key. So a consumer reads presence
+off the published node rather than assuming every declared name is a key, and the
+node and the hydrated Entity value observe one document — a leaf or a ``one`` the
+stored document omitted is absent from both, while one stored as JSON null is
+``None`` in both. A ``many`` is not an exception to that: the codec gives it no
+absent state at all (`m-document-codec`), so an omitted key, JSON null, and ``[]``
+are one stored zero value and the carrier holds the empty collection for all three.
 
 **The include tree bounds the walk, not the identity graph.** A merged node keeps
 every view any level loaded onto it, so following a node's own views would revisit
@@ -470,13 +475,13 @@ def _wire_scalar(neutral_type: object, value: object) -> WireValue:
 
 @dataclass(frozen=True, slots=True)
 class _Carrier:
-    """How one kind of occurrence carrier answers the two questions the
-    declared-member fill asks of it: what a ``many`` value's elements are, and
-    what one record holds under each declared member name.
+    """How one kind of occurrence carrier answers the two questions publication
+    asks of it: what a ``many`` value's elements are, and which members one record
+    holds, under their declared names.
 
     A stored :class:`ValueObjectRecord` and an authored write document hold the
-    same value differently — identity-keyed entries against a plain mapping —
-    and nothing else about the fill differs, so the walk is shared and only the
+    same value differently — identity-keyed entries against a plain mapping — and
+    nothing else about publication differs, so the walk is shared and only the
     lookup varies. That is what keeps the node a Wire insert answers and the node
     a read publishes describing one row the same way.
     """
@@ -491,7 +496,7 @@ def _stored_elements(value: object) -> Sequence[object]:
 
 def _stored_entries(record: object) -> Mapping[str, object]:
     """One stored record's members by declared name — empty for anything that is
-    not a record, which is what fills an occurrence the carrier never held."""
+    not a record, which holds no member of any name."""
     return (
         {
             **{entry.identity.name: entry.value for entry in record.attributes},
@@ -515,31 +520,40 @@ _AUTHORED: Final = _Carrier(elements=_authored_elements, entries=_authored_entri
 
 
 def _occurrence(value: object, declared: _VoContainer, carrier: _Carrier) -> WireValue:
-    """One occurrence entry as its declared-member-filled Wire value."""
+    """One occurrence entry as the Wire value its carrier holds."""
     if declared.multiplicity is Multiplicity.MANY:
         return _frozen_sequence(
-            _filled_members(record, declared, carrier) for record in carrier.elements(value)
+            _held_members(record, declared, carrier) for record in carrier.elements(value)
         )
-    return None if value is None else _filled_members(value, declared, carrier)
+    return None if value is None else _held_members(value, declared, carrier)
 
 
-def _filled_members(record: object, declared: _VoContainer, carrier: _Carrier) -> WireValue:
-    """One occurrence record as every DECLARED member, absence filled.
+def _held_members(record: object, declared: _VoContainer, carrier: _Carrier) -> WireValue:
+    """One occurrence record as the members its carrier HELD, in declared order.
 
-    The walk is over the declared member lists rather than the record's own
-    entries, which is the whole difference between the getter surface and the
-    carrier: a leaf the stored document omitted reads ``None`` here, an absent
-    ``one`` occurrence reads ``None``, and an absent ``many`` reads ``[]`` —
-    while the carrier keeps recording that it held none of them.
+    The declared member lists supply the order and the per-position decoding, and
+    the carrier decides which of those positions become keys: a member it does not
+    hold is absent from the published mapping rather than filled with a value the
+    document never carried. Absence is therefore something a consumer reads, and
+    re-serializing a published occurrence stores what was stored.
+
+    Presence is the carrier's whole answer, so nothing here re-derives it. A
+    stored record already carries the codec's verdicts — a leaf or a ``one`` the
+    document omitted contributes no entry, one stored as JSON null contributes
+    ``None``, and a ``many`` contributes its ordered elements whichever of the
+    three zero spellings the document used.
     """
     held = carrier.entries(record)
-    filled: dict[str, WireValue] = {}
+    published: dict[str, WireValue] = {}
     for leaf in declared.attributes:
-        filled[leaf.identity.name] = _wire_scalar(leaf.type, held.get(leaf.identity.name))
+        name = leaf.identity.name
+        if name in held:
+            published[name] = _wire_scalar(leaf.type, held[name])
     for occurrence in declared.value_objects:
         name = occurrence.identity.path[-1]
-        filled[name] = _occurrence(held.get(name), occurrence, carrier)
-    return _frozen_mapping(_FrozenMapping, filled)
+        if name in held:
+            published[name] = _occurrence(held[name], occurrence, carrier)
+    return _frozen_mapping(_FrozenMapping, published)
 
 
 def opened_wire_entity(

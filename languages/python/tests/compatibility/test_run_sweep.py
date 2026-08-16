@@ -414,13 +414,12 @@ def _scenario_read_schedule(
 def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], Row]:
     """A captured port row as the observation ``expectRows`` grades.
 
-    An instance-form step's occurrence is the DECLARED COMPOSITE the read
-    publishes, not the document storage held: a leaf the stored document omitted
-    reads null, an absent nested `one` reads null, and an absent `many` reads the
-    empty array, exactly as `then.graph` renders the same collapse. The published
-    occurrence therefore comes from the materializer rather than from the row, so
-    a direct Column's ``DocumentRead`` carrier never reaches a comparison and an
-    undeclared stored key never enters one.
+    An instance-form step's occurrence is the one the read PUBLISHES, which
+    carries the members the stored document held and drops every undeclared key,
+    exactly as `then.graph` renders the same value. So it comes from the
+    materializer rather than from the row: a direct Column's ``DocumentRead``
+    carrier never reaches a comparison, and neither an undeclared stored key nor
+    a declared member the document omitted enters one.
     """
 
     def transform(row: Row) -> Row:

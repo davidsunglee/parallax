@@ -16,12 +16,12 @@
 #                     roundTrips = 2 (root + one IN-keyed child level), NOT
 #                     1 + N.
 #
-# The child level's `address` decodes to the SAME declared projection as the
-# owner read (m-value-object materialization): only declared members appear (the
-# undeclared `zip` inside Location 100's geo is dropped), and the absence collapse
-# is pinned AT DEPTH — Location 101 carries a NULL document, so its whole value
-# object materializes null, exactly as a null-address Customer (id 4) does at the
-# root. This is the witness against an implementation that materializes documents
+# The child level's `address` decodes exactly as the owner read's does
+# (m-value-object materialization): undeclared keys are dropped (the `zip` inside
+# Location 100's geo) and each declared member the document held is present, and
+# the whole-occurrence collapse is pinned AT DEPTH — Location 101 carries a NULL
+# document, so its whole value object materializes null, exactly as a null-address
+# Customer (id 4) does at the root. This is the witness against an implementation that materializes documents
 # at the root but forgets them at child levels (or mishandles a null child
 # document). Customers with no locations (3-10) still appear with an empty
 # `locations` list (the fan-out attaches by key, never dropping childless parents).
@@ -133,11 +133,7 @@ then:
         name: Kavi
         address:
           street: 5 Harbour Rd
-          city: null
-          geo:
-            country: null
-            elevation: null
-            point: null
+          geo: {}
           phones: []
         locations: []
       - id: 6
@@ -164,24 +160,18 @@ then:
         name: Iris
         address:
           street: 8 Null Way
-          city: null
-          geo: null
           phones: []
         locations: []
       - id: 9
         name: Omar
         address:
           street: 9 Scalar Rd
-          city: null
-          geo: null
           phones: []
         locations: []
       - id: 10
         name: Priya
         address:
           street: 10 Object Ct
-          city: null
-          geo: null
           phones: []
         locations: []
   storedDataIssues:

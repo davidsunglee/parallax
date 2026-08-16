@@ -3102,18 +3102,16 @@ def _graphs_equal(
 def _project_value_object(vo: dict[str, Any], decoded: Any) -> Any:
     """Project a decoded document slot to its DECLARED value-object shape.
 
-    The projection mirrors the typed getter surface (m-value-object): only
-    declared members appear (undeclared JSON keys are dropped), every declared
-    member is always present (null where the document does not supply it), and the
-    absence states collapse exactly as the read predicates do (m-predicate,
-    resolved Q5):
+    The projection answers one occurrence's own value once its parent has decided
+    the position exists at all (:func:`_project_members`):
 
     * a ``one`` member is a nested object when the slot is a JSON object, else
-      ``None`` (a SQL-NULL column, a missing key, a JSON ``null``, or a non-object
-      intermediate all read as "not present");
+      ``None`` — a SQL-NULL column, a JSON ``null``, and a non-object intermediate
+      all collapse the composite (m-document-codec);
     * a ``many`` member is the collection of its element projections when the
-      slot is a JSON array, else ``[]`` (a null / missing / non-array ``many``
-      value collapses to zero elements).
+      slot is a JSON array, else ``[]``, because a ``many`` has no absent state:
+      an omitted key, a JSON ``null``, and ``[]`` are three stored spellings of
+      one zero value.
 
     Element order within a ``many`` member is semantic (m-value-object), so this
     projection preserves JSON document order and metadata-aware graph comparison
@@ -3131,22 +3129,36 @@ def _project_value_object(vo: dict[str, Any], decoded: Any) -> Any:
 def _project_members(vo: dict[str, Any], obj: Any) -> dict[str, Any]:
     """Build the declared-member projection of one value-object document object.
 
-    Each declared ``attribute`` contributes its leaf value, decoded by its DECLARED
-    type (:func:`decode_leaf`) rather than copied out of the document, because the
-    document stores the codec's portable spelling and a getter yields the value a
-    Column of that type reads back as — ``None`` for a missing key or a JSON
-    ``null``. Each declared nested ``valueObject`` recurses. A non-object element
-    (e.g. a scalar inside a ``many`` array) yields all-null declared members.
-    Undeclared keys are omitted, so the projected node's key set is exactly the
-    declared members — the shape the typed getters expose.
+    Undeclared keys are omitted and each declared member the document HOLDS is
+    decoded by its declared type (:func:`decode_leaf`) rather than copied out,
+    because the document stores the codec's portable spelling. What the projection
+    does not do is fill: a leaf or a ``one`` the document omits contributes no key,
+    so re-serializing the projection stores what was stored, and a document short
+    of a member stays distinguishable from one holding that member's JSON null
+    (m-document-codec "Presence inside a Value Object subtree is not collapsed").
+    Absence is what a member READS as — the collapse the read predicates apply —
+    and that is a different question from which keys a document carries.
+
+    Two declarations put a key back regardless. A non-nullable ``one`` the document
+    omits is the required-member-absent state, whose normative collapse gives the
+    position its null, and a ``many`` always publishes because it has no absent
+    state. A non-object element inside a ``many`` array holds no member of any
+    name and projects to the empty object.
     """
     source = obj if isinstance(obj, dict) else {}
     node: dict[str, Any] = {}
     for attribute in vo.get("attributes", []):
-        node[attribute["name"]] = decode_leaf(attribute["type"], source.get(attribute["name"]))
+        if attribute["name"] in source:
+            node[attribute["name"]] = decode_leaf(attribute["type"], source[attribute["name"]])
     for nested in vo.get("valueObjects", []):
-        node[nested["name"]] = _project_value_object(nested, source.get(nested["name"]))
+        if _projects_absent(nested) or nested["name"] in source:
+            node[nested["name"]] = _project_value_object(nested, source.get(nested["name"]))
     return node
+
+
+def _projects_absent(nested: dict[str, Any]) -> bool:
+    """Whether ``nested`` carries a key even where the document holds none."""
+    return nested.get("multiplicity", "one") == "many" or not nested.get("nullable", False)
 
 
 def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, Any]:

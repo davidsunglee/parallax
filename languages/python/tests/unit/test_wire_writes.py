@@ -208,6 +208,34 @@ def test_a_wire_occurrence_assignment_emits_what_the_typed_one_emits() -> None:
     assert _writes(wire_port) == _writes(typed_port)
 
 
+def test_authoring_a_null_over_a_member_the_document_omitted_emits_one_answer() -> None:
+    # The stored occurrence holds `city` and no `geo`, and both authored values
+    # spell `geo` as an explicit null — a change the write must make, because an
+    # omitted key and a stored null are two documents. It is one answer only
+    # because the two lanes weigh it against ONE observed value: the Wire node
+    # publishes the presence the document carried, exactly as the hydrated Typed
+    # value keeps it, so neither lane can read the absence as a null already
+    # there and eliminate the write.
+    stored: Row = {"id": 1, "payload": {"address": {"city": "Oslo"}, "tags": []}}
+    wire_port = RecordingPort(rows=[dict(stored)])
+
+    def wire(tx: Transaction) -> None:
+        tx.wire.update(_node(tx, _TRAVELER_QUERY), {"address": {"city": "Oslo", "geo": None}})
+
+    db_for(mm.DOCUMENT_LAYOUT_MODEL, wire_port).transact(wire)
+
+    typed_port = RecordingPort(rows=[dict(stored)])
+
+    def typed(tx: Transaction) -> None:
+        node = tx.find(mm.Traveler.where(mm.Traveler.id == 1)).result()
+        tx.update(node.edit(address=mm.TravelerAddress(city="Oslo", geo=None)))
+
+    db_for(mm.DOCUMENT_LAYOUT_MODEL, typed_port).transact(typed)
+
+    assert len(_writes(wire_port)) == 1
+    assert _writes(wire_port) == _writes(typed_port)
+
+
 def test_a_wire_delete_emits_what_the_typed_delete_emits() -> None:
     wire_port = _account_port()
     db_for(ACCOUNT, wire_port).transact(lambda tx: tx.wire.delete(_node(tx, _ACCOUNT_QUERY)))

@@ -38,15 +38,15 @@ then:
       - id: 1
         profile: { street: 1 Main, city: null }
         children:
-          - { id: 11, itemId: 1, profile: { street: null, city: Berlin } }
+          - { id: 11, itemId: 1, profile: { city: Berlin } }
       - id: 2
-        profile: { street: null, city: Oslo }
+        profile: { city: Oslo }
         children:
           - { id: 12, itemId: 2, profile: { street: 12 Main, city: null } }
       - id: 3
-        profile: { street: null, city: Berlin }
+        profile: { city: Berlin }
         children:
-          - { id: 13, itemId: 3, profile: { street: null, city: Oslo } }
+          - { id: 13, itemId: 3, profile: { city: Oslo } }
       - id: 4
         profile: { street: 4 Main, city: Boston }
         children:

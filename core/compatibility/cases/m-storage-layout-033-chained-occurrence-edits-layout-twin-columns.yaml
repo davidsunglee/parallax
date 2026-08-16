@@ -6,7 +6,9 @@
 # elements of `stops`; the intervening find proves that restated value is what item 2
 # now holds. The second edit names `title` and one stop and nothing else, so what it
 # destroys is what the FIRST edit stored rather than what the fixture did — `note`
-# and `origin` were rewritten a moment earlier and are gone all the same.
+# and `origin` were rewritten a moment earlier and are gone all the same, and the
+# closing find publishes an occurrence without those keys rather than with their
+# nulls.
 #
 # The semantic distinction this pair pins down is that a chain composes over stored
 # state, one replacement per edit, with no accumulation across the chain. An
@@ -111,8 +113,6 @@ when:
           label: south
           spec:
             title: Meridian
-            note: null
-            origin: null
             stops:
               - { port: Kiel }
           marks:

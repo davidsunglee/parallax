@@ -506,7 +506,11 @@ contributes its null. A reduction that preserves presence therefore carries the
 missing-versus-explicitly-null distinction this module already keeps at the
 interface, instead of collapsing it onto the declared member list. It is not the
 default: an ordinary reduction answers the declared composite, which is what a
-read publishes.
+consumer needing one entry per declared position asks for. Which members a
+materialized read carries is a separate contract, stated where the read is
+(`m-snapshot-read`): a materialized occurrence carries the members the stored
+document held, so this distinction survives materialization rather than being
+collapsed by it.
 
 Presence preservation is what a mutation comparison uses on both sides. An
 assignment states the complete value its occurrence will hold, so the document it

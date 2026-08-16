@@ -4678,7 +4678,7 @@ def test_run_graph_case_reports_the_records_a_classified_root_published() -> Non
         "street": "1 Main",
         "city": None,
     }
-    assert _node(graph["ClassificationTwinItem"], 1)["profile"] == {"street": None, "city": "Oslo"}
+    assert _node(graph["ClassificationTwinItem"], 1)["profile"] == {"city": "Oslo"}
     assert stored_data_issues == [
         {
             "ordinal": 1,
@@ -5045,7 +5045,7 @@ def test_render_value_recurses_into_a_nested_value_object_document() -> None:
     assert rendered["address"] == {
         "street": "x",
         "city": "Oslo",
-        "geo": {"country": "NO", "elevation": None, "point": None},
+        "geo": {"country": "NO"},
         "phones": [],
     }
 

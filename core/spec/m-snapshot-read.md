@@ -98,6 +98,37 @@ root's result position; it never prunes the node, silently drops the root, or
 publishes a node-level invalid union. The public result and accessor shapes that
 carry this classification are language-surface concerns built over this contract.
 
+## What a materialized value carries
+
+A materialized Value Object occurrence carries the members the stored document
+**held**. A member the document omits is absent from the materialized value; a
+member the document stores as JSON null is carried, as null. That is the presence
+distinction `m-document-codec` keeps inside a Value Object subtree, and
+materialization neither collapses nor fills it, so a materialized occurrence
+serializes back to the document it came from. The same stored state answers the
+same way under every Storage Layout.
+
+Two positions carry a member the document does not hold, and neither is a fill:
+
+- A `Many` occurrence has no absent state. An omitted key, JSON null, and `[]` are
+  three stored spellings of one zero value (`m-document-codec`), so a `Many` is
+  always carried, as the empty collection where the document supplied no elements.
+- A **non-nullable** `One` occurrence the document omits is the
+  `stored-data-required-member-absent` state, whose normative absence collapse is
+  what the hydration table above admits. That position is carried as null, and its
+  root is classified.
+
+**What a member reads as and which members a value carries are two questions.** A
+member the document omits *reads* as not present — the absence collapse
+`m-predicate` fixes for a query and `m-value-object` fixes for a typed getter, both
+of which answer null for it. That collapse says nothing about which keys a value
+carries, and a representation that IS a document — a Wire Snapshot, whose leaves
+this module's member names key — answers the second question rather than the first.
+A representation with getters answers both, from one materialization: its getter
+answers null for the omitted member and its document does not carry it. So the two
+representations of one read observe one value, and neither can turn a stored
+absence into a stored null.
+
 ## Graph-local identity resolution
 
 Within **one materialized graph**, one row is **one node**:
