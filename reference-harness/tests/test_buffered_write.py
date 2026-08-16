@@ -68,7 +68,9 @@ _PK_SEQUENCE = _defs("models/pk-sequence.yaml")
 
 def _accepted(instructions: list[Any], entity_defs: list[dict[str, Any]]) -> bool:
     """A buffer is ACCEPTED only when BOTH layers pass — the schema structural shape
-    (one-or-more keyed entries, no predicate entry) and the harness member-name check."""
+    (one-or-more keyed entries, no predicate entry) and the harness's three model-aware
+    checks (member-name honesty, the temporal singleton, framework provenance), asked
+    here for an UNGROUPED step."""
     schema_ok = next(_buffered_validator().iter_errors(instructions), None) is None
     harness_errors: list[str] = []
     _validate_buffered_write(instructions, entity_defs, _OP, "probe", harness_errors)
@@ -333,6 +335,17 @@ def test_a_framework_marker_beside_a_caller_authored_entry_is_rejected() -> None
     # in. Structurally schema-valid, which is why the model-aware layer decides it.
     probe = [_REGISTRY_ADVANCE, _BADGE_INSERT]
     assert next(_buffered_validator().iter_errors(probe), None) is None
+    errors: list[str] = []
+    _validate_buffered_write(probe, _PK_SEQUENCE, _OP, "probe", errors)
+    assert any("only entry" in error for error in errors)
+
+
+def test_two_framework_marker_entries_in_one_buffer_are_rejected() -> None:
+    # Nothing here is caller-authored, so the rule that decides it is cardinality
+    # rather than mixture: each marker is a unit of its own, and one buffer cannot
+    # be two units.
+    second = {**_REGISTRY_ADVANCE, "rows": [{"name": "ticket_seq", "nextVal": {"increment": 5}}]}
+    probe = [_REGISTRY_ADVANCE, second]
     errors: list[str] = []
     _validate_buffered_write(probe, _PK_SEQUENCE, _OP, "probe", errors)
     assert any("only entry" in error for error in errors)
