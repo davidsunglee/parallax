@@ -12,6 +12,12 @@ The stakes are the reason the verb exists. Assigning an occurrence replaces its
 subtree whole, so a member a restated value forgets is a member the write
 deletes, and an unvalidated copy is structurally invalid data one write away from
 being stored.
+
+What this suite holds is the in-memory seam — the populated set, the document a
+value serializes to, the instance state a copy carries — and every refusal. The
+idiomatic usage story, where the derived value is graded as the document the
+database then holds, runs against real Postgres in
+``tests/api/test_value_object_edit_run.py``.
 """
 
 from __future__ import annotations
@@ -50,13 +56,6 @@ def _address(city: str = "Oslo") -> vm.Address:
 # --------------------------------------------------------------------------- #
 # The copy: everything unnamed is carried forward, presence included.          #
 # --------------------------------------------------------------------------- #
-def test_an_edit_changes_only_what_it_names() -> None:
-    edited = _address().edit(city="Bergen")
-    assert edited.city == "Bergen"
-    assert edited.street == "Storgata 1"
-    assert edited.phones == (vm.Phone(type="home", number="1"),)
-
-
 def test_an_unset_optional_member_stays_absent_from_the_document() -> None:
     # The round-trip property replacement depends on: an edit fabricates no
     # explicit null for a member storage never held, so writing back what a read
@@ -91,17 +90,6 @@ def test_an_edit_replaces_a_nested_occurrence_whole() -> None:
 def test_an_edit_replaces_a_many_occurrence_whole() -> None:
     edited = _address().edit(phones=(vm.Phone(type="work", number="2"),))
     assert edited.__parallax_document__()["phones"] == [{"type": "work", "number": "2"}]
-
-
-def test_an_edit_of_an_edit_composes() -> None:
-    edited = _address().edit(city="Bergen").edit(street="Nedre gate 2")
-    assert (edited.street, edited.city) == ("Nedre gate 2", "Bergen")
-
-
-def test_the_receiver_is_unchanged() -> None:
-    original = _address()
-    original.edit(city="Bergen")
-    assert original.city == "Oslo"
 
 
 def test_an_edit_with_no_changes_is_legal_and_carries_the_same_state() -> None:
