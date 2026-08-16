@@ -511,11 +511,11 @@ as `[]`, so an omitted `many` contributes its empty collection under either mode
 Presence preservation is not the default: an ordinary reduction answers the
 declared composite, which is what a consumer needing one entry per declared
 position asks for. Which members a materialized read carries is a separate
-contract, stated where the read is (`m-snapshot-read`): a materialized occurrence
-carries the conforming members the stored document held, plus the two positions
-that module carries whatever the document held and minus the undecodable leaf it
-can carry no value for, so this distinction survives materialization rather than
-being collapsed by it.
+contract, and this module does not state it: it is fixed where the read is
+(`m-snapshot-read`, *What a materialized value carries*). What this module claims
+is only that the distinction survives materialization rather than being collapsed
+by it — a reduction is what a read reduces the stored document through, so a read
+never loses a presence state this module keeps.
 
 Presence preservation is what a mutation comparison uses on both sides, the
 `many` exception included on each. An assignment states the complete value its

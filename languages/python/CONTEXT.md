@@ -183,12 +183,10 @@ _Avoid_: Neutral API, Wire transaction, format selector, descriptor mode
 **Wire Entity Mapping**:
 The mapping-shaped Python representation of one Entity node in a Wire Snapshot,
 keyed by declared member names and carrying no serialized framework metadata.
-Its Value Object occurrences carry the conforming members the stored document
-held, so a declared member the row never stored is a key the mapping does not
-have — except at the two positions `python.md` §4 carries regardless, a `many`
-and a non-nullable `one`, and in the other direction a leaf the document held in
-a spelling its declared type cannot decode, which is unavailable and carried
-nowhere.
+Its Value Object occurrences key exactly the members the read contract carries —
+`core/spec/m-snapshot-read.md` _What a materialized value carries_ — so presence is
+something a consumer reads off the mapping rather than assuming, and the mapping is
+the same document the Typed value of that row serializes to.
 It may retain a core Source Hint privately without changing its mapping value.
 The hint identifies the concrete Entity and original Object Key and optionally
 an exact observed state; an unversioned Non-Temporal source has no observed

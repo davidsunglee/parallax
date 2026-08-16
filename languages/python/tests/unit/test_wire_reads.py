@@ -572,9 +572,9 @@ def test_either_model_provenance_publishes_a_hydratable_record(provenance: str) 
     assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
     # The collapse a hydratable root is published under answers what the required
     # member READS as; it puts no key back. A required LEAF the document omits
-    # therefore stays absent from the published node, unlike the two positions
-    # publication carries whatever the document held — a `many` and a non-nullable
-    # nested `one`.
+    # therefore stays absent from the published node — one of the positions where
+    # `m-snapshot-read` *What a materialized value carries* separates held from
+    # carried.
     assert "street" not in _mapping(cast("Mapping[str, object]", record.data)["address"])
 
 

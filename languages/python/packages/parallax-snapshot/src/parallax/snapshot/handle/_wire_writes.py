@@ -698,8 +698,10 @@ def _with_zero_state_occurrences(
     every depth and under either Storage Layout. Naming one as an explicit null is
     refused rather than read as that zero — the model gives a ``many`` no null
     state — so a null reaching here is left as authored for the assignment
-    judgement to name. Only a STORED document has a third zero spelling, the JSON
-    null the codec reads on the way out and no author may write.
+    judgement to name. The AUTHORED spellings are the two above; which spellings a
+    stored document has for the same zero is the read side's question
+    (`m-snapshot-read` *What a materialized value carries*), and the two sets differ
+    by the JSON null the codec reads on the way out and no author may write.
 
     Supplying the omitted zero is what makes the decoded document the document the
     row will hold: otherwise an author who omits the member writes DML against a

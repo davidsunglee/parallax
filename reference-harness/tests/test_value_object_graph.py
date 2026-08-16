@@ -391,7 +391,8 @@ def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_coll
     # The two halves of one boundary, at the projection the graph comparison reads. A
     # member the document HOLDS in a state the model has — a JSON null, an
     # occurrence of the wrong kind — is carried, collapsed; a member the document
-    # omits is carried only where it has no absent state (`entries`, a `many`). A
+    # omits is carried where the read contract carries it regardless, which of this
+    # model's occurrences is `entries`, a `many` (m-snapshot-read). A
     # leaf that IS supplied and is not an encoding of its declared type is a state
     # the model does not have, so it is refused instead of reaching the projected
     # node as the raw stored value.

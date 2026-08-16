@@ -12,21 +12,13 @@ Two rules give the result its shape.
 **Declared names, canonical values.** Every key is the model's own declared member
 name — never a physical column — and every leaf is its canonical Wire Value
 (`m-wire`), the same spelling the document codec stores. A Value Object occurrence
-publishes the members its carrier HELD: the walk follows the declared member lists,
+publishes the members its carrier HOLDS: the walk follows the declared member lists,
 which is what fixes key order and decodes each position by its declared type, but a
-member the carrier does not hold contributes no key. So a consumer reads presence
-off the published node rather than assuming every declared name is a key, and the
-node and the hydrated Entity value observe one document — a leaf or a nullable
-``one`` the stored document omitted is absent from both, while one stored as JSON
-null is ``None`` in both.
-
-Two positions carry a member the document did not hold, and neither is a fill
-(`m-snapshot-read`). A ``many`` always publishes: the codec gives it no absent
-state at all (`m-document-codec`), so an omitted key, JSON null, and ``[]`` are one
-stored zero value and the carrier holds the empty collection for all three. A
-**non-nullable** ``one`` the document omits publishes null, because that omission
-is the required-member-absent state whose collapse the hydration table admits as a
-value, and its root is classified.
+member the carrier does not hold contributes no key. Which members a read's carrier
+holds — the whole of it, at every position where carried and held part — is fixed by
+`m-snapshot-read` *What a materialized value carries*, and nothing here decides any
+of it: the carrier is the reduced record that contract already produced, which is
+why the published node and the hydrated Entity value observe one document.
 
 **The include tree bounds the walk, not the identity graph.** A merged node keeps
 every view any level loaded onto it, so following a node's own views would revisit
@@ -535,25 +527,20 @@ def _occurrence(value: object, declared: _VoContainer, carrier: _Carrier) -> Wir
 
 
 def _held_members(record: object, declared: _VoContainer, carrier: _Carrier) -> WireValue:
-    """One occurrence record as the members its carrier HELD, in declared order.
+    """One occurrence record as the members its carrier HOLDS, in declared order.
 
     The declared member lists supply the order and the per-position decoding, and
     the carrier decides which of those positions become keys: a member it does not
     hold is absent from the published mapping rather than filled with a value the
-    document never carried. Absence is therefore something a consumer reads, and
-    re-serializing an occurrence published from a CONFORMING document stores what
-    was stored, apart from the two carried positions below. Stored state the
-    hydration rules collapse — a wrong-kind ``one`` or ``many``, an undecodable
-    leaf — reserializes as its collapse instead, with its root classified.
+    document never carried. Absence is therefore something a consumer reads.
 
-    Presence is the carrier's whole answer, so nothing here re-derives it — which
-    is also why the two positions `m-snapshot-read` carries regardless of the
-    document need no branch here. A stored record already carries the codec's
-    verdicts: a leaf or a nullable ``one`` the document omitted contributes no
-    entry, one stored as JSON null contributes ``None``, a ``many`` contributes its
-    ordered elements whichever of the three zero spellings the document used, and a
-    non-nullable ``one`` the document omitted contributes the null its collapse
-    answers with.
+    Presence is the carrier's whole answer, so nothing here re-derives it and no
+    position needs a branch. A read's carrier is the record the read reduction
+    already built, so it states which members the value carries — including each
+    position where that differs from what the stored document held, which
+    `m-snapshot-read` *What a materialized value carries* fixes and this walk only
+    renders. An insert's carrier is its own opening row, complete by the rule
+    :func:`opened_wire_entity` states.
     """
     held = carrier.entries(record)
     published: dict[str, WireValue] = {}

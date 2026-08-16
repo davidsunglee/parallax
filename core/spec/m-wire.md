@@ -163,11 +163,12 @@ never guesses a type from a value's shape, so a `string` member holding
 - **Where a value sits.** Document shape, presence, absence, unknown keys, and
   patching belong to `m-document-codec`; the shape of a Wire Snapshot, the member
   names its keys carry, and **which** members it carries belong to
-  `m-snapshot-read`. This module spells the value at a position that exists and
-  grants no consumer a spelling for one that does not: a declared member a Wire
-  Snapshot has no key for has no Wire Value here either, and inventing one — a
-  null for a member the stored document never held — would be reading a value out
-  of this table for a position it was never given.
+  `m-snapshot-read` (*What a materialized value carries*). This module spells the
+  value at a position that exists and grants no consumer a spelling for one that
+  does not: a declared member a Wire Snapshot has no key for has no Wire Value
+  here either, and inventing one — a null for a member the stored document never
+  held — would be reading a value out of this table for a position it was never
+  given.
 - **Comparison.** Which types SQL compares as extracted text and which it casts
   is a `m-dialect` / `m-sql` decision, stated where the comparison is
   (`m-document-codec` "Portable leaf encodings"). It is a *consequence* of the
