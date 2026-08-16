@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-73**.
+Entry numbering is continuous and never reused. The next new number is **D-74**.
 
 ## Entries
 
@@ -283,41 +283,6 @@ whether the framework is permitted to issue a read on a keyed write's behalf,
 which every other rule in this area says it is not. The gap predates the write
 surface's own rework and no acceptance criterion reaches it.
 
-### D-71 — A Typed keyed occurrence assignment compares as a mask over authored members while the write it emits replaces the occurrence whole
-
-*High — the same authored value stores two different documents depending on
-whether some other member changed, and the two representations disagree.* Relates
-to `parallax.core.entity._row_codec._assignment_matches_original`,
-`parallax.snapshot.handle._wire_writes._authored_row`,
-`languages/python/spec/python.md` *Provenance comparison*, `docs/adr/0003`.
-
-**What.** Assigning a Value Object occurrence replaces its subtree whole under
-every Storage Layout, so a declared member the authored value omits is absent
-afterwards. The Typed lane's net-zero comparison did not follow: it compares a
-`one` value as a **mask over the keys the caller authored**, so an authored
-occurrence that omits a member the stored value holds compares **equal** and the
-write is eliminated. Against a stored `{street: "A", city: "Oslo"}`:
-
-- `edit(profile=Profile(street="A"))` yields no row at all, so `city` survives;
-- `edit(profile=Profile(street="B"))` yields a row, replaces whole, and `city` is
-  gone.
-
-The Wire peer already compares the whole decoded occurrence against the whole
-published one, so it emits the first write and removes `city`. Two peer
-interfaces therefore answer one authored value differently, which is exactly what
-the peer-interface contract forbids. The predicate lane's own comparison was the
-third instance of the mask and was corrected to compare both sides
-presence-preserving and whole; the change-record lane was not.
-
-**Why it is deferred rather than fixed.** It is a behavior change to a rule three
-documents state normatively — `python.md`'s provenance-comparison paragraph, the
-copy-provenance ADR's own restatement of it, and the no-drift pin over
-`edited_row` — and its blast radius is every Typed idiom that restates an
-occurrence, including the API Conformance Suite's rendered stories. Deciding it
-also settles the sibling question the mask was originally protecting: whether an
-occurrence differing only in **undeclared** keys should stay the conservative
-eliminated arm, which is a deliberate choice rather than an oversight.
-
 ### D-72 — Milestone-set staging and predicate-write staging still refuse an issue-bearing read instead of classifying it
 
 *Medium — one stored state is classified on the ordinary read lane and refused on
@@ -337,6 +302,34 @@ edge it cannot decode from an unhydratable row, and a predicate-selected write
 needs a decision about what selecting an invalid row even means, which is a write
 contract rather than a read one. Only the values lane was required, and it was
 converted.
+
+### D-73 — A Wire read publishes an absent occurrence member as null, so a Wire keyed write cannot see a difference its Typed peer sees
+
+*Medium — one authored value earns a write through one representation and no
+write through the other.* Relates to `parallax.snapshot.materialize._wire`
+publication, `parallax.snapshot.handle._wire_writes._authored_row`,
+`core/spec/m-unit-work.md` *Comparing an assigned member with its persisted
+value*.
+
+**What.** Both keyed lanes now compare an assigned occurrence whole with presence
+preserved, but they compare against different observed values. A Typed source is
+a hydrated Value Object whose populated set is what storage held, so an absent
+member stays absent; a Wire source publishes the **declared composite**, where an
+absent member reads `null`. Against a stored `{"city": "Oslo"}`, authoring
+`{"city": "Oslo", "geo": null}` is an effective change through `tx.update` — it
+writes an explicit null where storage held nothing — and a restoration through
+`tx.wire.update`, which buffers nothing. A later read of either state answers the
+same `geo`; what differs is the DML issued and the document storage ends up
+holding.
+
+**Why it is deferred rather than fixed.** Each half is a settled decision of its
+own. Presence preservation on a hydrated value is D-47's fix, which replacement
+depends on; publishing the declared composite is what a Wire read means, what
+`then.graph` renders, and what both graders grade. Reconciling them means
+deciding whether a Wire read may distinguish absent from null at all — a read
+contract change across every language target — rather than adjusting a
+comparison. Neither an acceptance criterion nor a corpus case reaches it: no case
+stores a document short of a declared member and then writes that member's null.
 
 ## Forwarding pointers
 
@@ -363,6 +356,7 @@ prose.
 - **D-65** → [COR-97](https://linear.app/flimflam/issue/COR-97/give-a-transaction-a-supported-abandon-and-the-execution-log-an-abort). A `rollback: true` step's abort sentinel records a `commit`-phase failure and an unclassified retry verdict, which no oracle reads; `engine._AbortingPort` states the untruth and its bound, and COR-97's `Transaction.abandon()` plus an `aborted` attempt status removes the decorator.
 - **D-66** → [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would). A keyed temporal write settling against case state a committed materializing predicate write of the same case moved is refused (`engine._refuse_materialized_case_state`, marked by `temporal_state.TemporalShadow.note_materialized_write`): production resolves and plans that write internally and returns neither, so the adapter would issue a zero-row close where a real caller — who could only reach the step by reading — gets a stale write. COR-99 is the systematic pass over adapter/production divergences of that kind and cites this composition as its motivating example; this refusal is the one hand-placed instance of what that audit generalizes.
 - **D-68** → closed by [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production). `parallax.conformance` reaches a corpus model through the public `domain_model_from_document` door alone and reads the accepted Metamodel's own vocabulary, so no `parallax.descriptor` private import and no `parallax.core._formation_profile` reach survives; `ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at three `parallax.core.entity` entries that `spec/python.md` §7 states as a rebuttal rather than an exemption. One question the accepted model cannot answer survives the conversion, and it is not a model question: the order a document declared its Entities in, which `m-case-format` makes load-bearing for a case naming no target and which `conformance.models.declared_entity_spellings` therefore reads off the decoded document. This target pins that order in a unit assertion of its own (`tests/unit/test_corpus_models.py`), but no compatibility case distinguishes it from the accepted model's canonical order: exactly one case resolves the convention over a model whose two orders disagree (`m-predicate-048`), and it is refused by the same rule under either root. Which order `m-case-format` means is therefore ungated across targets, and [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would) carries it.
+- **D-71** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout) Phase 9. `_row_codec._assignment_matches_original` compares both sides whole and presence-preserving, the fourth and last seam the occurrence collapse falsified; `python.md`'s *Provenance comparison* paragraph and `docs/adr/0003` state the whole comparison, and `test_wire_writes.py` pins the peer agreement the mask broke. The sibling question is unchanged rather than settled: neither side of this comparison can hold a key no member declares, so an occurrence differing only there stays the conservative eliminated arm `m-unit-work` already states.
 
 ## History
 

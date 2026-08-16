@@ -184,3 +184,34 @@ The verb's own name is consequently reserved on **both** class kinds, joining th
 prefix and namespace reservations that already were. A Value Object Class
 declaring a member of that name would install an attribute descriptor over the
 verb and leave the class with no way to derive a copy at all.
+
+## Amendment (2026-08, COR-85): an occurrence compares whole, not as a mask
+
+The provenance-semantics paragraph above records that "a `one` value compares as
+a mask over the keys the caller authored".
+
+**Superseding decision:** an occurrence compares as a **whole** at either
+cardinality, presence preserved on both sides. A declared member the authored
+value omits is a difference like any other, so the edit is effective and a row is
+derived.
+
+The mask was written when assigning an occurrence patched the members it named,
+where an omitted member genuinely was un-authored and unaffected. An assignment
+now replaces the occurrence's subtree whole under every Storage Layout, so an
+omitted member is one the write **removes** — and eliminating that write as a
+net-zero edit preserved state the author's own value says is gone. Against a
+stored `{street: "A", city: "Oslo"}`, `edit(profile=Profile(street="A"))` wrote
+nothing and left `city` standing, while `edit(profile=Profile(street="B"))` wrote
+and dropped it: one value's fate turned on whether some other member changed.
+
+The `many` rule is unchanged, and the two cardinalities now answer one rule
+rather than two. What the elimination still ignores is a key **no member
+declares**: neither side of this comparison can hold one, so an occurrence
+differing only there is equal and its write is eliminated, exactly as
+`m-unit-work` states for every other comparison of an assigned member with its
+persisted value.
+
+The rule is a peer-interface obligation as much as a codec one. The Wire keyed
+verb computes its own effective change set against the source its read published
+and has always compared whole decoded values, so the mask was one authored value
+getting two answers from two peer interfaces (ADR 0057).

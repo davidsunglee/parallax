@@ -412,16 +412,39 @@ def test_edited_row_serializes_a_changed_value_object_beside_a_raw_identity() ->
     assert row["address"] == {"city": "Bergen"}
 
 
-def test_edited_row_compares_a_one_occurrence_as_a_mask_over_the_authored_keys() -> None:
-    # The authored occurrence names only `city`, so the unauthored `geo` is not
-    # a difference and the edit nets to zero.
+def test_edited_row_compares_a_one_occurrence_as_a_whole() -> None:
+    # The authored occurrence names `city` alone, so the omitted `geo` is a
+    # member the write REMOVES — an assignment replaces its subtree whole under
+    # every Storage Layout — and the edit is effective even though every key it
+    # does name is unchanged. Comparing only those keys would eliminate a write
+    # that changes what storage holds.
     original = mm.Traveler(
         id=1,
         address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway")),
         tags=(),
     )
     edited = original.edit(address=mm.TravelerAddress(city="Oslo"))
-    assert row_codec_of(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited) is None
+    assert row_codec_of(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited) == {
+        "id": 1,
+        "address": {"city": "Oslo"},
+    }
+
+
+def test_edited_row_answers_none_for_an_occurrence_restated_unchanged() -> None:
+    # The other side of the same rule: an occurrence restated with the members
+    # its original holds, at the values it holds them, stores exactly what is
+    # there and nets to zero.
+    original = mm.Traveler(
+        id=1,
+        address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway")),
+        tags=(),
+    )
+    edited = original.edit(
+        address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway"))
+    )
+    codec = row_codec_of(mm.DOCUMENT_LAYOUT_MODEL)
+    assert codec.edited_row(edited) is None
+    assert codec.restored_members(edited) == frozenset({"address"})
 
 
 def test_edited_row_compares_a_many_occurrence_as_a_whole() -> None:
@@ -473,8 +496,10 @@ def test_edited_row_writes_an_authored_null_a_materialized_read_never_set() -> N
     }
 
 
-def test_assignment_scoped_comparison_covers_nested_and_many_boundaries() -> None:
-    assert _assignment_matches_original({}, {"future": 1})
+def test_whole_comparison_covers_the_nested_and_many_boundaries() -> None:
+    assert _assignment_matches_original({"city": "Oslo"}, {"city": "Oslo"})
+    assert not _assignment_matches_original({}, {"future": 1})
+    assert not _assignment_matches_original({"city": "Oslo"}, {"city": "Oslo", "geo": None})
     assert not _assignment_matches_original({"city": "Oslo"}, None)
     assert not _assignment_matches_original({"city": "Oslo"}, {"city": "Bergen"})
     assert not _assignment_matches_original([{"city": "Oslo"}], [{"city": "Oslo", "future": 1}])

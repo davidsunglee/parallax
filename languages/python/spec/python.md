@@ -3344,12 +3344,16 @@ or descriptor authoring form and performs no audit stamping.
   `entity-row-member-missing` from `full_row` and emits a row from
   `identity_row`, whose selection is the declared primary key.
 
-  Provenance comparison is stated rather than implied: a
-  `one` value compares as a **mask over the keys the caller authored**, a `many`
-  value compares as a **whole** because its elements have no identity, and an
-  omitted key means un-authored rather than null — the same
-  explicit-versus-defaulted distinction canonical document serialization draws
-  (§3).
+  Provenance comparison is stated rather than implied: an occurrence compares as
+  a **whole** at either cardinality, presence preserved on both sides, because
+  assigning one replaces its subtree (`m-unit-work` *Comparing an assigned member
+  with its persisted value*). A declared member the authored value omits is a
+  member the write removes, so it makes the edit effective rather than passing
+  as un-authored; an explicit null and an omitted key stay distinct on both
+  sides, the same explicit-versus-defaulted distinction canonical document
+  serialization draws (§3). One authored value therefore earns one answer from
+  this comparison and from the Wire keyed verb's own effective-change set, which
+  weighs the same value against the source its read published.
 
   **The codec is an authoring codec, never a provenance decorator.** It emits
   only caller-authored identity and domain values in canonical Attribute-keyed
