@@ -262,7 +262,10 @@ rather than left true by omission:
    yields the ordered collection of element values. **Element order within a
    `many` member is semantic** and MUST preserve authored/wire document order.
    Accordingly compatibility `then.graph` comparison for value-object arrays is
-   order-sensitive; duplicate values remain distinct.
+   order-sensitive; duplicate values remain distinct. A getter answers what its
+   member **reads as**, so a member the stored document omitted reads null through
+   one — which is a different question from which members the materialized value
+   carries, and does not make the omitted member part of it (`m-snapshot-read`).
 2. **They materialize with the owner in one round trip.** A value object
    materializes **with its owning entity in the same read**: the owner's single
    statement projects the whole structured-document column, and every nested

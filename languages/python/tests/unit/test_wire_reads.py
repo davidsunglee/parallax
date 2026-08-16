@@ -143,7 +143,7 @@ def test_wire_keys_are_declared_member_names_and_leaves_are_canonical() -> None:
     assert root["active"] is True
 
 
-def test_a_document_occurrence_fills_every_declared_member() -> None:
+def test_a_document_occurrence_publishes_the_members_the_document_held() -> None:
     port = QueuePort(
         [
             [
@@ -166,10 +166,36 @@ def test_a_document_occurrence_fills_every_declared_member() -> None:
     root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
     address = _mapping(root["address"])
     geo = _mapping(address["geo"])
-    # The declared walk fills what the stored document omitted: `geo.point` is a
-    # declared `one` the row never carried, and it reads null rather than absent.
-    assert geo["point"] is None
+    # `geo.point` is a declared `one` the stored document never carried, so it is
+    # absent from the published node rather than invented as a null.
+    assert set(geo) == {"country", "elevation"}
     assert _sequence(address["phones"])[0] == {"type": "home", "number": "555-1234"}
+
+
+def test_two_stored_occurrences_short_and_null_publish_differently() -> None:
+    # The distinction publication now carries: a document that omits `geo` and one
+    # that stores it as JSON null are two stored states, so they publish two
+    # nodes. Both hydrate a Typed `geo` of `None`, which is why the Wire node was
+    # the only place the difference could be lost.
+    def published(document: object) -> Mapping[str, object]:
+        port = QueuePort([[{"id": 1, "name": "Ada", "address": document}]])
+        query = deserialize_query(
+            {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
+        )
+        root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
+        return _mapping(root["address"])
+
+    assert published({"street": "1 Park Ave", "city": "Oslo"}) == {
+        "street": "1 Park Ave",
+        "city": "Oslo",
+        "phones": [],
+    }
+    assert published({"street": "1 Park Ave", "city": "Oslo", "geo": None}) == {
+        "street": "1 Park Ave",
+        "city": "Oslo",
+        "geo": None,
+        "phones": [],
+    }
 
 
 def test_only_an_entity_node_can_carry_a_source_hint() -> None:
@@ -211,6 +237,9 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
     assert root["address"] is None
 
+    # A `many` has no absent state, so a document omitting `phones` HELD the empty
+    # collection and publishing `[]` for it carries the stored value rather than
+    # inventing one — the verdict a leaf and a `one` do not share.
     port = QueuePort([[{"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}}]])
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 3}}}
@@ -509,8 +538,9 @@ def test_either_model_provenance_publishes_one_conforming_wire_root(provenance: 
     assert published["name"] == "Ada"
     address = _mapping(published["address"])
     assert address["street"] == "Storgata 1"
-    # Declared-member filled at every depth: an absent nested `one` reads None.
-    assert address["geo"] is None
+    # The document held no `geo`, so the published occurrence carries no such key
+    # at any depth — the same absence the hydrated Typed value keeps.
+    assert "geo" not in address
 
 
 @pytest.mark.parametrize("provenance", list(_CUSTOMER_MODELS))
@@ -521,7 +551,9 @@ def test_either_model_provenance_publishes_a_hydratable_record(provenance: str) 
     assert isinstance(published, InvalidData)
     record = cast("InvalidData[object]", published)
     assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
-    assert _mapping(cast("Mapping[str, object]", record.data)["address"])["street"] is None
+    # The collapse a hydratable root is published under answers what the required
+    # member READS as; the published document still carries only what was stored.
+    assert "street" not in _mapping(cast("Mapping[str, object]", record.data)["address"])
 
 
 @pytest.mark.parametrize("provenance", list(_CUSTOMER_MODELS))

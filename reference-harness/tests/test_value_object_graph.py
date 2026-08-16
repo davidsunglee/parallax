@@ -309,11 +309,11 @@ def test_reference_identity_filter_uses_consumption_state_not_payload_equality(
     assert _reference_identity_row(consumed) == {"id": 2, "familyVariant": payload}
 
 
-def test_projection_drops_undeclared_keys_and_collapses_absence() -> None:
+def test_projection_drops_undeclared_keys_and_publishes_what_the_document_held() -> None:
     address = _address_decl()
 
-    # A present composite: the undeclared `zip` is dropped, a missing `elevation`
-    # is null, the deep to-one and the to-many materialize.
+    # A present composite: the undeclared `zip` is dropped, the omitted `elevation`
+    # contributes no key, the deep to-one and the to-many materialize.
     doc = {
         "street": "S",
         "city": "C",
@@ -323,14 +323,14 @@ def test_projection_drops_undeclared_keys_and_collapses_absence() -> None:
     assert _project_value_object(address, doc) == {
         "street": "S",
         "city": "C",
-        "geo": {"country": "NO", "elevation": None, "point": {"lat": 1.0, "lon": 2.0}},
+        "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}},
         "phones": [{"type": "home", "number": "1"}],
     }
 
-    # A non-object nested `one` collapses to null; a non-array `many` collapses to [].
+    # A nested `one` the document HOLDS as a non-object collapses to null and keeps
+    # its key; a `many` is always carried, because it has no absent state. The
+    # omitted leaves are absent rather than null.
     assert _project_value_object(address, {"geo": "scalar", "phones": "scalar"}) == {
-        "street": None,
-        "city": None,
         "geo": None,
         "phones": [],
     }
@@ -373,11 +373,12 @@ def test_projection_decodes_every_leaf_by_its_declared_type() -> None:
 
 def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_collapses() -> None:
     # The two halves of one boundary, at the projection the graph comparison reads. A
-    # member the document does not supply is a presence state the model HAS — a
-    # missing key, a JSON null, an occurrence of the wrong kind — and collapses to
-    # null / [] as the read predicates do (m-predicate). A leaf that IS supplied and
-    # is not an encoding of its declared type is a state the model does not have, so
-    # it is refused instead of reaching the projected node as the raw stored value.
+    # member the document HOLDS in a state the model has — a JSON null, an
+    # occurrence of the wrong kind — is carried, collapsed; a member the document
+    # omits is carried only where it has no absent state (`entries`, a `many`). A
+    # leaf that IS supplied and is not an encoding of its declared type is a state
+    # the model does not have, so it is refused instead of reaching the projected
+    # node as the raw stored value.
     profile = (
         load_model(COMPATIBILITY_ROOT, "models/document-codec.yaml")
         .entity("Sample")
@@ -388,7 +389,7 @@ def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_coll
         _project_value_object(profile, {"small": None, "origin": "unknown", "entries": None}),
     )
     assert collapsing["small"] is None
-    assert collapsing["amount"] is None
+    assert "amount" not in collapsing
     assert collapsing["origin"] is None
     assert collapsing["entries"] == []
 

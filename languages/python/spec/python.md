@@ -2841,9 +2841,16 @@ or descriptor authoring form and performs no audit stamping.
   inheritance participant additionally carries its stable variant spelling under
   `familyVariant`. Leaves are canonical Wire Values (`m-wire`), the same
   spelling the document codec stores; a temporal end's open bound carries
-  `m-core`'s `infinity` literal. Value Object occurrences are declared-member
-  filled at every depth: an absent leaf or `one` reads `None` and an absent
-  `many` reads `[]`.
+  `m-core`'s `infinity` literal. A Value Object occurrence carries the members the
+  stored document HELD, at every depth (`m-snapshot-read`): a leaf or a `one` the
+  document omitted is not a key of the published mapping, while one stored as JSON
+  null is a key whose value is `None`. So a consumer reads presence off the node
+  rather than assuming every declared name is there, and the node is exactly the
+  document `to_document` derives from the Typed value of the same row. Two
+  positions carry a member the document does not hold, and neither is a fill: a
+  `many` always publishes, as `[]` where the document supplied no elements, because
+  it has no absent state; and a non-nullable `one` the document omits publishes
+  `None` under the required-member-absent collapse, with its root classified.
 - **Finite unwind.** Relationships render along the requested Include Paths
   rather than the merged identity graph, so a back-reference renders its target
   once, in full, and terminates — never a primary-key stub. A relationship no
@@ -3352,19 +3359,14 @@ or descriptor authoring form and performs no audit stamping.
   as un-authored; an explicit null and an omitted key stay distinct on both
   sides, the same explicit-versus-defaulted distinction canonical document
   serialization draws (§3). The Wire keyed verb applies that identical rule to
-  its own effective-change set, so one authored value earns one answer from both
-  peer interfaces wherever they weigh it against the same observed value. What
-  the two can disagree about is that value rather than the rule: this comparison
-  weighs the authored member against the hydrated original, whose populated set
-  is what storage held, while the Wire verb weighs it against the node its read
-  published, which fills an absent declared member with null (§4). Against a row
-  storing an occurrence short of a declared member, authoring that member's
-  explicit null is therefore an effective change here and a restoration there —
-  a difference in the DML issued and in what the document then holds, never in
-  the value either stored state hydrates to or the node either publishes.
-  Closing it decides whether a Wire read may distinguish absent from null at
-  all, which is a read contract rather than a comparison, so it is carried open
-  in [`docs/deferred-ledger.md`](../docs/deferred-ledger.md).
+  its own effective-change set, and it weighs it against the same observed value:
+  this comparison reads the hydrated original's populated set and the Wire verb
+  reads the node its read published, which carries the members the stored
+  document held (§4) — one document under two names. One authored value
+  therefore earns one answer from both peer interfaces, including where the
+  answer turns on presence: against a row storing an occurrence short of a
+  declared member, authoring that member's explicit null is an effective change
+  through either, and the two emit the same DML.
 
   **The codec is an authoring codec, never a provenance decorator.** It emits
   only caller-authored identity and domain values in canonical Attribute-keyed

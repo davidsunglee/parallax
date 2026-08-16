@@ -56,7 +56,7 @@ from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, DomainModel
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import UnloadedRelationshipError, ValueObject, shape_of
+from parallax.core.entity import UnloadedRelationshipError, to_document
 from parallax.core.entity._model import model_of
 from parallax.snapshot import InvalidData, connect, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.handle import TransactionTimePinReadOnlyError
@@ -464,49 +464,22 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(provisioner: Any) -> No
     assert snapshot.execution.round_trips == 3
 
 
-def _value_object_projection(value: Any) -> dict[str, Any] | None:
-    """One materialized Value Object as the DECLARED projection a `then.graph`
-    leaf grades: EVERY declared member, canonically named, valued as the carrier
-    reads it, recursively. A member the stored document omitted collapses to
-    `None` / `()` exactly as one it stored as JSON null does — the absence
-    collapse `m-predicate` fixes and `m-value-object-023` states in its own
-    words ("every declared member is present").
-
-    Deliberately not `to_document`: canonical document serialization is
-    presence-filtered, so it omits a member storage never held. The carrier keeps
-    that distinction — it is what lets an edited copy author an explicit null
-    over an omission — and `then.graph` deliberately does not grade it. Values
-    stay MANAGED here, exactly as the wire-level engine's own graph rendering
-    leaves them, so both sides normalize through one wire rule.
-    """
-    if value is None:
-        return None
-    declared = shape_of(cast("type[ValueObject]", type(value)))
-    projected: dict[str, Any] = {}
-    for py_name, canonical in declared.py_to_name.items():
-        member: Any = getattr(value, py_name)
-        if py_name in declared.many_py:
-            projected[canonical] = [_value_object_projection(element) for element in member]
-        elif isinstance(member, ValueObject):
-            projected[canonical] = _value_object_projection(member)
-        else:
-            projected[canonical] = member
-    return projected
-
-
 def _vo_owner_row(instance: Any, vo_py_name: str = "address") -> dict[str, Any]:
     """A materialized VO-bearing owner's own graph node, DECLARED-member-keyed
-    (``instance_graph_node``), with its value-object member rendered as the
-    declared projection (:func:`_value_object_projection`) so ``compare_graph``
-    can recurse into it exactly like the wire-level engine's own `then.graph`
-    grading.
+    (``instance_graph_node``), with its value-object member serialized to its
+    canonical document so ``compare_graph`` can recurse into it exactly like the
+    wire-level engine's own `then.graph` grading.
 
-    The projection, not the canonical document: a read preserves the stored
-    document's own field presence, so serializing the carrier would omit a
-    member storage never held, while `then.graph` grades every declared member
-    with absence collapsed."""
+    ``to_document``, because a `then.graph` leaf is the document the read
+    published and canonical serialization is presence-filtered the same way: a
+    member the stored document omitted is absent from both sides, and one it
+    stored as JSON null is null on both. Rendering by GETTER instead would report
+    what an absent member READS as — the absence collapse `m-predicate` fixes —
+    which is a different observation and the one thing this comparison must not
+    substitute for the published value.
+    """
     row = instance_graph_node(instance)
-    row[vo_py_name] = _value_object_projection(getattr(instance, vo_py_name))
+    row[vo_py_name] = to_document(getattr(instance, vo_py_name))
     return row
 
 

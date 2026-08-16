@@ -7,7 +7,9 @@
 # `many` `stops`; the assignment names `title` alone. Afterwards `note` and `origin`
 # are gone and `stops` is the empty array, because the author stated a complete value
 # and no stored member is merged back into it — replacement reaches every depth of
-# the occurrence, not just its own level. `marks` shows the same rule at the top
+# the occurrence, not just its own level. The dependent find is where the removal is
+# observable: the published occurrence carries the members the row now holds, so
+# `note` and `origin` are ABSENT from it rather than present and null. `marks` shows the same rule at the top
 # level: the two stored elements are gone and the assigned one-element array is the
 # whole of it. `label` was never mentioned, so it is still `north`.
 #
@@ -63,8 +65,6 @@ when:
           label: north
           spec:
             title: Pilot
-            note: null
-            origin: null
             stops: []
           marks:
             - { code: Z }

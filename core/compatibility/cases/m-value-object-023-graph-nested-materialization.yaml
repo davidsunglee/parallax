@@ -7,17 +7,24 @@
 # to-many `phones` array all decode from that ONE column — no deep-fetch statement,
 # no per-value-object fetch, one golden statement, `then.graph` fully materialized:
 # the positive proof of getter navigation to arbitrary depth with no child round
-# trip. The graph is the DECLARED projection: only declared members appear (the
-# undeclared `zip` inside `geo` is dropped), every declared member is present, and
-# absence collapses exactly as the read predicates do (m-predicate Q5) — a null,
-# missing, JSON-null, or WRONG-KIND `one` member materializes as null, and the
-# corresponding `many` states materialize as []. A wrong-kind occurrence collapses
-# AND is classified: the graph carries the collapsed value while
-# `then.storedDataIssues` carries the diagnosis for that result position, which is
-# what makes hydration and classification one pass rather than a refusal
-# (m-snapshot-read). Per id: 4 a SQL-NULL address column
-# (whole object null); 5 missing city + geo inner keys (geo all-null, point null,
-# phones missing); 6 a wrong-kind geo scalar; 7 explicit JSON-null
+# trip. The graph is the stored document read through the declaration: undeclared
+# keys are dropped (the `zip` inside `geo`) and every declared member the document
+# HELD is present, decoded by its declared type. A member the document omits is
+# absent from the graph rather than rendered as a null it never stored — which
+# member a document holds is not the same question as what an absent member READS
+# as, and only the first is what a materialized value carries. The read predicates'
+# own absence collapse (m-predicate Q5) answers the second and changes nothing
+# here. Two shapes still carry a key without one in the document, both by the
+# codec's own algebra (m-document-codec): a WRONG-KIND `one` is a member the
+# document holds, so it appears, collapsed to null; and a `many` has no absent
+# state, so an omitted key, a JSON null, and a non-array value are three stored
+# spellings of the empty collection and `phones` is present for all three. A
+# wrong-kind occurrence collapses AND is classified: the graph carries the
+# collapsed value while `then.storedDataIssues` carries the diagnosis for that
+# result position, which is what makes hydration and classification one pass
+# rather than a refusal (m-snapshot-read). Per id: 4 a SQL-NULL address column
+# (whole object null); 5 missing city + phones and a geo holding only an undeclared
+# key (so an empty geo composite); 6 a wrong-kind geo scalar; 7 explicit JSON-null
 # point leaves beside a real one-element phones array; 8 phones an explicit JSON
 # null; 9/10 phones a wrong-kind scalar / object — still []. Golden SQL is
 # dialect-identical (a presence-plus-document projection; MariaDB
@@ -81,11 +88,7 @@ then:
         name: Kavi
         address:
           street: 5 Harbour Rd
-          city: null
-          geo:
-            country: null
-            elevation: null
-            point: null
+          geo: {}
           phones: []
       - id: 6
         name: Rin
@@ -109,22 +112,16 @@ then:
         name: Iris
         address:
           street: 8 Null Way
-          city: null
-          geo: null
           phones: []
       - id: 9
         name: Omar
         address:
           street: 9 Scalar Rd
-          city: null
-          geo: null
           phones: []
       - id: 10
         name: Priya
         address:
           street: 10 Object Ct
-          city: null
-          geo: null
           phones: []
   storedDataIssues:
     - ordinal: 5
