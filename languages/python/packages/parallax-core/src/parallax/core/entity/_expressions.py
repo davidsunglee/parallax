@@ -669,7 +669,9 @@ class AttributeExpr[E, T]:
         """
         if self._member is None:
             return
-        violation = judged_edit_violation(self._member, value, owner=self._entity)
+        violation = judged_edit_violation(
+            self._member, value, owner=self._entity, location=member_location(self._member)
+        )
         if violation is not None:
             raise EditError([violation]) from None
 
@@ -721,7 +723,11 @@ def member_canonical_name(member: AttributeMetadata | ValueObjectMetadata) -> st
 
 
 def judged_edit_violation(
-    member: AttributeMetadata | ValueObjectMetadata, value: object, *, owner: str
+    member: AttributeMetadata | ValueObjectMetadata,
+    value: object,
+    *,
+    owner: str,
+    location: ModelLocation,
 ) -> EditViolation | None:
     """The shared judgement's verdict on ``value``, as a located violation.
 
@@ -729,13 +735,18 @@ def judged_edit_violation(
     it or re-wording it: the judgement owns the rule and its message, this owns
     only the edit code the rule reports as and the owner prefix that says where
     the member was addressed. ``None`` means the assignment is accepted.
+
+    ``location`` is the caller's, because where a refusal lands is a fact about
+    the surface rather than about the verdict: a member of a model's Entity
+    locates at :func:`member_location`, while a Value Object Class's own member
+    belongs to no model position at all.
     """
     try:
         judge_assignment(member, value)
     except WriteAssignmentError as error:
         return EditViolation(
             code=EDIT_CODE_BY_RULE[error.rule],
-            location=member_location(member),
+            location=location,
             member_name=member_canonical_name(member),
             message=f"{owner}.{error}",
         )

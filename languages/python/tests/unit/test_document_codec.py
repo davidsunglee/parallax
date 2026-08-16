@@ -61,6 +61,7 @@ from parallax.core.document_codec import (
     encode_many,
     entity_shape,
     is_text_compared,
+    mask_managed_members,
     occurrence_shape,
     reduce_declared_members,
     reduce_declared_members_classified,
@@ -752,6 +753,23 @@ def test_declared_member_reduction_refuses_wrong_occurrence_kinds() -> None:
         reduce_declared_members(_SHAPE, {"origin": "Oslo"})
     with pytest.raises(LeafEncodingError, match="expected array"):
         reduce_declared_members(_SHAPE, {"entries": {"kind": "home"}})
+
+
+def test_a_managed_mask_selects_recursively_through_one_occurrences_alone() -> None:
+    # The exported mask operation, kept while no production comparison reaches it:
+    # an occurrence assignment now replaces its subtree whole, so both sides of a
+    # write comparison reduce presence-preserving and compare whole rather than
+    # masking the stored document by the members the assignment authored. What the
+    # operation still says is where the recursion stops — a mapping selects member
+    # by member, and every other value, an array included, is taken whole.
+    managed = {"flag": True, "origin": {"city": "Oslo", "zone": 1}, "entries": [{"kind": "home"}]}
+    assert mask_managed_members(managed, {"origin": {"city": "Bergen"}, "entries": []}) == {
+        "origin": {"city": "Oslo"},
+        "entries": [{"kind": "home"}],
+    }
+    assert mask_managed_members("Oslo", {"city": "Bergen"}) == "Oslo"
+    assert mask_managed_members(managed, "Oslo") == managed
+    assert mask_managed_members({"origin": {"city": "Oslo"}}, {"absent": {}}) == {"absent": None}
 
 
 def test_patches_apply_left_to_right_each_over_the_result_of_the_last() -> None:

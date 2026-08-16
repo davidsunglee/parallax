@@ -172,6 +172,23 @@ def test_an_invalid_scalar_value_raises_at_edit_time_not_at_the_database() -> No
         _account().edit(balance="not-a-decimal")
 
 
+def test_a_dotted_name_is_refused_as_a_path_rather_than_as_an_unknown_member() -> None:
+    # `address` is a declared member and `city` is a declared field of it, so
+    # reporting the name as unknown would misdiagnose it. What the caller asked
+    # for is the sparse write below an occurrence's boundary that
+    # `Customer.address.city.set(...)` is refused for, and a keyword edit is the
+    # other spelling of the same request. The remedy is composing edits.
+    customer = vm.Customer(id=1, name="Ada", address=vm.Address(street="s", city="Oslo"))
+    with pytest.raises(EditError, match="never a nested path") as caught:
+        customer.edit(**{"address.city": "Bergen"})
+    assert caught.value.codes == {"edit-nested-path"}
+    violation = caught.value.violations[0]
+    assert violation.member_name == "address.city"
+    assert violation.location == EntityLocation(
+        EntityIdentity("parallax.compatibility", "Customer")
+    )
+
+
 def test_wire_names_of_rejects_a_class_that_declares_nothing() -> None:
     with pytest.raises(EntityDefinitionError, match="not a Parallax Entity Class"):
         wire_names_of(int)

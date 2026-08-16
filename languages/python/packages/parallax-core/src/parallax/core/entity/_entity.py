@@ -14,7 +14,6 @@ no adapter and no mirrored record graph.
 
 from __future__ import annotations
 
-import functools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Self, cast
@@ -34,12 +33,19 @@ from parallax.core.entity._declaration import (
     declaration_of,
     members_of,
 )
+from parallax.core.entity._edit import (
+    partition_declared,
+    restate,
+    unresolved_member_violation,
+    use_edit,
+)
 from parallax.core.entity._errors import EditError, EditViolation, EntityDefinitionError
 from parallax.core.entity._expressions import (
     AllPredicate,
     Predicate,
     conjoin,
     judged_edit_violation,
+    member_location,
     serialize_member,
 )
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
@@ -369,9 +375,12 @@ def _edit_violations(
     """Every rule the authored ``changes`` break, one per named member (spec §3).
 
     The split is by what each half can know. Resolving a Python name to a member
-    is a class-shaped question and is answered here: a relationship member and an
-    undeclared name never reach a member at all, and each contributes its
-    resolution violation instead of a judgement. Everything a resolved member
+    is a class-shaped question and is answered here: a relationship member, a
+    dotted path, and an undeclared name never reach a member at all, and each
+    contributes its resolution violation instead of a judgement — the last two
+    through the refusal both edit surfaces share
+    (:func:`~parallax.core.entity._edit.unresolved_member_violation`).
+    Everything a resolved member
     then decides — primary-key, read-only, and framework-owned targets, in that
     order, plus declared-type and nullability conformance — is
     :func:`~parallax.core.metamodel.judge_assignment`'s single verdict, the SAME
@@ -410,73 +419,20 @@ def _edit_violations(
         member = names.members.get(py_name)
         if member is None:
             violations.append(
-                EditViolation(
-                    code="edit-unknown-member",
-                    location=EntityLocation(entity),
-                    member_name=py_name,
-                    message=f"{cls_name}.{py_name}: unknown member name",
+                unresolved_member_violation(
+                    py_name, owner=cls_name, location=EntityLocation(entity)
                 )
             )
             continue
-        violation = judged_edit_violation(member, serialize_member(value), owner=entity.canonical)
+        violation = judged_edit_violation(
+            member,
+            serialize_member(value),
+            owner=entity.canonical,
+            location=member_location(member),
+        )
         if violation is not None:
             violations.append(violation)
     return tuple(violations)
-
-
-_UNBOUND: Final = object()
-"""Distinguishes a class that binds a name to ``None`` from one that binds it not
-at all."""
-
-
-def _is_derived_cache(cls: type, key: str) -> bool:
-    """Whether ``cls`` declares the instance slot ``key`` a derived cache.
-
-    A ``functools.cached_property`` memoizes an answer computed from the value it
-    was read through, so the class itself declares that slot derived and the rule
-    needs no registry. The first ancestor that binds the name decides, exactly as
-    attribute lookup would, so a subtype that rebinds the name to something else
-    is not taken to have inherited the declaration.
-    """
-    for ancestor in cls.__mro__:
-        attribute = ancestor.__dict__.get(key, _UNBOUND)
-        if attribute is not _UNBOUND:
-            return isinstance(attribute, functools.cached_property)
-    return False
-
-
-def _partition_declared(
-    value: Entity, names: WireNames
-) -> tuple[dict[str, object], dict[str, object]]:
-    """``value``'s declared member state and everything an edit carries, split.
-
-    An edit replaces the first half and preserves the second unchanged, which is
-    what keeps a materialized node's relationship views and lifecycle state
-    readable on the copy it derives. The second half is a complement rather than
-    an enumerated slot list, so a new kind of instance state travels correctly
-    without either caller learning its name.
-
-    A derived cache is the one thing that complement drops: a slot the class
-    declares a ``functools.cached_property`` (:func:`_is_derived_cache`) holds an
-    answer computed from declared state an edit may replace, so it is left out
-    and recomputed on next access rather than carried into a copy whose own
-    declared state contradicts it. That reads a declaration, so it reaches only
-    names a declaration may author: the framework's own ``__parallax_`` prefix is
-    reserved from every class body, which is what keeps a lifecycle's state and a
-    Change Record outside anything a class can declare derived.
-
-    Both branches of :meth:`Entity.edit` partition here, so neither can hold its
-    own opinion of the boundary.
-    """
-    declared_names = set(names.py_to_name)
-    declared_state: dict[str, object] = {}
-    carried: dict[str, object] = {}
-    for key, member in value.__dict__.items():
-        if key in declared_names:
-            declared_state[key] = member
-        elif not _is_derived_cache(type(value), key):
-            carried[key] = member
-    return declared_state, carried
 
 
 def _restate[E: Entity](
@@ -485,38 +441,22 @@ def _restate[E: Entity](
     carried: dict[str, object],
     record: dict[str, object],
 ) -> E:
-    """A fresh value holding exactly ``value``'s state under ``record``.
-
-    An edit that authors nothing validates nothing, so it builds through the
-    validation-free construction path materialization already uses rather than
-    through the constructor — which is also the only path left once every
-    inherited copy door is refused.
-    """
-    restated = type(value).model_construct()
-    object.__setattr__(restated, "__dict__", declared_state | carried)
-    object.__setattr__(restated, "__pydantic_fields_set__", set(value.__pydantic_fields_set__))
+    """A fresh value holding exactly ``value``'s state under ``record``."""
+    restated = restate(value, declared_state | carried)
     object.__setattr__(restated, CHANGE_RECORD_SLOT, record)
     return restated
 
 
 def _use_edit(cls: type, door: str) -> EditError:
-    """The refusal of an inherited copy path (spec §3).
-
-    It examines no argument and names no member, so it locates at the Entity
-    whose value was copied and carries no member name.
-    """
-    return EditError(
-        [
-            EditViolation(
-                code="edit-use-edit",
-                location=EntityLocation(declaration_of(cls).identity),
-                message=(
-                    f"{cls.__name__}.{door}(...) creates no value: derive an edited copy with "
-                    "`value.edit(**changes)`, the one door that judges every assignment and "
-                    "records what it touched"
-                ),
-            )
-        ]
+    """The refusal of an inherited copy path, located at the copied Entity."""
+    return use_edit(
+        cls.__name__,
+        door,
+        location=EntityLocation(declaration_of(cls).identity),
+        remedy=(
+            "derive an edited copy with `value.edit(**changes)`, the one door that judges "
+            "every assignment and records what it touched"
+        ),
     )
 
 
@@ -619,7 +559,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         coverage defect rather than a developer-input refusal.
 
         An edit replaces declared member state and preserves everything it
-        neither replaces nor invalidates (:func:`_partition_declared`), whichever
+        neither replaces nor invalidates (:func:`partition_declared`), whichever
         branch builds the result. A materialized node's relationship views and
         its lifecycle state therefore reach the copy intact, so the copy answers
         a relationship and the lifecycle's own inspection surface exactly as the
@@ -648,7 +588,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         """
         record = dict(_change_record(self) or {})
         names = wire_names_of(type(self))
-        declared_state, carried = _partition_declared(self, names)
+        declared_state, carried = partition_declared(self, set(names.py_to_name))
         if not changes:
             return _restate(self, declared_state, carried, record)
         entity = declaration_of(type(self)).identity
