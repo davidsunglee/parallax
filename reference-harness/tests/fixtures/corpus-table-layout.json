@@ -4472,5 +4472,199 @@
         0
       ]
     }
+  },
+  "models/write-transparency-layout-twin-columns.yaml": {
+    "write_twin": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinItem"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.WriteTwinItem.id",
+          "declaringOwner": "parallax.compatibility.WriteTwinItem",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinItem"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.WriteTwinItem.label",
+          "declaringOwner": "parallax.compatibility.WriteTwinItem",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinItem"
+          ],
+          "column": "spec",
+          "contributor": "valueObject:parallax.compatibility.WriteTwinItem.spec",
+          "declaringOwner": "parallax.compatibility.WriteTwinItem",
+          "effectiveNullable": true,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinItem"
+          ],
+          "column": "marks",
+          "contributor": "valueObject:parallax.compatibility.WriteTwinItem.marks",
+          "declaringOwner": "parallax.compatibility.WriteTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "write_twin_log": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinLog"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.WriteTwinLog.id",
+          "declaringOwner": "parallax.compatibility.WriteTwinLog",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinLog"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.WriteTwinLog.label",
+          "declaringOwner": "parallax.compatibility.WriteTwinLog",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinLog"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.WriteTwinLog.txStart",
+          "declaringOwner": "parallax.compatibility.WriteTwinLog",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinLog"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.WriteTwinLog.txEnd",
+          "declaringOwner": "parallax.compatibility.WriteTwinLog",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinLog"
+          ],
+          "column": "spec",
+          "contributor": "valueObject:parallax.compatibility.WriteTwinLog.spec",
+          "declaringOwner": "parallax.compatibility.WriteTwinLog",
+          "effectiveNullable": true,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinLog"
+          ],
+          "column": "marks",
+          "contributor": "valueObject:parallax.compatibility.WriteTwinLog.marks",
+          "declaringOwner": "parallax.compatibility.WriteTwinLog",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        3
+      ]
+    }
+  },
+  "models/write-transparency-layout-twin-document.yaml": {
+    "write_twin": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinItem"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.WriteTwinItem.id",
+          "declaringOwner": "parallax.compatibility.WriteTwinItem",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinItem"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.WriteTwinItem",
+          "declaringOwner": "parallax.compatibility.WriteTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "write_twin_log": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinLog"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.WriteTwinLog.id",
+          "declaringOwner": "parallax.compatibility.WriteTwinLog",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinLog"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.WriteTwinLog.txStart",
+          "declaringOwner": "parallax.compatibility.WriteTwinLog",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinLog"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.WriteTwinLog.txEnd",
+          "declaringOwner": "parallax.compatibility.WriteTwinLog",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.WriteTwinLog"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.WriteTwinLog",
+          "declaringOwner": "parallax.compatibility.WriteTwinLog",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        2
+      ]
+    }
   }
 }

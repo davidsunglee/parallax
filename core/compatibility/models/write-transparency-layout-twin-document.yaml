@@ -1,0 +1,99 @@
+# Relational Document Layout member of the Value Object write transparency twin.
+# This is an ordinary production descriptor consumed without a harness override:
+# the root-owned layout block on each Entity is its only difference from the Columns
+# member, so every occurrence is patched into the shared `payload` document rather
+# than bound at a Column of its own. The fixture twin authors the same logical rows
+# and the case twins author the same writes, so what a write leaves stored and a
+# later read publishes is what the pair proves layout cannot change.
+#
+# The two Entities divide the write surface by temporality. `WriteTwinItem` is
+# Non-Temporal and unversioned, so its family supplies no version source and every
+# participating read takes the shared row lock its Locking fallback demands.
+# `WriteTwinLog` is Transaction-Time-Only, so an assignment closes the current
+# milestone and chains a successor built from the document that milestone retained.
+#
+# `spec` carries both nested cardinalities — a nested `one` (`origin`) and a nested
+# `many` (`stops`) — so replacing it at the top is observable at depth, and its two
+# leaves divide the presence trichotomy: `title` is the member every write names,
+# while `note` is the one a write may omit, spell as an explicit null, or leave
+# outside an occurrence that is absent altogether. `marks` is the top-level `many`,
+# which is never null and whose empty state is the empty array.
+entities:
+  - name: WriteTwinItem
+    namespace: parallax.compatibility
+    table: write_twin
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: label
+        type: string
+        maxLength: 64
+        nullable: true
+    valueObjects:
+      - name: spec
+        nullable: true
+        attributes:
+          - name: title
+            type: string
+            nullable: true
+          - name: note
+            type: string
+            nullable: true
+        valueObjects:
+          - name: origin
+            nullable: true
+            attributes:
+              - name: country
+                type: string
+                nullable: true
+          - name: stops
+            multiplicity: many
+            attributes:
+              - name: port
+                type: string
+                nullable: true
+      - name: marks
+        multiplicity: many
+        attributes:
+          - name: code
+            type: string
+            nullable: true
+  - name: WriteTwinLog
+    namespace: parallax.compatibility
+    table: write_twin_log
+    layout:
+      document:
+        column: payload
+    temporality: transaction-time
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: label
+        type: string
+        maxLength: 64
+        nullable: true
+    valueObjects:
+      - name: spec
+        nullable: true
+        attributes:
+          - name: title
+            type: string
+            nullable: true
+        valueObjects:
+          - name: origin
+            nullable: true
+            attributes:
+              - name: country
+                type: string
+                nullable: true
+      - name: marks
+        multiplicity: many
+        attributes:
+          - name: code
+            type: string
+            nullable: true

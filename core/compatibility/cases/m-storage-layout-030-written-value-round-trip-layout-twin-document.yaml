@@ -1,0 +1,230 @@
+# Relational Document Layout half of the written-value round trip: the same four
+# writes compose the same four values, and the same read publishes them back member
+# for member. Only the physical encoding differs — every member of every row rides
+# inside the shared `payload` document rather than in a Column of its own.
+#
+# Row 10 names every member, so one write covers the whole shape — the top-level
+# `one` `spec`, the nested `one` `origin` and nested `many` `stops` inside it, and
+# the top-level `many` `marks`. Rows 11 to 13 divide the three ways a write can
+# leave something not present:
+#
+#   11  `note` OMITTED         the stored occurrence carries no `note` key
+#   12  `note` EXPLICIT NULL   the stored occurrence carries `note: null`
+#   13  `spec` never named     the occurrence itself is absent
+#
+# A `many` left unset is neither of those: `stops` and `marks` store the empty
+# array, a `many` occurrence's only zero-element representation.
+#
+# The semantic distinction this pair pins down is that presence belongs to the
+# WRITTEN VALUE and not to the layout, on both sides of the round trip. The closing
+# find's `expectRows` shows the read side: an omitted leaf and an explicit null
+# collapse to one answer while an absent occurrence answers null and an unset `many`
+# answers `[]`, and the twin publishes those same four rows. `then.tableState` shows
+# the write side under this layout: an absent occurrence is a key the shared document
+# never carries where the Columns member has a NULL Column, and an omitted leaf is a
+# key missing from `payload.spec` rather than from a `spec` Column — three spellings
+# that stay distinct in storage either way. `WriteTwinItem` declares no version and
+# no As-Of Axis, so its Effective Concurrency Strategy is Locking and the
+# participating find takes the shared row lock.
+model: models/write-transparency-layout-twin-document.yaml
+tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-opt-lock, m-read-lock, m-sql, scenario, insert, json, presence, nested, to-many, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.WriteTwinItem
+          rows:
+            - id: 10
+              label: north
+              spec:
+                title: Atlas
+                note: first
+                origin: { country: "NO" }
+                stops:
+                  - { port: Oslo }
+                  - { port: Bergen }
+              marks:
+                - { code: A }
+                - { code: B }
+      roundTrips: 1
+      note: write every member of every shape — the nested `one`, the nested `many`, and the top-level `many`
+      statements:
+        - sql:
+            postgres: insert into write_twin(id, payload) values (?, ?)
+            mariadb: insert into write_twin(id, payload) values (?, ?)
+          binds:
+            - 10
+            - label: north
+              spec:
+                title: Atlas
+                note: first
+                origin: { country: "NO" }
+                stops:
+                  - { port: Oslo }
+                  - { port: Bergen }
+              marks:
+                - { code: A }
+                - { code: B }
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.WriteTwinItem
+          rows:
+            - id: 11
+              spec:
+                title: Beta
+      roundTrips: 1
+      note: omit `note` and every occurrence-valued member — the omitted `many` members still store the empty array
+      statements:
+        - sql:
+            postgres: insert into write_twin(id, payload) values (?, ?)
+            mariadb: insert into write_twin(id, payload) values (?, ?)
+          binds:
+            - 11
+            - spec:
+                title: Beta
+                stops: []
+              marks: []
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.WriteTwinItem
+          rows:
+            - id: 12
+              spec:
+                title: Gamma
+                note: null
+      roundTrips: 1
+      note: spell `note` as an explicit null — the same member, the other presence state
+      statements:
+        - sql:
+            postgres: insert into write_twin(id, payload) values (?, ?)
+            mariadb: insert into write_twin(id, payload) values (?, ?)
+          binds:
+            - 12
+            - spec:
+                title: Gamma
+                note: null
+                stops: []
+              marks: []
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.WriteTwinItem
+          rows:
+            - id: 13
+              label: delta
+      roundTrips: 1
+      note: name no occurrence at all — `spec` is absent while `marks` still stores the empty array
+      statements:
+        - sql:
+            postgres: insert into write_twin(id, payload) values (?, ?)
+            mariadb: insert into write_twin(id, payload) values (?, ?)
+          binds:
+            - 13
+            - label: delta
+              marks: []
+    - objectQuery:
+        target: parallax.compatibility.WriteTwinItem
+        predicate:
+          greaterThan:
+            attr: parallax.compatibility.WriteTwinItem.id
+            value: 9
+        orderBy:
+          - attr: parallax.compatibility.WriteTwinItem.id
+            direction: asc
+      roundTrips: 1
+      note: read the four written rows back — each one publishes exactly the value its own write composed
+      statements:
+        - sql:
+            postgres: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id > ? order by t0.id asc for share of t0
+            mariadb: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id > ? order by t0.id asc lock in share mode
+          binds: [9]
+      expectRows:
+        - id: 10
+          label: north
+          spec:
+            title: Atlas
+            note: first
+            origin: { country: "NO" }
+            stops:
+              - { port: Oslo }
+              - { port: Bergen }
+          marks:
+            - { code: A }
+            - { code: B }
+        - id: 11
+          label: null
+          spec:
+            title: Beta
+            note: null
+            origin: null
+            stops: []
+          marks: []
+        - id: 12
+          label: null
+          spec:
+            title: Gamma
+            note: null
+            origin: null
+            stops: []
+          marks: []
+        - id: 13
+          label: delta
+          spec: null
+          marks: []
+then:
+  roundTrips: 5
+  tableState:
+    write_twin:
+      - id: 1
+        payload:
+          label: north
+          spec:
+            title: Atlas
+            note: first
+            origin: { country: "NO" }
+            stops:
+              - { port: Oslo }
+          marks:
+            - { code: A }
+            - { code: B }
+      - id: 2
+        payload:
+          label: south
+          spec:
+            title: Meridian
+            note: second
+            origin: { country: SE }
+            stops:
+              - { port: Bergen }
+          marks:
+            - { code: C }
+      - id: 10
+        payload:
+          label: north
+          spec:
+            title: Atlas
+            note: first
+            origin: { country: "NO" }
+            stops:
+              - { port: Oslo }
+              - { port: Bergen }
+          marks:
+            - { code: A }
+            - { code: B }
+      - id: 11
+        payload:
+          spec:
+            title: Beta
+            stops: []
+          marks: []
+      - id: 12
+        payload:
+          spec:
+            title: Gamma
+            note: null
+            stops: []
+          marks: []
+      - id: 13
+        payload:
+          label: delta
+          marks: []

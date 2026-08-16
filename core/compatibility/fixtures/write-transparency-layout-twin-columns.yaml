@@ -1,0 +1,49 @@
+# Logical rows shared by both Value Object write transparency descriptors. Each row
+# authors declared member names rather than physical cells, so one file describes one
+# logical state under either layout.
+#
+# The two `WriteTwinItem` rows are the pre-existing state a keyed write settles
+# against, and each is stored with every occurrence populated so a replacement has
+# something to destroy:
+#
+#   id 1  the replacement subject   `spec` carries both nested cardinalities
+#   id 2  the chained-edit subject  two successive edits of one occurrence
+#
+# The `WriteTwinLog` row is one open Transaction-Time milestone, so an assignment
+# closes it and chains a successor built from the document it retained.
+parallax.compatibility.WriteTwinItem:
+  - id: 1
+    label: north
+    spec:
+      title: Atlas
+      note: first
+      origin:
+        country: "NO"
+      stops:
+        - { port: Oslo }
+    marks:
+      - { code: A }
+      - { code: B }
+  - id: 2
+    label: south
+    spec:
+      title: Meridian
+      note: second
+      origin:
+        country: SE
+      stops:
+        - { port: Bergen }
+    marks:
+      - { code: C }
+
+parallax.compatibility.WriteTwinLog:
+  - id: 5
+    label: voyager
+    txStart: "2026-01-01T00:00:00+00:00"
+    txEnd: infinity
+    spec:
+      title: Ore Run
+      origin:
+        country: "NO"
+    marks:
+      - { code: X }

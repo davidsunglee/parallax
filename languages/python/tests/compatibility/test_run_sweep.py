@@ -40,17 +40,20 @@ from _support.sweep_goldens import (
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
 from parallax.core import predicate as predicate_algebra
 from parallax.core import storage_layout
-from parallax.core.base import DocumentValue, PresentDocument, SqlNull
+from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.dialect import dialect_for
+from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import (
     LevelContext,
     MergeScope,
+    WireEntity,
     convert_row,
     merge_graph_input,
     require_publishable,
+    wire_roots,
 )
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
@@ -389,10 +392,10 @@ def _scenario_read_schedule(
 
     The port seam these rows are captured at sits BELOW the read's own transform,
     so a captured document is still a provider-neutral ``DocumentRead``. The
-    compiled transform fans out a Relational Document Layout's Structured Column;
-    direct Columns documents are then unwrapped to the logical value authored by
-    ``expectRows``. Compiling a bare ``all()`` read of the same target recovers
-    exactly the projection metadata the executed read carried.
+    compiled transform fans out a Relational Document Layout's Structured Column
+    and materializes every occurrence into the declared composite ``expectRows``
+    authors. Compiling a bare ``all()`` read of the same target recovers exactly
+    the projection metadata the executed read carried.
     """
     schedule: list[tuple[list[dict[str, Any]] | None, Callable[[Row], Row] | None]] = []
     for step in cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"]):
@@ -409,7 +412,16 @@ def _scenario_read_schedule(
 
 
 def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], Row]:
-    document_columns = frozenset(document.storage.name for document in compiled.documents)
+    """A captured port row as the observation ``expectRows`` grades.
+
+    An instance-form step's occurrence is the DECLARED COMPOSITE the read
+    publishes, not the document storage held: a leaf the stored document omitted
+    reads null, an absent nested `one` reads null, and an absent `many` reads the
+    empty array, exactly as `then.graph` renders the same collapse. The published
+    occurrence therefore comes from the materializer rather than from the row, so
+    a direct Column's ``DocumentRead`` carrier never reaches a comparison and an
+    undeclared stored key never enters one.
+    """
 
     def transform(row: Row) -> Row:
         materialized = compiled.materialize_row(row)
@@ -426,18 +438,20 @@ def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], R
             family_tag_unknown=materialized.family_tag_unknown,
             classified_members=materialized.classified_members,
         )
-        require_publishable(merge_graph_input(scope.build((ref,), Pin()), model))
+        merge = merge_graph_input(scope.build((ref,), Pin()), model)
+        require_publishable(merge)
+        (published,) = wire_roots(merge, model)
+        # `require_publishable` has already refused an issue-bearing read, so the
+        # one root here is conforming rather than a classified record.
+        assert isinstance(published, WireEntity), (materialized.resolved_entity, published)
         values = materialized.values
         if materialized.family_variant is not None:
             values["familyVariant"] = materialized.family_variant
-        for column in document_columns & row.keys() & values.keys():
-            document_read = row[column]
-            if isinstance(document_read, SqlNull):
-                values[column] = None
-            elif isinstance(document_read, PresentDocument):
-                values[column] = document_read.document
-            else:
-                raise AssertionError(f"captured document column {column!r} is not a DocumentRead")
+        position = inheritance_view(model).entity(materialized.resolved_entity)
+        for occurrence in () if position is None else position.applicable_value_objects:
+            column = occurrence.storage.name
+            if column in values:
+                values[column] = published[occurrence.identity.path[-1]]
         return values
 
     return transform

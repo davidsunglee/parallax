@@ -641,6 +641,16 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "cross-layout corpus proof, and the twin-layout gate compares its logical model "
             "directly with the Columns arm"
         ),
+        "write-transparency-layout-twin-columns": (
+            "no mirror authored; this production descriptor is the Columns arm of the "
+            "cross-layout Value Object write proof, and the twin-layout gate compares its "
+            "logical model directly with the Document arm"
+        ),
+        "write-transparency-layout-twin-document": (
+            "no mirror authored; this production descriptor is the Document arm of the "
+            "cross-layout Value Object write proof, and the twin-layout gate compares its "
+            "logical model directly with the Columns arm"
+        ),
         "subscriber": (
             "no mirror authored; it composes the nested Value Object tree the mirrored `customer` "
             "and `supplier` prove with the optimistic-lock version `account` proves"
@@ -660,7 +670,7 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
 """Corpus model stem -> why the class frontend does not mirror it.
 
 Every reason here is either a redundant declaration shape or an unwritten
-mirror. **No corpus model is unmirrorable:** the class grammar can author all 44,
-so this mapping records the guard's chosen breadth, not a grammar limit. A reason
+mirror. **No corpus model is unmirrorable:** the class grammar can author every
+one, so this mapping records the guard's chosen breadth, not a grammar limit. A reason
 that ever becomes a real limit belongs in the grammar's own specification instead.
 """

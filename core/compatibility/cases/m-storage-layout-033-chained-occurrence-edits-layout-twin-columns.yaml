@@ -1,0 +1,142 @@
+# Columns half of the chained-edit proof: two successive edits of ONE occurrence,
+# each replacing it whole against the state the previous one left. Its twin authors
+# the same two edits and the same two expected rows under Relational Document Layout.
+#
+# The first edit adds a stop, so it restates `title`, `note`, `origin`, and both
+# elements of `stops`; the intervening find proves that restated value is what item 2
+# now holds. The second edit names `title` and one stop and nothing else, so what it
+# destroys is what the FIRST edit stored rather than what the fixture did — `note`
+# and `origin` were rewritten a moment earlier and are gone all the same.
+#
+# The semantic distinction this pair pins down is that a chain composes over stored
+# state, one replacement per edit, with no accumulation across the chain. An
+# implementation that merged an assignment into the stored occurrence would end with
+# `note` and `origin` still standing and both stops still listed; one that settled
+# the second edit against the value the first edit was itself built from would end
+# with `Bergen` back. Each edit is its own unit of work, so each takes its own
+# resolving read — `WriteTwinItem` declares no version and no As-Of Axis, so its
+# Effective Concurrency Strategy is Locking and every read here takes the shared row
+# lock.
+model: models/write-transparency-layout-twin-columns.yaml
+tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-opt-lock, m-read-lock, m-sql, scenario, update, json, nested, to-many, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        - mutation: update
+          entity: parallax.compatibility.WriteTwinItem
+          rows:
+            - id: 2
+              spec:
+                title: Meridian
+                note: second
+                origin: { country: SE }
+                stops:
+                  - { port: Bergen }
+                  - { port: Kiel }
+      roundTrips: 2
+      note: the first edit restates the whole occurrence to add a stop
+      statements:
+        - sql:
+            postgres: update write_twin set spec = ? where id = ?
+            mariadb: update write_twin set spec = ? where id = ?
+          binds:
+            - title: Meridian
+              note: second
+              origin: { country: SE }
+              stops:
+                - { port: Bergen }
+                - { port: Kiel }
+            - 2
+    - objectQuery:
+        target: parallax.compatibility.WriteTwinItem
+        predicate:
+          eq:
+            attr: parallax.compatibility.WriteTwinItem.id
+            value: 2
+      roundTrips: 1
+      note: the restated occurrence is what item 2 holds when the second edit arrives
+      statements:
+        - sql:
+            postgres: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ? for share of t0
+            mariadb: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ? lock in share mode
+          binds: [2]
+      expectRows:
+        - id: 2
+          label: south
+          spec:
+            title: Meridian
+            note: second
+            origin: { country: SE }
+            stops:
+              - { port: Bergen }
+              - { port: Kiel }
+          marks:
+            - { code: C }
+    - write:
+        - mutation: update
+          entity: parallax.compatibility.WriteTwinItem
+          rows:
+            - id: 2
+              spec:
+                title: Meridian
+                stops:
+                  - { port: Kiel }
+      roundTrips: 2
+      note: the second edit names two members, so it destroys what the first edit had just stored
+      statements:
+        - sql:
+            postgres: update write_twin set spec = ? where id = ?
+            mariadb: update write_twin set spec = ? where id = ?
+          binds:
+            - title: Meridian
+              stops:
+                - { port: Kiel }
+            - 2
+    - objectQuery:
+        target: parallax.compatibility.WriteTwinItem
+        predicate:
+          eq:
+            attr: parallax.compatibility.WriteTwinItem.id
+            value: 2
+      roundTrips: 1
+      note: only the second edit's own value survives, and `label` and `marks` are untouched throughout
+      statements:
+        - sql:
+            postgres: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ? for share of t0
+            mariadb: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ? lock in share mode
+          binds: [2]
+      expectRows:
+        - id: 2
+          label: south
+          spec:
+            title: Meridian
+            note: null
+            origin: null
+            stops:
+              - { port: Kiel }
+          marks:
+            - { code: C }
+then:
+  roundTrips: 6
+  tableState:
+    write_twin:
+      - id: 1
+        label: north
+        spec:
+          title: Atlas
+          note: first
+          origin: { country: "NO" }
+          stops:
+            - { port: Oslo }
+        marks:
+          - { code: A }
+          - { code: B }
+      - id: 2
+        label: south
+        spec:
+          title: Meridian
+          stops:
+            - { port: Kiel }
+        marks:
+          - { code: C }

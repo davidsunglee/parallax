@@ -1360,5 +1360,89 @@
       "documentPath": {},
       "valueObject": {}
     }
+  },
+  "models/write-transparency-layout-twin-columns.yaml": {
+    "parallax.compatibility.WriteTwinItem": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {
+        "marks.code": "marks:code",
+        "spec.note": "spec:note",
+        "spec.origin": "spec:origin",
+        "spec.origin.country": "spec:origin.country",
+        "spec.stops": "spec:stops",
+        "spec.stops.port": "spec:stops.port",
+        "spec.title": "spec:title"
+      },
+      "valueObject": {
+        "marks": "marks",
+        "spec": "spec"
+      }
+    },
+    "parallax.compatibility.WriteTwinLog": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {
+        "marks.code": "marks:code",
+        "spec.origin": "spec:origin",
+        "spec.origin.country": "spec:origin.country",
+        "spec.title": "spec:title"
+      },
+      "valueObject": {
+        "marks": "marks",
+        "spec": "spec"
+      }
+    }
+  },
+  "models/write-transparency-layout-twin-document.yaml": {
+    "parallax.compatibility.WriteTwinItem": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {
+        "label": "payload:label",
+        "marks": "payload:marks",
+        "marks.code": "payload:marks.code",
+        "spec": "payload:spec",
+        "spec.note": "payload:spec.note",
+        "spec.origin": "payload:spec.origin",
+        "spec.origin.country": "payload:spec.origin.country",
+        "spec.stops": "payload:spec.stops",
+        "spec.stops.port": "payload:spec.stops.port",
+        "spec.title": "payload:spec.title"
+      },
+      "valueObject": {
+        "marks": "marks",
+        "spec": "spec"
+      }
+    },
+    "parallax.compatibility.WriteTwinLog": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {
+        "label": "payload:label",
+        "marks": "payload:marks",
+        "marks.code": "payload:marks.code",
+        "spec": "payload:spec",
+        "spec.origin": "payload:spec.origin",
+        "spec.origin.country": "payload:spec.origin.country",
+        "spec.title": "payload:spec.title"
+      },
+      "valueObject": {
+        "marks": "marks",
+        "spec": "spec"
+      }
+    }
   }
 }

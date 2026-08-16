@@ -440,6 +440,21 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 # classifies it for the same reason. Compile-eligible because no bind depends on what
 # the read returned.
 _CLASSIFIED_SOURCE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset({"m-unit-work-028"})
+# The cross-layout Value Object WRITE twins (`m-case-format` *Cross-layout twin
+# proofs*), one logical model authored once per Storage Layout arm. Each pair's
+# authored write and round trips are compared statically by the twin-layout gate;
+# what THIS lane adds is the emission each arm's own layout produces — one bind per
+# occurrence Column against one flat assignment per occurrence path — and, for the
+# scenario members, that the closing find publishes the same rows in both.
+#
+# `m-txtime-write-013`/`-014` are `writeSequence` rather than scenario because a
+# temporal close needs a Temporal Observation, which a scenario supplies only from a
+# read the compile lane cannot perform; from `given.fixtures` the compile lane
+# reconstructs it from case state, so both lanes grade the pair.
+_LAYOUT_TWIN_WRITES: Final[frozenset[str]] = frozenset(
+    {f"m-storage-layout-{n:03d}" for n in range(29, 35)}
+    | {"m-txtime-write-013", "m-txtime-write-014"}
+)
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
     frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002"})
     | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
@@ -555,6 +570,7 @@ _EXECUTION_LOG_SCENARIOS: Final[frozenset[str]] = frozenset(
 WRITE_EXERCISED: Final[frozenset[str]] = (
     _WRITE_SCENARIOS
     | _EXECUTION_LOG_SCENARIOS
+    | _LAYOUT_TWIN_WRITES
     | _WRITE_SEQUENCES
     | _SNAPSHOT_MUTATE_SCENARIOS
     | _TEMPORAL_WRITE_SEQUENCES
