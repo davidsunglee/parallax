@@ -35,9 +35,9 @@ construction and a second planner class, but a planner constructed through an
 alias is caught by neither module.
 
 The `Database` lane is graded on identity as well as provenance. One planner
-serves the whole transaction, so a typed verb and ``tx.write_neutral`` are held
-to feeding the SAME object rather than two equivalently wired ones — the direct
-statement of spec §5's model-neutral seam. The conformance engine builds a
+serves the whole transaction, so a Typed verb and ``tx.wire`` verb are held to
+feeding the SAME object rather than two equivalently wired ones — the direct
+statement of spec §5's shared Unit of Work. The conformance engine builds a
 planner per lowering and holds none, so its drives claim provenance rather than
 identity.
 
@@ -51,6 +51,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
 
@@ -68,14 +69,12 @@ from parallax.core.unit_work import (
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
+    Finalization,
     PlannedWrite,
     PlanningRequest,
     TemporalStrategy,
-    VersionObservation,
-    WriteInstruction,
     WritePlan,
     WritePlanner,
-    instructions,
 )
 from parallax.snapshot import handle
 from parallax.snapshot.handle import Transaction, _planning
@@ -167,7 +166,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     lowering function nothing holds fails the watch outright, so the day a name
     moves this fails rather than silently watching nothing.
 
-    ``plan`` is watched on the class rather than on the built planners, so a
+    ``finalize`` is watched on the class rather than on the built planners, so a
     planning that ran on some OTHER ``WritePlanner`` is visible instead of merely
     absent. The lowering functions are watched because a plan an unrelated
     implementation produced runs no watched ``plan`` at all and would otherwise be
@@ -176,7 +175,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     consumed accounts for nothing.
     """
     seen = _Composition(lane=lane, built=[], planned=[], lowered=[], rendered=[])
-    planning = WritePlanner.plan
+    finalizing = WritePlanner.finalize
     streaming = handle.stream_lowered
     rendering = handle.lower_step
 
@@ -194,10 +193,10 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         seen.built.append(_Built(planner=planner, audit=audit))
         return planner
 
-    def plan(self: WritePlanner, request: PlanningRequest) -> WritePlan:
-        planned = planning(self, request)
-        seen.planned.append(_Planning(planner=self, request=request, plan=planned))
-        return planned
+    def finalize(self: WritePlanner, request: PlanningRequest) -> Finalization:
+        finalized = finalizing(self, request)
+        seen.planned.append(_Planning(planner=self, request=request, plan=finalized.plan))
+        return finalized
 
     def lower(
         plan: WritePlan, meta: Metamodel, dialect: Dialect
@@ -210,7 +209,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         return rendering(step, meta, dialect)
 
     monkeypatch.setattr(_planning, "WritePlanner", construct)
-    monkeypatch.setattr(WritePlanner, "plan", plan)
+    monkeypatch.setattr(WritePlanner, "finalize", finalize)
     for replacement, name in ((lower, "stream_lowered"), (render, "lower_step")):
         holders = _bindings_of(name)
         assert holders, f"nothing imported holds {name}, so watching it grades nothing"
@@ -258,16 +257,6 @@ def _buffer_shapes(request: PlanningRequest) -> list[str]:
     return [type(item).__name__ for item in request.buffered_writes]
 
 
-def _neutral_update() -> WriteInstruction:
-    return instructions.deserialize(
-        {
-            "mutation": "update",
-            "entity": "parallax.compatibility.Account",
-            "rows": [{"id": 7, "balance": 11}],
-        }
-    )
-
-
 def test_the_database_lane_plans_every_ingress_through_one_factory_planner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -277,11 +266,12 @@ def test_the_database_lane_plans_every_ingress_through_one_factory_planner(
 
     def body(tx: Transaction) -> None:
         tx.insert(new_account())
-        # A participating read force-flushes the buffered insert, so the neutral
-        # write below reaches a SECOND planning rather than being coalesced into
-        # the typed verb's own — which is what leaves two receivers to compare.
+        # A participating read force-flushes the buffered Typed insert, so the
+        # Wire insert below reaches a SECOND planning rather than being coalesced
+        # into the Typed verb's own — which is what leaves two receivers to
+        # compare.
         tx.find(mm.Account.where(mm.Account.id == 7))
-        tx.write_neutral(_neutral_update(), observation=VersionObservation(observed_version=1))
+        tx.wire.insert("Account", {"id": 8, "owner": "Ada", "balance": "11.00"})
 
     database.transact(body)
 
@@ -361,7 +351,11 @@ def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
     seen = _watch("conformance conflict", monkeypatch)
     case = case_format.load_case(_CASES / "m-opt-lock-006-success.yaml")
     emissions, _affected, _state, _log, _round_trips = engine.run_conflict_case(
-        case, "postgres", RecordingPort()
+        case,
+        "postgres",
+        RecordingPort(
+            rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]
+        ),
     )
 
     assert emissions, "a case that emitted nothing exercised no write lane"
