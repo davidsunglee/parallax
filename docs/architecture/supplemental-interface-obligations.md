@@ -51,6 +51,18 @@ Each entry carries five things:
   that a particular test exists is not portable across languages, and the point of
   an obligation is the observable, not the fixture.
 
+A **withdrawn** entry obliges nothing, so it carries a different and shorter set —
+its id, its module tag, **Withdrawn**, and **Residue** — and never a Supplements,
+a structural reason, or a Required assertion. A consumer reads the two kinds apart
+by the assertion: an entry with none is a tombstone and is owed by no
+implementation. The module tag stays so the withdrawal is visible from the module
+its claim was filed under.
+
+- **Withdrawn** — the reason the entry stated, and why that reason did not survive
+  inspection.
+- **Residue** — what is true nonetheless and where it now lives, or *none* where
+  nothing survived the withdrawal.
+
 Three structural reasons recur, and the entries name them by these labels.
 
 **The action-step lane.** The corpus's one shape for a refusal over a live client
@@ -286,9 +298,9 @@ compatibility case is.
   authoring gap, not a structural limit: the shape is perfectly authorable, and
   what it costs is a descriptor, its fixtures, and regenerated storage and
   table-layout baselines. An obligation records what the corpus *cannot* say, so
-  work it merely has not done yet does not belong here. The gap itself is open
-  and tracked as `D-74` in the Python target's deferred-work ledger, which names
-  the corpus as its owner.
+  work it merely has not done yet does not belong here.
+- **Residue**: the gap is open and tracked as `D-74` in the Python target's
+  deferred-work ledger, which names the corpus as its owner.
 
 ---
 
@@ -398,10 +410,10 @@ compatibility case is.
   directly — `m-batch-write-001` already witnesses the collapse arm — so nothing
   structural stops the corpus from saying it, and an authoring choice inside one
   gate is not an obligation on a second implementation.
-- **What is true here** is an authoring constraint on twin pairs, recorded so the
-  next cross-layout write case does not rediscover it: batch collapse groups
-  adjacent single-row inserts by physical column set, which Relational Document
-  Layout makes uniform, so four inserts whose authored members differ emit three
+- **Residue**: an authoring constraint on twin pairs, recorded so the next
+  cross-layout write case does not rediscover it. Batch collapse groups adjacent
+  single-row inserts by physical column set, which Relational Document Layout
+  makes uniform, so four inserts whose authored members differ emit three
   statements under Columns and one under Document Layout. A twin pair's
   round-trip count is layout-invariant by construction, which is why
   `m-storage-layout-029` / `-030` author one insert per step.
