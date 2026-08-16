@@ -46,8 +46,7 @@ __all__ = [
     "DocumentPathSegment",
     "LocatedMemberInput",
     "SetLeaf",
-    "SetMany",
-    "SetOccurrence",
+    "SetValue",
     "Unavailable",
     "apply_patches",
     "comparison_text",
@@ -285,32 +284,25 @@ class SetLeaf:
 
 
 @dataclass(frozen=True, slots=True)
-class SetOccurrence:
-    """Patch the named declared members of a ``one`` occurrence at ``path``.
+class SetValue:
+    """Replace the occurrence at ``path`` with ``document``, whole.
 
-    ``document`` is that occurrence's authored document or ``None``. Named members are
-    applied recursively; omitted declared members and undeclared keys survive. ``None``
-    stores JSON null for the occurrence as a whole.
+    ``document`` is that occurrence's complete stored document — the object a ``one``
+    holds, the ordered array a ``many`` holds — or ``None``, which stores JSON null.
+    Nothing inside the replaced subtree survives: an omitted declared member is absent
+    afterwards and an undeclared key is gone. Cardinality selects no arm here, because
+    an author who states an occurrence has stated a complete value either way.
     """
 
     path: tuple[str, ...]
     document: object
 
 
-@dataclass(frozen=True, slots=True)
-class SetMany:
-    """Replace a ``many`` occurrence's complete ordered array at ``path``."""
-
-    path: tuple[str, ...]
-    document: object
-
-
-type DocumentPatch = SetLeaf | SetOccurrence | SetMany
-"""The closed patch algebra, and the pairing is exclusive both ways: a whole
-    ``one`` occurrence is patched through :class:`SetOccurrence`, a ``many`` is
-    replaced through :class:`SetMany`, and neither is written through
-:class:`SetLeaf`, and a leaf is written through :class:`SetLeaf` and never through
-:class:`SetOccurrence`. Either mismatch is refused rather than applied, because
+type DocumentPatch = SetLeaf | SetValue
+"""The closed patch algebra, and the pairing is exclusive both ways: an occurrence
+is replaced through :class:`SetValue` and never written through :class:`SetLeaf`,
+and a leaf is written through :class:`SetLeaf` and never through
+:class:`SetValue`. Either mismatch is refused rather than applied, because
 applying one produces a document whose own shape would read it back as invalid
 stored data."""
 
@@ -542,10 +534,10 @@ def apply_patches(
 
     Every key a patch is not told to change survives, unknown keys included. That is
     the whole point of patching rather than re-encoding: an application that rebuilt a
-    document from the members it knows would silently drop the rest. A
-    :class:`SetOccurrence` recursively patches the declared members its document names,
-    while a :class:`SetMany` replaces its ordered array whole because its elements have
-    no identity by which stored and assigned elements could be matched.
+    document from the members it knows would silently drop the rest. The unit a patch
+    does change is the position it names: a :class:`SetValue` replaces its occurrence's
+    subtree whole, so the keys inside one it names do NOT survive, at any depth and
+    whatever the occurrence's cardinality.
 
     ``shape`` is what makes a :class:`SetLeaf`'s ``NeutralValue`` spellable here rather
     than by its caller; it also refuses a path the model does not declare, so a patch
@@ -579,30 +571,10 @@ def _apply(shape: DocumentShape, document: object, patch: DocumentPatch) -> obje
         target[name] = replacement
         target = replacement
     name = patch.path[-1]
-    if isinstance(patch, SetMany):
-        if not isinstance(member, Occurrence) or member.multiplicity is not Multiplicity.MANY:
-            raise ValueError(f"{'.'.join(patch.path)!r} does not name a `many` occurrence")
-        target[name] = detach_json_container(patch.document)
-    elif isinstance(patch, SetOccurrence):
+    if isinstance(patch, SetValue):
         if not isinstance(member, Occurrence):
             raise ValueError(f"{'.'.join(patch.path)!r} names a leaf; use SetLeaf")
-        if member.multiplicity is Multiplicity.MANY:
-            raise ValueError(f"{'.'.join(patch.path)!r} names a `many`; use SetMany")
-        if patch.document is None:
-            target[name] = None
-        else:
-            authored = cast("Mapping[str, object]", patch.document)
-            nested = tuple(_occurrence_patches(member.shape, authored))
-            current = target.get(name)
-            target[name] = (
-                apply_patches(member.shape, current, nested)
-                if nested
-                else detach_json_container(
-                    cast("Mapping[str, object]", current)
-                    if isinstance(current, Mapping)
-                    else cast("Mapping[str, object]", {})
-                )
-            )
+        target[name] = detach_json_container(patch.document)
     elif isinstance(patch.value, Missing):
         target.pop(name, None)
     elif isinstance(patch.value, ExplicitNull):
@@ -610,28 +582,8 @@ def _apply(shape: DocumentShape, document: object, patch: DocumentPatch) -> obje
     elif isinstance(member, Leaf):
         target[name] = encode_leaf(member.type, patch.value.value)
     else:
-        raise ValueError(f"{'.'.join(patch.path)!r} names an occurrence; use SetOccurrence")
+        raise ValueError(f"{'.'.join(patch.path)!r} names an occurrence; use SetValue")
     return root
-
-
-def _occurrence_patches(
-    shape: DocumentShape, document: Mapping[str, object]
-) -> Sequence[DocumentPatch]:
-    patches: list[DocumentPatch] = []
-    for member in shape.members:
-        if member.name not in document:
-            continue
-        value = document[member.name]
-        path = (member.name,)
-        if isinstance(member, Leaf):
-            patches.append(
-                SetLeaf(path, NULL if value is None else Present(decode_leaf(member.type, value)))
-            )
-        elif member.multiplicity is Multiplicity.MANY:
-            patches.append(SetMany(path, detach_json_container(value)))
-        else:
-            patches.append(SetOccurrence(path, detach_json_container(value)))
-    return patches
 
 
 def reduce_declared_members(

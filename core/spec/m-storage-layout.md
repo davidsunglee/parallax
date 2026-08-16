@@ -440,10 +440,9 @@ one canonical name.
 ## Assignment paths and mutation composition order
 
 **Every assignment names a top-level member.** A scalar assignment reaches its
-one Document Path. A complete top-level `one` occurrence assignment recursively
-reaches only the declared members its authored document names; a `many`
-assignment replaces its array whole. Nested members remain unassignable on their
-own.
+one Document Path. A top-level Value Object occurrence assignment binds that
+occurrence's complete document at the occurrence's own Document Path, at either
+cardinality. Nested members remain unassignable on their own.
 
 Two consequences depend on it, and both are stated here so a later contract that
 made a nested member assignable would have to revisit them together.
@@ -456,27 +455,32 @@ arbitrary order — so the emitted expression is deterministic and stable to
 author as golden SQL. No dependency sort is needed because top-level assignments
 name disjoint subtrees.
 
-Second, **an occurrence assignment establishes every parent it descends
-through.** Each occurrence level type-tests its stored subtree, substitutes an
-empty object for absent, JSON-null, or non-object state, applies its inner
-mutations, and writes the object back at that level. This order is internal to
-one assignment tree and independent of the top-level placement order.
+Second, **an assignment establishes no parent**, because it descends through
+none: a top-level member's Document Path is one segment, whose parent is the
+Structured Column's own root object, and every governed row carries that object.
+An assignment therefore creates only the final path segment, which is all a
+document-mutation expression is required to do (`m-dialect`).
 
 | Assignment | Effect on the Structured Column | What survives |
 |---|---|---|
-| a document-resident top-level Attribute | patches that one path in place | every other key, including keys no accepted member declares |
-| a top-level `one` Value Object occurrence | patches named declared members recursively | every key outside it and every undeclared or omitted key inside it |
-| a top-level `many` Value Object occurrence | replaces that one array in place | every key outside the array; nothing inside a replaced element |
+| a document-resident top-level Attribute | writes that one path in place | every other key, including keys no accepted member declares |
+| a top-level Value Object occurrence, `one` or `many` | replaces the subtree at that one path | every key outside it; nothing inside it |
 | an insert, including a temporal successor | binds one complete document | whatever the bound document carries |
 
-No ordinary update replaces the whole Structured Column. Changing a member
-nested inside a Value Object means assigning the whole occurrence, whose named
-declared members are patched recursively.
+No ordinary update replaces the whole Structured Column: the unit of replacement
+is the assigned occurrence, never the row. Changing a member nested inside a
+Value Object means assigning the whole occurrence, and what that stores is the
+document the author stated — an omitted declared member is absent afterwards and
+an undeclared key inside the occurrence does not survive, at any depth.
 
-This is strictly finer-grained than conventional Value Object storage, where a
-top-level occurrence's own Structured Column is bound atomically and every
-update rewrites it whole (`m-value-object`). Path patching is what makes keys
-written by a newer application version survive an update at all.
+The rule is therefore identical to conventional Value Object storage, where a
+top-level occurrence's own Structured Column is bound atomically and every update
+rewrites it whole (`m-value-object`). The two layouts differ only in whether the
+row as stored is one document or several columns; assigning an occurrence
+replaces its value under both, and neither layout carries a merge. What still
+distinguishes this layout is that an update leaves every key it does not assign
+standing, which is what makes a key written by a newer application version
+survive an unrelated write.
 
 ## Tier classification and ordering
 

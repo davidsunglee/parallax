@@ -1,9 +1,11 @@
-# One temporal observation-bearing assignment applies the two occurrence rules at
-# once on PostgreSQL and MariaDB: a `one` recursively patches its named declared
-# member and preserves the stored undeclared `sealNumber`, while a `many` replaces
-# its ordered array whole and therefore drops the stored element's undeclared
-# `berth`. The root-level undeclared `charterCode` survives both, distinguishing
-# declared-member patching from whole-document replacement and positional array merge.
+# One temporal observation-bearing assignment fixes the UNIT of replacement on
+# PostgreSQL and MariaDB: the assigned occurrence, not the row and not the document.
+# Both assigned occurrences are replaced whole, at either cardinality — the `one`
+# drops the stored undeclared `sealNumber` and the `many` drops its stored element's
+# undeclared `berth` — while the root-level undeclared `charterCode`, which sits
+# outside every assigned occurrence and was never mentioned, rides into the successor
+# untouched. The contrast is m-txtime-write-011, where `manifest` is CARRIED rather
+# than assigned and keeps the very key this case's assignment destroys.
 model: models/document-layout.yaml
 tags: [m-txtime-write, m-storage-layout, m-document-codec, m-value-object, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -32,7 +34,7 @@ when:
     - mutation: update
       entity: parallax.compatibility.Voyage
       statements: 2
-      note: assign one and many occurrences in the same observed successor
+      note: assign both occurrence kinds in one observed successor
       rows:
         - id: 8
           title: Island Run
@@ -60,7 +62,6 @@ then:
           charterCode: NB-204
           manifest:
             cargo: salt
-            sealNumber: S-9930
           legs:
             - port: Bergen
   tableState:
@@ -87,7 +88,6 @@ then:
           charterCode: NB-204
           manifest:
             cargo: salt
-            sealNumber: S-9930
           legs:
             - port: Bergen
   roundTrips: 3

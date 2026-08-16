@@ -174,10 +174,8 @@ patch(shape: DocumentShape,
 DocumentPatch =
     SetLeaf(path: nonempty sequence<MemberName>,
             value: Presence)
-  | SetOccurrence(path: nonempty sequence<MemberName>,
-                  document: Document | Null)
-  | SetMany(path: nonempty sequence<MemberName>,
-            elements: sequence<Document>)
+  | SetValue(path: nonempty sequence<MemberName>,
+             document: Document | Null)
 ```
 
 `encode` builds one complete document from a shape and one presence-classified
@@ -206,8 +204,10 @@ against the shape, so the declared Neutral Type comes from the model rather than
 from the caller: a `Leaf` path answers with that leaf's value decoded by its
 declared type rather than by the JSON value's own shape, and an `Occurrence` path
 answers with that occurrence's own document exactly as stored, unknown keys
-included — which is what whole-occurrence comparison (`m-unit-work`) and subtree
-replacement need. A path naming no member of the shape is a caller error, not an
+included — which is what carrying an UNASSIGNED occurrence forward across a
+temporal successor needs (`m-unit-work`), since an assignment supplies its own
+document and reads no stored state at all. A path naming no member of the shape
+is a caller error, not an
 absence. Decoding is per path rather than whole-document because a row-form read
 needs only the members its consumer asked for and never pays to decode the rest;
 a consumer that wants an occurrence's members decodes them against that
@@ -468,27 +468,30 @@ other version of an application. Decoding never fails on one and never turns one
 into a member value: a `Leaf` path answers only for the member the shape names,
 so an unknown key is never a result member and never reaches an Entity member. An
 `Occurrence` path answers with the stored subtree as it is, unknown keys and all,
-because a patch must see the state it writes over in order to preserve it.
-That subtree is a carrier, exactly like the raw Structured Column document, and
-is never a member value or a result field.
+because a consumer carrying that occurrence forward unassigned must see the state
+it is preserving in order to preserve it. That subtree is a carrier, exactly like
+the raw Structured Column document, and is never a member value or a result
+field.
 
 ## Patching, unknown keys, and occurrence assignments
 
 `patch` preserves every key it is not told to change, including unknown keys.
 That is the whole point of patching rather than re-encoding: an application that
-rebuilt a document from the members it knows would silently drop the rest.
+rebuilt a document from the members it knows would silently drop the rest. What
+it does change is the position each patch names, whole.
 
 - `SetLeaf` writes one path and leaves every other key untouched. Its value is a
   leaf presence — a `NeutralValue`, `ExplicitNull`, or `Missing`: writing
   `ExplicitNull` stores JSON null and writing `Missing` removes the key. A whole
-  occurrence is stated only through its matching occurrence arm.
-- `SetOccurrence` states a `one` occurrence's named declared members. It patches
-  each named leaf or nested occurrence recursively, leaves omitted nullable
-  members and every undeclared key untouched, and stores JSON null when its
-  document is `Null`. At every nested level an absent, JSON-null, or non-object
-  target is treated as an empty object before applying the named members.
-- `SetMany` replaces its encoded ordered array whole. Elements have no identity,
-  so no stored element state survives the replacement.
+  occurrence is stated only through `SetValue`.
+- `SetValue` **replaces** the occurrence at its path with the complete document
+  it carries — the object a `one` holds, the ordered array a `many` holds — or
+  stores JSON null when that document is `Null`. Nothing inside the replaced
+  subtree survives, at any depth: an omitted declared member is absent
+  afterwards, and a key no member declares is gone. Cardinality selects no arm,
+  because an author stating an occurrence has stated a complete value either way,
+  and a `many`'s elements additionally have no identity by which stored and
+  supplied elements could be matched.
 
 The exported declared-member reduction is the sole shape-aware operation used by
 materialization and write comparison. It decodes leaves by declared Neutral Type,
@@ -505,20 +508,26 @@ source omits contributes nothing, at every containment depth, including inside a
 `many` element, while a member stored as JSON null still contributes its null. A
 reduction that preserves presence therefore carries the missing-versus-explicitly-null
 distinction this module already keeps at the interface, instead of collapsing it
-onto the declared member list. A consumer materializing stored state into carriers
-that record presence preserves it; a consumer comparing an assignment against
-stored state masks by the assignment. Neither option is the other's default.
+onto the declared member list. Neither option is the other's default.
+
+Presence preservation is what a mutation comparison uses on both sides. An
+assignment states the complete value its occurrence will hold, so the document it
+would store — presence preserved, a member the author omits contributing no key
+exactly as an unstored one does — is what a stored occurrence's own
+presence-preserving reduction is compared against. Narrowing the stored side to
+the members the assignment happens to name would call a write that removes a
+member no change at all.
 
 Patches apply in the order given, left to right, each over the result of the
 last. `m-storage-layout` fixes that order for a Parallax write: canonical logical
-placement order. Top-level assignments name disjoint subtrees. Within a
-`SetOccurrence`, each occurrence level establishes its own object parent before
-applying its nested assignments, so no dependency sort exists between top-level
-members.
+placement order. Top-level assignments name disjoint subtrees, and a `SetValue`
+reaches no further than the one path it names, so no dependency sort exists
+between them.
 
 A temporal successor is built by patching the retained raw predecessor document
-rather than by re-encoding decoded members, so keys the running application does
-not declare survive the close-and-insert (`m-unit-work`).
+at the assigned paths alone rather than by re-encoding decoded members, so keys
+the running application does not declare survive the close-and-insert outside
+every occurrence the mutation assigned (`m-unit-work`).
 
 ## Determinism and comparison
 

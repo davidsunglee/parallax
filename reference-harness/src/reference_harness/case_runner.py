@@ -1774,9 +1774,16 @@ class _DocumentMember(NamedTuple):
 
 
 class _DocumentAssignment(NamedTuple):
-    """One independently derived leaf, ``one``, or ``many`` assignment node."""
+    """One independently derived assigned Document Path and the complete encoded
+    value that lands there.
 
-    kind: str
+    The two positions a Parallax assignment reaches — a leaf and a whole
+    occurrence — differ only in how that value is spelled, a leaf encoding against
+    a whole occurrence document, so nothing downstream branches on which one it
+    was: an assigned occurrence binds its subtree whole, exactly as a leaf binds
+    its own value.
+    """
+
     path: tuple[str, ...]
     value: Any
 
@@ -3988,10 +3995,12 @@ def _document_assignments(
 ) -> tuple[_DocumentAssignment, ...]:
     """The ordered Document Paths one revising ① row assigns, canonical order.
 
-    A revising statement patches only the paths it names (`m-storage-layout`), so
+    A revising statement writes only the paths it names (`m-storage-layout`), so
     this is the resident member sequence narrowed to the row's own keys — never the
-    whole document. Order is the layout's, not the row's, because both dialects'
-    mutation expressions apply left to right (`m-dialect`).
+    whole document. An assigned occurrence contributes ONE path carrying its whole
+    encoded document, because assigning one replaces its subtree rather than
+    reaching inside it. Order is the layout's, not the row's, because both
+    dialects' mutation expressions apply left to right (`m-dialect`).
     """
     _column, resident = _document_layout_members(case, entity)
     assignments: list[_DocumentAssignment] = []
@@ -4002,50 +4011,10 @@ def _document_assignments(
         value = row[name]
         if member.type_spelling is None:
             occurrence = entity.value_object_by_name(name)
-            if occurrence.get("multiplicity", "one") == "many":
-                assignments.append(
-                    _DocumentAssignment("many", member.path, encode_document(occurrence, value))
-                )
-            elif value is None:
-                assignments.append(_DocumentAssignment("one-null", member.path, None))
-            else:
-                assignments.append(
-                    _DocumentAssignment(
-                        "one", member.path, _occurrence_assignments(occurrence, value)
-                    )
-                )
+            assignments.append(_DocumentAssignment(member.path, encode_document(occurrence, value)))
         else:
             assignments.append(
-                _DocumentAssignment("leaf", member.path, encode_leaf(member.type_spelling, value))
-            )
-    return tuple(assignments)
-
-
-def _occurrence_assignments(
-    occurrence: dict[str, Any], value: Any
-) -> tuple[_DocumentAssignment, ...]:
-    raw = value if isinstance(value, dict) else {}
-    assignments: list[_DocumentAssignment] = []
-    for attribute in occurrence.get("attributes", []):
-        name = attribute["name"]
-        if name in raw:
-            assignments.append(
-                _DocumentAssignment("leaf", (name,), encode_leaf(attribute["type"], raw[name]))
-            )
-    for nested in occurrence.get("valueObjects", []):
-        name = nested["name"]
-        if name not in raw:
-            continue
-        nested_value = raw[name]
-        if nested.get("multiplicity", "one") == "many":
-            assignments.append(
-                _DocumentAssignment("many", (name,), encode_document(nested, nested_value))
-            )
-        elif nested_value is None:
-            assignments.append(_DocumentAssignment("one-null", (name,), None))
-        else:
-            assignments.append(
-                _DocumentAssignment("one", (name,), _occurrence_assignments(nested, nested_value))
+                _DocumentAssignment(member.path, encode_leaf(member.type_spelling, value))
             )
     return tuple(assignments)
 
@@ -4054,28 +4023,13 @@ def _document_assignment_binds(
     assignments: tuple[_DocumentAssignment, ...], dialect: str
 ) -> list[Any]:
     binds: list[Any] = []
-
-    def append(assignment: _DocumentAssignment, prefix: tuple[str, ...]) -> None:
-        path = _document_path_bind(assignment.path, dialect)
-        if assignment.kind in {"leaf", "many", "one-null"}:
-            binds.extend([path, _document_value_bind(assignment.value)])
-            return
-        absolute = (*prefix, *assignment.path)
+    for assignment in assignments:
         binds.extend(
             [
-                path,
-                _document_path_bind(absolute, dialect),
-                "OBJECT" if dialect == "mariadb" else "object",
-                _document_path_bind(absolute, dialect),
+                _document_path_bind(assignment.path, dialect),
+                _document_value_bind(assignment.value),
             ]
         )
-        if dialect == "postgres":
-            binds.append("{}")
-        for child in assignment.value:
-            append(child, absolute)
-
-    for assignment in assignments:
-        append(assignment, ())
     return binds
 
 

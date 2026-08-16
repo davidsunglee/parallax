@@ -218,11 +218,19 @@ from the Entity view slot's contributor (scalar Attribute vs Value Object) —
 bound as one document value regardless of what that value happens to look like.
 
 There are **no partial-document (path-level) writes**. A whole-document update
-**replaces** the entire column value with the newly bound document; there is no
-`UPDATE` of a path *inside* the document and no merge with the prior value. This
-matches the single-column storage model (`m-value-object` [one
+**replaces** the value object's stored document with the newly bound one; there is
+no `UPDATE` of a path *inside* that document and no merge with the prior value.
+This matches the single-column storage model (`m-value-object` [one
 column](#one-column--never-extra-columns-rows-or-joins)): the document is the unit
-of write exactly as it is the unit of storage. On a temporal owner the same
+of write exactly as it is the unit of storage.
+
+The rule is the same under either Storage Layout, and so is the DML shape it
+implies where the occurrence has a column of its own: the update binds the whole
+document at the occurrence's position. Under Relational Document Layout the
+occupied position is a Document Path in the owner's shared Structured Column
+rather than a Column, so the statement leaves the rest of that Column standing —
+but what lands at the occurrence's own position is still the whole document, and
+still no merge (`m-storage-layout`). On a temporal owner the same
 atomic document rides milestone chaining like any scalar column (see [Inherited
 temporality](#inherited-temporality)): a Transaction-Time-Only update chains it onto the new
 current milestone (`m-value-object-032`) and a bitemporal `updateUntil` carries it

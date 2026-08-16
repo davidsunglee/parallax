@@ -1,0 +1,61 @@
+# Three stored rows place the same nullable document-resident `one` occurrence in the
+# absent, JSON-null, and non-object states. Assigning that occurrence must land the
+# authored subtree on all three, identically, on PostgreSQL and MariaDB — one flat
+# assignment at the occurrence's own path, with no type test, no empty-object
+# fallback, and no write-back. This distinguishes replacement from the guarded
+# read-modify-write an assignment that reached INSIDE the stored subtree would need:
+# both engines create only the FINAL path segment, and a top-level occurrence's parent
+# is the document root, which every governed row already carries.
+model: models/document-layout.yaml
+tags: [m-storage-layout, m-dialect, m-document-codec, m-value-object, m-sql, write-sequence, update, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "out-of-band stored parent states"
+given:
+  apply:
+    - sql: insert into traveler(id, payload) values (?, ?), (?, ?), (?, ?)
+      binds:
+        - 40
+        - { displayName: absent }
+        - 41
+        - { displayName: null, address: null }
+        - 42
+        - { displayName: scalar, address: 7 }
+when:
+  writeSequence:
+    - mutation: update
+      entity: parallax.compatibility.Traveler
+      statements: 3
+      note: different assigned cities keep the batch in per-key form
+      rows:
+        - { id: 40, address: { city: Alta } }
+        - { id: 41, address: { city: Bodo } }
+        - { id: 42, address: { city: Tromso } }
+then:
+  statements:
+    - sql:
+        postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+      binds:
+        postgres: ['{address}', { city: Alta }, 40]
+        mariadb: ['$.address', { city: Alta }, 40]
+    - sql:
+        postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+      binds:
+        postgres: ['{address}', { city: Bodo }, 41]
+        mariadb: ['$.address', { city: Bodo }, 41]
+    - sql:
+        postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+      binds:
+        postgres: ['{address}', { city: Tromso }, 42]
+        mariadb: ['$.address', { city: Tromso }, 42]
+  tableState:
+    traveler:
+      - { id: 40, payload: { displayName: absent, address: { city: Alta } } }
+      - { id: 41, payload: { displayName: null, address: { city: Bodo } } }
+      - { id: 42, payload: { displayName: scalar, address: { city: Tromso } } }
+  roundTrips: 4

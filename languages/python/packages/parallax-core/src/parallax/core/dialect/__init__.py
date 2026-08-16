@@ -45,8 +45,7 @@ __all__ = [
     "Dialect",
     "DocumentAssignment",
     "DocumentLeafAssignment",
-    "DocumentManyAssignment",
-    "DocumentOneAssignment",
+    "DocumentValueAssignment",
     "LockMode",
     "dialect_for",
     "projection_result_key",
@@ -69,31 +68,23 @@ class DocumentLeafAssignment:
 
 
 @dataclass(frozen=True, slots=True)
-class DocumentManyAssignment:
-    """One complete encoded array assigned relative to a document expression."""
+class DocumentValueAssignment:
+    """One complete encoded occurrence document assigned relative to a document
+    expression — the object a ``one`` holds, the ordered array a ``many`` holds, or
+    ``None`` for JSON null."""
 
     path: tuple[str, ...]
     value: object
 
 
-@dataclass(frozen=True, slots=True)
-class DocumentOneAssignment:
-    """A guarded ``one`` occurrence mutation relative to a document expression.
+type DocumentAssignment = DocumentLeafAssignment | DocumentValueAssignment
+"""One assigned path and the complete encoded value that lands there.
 
-    ``assignments=None`` nulls the occurrence. An empty tuple instead guards and
-    writes back the occurrence without assigning any named child.
-    """
-
-    path: tuple[str, ...]
-    assignments: tuple[DocumentAssignment, ...] | None
-
-
-type DocumentAssignment = DocumentLeafAssignment | DocumentManyAssignment | DocumentOneAssignment
-"""One node in a recursive document-mutation tree.
-
-Leaf and ``many`` nodes assign complete encoded values at their relative paths.
-A ``one`` node guards its occurrence as an object and recursively applies its
-children, or stores JSON null when its children are absent.
+The two nodes name the two kinds of position a Parallax assignment reaches — a
+leaf and a whole occurrence — and this seam renders them identically, because
+both hand it one already-encoded value for one absolute path. The list is flat:
+an occurrence carries no children here, since assigning one replaces its subtree
+whole rather than reaching inside it.
 """
 
 # A "simple" identifier needs no quoting: lowercase, starts with a letter.
@@ -319,15 +310,13 @@ class Dialect:
         form*).
 
         ``document`` is an ALREADY-RENDERED Structured Column reference, for the
-        same reason :meth:`nested_extract` takes one. Leaf and ``many`` nodes
-        assign encoded values. A ``one`` node recursively guards the occurrence
-        with an object type test and empty-object fallback, applies its children,
-        and writes the result back; absent children store JSON null. Paths are
-        absolute extraction and write-back paths and may therefore occur more
-        than once in the ordered binds alongside type tags, fallback objects,
-        encoded values, and child binds. The sequence is applied left to right in
-        canonical logical placement order, which `m-sql` fixes and this seam MUST
-        NOT reorder, deduplicate, or merge.
+        same reason :meth:`nested_extract` takes one. Every node assigns one
+        complete encoded value at one absolute path — a leaf's spelling, an
+        occurrence's whole document, or JSON null — so the expression is one call
+        per assigned path and its binds read path, value, path, value. The
+        sequence is applied left to right in canonical logical placement order,
+        which `m-sql` fixes and this seam MUST NOT reorder, deduplicate, or
+        merge.
 
         The value hole is a per-dialect **expression**, not a bare `?`: Postgres
         resolves a bare parameter there to `jsonb_set`'s declared `jsonb` and
@@ -343,53 +332,11 @@ class Dialect:
         expression = document
         binds: list[object] = []
         for assignment in assignments:
-            expression, assignment_binds = self._document_assignment(
-                expression, document, assignment
+            expression = f"jsonb_set({expression}, ?, cast(? as jsonb))"
+            binds.extend(
+                [self.document_path(assignment.path), _document_value_bind(assignment.value)]
             )
-            binds.extend(assignment_binds)
         return expression, binds
-
-    def _document_assignment(
-        self, document: str, source: str, assignment: DocumentAssignment
-    ) -> tuple[str, list[object]]:
-        path = self.document_path(assignment.path)
-        if isinstance(assignment, (DocumentLeafAssignment, DocumentManyAssignment)):
-            return (
-                f"jsonb_set({document}, ?, cast(? as jsonb))",
-                [path, _document_value_bind(assignment.value)],
-            )
-        if assignment.assignments is None:
-            return f"jsonb_set({document}, ?, cast(? as jsonb))", [path, "null"]
-        inner, inner_binds = self._one_document(source, (), assignment)
-        return f"jsonb_set({document}, ?, {inner})", [path, *inner_binds]
-
-    def _one_document(
-        self,
-        source: str,
-        prefix: tuple[str, ...],
-        assignment: DocumentOneAssignment,
-    ) -> tuple[str, list[object]]:
-        absolute = (*prefix, *assignment.path)
-        absolute_path = self.document_path(absolute)
-        extracted = f"{source} #> ?"
-        guarded = (
-            f"case when jsonb_typeof({extracted}) = ? then {extracted} else cast(? as jsonb) end"
-        )
-        inner = guarded
-        binds: list[object] = [absolute_path, "object", absolute_path, "{}"]
-        assert assignment.assignments is not None
-        for child in assignment.assignments:
-            child_path = self.document_path(child.path)
-            if isinstance(child, DocumentOneAssignment) and child.assignments is not None:
-                child_value, child_binds = self._one_document(source, absolute, child)
-                inner = f"jsonb_set({inner}, ?, {child_value})"
-                binds.extend([child_path, *child_binds])
-                continue
-            value = None if isinstance(child, DocumentOneAssignment) else child.value
-            inner = f"jsonb_set({inner}, ?, cast(? as jsonb))"
-            child_binds = [child_path, _document_value_bind(value)]
-            binds.extend(child_binds)
-        return inner, binds
 
     def document_equals(self, left: str, right: str) -> str:
         """The predicate deciding whether two documents are structurally equal.

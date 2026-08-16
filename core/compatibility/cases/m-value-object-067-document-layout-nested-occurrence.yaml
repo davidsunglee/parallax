@@ -1,10 +1,11 @@
 # A document-resident top-level `one` occurrence keeps its containment path while an
-# assignment recursively patches only the declared members its authored document
-# names on PostgreSQL and MariaDB. The stored `address.geo` occurrence is omitted by
-# step 2 and therefore survives beside the changed `address.city`; root siblings also
-# survive. The golden requires an object guard and write-back at `address`, separating
-# declared-member assignment from whole-subtree replacement and from a flat deep-path
-# mutation that would silently lose the write when the occurrence parent is absent.
+# assignment REPLACES the whole subtree stored there, on PostgreSQL and MariaDB. Step
+# 2 authors `address` naming only `city`, so the stored nested `address.geo` is gone
+# afterwards — the author stated a complete value and no stored member is merged back
+# into it — while every root sibling outside the occurrence survives untouched. The
+# golden is one flat assignment at `address` carrying that whole document, separating
+# replacement of the assigned subtree from a path-level merge inside it and from a
+# whole-column rewrite that would take the root siblings with it.
 model: models/document-layout.yaml
 tags: [m-value-object, m-storage-layout, m-document-codec, m-sql, write-sequence, update, json, nested, document-layout, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -48,11 +49,11 @@ then:
           tags:
             - { label: pilot }
     - sql:
-        postgres: 'update traveler set payload = jsonb_set(payload, ?, jsonb_set(case when jsonb_typeof(payload #> ?) = ? then payload #> ? else cast(? as jsonb) end, ?, cast(? as jsonb))) where id = ?'
-        mariadb: update traveler set payload = json_set(payload, ?, json_set(case when json_type(json_extract(payload, ?)) = ? then json_extract(payload, ?) else json_object() end, ?, json_extract(?, '$'))) where id = ?
+        postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
       binds:
-        postgres: ['{address}', '{address}', object, '{address}', '{}', '{city}', '"Bodo"', 7]
-        mariadb: ['$.address', '$.address', OBJECT, '$.address', '$.city', '"Bodo"', 7]
+        postgres: ['{address}', { city: Bodo }, 7]
+        mariadb: ['$.address', { city: Bodo }, 7]
   tableState:
     traveler:
       - id: 7
@@ -61,8 +62,6 @@ then:
           score: 9
           address:
             city: Bodo
-            geo:
-              country: "NO"
           tags:
             - { label: pilot }
   roundTrips: 3

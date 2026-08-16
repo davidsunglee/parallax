@@ -523,9 +523,9 @@ def _decode_element(
     A member the stored document omits contributes no key, at every containment
     depth, so what a read carries forward is the document's own presence rather
     than the declared member list. That is what lets a materialized occurrence be
-    re-serialized without inventing a key storage never held. The presence option
-    is not the authored-member mask mutation comparison supplies: this source
-    answers for itself which members it holds, so no mask is passed."""
+    re-serialized without inventing a key storage never held, and it is the same
+    reduction a mutation comparison applies to the document an assignment would
+    store — one occurrence value, compared whole against another."""
     reduced, findings = reduce_declared_members_classified(
         occurrence_shape(declared), raw, preserve_presence=True
     )

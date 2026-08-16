@@ -3,10 +3,12 @@
 Two properties are under test, and they are the write-side halves of the one the
 read suite pins. First, every document-resident member the statement touches
 reaches the SAME shared Structured Column: an opening statement fills it with one
-complete document and a revising one patches only the paths it assigns, so an
+complete document and a revising one writes only the paths it assigns, so an
 unassigned key — a model member the step left alone as much as a key a newer
-application version wrote — survives. Second, what lands there is the CODEC's
-spelling of each value rather than the carrier the write input happened to hold.
+application version wrote — survives, while an assigned occurrence's path takes
+its whole subtree and nothing inside the replaced one does. Second, what lands
+there is the CODEC's spelling of each value rather than the carrier the write
+input happened to hold.
 
 The model is the read suite's own (`_document_layout_support`), so the two
 suites' claims are about one declaration seen from both sides.
@@ -21,11 +23,9 @@ import pytest
 from _document_layout_support import PERSON, columns_model, document_model, entity
 
 from _support.lowering_probes import lower_instruction
-from parallax.core.base import STRING
 from parallax.core.db_port import JsonDocument
-from parallax.core.dialect import POSTGRES, DocumentManyAssignment
-from parallax.core.document_codec import DocumentShape, Leaf, Occurrence
-from parallax.core.metamodel import Metamodel, Multiplicity
+from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import KeyedWrite, PredecessorRow, WriteInstruction
 from parallax.core.unit_work.planned import (
@@ -36,7 +36,6 @@ from parallax.core.unit_work.planned import (
     PlannedInsert,
     PlannedRow,
 )
-from parallax.snapshot.handle import _step_lowering as step_lowering
 from parallax.snapshot.handle import lower_step
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
 from parallax.snapshot.handle._write_inputs import is_no_op_assignment
@@ -132,20 +131,15 @@ def test_an_assigned_none_writes_json_null_rather_than_removing_the_key() -> Non
     assert statement.binds == ("{displayName}", "null", 1)
 
 
-def test_assigning_a_one_occurrence_binds_a_guarded_declared_member_patch() -> None:
+def test_assigning_a_one_occurrence_binds_its_whole_subtree_at_its_own_path() -> None:
+    # One path, one composite value, and no type test: the author stated a complete
+    # `address`, so the statement writes that document rather than reaching inside the
+    # stored one. `geo` is not named, and after this write the row does not hold it.
     (statement,) = _lower(KeyedWrite("update", "Person", ({"id": 1, "address": {"city": "Bodo"}},)))
-    assert statement.sql.count("jsonb_typeof") == 1
-    assert statement.sql.startswith("update person set payload = jsonb_set(payload, ?, ")
-    assert statement.binds == (
-        "{address}",
-        "{address}",
-        "object",
-        "{address}",
-        "{}",
-        "{city}",
-        '"Bodo"',
-        1,
+    assert statement.sql == (
+        "update person set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
     )
+    assert statement.binds == ("{address}", JsonDocument({"city": "Bodo"}), 1)
 
 
 def test_assigning_null_to_a_one_occurrence_writes_json_null() -> None:
@@ -160,7 +154,19 @@ def test_assigning_a_many_occurrence_replaces_its_array_whole() -> None:
     assert statement.binds == ("{tags}", JsonDocument([{"label": "member"}]), 1)
 
 
-def test_assigning_a_nested_one_builds_a_guard_at_each_occurrence_level() -> None:
+def test_one_and_many_assignments_render_the_identical_statement_shape() -> None:
+    # The whole collapse in one assertion: cardinality selects no arm, so the two
+    # occurrence kinds emit the same expression over their own paths and differ only
+    # in the document each binds.
+    (one,) = _lower(KeyedWrite("update", "Person", ({"id": 1, "address": {"city": "Bodo"}},)))
+    (many,) = _lower(KeyedWrite("update", "Person", ({"id": 1, "tags": []},)))
+    assert one.sql == many.sql
+
+
+def test_a_nested_occurrence_rides_inside_the_document_its_parent_binds() -> None:
+    # A nested occurrence is never independently assignable, so naming one inside an
+    # authored `address` contributes a key to the ONE document that path binds rather
+    # than a second path of its own.
     (statement,) = _lower(
         KeyedWrite(
             "update",
@@ -168,27 +174,7 @@ def test_assigning_a_nested_one_builds_a_guard_at_each_occurrence_level() -> Non
             ({"id": 1, "address": {"geo": {"country": "NO"}}},),
         )
     )
-    assert statement.sql.count("jsonb_typeof") == 2
-    assert statement.binds[-3:] == ("{country}", '"NO"', 1)
-
-
-def test_a_nested_many_is_encoded_as_one_whole_array_assignment() -> None:
-    item_shape = DocumentShape((Leaf("label", STRING, True),))
-    shape = DocumentShape(
-        (
-            Occurrence(
-                name="items",
-                multiplicity=Multiplicity.MANY,
-                nullable=False,
-                shape=item_shape,
-            ),
-        )
-    )
-    element_assignments = step_lowering._element_assignments  # pyright: ignore[reportPrivateUsage]
-    assignments = element_assignments(shape, {"items": [{"label": "member"}]})
-    assert len(assignments) == 1
-    assert isinstance(assignments[0], DocumentManyAssignment)
-    assert assignments[0].path == ("items",)
+    assert statement.binds == ("{address}", JsonDocument({"geo": {"country": "NO"}}), 1)
 
 
 def test_a_direct_member_still_assigns_its_own_column() -> None:
@@ -286,7 +272,11 @@ def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:
     ) == collapse_group_key(DOCUMENT, person, "delete", {"id": 2, "score": 7})
 
 
-def test_no_op_comparison_uses_managed_occurrences_without_decoding_again() -> None:
+def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None:
+    # An assigned occurrence is compared whole, because the write it stands for
+    # replaces the subtree whole. Naming only `city` is therefore a CHANGE against a
+    # row holding `geo` — issuing it removes `geo`, so eliminating it would leave
+    # stored state the assignment says is gone.
     person = entity(DOCUMENT, "Person")
     occurrences = {
         occurrence.identity.path[-1]: occurrence for occurrence in person.declared_value_objects
@@ -299,10 +289,11 @@ def test_no_op_comparison_uses_managed_occurrences_without_decoding_again() -> N
 
     assert is_no_op_assignment(
         columns,
-        {"address": {"city": "Bergen"}, "tags": [{"label": "founder"}]},
+        {"address": {"city": "Bergen", "geo": {"country": "NO"}}, "tags": [{"label": "founder"}]},
         row,
         occurrences,
     )
+    assert not is_no_op_assignment(columns, {"address": {"city": "Bergen"}}, row, occurrences)
     assert not is_no_op_assignment(columns, {"address": {"city": "Oslo"}}, row, occurrences)
     assert not is_no_op_assignment(columns, {"tags": []}, row, occurrences)
 
@@ -422,7 +413,11 @@ def test_a_carried_occurrence_rides_forward_however_its_observation_spelled_it()
     assert successor == {**_STORED, "score": 21}
 
 
-def test_an_assigned_one_patches_named_members_and_preserves_the_rest() -> None:
+def test_an_assigned_one_replaces_its_subtree_while_the_root_carries_forward() -> None:
+    # The unit of replacement is the assigned occurrence, not the row. `address` was
+    # authored complete, so the omitted `geo` and the undeclared `sealNumber` inside
+    # it are both gone — while `charterCode`, which sits OUTSIDE it and was never
+    # mentioned, rides forward with the rest of the retained document.
     successor = _successor(
         {**_DECODED, "address": {"city": "Alta"}}, document=_STORED, origin=ChangedFrom
     )
@@ -430,11 +425,7 @@ def test_an_assigned_one_patches_named_members_and_preserves_the_rest() -> None:
         "displayName": "Ada",
         "score": 7,
         "charterCode": "NB-118",
-        "address": {
-            "city": "Alta",
-            "geo": {"country": "NO"},
-            "sealNumber": "S-4021",
-        },
+        "address": {"city": "Alta"},
         "tags": [{"label": "founder"}],
     }
 
