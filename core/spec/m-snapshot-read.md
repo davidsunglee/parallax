@@ -110,11 +110,16 @@ For a **conforming** member, a materialized Value Object occurrence carries what
 the stored document held: a member the document omits is absent from the
 materialized value, and a member it stores as JSON null is carried, as null. That
 is the presence distinction `m-document-codec` keeps inside a Value Object
-subtree, and materialization neither collapses nor fills it, so a conforming
-occurrence serializes back to the document it came from at every position but the
-`Many` zero below, whose three stored spellings are one value and serialize as the
-single canonical `[]`. The same stored state answers the same way under every
-Storage Layout.
+subtree, and materialization neither collapses nor fills it. What is preserved is
+each **declared** member's presence, not the source document: a read reduces its
+occurrence to the members the shape declares (`m-document-codec`), so re-encoding
+a materialized occurrence reproduces that document's declared members alone —
+each conforming one in the presence it held, and a `Many` in the single canonical
+`[]` its three stored spellings share. A key the shape does not declare never
+becomes a member of any value, so no read carries it and no re-encoding restores
+it; carrying one forward is what patching a retained document does
+(`m-document-codec`), not what a read does. The same stored state answers the same
+way under every Storage Layout.
 
 Held and carried are nevertheless two different questions, and stored state the
 hydration table collapses is where they part — in both directions. Two positions
