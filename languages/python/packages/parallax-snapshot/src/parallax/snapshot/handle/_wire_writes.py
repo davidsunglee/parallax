@@ -367,7 +367,9 @@ def _authored_row(
     value already equals what the source published was touched and restored, and
     the rest are the effective changes. Comparison is over DECODED values, so a
     caller writing back what a read handed it is a no-op whatever spelling it
-    used.
+    used — an occurrence authored short of a nested ``many`` included, because
+    that member has no absent state and both sides decode to the ``[]`` the store
+    holds (:func:`_decoded_document`).
 
     A destructive or close verb names no member and always buffers its identity
     row. An update whose effective set is empty buffers nothing — the
@@ -649,6 +651,14 @@ def _decoded_document(container: _VoContainer, value: object) -> object:
     authored for the composite judgement to name. A leaf inside an occurrence
     carries its own metadata type rather than an Entity Attribute's, so what the
     two levels share is the resolved decoder rather than the member.
+
+    A nested ``many`` is the one position the authored keys do not decide, because
+    it has no absent state: an omitted key, a null, and ``[]`` are three spellings
+    of one zero value, and the document this assignment stores carries ``[]`` at
+    that position whichever was authored. Decoding it to the empty collection is
+    what makes the value compared here the value that will be stored — otherwise
+    an author who omits it writes DML against a row already holding that zero, and
+    the node an insert answers omits a key its own buffered row stores.
     """
     if not isinstance(value, Mapping):
         return value
@@ -662,10 +672,15 @@ def _decoded_document(container: _VoContainer, value: object) -> object:
             for nested in container.value_objects
         },
     }
-    return {
+    decoded: dict[str, object] = {
         key: _decoded(decoders.get(key), nested)
         for key, nested in cast("Mapping[str, object]", value).items()
     }
+    for nested in container.value_objects:
+        name = nested.identity.path[-1]
+        if nested.multiplicity is Multiplicity.MANY and name not in decoded:
+            decoded[name] = []
+    return decoded
 
 
 def _authored_document(value: object, described: str) -> dict[str, object]:

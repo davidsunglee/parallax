@@ -504,22 +504,30 @@ member the source omits contributes nothing, at every containment depth,
 including inside a `many` element, while a member stored as JSON null still
 contributes its null. A reduction that preserves presence therefore carries the
 missing-versus-explicitly-null distinction this module already keeps at the
-interface, instead of collapsing it onto the declared member list. It is not the
-default: an ordinary reduction answers the declared composite, which is what a
-consumer needing one entry per declared position asks for. Which members a
-materialized read carries is a separate contract, stated where the read is
-(`m-snapshot-read`): a materialized occurrence carries the members the stored
-document held plus the two positions that module carries whatever the document
-held, so this distinction survives materialization rather than being collapsed by
-it.
+interface, instead of collapsing it onto the declared member list. A `many` is the
+one member it cannot narrow, because that member has no absence to preserve:
+omission, JSON null, and `[]` are one zero value above and all three encode back
+as `[]`, so an omitted `many` contributes its empty collection under either mode.
+Presence preservation is not the default: an ordinary reduction answers the
+declared composite, which is what a consumer needing one entry per declared
+position asks for. Which members a materialized read carries is a separate
+contract, stated where the read is (`m-snapshot-read`): a materialized occurrence
+carries the conforming members the stored document held, plus the two positions
+that module carries whatever the document held and minus the undecodable leaf it
+can carry no value for, so this distinction survives materialization rather than
+being collapsed by it.
 
-Presence preservation is what a mutation comparison uses on both sides. An
-assignment states the complete value its occurrence will hold, so the document it
-would store — presence preserved, a member the author omits contributing no key
-exactly as an unstored one does — is what a stored occurrence's own
-presence-preserving reduction is compared against. Narrowing the stored side to
-the members the assignment happens to name would call a write that removes a
-member no change at all, so no authored-member mask over the reduction exists.
+Presence preservation is what a mutation comparison uses on both sides, the
+`many` exception included on each. An assignment states the complete value its
+occurrence will hold, so the document it would store — presence preserved, a
+member the author omits contributing no key exactly as an unstored one does, and
+an omitted `many` contributing the `[]` that store will hold — is what a stored
+occurrence's own presence-preserving reduction is compared against. Narrowing the
+stored side to the members the assignment happens to name would call a write that
+removes a member no change at all, so no authored-member mask over the reduction
+exists. Preserving an omitted `many` would err the other way: it would call a
+write that stores the very zero already there a change, and issue DML, advance a
+version, and consult a clock for it.
 
 Patches apply in the order given, left to right, each over the result of the
 last. `m-storage-layout` fixes that order for a Parallax write: canonical logical

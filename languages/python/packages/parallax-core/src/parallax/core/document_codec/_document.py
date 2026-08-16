@@ -606,6 +606,14 @@ def reduce_declared_members(
     because an assignment states the complete value its occurrence will hold:
     narrowing the stored side to the members the assignment happens to name would
     call a write that removes a member no change at all.
+
+    A ``many`` is the one member presence preservation cannot narrow, because it
+    has no absent state to preserve: an omitted key, a JSON null, and ``[]`` are
+    three spellings of one zero value, and the document a write composes from this
+    reduction stores ``[]`` for all three. Preserving that omission would make two
+    documents of one logical value compare unequal and turn a no-op write into
+    DML, so an omitted ``many`` contributes its empty collection under either
+    mode.
     """
     if document is None:
         return None
@@ -614,7 +622,7 @@ def reduce_declared_members(
     source = cast("Mapping[str, object]", document)
     reduced: dict[str, object] = {}
     for member in shape.members:
-        if preserve_presence and member.name not in source:
+        if preserve_presence and member.name not in source and not _is_many(member):
             continue
         raw = source.get(member.name)
         if isinstance(member, Leaf):
@@ -653,3 +661,7 @@ def reduce_declared_members(
             except LeafEncodingError as exc:
                 raise exc.under(member.name) from exc
     return reduced
+
+
+def _is_many(member: Leaf | Occurrence) -> bool:
+    return isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY

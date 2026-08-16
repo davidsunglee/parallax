@@ -427,6 +427,32 @@ _PROFILE = ValueObjectShapeDeclaration(
 )
 _SHAPE = shape_of_declaration(_PROFILE)
 
+_NESTED_MANY_SHAPE = shape_of_declaration(
+    ValueObjectShapeDeclaration(
+        key=ValueObjectShapeKey(),
+        value_objects=(
+            NestedValueObjectOccurrenceDeclaration(
+                name="address",
+                shape=ValueObjectShapeDeclaration(
+                    key=ValueObjectShapeKey(),
+                    attributes=(
+                        ValueObjectAttributeDeclaration(name="city", type=STRING, nullable=True),
+                    ),
+                    value_objects=(
+                        NestedValueObjectOccurrenceDeclaration(
+                            name="phones", shape=_ENTRY, multiplicity=Multiplicity.MANY
+                        ),
+                    ),
+                ),
+                multiplicity=Multiplicity.ONE,
+                nullable=True,
+            ),
+        ),
+    )
+)
+"""A `many` under a nested `one`, which is where a reduction's own recursion
+decides whether a member's presence rule holds at depth."""
+
 
 def test_a_declared_shape_names_leaves_then_occurrences_in_declaration_order() -> None:
     assert [member.name for member in _SHAPE.members] == ["flag", "day", "origin", "entries"]
@@ -726,6 +752,24 @@ def test_declared_member_reduction_can_take_its_presence_from_the_source_documen
         "origin": {"city": None},
         "entries": [{"kind": "home", "price": None}],
     }
+
+
+def test_presence_preservation_still_answers_an_omitted_many_with_its_empty_collection() -> None:
+    # A `many` has no absent state to preserve: an omitted key, a JSON null, and
+    # `[]` are three spellings of one zero value, and the document a write composes
+    # from this reduction stores `[]` for all three. Dropping the key would make two
+    # documents of one logical value compare unequal, so the preserved reduction
+    # answers `[]` exactly as the unpreserved one does, at every depth.
+    assert reduce_declared_members(_SHAPE, {"flag": True}, preserve_presence=True) == {
+        "flag": True,
+        "entries": [],
+    }
+    assert reduce_declared_members(_SHAPE, {"entries": None}, preserve_presence=True) == {
+        "entries": []
+    }
+    assert reduce_declared_members(
+        _NESTED_MANY_SHAPE, {"address": {"city": "Oslo"}}, preserve_presence=True
+    ) == {"address": {"city": "Oslo", "phones": []}}
 
 
 def test_declared_member_reduction_refuses_wrong_occurrence_kinds() -> None:

@@ -193,7 +193,9 @@ a mask over the keys the caller authored".
 **Superseding decision:** an occurrence compares as a **whole** at either
 cardinality, presence preserved on both sides. A declared member the authored
 value omits is a difference like any other, so the edit is effective and a row is
-derived.
+derived — with the one exception `m-document-codec` gives a nested `many`, which
+has no absent state and is therefore read on both sides as the empty collection
+the write stores whether or not the author spelled it.
 
 The mask was written when assigning an occurrence patched the members it named,
 where an omitted member genuinely was un-authored and unaffected. An assignment

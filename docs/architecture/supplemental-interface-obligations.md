@@ -463,6 +463,10 @@ compatibility case is.
   same stored document whichever ingress states it. It binds at the shape where
   the two are most easily divergent: the ingresses observe the row through
   different representations, so each must weigh an authored occurrence against
-  the **same** observed value — the members the stored document held. An
-  implementation shipping one ingress owes nothing here, exactly as one whose host
-  runtime supplies no inherited copy doors owes nothing for SIO-016.
+  the **same** observed value — the one `m-snapshot-read` says a materialization
+  of that row carries — and must read an authored occurrence the same way, which
+  is where a member with no absent state separates them: an author who omits a
+  nested `many` has stated the zero the row already holds, so neither ingress may
+  call it a change. An implementation shipping one ingress owes nothing here,
+  exactly as one whose host runtime supplies no inherited copy doors owes nothing
+  for SIO-016.

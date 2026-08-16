@@ -16,6 +16,7 @@ import copy
 import datetime as dt
 import json
 import pickle
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, cast
 
@@ -36,6 +37,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from parallax.conformance import vo_models as vo
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core.base import InstantError
 from parallax.core.db_port import DbPort, JsonDocument, Row
@@ -93,6 +95,10 @@ _TRAVELER_ROW: Row = {
 _TRAVELER_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Traveler",
     "predicate": {"eq": {"attr": "parallax.compatibility.Traveler.id", "value": 1}},
+}
+_CONTACT_QUERY: dict[str, object] = {
+    "target": "parallax.compatibility.Contact",
+    "predicate": {"eq": {"attr": "parallax.compatibility.Contact.id", "value": 1}},
 }
 
 
@@ -234,6 +240,88 @@ def test_authoring_a_null_over_a_member_the_document_omitted_emits_one_answer() 
 
     assert len(_writes(wire_port)) == 1
     assert _writes(wire_port) == _writes(typed_port)
+
+
+def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> None:
+    # The stored document omits `phones`, which a `many` has no absent state for:
+    # the read publishes `[]` there and storing this authored occurrence would too.
+    # Both authored values therefore state exactly the value the row holds, and the
+    # two lanes agree on the only answer that leaves state as it is — no DML, no
+    # milestone, no clock. A Wire author who omits the key spells the same zero the
+    # Typed author's unpopulated tuple does.
+    stored: Row = {
+        "id": 1,
+        "name": "Ada",
+        "address": {
+            "street": "S",
+            "city": "C",
+            "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}},
+        },
+    }
+    authored = {
+        "street": "S",
+        "city": "C",
+        "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}},
+    }
+    wire_port = RecordingPort(rows=[copy.deepcopy(stored)])
+
+    def wire(tx: Transaction) -> None:
+        node = tx.wire.find(_CONTACT_QUERY).result()
+        assert _address(node)["phones"] == []
+        tx.wire.update(node, {"address": authored})
+
+    db_for(CONTACT, wire_port).transact(wire)
+
+    typed_port = RecordingPort(rows=[copy.deepcopy(stored)])
+
+    def typed(tx: Transaction) -> None:
+        node = tx.find(vo.Contact.where(vo.Contact.id == 1)).result()
+        tx.update(
+            node.edit(
+                address=vo.ContactAddress(
+                    street="S",
+                    city="C",
+                    geo=vo.ContactGeo(country="NO", point=vo.ContactPoint(lat=1.0, lon=2.0)),
+                )
+            )
+        )
+
+    db_for(CONTACT, typed_port).transact(typed)
+
+    assert _writes(wire_port) == []
+    assert _writes(typed_port) == []
+
+
+def test_an_insert_answers_the_nested_many_its_own_buffered_row_stores() -> None:
+    # The document an insert composes carries `[]` at a nested `many` the payload
+    # left out, so the node it answers has to carry it too: a caller revising that
+    # node compares its own authored value against what was published, and a key
+    # the answer omitted while the row stored it would make the next write differ
+    # from the row it addresses.
+    port = RecordingPort(rows=[])
+
+    def body(tx: Transaction) -> None:
+        opened = tx.wire.insert(
+            "parallax.compatibility.Contact",
+            {
+                "id": 7,
+                "name": "Grace",
+                "address": {
+                    "street": "S",
+                    "city": "C",
+                    "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}},
+                },
+            },
+        )
+        assert _address(opened)["phones"] == []
+
+    db_for(CONTACT, port).transact(body)
+    stored = cast("JsonDocument", cast("tuple[object, ...]", _writes(port)[0][2])[2])
+    assert cast("dict[str, Any]", stored.value)["phones"] == []
+
+
+def _address(node: WireEntity) -> Mapping[str, Any]:
+    return cast("Mapping[str, Any]", dict(node)["address"])
 
 
 def test_a_wire_delete_emits_what_the_typed_delete_emits() -> None:
