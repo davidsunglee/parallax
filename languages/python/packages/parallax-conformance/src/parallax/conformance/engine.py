@@ -2655,13 +2655,13 @@ def _execute_framework_write_unit(
     model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
-    resolved: Sequence[_ResolvedWrite],
+    write: _ResolvedWrite,
     tx_instant: str,
     *,
     rollback: bool,
 ) -> int:
-    """Execute one choreography unit whose writes are the FRAMEWORK's own, and
-    report the calls it cost.
+    """Execute the choreography unit ONE framework-marker entry is, and report the
+    calls it cost.
 
     Composed the way :func:`_run_conflict_close` composes a standalone close —
     plan, lower, and execute on the port's own transaction — rather than driven
@@ -2672,20 +2672,19 @@ def _execute_framework_write_unit(
     for these entries is the statement the planner renders, which is exactly
     what this executes.
 
-    A marker entry is a choreography unit of its own (`m-case-format`
-    "Buffered keyed write instructions"), so this lane runs a whole unit. It
-    therefore honours the step's own abort contract like every other write path:
-    a ``rollback: true`` step runs on the aborting port, its statements reach the
-    wire and count their round trips, and the provider then rolls them back.
+    A marker entry is a choreography unit of its own and the buffer's only entry
+    (`m-case-format` "Buffered keyed write instructions"), which is why this
+    takes one write rather than a buffer: the unit is the entry. It honours the
+    step's own abort contract like every other write path: a ``rollback: true``
+    step runs on the aborting port, its statements reach the wire and count their
+    round trips, and the provider then rolls them back.
     """
     plan = build_write_planner(model).plan(
         PlanningRequest(
             subject_identity=_PLANNING_SUBJECT,
             transaction_instant=_pinned_instant(tx_instant),
             concurrency=concurrency,
-            buffered_writes=[
-                _buffered(write.instruction, write.oracle_observation, model) for write in resolved
-            ],
+            buffered_writes=[_buffered(write.instruction, write.oracle_observation, model)],
         )
     )
     statements = [statement for _step, statement in stream_lowered(plan, model, dialect)]
@@ -2820,11 +2819,13 @@ def _execute_write_unit(
     A unit whose writes are the framework's own bookkeeping takes
     :func:`_execute_framework_write_unit` instead, which opens no unit of work
     at all — those statements have no verb to be stated through. A marker entry
-    is a choreography unit of its own (`m-case-format` "Buffered keyed write
-    instructions"), so a buffer mixing one with caller-authored entries states a
-    form no case may author: it is refused here rather than silently routed by
-    its first entry, which would put half its DML through a public verb and half
-    around it.
+    is a choreography unit of its own and therefore the buffer's ONLY entry
+    (`m-case-format` "Buffered keyed write instructions"), so anything beside it
+    states a form no case may author and is refused here rather than silently
+    executed as one unit: a caller-authored entry would put half the DML through
+    a public verb and half around it, and a second marker would fold two of the
+    framework's own units into one flush, hiding whichever boundary the corpus
+    meant to grade.
 
     A ``rollback: true`` step runs on the aborting port (`m-unit-work` abort
     contract): the boundary's own finalization flush still puts the buffered DML
@@ -2840,8 +2841,14 @@ def _execute_write_unit(
                 f"a DB-computed write marker beside {len(resolved) - len(framework)} that a "
                 "public verb states"
             )
+        if len(resolved) != 1:
+            raise EngineError(
+                "an entry carrying a DB-computed write marker states the framework's own "
+                "bookkeeping and is a choreography unit of its own, so it is the buffer's only "
+                f"entry: this one holds {len(resolved)}"
+            )
         return None, _execute_framework_write_unit(
-            port, model, dialect, concurrency, resolved, tx_instant, rollback=rollback
+            port, model, dialect, concurrency, resolved[0], tx_instant, rollback=rollback
         )
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     database = handle.Database(

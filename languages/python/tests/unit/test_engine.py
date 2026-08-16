@@ -5647,6 +5647,14 @@ def test_one_entity_spelled_two_ways_owes_one_membership_read() -> None:
     assert port.reads[0][0].endswith("where t0.id in (%s, %s) for share of t0")
 
 
+def _registry_advance(sequence: str) -> dict[str, object]:
+    return {
+        "mutation": "update",
+        "entity": "parallax.compatibility.PkSequence",
+        "rows": [{"name": sequence, "nextVal": {"increment": 1}}],
+    }
+
+
 def test_a_unit_mixing_a_framework_marker_with_a_public_verb_write_is_refused() -> None:
     # A pk-gen registry advance has no verb to be stated through and an ordinary
     # insert has nothing else, so a unit holding both would put half its DML
@@ -5658,11 +5666,7 @@ def test_a_unit_mixing_a_framework_marker_with_a_public_verb_write_is_refused() 
         [
             {
                 "write": [
-                    {
-                        "mutation": "update",
-                        "entity": "parallax.compatibility.PkSequence",
-                        "rows": [{"name": "badge_seq", "nextVal": {"increment": 1}}],
-                    },
+                    _registry_advance("badge_seq"),
                     {
                         "mutation": "insert",
                         "entity": "parallax.compatibility.Badge",
@@ -5677,18 +5681,27 @@ def test_a_unit_mixing_a_framework_marker_with_a_public_verb_write_is_refused() 
         engine.run_scenario_case(case, "postgres", FakeWritePort())
 
 
-def _pk_sequence_advance(**step: object) -> dict[str, object]:
-    return {
-        "write": [
+def test_a_unit_holding_two_framework_markers_is_refused() -> None:
+    # Two registry advances are two of the framework's own units, and a marker
+    # entry is the buffer's only entry — so a buffer holding both is a form no
+    # case may author even though nothing in it is caller-authored. The mixed
+    # refusal cannot see this shape: every entry is the framework's.
+    case = _synthetic_scenario(
+        "models/pk-sequence.yaml",
+        "m-pk-gen-996",
+        [
             {
-                "mutation": "update",
-                "entity": "parallax.compatibility.PkSequence",
-                "rows": [{"name": "badge_seq", "nextVal": {"increment": 1}}],
+                "write": [_registry_advance("badge_seq"), _registry_advance("ticket_seq")],
+                "roundTrips": 2,
             }
         ],
-        "roundTrips": 1,
-        **step,
-    }
+    )
+    with pytest.raises(engine.EngineError, match="buffer's only entry"):
+        engine.run_scenario_case(case, "postgres", FakeWritePort())
+
+
+def _pk_sequence_advance(**step: object) -> dict[str, object]:
+    return {"write": [_registry_advance("badge_seq")], "roundTrips": 1, **step}
 
 
 def test_an_aborted_framework_write_step_executes_its_dml_and_rolls_back() -> None:
