@@ -485,6 +485,13 @@ holds at that step — never a re-read. An adapter that re-queries to answer thi
 observation reports that the database is right while the case asks whether the
 view survived, which is the distinction the oracle exists to draw.
 
+A multi-hop `path` is walked under the null-branch rule `m-case-format` states:
+a path fanning out through any to-many hop reports its **non-null** terminals,
+and an all-to-one path reports one terminal per root, `null` where its branch
+reached no row. That rule belongs to the observable rather than to any one
+language's traversal API, so every adapter reports the contents the case states
+instead of the shape its own inspection surface happens to answer.
+
 It is additive and optional in the same sense as `stateChecks` / `errors`: a run
 whose case declares no `expectGraph` omits it, and every existing `run` output
 stays valid unchanged.
