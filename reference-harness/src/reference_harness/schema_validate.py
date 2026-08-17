@@ -14,7 +14,11 @@ It performs m-case-format layer 1 statically (no database needed):
   scenario/coherence step's own) validates against the Object Query schema, which
   reaches the Predicate and Subtype Selection grammars through it.
 * **Case validation** — every case validates against the compatibility-case
-  schema, and its referenced model + golden-SQL dialect keys are coherent.
+  schema, and its referenced model + golden-SQL dialect keys are coherent. The
+  model-aware case-authoring rules JSON Schema cannot express are asked here too,
+  where the model is in hand and no executor has run yet: a buffered write's
+  member honesty, and a scenario `mutate`'s own assignments
+  (:func:`_validate_scenario_edit`).
 """
 
 from __future__ import annotations
@@ -48,6 +52,7 @@ from .storage_layout import validate_storage_layout
 from .temporal_selection_validate import validate_temporal_selections
 from .temporality import derive_temporal_structure
 from .value_object_resolve import RejectionError
+from .write_validate import assignment_violation, undeclared_members
 
 
 class ValidationFailure(Exception):
@@ -422,6 +427,95 @@ def _validate_scenario_reference_sql(
     _scenario_reference_sql_dialect_keys(step, label, errors)
 
 
+def _edited_target(steps: list[Any], index: int) -> str | None:
+    """The Object Query target the `mutate` step at *index* edits, or ``None``.
+
+    A `mutate` names an earlier step through ``on``: the find whose result it
+    edits, or an earlier `mutate` whose copy it derives from, which the walk
+    follows back to the find that materialized the chain. ``None`` means the step
+    resolves to no query at all — an out-of-range or missing ``on``, or one naming
+    a write step — which the runtime ``on`` rules own
+    (:func:`~reference_harness.case_runner._assert_action_on`) and this check does
+    not restate.
+    """
+    seen: set[int] = set()
+    current = index
+    while current not in seen:
+        seen.add(current)
+        step = steps[current] if 0 <= current < len(steps) else None
+        on = step.get("on") if isinstance(step, dict) else None
+        if not isinstance(on, int) or not 0 <= on < len(steps):
+            return None
+        source = steps[on]
+        if not isinstance(source, dict):
+            return None
+        query = source.get("objectQuery")
+        if isinstance(query, dict):
+            target = query.get("target")
+            return target if isinstance(target, str) else None
+        if source.get("action") != "mutate":
+            return None
+        current = on
+    return None
+
+
+def _validate_scenario_edit(
+    steps: list[Any],
+    index: int,
+    entity_defs: list[dict[str, Any]],
+    family: Family | None,
+    label: str,
+    errors: list[str],
+) -> None:
+    """Refuse a `mutate` step whose `set` the model does not admit.
+
+    `m-case-format` makes an assignment no member of the edited Entity admits a
+    **case-authoring failure** rather than a graded observation: the closed
+    `expectError` vocabulary has no member for it, so a case cannot declare the
+    refusal and an executor reaching one has nothing portable to report. Refusing
+    it statically is the same standard the bare write row's member honesty is held
+    to, asked before any executor sees the case rather than by each of them.
+
+    The Entity is the one the edited node IS, which an abstract-target read leaves
+    open: such a read materializes complete concrete instances, so a subtype's own
+    member is assignable on a node the query answered. The set is therefore judged
+    against the target's EFFECTIVE CONCRETE SET and accepted where any member of it
+    admits the assignment — the widest position the query could have answered, so
+    the refusal reports only what no concrete could accept. A `narrowTo` clause can
+    only shrink that set, so reading the bare target stays conservative.
+
+    A refusal spanning a family is reported from a concrete that DECLARES the
+    member where one does: every other concrete answers that the name is nothing of
+    theirs, which is true and says less than the declared position's own verdict on
+    the value.
+    """
+    step = steps[index]
+    assignments = step.get("set") if isinstance(step, dict) else None
+    if not isinstance(assignments, dict) or not assignments:
+        return
+    target = _edited_target(steps, index)
+    if target is None:
+        return
+    positions = family.effective_concrete_set(target) if family is not None else [target]
+    entities: list[Entity] = []
+    for position in positions:
+        entity = _effective_entity(entity_defs, position)
+        if entity is None:
+            return  # an undeclared target is the query validator's to report
+        entities.append(entity)
+    for name, value in assignments.items():
+        judged = [(entity, assignment_violation(entity, name, value)) for entity in entities]
+        if any(violation is None for _, violation in judged):
+            continue
+        declaring = [
+            violation
+            for entity, violation in judged
+            if not undeclared_members(entity, {name: value}) and violation is not None
+        ]
+        reported = declaring or [violation for _, violation in judged if violation is not None]
+        errors.append(f"{label}: `mutate` set {reported[0]}")
+
+
 def validate_tree(compatibility_root: Path) -> list[str]:
     """Validate every schema and every fixture; return a list of error strings."""
     compatibility_root = compatibility_root.resolve()
@@ -538,6 +632,15 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                             )
                         except PredicateWriteValidationError as exc:
                             errors.append(f"case {case_path.name} scenario[{index}]: {exc}")
+                if isinstance(step, dict) and step.get("action") == "mutate":
+                    _validate_scenario_edit(
+                        when["scenario"],
+                        index,
+                        model_entities.get(model_name or "", []),
+                        family,
+                        f"case {case_path.name} scenario[{index}]",
+                        errors,
+                    )
                 if isinstance(step, dict) and isinstance(step.get("write"), list):
                     _validate_buffered_write(
                         step["write"],

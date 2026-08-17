@@ -28,13 +28,18 @@ and the As-Of Axis endpoints (:func:`framework_owned_names`), plus a
 table-per-hierarchy tag column, whose presence the concrete-subtype protocol below
 refuses outright.
 
+The same declared structure answers a narrower question for an authored ASSIGNMENT
+— one member named with one value, rather than a whole row
+(:func:`assignment_violation`) — so a case that assigns a value no member of the
+model admits is refused from the same walk that refuses a row.
+
 The reference harness runs this so the reference implementation actually rejects
 what the `rejected` cases pin — the refusal each language implementation must make.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .case import Entity
@@ -106,6 +111,65 @@ def undeclared_members(entity: Entity, row: Mapping[str, Any]) -> list[str]:
     declared = {attribute["name"] for attribute in entity.attributes}
     declared.update(value_object["name"] for value_object in entity.value_objects)
     return sorted(key for key in row if key not in declared and key not in _ROW_CONTROL_KEYS)
+
+
+def assignment_violation(entity: Entity, name: str, value: Any) -> str | None:
+    """Why *entity* refuses assigning *value* to its member *name*, or ``None``.
+
+    One member with one value, which is what an EDIT authors, where
+    :func:`validate_write` judges a whole row: the member must be one this entity
+    declares and one a caller may assign, and the value must be one that member
+    admits. A primary-key, read-only or framework-owned target is refused whatever
+    the value — those are the framework's to supply — and a name naming neither a
+    declared Attribute nor a declared Value Object occurrence (a relationship, a
+    sibling branch's attribute, a misspelling) is refused as naming nothing to
+    assign to.
+
+    The value itself is judged by the SAME walk a row's is: a scalar against its
+    declared neutral type, `null` only where the member is nullable, and a Value
+    Object occurrence as one whole document (or a list of them for a `many`),
+    because an occurrence binds atomically. A DB-computed write marker is NOT
+    exempt here as it is in a row — it names a statement the framework issues, and
+    no edit authors one.
+
+    The message is the refusal's own detail, member-qualified, so a caller reports
+    what is wrong with the assignment rather than re-deriving it.
+    """
+    path = f"{entity.name}.{name}"
+    attribute = next(
+        (candidate for candidate in entity.attributes if candidate["name"] == name), None
+    )
+    if attribute is not None:
+        if attribute.get("primaryKey"):
+            return f"{path}: primary-key fields may not be assigned"
+        if attribute.get("readOnly"):
+            return f"{path}: read-only fields may not be assigned"
+        if name in framework_owned_names(entity):
+            return f"{path}: framework-owned fields may not be assigned"
+        return _violation_detail(
+            lambda: _validate_attribute({name: value}, attribute, path=path, marker_exempt=False)
+        )
+    occurrence = next(
+        (candidate for candidate in entity.value_objects if candidate["name"] == name), None
+    )
+    if occurrence is None:
+        return f"{path}: names no assignable attribute or value object"
+    return _violation_detail(lambda: _validate_occurrence({name: value}, occurrence, path=path))
+
+
+def _violation_detail(judge: Callable[[], None]) -> str | None:
+    """*judge*'s refusal detail, or ``None`` when it raises nothing.
+
+    The row walk answers by raising a classified :class:`RejectionError`, because a
+    `rejected` case's observable IS the rule it names. An assignment has no such
+    observable — a case may not declare this refusal at all — so the rule is
+    dropped here and only the human-readable detail survives.
+    """
+    try:
+        judge()
+    except RejectionError as exc:
+        return exc.detail
+    return None
 
 
 def validate_write(entity: Entity, row: dict[str, Any]) -> None:

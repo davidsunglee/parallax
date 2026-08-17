@@ -713,7 +713,7 @@
                 "enum": ["unmanaged", "thisSource", "anotherSource"]
               },
               "set": {
-                "description": "mutate action only (enforced by the sibling `allOf`). The attribute assignments a `mutate` applies, as an attribute-name-keyed map of new values.",
+                "description": "mutate action only (enforced by the sibling `allOf`). The attribute assignments a `mutate` applies, as an attribute-name-keyed map of new values. Every key MUST name an assignable member of the Entity the edited node is, and every value MUST be one that member admits; JSON Schema is model-blind, so that rule is a case-authoring failure the corpus's own model-aware validation refuses rather than a shape stated here (m-case-format).",
                 "type": "object",
                 "minProperties": 1
               },

@@ -352,42 +352,6 @@ the branch plus its own DB-free driver; until then the honest state is the
 refusal this entry describes, which already says which half of itself is
 permanent.
 
-### D-76 — An invalid scenario `mutate` assignment has no portable outcome: one executor refuses it, the other ignores it, and no case can declare either
-
-*Medium — latent rather than live: every `set` the corpus authors today is a
-valid assignment, so no case is currently graded two ways.* **Owned by
-`core/spec/m-case-format.md` and the corpus, not this target**, and kept here
-because Python work surfaced it and nothing else tracks it. Relates to
-`parallax.conformance.engine._edited_copy` / `_judged_assignments`,
-`core/schemas/compatibility-case.schema.json` (`set`), and the reference
-harness's `case_runner._run_scenario_action`.
-
-**What.** A scenario `mutate` step's `set` is schema-typed as an arbitrary
-non-empty object, and no rule says what an executor owes an assignment the model
-refuses. The Python lane now reaches the whole edit verdict — a relationship
-name, an undeclared or sibling-branch or metadata name, a primary-key or
-read-only target, and an ill-typed value are each refused loudly as a
-case-authoring defect — while the reference harness never reads `set` at all and
-passes. So one schema-valid case would fail one executor and pass the other, and
-the case could not declare which was right: `m-case-format`'s per-step
-`expectError` is a closed application-lifecycle vocabulary with no edit-validation
-member. `m-case-format` gives a bare write row naming an undeclared member exactly
-the status this needs — a case-authoring failure, refused before grading, enforced
-by both executors — and says nothing of the same kind about `set`.
-
-**Why it is deferred rather than fixed.** The two ways to close it differ in what
-the corpus is allowed to say, which is a decision about the case format rather
-than about either executor. Making an invalid `set` a **case-authoring failure**
-states one rule in the register the bare write row already uses and needs no new
-vocabulary, but it permanently forecloses grading edit-time validation from the
-corpus — the rule that an invalid edit raises at edit time would stay a
-per-language spec claim (`spec/python.md` §1 *Explicit writes*) with no
-compatibility case behind it. Making the refusal **declarable** — an `expectError`
-member plus adapter and schema support — buys that coverage and costs a new member
-of a closed vocabulary whose members are each defined normatively where the error
-is defined, which for edit-time validation is nowhere in `core/spec` today.
-Choosing either is a normative change this target cannot make on its own.
-
 ## Forwarding pointers
 
 Removed entries whose number a live document still cites. One line each; drop a
@@ -413,6 +377,7 @@ prose.
 - **D-65** → [COR-97](https://linear.app/flimflam/issue/COR-97/give-a-transaction-a-supported-abandon-and-the-execution-log-an-abort). A `rollback: true` step's abort sentinel records a `commit`-phase failure and an unclassified retry verdict, which no oracle reads; `engine._AbortingPort` states the untruth and its bound, and COR-97's `Transaction.abandon()` plus an `aborted` attempt status removes the decorator.
 - **D-66** → [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would). A keyed temporal write settling against case state a committed materializing predicate write of the same case moved is refused (`engine._refuse_materialized_case_state`, marked by `temporal_state.TemporalShadow.note_materialized_write`): production resolves and plans that write internally and returns neither, so the adapter would issue a zero-row close where a real caller — who could only reach the step by reading — gets a stale write. COR-99 is the systematic pass over adapter/production divergences of that kind and cites this composition as its motivating example; this refusal is the one hand-placed instance of what that audit generalizes.
 - **D-68** → closed by [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production). `parallax.conformance` reaches a corpus model through the public `domain_model_from_document` door alone and reads the accepted Metamodel's own vocabulary, so no `parallax.descriptor` private import and no `parallax.core._formation_profile` reach survives; `ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at three `parallax.core.entity` entries that `spec/python.md` §7 states as a rebuttal rather than an exemption. One question the accepted model cannot answer survives the conversion, and it is not a model question: the order a document declared its Entities in, which `m-case-format` makes load-bearing for a case naming no target and which `conformance.models.declared_entity_spellings` therefore reads off the decoded document. This target pins that order in a unit assertion of its own (`tests/unit/test_corpus_models.py`), but no compatibility case distinguishes it from the accepted model's canonical order: exactly one case resolves the convention over a model whose two orders disagree (`m-predicate-048`), and it is refused by the same rule under either root. Which order `m-case-format` means is therefore ungated across targets, and [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would) carries it.
+- **D-76** → closed by the decision it asked for. An invalid scenario `mutate` `set` is a **case-authoring failure**: `core/spec/m-case-format.md` states it in the register the bare write row already uses, and the corpus's own model-aware validation (`reference_harness.schema_validate._validate_scenario_edit`, run by `just core-check-schemas`) refuses such a case before either executor sees it. Undeclarability is the design rather than a gap — an edit refusal is deliberately not an `expectError` member — so what the entry called a divergence is now one rule with one enforcement point, and the Python lane's own verdict (`engine._judged_assignments`) is a restatement rather than the portability mechanism.
 - **D-71** → fixed. `_row_codec._assignment_matches_original` compares both sides whole and presence-preserving — with the nested-`many` exception, which has no absence to preserve and reads as the empty collection on both sides — as `python.md`'s *Provenance comparison* paragraph and `docs/adr/0003` state.
 - **D-73** → fixed. A Wire read publishes what one materialization carries — the members the stored document held, plus and minus what `m-snapshot-read` fixes at each — so both representations observe one value; `core/spec/m-snapshot-read.md` *What a materialized value carries* states the read contract and `python.md` §4 the published node.
 
