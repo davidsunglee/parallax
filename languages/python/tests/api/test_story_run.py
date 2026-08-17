@@ -336,35 +336,87 @@ def test_a_write_keeps_an_unloaded_relationship_absent(provisioner: Any) -> None
     assert _committed_item_ids(db, 3) == [31]
 
 
+def _access_expect_graph(case_id: str) -> dict[str, Any]:
+    """The scenario's single ``expectGraph`` — the surviving view's own oracle."""
+    steps = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
+    graphs = [step["expectGraph"] for step in steps if "expectGraph" in step]
+    assert len(graphs) == 1, case_id
+    return cast("dict[str, Any]", graphs[0])
+
+
+def _assert_surviving_view(case_id: str, entity: str, instances: Sequence[Any]) -> None:
+    """Grade a composition story's surviving relationship view against the whole
+    ``expectGraph`` its access step authors, through the SAME model-driven
+    comparator the wire lane grades that step by — so every leaf the case states
+    is asserted here rather than the handful an assertion happens to name."""
+    compare_graph(
+        {entity: [instance_graph_node(instance) for instance in instances]},
+        _access_expect_graph(case_id),
+        CollectionKinds(engine.load_case_metamodel(_CASES[case_id])),
+    )
+
+
+def _assert_read_back(case_id: str, snapshot: Any) -> None:
+    """Grade a composition story's read-back against the case's own final find —
+    the same query, so the same rows: the oracle for the write having genuinely
+    landed on the very rows the surviving view still answers for."""
+    compare_rows(
+        [instance_row(instance) for instance in snapshot.results()],
+        _final_find_expect_rows(case_id),
+    )
+
+
+def _assert_composition_round_trips(
+    case_id: str, snapshot: Any, committed: Any, reread: Any
+) -> None:
+    """A composition story's three units of work cost the case's own
+    ``then.roundTrips``: the materializing find, the write's committed attempt,
+    and the read-back. The zero-round-trip access sits inside the first count —
+    it holds only because touching the surviving view left it untouched."""
+    total = cast("int", case_document(_CASES[case_id])["then"]["roundTrips"])
+    assert snapshot.execution.round_trips == 2, case_id
+    assert (
+        snapshot.execution.round_trips
+        + committed.execution.round_trips
+        + reread.execution.round_trips
+        == total
+    ), case_id
+
+
 def test_a_delete_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-020"]
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
-    snapshot, loaded_items, reread = story.run(db)
-    # What only this lane can show: the destroyed row's own node is still IN the
-    # view, and it is the SAME object — an eviction that replaced it with an
-    # equal-valued rebuild would satisfy the case's `expectGraph` and fail here.
+    snapshot, loaded_items, committed, reread = story.run(db)
+    _assert_surviving_view(story.case_id, "OrderItem", loaded_items)
+    # The multiset comparison above cannot see order; the relationship declares
+    # `id desc`, and the destroyed row is still in its declared position.
     assert [item.id for item in loaded_items] == [12, 11]
+    # What only this lane can show: it is the SAME object — an eviction that
+    # replaced it with an equal-valued rebuild would satisfy the case's
+    # `expectGraph` and fail here.
     assert snapshot.result().items[1] is loaded_items[1]
     # The delete is load-bearing: item 11 is gone from the database, so the node
     # the view still answers denotes a row no read can reach.
-    assert [item.id for item in reread.items] == [12]
-    assert snapshot.execution.round_trips == 2
+    _assert_read_back(story.case_id, reread)
+    _assert_composition_round_trips(story.case_id, snapshot, committed, reread)
 
 
 def test_a_rectangle_split_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-025"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
-    snapshot, loaded_coverages, reread = story.run(db)
-    # The pinned view answers the rectangle its own read selected, and answers it
-    # with the SAME object. The re-read takes the SAME pin and answers the middle
-    # rectangle the split chained, so the two disagree by construction — which is
-    # what a bitemporal store is for.
-    assert [(c.id, c.amount) for c in loaded_coverages] == [(20, Decimal("300.00"))]
+    # The case's own `at:` instant, so the rectangles the split chains open where
+    # the case says they do and its read-back rows are gradable at all.
+    clock = story.clock() if story.clock is not None else None
+    db = connect(provisioner.port, meta, clock=clock)
+    snapshot, loaded_coverages, committed, reread = story.run(db)
+    _assert_surviving_view(story.case_id, "Coverage", loaded_coverages)
     assert snapshot.result().coverages[0] is loaded_coverages[0]
-    assert [(c.id, c.amount) for c in reread.coverages] == [(20, Decimal("999.00"))]
-    assert snapshot.execution.round_trips == 2
+    # The re-read takes the SAME pin and answers the middle rectangle the split
+    # chained, so the two disagree by construction — which is what a bitemporal
+    # store is for.
+    _assert_read_back(story.case_id, reread)
+    _assert_composition_round_trips(story.case_id, snapshot, committed, reread)
 
 
 def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) -> None:

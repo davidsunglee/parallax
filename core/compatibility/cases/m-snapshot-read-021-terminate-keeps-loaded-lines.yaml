@@ -41,8 +41,12 @@
 # `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
 # accesses (m-op-list-002), but on the wire lane it is primary-key equality
 # against this step's own reused source rows; the identity proof of record — that
-# the accessed lines are literally the SAME objects — is the reference-identity
-# assertion each language's API Conformance Suite runs (m-api-conformance). The
+# the accessed lines are literally the SAME objects — is a reference-identity
+# assertion on the API Conformance Suite side (m-api-conformance), which a suite
+# may make here or on the sibling cases holding this same clause
+# (m-snapshot-read-020 across a delete, m-snapshot-read-025 across a rectangle
+# split): identity survives because the graph was materialized, not because of
+# which verb wrote beside it. The
 # contents divide the same way: a wire harness assembles them from the rows its
 # own read retained, while a conforming adapter reports the graph ITS
 # implementation still holds for this step (m-conformance-adapter `stepGraphs`),

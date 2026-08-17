@@ -29,9 +29,12 @@
 #
 # Steps 2 and 3 together are the case's teeth and its semantic distinction. They
 # ask the same question of the same relationship at the same pin and MUST answer
-# differently — and here they differ in EVERY leaf: the access answers 300.00 over
-# [2024-01-01, infinity) x [2024-01-01, infinity), the read-back answers 999.00
-# over [2024-03-01, 2024-09-01) x [2024-07-01, infinity). Both are correct
+# differently — and here the disagreement reaches the AMOUNT and not only the
+# bounds: the access answers 300.00 over [2024-01-01, infinity) x [2024-01-01,
+# infinity), the read-back answers 999.00 over [2024-03-01, 2024-09-01) x
+# [2024-07-01, infinity). What the two still share is identity alone — coverage
+# 20 of policy 2, each open on Transaction Time — so every leaf the split
+# rewrote differs, and the value is one of them. Both are correct
 # answers to different questions, which is what a bitemporal store is for: a
 # pinned graph records what was believed when it was taken, and only another read
 # reports what is believed now. An implementation that re-pinned, refreshed, or
