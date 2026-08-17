@@ -17,10 +17,10 @@ history run-through.
 
 Most graph stories read only, and their canned port refuses DML outright so a
 story that quietly acquired a write is caught here. The composition stories
-(`m-snapshot-read-017`/`-018`/`-019`/`-020`/`-025`) are the exception by
-construction: what they demonstrate is a materialized view standing across a
-COMMITTED write, so they need a port that opens a transaction and takes the DML
-(:class:`_WritingCannedPort`).
+(`m-snapshot-read-017`/`-018`/`-019`/`-020`/`-023`/`-024`/`-025`) are the
+exception by construction: what they demonstrate is a materialized view standing
+across a COMMITTED write, so they need a port that opens a transaction and takes
+the DML (:class:`_WritingCannedPort`).
 
 Running the bodies here is also what makes a scenario case's per-step finds
 reachable for the Object Query no-drift guard `m-api-conformance` requires: those
@@ -39,10 +39,11 @@ from typing import Any, cast
 import pytest
 
 from _support.corpus import case_document, compare_binds
+from _support.document_reads import fold_mapping_rows
 from _support.query_probes import canonical_document
 from parallax.conformance import case_format, graph_stories
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.story_models import Order
+from parallax.conformance.story_models import Order, OrderStatus
 from parallax.core import DomainModel, ObjectQuery
 from parallax.core.base import INFINITY
 from parallax.core.db_port import Bind, DbPort, Row
@@ -79,6 +80,67 @@ _ORDER_3_ROW: Row = {
     "price": Decimal("30.25"),
     "active": False,
     "ordered_on": dt.date(2024, 3, 15),
+}
+
+_ORDER_ITEM_12_ROW: Row = {
+    "id": 12,
+    "order_id": 1,
+    "sku": "SKU-12",
+    "quantity": 1,
+    "shipped_on": None,
+}
+
+# Order 1's four statuses: one ORDER-level (null `order_item_id`, the branch the
+# multi-hop walk drops) beside three ITEM-level ones, two of which reach item 11.
+_ORDER_1_STATUS_ROWS: list[Row] = [
+    {"id": 101, "order_id": 1, "order_item_id": None, "code": "NEW"},
+    {"id": 201, "order_id": 1, "order_item_id": 11, "code": "PICKED"},
+    {"id": 202, "order_id": 1, "order_item_id": 11, "code": "PACKED"},
+    {"id": 203, "order_id": 1, "order_item_id": 12, "code": "PICKED"},
+]
+
+# Location 100 and its owning Customer 1, both carrying an `address` document —
+# the value-object composition arm. The customer's two `phones` are queued in the
+# order the read decodes them, which is the order the surviving view must answer
+# after the story's write rewrites the document with them swapped.
+_LOCATION_100_ROW: Row = {
+    "id": 100,
+    "customer_id": 1,
+    "label": "HQ",
+    "address": {"street": "1 Harbour Way", "city": "Oslo"},
+}
+
+_CUSTOMER_1_ROW: Row = {
+    "id": 1,
+    "name": "Ada",
+    "address": {
+        "street": "1 Park Ave",
+        "city": "Oslo",
+        "phones": [
+            {"type": "home", "number": "555-1234"},
+            {"type": "work", "number": "555-9999"},
+        ],
+    },
+}
+
+# Order 6 and its single line item — the rows the fresh-row story's own insert
+# creates and its find then materializes a graph over.
+_ORDER_6_ROW: Row = {
+    "id": 6,
+    "name": "Hopper",
+    "sku": "F-600",
+    "qty": 2,
+    "price": Decimal("60.00"),
+    "active": True,
+    "ordered_on": dt.date(2024, 7, 7),
+}
+
+_ORDER_ITEM_61_ROW: Row = {
+    "id": 61,
+    "order_id": 6,
+    "sku": "C-610",
+    "quantity": 4,
+    "shipped_on": None,
 }
 
 _ORDER_ITEM_INSERT = "insert into order_item(id, order_id, sku, quantity) values (%s, %s, %s, %s)"
@@ -119,7 +181,12 @@ _BALANCE_MILESTONE_ROW: Row = {
 class _CannedPort:
     """A fake ``m-db-port`` answering reads from a fixed queue (empty by
     default — an empty root level short-circuits every child level, which is
-    all a run-through proof needs)."""
+    all a run-through proof needs).
+
+    A queued row is LOGICAL — its own members, keyed by column — and is folded
+    into the adjacent presence/value projection the compiled read asked for, so
+    a value-object-bearing entity can be canned here as the document it holds
+    rather than as the widened cell pair its statement selects."""
 
     def __init__(self, responses: Sequence[list[Row]] = ()) -> None:
         self._responses = list(responses)
@@ -128,7 +195,7 @@ class _CannedPort:
     def execute(
         self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return self._responses.pop(0) if self._responses else []
+        return fold_mapping_rows(self._responses.pop(0), document_reads) if self._responses else []
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:  # pragma: no cover
         raise AssertionError("a read-only graph story issues no DML")
@@ -157,14 +224,16 @@ class _WritingCannedPort(_TransactingCannedPort):
 
 
 # The stories whose body commits DML (`m-snapshot-read-017`/`-018`/`-019`/`-020`/
-# `-025`): the composition arm, where what is demonstrated is the materialized
-# view standing across a persisting write.
+# `-023`/`-024`/`-025`): the composition arm, where what is demonstrated is the
+# materialized view standing across a persisting write.
 _WRITING_STORIES: frozenset[Callable[..., Any]] = frozenset(
     {
         graph_stories.a_write_keeps_a_loaded_to_one_view,
         graph_stories.a_write_keeps_a_loaded_empty_relationship_view,
         graph_stories.a_write_keeps_an_unloaded_relationship_absent,
         graph_stories.a_delete_keeps_a_loaded_relationship_view,
+        graph_stories.a_write_keeps_a_loaded_value_object_document,
+        graph_stories.a_write_keeps_a_view_over_freshly_inserted_rows,
         graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view,
     }
 )
@@ -185,10 +254,11 @@ def _golden_write_binds(case_id: str) -> list[list[object]]:
     """
     steps = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
     writes = [step for step in steps if "write" in step]
-    assert len(writes) == 1, case_id
+    assert writes, case_id
     return [
         cast("list[object]", statement.get("binds", []))
-        for statement in cast("list[dict[str, Any]]", writes[0]["statements"])
+        for step in writes
+        for statement in cast("list[dict[str, Any]]", step["statements"])
     ]
 
 
@@ -234,9 +304,25 @@ def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
     root and include levels, the transaction's observing find, and the read-back
     — which answers nothing, because the canned port is a stub rather than a
     store and only the real-database driver can say what the write left behind.
+
+    The composite stories read for their own levels, their transaction's
+    observing find, and their read-back: the edit chain twice (root and `items`,
+    so the chain has a child to carry across its hops, and no write at all), the
+    value-object and fresh-row stories four times each — their own levels, the
+    row the write settles against, and a read-back that answers nothing here
+    because the canned port is a stub rather than a store — and the multi-hop
+    story three times, one per level of the `statuses.orderItem` path.
     """
     if run is graph_stories.mutation_has_no_writeback:
         return [[_ORDER_ROW], [_ORDER_ROW]]
+    if run is graph_stories.an_edit_chain_keeps_a_loaded_relationship_view:
+        return [[_ORDER_ROW], [_ORDER_ITEM_ROW]]
+    if run is graph_stories.a_write_keeps_a_loaded_value_object_document:
+        return [[_LOCATION_100_ROW], [_CUSTOMER_1_ROW], [_CUSTOMER_1_ROW], []]
+    if run is graph_stories.a_write_keeps_a_view_over_freshly_inserted_rows:
+        return [[_ORDER_6_ROW], [_ORDER_ITEM_61_ROW], [_ORDER_ITEM_61_ROW], []]
+    if run is graph_stories.a_multi_hop_access_drops_its_null_branches:
+        return [[_ORDER_ROW], _ORDER_1_STATUS_ROWS, [_ORDER_ITEM_ROW, _ORDER_ITEM_12_ROW]]
     if run is graph_stories.a_write_keeps_a_loaded_to_one_view:
         return [[_ORDER_ITEM_ROW], [_ORDER_ROW], [_ORDER_ROW], [_ORDER_ROW]]
     if run is graph_stories.a_write_keeps_a_loaded_empty_relationship_view:
@@ -357,6 +443,77 @@ def test_the_rectangle_split_story_keeps_the_pinned_rectangle_in_its_view() -> N
     assert snapshot.result().coverages[0] is loaded_coverages[0]
 
 
+def test_the_edit_chain_story_keeps_the_same_children_at_every_hop() -> None:
+    # The in-memory half of `m-snapshot-read-022`, which needs no database: each
+    # hop of the chain derives a COPY carrying the source's own loaded children,
+    # so the change-free edit of an edited copy answers the same objects the read
+    # materialized — and the source keeps its own name while both copies carry
+    # the authored one.
+    story = next(
+        s
+        for s in graph_stories.GRAPH_STORIES
+        if s.run is graph_stories.an_edit_chain_keeps_a_loaded_relationship_view
+    )
+    snapshot, renamed, restated = story.run(_db(story, _responses_for(story.run)))
+    order = snapshot.result()
+    assert (order.name, renamed.name, restated.name) == ("Ada", "Mutant", "Mutant")
+    assert restated.items[0] is order.items[0]
+    assert renamed.items[0] is order.items[0]
+
+
+def test_the_value_object_composition_story_keeps_its_document_in_read_order() -> None:
+    # The in-memory half of `m-snapshot-read-023`: the rewritten document reaches
+    # the wire with the case's own binds (a changed city and the phones swapped),
+    # and the already-materialized `customer` view still answers the document the
+    # read decoded, ELEMENT ORDER included — the half a multiset comparison could
+    # not tell apart.
+    story = next(
+        s
+        for s in graph_stories.GRAPH_STORIES
+        if s.run is graph_stories.a_write_keeps_a_loaded_value_object_document
+    )
+    port = _WritingCannedPort(_responses_for(story.run))
+    snapshot, loaded_customer, _committed, _reread = story.run(_connect(story, port))
+    _assert_wire_binds(story.case_id, port)
+    assert loaded_customer.address.city == "Oslo"
+    assert [phone.type for phone in loaded_customer.address.phones] == ["home", "work"]
+    assert snapshot.result().customer is loaded_customer
+
+
+def test_the_fresh_row_composition_story_keeps_the_inserted_rows_view() -> None:
+    # The in-memory half of `m-snapshot-read-024`: both units of work reach the
+    # wire with the case's own binds — the inserts that made the rows and the
+    # update that rewrote one — and the view materialized in between still
+    # answers the sku the read produced, by identity.
+    story = next(
+        s
+        for s in graph_stories.GRAPH_STORIES
+        if s.run is graph_stories.a_write_keeps_a_view_over_freshly_inserted_rows
+    )
+    port = _WritingCannedPort(_responses_for(story.run))
+    _created, snapshot, loaded_items, _committed, _reread = story.run(_connect(story, port))
+    _assert_wire_binds(story.case_id, port)
+    assert [(item.id, item.sku) for item in loaded_items] == [(61, "C-610")]
+    assert snapshot.result().items[0] is loaded_items[0]
+
+
+def test_the_multi_hop_story_drops_its_null_branch_in_memory() -> None:
+    # The in-memory half of `m-snapshot-read-026`, which needs no write at all:
+    # every status carries a LOADED `order_item` view, the order-level one holds
+    # null and contributes no terminal, and the two statuses reaching item 11
+    # reach the SAME node rather than two equal ones.
+    story = next(
+        s
+        for s in graph_stories.GRAPH_STORIES
+        if s.run is graph_stories.a_multi_hop_access_drops_its_null_branches
+    )
+    order = story.run(_db(story, _responses_for(story.run))).result()
+    assert all(is_view_loaded(status, OrderStatus.order_item) for status in order.statuses)
+    reached = [status.order_item for status in order.statuses if status.order_item is not None]
+    assert [item.id for item in reached] == [11, 11, 12]
+    assert reached[0] is reached[1]
+
+
 class _RecordingDatabase(Database):
     """The shipped handle, recording the Object Query each ``find`` receives.
 
@@ -402,7 +559,11 @@ _SCENARIO_FIND_STORIES = (
     "m-snapshot-read-018",
     "m-snapshot-read-019",
     "m-snapshot-read-020",
+    "m-snapshot-read-022",
+    "m-snapshot-read-023",
+    "m-snapshot-read-024",
     "m-snapshot-read-025",
+    "m-snapshot-read-026",
 )
 
 # The one scenario-shaped story whose find sequence is not its case's, and why.

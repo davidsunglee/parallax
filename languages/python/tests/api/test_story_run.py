@@ -54,10 +54,10 @@ from parallax.conformance.graph_stories import (
 from parallax.conformance.read_models import Animal, Cat, Dog
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
-from parallax.conformance.story_models import Order
+from parallax.conformance.story_models import Order, OrderStatus
 from parallax.core import LATEST, DomainModel
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import UnloadedRelationshipError, to_document
+from parallax.core.entity import UnloadedRelationshipError, ValueObject, to_document
 from parallax.core.entity._model import model_of
 from parallax.snapshot import InvalidData, connect, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.handle import Database, TransactionTimePinReadOnlyError
@@ -352,13 +352,30 @@ def _access_expect_graph(case_id: str) -> dict[str, Any]:
     return cast("dict[str, Any]", graphs[0])
 
 
+def _documented(node: dict[str, Any]) -> dict[str, Any]:
+    """``node`` with every Value Object member serialized to its canonical document.
+
+    A `then.graph` / `expectRows` leaf is the document the read published, and
+    canonical serialization is presence-filtered the same way: a member the
+    stored document omitted is absent from both sides, and one it stored as JSON
+    null is null on both. Rendering by GETTER instead would report what an absent
+    member READS as — the absence collapse `m-predicate` fixes — which is a
+    different observation and the one thing this comparison must not substitute
+    for the published value.
+    """
+    return {
+        key: to_document(value) if isinstance(value, ValueObject) else value
+        for key, value in node.items()
+    }
+
+
 def _assert_surviving_view(case_id: str, entity: str, instances: Sequence[Any]) -> None:
     """Grade a composition story's surviving relationship view against the whole
     ``expectGraph`` its access step authors, through the SAME model-driven
     comparator the wire lane grades that step by — so every leaf the case states
     is asserted here rather than the handful an assertion happens to name."""
     compare_graph(
-        {entity: [instance_graph_node(instance) for instance in instances]},
+        {entity: [_documented(instance_graph_node(instance)) for instance in instances]},
         _access_expect_graph(case_id),
         CollectionKinds(engine.load_case_metamodel(_CASES[case_id])),
     )
@@ -374,41 +391,40 @@ def _assert_find_step_rows(case_id: str, index: int, snapshot: Any) -> None:
     fails on the step it mirrors rather than on the relationship view alone.
     """
     compare_rows(
-        [instance_row(instance) for instance in snapshot.results()],
+        [_documented(instance_row(instance)) for instance in snapshot.results()],
         cast("list[dict[str, Any]]", _scenario_finds(case_id)[index]["expectRows"]),
     )
 
 
-def _assert_composition_round_trips(
-    case_id: str, snapshot: Any, committed: Any, reread: Any
-) -> None:
-    """A composition story's three units of work each cost the round trips the
-    scenario step they mirror authors, and together the case's own
-    ``then.roundTrips``.
+def _assert_composition_units(case_id: str, *units: Any) -> None:
+    """A composition story's units of work each cost the round trips the scenario
+    step they mirror authors, and together the case's own ``then.roundTrips``.
+
+    ``units`` are the story's own ``Snapshot`` and ``TransactionResult`` values
+    in AUTHORED order, one per scenario step that touches the database — every
+    find and every write, which is the same partition the case's own steps draw.
+    A zero-round-trip `access` rides on the counter of the find its `on` names,
+    so its declared cost is added there rather than counted on its own: a
+    re-fetching access breaks that find's equality.
 
     Per step and in total, because the aggregate alone admits compensating
     errors: a read-back that re-read the root with an include costs one round
     trip too many, which a write that skipped its resolving read would pay for.
-    The access step's own count rides on the materializing find's counter, read
-    after the story touched the surviving view, so a re-fetching access breaks
-    that first equality.
     """
-    materialize, read_back = _scenario_finds(case_id)
     steps = _scenario_steps(case_id)
-    write = next(step for step in steps if "write" in step)
-    access = next(step for step in steps if step.get("action") == "access")
-    assert snapshot.execution.round_trips == materialize["roundTrips"] + access["roundTrips"], (
-        case_id
-    )
-    assert committed.execution.round_trips == write["roundTrips"], case_id
-    assert reread.execution.round_trips == read_back["roundTrips"], case_id
-    total = cast("int", case_document(_CASES[case_id])["then"]["roundTrips"])
-    assert (
-        snapshot.execution.round_trips
-        + committed.execution.round_trips
-        + reread.execution.round_trips
-        == total
-    ), case_id
+    expected = [
+        cast("int", step["roundTrips"])
+        + sum(
+            cast("int", rider["roundTrips"])
+            for rider in steps
+            if rider.get("action") == "access" and rider.get("on") == index
+        )
+        for index, step in enumerate(steps)
+        if "write" in step or "objectQuery" in step
+    ]
+    observed = [unit.execution.round_trips for unit in units]
+    assert observed == expected, case_id
+    assert sum(observed) == case_document(_CASES[case_id])["then"]["roundTrips"], case_id
 
 
 def test_a_delete_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
@@ -428,7 +444,7 @@ def test_a_delete_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     # The delete is load-bearing: item 11 is gone from the database, so the node
     # the view still answers denotes a row no read can reach.
     _assert_find_step_rows(story.case_id, 1, reread)
-    _assert_composition_round_trips(story.case_id, snapshot, committed, reread)
+    _assert_composition_units(story.case_id, snapshot, committed, reread)
 
 
 def test_a_rectangle_split_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
@@ -446,7 +462,97 @@ def test_a_rectangle_split_keeps_a_loaded_relationship_view(provisioner: Any) ->
     # chained, so the two disagree by construction — which is what a bitemporal
     # store is for.
     _assert_find_step_rows(story.case_id, 1, reread)
-    _assert_composition_round_trips(story.case_id, snapshot, committed, reread)
+    _assert_composition_units(story.case_id, snapshot, committed, reread)
+
+
+def test_an_edit_chain_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-022"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot, renamed, restated = story.run(db)
+    order = snapshot.result()
+    _assert_find_step_rows(story.case_id, 0, snapshot)
+    # The case's own access names step 0, so its `expectGraph` is the SOURCE's
+    # view — graded here through the same comparator the wire lane uses.
+    _assert_surviving_view(story.case_id, "OrderItem", order.items)
+    # What only this lane holds: the copies themselves. Each hop of the chain
+    # answers the SAME materialized children, which is what makes the chain a
+    # chain of copies rather than one dict written twice — and the change-free
+    # hop carries the authored one's assignment while the source keeps its own.
+    _assert_surviving_view(story.case_id, "OrderItem", restated.items)
+    assert (order.name, renamed.name, restated.name) == ("Ada", "Mutant", "Mutant")
+    assert [copy.items[0] is order.items[0] for copy in (renamed, restated)] == [True, True]
+    assert [copy.items[1] is order.items[1] for copy in (renamed, restated)] == [True, True]
+    _assert_composition_units(story.case_id, snapshot)
+
+
+def test_a_write_keeps_a_loaded_value_object_document(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-023"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot, loaded_customer, committed, reread = story.run(db)
+    _assert_find_step_rows(story.case_id, 0, snapshot)
+    _assert_surviving_view(story.case_id, "Customer", [loaded_customer])
+    # The comparator above already grades `phones` POSITIONALLY (a
+    # `multiplicity: many` Value Object); this states the order in the open, so a
+    # reader can see that the surviving document and the written one are the same
+    # two elements in opposite sequence.
+    assert [(phone.type, phone.number) for phone in loaded_customer.address.phones] == [
+        ("home", "555-1234"),
+        ("work", "555-9999"),
+    ]
+    # What only this lane can show: the write replaced no node — the view still
+    # holds the SAME object, which the case's `expectGraph` cannot distinguish
+    # from an equal-valued rebuild.
+    assert snapshot.result().customer is loaded_customer
+    # The re-read is where the write IS observable, and it disagrees with the
+    # surviving view on both the changed leaf and the element order.
+    _assert_find_step_rows(story.case_id, 1, reread)
+    _assert_composition_units(story.case_id, snapshot, committed, reread)
+
+
+def test_a_write_keeps_a_view_over_freshly_inserted_rows(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-024"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    created, snapshot, loaded_items, committed, reread = story.run(db)
+    _assert_find_step_rows(story.case_id, 0, snapshot)
+    _assert_surviving_view(story.case_id, "OrderItem", loaded_items)
+    # What only this lane can show: it is the SAME object, not an equal-valued
+    # rebuild the case's contents comparison would also accept.
+    assert snapshot.result().items[0] is loaded_items[0]
+    # The update is load-bearing: the row the view still answers for carries the
+    # rewritten sku in the database, so `C-610` is a value only the surviving
+    # view can produce — and the insert before it is what put the row there.
+    _assert_find_step_rows(story.case_id, 1, reread)
+    _assert_composition_units(story.case_id, created, snapshot, committed, reread)
+
+
+def test_a_multi_hop_access_drops_its_null_branches(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-026"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_find_step_rows(story.case_id, 0, snapshot)
+    order = snapshot.result()
+    # The walk the case states, performed on the developer surface: every status's
+    # own `order_item` view, in traversal order, with the order-level status's
+    # loaded-NULL branch dropped.
+    reached = [status.order_item for status in order.statuses if status.order_item is not None]
+    _assert_surviving_view(story.case_id, "OrderItem", reached)
+    assert sorted(item.id for item in reached) == [11, 11, 12]
+    # What only this lane can show: the two statuses reaching item 11 reach the
+    # SAME node, so the repeat in the contents is one object named twice rather
+    # than two equal ones — and the dropped branch is a loaded null, not an
+    # unloaded view.
+    assert reached[0] is reached[1]
+    assert [is_view_loaded(status, OrderStatus.order_item) for status in order.statuses] == [
+        True,
+        True,
+        True,
+        True,
+    ]
+    _assert_composition_units(story.case_id, snapshot)
 
 
 def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) -> None:
@@ -664,23 +770,12 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(provisioner: Any) -> No
     assert snapshot.execution.round_trips == 3
 
 
-def _vo_owner_row(instance: Any, vo_py_name: str = "address") -> dict[str, Any]:
+def _vo_owner_row(instance: Any) -> dict[str, Any]:
     """A materialized VO-bearing owner's own graph node, DECLARED-member-keyed
-    (``instance_graph_node``), with its value-object member serialized to its
-    canonical document so ``compare_graph`` can recurse into it exactly like the
-    wire-level engine's own `then.graph` grading.
-
-    ``to_document``, because a `then.graph` leaf is the document the read
-    published and canonical serialization is presence-filtered the same way: a
-    member the stored document omitted is absent from both sides, and one it
-    stored as JSON null is null on both. Rendering by GETTER instead would report
-    what an absent member READS as — the absence collapse `m-predicate` fixes —
-    which is a different observation and the one thing this comparison must not
-    substitute for the published value.
-    """
-    row = instance_graph_node(instance)
-    row[vo_py_name] = to_document(getattr(instance, vo_py_name))
-    return row
+    (``instance_graph_node``), with its value-object members serialized to their
+    canonical documents (:func:`_documented`) so ``compare_graph`` can recurse
+    into them exactly like the wire-level engine's own `then.graph` grading."""
+    return _documented(instance_graph_node(instance))
 
 
 def _assert_vo_owner_graph(case_id: str, snapshot: Any, entity_name: str, pk_member: str) -> None:

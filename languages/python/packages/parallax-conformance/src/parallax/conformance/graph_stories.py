@@ -87,7 +87,16 @@ from parallax.conformance.read_models import (
 )
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.story_models import Order, OrderItem
-from parallax.conformance.vo_models import Branch, Customer, CustomerPhone, Supplier
+from parallax.conformance.vo_models import (
+    Branch,
+    Customer,
+    CustomerAddress,
+    CustomerGeo,
+    CustomerPhone,
+    CustomerPoint,
+    Location,
+    Supplier,
+)
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.unit_work import Clock
 from parallax.snapshot.handle import Database, Snapshot, Transaction, TransactionResult
@@ -207,6 +216,78 @@ def a_delete_keeps_a_loaded_relationship_view(
     committed = db.transact(destroy)
     reread = db.find(OrderItem.where(OrderItem.order_id == 1))  # where the delete IS observable
     return snapshot, loaded_items, committed, reread
+
+
+def an_edit_chain_keeps_a_loaded_relationship_view(
+    db: Database,
+) -> tuple[Snapshot[Any], Any, Any]:
+    snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
+    renamed = snapshot.result().edit(name="Mutant")  # an AUTHORED change
+    restated = renamed.edit()  # a CHANGE-FREE edit OF THAT COPY
+    return snapshot, renamed, restated
+
+
+def a_write_keeps_a_loaded_value_object_document(
+    db: Database,
+) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+    snapshot = db.find(Location.where(Location.id == 100).include(Location.customer))
+    loaded_customer = snapshot.result().customer
+
+    def rewrite(tx: Transaction) -> None:
+        observed = tx.find(Customer.where(Customer.id == 1)).result()
+        tx.update(
+            observed.edit(
+                address=CustomerAddress(  # a changed city AND the phones in the opposite order
+                    street="1 Park Ave",
+                    city="Bergen",
+                    geo=CustomerGeo(
+                        country="NO", elevation=10.5, point=CustomerPoint(lat=59.9, lon=10.7)
+                    ),
+                    phones=(
+                        CustomerPhone(type="work", number="555-9999"),
+                        CustomerPhone(type="home", number="555-1234"),
+                    ),
+                )
+            )
+        )
+
+    committed = db.transact(rewrite)
+    reread = db.find(Customer.where(Customer.id == 1))  # where the write IS observable
+    return snapshot, loaded_customer, committed, reread
+
+
+def a_write_keeps_a_view_over_freshly_inserted_rows(
+    db: Database,
+) -> tuple[TransactionResult[None], Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+    def create(tx: Transaction) -> None:
+        tx.insert(
+            Order(
+                id=6,
+                name="Hopper",
+                sku="F-600",
+                qty=2,
+                price=Decimal("60.00"),
+                active=True,
+                ordered_on=dt.date(2024, 7, 7),
+            )
+        )
+        tx.insert(OrderItem(id=61, order_id=6, sku="C-610", quantity=4))
+
+    created = db.transact(create)  # PROVENANCE: the rows the graph below is made of
+    snapshot = db.find(Order.where(Order.id == 6).include(Order.items))
+    loaded_items = snapshot.result().items
+
+    def rewrite(tx: Transaction) -> None:
+        observed = tx.find(OrderItem.where(OrderItem.id == 61)).result()
+        tx.update(observed.edit(sku="Rewritten"))
+
+    committed = db.transact(rewrite)
+    reread = db.find(OrderItem.where(OrderItem.id == 61))  # where the write IS observable
+    return created, snapshot, loaded_items, committed, reread
+
+
+def a_multi_hop_access_drops_its_null_branches(db: Database) -> Snapshot[Any]:
+    return db.find(Order.where(Order.id == 1).include(Order.statuses.order_item))
 
 
 def a_rectangle_split_keeps_a_loaded_relationship_view(
@@ -633,11 +714,35 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         a_delete_keeps_a_loaded_relationship_view,
     ),
     GraphStory(
+        "m-snapshot-read-022",
+        "A CHAIN of edits leaves every copy holding the SAME loaded relationship objects",
+        "orders",
+        an_edit_chain_keeps_a_loaded_relationship_view,
+    ),
+    GraphStory(
+        "m-snapshot-read-023",
+        "A committed write leaves a loaded view answering its own value-object document",
+        "customer",
+        a_write_keeps_a_loaded_value_object_document,
+    ),
+    GraphStory(
+        "m-snapshot-read-024",
+        "A view materialized over freshly inserted rows survives a write like any other",
+        "orders",
+        a_write_keeps_a_view_over_freshly_inserted_rows,
+    ),
+    GraphStory(
         "m-snapshot-read-025",
         "A bitemporal rectangle split leaves a pinned view answering its own rectangle",
         "policy",
         a_rectangle_split_keeps_a_loaded_relationship_view,
         clock=_snapshot_read_025_clock,
+    ),
+    GraphStory(
+        "m-snapshot-read-026",
+        "A fanned-out multi-hop access answers its non-null terminals alone",
+        "orders",
+        a_multi_hop_access_drops_its_null_branches,
     ),
     GraphStory(
         "m-snapshot-read-007",
