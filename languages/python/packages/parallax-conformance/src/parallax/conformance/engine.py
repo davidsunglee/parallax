@@ -2520,25 +2520,30 @@ def _compile_snapshot_scenario(
 class _ScenarioStepResult:
     """What one snapshot-scenario step left behind for a later step to name.
 
-    The three facts are produced by one find and named together by every step
-    that reaches back to it — a `mutate` grades its assignment against ``pin``
-    and ``identity`` before assigning into ``roots``
-    (:func:`_grade_mutate_step`), an `access` navigates ``roots`` under the same
-    ``identity`` (:func:`_access_step_graph`) — so they travel as one value
-    rather than as index-aligned sequences a caller could fall out of step.
+    The three facts are produced together and named together by every step that
+    reaches back to them — a `mutate` grades its assignment against ``pin`` and
+    ``identity`` and derives a copy of ``roots`` (:func:`_grade_mutate_step`), an
+    `access` navigates ``roots`` under the same ``identity``
+    (:func:`_access_step_graph`) — so they travel as one value rather than as
+    index-aligned sequences a caller could fall out of step.
 
-    ``roots`` is the in-memory member state of each root the step materialized,
-    keyed by declared member name — the plain detached value a `mutate` assigns
-    into and an `access` navigates from (`m-snapshot-read` closed world). Its
-    length is what a `mutate` step's single-node requirement is checked against.
-    A relationship the step's own read included rides ON that state as the nested
-    nodes the Wire result published, so the view a later step reaches is the one
-    THIS read materialized and no re-read can stand in for it — which is exactly
-    what an `access` step's `expectGraph` asks about. ``pin`` and ``identity`` are
-    the coordinates the production finite-pin validator is handed. Only a find
-    step materializes anything, so an action or write step carries the empty
-    result — its slot exists so a later step's `on` index still names the step it
-    means.
+    ``roots`` is the in-memory member state of each root the step holds, keyed by
+    declared member name — the plain detached value an `access` navigates from
+    (`m-snapshot-read` closed world). Its length is what a `mutate` step's
+    single-node requirement is checked against. A relationship a find step's own
+    read included rides ON that state as the nested nodes the Wire result
+    published, so the view a later step reaches is the one THAT read materialized
+    and no re-read can stand in for it — which is exactly what an `access` step's
+    `expectGraph` asks about. ``pin`` and ``identity`` are the coordinates the
+    production finite-pin validator is handed.
+
+    Two step kinds fill one: a find, with what it materialized, and an ACCEPTED
+    `mutate`, with the Edited Copy it derived (:func:`_edited_copy`) — a copy
+    carries its source's views, pin and Identity, so naming it answers exactly
+    as naming the read does (`m-snapshot-read` *Closed world*, composition). A
+    write step, and a `mutate` the pin rule refused, carry the empty result
+    instead — their slot exists so a later step's `on` index still names the step
+    it means.
     """
 
     roots: tuple[dict[str, object], ...]
@@ -2558,13 +2563,13 @@ def _run_snapshot_scenario(
     """Run a snapshot-read scenario: each find step reads through the SAME
     public Wire read every graph read uses (``db.wire.find``); `mutate` runs the
     production write seam's
-    finite-Transaction-Time-pin refusal against the referenced find step's own
-    statement pin and, when that verdict accepts, assigns the step's `set` to the
-    named view's own in-memory members (:func:`_grade_mutate_step`) — zero round
-    trips, nothing at the port (m-snapshot-read closed world: a snapshot node is
-    never enrolled in a unit of work, so mutating it can never write back); and
-    `access` navigates a relationship on the view a named earlier find step
-    materialized, likewise touching the port not at all
+    finite-Transaction-Time-pin refusal against the named view's own pin and,
+    when that verdict accepts, derives an Edited Copy carrying the step's `set`
+    and publishes it as this step's own result (:func:`_grade_mutate_step`) —
+    zero round trips, nothing at the port (m-snapshot-read closed world: a
+    snapshot node is never enrolled in a unit of work, so editing it can never
+    write back); and `access` navigates a relationship on the view a named
+    earlier step holds, likewise touching the port not at all
     (:func:`_access_step_graph`).
 
     A `write:` step is the composition the closed-world clause is about: it
@@ -2600,11 +2605,12 @@ def _run_snapshot_scenario(
                     observed = _access_step_graph(case, model, index, step, results)
                     if observed is not None:
                         step_graphs.append(observed)
+                    results.append(_NO_SCENARIO_RESULT)
                 else:
-                    error_class = _grade_mutate_step(case, step, results)
+                    error_class, edited = _grade_mutate_step(case, model, step, results)
                     if error_class is not None:
                         errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
-                results.append(_NO_SCENARIO_RESULT)
+                    results.append(edited)
             case "write":
                 statements, unit_trips = _run_snapshot_write_step(case, context, port, step)
                 emissions.extend(
@@ -2641,8 +2647,11 @@ def _root_members(
     """Each root the step materialized, as its own detached member state.
 
     Member NAME keyed, because that is the vocabulary a case's `set` is authored
-    in — the Wire result's own keying — and the values are copied out so a later
-    assignment reaches nothing the frozen result still publishes.
+    in — the Wire result's own keying — and detached into a plain mapping so
+    what a later step names is a value of this lane's own rather than the frozen
+    result production published. The relationship arms ride along by reference:
+    a copy derived from this state answers the SAME materialized children, which
+    is the composition rule itself (`m-snapshot-read` *Closed world*).
     """
     return tuple(dict(_graph_root(root) or {}) for root in snapshot.checked().results())
 
@@ -2687,10 +2696,10 @@ def _access_step_graph(
 
     An access over an already-materialized relationship issues nothing at the
     port (`m-snapshot-read` closed world), so what it observes is read off the
-    state the named find step left behind — including whatever a `mutate` in
-    between did to it. Reporting a re-read here would answer that the database is
-    right where the case asks whether the view survived, which is the whole point
-    of the observable (`m-conformance-adapter`).
+    state the named step holds — the view a find materialized, untouched by any
+    edit derived from it since. Reporting a re-read here would answer that the
+    database is right where the case asks whether the view survived, which is the
+    whole point of the observable (`m-conformance-adapter`).
 
     The step names ONE materializing read (`m-case-format`): the multi-source
     `on` form spans views at different lowered coordinates, and no single view
@@ -2706,7 +2715,9 @@ def _access_step_graph(
         )
     source = results[on] if 0 <= on < len(results) else None
     if source is None or source.identity is None:
-        raise EngineError(f"{case.path.name}: `access` names {on!r}, which is no earlier find step")
+        raise EngineError(
+            f"{case.path.name}: `access` names {on!r}, which holds no view to navigate"
+        )
     path = step.get("path")
     if not isinstance(path, str):
         raise EngineError(f"{case.path.name}: an `access` asserting a graph needs a `path`")
@@ -2770,15 +2781,25 @@ def _navigate_step_view(
     return identity.name, nodes
 
 
+def _relationship_declaration(
+    model: AcceptedMetamodel, identity: EntityIdentity, name: str
+) -> relationship.RelationshipMetadata | None:
+    """The relationship ``name`` declares one hop from ``identity``, or ``None``.
+
+    The one place a member name is asked whether it is a relationship at all, so
+    the navigating caller (:func:`_related_direction`) and the refusing one
+    (:func:`_edited_copy`) reach the same answer.
+    """
+    position = inheritance.view(model).entity(identity)
+    declared = None if position is None else position.applicable_relationship(name)
+    return None if declared is None else relationship.view(model).relationship(declared.identity)
+
+
 def _related_direction(
     case: case_format.Case, model: AcceptedMetamodel, identity: EntityIdentity, name: str
 ) -> relationship.RelationshipMetadata:
     """The relationship direction one hop from ``identity``, by its local name."""
-    position = inheritance.view(model).entity(identity)
-    declared = None if position is None else position.applicable_relationship(name)
-    direction = (
-        None if declared is None else relationship.view(model).relationship(declared.identity)
-    )
+    direction = _relationship_declaration(model, identity, name)
     if direction is None:
         raise EngineError(
             f"{case.path.name}: {identity.name} declares no relationship {name!r} to navigate"
@@ -2798,25 +2819,37 @@ def _find_step_pin(model: AcceptedMetamodel, query: ObjectQueryNode) -> Pin:
 
 def _grade_mutate_step(
     case: case_format.Case,
+    model: AcceptedMetamodel,
     step: Mapping[str, object],
     results: Sequence[_ScenarioStepResult],
-) -> str | None:
-    """Grade one scenario `mutate` action step through the SAME production
-    validator the keyed developer verbs run
-    (:func:`~parallax.snapshot.handle.validate_source_pin`): a mutation
-    through a view pinned at a finite Transaction-Time instant raises the
-    neutral `transaction-time-pin-read-only` error and assigns nothing, while a
-    Latest or finite-Valid-Time pin is accepted and the `set` applies in memory
-    (:func:`_apply_mutate_step`). Returns the raised error's `errorClass` when
-    the step's own declared `expectError` matched it, else ``None`` for an
-    accepted mutation; a mismatch in either direction — an undeclared refusal,
-    or a declared expectation the verb never raised — is a loud
-    :class:`EngineError`, never a silently dropped observation."""
+) -> tuple[str | None, _ScenarioStepResult]:
+    """Grade one scenario `mutate` action step, answering both of its channels:
+    the neutral error the verb raised, and the Edited Copy it derived.
+
+    The verdict is the SAME production validator the keyed developer verbs run
+    (:func:`~parallax.snapshot.handle.validate_source_pin`): a mutation through a
+    view pinned at a finite Transaction-Time instant raises the neutral
+    `transaction-time-pin-read-only` error and derives nothing, while a Latest or
+    finite-Valid-Time pin is accepted and the step's `set` reaches a copy
+    (:func:`_edited_copy`). The error channel carries the raised error's
+    `errorClass` when the step's own declared `expectError` matched it, else
+    ``None`` for an accepted mutation; a mismatch in either direction — an
+    undeclared refusal, or a declared expectation the verb never raised — is a
+    loud :class:`EngineError`, never a silently dropped observation. The result
+    channel carries the copy on acceptance and the empty result on refusal,
+    which is what a later step's `on` index resolves against.
+
+    ``on`` names any step holding a view: a find, or an earlier `mutate` whose
+    own copy this one derives from. A chain of edits therefore re-asks the pin
+    question at every hop, because a copy carries its source's pin — which is
+    what makes a view pinned in the Transaction-Time past read-only through an
+    edit as well as directly.
+    """
     on = step.get("on")
     source = results[on] if isinstance(on, int) and 0 <= on < len(results) else None
     identity = None if source is None else source.identity
     if not isinstance(on, int) or source is None or identity is None:
-        raise EngineError(f"{case.path.name}: `mutate` names {on!r}, which is no earlier find step")
+        raise EngineError(f"{case.path.name}: `mutate` names {on!r}, which holds no view to edit")
     expected = step.get("expectError")
     try:
         validate_source_pin(identity, source.pin)
@@ -2827,53 +2860,78 @@ def _grade_mutate_step(
                 f"{case.path.name}: the `mutate` verb raised {exc.code!r} but the step "
                 f"declares {declared}"
             ) from exc
-        return exc.code
+        return exc.code, _NO_SCENARIO_RESULT
     if expected is not None:
         raise EngineError(
             f"{case.path.name}: the step declares expectError {expected!r} but the "
             "mutation was accepted"
         )
-    _apply_mutate_step(case, step, on, source)
-    return None
+    return None, _edited_copy(case, model, step, on, source)
 
 
-def _apply_mutate_step(
+def _edited_copy(
     case: case_format.Case,
+    model: AcceptedMetamodel,
     step: Mapping[str, object],
     on: int,
     source: _ScenarioStepResult,
-) -> None:
-    """Assign an ACCEPTED mutation's `set` to the named view's own members.
+) -> _ScenarioStepResult:
+    """The Edited Copy an ACCEPTED `mutate` derives from the view step ``on`` holds.
 
     `m-case-format` defines `mutate` as assigning the attributes in `set` in
-    memory, so the assignment lands on the detached member state the source step
-    materialized and reaches nothing else: the immutable neutral view production
-    published is untouched, no unit of work holds the view, and no DML follows.
-    A `set` naming a member the materialized view does not carry is refused
-    here — an assignment with nowhere to land is a case the verb cannot perform,
-    not a mutation it silently drops. The refusal is decided over the WHOLE
-    `set` before any member is written, so a rejected mutation leaves the member
-    state exactly as the find step materialized it: `set` is an unordered
-    mapping, and applying its recognized names up to the first unrecognized one
-    would make the surviving state depend on authoring order.
+    memory, and `m-snapshot-read` *Closed world* fixes what deriving leaves
+    alone: the result is a NEW value carrying the source's own relationship
+    views, and the source itself is untouched — an edit answers with a copy
+    rather than rewriting the node it derives from, which is why a scenario can
+    hold both and ask each what it answers. It carries the source's pin and
+    Entity Identity too, so a later step naming the copy resolves exactly as one
+    naming the read does. No DML follows either way: no unit of work holds the
+    view (`m-snapshot-read`).
+
+    Two names a `set` may not carry, refused for two different reasons. A
+    RELATIONSHIP is refused outright — no edit changes a relationship member, so
+    a carried view can only ever describe what a read observed, and a copy whose
+    `items` the author replaced would describe a fetch that never happened. A
+    name the materialized view carries no member of is refused as an assignment
+    with nowhere to land — a case the verb cannot perform, not a mutation it
+    silently drops. Both verdicts are reached over the WHOLE `set` before any
+    member is copied, so a refused mutation derives nothing at all: `set` is an
+    unordered mapping, and applying its accepted names up to the first refused
+    one would make the result depend on authoring order.
+
+    A `mutate` carrying NO `set` is the change-free edit, which is legal and
+    derives a copy of the source's own state — the branch an implementation that
+    short-circuits a change-free edit, or rebuilds a copy from its declared
+    members, must still answer for.
     """
     if len(source.roots) != 1:
         raise EngineError(
-            f"{case.path.name}: `mutate` targets step {on}, which materialized "
-            f"{len(source.roots)} nodes (expected exactly one to mutate)"
+            f"{case.path.name}: `mutate` targets step {on}, which holds "
+            f"{len(source.roots)} nodes (expected exactly one to edit)"
         )
-    assignments = step.get("set")
-    if not isinstance(assignments, Mapping):
-        raise EngineError(f"{case.path.name}: a `mutate` action needs a `set` mapping")
+    raw = step.get("set", {})
+    if not isinstance(raw, Mapping):
+        raise EngineError(f"{case.path.name}: a `mutate` action's `set` is a mapping")
+    assignments = cast("Mapping[str, object]", raw)
     members = source.roots[0]
-    member_assignments = cast("Mapping[str, object]", assignments)
-    unassignable = sorted(name for name in member_assignments if name not in members)
+    assert source.identity is not None, "the caller resolves the source step's Entity Identity"
+    related = sorted(
+        name
+        for name in assignments
+        if _relationship_declaration(model, source.identity, name) is not None
+    )
+    if related:
+        raise EngineError(
+            f"{case.path.name}: `mutate` assigns {related!r}, which name relationship members — "
+            "an edit carries the views its source read materialized and authors none"
+        )
+    unassignable = sorted(name for name in assignments if name not in members)
     if unassignable:
         raise EngineError(
             f"{case.path.name}: `mutate` assigns {unassignable!r}, which the view step {on} "
-            "materialized carries no member of"
+            "holds no member of"
         )
-    members.update(member_assignments)
+    return _ScenarioStepResult(({**members, **assignments},), source.pin, source.identity)
 
 
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:

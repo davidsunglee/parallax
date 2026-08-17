@@ -1383,8 +1383,14 @@ has an oracle, never in this shape.
   expectError: write-value-not-stored       # ... so `update` addresses no stored row
 ```
 
-`set` is legal **only** on a `mutate` action; `path` (the navigated relationship,
-e.g. `items` or `items.statuses`) only on `load` / `access`. Because golden SQL
+`set` is legal **only** on a `mutate` action, and a `mutate` carrying none is the
+**change-free** derivation: an edit that assigns nothing is legal and produces a
+copy of the value's own state, so the two forms are the two kinds of edit a case
+may compose (`m-snapshot-read` *Closed world*). Because a `mutate` derives a copy
+rather than rewriting the object it names, its own step is a source a later step
+may name in turn — a chain of edits is a chain of copies, and the step the chain
+starts from still answers what it held. `path` (the navigated relationship, e.g.
+`items` or `items.statuses`) is legal only on `load` / `access`. Because golden SQL
 still lives per step, a scenario with action steps carries no top-level
 `then.statements`, and the harness executes a load / access as a relationship
 query, a flush / mergeBack / commit as committed DML, and counts each step's round
