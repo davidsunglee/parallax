@@ -6045,6 +6045,52 @@ _ORDER_NAME_UPDATE: list[dict[str, object]] = [
 ]
 
 
+def _ledger_write_between_find_and_mutate(write: object) -> case_format.Case:
+    """A snapshot-lane scenario over the Transaction-Time-Only Ledger: the find
+    materializes the one CURRENT milestone of id 2 (the fixture key holding
+    exactly one, so a write naming no observed edge resolves unambiguously), a
+    `mutate` puts the scenario on this lane, and the write step is whatever the
+    caller states."""
+    when = {
+        "scenario": [
+            {
+                "objectQuery": {
+                    "target": "parallax.compatibility.Ledger",
+                    "predicate": {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}},
+                    "temporal": {"transaction-time": {"asOf": "latest"}},
+                }
+            },
+            {"action": "mutate", "on": 0, "set": {"acctNum": "Z"}},
+            {"write": write, "roundTrips": 2},
+        ]
+    }
+    return _synthetic_write(
+        "scenario",
+        {
+            "model": "models/ledger.yaml",
+            "when": {"uow": {"concurrency": "optimistic"}, **when},
+        },
+    )
+
+
+_LEDGER_2_ROW: dict[str, object] = {
+    "led_id": 2,
+    "acct_num": "B",
+    "val": decimal.Decimal("200.00"),
+    "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+    "out_z": INFINITY,
+}
+
+_LEDGER_VALUE_UPDATE: list[dict[str, object]] = [
+    {
+        "mutation": "update",
+        "entity": "parallax.compatibility.Ledger",
+        "rows": [{"id": 2, "value": decimal.Decimal("300.00")}],
+        "at": "2024-05-01T00:00:00+00:00",
+    }
+]
+
+
 def test_run_scenario_case_write_step_commits_and_leaves_the_retained_view_standing() -> None:
     # The composition the closed-world clause is about: the write is its own unit
     # of work — a resolving read and then its DML — and the view the find
@@ -6128,6 +6174,73 @@ def test_compile_scenario_case_lowers_a_snapshot_lane_write_step() -> None:
     ]
     assert emissions[1].sql == "update orders set name = ? where id = ?"
     assert round_trips == 2
+
+
+def test_run_scenario_case_refuses_a_materializing_predicate_write_on_the_snapshot_lane() -> None:
+    # A predicate write over a TEMPORAL target materializes: it resolves through
+    # the find before it. A find on this lane materializes the view a later access
+    # states, so the two step roles genuinely conflict and the refusal says so —
+    # never the readless diagnosis below.
+    value = "parallax.compatibility.Ledger.value"
+    write = {
+        "mutation": "update",
+        "target": {
+            "entity": "parallax.compatibility.Ledger",
+            "predicate": {"lessThan": {"attr": value, "value": 500.00}},
+        },
+        "assignments": [{"attr": value, "value": 5.00}],
+        "at": "2024-05-01T00:00:00+00:00",
+    }
+    port = _QueueWritePort([[dict(_LEDGER_2_ROW)]])
+    with pytest.raises(engine.EngineError, match="MATERIALIZING predicate write"):
+        engine.run_scenario_case(_ledger_write_between_find_and_mutate(write), "postgres", port)
+    assert port.writes == []
+
+
+def test_run_scenario_case_refuses_a_readless_predicate_write_on_the_snapshot_lane() -> None:
+    # An UNVERSIONED, non-temporal target owes no resolving read, so nothing about
+    # the shape conflicts with this lane: it is refused as unwired, which is a
+    # different fact about a different form than the materializing refusal above.
+    write = {
+        "mutation": "delete",
+        "target": {
+            "entity": "parallax.compatibility.OrderItem",
+            "predicate": {
+                "lessThan": {"attr": "parallax.compatibility.OrderItem.quantity", "value": 5}
+            },
+        },
+    }
+    port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
+    with pytest.raises(engine.EngineError, match="READLESS predicate write"):
+        engine.run_scenario_case(_write_between_find_and_access(write), "postgres", port)
+    assert port.writes == []
+
+
+def test_snapshot_lane_compile_and_run_reach_the_same_temporal_dml() -> None:
+    # Compile seeds the same fixture milestones the run lane does, so a temporal
+    # close on this lane resolves the milestone persisted history holds instead of
+    # refusing for want of an observation. The two lanes must reach the SAME DML
+    # for the same case, which is the whole reason this lane has a compile path —
+    # so the run's own emissions ARE the compile oracle here, not a transcription
+    # of one.
+    case = _ledger_write_between_find_and_mutate(_LEDGER_VALUE_UPDATE)
+    # The find, then the resolving read the keyed write's own unit of work owes.
+    port = _QueueWritePort([[dict(_LEDGER_2_ROW)], [dict(_LEDGER_2_ROW)]])
+
+    compiled, _round_trips = engine.compile_scenario_case(case, "postgres")
+    run = engine.run_scenario_case(case, "postgres", port)
+
+    assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
+        (e.case_pointer, e.sql, e.binds) for e in run.emissions
+    ]
+    assert [e.sql for e in compiled[1:]] == [
+        "update ledger set out_z = ? where led_id = ? and out_z = ? and in_z = ?",
+        "insert into ledger(led_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
+    ]
+    # The close addresses the FIXTURE milestone's own edge and the successor
+    # carries its acct_num forward: both are facts only a seeded tracker holds.
+    assert compiled[1].binds[3] == "2024-02-01T00:00:00+00:00"
+    assert compiled[2].binds[:3] == (2, "B", decimal.Decimal("300.00"))
 
 
 def test_run_scenario_case_access_step_graph_keeps_an_all_to_one_terminal_null() -> None:
