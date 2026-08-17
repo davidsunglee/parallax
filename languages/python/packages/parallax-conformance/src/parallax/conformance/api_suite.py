@@ -1028,6 +1028,27 @@ _MILESTONE_SET_GRAPH_SIBLING_REASON: Final[str] = (
     "which materialize their own `then.graphs`"
 )
 
+# The composition family's Transaction-Time-only arm. `m-snapshot-read-021`
+# reads `models/invoice.yaml`, which this package deliberately authors no
+# idiomatic class family for (`tests/_support/mirrored_models.UNMIRRORED`: the
+# model composes `balance`'s transaction-time-only axis with `orders`' dependent
+# one-to-many, both mirrored already), so hosting a story for it means reversing
+# that recorded partition rather than writing a story. What a story adds over the
+# two wire executors is reference identity of the surviving view, and that is a
+# materialization property rather than a write-verb one: `-020` proves it across
+# the destructive verb and `-025` across the bitemporal rectangle split, which is
+# the same coordinate rewrite this case performs on one axis instead of two.
+_COMPOSITION_UNMIRRORED_MODEL_REASON: Final[str] = (
+    "a representative sibling of the executed composition stories "
+    "(m-snapshot-read-020 across a delete, m-snapshot-read-025 across a bitemporal "
+    "rectangle split): the surviving view's reference identity is a materialization "
+    "property, not a write-verb one, and this case's own composition is graded "
+    "end-to-end by BOTH wire executors — golden close DML, `roundTrips: 0` on the "
+    "access, the contents its `expectGraph` states, and the read-back that shows "
+    "Latest moved. Its model (`models/invoice.yaml`) is one this package authors no "
+    "idiomatic class family for by the recorded mirrored-model partition"
+)
+
 # Value-object nested/absence/cast/array-traversal PREDICATE reads: rows-form,
 # representative siblings of the Customer.address predicate graph stories NOW
 # EXECUTED for real (m-value-object-001/002/007/015/016/017/019 in
@@ -1433,6 +1454,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-snapshot-read: milestone-set graph siblings ----------------------- #
     "m-snapshot-read-013": _MILESTONE_SET_GRAPH_SIBLING_REASON,
     "m-snapshot-read-014": _MILESTONE_SET_GRAPH_SIBLING_REASON,
+    # -- m-snapshot-read: the composition arm on an unmirrored model --------- #
+    "m-snapshot-read-021": _COMPOSITION_UNMIRRORED_MODEL_REASON,
     # -- m-value-object: predicate-read representative siblings ------------- #
     "m-value-object-004": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-005": _VO_PREDICATE_SIBLING_REASON,

@@ -1,0 +1,122 @@
+# A TERMINATED milestone stays in the relationship view pinned before it
+# (m-snapshot-read *Closed world*, composition): a materialized graph is a value
+# taken at its pin, so a committed TERMINATE that closes the current milestone of
+# a row a loaded to-many view holds neither re-pins that view nor invalidates it —
+# accessing it still issues ZERO SQL and still answers both invoice lines. This is
+# the clause "a write changes nothing about a graph already materialized", held on
+# the destructive arm of a TRANSACTION-TIME entity; m-snapshot-read-020 holds the
+# same clause where a non-temporal row was physically deleted, and the pair is the
+# reason the temporal arm gets its own case. A terminate destroys nothing on disk:
+# it only moves where Latest is, so the closed row is still there to be found,
+# carrying a rewritten txEnd. An implementation that retained primary keys rather
+# than values and re-resolved them on access therefore answers the CLOSED
+# milestone HERE, where on the delete arm the same defect answers nothing at all —
+# two failures a reader would otherwise attribute to one cause.
+#
+# Step 0 materializes invoice 100 as of Transaction Time LATEST, WITH its `lines`
+# — the ordinary 1 + L deep fetch, one statement per level, the root pin
+# propagating per hop into the child level (m-navigate), two round trips. At
+# Latest, line 1000 resolves to its corrected 75.00 milestone and line 1001 to
+# 25.00. Step 1 TERMINATES line 1001 at 2024-08-01 and commits it as its OWN unit
+# of work: one close statement plus the resolving read a keyed terminate owes the
+# milestone it addresses, so two round trips. Step 2 accesses `lines` on the view
+# step 0 materialized and states its WHOLE contents through `expectGraph` — BOTH
+# lines, line 1001 included, still carrying the open `txEnd` its pin observed.
+# Step 3 then re-reads the same relationship's rows FROM THE DATABASE at Latest
+# and observes line 1000 alone.
+#
+# Steps 2 and 3 together are the case's teeth and its semantic distinction. They
+# ask the same question of the same relationship at the same moment and MUST
+# answer differently: the access answers the milestones step 0's pin selected, the
+# read-back answers what Latest now selects, and only their disagreement proves
+# the terminate genuinely moved Latest rather than no-opping. The `txEnd:
+# infinity` step 2 states is the sharpest leaf of all — the stored row now carries
+# a FINITE 2024-08-01 there, so no re-read at any pin can produce the node the
+# view answers. An implementation that re-pinned, refreshed, or invalidated the
+# view on write answers the closed milestone or drops line 1001 entirely and
+# fails; one that discarded the view raises where it should answer; one whose
+# close reached nothing fails step 3; and `roundTrips: 0` fails anything that
+# reaches the database at step 2 at all.
+#
+# `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
+# accesses (m-op-list-002), but on the wire lane it is primary-key equality
+# against this step's own reused source rows; the identity proof of record — that
+# the accessed lines are literally the SAME objects — is the reference-identity
+# assertion each language's API Conformance Suite runs (m-api-conformance). The
+# contents divide the same way: a wire harness assembles them from the rows its
+# own read retained, while a conforming adapter reports the graph ITS
+# implementation still holds for this step (m-conformance-adapter `stepGraphs`),
+# which is the half that can tell a surviving view from a re-read.
+model: models/invoice.yaml
+tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, m-txtime-write, m-unit-work, closed-world, relationship, temporal, audit-only, terminate, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "include level - the Invoice.lines child IN-list binds are the distinct root keys gathered from step 0's own root read, so the child emission depends on a query result"
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Invoice
+        predicate:
+          eq:
+            attr: parallax.compatibility.Invoice.id
+            value: 100
+        temporal:
+          transaction-time:
+            asOf: latest
+        includes:
+          - segments:
+              - rel: parallax.compatibility.Invoice.lines
+      roundTrips: 2
+      note: materialize a snapshot of invoice 100 at Transaction Time LATEST WITH its lines (1 + L levels, the root pin propagating per hop)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.in_z, t0.out_z from invoice t0 where t0.id = ? and t0.out_z = ?
+          binds: [100, infinity]
+        - sql:
+            postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id in (?) and t0.out_z = ?
+          binds: [100, infinity]
+      expectRows:
+        - { id: 100, name: INV-100, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
+    - write:
+        - mutation: terminate
+          entity: parallax.compatibility.InvoiceLine
+          rows:
+            - { id: 1001 }
+          at: "2024-08-01T00:00:00+00:00"
+      roundTrips: 2
+      note: close the current milestone of the very line the loaded `lines` view holds - one close statement plus the resolving read the keyed terminate owes
+      statements:
+        - sql:
+            postgres: update invoice_line set out_z = ? where id = ? and out_z = ? and in_z = ?
+          binds: ["2024-08-01T00:00:00+00:00", 1001, infinity, "2024-01-01T00:00:00+00:00"]
+    - action: access
+      "on": 0
+      path: lines
+      roundTrips: 0
+      sameObjectAs: 0
+      note: access the ALREADY-MATERIALIZED lines after the terminate -> ZERO SQL and the closed milestone still open in the view
+      expectGraph:
+        InvoiceLine:
+          - { id: 1000, invoiceId: 100, amount: 75.00, txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
+          - { id: 1001, invoiceId: 100, amount: 25.00, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
+    - objectQuery:
+        target: parallax.compatibility.InvoiceLine
+        predicate:
+          eq:
+            attr: parallax.compatibility.InvoiceLine.invoiceId
+            value: 100
+        temporal:
+          transaction-time:
+            asOf: latest
+      roundTrips: 1
+      note: observing the write means issuing another read - the same relationship's rows at Latest hold line 1000 alone
+      statements:
+        - sql:
+            postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.out_z = ?
+          binds: [100, infinity]
+      expectRows:
+        - { id: 1000, invoice_id: 100, amount: 75.00, in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+then:
+  roundTrips: 5

@@ -1,0 +1,107 @@
+# A DESTROYED row stays in the relationship view that already held it
+# (m-snapshot-read *Closed world*, composition): a materialized graph is a value
+# taken at its pin, so a committed DELETE of a row a loaded to-many view holds
+# neither drops it from that view nor invalidates the view — accessing it still
+# issues ZERO SQL and still answers both line items. This is the clause "a write
+# changes nothing about a graph already materialized ... whatever the write did to
+# the rows behind them — INCLUDING DELETING THEM", held on the destructive arm;
+# m-snapshot-read-017 holds the same clause where the write rewrote a row rather
+# than removing it, and the pair is the reason the clause names deletion
+# explicitly: an implementation may plausibly treat destruction as the one write a
+# view cannot outlive.
+#
+# Step 0 materializes order 1 WITH its `items` — the ordinary 1 + L deep fetch,
+# one statement per level, two round trips, both items present. Step 1 DELETES
+# line item 11 and commits it as its OWN unit of work: one DML statement plus the
+# resolving read a keyed delete owes an unversioned Non-Temporal target under the
+# mandatory Locking fallback, so two round trips. Step 2 accesses `items` on the
+# view step 0 materialized and states its WHOLE contents through `expectGraph` —
+# BOTH items, item 11 included, in the `id desc` order the relationship declares.
+# Step 3 then re-reads the same relationship's rows FROM THE DATABASE and observes
+# item 12 alone.
+#
+# Steps 2 and 3 together are the case's teeth and its semantic distinction. They
+# ask the same question of the same relationship at the same moment and MUST
+# answer differently: the access answers what step 0 fetched, the read-back
+# answers what the database now holds, and only their disagreement proves the row
+# was genuinely destroyed rather than left in place by a write that no-opped. An
+# implementation that re-fetched, refreshed, or invalidated the view on write
+# drops item 11 from step 2 and fails; one that discarded the view raises where it
+# should answer; one whose DELETE reached nothing fails step 3; and
+# `roundTrips: 0` fails anything that reaches the database at step 2 at all.
+#
+# `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
+# accesses (m-op-list-002), but on the wire lane it is primary-key equality
+# against this step's own reused source rows; the identity proof of record — that
+# the accessed items are literally the SAME objects a deleted row included — is
+# the reference-identity assertion each language's API Conformance Suite runs
+# (m-api-conformance). The contents divide the same way: a wire harness assembles
+# them from the rows its own read retained, while a conforming adapter reports the
+# graph ITS implementation still holds for this step (m-conformance-adapter
+# `stepGraphs`), which is the half that can tell a surviving view from a re-read.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, delete, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "include level - the Order.items child IN-list binds are the distinct root keys gathered from step 0's own root read, so the child emission depends on a query result"
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.id
+            value: 1
+        includes:
+          - segments:
+              - rel: parallax.compatibility.Order.items
+      roundTrips: 2
+      note: materialize a snapshot of order 1 WITH its line items (1 + L levels)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
+          binds: [1]
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
+          binds: [1]
+      expectRows:
+        - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+    - write:
+        - mutation: delete
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 11 }
+      roundTrips: 2
+      note: destroy the very row the loaded `items` view holds - one DML statement plus the resolving read the keyed delete owes
+      statements:
+        - sql:
+            postgres: delete from order_item where id = ?
+          binds: [11]
+    - action: access
+      "on": 0
+      path: items
+      roundTrips: 0
+      sameObjectAs: 0
+      note: access the ALREADY-MATERIALIZED items after the delete -> ZERO SQL and the destroyed row still among them
+      expectGraph:
+        OrderItem:
+          - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+          - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
+    - objectQuery:
+        target: parallax.compatibility.OrderItem
+        predicate:
+          eq:
+            attr: parallax.compatibility.OrderItem.orderId
+            value: 1
+      roundTrips: 1
+      note: observing the write means issuing another read - the same relationship's rows, re-read, hold item 12 alone
+      expectRows:
+        - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = ?
+          binds: [1]
+then:
+  roundTrips: 5

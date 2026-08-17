@@ -17,9 +17,9 @@ history run-through.
 
 Most graph stories read only, and their canned port refuses DML outright so a
 story that quietly acquired a write is caught here. The composition stories
-(`m-snapshot-read-017`/`-018`/`-019`) are the exception by construction: what
-they demonstrate is a materialized view standing across a COMMITTED write, so
-they need a port that opens a transaction and takes the DML
+(`m-snapshot-read-017`/`-018`/`-019`/`-020`/`-025`) are the exception by
+construction: what they demonstrate is a materialized view standing across a
+COMMITTED write, so they need a port that opens a transaction and takes the DML
 (:class:`_WritingCannedPort`).
 """
 
@@ -35,6 +35,7 @@ import pytest
 from parallax.conformance import graph_stories
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order
+from parallax.core.base import INFINITY
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.snapshot import is_view_loaded
@@ -71,6 +72,33 @@ _ORDER_3_ROW: Row = {
 }
 
 _ORDER_ITEM_INSERT = "insert into order_item(id, order_id, sku, quantity) values (%s, %s, %s, %s)"
+
+_COVERAGE_INSERT = (
+    "insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) "
+    "values (%s, %s, %s, %s, %s, %s, %s)"
+)
+
+# Policy 2 and its single coverage at the pin the rectangle-split story takes —
+# one rectangle open on both axes, which is what a bounded `updateUntil` splits
+# into head / middle / tail.
+_POLICY_2_ROW: Row = {
+    "id": 2,
+    "name": "Home",
+    "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "thru_z": INFINITY,
+    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "out_z": INFINITY,
+}
+
+_COVERAGE_20_ROW: Row = {
+    "id": 20,
+    "policy_id": 2,
+    "amount": Decimal("300.00"),
+    "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "thru_z": INFINITY,
+    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "out_z": INFINITY,
+}
 
 # Balance 1's SUPERSEDED milestone — the row a finite Transaction-Time pin at
 # 2024-03-01 selects, closed at 2024-06-01 by the milestone that replaced it.
@@ -123,14 +151,16 @@ class _WritingCannedPort(_TransactingCannedPort):
         return 1
 
 
-# The stories whose body commits DML (`m-snapshot-read-017`/`-018`/`-019`): the
-# composition arm, where what is demonstrated is the materialized view standing
-# across a persisting write.
+# The stories whose body commits DML (`m-snapshot-read-017`/`-018`/`-019`/`-020`/
+# `-025`): the composition arm, where what is demonstrated is the materialized
+# view standing across a persisting write.
 _WRITING_STORIES: frozenset[Callable[..., Any]] = frozenset(
     {
         graph_stories.a_write_keeps_a_loaded_to_one_view,
         graph_stories.a_write_keeps_a_loaded_empty_relationship_view,
         graph_stories.a_write_keeps_an_unloaded_relationship_absent,
+        graph_stories.a_delete_keeps_a_loaded_relationship_view,
+        graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view,
     }
 )
 
@@ -157,6 +187,12 @@ def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
     order 3 and its `items` level answers nothing, which is what makes the view
     loaded and EMPTY rather than short-circuited — and its unloaded sibling once,
     declaring no include at all.
+
+    The destructive and rectangle-split stories read five times each: their own
+    root and include levels, the transaction's observing find, and the re-read's
+    two levels. Each re-read's own child level answers nothing, because the
+    canned port is a stub rather than a store and only the real-database driver
+    can say what the write left behind.
     """
     if run is graph_stories.mutation_has_no_writeback:
         return [[_ORDER_ROW], [_ORDER_ROW]]
@@ -166,6 +202,16 @@ def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
         return [[_ORDER_3_ROW], []]
     if run is graph_stories.a_write_keeps_an_unloaded_relationship_absent:
         return [[_ORDER_3_ROW]]
+    if run is graph_stories.a_delete_keeps_a_loaded_relationship_view:
+        return [[_ORDER_ROW], [_ORDER_ITEM_ROW], [_ORDER_ITEM_ROW], [_ORDER_ROW], []]
+    if run is graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view:
+        return [
+            [_POLICY_2_ROW],
+            [_COVERAGE_20_ROW],
+            [_COVERAGE_20_ROW],
+            [_POLICY_2_ROW],
+            [],
+        ]
     if run in (
         graph_stories.an_edited_copy_keeps_its_source_nodes_views,
         graph_stories.an_edit_keeps_a_loaded_relationship_view,
@@ -239,6 +285,44 @@ def test_the_unloaded_composition_story_keeps_an_absent_view_across_its_insert()
     assert is_view_loaded(order, Order.items) is False
     with pytest.raises(UnloadedRelationshipError, match="items"):
         order.items  # noqa: B018 - the access itself is the assertion
+
+
+def test_the_destructive_composition_story_keeps_the_destroyed_row_in_its_view() -> None:
+    # The in-memory half of `m-snapshot-read-020`: the DELETE reaches the wire
+    # (recorded below), and the already-materialized `items` view still answers
+    # the destroyed row's own node — the SAME object, not an equal-valued
+    # rebuild, which is the half a contents comparison cannot see.
+    story = next(
+        s
+        for s in graph_stories.GRAPH_STORIES
+        if s.run is graph_stories.a_delete_keeps_a_loaded_relationship_view
+    )
+    port = _WritingCannedPort(_responses_for(story.run))
+    snapshot, loaded_items, _reread = story.run(Database.connect(port, MODELS[story.model]))
+    assert port.writes == [("delete from order_item where id = %s", [11])]
+    assert [item.id for item in loaded_items] == [11]
+    assert snapshot.result().items[0] is loaded_items[0]
+
+
+def test_the_rectangle_split_story_keeps_the_pinned_rectangle_in_its_view() -> None:
+    # The in-memory half of `m-snapshot-read-025`: the split reaches the wire as
+    # the close plus the three chained rectangles, and the pinned `coverages`
+    # view still answers the rectangle its own read selected, by identity. The
+    # binds carry the ambient clock's instant, so the statement shapes are what
+    # this driver can pin; the case's own goldens hold the binds.
+    story = next(
+        s
+        for s in graph_stories.GRAPH_STORIES
+        if s.run is graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view
+    )
+    port = _WritingCannedPort(_responses_for(story.run))
+    snapshot, loaded_coverages, _reread = story.run(Database.connect(port, MODELS[story.model]))
+    assert [sql for sql, _binds in port.writes] == [
+        "update coverage set out_z = %s where id = %s and thru_z = %s and out_z = %s and in_z = %s",
+        *[_COVERAGE_INSERT] * 3,
+    ]
+    assert [(c.id, c.amount) for c in loaded_coverages] == [(20, Decimal("300.00"))]
+    assert snapshot.result().coverages[0] is loaded_coverages[0]
 
 
 def test_the_mutation_story_edits_in_memory_and_rereads_the_original() -> None:

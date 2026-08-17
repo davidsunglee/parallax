@@ -1,0 +1,138 @@
+# A RECTANGLE SPLIT under a loaded view leaves that view alone (m-snapshot-read
+# *Closed world*, composition): a materialized graph is a value taken at its pin,
+# so a committed `updateUntil` that inactivates the very rectangle a loaded
+# to-many view holds and chains three successors in its place neither re-pins that
+# view nor invalidates it — accessing it still issues ZERO SQL and still answers
+# the rectangle the read selected. This is the clause "a write changes nothing
+# about a graph already materialized", held on the BOUNDED BITEMPORAL arm;
+# m-snapshot-read-021 holds it for a single-axis close, and this case is the one
+# where the write rewrites the view's own coordinates rather than only its
+# contents — the read's pin still selects a row after the write, and it is a
+# DIFFERENT row.
+#
+# Step 0 materializes policy 2 as of Valid Time 2024-05-01 / Transaction Time
+# LATEST, WITH its `coverages` — the ordinary 1 + L deep fetch, one statement per
+# level, the root pin propagating per hop and per axis (m-navigate), two round
+# trips. At that pin the policy owns exactly one coverage: 20 at 300.00, valid
+# [2024-01-01, infinity) and current on Transaction Time; coverage 21 is a
+# Transaction-Time-historical row the pin correctly excludes. Step 1 issues
+# `updateUntil` over the Valid-Time window [2024-03-01, 2024-09-01) at
+# Transaction Time 2024-07-01, committed as its OWN unit of work: the signature
+# rectangle split — inactivate the observed rectangle, then chain head (the old
+# 300.00 before the window), middle (the new 999.00 inside it) and tail (the old
+# 300.00 after it) — four statements plus the resolving read the keyed write owes
+# the rectangle it addresses, so five round trips. Step 2 accesses `coverages` on
+# the view step 0 materialized and states its WHOLE contents through
+# `expectGraph`: coverage 20 at 300.00, still spanning [2024-01-01, infinity) on
+# both axes. Step 3 then re-reads the same relationship's rows FROM THE DATABASE
+# at the SAME pin.
+#
+# Steps 2 and 3 together are the case's teeth and its semantic distinction. They
+# ask the same question of the same relationship at the same pin and MUST answer
+# differently — and here they differ in EVERY leaf: the access answers 300.00 over
+# [2024-01-01, infinity) x [2024-01-01, infinity), the read-back answers 999.00
+# over [2024-03-01, 2024-09-01) x [2024-07-01, infinity). Both are correct
+# answers to different questions, which is what a bitemporal store is for: a
+# pinned graph records what was believed when it was taken, and only another read
+# reports what is believed now. An implementation that re-pinned, refreshed, or
+# invalidated the view on write answers the middle rectangle and fails; one that
+# discarded the view raises where it should answer; one whose split reached
+# nothing fails step 3; and `roundTrips: 0` fails anything that reaches the
+# database at step 2 at all.
+#
+# `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
+# accesses (m-op-list-002), but on the wire lane it is primary-key equality
+# against this step's own reused source rows; the identity proof of record — that
+# the accessed coverage is literally the SAME object — is the reference-identity
+# assertion each language's API Conformance Suite runs (m-api-conformance). The
+# contents divide the same way: a wire harness assembles them from the rows its
+# own read retained, while a conforming adapter reports the graph ITS
+# implementation still holds for this step (m-conformance-adapter `stepGraphs`),
+# which is the half that can tell a surviving view from a re-read.
+model: models/policy.yaml
+tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, m-bitemp-write, m-unit-work, closed-world, relationship, temporal, bitemporal, update-until, rectangle-split, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "include level - the Policy.coverages child IN-list binds are the distinct root keys gathered from step 0's own root read, so the child emission depends on a query result"
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Policy
+        predicate:
+          eq:
+            attr: parallax.compatibility.Policy.id
+            value: 2
+        temporal:
+          transaction-time:
+            asOf: latest
+          valid-time:
+            asOf: '2024-05-01T00:00:00+00:00'
+        includes:
+          - segments:
+              - rel: parallax.compatibility.Policy.coverages
+      roundTrips: 2
+      note: materialize a snapshot of policy 2 at Valid Time 2024-05-01 / Transaction Time LATEST WITH its coverages (1 + L levels, the root pin propagating per hop and per axis)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where t0.id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [2, "2024-05-01T00:00:00+00:00", "2024-05-01T00:00:00+00:00", infinity]
+        - sql:
+            postgres: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id in (?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [2, "2024-05-01T00:00:00+00:00", "2024-05-01T00:00:00+00:00", infinity]
+      expectRows:
+        - { id: 2, name: Home, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
+    - write:
+        - mutation: updateUntil
+          entity: parallax.compatibility.Coverage
+          rows:
+            - { id: 20, amount: 999.00 }
+          validFrom: "2024-03-01T00:00:00+00:00"
+          until: "2024-09-01T00:00:00+00:00"
+          at: "2024-07-01T00:00:00+00:00"
+      roundTrips: 5
+      note: split the very rectangle the loaded `coverages` view holds - inactivate it, chain head / middle / tail, plus the resolving read the keyed write owes
+      statements:
+        - sql:
+            postgres: update coverage set out_z = ? where id = ? and thru_z = ? and out_z = ? and in_z = ?
+          binds: ["2024-07-01T00:00:00+00:00", 20, infinity, infinity, "2024-01-01T00:00:00+00:00"]
+        - sql:
+            postgres: insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [20, 2, 300.00, "2024-01-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity]
+        - sql:
+            postgres: insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [20, 2, 999.00, "2024-03-01T00:00:00+00:00", "2024-09-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity]
+        - sql:
+            postgres: insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [20, 2, 300.00, "2024-09-01T00:00:00+00:00", infinity, "2024-07-01T00:00:00+00:00", infinity]
+    - action: access
+      "on": 0
+      path: coverages
+      roundTrips: 0
+      sameObjectAs: 0
+      note: access the ALREADY-MATERIALIZED coverages after the split -> ZERO SQL and the inactivated rectangle still whole in the view
+      expectGraph:
+        Coverage:
+          - { id: 20, policyId: 2, amount: 300.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
+    - objectQuery:
+        target: parallax.compatibility.Coverage
+        predicate:
+          eq:
+            attr: parallax.compatibility.Coverage.policyId
+            value: 2
+        temporal:
+          transaction-time:
+            asOf: latest
+          valid-time:
+            asOf: '2024-05-01T00:00:00+00:00'
+      roundTrips: 1
+      note: observing the write means issuing another read - the same pin now selects the middle rectangle the split chained
+      statements:
+        - sql:
+            postgres: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [2, "2024-05-01T00:00:00+00:00", "2024-05-01T00:00:00+00:00", infinity]
+      expectRows:
+        - { id: 20, policy_id: 2, amount: 999.00, from_z: "2024-03-01T00:00:00+00:00", thru_z: "2024-09-01T00:00:00+00:00", in_z: "2024-07-01T00:00:00+00:00", out_z: infinity }
+then:
+  roundTrips: 8
