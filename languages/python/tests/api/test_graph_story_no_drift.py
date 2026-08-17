@@ -241,6 +241,13 @@ _WRITING_STORIES: frozenset[Callable[..., Any]] = frozenset(
 
 _CASES = {case.case_id: case for case in case_format.load_cases()}
 
+# Each story by the callable that IS it. A test naming the behaviour it drives
+# names the run function, so this is the lookup every one of them wants, and
+# keying on the function rather than the case id keeps the reference resolvable
+# by the type checker.
+_STORIES_BY_RUN = {story.run: story for story in graph_stories.GRAPH_STORIES}
+assert len(_STORIES_BY_RUN) == len(graph_stories.GRAPH_STORIES), "one story per run function"
+
 
 def _golden_write_binds(case_id: str) -> list[list[object]]:
     """The DML binds the case's own write step declares, statement for statement.
@@ -289,11 +296,12 @@ def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
     """Canned reads for the stories whose bodies dereference a result — every
     other story's empty root level legally short-circuits the rest.
 
-    The no-writeback story reads twice (the find and the re-read); each
-    edited-copy story once (its include level short-circuits on the empty tail).
-    The to-one composition story reads four times: its own root and include
-    levels, the transaction's observing find, and the re-read that shows where
-    the write IS observable.
+    The no-writeback story reads twice (the find and the re-read); the two
+    SINGLE-HOP edited-copy stories once each (their include level short-circuits
+    on the empty tail), where the edit chain needs a child to carry across its
+    hops and is counted with the composite stories below. The to-one composition
+    story reads four times: its own root and include levels, the transaction's
+    observing find, and the re-read that shows where the write IS observable.
 
     The loaded-empty composition story reads twice — its root level answers
     order 3 and its `items` level answers nothing, which is what makes the view
@@ -355,11 +363,7 @@ def test_the_to_one_composition_story_keeps_the_view_across_the_committed_write(
     # write reaches the wire (recorded below) and the already-materialized
     # `order` view still answers the SAME object holding the value the read
     # produced, never the one the write buffered.
-    story = next(
-        s
-        for s in graph_stories.GRAPH_STORIES
-        if s.run is graph_stories.a_write_keeps_a_loaded_to_one_view
-    )
+    story = _STORIES_BY_RUN[graph_stories.a_write_keeps_a_loaded_to_one_view]
     port = _WritingCannedPort(_responses_for(story.run))
     snapshot, loaded_order, _reread = story.run(Database.connect(port, MODELS[story.model]))
     assert [sql for sql, _binds in port.writes] == ["update orders set name = %s where id = %s"]
@@ -373,11 +377,7 @@ def test_the_loaded_empty_composition_story_keeps_an_empty_view_across_its_inser
     # nothing would satisfy every claim about the view — and `items` still
     # answers the empty tuple the include level fetched, LOADED rather than
     # absent.
-    story = next(
-        s
-        for s in graph_stories.GRAPH_STORIES
-        if s.run is graph_stories.a_write_keeps_a_loaded_empty_relationship_view
-    )
+    story = _STORIES_BY_RUN[graph_stories.a_write_keeps_a_loaded_empty_relationship_view]
     port = _WritingCannedPort(_responses_for(story.run))
     snapshot = story.run(Database.connect(port, MODELS[story.model]))
     order = snapshot.result()
@@ -393,11 +393,7 @@ def test_the_unloaded_composition_story_keeps_an_absent_view_across_its_insert()
     # no corpus executor at all: the SAME insert against the SAME order as its
     # loaded-empty sibling, and `items` still absent rather than empty — the two
     # halves of the distinction, differing only in the include the read declared.
-    story = next(
-        s
-        for s in graph_stories.GRAPH_STORIES
-        if s.run is graph_stories.a_write_keeps_an_unloaded_relationship_absent
-    )
+    story = _STORIES_BY_RUN[graph_stories.a_write_keeps_an_unloaded_relationship_absent]
     port = _WritingCannedPort(_responses_for(story.run))
     order = story.run(Database.connect(port, MODELS[story.model])).result()
     assert [(sql, binds) for sql, binds in port.writes] == [
@@ -413,11 +409,7 @@ def test_the_destructive_composition_story_keeps_the_destroyed_row_in_its_view()
     # (recorded below), and the already-materialized `items` view still answers
     # the destroyed row's own node — the SAME object, not an equal-valued
     # rebuild, which is the half a contents comparison cannot see.
-    story = next(
-        s
-        for s in graph_stories.GRAPH_STORIES
-        if s.run is graph_stories.a_delete_keeps_a_loaded_relationship_view
-    )
+    story = _STORIES_BY_RUN[graph_stories.a_delete_keeps_a_loaded_relationship_view]
     port = _WritingCannedPort(_responses_for(story.run))
     snapshot, loaded_items, _committed, _reread = story.run(_connect(story, port))
     _assert_wire_binds(story.case_id, port)
@@ -431,11 +423,7 @@ def test_the_rectangle_split_story_keeps_the_pinned_rectangle_in_its_view() -> N
     # the story's scripted clock is what makes those binds reachable at all —
     # and the pinned `coverages` view still answers the rectangle its own read
     # selected, by identity.
-    story = next(
-        s
-        for s in graph_stories.GRAPH_STORIES
-        if s.run is graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view
-    )
+    story = _STORIES_BY_RUN[graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view]
     port = _WritingCannedPort(_responses_for(story.run))
     snapshot, loaded_coverages, _committed, _reread = story.run(_connect(story, port))
     _assert_wire_binds(story.case_id, port)
@@ -449,11 +437,7 @@ def test_the_edit_chain_story_keeps_the_same_children_at_every_hop() -> None:
     # so the change-free edit of an edited copy answers the same objects the read
     # materialized — and the source keeps its own name while both copies carry
     # the authored one.
-    story = next(
-        s
-        for s in graph_stories.GRAPH_STORIES
-        if s.run is graph_stories.an_edit_chain_keeps_a_loaded_relationship_view
-    )
+    story = _STORIES_BY_RUN[graph_stories.an_edit_chain_keeps_a_loaded_relationship_view]
     snapshot, renamed, restated = story.run(_db(story, _responses_for(story.run)))
     order = snapshot.result()
     assert (order.name, renamed.name, restated.name) == ("Ada", "Mutant", "Mutant")
@@ -467,11 +451,7 @@ def test_the_value_object_composition_story_keeps_its_document_in_read_order() -
     # and the already-materialized `customer` view still answers the document the
     # read decoded, ELEMENT ORDER included — the half a multiset comparison could
     # not tell apart.
-    story = next(
-        s
-        for s in graph_stories.GRAPH_STORIES
-        if s.run is graph_stories.a_write_keeps_a_loaded_value_object_document
-    )
+    story = _STORIES_BY_RUN[graph_stories.a_write_keeps_a_loaded_value_object_document]
     port = _WritingCannedPort(_responses_for(story.run))
     snapshot, loaded_customer, _committed, _reread = story.run(_connect(story, port))
     _assert_wire_binds(story.case_id, port)
@@ -485,11 +465,7 @@ def test_the_fresh_row_composition_story_keeps_the_inserted_rows_view() -> None:
     # wire with the case's own binds — the inserts that made the rows and the
     # update that rewrote one — and the view materialized in between still
     # answers the sku the read produced, by identity.
-    story = next(
-        s
-        for s in graph_stories.GRAPH_STORIES
-        if s.run is graph_stories.a_write_keeps_a_view_over_freshly_inserted_rows
-    )
+    story = _STORIES_BY_RUN[graph_stories.a_write_keeps_a_view_over_freshly_inserted_rows]
     port = _WritingCannedPort(_responses_for(story.run))
     _created, snapshot, loaded_items, _committed, _reread = story.run(_connect(story, port))
     _assert_wire_binds(story.case_id, port)
@@ -502,11 +478,7 @@ def test_the_multi_hop_story_drops_its_null_branch_in_memory() -> None:
     # every status carries a LOADED `order_item` view, the order-level one holds
     # null and contributes no terminal, and the two statuses reaching item 11
     # reach the SAME node rather than two equal ones.
-    story = next(
-        s
-        for s in graph_stories.GRAPH_STORIES
-        if s.run is graph_stories.a_multi_hop_access_drops_its_null_branches
-    )
+    story = _STORIES_BY_RUN[graph_stories.a_multi_hop_access_drops_its_null_branches]
     order = story.run(_db(story, _responses_for(story.run))).result()
     assert all(is_view_loaded(status, OrderStatus.order_item) for status in order.statuses)
     reached = [status.order_item for status in order.statuses if status.order_item is not None]
@@ -607,9 +579,7 @@ def test_every_scenario_story_is_query_graded_or_reasoned() -> None:
 
 
 def test_the_mutation_story_edits_in_memory_and_rereads_the_original() -> None:
-    story = next(
-        s for s in graph_stories.GRAPH_STORIES if s.run is graph_stories.mutation_has_no_writeback
-    )
+    story = _STORIES_BY_RUN[graph_stories.mutation_has_no_writeback]
     mutated, reread = story.run(_db(story, _responses_for(story.run)))
     assert mutated.name == "Mutant"
     assert reread.result().name == "Ada"
@@ -619,11 +589,7 @@ def test_the_edited_copy_story_answers_the_source_nodes_unloaded_view() -> None:
     # The other in-memory semantic a wrap-through needs no database for: the
     # copy's view state IS the node's, so the un-included relationship reports
     # the same closed-world absence rather than a member the rebuild dropped.
-    story = next(
-        s
-        for s in graph_stories.GRAPH_STORIES
-        if s.run is graph_stories.an_edited_copy_keeps_its_source_nodes_views
-    )
+    story = _STORIES_BY_RUN[graph_stories.an_edited_copy_keeps_its_source_nodes_views]
     snapshot, edited = story.run(_db(story, _responses_for(story.run)))
     assert (edited.name, snapshot.result().name) == ("Mutant", "Ada")
     assert is_view_loaded(edited, Order.statuses) is False

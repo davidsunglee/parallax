@@ -75,6 +75,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
     ValueObjectMetadata,
+    WriteAssignmentError,
     entity_by_name,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -2539,16 +2540,22 @@ class _ScenarioStepResult:
 
     Two step kinds fill one: a find, with what it materialized, and an ACCEPTED
     `mutate`, with the Edited Copy it derived (:func:`_edited_copy`) — a copy
-    carries its source's views, pin and Identity, so naming it answers exactly
-    as naming the read does (`m-snapshot-read` *Closed world*, composition). A
-    write step, and a `mutate` the pin rule refused, carry the empty result
-    instead — their slot exists so a later step's `on` index still names the step
-    it means.
+    carries its source's views, pin and Identity, so a later `mutate` naming it
+    answers exactly as one naming the read does (`m-snapshot-read` *Closed
+    world*, composition). ``materialized`` is what separates them: a find's own
+    read fetched the contents, a copy only carries them, and an `access` stating
+    relationship contents names the read that materialized them (`m-case-format`
+    *Relationship contents at a step*) — a distinction every executor draws
+    alike, so the flag is the one place this lane draws it. A write step, an
+    `access`, and a `mutate` the pin rule refused carry the empty result instead
+    — their slot exists so a later step's `on` index still names the step it
+    means.
     """
 
     roots: tuple[dict[str, object], ...]
     pin: Pin | None
     identity: EntityIdentity | None
+    materialized: bool = False
 
 
 _NO_SCENARIO_RESULT: Final[_ScenarioStepResult] = _ScenarioStepResult((), None, None)
@@ -2637,7 +2644,9 @@ def _run_snapshot_scenario(
                     for call in snapshot.execution.calls
                 )
                 round_trips += snapshot.execution.round_trips
-                results.append(_ScenarioStepResult(_root_members(snapshot), pin, identity))
+                results.append(
+                    _ScenarioStepResult(_root_members(snapshot), pin, identity, materialized=True)
+                )
     return ScenarioRun(emissions, round_trips, errors, step_graphs, None)
 
 
@@ -2701,9 +2710,15 @@ def _access_step_graph(
     database is right where the case asks whether the view survived, which is the
     whole point of the observable (`m-conformance-adapter`).
 
-    The step names ONE materializing read (`m-case-format`): the multi-source
-    `on` form spans views at different lowered coordinates, and no single view
-    holds contents gathered across them.
+    The step names ONE materializing READ (`m-case-format`), and both halves of
+    that bind here. One, because the multi-source `on` form spans views at
+    different lowered coordinates and no single view holds contents gathered
+    across them. A read, because an Edited Copy carries contents it never
+    fetched: naming one would state a graph whose provenance is a step that
+    issued no query, which the executor holding no copy at all cannot express —
+    so a case authored that way would grade in one lane and be refused in
+    another, where the observable's whole worth is that one authored
+    `expectGraph` grades alike in every lane.
     """
     if "expectGraph" not in step:
         return None
@@ -2717,6 +2732,12 @@ def _access_step_graph(
     if source is None or source.identity is None:
         raise EngineError(
             f"{case.path.name}: `access` names {on!r}, which holds no view to navigate"
+        )
+    if not source.materialized:
+        raise EngineError(
+            f"{case.path.name}: `access` states relationship contents on step {on}, which "
+            "derived its view rather than materializing it — such a step names the read "
+            "whose `includes` fetched the contents"
         )
     path = step.get("path")
     if not isinstance(path, str):
@@ -2884,20 +2905,33 @@ def _edited_copy(
     views, and the source itself is untouched — an edit answers with a copy
     rather than rewriting the node it derives from, which is why a scenario can
     hold both and ask each what it answers. It carries the source's pin and
-    Entity Identity too, so a later step naming the copy resolves exactly as one
-    naming the read does. No DML follows either way: no unit of work holds the
-    view (`m-snapshot-read`).
+    Entity Identity too, so a later `mutate` naming the copy resolves exactly as
+    one naming the read does; what it does NOT carry is a read of its own, which
+    is why an `access` stating contents still names the find
+    (:func:`_access_step_graph`). No DML follows either way: no unit of work
+    holds the view (`m-snapshot-read`).
 
-    Two names a `set` may not carry, refused for two different reasons. A
-    RELATIONSHIP is refused outright — no edit changes a relationship member, so
-    a carried view can only ever describe what a read observed, and a copy whose
-    `items` the author replaced would describe a fetch that never happened. A
-    name the materialized view carries no member of is refused as an assignment
-    with nowhere to land — a case the verb cannot perform, not a mutation it
-    silently drops. Both verdicts are reached over the WHOLE `set` before any
-    member is copied, so a refused mutation derives nothing at all: `set` is an
-    unordered mapping, and applying its accepted names up to the first refused
-    one would make the result depend on authoring order.
+    Three verdicts stand between a `set` and the copy, in this order. A
+    RELATIONSHIP name is refused outright — no edit changes a relationship
+    member, so a carried view can only ever describe what a read observed, and a
+    copy whose `items` the author replaced would describe a fetch that never
+    happened. A name the materialized view carries no member of is refused as an
+    assignment with nowhere to land — a case the verb cannot perform, not a
+    mutation it silently drops. What survives both is judged as any written value
+    is (:func:`~parallax.core.inheritance.validate_write_assignment`), so a
+    primary-key, read-only or framework-owned target and an ill-typed value are
+    refused by the SAME verdict the typed `edit(**changes)` and the serialized
+    write boundary reach — one rule, whichever surface the assignment arrives
+    through. The value is decoded to its native carrier first
+    (:func:`_decoded_assignment_value`), because a case authors wire literals and
+    the judgement is about the value a member would hold; the copy carries the
+    decoded value for the same reason, so its member state is in the vocabulary
+    the read's own is.
+
+    Every verdict is reached over the WHOLE `set` before any member is copied, so
+    a refused mutation derives nothing at all: `set` is an unordered mapping, and
+    applying its accepted names up to the first refused one would make the result
+    depend on authoring order.
 
     A `mutate` carrying NO `set` is the change-free edit, which is legal and
     derives a copy of the source's own state — the branch an implementation that
@@ -2931,7 +2965,40 @@ def _edited_copy(
             f"{case.path.name}: `mutate` assigns {unassignable!r}, which the view step {on} "
             "holds no member of"
         )
-    return _ScenarioStepResult(({**members, **assignments},), source.pin, source.identity)
+    edited = _judged_assignments(case, model, source.identity, assignments)
+    return _ScenarioStepResult(({**members, **edited},), source.pin, source.identity)
+
+
+def _judged_assignments(
+    case: case_format.Case,
+    model: AcceptedMetamodel,
+    identity: EntityIdentity,
+    assignments: Mapping[str, object],
+) -> dict[str, object]:
+    """One `mutate` step's `set`, decoded against ``identity``'s declared members
+    and judged assignable, or a loud refusal naming the case.
+
+    An unassignable target or an ill-typed value is a case-AUTHORING defect
+    rather than a graded observation: `m-case-format`'s per-step `expectError`
+    vocabulary has no member for it, so a case cannot declare the refusal, and an
+    engine that accepted the assignment anyway would report a pass for an edit
+    the language's own surface raises on. It is therefore refused exactly as a
+    bare write row naming an undeclared member is
+    (:func:`_reject_undeclared_bare_row_members`).
+    """
+    entity = case_entity(model, identity.canonical)
+    decoded = {
+        name: _decoded_assignment_value(entity, name, value, model)
+        for name, value in assignments.items()
+    }
+    for name, value in decoded.items():
+        try:
+            inheritance.validate_write_assignment(model, entity, name, value)
+        except WriteAssignmentError as exc:
+            raise EngineError(
+                f"{case.path.name}: `mutate` assigns {name!r}, which an edit refuses — {exc}"
+            ) from exc
+    return decoded
 
 
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:

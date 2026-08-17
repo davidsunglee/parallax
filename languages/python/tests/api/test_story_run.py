@@ -352,7 +352,7 @@ def _access_expect_graph(case_id: str) -> dict[str, Any]:
     return cast("dict[str, Any]", graphs[0])
 
 
-def _documented(node: dict[str, Any]) -> dict[str, Any]:
+def _serialize_value_object_members(node: dict[str, Any]) -> dict[str, Any]:
     """``node`` with every Value Object member serialized to its canonical document.
 
     A `then.graph` / `expectRows` leaf is the document the read published, and
@@ -375,7 +375,12 @@ def _assert_surviving_view(case_id: str, entity: str, instances: Sequence[Any]) 
     comparator the wire lane grades that step by — so every leaf the case states
     is asserted here rather than the handful an assertion happens to name."""
     compare_graph(
-        {entity: [_documented(instance_graph_node(instance)) for instance in instances]},
+        {
+            entity: [
+                _serialize_value_object_members(instance_graph_node(instance))
+                for instance in instances
+            ]
+        },
         _access_expect_graph(case_id),
         CollectionKinds(engine.load_case_metamodel(_CASES[case_id])),
     )
@@ -391,7 +396,10 @@ def _assert_find_step_rows(case_id: str, index: int, snapshot: Any) -> None:
     fails on the step it mirrors rather than on the relationship view alone.
     """
     compare_rows(
-        [_documented(instance_row(instance)) for instance in snapshot.results()],
+        [
+            _serialize_value_object_members(instance_row(instance))
+            for instance in snapshot.results()
+        ],
         cast("list[dict[str, Any]]", _scenario_finds(case_id)[index]["expectRows"]),
     )
 
@@ -773,9 +781,10 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(provisioner: Any) -> No
 def _vo_owner_row(instance: Any) -> dict[str, Any]:
     """A materialized VO-bearing owner's own graph node, DECLARED-member-keyed
     (``instance_graph_node``), with its value-object members serialized to their
-    canonical documents (:func:`_documented`) so ``compare_graph`` can recurse
-    into them exactly like the wire-level engine's own `then.graph` grading."""
-    return _documented(instance_graph_node(instance))
+    canonical documents (:func:`_serialize_value_object_members`) so
+    ``compare_graph`` can recurse into them exactly like the wire-level engine's
+    own `then.graph` grading."""
+    return _serialize_value_object_members(instance_graph_node(instance))
 
 
 def _assert_vo_owner_graph(case_id: str, snapshot: Any, entity_name: str, pk_member: str) -> None:

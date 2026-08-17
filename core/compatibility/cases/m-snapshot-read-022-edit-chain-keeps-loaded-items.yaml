@@ -4,8 +4,8 @@
 # issues ZERO SQL and still answers both line items. This is the clause "a
 # derived copy's view state IS its source's" held over a chain rather than a
 # single derivation; m-snapshot-read-016 holds it for ONE edit, and the two
-# together say that carrying a view is a property of the edit verb rather than of
-# the first use of it.
+# together say that leaving the view alone is a property of the edit verb rather
+# than of the first use of it.
 #
 # Step 0 materializes order 1 WITH its `items` — the ordinary 1 + L deep fetch,
 # one statement per level, two round trips. Step 1 derives an edited copy
@@ -19,21 +19,24 @@
 # its WHOLE contents through `expectGraph`: both OrderItem rows, every declared
 # member, unchanged, in the `id desc` order the relationship declares.
 #
-# The semantic distinction is against a single edit and against a re-read alike.
-# An implementation that carries views on the FIRST derivation but rebuilds a
-# copy of a copy from its declared members — or that short-circuits a change-free
-# edit into something other than a copy — passes m-snapshot-read-016 and fails
-# here at step 2's own hop, because step 3 asks the source what it still holds
-# after the chain ran. A fresh find after the chain would re-query the database
-# and grade a NEW materialization instead, which is why `expectGraph` is legal on
-# an access step alone. `roundTrips: 0` is the closed-world half; `expectGraph`
-# is the survival half.
+# The semantic distinction against a single edit is step 2, and it is a
+# RESOLUTION rather than a comparison: step 2 names step 1, so an implementation
+# whose `mutate` rewrites the object it names — or answers with nothing a later
+# step can name — has no copy for step 2 to derive from and fails there while
+# m-snapshot-read-016 still passes. So does one that treats a `set`-less edit as
+# anything other than a copy of the value's own state. Step 3 is the distinction
+# against a re-read: it asks the source what it still holds after the chain ran,
+# where a fresh find would re-query the database and grade a NEW materialization
+# instead, which is why `expectGraph` is legal on an access step alone.
+# `roundTrips: 0` is the closed-world half; `expectGraph` is the survival half.
 #
-# The access names step 0, the read: `on` names the step whose Include Paths
-# materialized the view whose contents are stated, and the chain's own copies are
-# where the derivation is observable rather than where the fetch happened. What
-# each copy itself answers for `items` — the SAME objects, hop after hop — is the
-# reference-identity assertion each language's API Conformance Suite runs
+# What no observable here states is the CONTENTS of either copy's own view. The
+# access names step 0, the read: `on` names the step whose Include Paths
+# materialized the view whose contents are stated, and a copy carries a view it
+# never fetched rather than one it did. An implementation that published both
+# copies while dropping `items` from one of them therefore passes this case.
+# What each copy itself answers for `items` — the SAME objects, hop after hop —
+# is the reference-identity assertion each language's API Conformance Suite runs
 # (m-api-conformance), which is also the only lane that holds a copy at all.
 # `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
 # accesses (m-op-list-002); on the wire lane it is primary-key equality against

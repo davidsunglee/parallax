@@ -33,17 +33,19 @@
 #
 # Steps 2 and 3 are the case's teeth and its semantic distinction. They ask the
 # same question of the same row at the same moment and MUST answer differently,
-# and the two differences fail differently. `city` is an ordinary contradicted
+# and the two differences catch different defects. `city` is the contradicted
 # leaf: an implementation that re-fetched, refreshed, or invalidated the view on
-# write answers `Bergen` at step 2. The `phones` order is the one only a Value
-# Object can pose — the same two documents, the same multiset, a different
-# sequence — so a re-fetching implementation is caught by it ONLY because a
-# `multiplicity: many` Value Object compares POSITIONALLY while an entity
-# collection compares as a multiset (m-case-format *Relationship contents at a
-# step*). An executor that graded `phones` as a multiset would report this view
-# intact after re-reading the swapped document, which is the distinction that
-# rule exists to draw and the reason this case states the order rather than only
-# the leaves.
+# write answers `Bergen` at step 2 and fails there. The `phones` ORDER is the
+# distinction only a Value Object can pose — the same two documents, the same
+# multiset, a different sequence — and what it catches is an EXECUTOR rather than
+# an implementation. One grading a `multiplicity: many` Value Object as a
+# multiset, the rule an entity collection is compared under, would accept this
+# same document with its two elements swapped; under such a grader this
+# `expectGraph` would state nothing at all about the order the read decoded,
+# while `city` would still catch the re-fetch. Stating the sequence is what makes
+# positional comparison observable, which is the distinction m-case-format
+# *Relationship contents at a step* exists to draw and the reason this case
+# states the order rather than only the leaves.
 #
 # `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
 # accesses (m-op-list-002), but on the wire lane it is primary-key equality
