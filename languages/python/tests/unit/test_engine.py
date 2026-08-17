@@ -4876,50 +4876,121 @@ def _scenario_result(
     )
 
 
-def test_apply_mutate_step_raises_when_the_target_step_materialized_zero_nodes() -> None:
+_ORDERS_MODEL = engine.load_case_metamodel(_case("m-snapshot-read-010"))
+_ORDER_IDENTITY = engine.case_entity(_ORDERS_MODEL, "parallax.compatibility.Order").identity
+
+
+def _edited_copy(step: Mapping[str, object], on: int, source: Any) -> Any:
+    return engine._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        _case("m-snapshot-read-010"), _ORDERS_MODEL, step, on, source
+    )
+
+
+def _order_view(**members: object) -> Any:
+    return _scenario_result(dict(members), identity=_ORDER_IDENTITY)
+
+
+def test_edited_copy_raises_when_the_target_step_holds_zero_nodes() -> None:
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
     with pytest.raises(engine.EngineError, match="expected exactly one"):
-        engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, _scenario_result())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        _edited_copy(step, 0, _scenario_result(identity=_ORDER_IDENTITY))
 
 
-def test_apply_mutate_step_raises_when_the_target_step_materialized_many_nodes() -> None:
+def test_edited_copy_raises_when_the_target_step_holds_many_nodes() -> None:
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
-    source = _scenario_result({"id": 1, "name": "Ada"}, {"id": 2, "name": "Bob"})
+    source = _scenario_result(
+        {"id": 1, "name": "Ada"}, {"id": 2, "name": "Bob"}, identity=_ORDER_IDENTITY
+    )
     with pytest.raises(engine.EngineError, match="expected exactly one"):
-        engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, source)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        _edited_copy(step, 0, source)
 
 
-def test_apply_mutate_step_raises_when_set_is_not_a_mapping() -> None:
+def test_edited_copy_raises_when_set_is_not_a_mapping() -> None:
     step = {"action": "mutate", "on": 0, "set": "not-a-mapping"}
-    source = _scenario_result({"id": 1, "name": "Ada"})
-    with pytest.raises(engine.EngineError, match="needs a `set` mapping"):
-        engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, source)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    with pytest.raises(engine.EngineError, match="`set` is a mapping"):
+        _edited_copy(step, 0, _order_view(id=1, name="Ada"))
 
 
-def test_apply_mutate_step_assigns_every_named_member_in_memory() -> None:
+def test_edited_copy_carries_every_named_member_and_leaves_its_source_alone() -> None:
+    # An edit DERIVES: the copy carries the assignment and the node it was
+    # derived from still holds what the read materialized, which is the whole
+    # difference between an authored edit and an in-place assignment.
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant", "qty": 9}}
-    source = _scenario_result({"id": 1, "name": "Ada", "qty": 5})
-    engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, source)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    assert source.roots[0] == {"id": 1, "name": "Mutant", "qty": 9}
+    source = _order_view(id=1, name="Ada", qty=5)
+    copy = _edited_copy(step, 0, source)
+    assert copy.roots[0] == {"id": 1, "name": "Mutant", "qty": 9}
+    assert source.roots[0] == {"id": 1, "name": "Ada", "qty": 5}
 
 
-def test_apply_mutate_step_refuses_the_whole_set_when_one_name_is_unassignable() -> None:
-    # The assignable name is authored FIRST, so a per-name apply-then-check would
-    # leave `name` mutated behind the refusal: the whole `set` is rejected and
-    # the member state is the one the find step materialized.
+def test_edited_copy_carries_the_sources_pin_and_identity() -> None:
+    # What lets a chain of edits keep answering the pin question the same way,
+    # and a later step name the copy exactly as it names the read.
+    pin = Pin(tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC), valid_time=None)
+    source = _scenario_result({"id": 1, "name": "Ada"}, pin=pin, identity=_ORDER_IDENTITY)
+    copy = _edited_copy({"action": "mutate", "on": 0, "set": {"name": "Mutant"}}, 0, source)
+    assert (copy.pin, copy.identity) == (pin, _ORDER_IDENTITY)
+
+
+def test_edited_copy_with_no_set_restates_the_sources_own_state() -> None:
+    # The change-free edit (`test_edit.py`'s `_BRANCHES` second branch): legal,
+    # and a copy rather than the source itself.
+    source = _order_view(id=1, name="Ada")
+    copy = _edited_copy({"action": "mutate", "on": 0}, 0, source)
+    assert copy.roots[0] == {"id": 1, "name": "Ada"}
+    assert copy.roots[0] is not source.roots[0]
+
+
+def test_edited_copy_refuses_a_set_naming_a_relationship_member() -> None:
+    # No edit changes a relationship member: a carried view describes what a read
+    # observed, so authoring `items` would state a fetch that never happened.
+    step: dict[str, object] = {"action": "mutate", "on": 0, "set": {"items": []}}
+    source = _order_view(id=1, name="Ada", items=())
+    with pytest.raises(engine.EngineError, match="name relationship members"):
+        _edited_copy(step, 0, source)
+
+
+def test_edited_copy_refuses_the_whole_set_when_one_name_is_unassignable() -> None:
+    # The assignable name is authored FIRST, so a per-name copy-then-check would
+    # carry `name` past the refusal: the whole `set` is rejected and the source
+    # still holds the state the find step materialized.
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant", "nickname": "Nick"}}
-    source = _scenario_result({"id": 1, "name": "Ada"})
-    with pytest.raises(engine.EngineError, match="carries no member of"):
-        engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, source)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    source = _order_view(id=1, name="Ada")
+    with pytest.raises(engine.EngineError, match="holds no member of"):
+        _edited_copy(step, 0, source)
     assert source.roots[0] == {"id": 1, "name": "Ada"}
 
 
-def test_grade_mutate_step_rejects_an_on_index_naming_no_earlier_find() -> None:
+def test_grade_mutate_step_rejects_an_on_index_naming_no_view() -> None:
     step = {"action": "mutate", "on": 5, "set": {"name": "Mutant"}}
-    with pytest.raises(engine.EngineError, match="no earlier find step"):
+    with pytest.raises(engine.EngineError, match="holds no view to edit"):
         engine._grade_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-010"), step, [_scenario_result({"id": 1})]
+            _case("m-snapshot-read-010"), _ORDERS_MODEL, step, [_scenario_result({"id": 1})]
         )
+
+
+def test_grade_mutate_step_publishes_no_copy_when_the_pin_rule_refuses() -> None:
+    # A refused mutation derives nothing, so its slot stays empty and a later
+    # step naming it is told so rather than handed a copy the verb never made.
+    case = _case("m-bitemp-write-016")
+    model = engine.load_case_metamodel(case)
+    identity = engine.case_entity(model, "parallax.compatibility.Position").identity
+    source = _scenario_result(
+        {"id": 1, "value": decimal.Decimal("90.00")},
+        pin=Pin(tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC), valid_time=None),
+        identity=identity,
+    )
+    step = {
+        "action": "mutate",
+        "on": 0,
+        "set": {"value": 999},
+        "expectError": "transaction-time-pin-read-only",
+    }
+    error_class, result = engine._grade_mutate_step(case, model, step, [source])  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    assert (error_class, result.roots, result.identity) == (
+        "transaction-time-pin-read-only",
+        (),
+        None,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -5186,7 +5257,7 @@ def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() 
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
-    with pytest.raises(engine.EngineError, match="carries no member of"):
+    with pytest.raises(engine.EngineError, match="holds no member of"):
         engine.run_scenario_case(case, "postgres", port)
     assert len(port.writes) == 0
 
@@ -5271,12 +5342,12 @@ def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
 
 def test_run_scenario_case_mutate_grading_rejects_an_out_of_range_on_index() -> None:
     # The grading wrapper guards `on` itself (its identity and pin lookups both
-    # index the find steps' own recorded state), before the in-memory apply ever
-    # runs. One guard answers every way `on` can fail to name a find step —
-    # out of range, absent, or naming an action step, which resolves no Entity.
+    # index the earlier steps' own recorded state), before any copy is derived.
+    # One guard answers every way `on` can fail to name a step holding a view —
+    # out of range, absent, or naming a write step, which holds none.
     when = {"scenario": [{"action": "mutate", "on": 5, "set": {"name": "Mutant"}}]}
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(engine.EngineError, match="no earlier find step"):
+    with pytest.raises(engine.EngineError, match="holds no view to edit"):
         engine.run_scenario_case(case, "postgres", FakeDbPort([]))
 
 
@@ -5829,6 +5900,33 @@ def test_run_scenario_case_reports_an_access_step_graph_from_the_retained_view()
     assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType]
 
 
+def test_run_scenario_case_lets_an_edit_chain_name_the_copy_before_it() -> None:
+    # The chain the corpus authors (`m-snapshot-read-022`) in its DB-free form: a
+    # second `mutate` names the FIRST one's copy rather than the read, which
+    # resolves only because an accepted edit publishes what it derived. Each hop
+    # carries its predecessor's assignment, and the source the chain hangs off
+    # still holds the read's own state and the SAME loaded items.
+    when: dict[str, object] = {
+        "scenario": [
+            {
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "includes": [{"segments": [{"rel": "Order.items"}]}],
+                }
+            },
+            {"action": "mutate", "on": 0, "set": {"name": "Mutant"}},
+            {"action": "mutate", "on": 1},
+            {"action": "access", "on": 0, "path": "items", "expectGraph": {"OrderItem": []}},
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    run = engine.run_scenario_case(case, "postgres", _include_scenario_port())
+    assert run.round_trips == 2  # the find's two levels; no hop of the chain costs one
+    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
+    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType]
+
+
 def _orders_access_scenario(access: dict[str, object], *, includes: bool) -> case_format.Case:
     query: dict[str, object] = {
         "target": "Order",
@@ -5848,12 +5946,12 @@ def test_run_scenario_case_access_without_expect_graph_reports_no_step_graph() -
     assert run.step_graphs == []
 
 
-def test_run_scenario_case_access_step_graph_rejects_an_on_naming_no_find() -> None:
+def test_run_scenario_case_access_step_graph_rejects_an_on_naming_no_view() -> None:
     case = _orders_access_scenario(
         {"action": "access", "on": 5, "path": "items", "expectGraph": {"OrderItem": []}},
         includes=True,
     )
-    with pytest.raises(engine.EngineError, match="no earlier find step"):
+    with pytest.raises(engine.EngineError, match="holds no view to navigate"):
         engine.run_scenario_case(case, "postgres", _include_scenario_port())
 
 
