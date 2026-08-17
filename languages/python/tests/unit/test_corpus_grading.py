@@ -70,3 +70,38 @@ def test_one_node_grades_against_the_entity_it_names() -> None:
     address["phones"] = list(reversed(cast("list[Any]", address["phones"])))
     with pytest.raises(AssertionError):
         compare_graph(observed, expected, kinds)
+
+
+def _authored_step_graph(case_id: str, step: int) -> tuple[dict[str, Any], CollectionKinds]:
+    """One scenario step's own authored `expectGraph`, and the kinds its model
+    declares — the per-step analogue of :func:`_authored_graph`."""
+    case = _CASES[case_id]
+    steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    graph = copy.deepcopy(cast("dict[str, Any]", steps[step]["expectGraph"]))
+    return graph, CollectionKinds(engine.load_case_metamodel(case))
+
+
+def test_a_step_graph_relationship_target_set_compares_as_a_multiset() -> None:
+    # An `expectGraph` is `then.graph`'s own shape at a step, so its top-level key
+    # is an Entity name and its value that Entity's result set — a multiset, like
+    # every other entity collection, whatever the declared child ordering was.
+    expected, kinds = _authored_step_graph("m-snapshot-read-016", 2)
+    observed = {"OrderItem": list(reversed(cast("list[Any]", expected["OrderItem"])))}
+    compare_graph(observed, expected, kinds)
+
+
+def test_a_step_graph_rejects_a_corrupted_leaf() -> None:
+    expected, kinds = _authored_step_graph("m-snapshot-read-016", 2)
+    observed = copy.deepcopy(expected)
+    cast("dict[str, Any]", observed["OrderItem"][0])["sku"] = "WRONG"
+    with pytest.raises(AssertionError):
+        compare_graph(observed, expected, kinds)
+
+
+def test_a_step_graph_rejects_a_missing_node() -> None:
+    # The survival claim is about CONTENTS, so a view that answered with one of the
+    # two loaded items is as wrong as one that answered with the wrong values.
+    expected, kinds = _authored_step_graph("m-snapshot-read-016", 2)
+    observed = {"OrderItem": cast("list[Any]", expected["OrderItem"])[:1]}
+    with pytest.raises(AssertionError):
+        compare_graph(observed, expected, kinds)

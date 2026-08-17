@@ -469,6 +469,26 @@ Both are additive and optional: an adapter that observes no lifecycle state or
 raised error simply omits them, so an existing `run` output (`roundTrips` plus
 `rows` / `graph` / `identityChecks` / `storedDataIssues`) stays valid unchanged.
 
+### Per-step graph observations (`stepGraphs`)
+
+A scenario has no single whole-read graph, so a step's relationship contents
+cannot ride the `graph` key: they are one observation **per step**. `stepGraphs`
+is the optional `observations` array carrying them — one `{ at, graph }` entry
+per scenario step declaring `expectGraph` (`m-case-format`), `at` the JSON
+Pointer naming the step and `graph` the contents that step's access observed, in
+the same entity-keyed shape a `graph` observation carries. Entries appear in step
+order, and a step declaring the oracle whose entry is missing is an unanswered
+oracle rather than a pass.
+
+The contents reported are the ones the implementation's own materialized graph
+holds at that step — never a re-read. An adapter that re-queries to answer this
+observation reports that the database is right while the case asks whether the
+view survived, which is the distinction the oracle exists to draw.
+
+It is additive and optional in the same sense as `stateChecks` / `errors`: a run
+whose case declares no `expectGraph` omits it, and every existing `run` output
+stays valid unchanged.
+
 An **`identityCheck`'s semantics are the claiming module's identity contract**, not
 a single fixed rule. For a **wire-level** scenario check (the PK-value one-object-
 per-PK rule the harness itself grades) `same` means **primary-key-value equality**.

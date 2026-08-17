@@ -34,7 +34,14 @@ from parallax.conformance import (
     temporal_state,
 )
 from parallax.conformance.temporal_state import TemporalShadow
-from parallax.core import batch_write, deep_fetch, inheritance, opt_lock, storage_layout
+from parallax.core import (
+    batch_write,
+    deep_fetch,
+    inheritance,
+    opt_lock,
+    relationship,
+    storage_layout,
+)
 from parallax.core.base import (
     INFINITY_LITERAL,
     TemporalBound,
@@ -2332,13 +2339,21 @@ def _has_action_step(steps: Sequence[Mapping[str, object]]) -> bool:
     return any("action" in step for step in steps)
 
 
+_GRADED_ACTION_VERBS: Final[frozenset[str]] = frozenset({"mutate", "access"})
+"""The lifecycle action verbs this lane grades over a snapshot graph.
+
+`mutate` is the authored edit and `access` a relationship read over a view a
+find step already materialized — both are things this lane holds the state for.
+Every other verb (`detachCopy`, `load`, `flush`, `mergeBack`, `commit`,
+`abort`) is a managed-object lifecycle surfacing only the API Conformance Suite
+can verify, and a case built on one is dispatched to the api-conformance lane
+before reaching here at all."""
+
+
 def _check_action_step(case: case_format.Case, step: Mapping[str, object]) -> None:
-    """Refuse an action verb this lane does not grade (only `mutate` does; an
-    `action: access` case — m-snapshot-read's closed-world absence witness — is
-    dispatched to the api-conformance lane before reaching here at all, per the
-    adapter's own lane guard)."""
+    """Refuse an action verb this lane does not grade (:data:`_GRADED_ACTION_VERBS`)."""
     action = step.get("action")
-    if action != "mutate":
+    if action not in _GRADED_ACTION_VERBS:
         raise EngineError(
             f"{case.path.name}: scenario action {action!r} is graded by the API "
             "Conformance Suite (api-conformance lane), not compile/run"
@@ -2382,9 +2397,13 @@ class _ScenarioStepResult:
 
     ``roots`` is the in-memory member state of each root the step materialized,
     keyed by declared member name — the plain detached value a `mutate` assigns
-    into (`m-snapshot-read` closed world). Its length is what a `mutate` step's
-    single-node requirement is checked against. ``pin`` and ``identity`` are the
-    coordinates the production finite-pin validator is handed. An action step
+    into and an `access` navigates from (`m-snapshot-read` closed world). Its
+    length is what a `mutate` step's single-node requirement is checked against.
+    A relationship the step's own read included rides ON that state as the nested
+    nodes the Wire result published, so the view a later step reaches is the one
+    THIS read materialized and no re-read can stand in for it — which is exactly
+    what an `access` step's `expectGraph` asks about. ``pin`` and ``identity`` are
+    the coordinates the production finite-pin validator is handed. An action step
     materializes nothing and carries the empty result.
     """
 
@@ -2401,7 +2420,7 @@ def _run_snapshot_scenario(
     dialect_name: str,
     port: DbPort,
     steps: Sequence[Mapping[str, object]],
-) -> tuple[list[Emission], int, list[dict[str, object]]]:
+) -> tuple[list[Emission], int, list[dict[str, object]], list[dict[str, object]]]:
     """Run a snapshot-read scenario: each find step reads through the SAME
     public Wire read every graph read uses (``db.wire.find``); `mutate` runs the
     production write seam's
@@ -2409,10 +2428,14 @@ def _run_snapshot_scenario(
     statement pin and, when that verdict accepts, assigns the step's `set` to the
     named view's own in-memory members (:func:`_grade_mutate_step`) — zero round
     trips, nothing at the port (m-snapshot-read closed world: a snapshot node is
-    never enrolled in a unit of work, so mutating it can never write back).
-    Returns the ordered emissions, the total round trips, and one `errors`
+    never enrolled in a unit of work, so mutating it can never write back); and
+    `access` navigates a relationship on the view a named earlier find step
+    materialized, likewise touching the port not at all
+    (:func:`_access_step_graph`).
+    Returns the ordered emissions, the total round trips, one `errors`
     observation entry per `expectError` step whose verb raised its declared
-    application-lifecycle error (`m-conformance-adapter`)."""
+    application-lifecycle error, and one `stepGraphs` entry per `access` step
+    declaring `expectGraph` (`m-conformance-adapter`)."""
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     # This lane resolves no milestone from case state — every node it publishes
@@ -2424,8 +2447,16 @@ def _run_snapshot_scenario(
     round_trips = 0
     results: list[_ScenarioStepResult] = []
     errors: list[dict[str, object]] = []
+    step_graphs: list[dict[str, object]] = []
     for index, step in enumerate(steps):
         if "action" in step:
+            _check_action_step(case, step)
+            if step.get("action") == "access":
+                observed = _access_step_graph(case, model, index, step, results)
+                if observed is not None:
+                    step_graphs.append(observed)
+                results.append(_NO_SCENARIO_RESULT)
+                continue
             error_class = _grade_mutate_step(case, step, results)
             if error_class is not None:
                 errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
@@ -2447,7 +2478,7 @@ def _run_snapshot_scenario(
             )
         round_trips += snapshot.execution.round_trips
         results.append(_ScenarioStepResult(_root_members(snapshot), pin, identity))
-    return emissions, round_trips, errors
+    return emissions, round_trips, errors, step_graphs
 
 
 def _root_members(
@@ -2460,6 +2491,89 @@ def _root_members(
     assignment reaches nothing the frozen result still publishes.
     """
     return tuple(dict(_graph_root(root) or {}) for root in snapshot.checked().results())
+
+
+def _access_step_graph(
+    case: case_format.Case,
+    model: AcceptedMetamodel,
+    index: int,
+    step: Mapping[str, object],
+    results: Sequence[_ScenarioStepResult],
+) -> dict[str, object] | None:
+    """One `access` step's own graph observation, or ``None`` when it asserts none.
+
+    An access over an already-materialized relationship issues nothing at the
+    port (`m-snapshot-read` closed world), so what it observes is read off the
+    state the named find step left behind — including whatever a `mutate` in
+    between did to it. Reporting a re-read here would answer that the database is
+    right where the case asks whether the view survived, which is the whole point
+    of the observable (`m-conformance-adapter`).
+    """
+    if "expectGraph" not in step:
+        return None
+    on = step.get("on")
+    source = results[on] if isinstance(on, int) and 0 <= on < len(results) else None
+    if source is None or source.identity is None:
+        raise EngineError(f"{case.path.name}: `access` names {on!r}, which is no earlier find step")
+    path = step.get("path")
+    if not isinstance(path, str):
+        raise EngineError(f"{case.path.name}: an `access` asserting a graph needs a `path`")
+    entity_name, nodes = _navigate_step_view(case, model, source, path)
+    return {"at": f"/scenario/{index}", "graph": {entity_name: nodes}}
+
+
+def _navigate_step_view(
+    case: case_format.Case,
+    model: AcceptedMetamodel,
+    source: _ScenarioStepResult,
+    path: str,
+) -> tuple[str, list[object]]:
+    """The nodes ``path`` reaches on a retained view, and their Entity's local name.
+
+    Each hop reads the loaded arm the Wire result published on the node — a
+    frozen sequence for a to-many, a nested node or ``None`` for a to-one — so
+    the traversal is a walk over what the read materialized rather than a second
+    materialization of it. A key the node does not carry is the unloaded state
+    itself (`m-snapshot-read`), which an access asserting contents cannot be
+    authored over.
+    """
+    identity = source.identity
+    assert identity is not None, "the caller resolves the source step's Entity Identity"
+    nodes: list[object] = list(source.roots)
+    for name in path.split("."):
+        identity = _related_entity(case, model, identity, name)
+        reached: list[object] = []
+        for node in nodes:
+            if not isinstance(node, Mapping) or name not in node:
+                raise EngineError(
+                    f"{case.path.name}: `access` navigates {path!r}, but the view its "
+                    f"find step materialized carries no loaded {name!r} — an access "
+                    "asserting relationship contents names a read whose `includes` "
+                    "materialized them"
+                )
+            arm = cast("Mapping[str, object]", node)[name]
+            if isinstance(arm, list | tuple):
+                reached.extend(cast("Sequence[object]", arm))
+            else:
+                reached.append(arm)
+        nodes = reached
+    return identity.name, nodes
+
+
+def _related_entity(
+    case: case_format.Case, model: AcceptedMetamodel, identity: EntityIdentity, name: str
+) -> EntityIdentity:
+    """The Entity one relationship hop from ``identity`` lands on."""
+    position = inheritance.view(model).entity(identity)
+    declared = None if position is None else position.applicable_relationship(name)
+    direction = (
+        None if declared is None else relationship.view(model).relationship(declared.identity)
+    )
+    if direction is None:
+        raise EngineError(
+            f"{case.path.name}: {identity.name} declares no relationship {name!r} to navigate"
+        )
+    return direction.join.target.entity
 
 
 def _find_step_pin(model: AcceptedMetamodel, query: ObjectQueryNode) -> Pin:
@@ -2488,7 +2602,6 @@ def _grade_mutate_step(
     accepted mutation; a mismatch in either direction — an undeclared refusal,
     or a declared expectation the verb never raised — is a loud
     :class:`EngineError`, never a silently dropped observation."""
-    _check_action_step(case, step)
     on = step.get("on")
     source = results[on] if isinstance(on, int) and 0 <= on < len(results) else None
     identity = None if source is None else source.identity
@@ -4392,7 +4505,9 @@ def run_interleaved_scenario_case(
 
 def run_scenario_case(
     case: case_format.Case, dialect_name: str, port: DbPort
-) -> tuple[list[Emission], int, list[dict[str, object]], ExecutionLog | None]:
+) -> tuple[
+    list[Emission], int, list[dict[str, object]], list[dict[str, object]], ExecutionLog | None
+]:
     """Run a scenario: an UNGROUPED write step commits (or aborts) as its OWN
     unit of work through ``db.transact``, and an ungrouped find reads
     committed state. A `uow`-GROUPED contiguous span of steps instead runs
@@ -4404,20 +4519,23 @@ def run_scenario_case(
     detected by a one-step LOOK-AHEAD before that find is lowered as an
     ordinary standalone step, since `m-case-format`'s own "Materializing
     cases" convention makes the preceding find the resolve. Reports the
-    ordered emissions, the total round trips, and the `errors` observation
-    entries (`m-conformance-adapter`) — populated only by the snapshot
-    action-step lane's `expectError` grading (:func:`_run_snapshot_scenario`);
-    every keyed unit-of-work scenario reports an empty list.
+    ordered emissions, the total round trips, and the `errors` and `stepGraphs`
+    observation entries (`m-conformance-adapter`) — both populated only by the
+    snapshot action-step lane, from its `expectError` grading and its `access`
+    steps' retained views (:func:`_run_snapshot_scenario`); every keyed
+    unit-of-work scenario reports two empty lists.
 
-    The fourth element is the scenario's execution provenance
+    The last element is the scenario's execution provenance
     (`m-execution-log`): the Execution Log of its ONE `uow` group, or ``None``
     when the scenario ran no group or more than one — a scenario that opened
     several transactions has no single log to report, and the observation
     describes one invocation by contract."""
     steps = _scenario_steps(case)
     if _has_action_step(steps):
-        emissions, round_trips, errors = _run_snapshot_scenario(case, dialect_name, port, steps)
-        return emissions, round_trips, errors, None
+        emissions, round_trips, errors, step_graphs = _run_snapshot_scenario(
+            case, dialect_name, port, steps
+        )
+        return emissions, round_trips, errors, step_graphs, None
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
@@ -4525,7 +4643,7 @@ def run_scenario_case(
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = _emissions([(step.pointer, step.statements) for step in lowered])
     log = group_logs[0] if len(group_logs) == 1 else None
-    return emissions, round_trips, [], log
+    return emissions, round_trips, [], [], log
 
 
 def run_write_sequence_case(

@@ -791,6 +791,17 @@ def an_edited_copy_keeps_its_source_nodes_views(db: Database) -> tuple[Snapshot[
     return snapshot, edited
 ```
 
+## An edited copy holds the SAME loaded relationship objects, with zero SQL
+
+Corpus case: `m-snapshot-read-016`
+
+```python
+def an_edit_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any], Any]:
+    snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
+    edited = snapshot.result().edit(name="Mutant")  # the copy keeps the LOADED items
+    return snapshot, edited
+```
+
 ## As-of read at a past instant
 
 Corpus case: `m-temporal-read-003`

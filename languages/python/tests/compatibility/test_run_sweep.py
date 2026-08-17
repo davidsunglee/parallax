@@ -300,6 +300,18 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
 )
 
 
+# The snapshot-scenario cases whose own find step carries `objectQuery.includes`
+# (`m-snapshot-read-016`): a deep-fetch child level's `IN`-list binds are the
+# distinct root keys gathered from that step's own root read, so the case is
+# `compileEligibility: run-only` (query-result-dependent) exactly as every
+# deep-fetch read case is — which keeps it out of `WRITE_EXERCISED`, whose
+# membership couples compile grading in and which a run-only case would fail. Run
+# grades it here in full: the per-step emissions against the authored golden
+# levels, the round trips, and the `stepGraphs` observation its `access` step's
+# `expectGraph` asserts (`_grade_step_graphs`).
+_SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset({"m-snapshot-read-016"})
+
+
 def _reachable_write_cases() -> list[case_format.Case]:
     from parallax.conformance import sweep
 
@@ -309,6 +321,7 @@ def _reachable_write_cases() -> list[case_format.Case]:
         if (
             c.case_id in WRITE_EXERCISED
             or c.case_id in _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED
+            or c.case_id in _SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED
             or (
                 c.case_id not in _INTERLEAVED_UOW_GROUP_CASES
                 and engine.eligibility(c) is not None
@@ -382,8 +395,12 @@ def _scenario_read_schedule(
 ) -> list[tuple[list[dict[str, Any]] | None, Callable[[Row], Row] | None]]:
     """Every read the scenario issues, in order, paired with what grades it.
 
-    A find step contributes ONE graded read: its declared ``expectRows`` (``None``
-    asserts nothing) and its own row transform. A write step contributes the
+    A find step contributes ONE graded read — its declared ``expectRows``
+    (``None`` asserts nothing) and its own row transform — plus one UNGRADED read
+    per Include level after the root: a deep fetch costs ``1 + L`` reads at the
+    port and ``expectRows`` states the ROOT rows alone, the child levels being
+    graded by the step-graph observation an `access` step asserts instead. A
+    write step contributes the
     RESOLVING READS its keyed verbs owe (`m-case-format` *Resolving reads a write
     owes*), which grade nothing here — the values they publish are graded by the
     DML the write then emits. How many it owes is the case's own arithmetic: a
@@ -409,6 +426,7 @@ def _scenario_read_schedule(
             predicate_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
         )
         schedule.append((step.get("expectRows"), _logical_row_transform(compiled, model)))
+        schedule.extend([(None, None)] * max(0, step.get("roundTrips", 1) - 1))
     return schedule
 
 
@@ -538,6 +556,7 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         ]
         observed_errors = envelope["observations"].get("errors", [])
         assert observed_errors == expected_errors, (case.case_id, observed_errors)
+        _grade_step_graphs(case, model, steps, envelope)
     else:
         expected_state = cast(
             "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]
@@ -547,6 +566,36 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
         for table, expected_rows in expected_state.items():
             compare_rows(observed_state[table], expected_rows)
+
+
+def _grade_step_graphs(
+    case: case_format.Case,
+    model: Metamodel,
+    steps: list[dict[str, Any]],
+    envelope: Any,
+) -> None:
+    """Grade every `expectGraph` step against the run's own `stepGraphs` observation.
+
+    The relationship contents an `access` step observes are what
+    `m-conformance-adapter`'s `stepGraphs` reports — one entry per declaring step,
+    at that step's own pointer, in step order — compared through the SAME
+    model-driven graph comparator `then.graph` is graded by, so an entity
+    collection is a multiset and a `multiplicity: many` Value Object positional.
+    A declaring step with no entry is an unanswered oracle rather than a pass.
+    """
+    expected = [
+        (f"/scenario/{index}", cast("dict[str, Any]", step["expectGraph"]))
+        for index, step in enumerate(steps)
+        if "expectGraph" in step
+    ]
+    observed = cast("list[dict[str, Any]]", envelope["observations"].get("stepGraphs", []))
+    assert [entry["at"] for entry in observed] == [at for at, _ in expected], (
+        case.case_id,
+        observed,
+    )
+    kinds = CollectionKinds(model)
+    for entry, (_at, expected_graph) in zip(observed, expected, strict=True):
+        compare_graph(entry["graph"], expected_graph, kinds)
 
 
 def _assert_layout_shaped_table_state(

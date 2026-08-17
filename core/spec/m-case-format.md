@@ -323,7 +323,7 @@ keeps the assertion honest across engines.
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
-| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`), each carrying its own per-step golden `statements`; a `uow`-grouped write step MAY additionally carry `on`, naming the read step it settles against (see *Settling against a grouped find*, below) |
+| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom` / the `access`-only `expectGraph`), each carrying its own per-step golden `statements`; a `uow`-grouped write step MAY additionally carry `on`, naming the read step it settles against (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary) |
@@ -1397,7 +1397,7 @@ proven by the load step's golden SQL and binds.
 #### Per-step lifecycle observables
 
 Read and action steps carry lifecycle observables that grade what the wire golden
-SQL cannot see. Two — `sameObjectAs` (reference sameness) and `expectRows` — are
+SQL cannot see. Three — `sameObjectAs`, `expectRows` and `expectGraph` — are
 graded by the harness. The rest are **adapter-delegated**: the harness validates
 they are well-formed and skips grading them, exactly as it skips a whole
 `api-conformance`-lane case; each language's API Conformance Suite returns and
@@ -1405,11 +1405,17 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
 
 - **`sameObjectAs`** / **`differentObjectFrom`** — a zero-based earlier-step index
   this step's result denotes the **same** object as, or a **distinct** object from.
-  `differentObjectFrom` is the reference-inequality counterpart of `sameObjectAs`:
+  On the wire lane `sameObjectAs` is graded as **primary-key identity** — the
+  one-object-per-PK rule over the rows the two steps observed — because a harness
+  holding raw rows and no developer-surface object has no other identity available;
+  a language's API Conformance Suite is where the same declaration is graded as
+  reference sameness. `differentObjectFrom` is the reference-inequality counterpart:
   it proves two results are different objects even when their **row values are
   identical** (two finite coordinates in one milestone, `m-identity-map`), which
-  value equality alone cannot distinguish. A single step declares at most one of the
-  two.
+  value equality alone cannot distinguish, so it is graded as reference identity
+  only. A single step declares at most one of the two.
+- **`expectGraph`** — the relationship contents an `access` step observes, in
+  `then.graph`'s own shape (see *Relationship contents at a step*, below).
 - **`expectState`** — the lifecycle state the target object is in after the step,
   from the `m-detach` five-state machine (`in-memory` / `persisted` / `deleted` /
   `detached` / `detached-deleted`).
@@ -1430,6 +1436,36 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
   - `write-value-foreign-lifecycle` — a write verb handed a value produced by a
     read through some other framework-managed source than the one it writes
     through, the same store or not (`m-unit-work`).
+
+##### Relationship contents at a step (`expectGraph`)
+
+A step's only content oracle is otherwise `expectRows`, which carries flat root
+rows and says nothing about what a relationship holds. **`expectGraph`** is the
+step-level analogue of `then.graph` exactly as `expectRows` is the step-level
+analogue of `then.rows`: it carries `then.graph`'s own shape — an
+entity-name-keyed map whose value is a list of nodes, every key a declared member
+name, every leaf a canonical Wire Value, a to-many member a list and a to-one
+member a single node or null — keyed by the **target** entity of the relationship
+the step's `path` navigates to, under that entity's local name. Collection kinds
+compare exactly as `then.graph`'s do (entity collections as multisets, a
+`multiplicity: many` Value Object positionally), and an unattached slot is
+authored **absent** rather than empty, because a key one side carries and the
+other does not is simply unequal.
+
+It is legal **only on an `action: access` step**, and that placement is the
+point. A read-back step re-queries the database, so it proves the **database** is
+right and says nothing about the in-memory graph; only an access on a node the
+scenario already materialized proves the **view survived** whatever the steps in
+between did. The access therefore names the read that materialized the view
+(`on`), and that read MUST carry `objectQuery.includes` covering the accessed
+path — an access over a relationship no read included has no materialized
+contents to state, and asserting some would be asserting a fresh read.
+
+A step declares `expectRows` or `expectGraph`, never both: `expectRows` states
+the rows of the step's own source result while `expectGraph` states the contents
+of the relationship it navigated **to**, so the two would describe two different
+entities on one step. An author wanting the navigated entity's rows states them
+as `expectGraph` nodes.
 
 ### Coherence cases (`m-coherence`)
 

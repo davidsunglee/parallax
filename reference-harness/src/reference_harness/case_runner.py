@@ -683,53 +683,60 @@ def _resolve_rel_ref(model: Model, rel_ref: str) -> tuple[Entity, dict[str, Any]
     return entity, entity.relationship_metadata_by_name(rel_name)
 
 
-def _deepfetch_paths(case: Case) -> list[list[str]]:
-    """The deep-fetch paths as ordered lists of ``Class.relationship`` refs.
+def _deepfetch_paths(query: dict[str, Any]) -> list[list[str]]:
+    """One Object Query's include paths as ordered lists of ``Class.relationship`` refs.
 
     A path is a closed object ``{appliesTo?, segments}`` whose entries are closed
     ``{rel, narrowTo?}`` segments (m-object-query); this projection keeps only the
     ``rel`` and is used where narrowing is irrelevant (root-entity resolution).
     Narrow-aware hop identity is built from :func:`_deepfetch_paths_raw`.
+
+    Every helper here takes the QUERY rather than the case, because a read case's
+    top-level ``when.objectQuery`` and a scenario read step's own ``objectQuery``
+    are the same document in two positions and both carry includes.
     """
-    return [
-        [segment["rel"] for segment in path["segments"]] for path in case.object_query["includes"]
-    ]
+    return [[segment["rel"] for segment in path["segments"]] for path in query["includes"]]
 
 
-def _deepfetch_paths_raw(case: Case) -> list[dict[str, Any]]:
+def _deepfetch_paths_raw(query: dict[str, Any]) -> list[dict[str, Any]]:
     """The Include Paths as authored: closed ``{appliesTo?, segments}`` objects.
 
     Preserves both selection positions — the SOURCE guard and each hop's own
     ``narrowTo`` — so the fetch machinery can derive the narrowed view key, the
     root participation filter, and the dedup identity built from both.
     """
-    return list(case.object_query["includes"])
+    return list(query["includes"])
 
 
-def _deepfetch_root_position(case: Case) -> str | None:
+def _deepfetch_root_position(query: dict[str, Any]) -> str | None:
     """The polymorphic position a deep fetch's paths are rooted at.
 
     The query's own ``target`` when it names an entity of the model, which is what
     a source guard clamps against.
     """
-    target = case.object_query.get("target")
+    target = query.get("target")
     return target if isinstance(target, str) else None
 
 
+def _query_has_includes(query: dict[str, Any]) -> bool:
+    """Whether an Object Query eager-fetches anything at all."""
+    return bool(query.get("includes"))
+
+
 def _is_deep_fetch(case: Case) -> bool:
-    return bool(case.object_query.get("includes"))
+    return _query_has_includes(case.object_query)
 
 
-def _deepfetch_root_entity(case: Case) -> Entity:
+def _deepfetch_root_entity(model: Model, query: dict[str, Any]) -> Entity:
     """The entity the deep-fetch root query targets.
 
     It is the owning class of the first relationship in the first declared path
     (every path starts at the queried entity), so a deep fetch may be rooted at
     any entity in a multi-entity model, not just the descriptor's first one.
     """
-    first_rel = _deepfetch_paths(case)[0][0]
+    first_rel = _deepfetch_paths(query)[0][0]
     root_class = first_rel.rpartition(".")[0]
-    return case.model.entity(root_class)
+    return model.entity(root_class)
 
 
 # Canonical as-of dimension order: Valid Time precedes Transaction Time in both the
@@ -780,14 +787,14 @@ def _query_temporal_selections(query: Any) -> dict[str, _TemporalSelection]:
     return selections
 
 
-def _root_asof_pins(case: Case) -> dict[str, str]:
+def _root_asof_pins(query: dict[str, Any]) -> dict[str, str]:
     """Map ``{dimension: coordinate}`` from the read's own ``asOf`` selections. A
     dimension absent here defaults to the child's own ``latest`` value at
     propagation time. Empty when the root is unpinned.
     """
     return {
         dimension: selection.coordinate
-        for dimension, selection in _query_temporal_selections(case.object_query).items()
+        for dimension, selection in _query_temporal_selections(query).items()
         if isinstance(selection, _AsOfSelection)
     }
 
@@ -1075,7 +1082,7 @@ class _FetchStep:
         return self.cardinality == "one-to-many"
 
 
-def _fetch_steps(case: Case) -> list[_FetchStep]:
+def _fetch_steps(model: Model, query: dict[str, Any]) -> list[_FetchStep]:
     """Ordered, de-duplicated relationship hops for a deep fetch.
 
     Each distinct hop across all paths is exactly one statement (one query per level
@@ -1087,14 +1094,13 @@ def _fetch_steps(case: Case) -> list[_FetchStep]:
     (``[Pet]`` vs ``[Cat, Dog]``) converge — at the segment position and at the root
     position alike.
     """
-    model = case.model
     family = Family(model.entity_defs)
     variant_map = tag_value_to_subtype(model.entity_defs)
-    root_position = _deepfetch_root_position(case)
+    root_position = _deepfetch_root_position(query)
     root_full_set = resolve_root_source_set(family, root_position, {})
     steps: list[_FetchStep] = []
     seen: set[_HopKey] = set()
-    for path in _deepfetch_paths_raw(case):
+    for path in _deepfetch_paths_raw(query):
         root_source = resolve_root_source_set(family, root_position, path)
         # A guard admitting every root object restricts nothing, so only a PROPER
         # guard is carried as a participation filter.
@@ -2562,10 +2568,9 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     one of them.
     """
     dialect = db.dialect
+    query = case.object_query
     statements = case.golden_statements(dialect)
-    steps = _fetch_steps(case)
-
-    root_pins = _root_asof_pins(case)
+    steps = _fetch_steps(case.model, query)
 
     # Level 0: the root query. An abstract-target root resolves each row's own
     # concrete subtype into `familyVariant` exactly as a flat abstract read does —
@@ -2583,12 +2588,74 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     )
     root_rows = _materialize_family_variant(case, root_rows)
 
+    levels = [
+        (statements[index], case.statement_binds(index, dialect))
+        for index in range(1, len(statements))
+    ]
+    children_by_step = _execute_fetch_levels(
+        case, db, "then.statements", query, steps, root_rows, levels
+    )
+
+    # Assemble the graph: attach each child set under its relationship name on
+    # the parent rows, following the declared paths.
+    assembled = _assemble_graph(case, query, steps, root_rows, children_by_step)
+
+    expected = case.expected_graph or {}
+    if not _graphs_equal(assembled, expected, case.model):
+        raise CaseFailure(
+            f"{case.path.name}: assembled graph != then.graph.\n"
+            f"  assembled: {assembled!r}\n"
+            f"  expected:  {expected!r}"
+        )
+
+    # referenceSql (a single naive statement) is the independent oracle for the
+    # ROOT row set of the deep fetch.
+    reference_sql = case.reference_sql_for(db.dialect)
+    if reference_sql is not None:
+        reference_rows = _materialize_family_variant(case, db.query(reference_sql))
+        root_projection = [_project_like(r, root_rows) for r in reference_rows]
+        if not _rows_equal(root_projection, root_rows, case.tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: referenceSql root rows != then.statements root rows.\n"
+                f"  reference: {reference_rows!r}\n"
+                f"  golden:    {root_rows!r}"
+            )
+
+
+def _execute_fetch_levels(
+    case: Case,
+    db: DatabaseProvider,
+    source: str,
+    query: dict[str, Any],
+    steps: list[_FetchStep],
+    root_rows: list[dict[str, Any]],
+    levels: list[tuple[str, list[Any]]],
+) -> dict[_HopKey, dict[Any, list[dict[str, Any]]]]:
+    """Execute one Object Query's child levels and bucket each hop's rows by parent key.
+
+    The N+1-elimination contract, executed once for both positions an Include
+    Path is authored at — a read case's own ``then.statements`` and a scenario
+    read step's own ``statements``, named by *source* in every diagnostic. A
+    child level runs only when the previous level produced parent keys; an empty
+    parent key set elides that child SQL entirely, and a level the golden lists
+    but no parent reaches is unused SQL the case is refused for. Each executed
+    level's authored binds are cross-checked against the keys, tag values, and
+    propagated as-of coordinates the harness derives independently, so a dropped
+    IN list, a missing table-per-hierarchy tag filter, or a lost as-of
+    propagation fails the case rather than passing on the DB's own answer. Rows
+    are held per HOP rather than per entity, because two branches may reach one
+    entity through different guards or different parents and a deeper hop
+    descends from exactly one of them.
+    """
+    dialect = db.dialect
+    root_pins = _root_asof_pins(query)
+
     # rows_by_hop[hop key] -> the result-rows that hop fetched.
     rows_by_hop: dict[_HopKey, list[dict[str, Any]]] = {}
 
     # Execute each hop once, keyed by gathered parent keys, bucketed by hop identity.
     children_by_step: dict[_HopKey, dict[Any, list[dict[str, Any]]]] = {}
-    statement_index = 1
+    statement_index = 0
     for step in steps:
         source_rows = root_rows if step.parent_hop is None else rows_by_hop[step.parent_hop]
         parents = _guarded_parents(case.path.name, step, source_rows)
@@ -2602,9 +2669,9 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
             children_by_step[step.hop_key] = {}
             continue
 
-        if statement_index >= len(statements):
+        if statement_index >= len(levels):
             raise CaseFailure(
-                f"{case.path.name}: then.statements ({dialect}) has no child statement "
+                f"{case.path.name}: {source} ({dialect}) has no child statement "
                 f"for {step.view_key}, but the previous level gathered parent "
                 f"keys {parent_keys!r}."
             )
@@ -2612,21 +2679,21 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         # Bind layout per child level: the IN-list of gathered parent keys, then the
         # polymorphic hop's tag binds (table-per-hierarchy `kind = ?` / `in (?, …)`
         # over the effective set, alphabetical order), then the propagated as-of binds.
-        raw_authored = case.statement_binds(statement_index, dialect)
+        level_sql, raw_authored = levels[statement_index]
         in_slice = raw_authored[: len(parent_keys)]
         rest = list(raw_authored[len(parent_keys) :])
         tag_slice = rest[: len(step.tag_binds)]
         asof_suffix = rest[len(step.tag_binds) :]
         if sorted(_coerce_identity_key(b) for b in in_slice) != parent_keys:
             raise CaseFailure(
-                f"{case.path.name}: then.statements ({dialect}) level {statement_index} "
+                f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
                 f"({step.view_key}) IN-list binds {in_slice!r} != gathered parent "
                 f"keys {parent_keys!r}. The child level MUST be keyed by exactly "
                 f"the parents from the previous level (the N+1-eliminating IN list)."
             )
         if list(tag_slice) != list(step.tag_binds):
             raise CaseFailure(
-                f"{case.path.name}: then.statements ({dialect}) level {statement_index} "
+                f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
                 f"({step.view_key}) tag binds {tag_slice!r} != the effective-set tag "
                 f"values {step.tag_binds!r}. A polymorphic table-per-hierarchy hop over a "
                 f"proper subset MUST filter its shared-table read by the effective set's "
@@ -2645,7 +2712,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         )
         if list(asof_suffix) != expected_suffix:
             raise CaseFailure(
-                f"{case.path.name}: then.statements ({dialect}) level {statement_index} "
+                f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
                 f"({step.view_key}) as-of suffix {asof_suffix!r} != the propagated "
                 f"as-of binds {expected_suffix!r}. The root pin MUST propagate to "
                 f"this temporal child (matched by axis), appended after the IN list."
@@ -2654,7 +2721,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         child_rows = _query_rows(
             case,
             db,
-            statements[statement_index],
+            level_sql,
             list(parent_keys) + list(step.tag_binds) + expected_suffix,
         )
         # A polymorphic (multi-concrete, table-per-hierarchy) hop projects the raw tag
@@ -2689,38 +2756,14 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
 
     _assert_child_ordering(case.path.name, steps, children_by_step)
 
-    if statement_index != len(statements):
+    if statement_index != len(levels):
         raise CaseFailure(
-            f"{case.path.name}: then.statements ({dialect}) lists "
-            f"{len(statements) - statement_index} unused deep-fetch child "
+            f"{case.path.name}: {source} ({dialect}) lists "
+            f"{len(levels) - statement_index} unused deep-fetch child "
             f"statement(s). Child SQL MUST be omitted after a level gathers no "
             f"parent keys."
         )
-
-    # Assemble the graph: attach each child set under its relationship name on
-    # the parent rows, following the declared paths.
-    assembled = _assemble_graph(case, steps, root_rows, children_by_step)
-
-    expected = case.expected_graph or {}
-    if not _graphs_equal(assembled, expected, case.model):
-        raise CaseFailure(
-            f"{case.path.name}: assembled graph != then.graph.\n"
-            f"  assembled: {assembled!r}\n"
-            f"  expected:  {expected!r}"
-        )
-
-    # referenceSql (a single naive statement) is the independent oracle for the
-    # ROOT row set of the deep fetch.
-    reference_sql = case.reference_sql_for(db.dialect)
-    if reference_sql is not None:
-        reference_rows = _materialize_family_variant(case, db.query(reference_sql))
-        root_projection = [_project_like(r, root_rows) for r in reference_rows]
-        if not _rows_equal(root_projection, root_rows, case.tolerance):
-            raise CaseFailure(
-                f"{case.path.name}: referenceSql root rows != then.statements root rows.\n"
-                f"  reference: {reference_rows!r}\n"
-                f"  golden:    {root_rows!r}"
-            )
+    return children_by_step
 
 
 def _graphs_root_entity(case: Case) -> Entity:
@@ -2886,6 +2929,7 @@ def _materialize_hop_variant(case: Case, step: _FetchStep, row: dict[str, Any]) 
 
 def _assemble_graph(
     case: Case,
+    query: dict[str, Any],
     steps: list[_FetchStep],
     root_rows: list[dict[str, Any]],
     children_by_step: dict[_HopKey, dict[Any, list[dict[str, Any]]]],
@@ -2900,9 +2944,9 @@ def _assemble_graph(
     UNSET rather than empty — the observable difference between "no such related row"
     and "this object never participated".
     """
-    root_entity = _deepfetch_root_entity(case)
+    root_entity = _deepfetch_root_entity(case.model, query)
     family = Family(case.model.entity_defs)
-    root_position = _deepfetch_root_position(case)
+    root_position = _deepfetch_root_position(query)
     step_by_hopkey = {step.hop_key: step for step in steps}
 
     # Build per-view row registries keyed by primary key so a shared hop (e.g.
@@ -2933,7 +2977,7 @@ def _assemble_graph(
 
     root_nodes = [node_for("", root_entity, r) for r in root_rows]
 
-    for path in _deepfetch_paths_raw(case):
+    for path in _deepfetch_paths_raw(query):
         root_source = resolve_root_source_set(family, root_position, path)
         parent_nodes = root_nodes
         parent_hop: _HopKey | None = None
@@ -2964,8 +3008,8 @@ def _assemble_graph(
 
 
 def _graphs_equal(
-    left: dict[str, list[dict[str, Any]]],
-    right: dict[str, list[dict[str, Any]]],
+    left: Mapping[str, list[Any]],
+    right: Mapping[str, list[Any]],
     model: Model | None = None,
 ) -> bool:
     """Compare assembled graphs while preserving semantic collection order.
@@ -6651,6 +6695,147 @@ def _scenario_step_read_entity(
     return None
 
 
+@dataclass(frozen=True)
+class _StepIncludes:
+    """What one scenario read step's Include Paths materialized, kept for a later step.
+
+    A snapshot graph issues no SQL after materialization (`m-snapshot-read`), so an
+    `access` step over an already-loaded relationship executes nothing at all: the
+    contents it observes are the ones THIS step's own levels fetched. They are held
+    per HOP, exactly as a deep-fetch read case holds them, so the assembly a later
+    step runs is the same assembly over the same buckets
+    (:func:`_assemble_graph`) — the retention is the only new thing, not the graph.
+    """
+
+    query: dict[str, Any]
+    steps: list[_FetchStep]
+    root_rows: list[dict[str, Any]]
+    children_by_hop: dict[_HopKey, dict[Any, list[dict[str, Any]]]]
+
+
+def _run_step_includes(
+    case: Case,
+    reader: DatabaseProvider,
+    index: int,
+    step: dict[str, Any],
+    root_rows: list[dict[str, Any]],
+    pairs: list[tuple[str, list[Any]]],
+) -> _StepIncludes | None:
+    """Execute a scenario read step's child levels, or refuse a step that lists SQL
+    for levels its own query declares none of.
+
+    A read step's own ``objectQuery`` carries Include Paths exactly as a read case's
+    does, so the step costs ``1 + L`` round trips and lists one golden statement per
+    non-empty level. Without includes there is nothing after the root, so a second
+    listed statement is SQL nobody executes and the step's declared round trips would
+    count a call it never made.
+    """
+    query = step["objectQuery"]
+    if not _query_has_includes(query):
+        if len(pairs) > 1:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] lists {len(pairs)} golden "
+                f"statements but its objectQuery declares no `includes`, so only the "
+                f"root read has a level to run. A step that costs more than one round "
+                f"trip MUST declare the include levels the extra statements fetch."
+            )
+        return None
+    steps = _fetch_steps(case.model, query)
+    children_by_hop = _execute_fetch_levels(
+        case,
+        reader,
+        f"when.scenario[{index}].statements",
+        query,
+        steps,
+        root_rows,
+        pairs[1:],
+    )
+    return _StepIncludes(query, steps, root_rows, children_by_hop)
+
+
+def _step_graph_nodes(
+    case: Case, index: int, path: str, includes: _StepIncludes
+) -> list[dict[str, Any] | None]:
+    """The nodes a step's ``path`` reaches in the view its source read materialized.
+
+    The whole graph is assembled from the source read's own retained buckets, then
+    each hop of the dotted path is followed through the already-attached view keys —
+    a to-many hop contributing its list and a to-one hop its single node (or the
+    ``None`` a loaded-null view carries). Reaching a key the assembly never attached
+    means the source read did not include that relationship, which is an access with
+    no materialized contents to state rather than an empty answer.
+    """
+    assembled = _assemble_graph(
+        case, includes.query, includes.steps, includes.root_rows, includes.children_by_hop
+    )
+    nodes: list[Any] = [node for group in assembled.values() for node in group]
+    for hop, rel_name in enumerate(path.split(".")):
+        reached: list[Any] = []
+        for node in nodes:
+            if not isinstance(node, dict) or rel_name not in node:
+                raise CaseFailure(
+                    f"{case.path.name}: scenario[{index}] accesses {path!r}, but the "
+                    f"source read did not include {rel_name!r} (hop {hop}). An access "
+                    f"asserting relationship contents MUST name a read whose "
+                    f"`objectQuery.includes` materialized them."
+                )
+            value = node[rel_name]
+            reached.extend(value) if isinstance(value, list) else reached.append(value)
+        nodes = reached
+    return nodes
+
+
+def _action_source_includes(
+    step: dict[str, Any], step_includes: list[_StepIncludes | None]
+) -> _StepIncludes | None:
+    """What the read an action step names materialized, if that read included anything.
+
+    An action's ``on`` is the read whose objects it acts on, so the view it accesses
+    is that read's — the same resolution :func:`_scenario_step_read_entity` makes for
+    the entity, made here for the contents.
+    """
+    on = step.get("on")
+    source = (on[0] if on else None) if isinstance(on, list) else on
+    if not isinstance(source, int) or not 0 <= source < len(step_includes):
+        return None
+    return step_includes[source]
+
+
+def _assert_step_graph(
+    case: Case,
+    index: int,
+    step: dict[str, Any],
+    includes: _StepIncludes | None,
+    read_entity: Entity | None,
+) -> None:
+    """Assert an ``access`` step's ``expectGraph`` — the relationship contents the
+    already-materialized view answers with (`m-case-format`).
+
+    The oracle is the SAME graph comparison a read case's ``then.graph`` runs
+    (:func:`_graphs_equal`, model-aware so an entity collection compares as a
+    multiset and a `multiplicity: many` Value Object positionally), applied to the
+    nodes the step's ``path`` reaches, keyed by that path's TERMINAL entity — the
+    entity :func:`_scenario_step_read_entity` already resolved for this step.
+    """
+    expected = step.get("expectGraph")
+    if expected is None:
+        return
+    path = step.get("path")
+    if includes is None or read_entity is None or not isinstance(path, str):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] declares expectGraph, but it names no "
+            f"navigated `path` on a source read carrying `objectQuery.includes`. The "
+            f"contents an access states are the ones that read materialized."
+        )
+    observed = {read_entity.name: _step_graph_nodes(case, index, path, includes)}
+    if not _graphs_equal(observed, expected, case.model):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] relationship contents != expectGraph.\n"
+            f"  observed: {observed!r}\n"
+            f"  expected: {expected!r}"
+        )
+
+
 def _reuse_prior_rows(
     case: Case, step: dict[str, Any], index: int, results: list[list[dict[str, Any]]]
 ) -> list[dict[str, Any]]:
@@ -6937,6 +7122,10 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
 
     results: list[list[dict[str, Any]]] = []
     step_entities: list[Entity | None] = []
+    # Parallel to `results`, holding what each step's Include Paths materialized so
+    # a later zero-round-trip `access` can state its contents (`_StepIncludes`). A
+    # step that included nothing parks `None`, exactly as a write parks `[]`.
+    step_includes: list[_StepIncludes | None] = []
     with contextlib.ExitStack() as stack:
         for index, step in enumerate(case.scenario):
             pairs = _entry_pairs(step.get("statements"), dialect)
@@ -6982,6 +7171,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # stay aligned. A write observes no rows, so it reads no entity.
                 results.append([])
                 step_entities.append(None)
+                step_includes.append(None)
                 _finish_uow_group(case, index, label, group_states, dialect)
                 continue
             if "action" in step:
@@ -7003,8 +7193,15 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                     rows = [_materialize_owner_node(read_entity, row) for row in rows]
                 results.append(rows)
                 step_entities.append(read_entity)
+                step_includes.append(None)
                 _assert_step_row_observables(
                     case, index, step, rows, results, tolerance, default_identity
+                )
+                # `expectGraph` states the contents of the relationship this step
+                # navigated TO, which the SOURCE read materialized — nothing this
+                # zero-round-trip access fetched, which is the whole claim.
+                _assert_step_graph(
+                    case, index, step, _action_source_includes(step, step_includes), read_entity
                 )
                 continue
             # Every remaining step is a read (per the schema's exactly-one-of
@@ -7050,12 +7247,18 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                     case, read_entity, rows, include_value_objects=True
                 )
                 rows = [_materialize_owner_node(read_entity, row) for row in rows]
+                # A read step's own Include Paths are the levels after the root, run
+                # and retained here so a later `access` states contents THIS read
+                # materialized rather than ones it re-fetched.
+                includes = _run_step_includes(case, reader, index, step, rows, pairs)
             else:
                 # A cache hit (or an m-op-list construction that has not resolved yet): no
                 # statement executes. Reuse the SAME interned objects as the step it hits.
                 rows = _reuse_prior_rows(case, step, index, results)
+                includes = None
             results.append(rows)
             step_entities.append(read_entity)
+            step_includes.append(includes)
             _assert_step_row_observables(
                 case, index, step, rows, results, tolerance, default_identity
             )
