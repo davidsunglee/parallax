@@ -1,11 +1,12 @@
 # A POPULATED to-many relationship survives an authored edit (m-snapshot-read
-# *Closed world*, composition): once a read has materialized a relationship,
-# deriving an edited copy of the node leaves that view alone — accessing it still
-# issues ZERO SQL, still answers the same objects, and its contents are intact.
-# This is the clause "a derived copy's view state IS its source's" for the arm
-# m-snapshot-read-015 cannot reach: that case's source read includes nothing, so it
-# holds the ABSENT half alone, while this one holds what a copy answers for a
-# relationship the read DID materialize.
+# *Closed world*, composition): once a read has materialized a relationship, an
+# intervening edit leaves that view alone — accessing it still issues ZERO SQL and
+# still answers the same line items. The clause "a derived copy's view state IS its
+# source's" has two halves, and this case holds the SOURCE's: what the node the
+# read produced still answers once a copy has been derived from it.
+# m-snapshot-read-015 holds the copy's half, accessing the COPY rather than the
+# read — which is why it is an api-conformance-lane case, graded by each language's
+# Suite, where a copy exists as an object at all.
 #
 # Step 0 materializes order 1 WITH its `items` — the ordinary 1 + L deep fetch, one
 # statement per level, two round trips. Step 1 derives an edited copy, assigning
@@ -14,21 +15,36 @@
 # and states its WHOLE contents through `expectGraph` — both OrderItem rows, every
 # declared member, unchanged. A relationship collection compares as a multiset, so
 # what the statement pins is the elements and their multiplicity, never their order.
-# `roundTrips: 0` is the closed-world half (the access fires no query) and
-# `expectGraph` is the survival half (it answers what the read paid for). A language
-# that rebuilds an edited copy from its declared members alone fails the second; one
-# that quietly re-fetches the relationship fails the first.
 #
-# The semantic distinction is against a read-back. A fresh find after the edit
-# re-queries the database and therefore grades a NEW materialization: it would pass
-# on an implementation that discarded every view, because the database still holds
-# the rows. Only an access on the node the scenario already materialized can tell
-# a surviving view from a re-derived one, which is why `expectGraph` is legal on an
-# access step alone. `sameObjectAs: 0` rides along for consistency with the other
-# zero-round-trip accesses (m-op-list-002), but on the wire lane it is primary-key
-# equality against this step's own reused source rows; the identity proof of record
-# — that the copy's items are literally the SAME objects — is the reference-identity
-# assertion each language's API Conformance Suite runs (m-api-conformance).
+# Three implementations fail here. One that RE-QUERIES on access costs a round trip
+# that this step's `roundTrips: 0` and the case's `then.roundTrips: 2` both refuse,
+# however right the rows it answers back — the closed-world half. One whose access
+# answers other contents — an element dropped, a leaf disturbed — fails the graph
+# comparison, the survival half. And one whose edit reaches back into the node it
+# derives FROM, taking that node's views with it as it builds the copy, fails the
+# same comparison: that is what makes the intervening edit load-bearing here rather
+# than decorative, and it is graded wherever the edit happens in memory — an
+# executor that models a `mutate` as its authored golden DML alone holds no node to
+# disturb. The distinction is against a read-back, which no arrangement of these
+# steps could substitute for: a fresh find after the edit re-queries the database
+# and grades a NEW materialization, so it would pass on an implementation that
+# discarded every view. Only an access on the node the scenario already materialized
+# tells a surviving view from a re-derived one, which is why `expectGraph` is legal
+# on an access step alone.
+#
+# Two things no observable here states. The CONTENTS OF THE COPY'S OWN VIEW: the
+# access names step 0, because `on` names the step whose Include Paths materialized
+# the view whose contents are stated, and a copy carries a view it never fetched. An
+# implementation that published a copy rebuilt from its declared members alone —
+# `items` gone from the copy, intact on the source — passes. That half is the
+# reference-identity assertion each language's API Conformance Suite runs
+# (m-api-conformance), which grades the copy's own `items` as the SAME objects the
+# read produced. And DERIVING rather than rewriting: one whose `mutate` assigns into
+# the node it names and republishes that same node passes too, because the only
+# assignment here is `name` and nothing states `name` after step 0 read it.
+# `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
+# accesses (m-op-list-002); on the wire lane it is primary-key equality against this
+# step's own reused source rows.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-deep-fetch, closed-world, relationship, mutation, scenario, slice-snapshot-1]
 shape: scenario

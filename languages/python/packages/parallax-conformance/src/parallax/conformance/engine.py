@@ -2820,17 +2820,21 @@ def _relationship_declaration(
     return None if declared is None else relationship.view(model).relationship(declared.identity)
 
 
-def _assignable_member_names(model: AcceptedMetamodel, identity: EntityIdentity) -> frozenset[str]:
-    """Every member name an authored payload may target on ``identity``: its
-    family-effective attributes and Value Object occurrences.
+def _declared_member_names(model: AcceptedMetamodel, identity: EntityIdentity) -> frozenset[str]:
+    """Every member name ``identity`` DECLARES: its family-effective attributes
+    and Value Object occurrences, whatever each one's own assignability.
 
-    The one place that domain is derived, shared by a `mutate` step's `set`
-    (:func:`_edited_copy`) and a bare write row
-    (:func:`_reject_undeclared_bare_row_members`), so one authored name is judged
-    declared or not the same way whichever form carries it. A key a read
-    publishes BESIDE the declared members is absent by construction — framework
-    metadata such as `familyVariant` names no declaration, so it is no more
-    assignable than a name the model never heard of, however plainly the
+    Declaration membership alone, which is the question both callers ask — a
+    `mutate` step's `set` (:func:`_edited_copy`) and a bare write row
+    (:func:`_reject_undeclared_bare_row_members`) — so one authored name is judged
+    declared or not the same way whichever form carries it. Whether a DECLARED
+    name may then be assigned is a later and separate verdict
+    (:func:`_judged_assignments`), which is what refuses a primary-key or
+    read-only target; a name absent from this set is refused earlier and for the
+    different reason that it names no member at all. A key a read publishes
+    BESIDE the declared members is absent by construction — an inheritance
+    participant's synthetic `familyVariant` names no declaration, so it is no
+    more assignable than a name the model never heard of, however plainly the
     materialized node carries it.
     """
     position = inheritance.view(model).entity(identity)
@@ -2861,17 +2865,28 @@ def _edited_node_identity(
     concretes at once; only a step holding exactly one node has a concrete to
     name.
 
-    A variant spelling naming no concrete subtype of ``target`` is refused rather
-    than fallen back on: falling back would judge a subtype member against the
-    abstract position again, which is the hole this resolution exists to close.
+    ``familyVariant`` is read as PROVENANCE only where the target position
+    participates in a family, because that is the only place the name is reserved
+    for one: `m-inheritance` reserves the synthetic key from declared members "on
+    an inheritance participant", so a STANDALONE Entity may declare an ordinary
+    member spelled exactly that way and a read then publishes its domain value
+    under that key. The participation test is the position's own strategy — the
+    same test the read makes before publishing a synthetic variant at all — so
+    one node's key means metadata to both sides or domain state to both.
+
+    A variant spelling naming no concrete subtype of a PARTICIPANT ``target`` is
+    refused rather than fallen back on: falling back would judge a subtype member
+    against the abstract position again, which is the hole this resolution exists
+    to close.
     """
+    facet = inheritance.view(model)
+    position = facet.entity(target)
+    if position is None or position.strategy is None:
+        return target
     variant = node.get(FAMILY_VARIANT_KEY)
     if not isinstance(variant, str):
         return target
-    facet = inheritance.view(model)
-    position = facet.entity(target)
-    concretes = () if position is None else position.concrete_subtypes
-    for concrete in concretes:
+    for concrete in position.concrete_subtypes:
         if inheritance.family_variant_name(facet, concrete) == variant:
             return concrete
     raise EngineError(
@@ -2988,9 +3003,11 @@ def _edited_copy(
     happened. A name the node's Entity declares no assignable member of is
     refused as an assignment with nowhere to land — a case the verb cannot
     perform, not a mutation it silently drops. The DECLARATION is what that gate
-    asks, rather than the materialized mapping's own keys: a node publishes
-    framework metadata beside its members, and `familyVariant` is read-time
-    provenance no edit authors. What survives both is judged as any written value
+    asks, rather than the materialized mapping's own keys: an inheritance
+    participant's node publishes the synthetic `familyVariant` beside its
+    members, and that key is read-time provenance no edit authors — while on a
+    standalone Entity the same spelling is an ordinary declared member the gate
+    admits. What survives both is judged as any written value
     is (:func:`~parallax.core.inheritance.validate_write_assignment`), so a
     primary-key, read-only or framework-owned target and an ill-typed value are
     refused by the SAME verdict the typed `edit(**changes)` and the serialized
@@ -3031,7 +3048,7 @@ def _edited_copy(
             f"{case.path.name}: `mutate` assigns {related!r}, which name relationship members — "
             "an edit carries the views its source read materialized and authors none"
         )
-    declared = _assignable_member_names(model, identity)
+    declared = _declared_member_names(model, identity)
     unassignable = sorted(name for name in assignments if name not in declared)
     if unassignable:
         raise EngineError(
@@ -6364,7 +6381,7 @@ def _reject_undeclared_bare_row_members(
     carrying both an undeclared name and a real defect is refused rather than graded
     on the defect.
     """
-    declared = _assignable_member_names(model, target.identity)
+    declared = _declared_member_names(model, target.identity)
     unknown = sorted(key for key in row if key not in declared and key not in _ROW_CONTROL_KEYS)
     if unknown:
         raise EngineError(
