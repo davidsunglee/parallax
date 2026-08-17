@@ -12,7 +12,8 @@
 # `name` in memory: no DML at all, exactly as m-snapshot-read-010 pins. Step 2
 # accesses `items` on the view step 0 materialized, now that an edit has intervened,
 # and states its WHOLE contents through `expectGraph` — both OrderItem rows, every
-# declared member, unchanged, in the `id desc` order the relationship declares.
+# declared member, unchanged. A relationship collection compares as a multiset, so
+# what the statement pins is the elements and their multiplicity, never their order.
 # `roundTrips: 0` is the closed-world half (the access fires no query) and
 # `expectGraph` is the survival half (it answers what the read paid for). A language
 # that rebuilds an edited copy from its declared members alone fails the second; one

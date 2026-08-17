@@ -16,7 +16,8 @@
 # resolving read a keyed delete owes an unversioned Non-Temporal target under the
 # mandatory Locking fallback, so two round trips. Step 2 accesses `items` on the
 # view step 0 materialized and states its WHOLE contents through `expectGraph` —
-# BOTH items, item 11 included, in the `id desc` order the relationship declares.
+# BOTH items, item 11 included. A relationship collection compares as a multiset, so
+# what the statement pins is the elements and their multiplicity, never their order.
 # Step 3 then re-reads the same relationship's rows FROM THE DATABASE and observes
 # item 12 alone.
 #
