@@ -285,15 +285,15 @@ def test_a_write_keeps_a_loaded_to_one_view(provisioner: Any) -> None:
     assert snapshot.execution.round_trips == 2
 
 
-def _committed_item_ids(db: Database) -> list[int]:
-    """The line items order 3 owns in the DATABASE, read after a story ran.
+def _committed_item_ids(db: Database, order_id: int) -> list[int]:
+    """The line items ``order_id`` owns in the DATABASE, read after a story ran.
 
     The composition stories' own oracle for the half their returned snapshot
     cannot show: that the insert really committed against the very order whose
     relationship the surviving view answers for. Without it a story whose
     transaction did nothing would satisfy every assertion about that view.
     """
-    reread = db.find(Order.where(Order.id == 3).include(Order.items)).result()
+    reread = db.find(Order.where(Order.id == order_id).include(Order.items)).result()
     return [item.id for item in reread.items]
 
 
@@ -311,7 +311,7 @@ def test_a_write_keeps_a_loaded_empty_relationship_view(provisioner: Any) -> Non
     assert snapshot.execution.round_trips == 2
     # The write is load-bearing: order 3 really owns item 31 now, so the empty
     # tuple above is a value only the surviving view can answer.
-    assert _committed_item_ids(db) == [31]
+    assert _committed_item_ids(db, 3) == [31]
 
 
 def test_a_write_keeps_an_unloaded_relationship_absent(provisioner: Any) -> None:
@@ -333,7 +333,7 @@ def test_a_write_keeps_an_unloaded_relationship_absent(provisioner: Any) -> None
     # This case's lane has no corpus executor at all, so the write it composes
     # across is proven here or nowhere: order 3 really owns item 31, and the
     # relationship stayed absent across a write that genuinely landed on it.
-    assert _committed_item_ids(db) == [31]
+    assert _committed_item_ids(db, 3) == [31]
 
 
 def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) -> None:
