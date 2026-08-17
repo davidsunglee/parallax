@@ -1157,6 +1157,18 @@ def _expect_graph_on_a_multi_source_access() -> dict[str, Any]:
     return doc
 
 
+def _expect_graph_without_a_navigated_path() -> dict[str, Any]:
+    """`expectGraph` on an access naming no `path`.
+
+    The path-less `access` form resolves a query-backed list's own source entity
+    and navigates no relationship, so it reaches no relationship contents to state
+    and no accessed path the source read's `objectQuery.includes` could cover.
+    """
+    doc = _action_expect_graph_case()
+    del doc["when"]["scenario"][2]["path"]
+    return doc
+
+
 def _expect_graph_beside_expect_rows() -> dict[str, Any]:
     """One step declaring BOTH `expectRows` and `expectGraph`.
 
@@ -1360,6 +1372,7 @@ REJECTED_CASES = {
     "expect-graph-on-a-write-step": _expect_graph_on_a_write_step,
     "expect-graph-on-a-non-access-action": _expect_graph_on_a_non_access_action,
     "expect-graph-on-a-multi-source-access": _expect_graph_on_a_multi_source_access,
+    "expect-graph-without-a-navigated-path": _expect_graph_without_a_navigated_path,
     "expect-graph-beside-expect-rows": _expect_graph_beside_expect_rows,
     "graphs-entry-missing-pin": _graphs_entry_missing_pin,
     "graphs-entry-stray-key": _graphs_entry_stray_key,

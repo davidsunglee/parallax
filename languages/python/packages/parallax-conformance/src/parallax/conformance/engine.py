@@ -2567,15 +2567,30 @@ def _navigate_step_view(
     the traversal is a walk over what the read materialized rather than a second
     materialization of it. A key the node does not carry is the unloaded state
     itself (`m-snapshot-read`), which an access asserting contents cannot be
-    authored over.
+    authored over; a key carrying ``None`` is the LOADED-null branch instead,
+    whose deeper levels see an empty parent set (`m-deep-fetch`) rather than an
+    unloaded view.
+
+    A null or empty branch therefore contributes no terminal value once any hop
+    fans out: such a path answers its non-null terminal nodes in traversal order.
+    An all-to-one path fans out nowhere and answers one terminal per root
+    instead, ``None`` where its branch reached no row.
     """
     identity = source.identity
     assert identity is not None, "the caller resolves the source step's Entity Identity"
+    names = path.split(".")
+    fans_out = False
+    for name in names:
+        direction = _related_direction(case, model, identity, name)
+        identity = direction.join.target.entity
+        fans_out = fans_out or direction.cardinality.target is Multiplicity.MANY
     nodes: list[object] = list(source.roots)
-    for name in path.split("."):
-        identity = _related_entity(case, model, identity, name)
+    for name in names:
         reached: list[object] = []
         for node in nodes:
+            if node is None:
+                reached.append(None)
+                continue
             if not isinstance(node, Mapping) or name not in node:
                 raise EngineError(
                     f"{case.path.name}: `access` navigates {path!r}, but the view its "
@@ -2586,16 +2601,16 @@ def _navigate_step_view(
             arm = cast("Mapping[str, object]", node)[name]
             if isinstance(arm, list | tuple):
                 reached.extend(cast("Sequence[object]", arm))
-            else:
+            elif arm is not None or not fans_out:
                 reached.append(arm)
         nodes = reached
     return identity.name, nodes
 
 
-def _related_entity(
+def _related_direction(
     case: case_format.Case, model: AcceptedMetamodel, identity: EntityIdentity, name: str
-) -> EntityIdentity:
-    """The Entity one relationship hop from ``identity`` lands on."""
+) -> relationship.RelationshipMetadata:
+    """The relationship direction one hop from ``identity``, by its local name."""
     position = inheritance.view(model).entity(identity)
     declared = None if position is None else position.applicable_relationship(name)
     direction = (
@@ -2605,7 +2620,7 @@ def _related_entity(
         raise EngineError(
             f"{case.path.name}: {identity.name} declares no relationship {name!r} to navigate"
         )
-    return direction.join.target.entity
+    return direction
 
 
 def _find_step_pin(model: AcceptedMetamodel, query: ObjectQueryNode) -> Pin:

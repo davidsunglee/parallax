@@ -1757,6 +1757,176 @@ def test_scenario_access_keeps_a_loaded_null_distinct_from_a_node() -> None:
         _assert_scenario(case, _loaded_null_to_one_db())  # type: ignore[arg-type]
 
 
+def _null_branch_before_a_deeper_hop_case():
+    """A dotted path whose FIRST hop is the loaded-null to-one branch.
+
+    The read includes `OrderItem.order -> Order.items`, and the item's `order` view
+    is loaded null, so that branch's deeper level saw an EMPTY parent set and
+    fetched nothing (`m-deep-fetch`). The access over the whole path therefore
+    reaches no node at all — an empty answer, not a relationship the read left
+    unincluded.
+    """
+    case = _loaded_null_to_one_case()
+    read, _mutate, access = case.scenario
+    read["objectQuery"]["includes"] = [
+        {
+            "segments": [
+                {"rel": "parallax.compatibility.OrderItem.order"},
+                {"rel": "parallax.compatibility.Order.items"},
+            ]
+        }
+    ]
+    access["path"] = "order.items"
+    access["expectGraph"] = {"OrderItem": []}
+    return case
+
+
+def test_scenario_access_over_a_null_branch_reaches_no_deeper_node() -> None:
+    db = _loaded_null_to_one_db()
+
+    _assert_scenario(_null_branch_before_a_deeper_hop_case(), db)  # type: ignore[arg-type]
+
+    assert len(db.top_calls) == 2, "the null branch's own deeper level issues nothing"
+
+
+# One status belongs to a line item and one to the order alone (`orderItemId` is
+# nullable), so the `statuses -> orderItem` hop holds a real node beside a
+# loaded-null one.
+_ORDER_1_STATUS_ROWS: list[dict[str, Any]] = [
+    {"id": 201, "order_id": 1, "order_item_id": 11, "code": "PICKED"},
+    {"id": 204, "order_id": 1, "order_item_id": None, "code": "OPEN"},
+]
+
+
+def _fanned_out_terminal_null_case():
+    """A path whose LAST hop is a to-one reaching null on one of the fanned parents.
+
+    `Order.statuses -> OrderStatus.orderItem` fans out at the first hop, so the
+    access answers the terminal nodes it reached: the status without a line item
+    contributes none, exactly as its own deeper levels would see an empty parent
+    set.
+    """
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
+    read, _mutate, access = case.scenario
+    read["objectQuery"]["includes"] = [
+        {
+            "segments": [
+                {"rel": "parallax.compatibility.Order.statuses"},
+                {"rel": "parallax.compatibility.OrderStatus.orderItem"},
+            ]
+        }
+    ]
+    read["statements"] = [
+        copy.deepcopy(_MULTI_LEVEL_STATEMENTS[0]),
+        {
+            "sql": {
+                "postgres": "select t0.id, t0.order_id, t0.order_item_id, t0.code "
+                "from order_status t0 where t0.order_id in (?)"
+            },
+            "binds": [1],
+        },
+        {
+            "sql": {
+                "postgres": "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on "
+                "from order_item t0 where t0.id in (?)"
+            },
+            "binds": [11],
+        },
+    ]
+    read["roundTrips"] = 3
+    access["path"] = "statuses.orderItem"
+    access["expectGraph"] = {
+        "OrderItem": [
+            {
+                "id": 11,
+                "orderId": 1,
+                "sku": "A-100",
+                "quantity": 2,
+                "shippedOn": None,
+            }
+        ]
+    }
+    case.then["roundTrips"] = 3
+    return case
+
+
+def _fanned_out_terminal_null_db() -> _FakeGroupedDb:
+    return _FakeGroupedDb(
+        top_responses=[
+            [dict(_ORDER_1_ROW)],
+            [dict(row) for row in _ORDER_1_STATUS_ROWS],
+            [dict(_ORDER_1_ITEM_ROWS[1])],
+        ]
+    )
+
+
+def test_scenario_access_over_a_fan_out_omits_a_terminal_null() -> None:
+    _assert_scenario(_fanned_out_terminal_null_case(), _fanned_out_terminal_null_db())  # type: ignore[arg-type]
+
+
+def test_scenario_access_over_a_fan_out_still_grades_the_node_it_reached() -> None:
+    case = _fanned_out_terminal_null_case()
+    case.scenario[2]["expectGraph"]["OrderItem"][0]["sku"] = "WRONG"
+
+    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
+        _assert_scenario(case, _fanned_out_terminal_null_db())  # type: ignore[arg-type]
+
+
+def _all_to_one_null_branch_case():
+    """A dotted ALL-TO-ONE path whose first hop is loaded null.
+
+    Nothing fans out, so the access answers one terminal per root and the branch
+    that reached no row IS that terminal: `null`, which `m-case-format` authors as
+    the whole contents of a to-one member.
+    """
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
+    read, mutate, access = case.scenario
+    read["objectQuery"] = {
+        "target": "parallax.compatibility.OrderStatus",
+        "predicate": {"eq": {"attr": "parallax.compatibility.OrderStatus.id", "value": 204}},
+        "includes": [
+            {
+                "segments": [
+                    {"rel": "parallax.compatibility.OrderStatus.orderItem"},
+                    {"rel": "parallax.compatibility.OrderItem.order"},
+                ]
+            }
+        ],
+    }
+    read["statements"] = [
+        {
+            "sql": {
+                "postgres": "select t0.id, t0.order_id, t0.order_item_id, t0.code "
+                "from order_status t0 where t0.id = ?"
+            },
+            "binds": [204],
+        }
+    ]
+    read["roundTrips"] = 1
+    read["expectRows"] = [dict(_ORDER_1_STATUS_ROWS[1])]
+    mutate["set"] = {"code": "CLOSED"}
+    access["path"] = "orderItem.order"
+    access["expectGraph"] = {"Order": [None]}
+    case.then["roundTrips"] = 1
+    return case
+
+
+def test_scenario_access_over_an_all_to_one_path_keeps_a_terminal_null() -> None:
+    db = _FakeGroupedDb(top_responses=[[dict(_ORDER_1_STATUS_ROWS[1])]])
+
+    _assert_scenario(_all_to_one_null_branch_case(), db)  # type: ignore[arg-type]
+
+    assert len(db.top_calls) == 1, "neither level of the null branch has a parent to key on"
+
+
+def test_scenario_access_over_an_all_to_one_path_keeps_null_distinct_from_a_node() -> None:
+    case = _all_to_one_null_branch_case()
+    case.scenario[2]["expectGraph"] = {"Order": [{"id": 1}]}
+
+    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
+        _assert_scenario(case, _FakeGroupedDb(top_responses=[[dict(_ORDER_1_STATUS_ROWS[1])]]))  # type: ignore[arg-type]
+
+
 def test_scenario_access_expect_graph_rejects_a_corrupted_deep_leaf() -> None:
     case = _multi_level_include_case()
     case.scenario[2]["expectGraph"]["OrderStatus"][0]["code"] = "WRONG"

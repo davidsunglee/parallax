@@ -1461,6 +1461,12 @@ between did. The access therefore names the read that materialized the view
 path — an access over a relationship no read included has no materialized
 contents to state, and asserting some would be asserting a fresh read.
 
+It also names the navigated relationship itself (`path`), which is the path
+whose target entity keys the contents and whose coverage the source read's
+includes are judged against. The **path-less** access form resolves a
+query-backed list's own source entity and navigates no relationship at all, so
+it reaches no contents to state and admits no `expectGraph`.
+
 That `on` is a **single index**, never the array form. The array spans sources
 at different lowered coordinates, and contents gathered across several such
 views would be a graph no one materialized view holds — while what this
