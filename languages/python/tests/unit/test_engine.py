@@ -5898,3 +5898,118 @@ def test_run_scenario_case_access_step_graph_walks_a_to_one_arm() -> None:
 
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert [node["id"] for node in graph["Order"]] == [1]
+
+
+# `OrderStatus.orderItemId` is nullable, so one status belongs to a line item and
+# the other to the order alone — the loaded-NULL to-one branch a deeper hop must
+# tell apart from an unloaded view.
+_STATUS_ON_ITEM: dict[str, object] = {
+    "id": 201,
+    "order_id": 1,
+    "order_item_id": 11,
+    "code": "PICKED",
+}
+_STATUS_ON_ORDER_ALONE: dict[str, object] = {
+    "id": 204,
+    "order_id": 1,
+    "order_item_id": None,
+    "code": "OPEN",
+}
+_ITEM_11_STATUS_ROWS: list[dict[str, object]] = [
+    {"id": 202, "order_id": 1, "order_item_id": 11, "code": "PACKED"},
+    dict(_STATUS_ON_ITEM),
+]
+
+
+def _status_root_access(includes: list[dict[str, object]], access: dict[str, object]):
+    query = {
+        "target": "OrderStatus",
+        "predicate": {"eq": {"attr": "OrderStatus.orderId", "value": 1}},
+        "includes": includes,
+    }
+    when = {"scenario": [{"objectQuery": query}, access]}
+    return _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+
+
+def test_run_scenario_case_access_step_graph_drops_a_null_branch_before_a_deeper_hop() -> None:
+    # A loaded-null to-one branch is not an unloaded view: its own deeper level saw
+    # an EMPTY parent set, so it contributes no terminal node to a path that fans
+    # out. Carrying the null into the next hop would report the whole access as an
+    # access over a relationship the read never included.
+    case = _status_root_access(
+        [{"segments": [{"rel": "OrderStatus.orderItem"}, {"rel": "OrderItem.statuses"}]}],
+        {
+            "action": "access",
+            "on": 0,
+            "path": "orderItem.statuses",
+            "expectGraph": {"OrderStatus": [{"id": 202}, {"id": 201}]},
+        },
+    )
+    port = QueueDbPort(
+        [
+            [dict(_STATUS_ON_ITEM), dict(_STATUS_ON_ORDER_ALONE)],
+            [dict(_ORDER_1_ITEM_ROWS[1])],
+            [dict(row) for row in _ITEM_11_STATUS_ROWS],
+        ]
+    )
+
+    run = engine.run_scenario_case(case, "postgres", port)
+
+    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
+    assert [node["id"] for node in graph["OrderStatus"]] == [202, 201]
+
+
+def test_run_scenario_case_access_step_graph_omits_a_terminal_null_after_a_fan_out() -> None:
+    # The other side of the same rule at the LAST hop: a fanned-out path answers
+    # its non-null terminals, so the status belonging to no line item contributes
+    # nothing rather than a null node beside the real one.
+    query = {
+        "target": "Order",
+        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+        "includes": [{"segments": [{"rel": "Order.statuses"}, {"rel": "OrderStatus.orderItem"}]}],
+    }
+    when = {
+        "scenario": [
+            {"objectQuery": query},
+            {
+                "action": "access",
+                "on": 0,
+                "path": "statuses.orderItem",
+                "expectGraph": {"OrderItem": [{"id": 11}]},
+            },
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    port = QueueDbPort(
+        [
+            [dict(_ORDER_ROW)],
+            [dict(_STATUS_ON_ITEM), dict(_STATUS_ON_ORDER_ALONE)],
+            [dict(_ORDER_1_ITEM_ROWS[1])],
+        ]
+    )
+
+    run = engine.run_scenario_case(case, "postgres", port)
+
+    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
+    assert [node["id"] for node in graph["OrderItem"]] == [11]
+
+
+def test_run_scenario_case_access_step_graph_keeps_an_all_to_one_terminal_null() -> None:
+    # An all-to-one path fans out nowhere, so it answers one terminal per root and
+    # a branch that reached no row IS that terminal: `null`, the state a case
+    # authors as a to-one member and grades distinctly from a node.
+    case = _status_root_access(
+        [{"segments": [{"rel": "OrderStatus.orderItem"}, {"rel": "OrderItem.order"}]}],
+        {
+            "action": "access",
+            "on": 0,
+            "path": "orderItem.order",
+            "expectGraph": {"Order": [None]},
+        },
+    )
+    port = QueueDbPort([[dict(_STATUS_ON_ORDER_ALONE)]])
+
+    run = engine.run_scenario_case(case, "postgres", port)
+
+    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
+    assert graph["Order"] == [None]

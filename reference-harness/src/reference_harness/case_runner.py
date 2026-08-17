@@ -6675,6 +6675,22 @@ def _relationship_path_target(case: Case, start: Entity, path: str) -> Entity:
     return entity
 
 
+def _relationship_path_fans_out(case: Case, start: Entity, path: str) -> bool:
+    """Whether any hop of *path* walked from *start* is a to-many relationship.
+
+    A fanning-out path reaches a SET of terminal nodes, so a branch that reaches
+    no row contributes nothing to it; an all-to-one path reaches one terminal per
+    starting object instead, which is the node or the null the last hop holds.
+    """
+    entity = start
+    for rel_name in path.split("."):
+        relationship = entity.relationship_metadata_by_name(rel_name)
+        if relationship["cardinality"] == "one-to-many":
+            return True
+        entity = case.model.entity(relationship["join"]["target"]["entity"])
+    return False
+
+
 def _scenario_step_read_entity(
     case: Case, step: dict[str, Any], step_entities: list[Entity | None]
 ) -> Entity | None:
@@ -6776,14 +6792,24 @@ def _step_graph_nodes(
     ``None`` a loaded-null view carries). Reaching a key the assembly never attached
     means the source read did not include that relationship, which is an access with
     no materialized contents to state rather than an empty answer.
+
+    A loaded-null branch is not that: its own deeper levels saw an EMPTY parent set
+    (m-deep-fetch), so it contributes no terminal value to a path that fans out
+    through any to-many hop, and the walk of such a path answers non-null nodes
+    alone. An all-to-one path fans out nowhere and answers one terminal per root
+    instead — the ``None`` of a branch that reached no row included.
     """
     assembled = _assemble_graph(
         case, includes.query, includes.steps, includes.root_rows, includes.children_by_hop
     )
     nodes: list[Any] = [node for group in assembled.values() for node in group]
+    fans_out = _relationship_path_fans_out(case, case.model.entity(includes.query["target"]), path)
     for hop, rel_name in enumerate(path.split(".")):
         reached: list[Any] = []
         for node in nodes:
+            if node is None:
+                reached.append(None)
+                continue
             if not isinstance(node, dict) or rel_name not in node:
                 raise CaseFailure(
                     f"{case.path.name}: scenario[{index}] accesses {path!r}, but the "
@@ -6792,7 +6818,10 @@ def _step_graph_nodes(
                     f"`objectQuery.includes` materialized them."
                 )
             value = node[rel_name]
-            reached.extend(value) if isinstance(value, list) else reached.append(value)
+            if isinstance(value, list):
+                reached.extend(value)
+            elif value is not None or not fans_out:
+                reached.append(value)
         nodes = reached
     return nodes
 
