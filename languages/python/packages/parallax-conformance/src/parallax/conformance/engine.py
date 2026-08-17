@@ -2186,7 +2186,7 @@ def _member_columns(model: AcceptedMetamodel, entity_name: str) -> Mapping[str, 
 
 
 def _lower_scenario_step(
-    context: _GroupContext,
+    context: _CaseContext,
     step: Mapping[str, object],
     index: int,
     group_observations: GroupObservations,
@@ -2274,7 +2274,12 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     """
     model = load_case_metamodel(case)
     concurrency = _concurrency(case)
-    context = _GroupContext(model, dialect_for(dialect_name), concurrency, TemporalShadow())
+    context = _CaseContext(model, dialect_for(dialect_name), concurrency, TemporalShadow())
+    # The same seeding the RUN lane applies: a scenario loads its model's
+    # fixtures, so its first temporal close observes a persisted milestone rather
+    # than none at all. Both lanes must start from the same tracked state or they
+    # are not the same computation.
+    _seed_shadow_from_fixtures(case, model, context.shadow)
     group_observations: GroupObservations = []
     lowered: list[_LoweredStep] = []
     try:
@@ -2389,27 +2394,66 @@ def _check_action_step(case: case_format.Case, step: Mapping[str, object]) -> No
 
 
 def _snapshot_write_entries(
-    case: case_format.Case, step: Mapping[str, object]
+    case: case_format.Case, model: AcceptedMetamodel, step: Mapping[str, object]
 ) -> Sequence[Mapping[str, object]]:
     """One snapshot-read scenario write step's own keyed instruction buffer.
 
-    This lane admits the buffered KEYED form alone. A legacy string label states
-    no instruction to lower at all, and a predicate-selected write resolves
-    through its own internal read paired with the find that precedes it
-    (:func:`_run_materializing_pair`) — but a find HERE materializes a snapshot
-    whose view a later `access` states, never the rows a write settles against,
-    so pairing the two would answer a survival question with a resolve. Both are
-    refused by name rather than mis-lowered as a keyed buffer.
+    This lane admits the buffered KEYED form alone, and the three shapes it
+    refuses are refused for three different reasons, so the mapping-shaped ones
+    are CLASSIFIED before the diagnosis is written rather than sharing one:
+
+    - a legacy string label states no instruction to lower at all;
+    - a MATERIALIZING predicate write (:func:`_is_materializing_write_step`)
+      resolves through the find step that precedes it
+      (:func:`_run_materializing_pair`), and a find HERE materializes the
+      snapshot whose view a later `access` states rather than the rows a write
+      settles against — the two step roles genuinely conflict, so this refusal
+      is permanent;
+    - a READLESS predicate write owes no resolving read at all, so nothing about
+      it conflicts with this lane; it is refused because the lane has not wired
+      it, never because the shape is wrong here.
     """
     raw_write = step["write"]
-    if not isinstance(raw_write, list):
+    if isinstance(raw_write, list):
+        return _write_entries(cast("list[object]", raw_write))
+    if not _is_predicate_write_step(raw_write):
         raise EngineError(
             f"{case.path.name}: a snapshot-read scenario's write step states the BUFFERED "
-            f"KEYED instruction list; {type(raw_write).__name__!r} is a legacy label or a "
-            "predicate-selected instruction, neither of which this lane's find steps — "
-            "snapshot materializations, not a write's resolve — can stand behind"
+            f"KEYED instruction list; {type(raw_write).__name__!r} is a legacy label, which "
+            "states no instruction to lower at all"
         )
-    return _write_entries(cast("list[object]", raw_write))
+    if _is_materializing_write_step(step, model) is not None:
+        raise EngineError(
+            f"{case.path.name}: a MATERIALIZING predicate write resolves through the find "
+            "step before it, and a find HERE materializes the view a later `access` states "
+            "rather than the rows the write settles against — pairing the two would answer "
+            "a survival question with a resolve"
+        )
+    raise EngineError(
+        f"{case.path.name}: a READLESS predicate write owes no resolving find, so nothing "
+        "about it conflicts with this lane — the lane simply does not wire the "
+        "predicate-write translation yet, so the shape is unsupported rather than "
+        "mis-authored"
+    )
+
+
+_SnapshotStepKind = Literal["action", "write", "find"]
+
+
+def _snapshot_step_kind(step: Mapping[str, object]) -> _SnapshotStepKind:
+    """Which kind a snapshot-read scenario step is, decided ONCE for both of the
+    lane's interpreters (:func:`_compile_snapshot_scenario` and
+    :func:`_run_snapshot_scenario`).
+
+    The three are mutually exclusive and a step carrying neither an `action` nor
+    a `write` is a find (`m-case-format` "Scenario steps"), which is what makes
+    the cascade a classification rather than each interpreter's own ordered
+    guesses — a kind admitted here is a kind both of them must answer for."""
+    if "action" in step:
+        return "action"
+    if "write" in step:
+        return "write"
+    return "find"
 
 
 def _compile_snapshot_scenario(
@@ -2427,36 +2471,43 @@ def _compile_snapshot_scenario(
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
+    # The same seeding the RUN lane applies: this lane's cases load their model's
+    # fixtures, so a temporal close observes the milestone that persisted history
+    # holds rather than none at all. Both lanes must start from the same tracked
+    # state or they are not the same computation.
+    _seed_shadow_from_fixtures(case, model, shadow)
     emissions: list[Emission] = []
     try:
         for index, step in enumerate(steps):
-            if "action" in step:
-                _check_action_step(case, step)
-                continue
-            if "write" in step:
-                entries = _snapshot_write_entries(case, step)
-                with shadow.staged(doomed=step.get("rollback") is True):
-                    statements = _lower_writes(
-                        entries,
-                        model,
-                        dialect,
-                        concurrency,
-                        shadow,
-                        _entry_instant(entries[0]),
-                        [],
+            match _snapshot_step_kind(step):
+                case "action":
+                    _check_action_step(case, step)
+                case "write":
+                    entries = _snapshot_write_entries(case, model, step)
+                    with shadow.staged(doomed=step.get("rollback") is True):
+                        statements = _lower_writes(
+                            entries,
+                            model,
+                            dialect,
+                            concurrency,
+                            shadow,
+                            _entry_instant(entries[0]),
+                            [],
+                        )
+                    emissions.extend(
+                        Emission(f"/scenario/{index}/write", statement.sql, statement.binds)
+                        for statement in statements
                     )
-                emissions.extend(
-                    Emission(f"/scenario/{index}/write", statement.sql, statement.binds)
-                    for statement in statements
-                )
-                continue
-            query = _step_query(step)
-            metadata = case_entity(model, query.target.canonical)
-            entity_query = _canonicalize_read(query, metadata, model)
-            statement = compile_read(entity_query, model, dialect, result_form="instance").statement
-            emissions.append(
-                Emission(f"/scenario/{index}/objectQuery", statement.sql, statement.binds)
-            )
+                case "find":
+                    query = _step_query(step)
+                    metadata = case_entity(model, query.target.canonical)
+                    entity_query = _canonicalize_read(query, metadata, model)
+                    statement = compile_read(
+                        entity_query, model, dialect, result_form="instance"
+                    ).statement
+                    emissions.append(
+                        Emission(f"/scenario/{index}/objectQuery", statement.sql, statement.binds)
+                    )
     except (*_READ_ERRORS, *_LOWERING_ERRORS) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return emissions, len(emissions)
@@ -2525,14 +2576,13 @@ def _run_snapshot_scenario(
     group, so it carries no Execution Log."""
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
-    concurrency = _concurrency(case)
-    shadow = TemporalShadow()
+    context = _CaseContext(model, dialect, _concurrency(case), TemporalShadow())
     # Seeded from the case's own fixtures and then advanced by each write step's
     # plan, so a temporal close observes the milestone the persisted history (or
     # an earlier step) actually holds — the SAME order every other lane applies:
     # fixtures, then `given.apply`, then the first step.
-    _seed_shadow_from_fixtures(case, model, shadow)
-    _apply_given_apply(case, dialect, port, shadow)
+    _seed_shadow_from_fixtures(case, model, context.shadow)
+    _apply_given_apply(case, dialect, port, context.shadow)
     db = handle.Database(port, model, dialect=dialect)
     emissions: list[Emission] = []
     round_trips = 0
@@ -2540,46 +2590,45 @@ def _run_snapshot_scenario(
     errors: list[dict[str, object]] = []
     step_graphs: list[dict[str, object]] = []
     for index, step in enumerate(steps):
-        if "action" in step:
-            _check_action_step(case, step)
-            if step.get("action") == "access":
-                observed = _access_step_graph(case, model, index, step, results)
-                if observed is not None:
-                    step_graphs.append(observed)
+        match _snapshot_step_kind(step):
+            case "action":
+                _check_action_step(case, step)
+                if step.get("action") == "access":
+                    observed = _access_step_graph(case, model, index, step, results)
+                    if observed is not None:
+                        step_graphs.append(observed)
+                else:
+                    error_class = _grade_mutate_step(case, step, results)
+                    if error_class is not None:
+                        errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
                 results.append(_NO_SCENARIO_RESULT)
-                continue
-            error_class = _grade_mutate_step(case, step, results)
-            if error_class is not None:
-                errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
-            results.append(_NO_SCENARIO_RESULT)
-            continue
-        if "write" in step:
-            statements, unit_trips = _run_snapshot_write_step(
-                case, model, dialect, concurrency, shadow, port, step
-            )
-            emissions.extend(
-                Emission(f"/scenario/{index}/write", statement.sql, statement.binds)
-                for statement in statements
-            )
-            round_trips += unit_trips
-            results.append(_NO_SCENARIO_RESULT)
-            continue
-        query = _step_query(step)
-        try:
-            # The case document's own spelling is resolved HERE, where the
-            # document is read, so no later step carries a spelling into a
-            # production seam that takes an Entity Identity.
-            identity = case_entity(model, query.target.canonical).identity
-            snapshot = db.wire.find(query)
-            pin = _find_step_pin(model, query)
-        except _READ_ERRORS as exc:
-            raise EngineError(f"{case.path.name}: {exc}") from exc
-        for call in snapshot.execution.calls:
-            emissions.append(
-                Emission(f"/scenario/{index}/objectQuery", call.statement.sql, call.statement.binds)
-            )
-        round_trips += snapshot.execution.round_trips
-        results.append(_ScenarioStepResult(_root_members(snapshot), pin, identity))
+            case "write":
+                statements, unit_trips = _run_snapshot_write_step(case, context, port, step)
+                emissions.extend(
+                    Emission(f"/scenario/{index}/write", statement.sql, statement.binds)
+                    for statement in statements
+                )
+                round_trips += unit_trips
+                results.append(_NO_SCENARIO_RESULT)
+            case "find":
+                query = _step_query(step)
+                try:
+                    # The case document's own spelling is resolved HERE, where the
+                    # document is read, so no later step carries a spelling into a
+                    # production seam that takes an Entity Identity.
+                    identity = case_entity(model, query.target.canonical).identity
+                    snapshot = db.wire.find(query)
+                    pin = _find_step_pin(model, query)
+                except _READ_ERRORS as exc:
+                    raise EngineError(f"{case.path.name}: {exc}") from exc
+                emissions.extend(
+                    Emission(
+                        f"/scenario/{index}/objectQuery", call.statement.sql, call.statement.binds
+                    )
+                    for call in snapshot.execution.calls
+                )
+                round_trips += snapshot.execution.round_trips
+                results.append(_ScenarioStepResult(_root_members(snapshot), pin, identity))
     return ScenarioRun(emissions, round_trips, errors, step_graphs, None)
 
 
@@ -2597,44 +2646,31 @@ def _root_members(
 
 def _run_snapshot_write_step(
     case: case_format.Case,
-    model: AcceptedMetamodel,
-    dialect: Dialect,
-    concurrency: Concurrency,
-    shadow: TemporalShadow,
+    context: _CaseContext,
     port: DbPort,
     step: Mapping[str, object],
 ) -> tuple[tuple[LoweredStatement, ...], int]:
     """Execute one `write:` step of a snapshot-read scenario and report the DML
     it emitted beside the round trips it cost.
 
-    The step is its OWN choreography unit — one ``db.transact``, the resolving
-    reads its keyed verbs owe and then their DML — which is the ungrouped
-    semantics `m-case-format` gives a write step carrying no `uow` label, and the
-    same seam :func:`run_scenario_case` drives for the keyed unit-of-work lane.
-    Nothing about it reaches the views this scenario's find steps materialized:
-    those are values taken at their own pin (`m-snapshot-read` closed world), so
-    the write persists and the graph stands.
+    The step is its OWN choreography unit, driven through the SAME
+    :func:`_execute_keyed_unit` an ungrouped write step of the keyed
+    unit-of-work lane is, which is the ungrouped semantics `m-case-format` gives
+    a write step carrying no `uow` label. Nothing about it reaches the views this
+    scenario's find steps materialized: those are values taken at their own pin
+    (`m-snapshot-read` closed world), so the write persists and the graph stands.
 
-    The emission is the PURE re-lowering of the same resolved instructions the
-    execution buffered, so a golden bind states what the plan holds rather than
-    what a driver happened to send; both advance the case-state ledger once, on
-    the boundary this unit's outcome stages.
+    What this lane adds is its own admitted write form
+    (:func:`_snapshot_write_entries`) and the case-named diagnosis every failure
+    inside the unit carries out of it.
     """
-    entries = _snapshot_write_entries(case, step)
-    rollback = step.get("rollback") is True
-    tx_instant = _entry_instant(entries[0])
     try:
-        with shadow.staged(doomed=rollback):
-            resolved = _resolve_entries(entries, model, shadow, [])
-            statements = _lower_resolved(
-                resolved, entries, model, dialect, concurrency, tx_instant, shadow
-            )
-            _log, unit_trips = _execute_write_unit(
-                port, model, dialect, concurrency, resolved, tx_instant, rollback=rollback
-            )
+        entries = _snapshot_write_entries(case, context.model, step)
+        return _execute_keyed_unit(
+            port, context, entries, [], rollback=step.get("rollback") is True
+        )
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-    return statements, unit_trips
 
 
 def _access_step_graph(
@@ -3157,6 +3193,56 @@ def _execute_write_unit(
     return log, log.round_trips if log is not None else 0
 
 
+def _execute_keyed_unit(
+    port: DbPort,
+    context: _CaseContext,
+    entries: Sequence[Mapping[str, object]],
+    group_observations: GroupObservations,
+    *,
+    rollback: bool,
+) -> tuple[tuple[LoweredStatement, ...], int]:
+    """One buffered-keyed-write choreography unit, whole: resolve its entries
+    once, re-lower that ONE resolution purely, and execute it as its own
+    ``db.transact`` — reporting the DML the plan holds beside the round trips
+    the execution cost.
+
+    Every producer of an ungrouped keyed unit drives this — a scenario's
+    ungrouped write step on either scenario lane, and a writeSequence entry — so
+    the order the three operations happen in, and the boundary they are staged
+    on, are stated once. The staging is the unit's own outcome
+    (:meth:`~parallax.conformance.temporal_state.TemporalShadow.staged`): a
+    doomed unit's tracked advances are discarded with the rows its abort erases.
+
+    Resolution happens ONCE and both consumers read it, so a temporal write's
+    observation is consumed (and its milestone retired) a single time; the
+    emission is therefore the PURE re-lowering of the very instructions the
+    execution buffered, and a golden bind states what the plan holds rather than
+    what a driver happened to send.
+    """
+    tx_instant = _entry_instant(entries[0])
+    with context.shadow.staged(doomed=rollback):
+        resolved = _resolve_entries(entries, context.model, context.shadow, group_observations)
+        statements = _lower_resolved(
+            resolved,
+            entries,
+            context.model,
+            context.dialect,
+            context.concurrency,
+            tx_instant,
+            context.shadow,
+        )
+        _log, unit_trips = _execute_write_unit(
+            port,
+            context.model,
+            context.dialect,
+            context.concurrency,
+            resolved,
+            tx_instant,
+            rollback=rollback,
+        )
+    return statements, unit_trips
+
+
 def _run_readless_predicate_write(
     port: DbPort,
     model: AcceptedMetamodel,
@@ -3475,18 +3561,19 @@ def _group_is_doomed(steps: Sequence[Mapping[str, object]], start: int, end: int
 
 
 @dataclass(frozen=True, slots=True)
-class _GroupContext:
-    """What a scenario's translation is fixed by, for every one of its steps —
-    the run lane's `uow` groups (:func:`_run_group_step`) and the compile lane's
-    pure lowering (:func:`_lower_scenario_step`) alike.
+class _CaseContext:
+    """What ONE case's write translation is fixed by, for every step or entry of
+    it — the run lane's `uow` groups (:func:`_run_group_step`), an ungrouped
+    write step on either scenario lane (:func:`_execute_keyed_unit`), and the
+    compile lane's pure lowering (:func:`_lower_scenario_step`) alike.
 
     The model is the case's own accepted Metamodel
     (:func:`load_case_metamodel`), and the tracker is the ONE case-spanning
-    :class:`TemporalShadow` every group shares rather than a per-group copy — a
-    later group's temporal close observes the milestone an earlier group's write
-    opened. The record is frozen because none of the four is ever REBOUND
-    mid-scenario; the tracker's own contents advance, which is exactly the state
-    a shared tracker exists to carry.
+    :class:`TemporalShadow` every unit shares rather than a per-unit copy — a
+    later unit's temporal close observes the milestone an earlier one's write
+    opened. The record is frozen because none of the four is ever REBOUND inside
+    a case; the tracker's own contents advance, which is exactly the state a
+    shared tracker exists to carry.
     """
 
     model: AcceptedMetamodel
@@ -3781,7 +3868,7 @@ def _required(instant: dt.datetime | None) -> dt.datetime:
 
 def _run_group_step(
     tx: handle.Transaction,
-    context: _GroupContext,
+    context: _CaseContext,
     state: _GroupState,
     step: Mapping[str, object],
     index: int,
@@ -3855,7 +3942,7 @@ def _run_group_step(
 
 def _run_uow_group(
     port: DbPort,
-    context: _GroupContext,
+    context: _CaseContext,
     steps: Sequence[Mapping[str, object]],
     start: int,
     end: int,
@@ -3996,7 +4083,7 @@ class _InterleavedGroupResult:
 
 def _run_interleaved_group(
     database: handle.Database,
-    context: _GroupContext,
+    context: _CaseContext,
     steps: Sequence[Mapping[str, object]],
     indices: Sequence[int],
     turnstile: _Turnstile,
@@ -4622,7 +4709,7 @@ def run_interleaved_scenario_case(
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})
-    context = _GroupContext(model, dialect, concurrency, shadow)
+    context = _CaseContext(model, dialect, concurrency, shadow)
     thread_a = threading.Thread(
         target=_run_interleaved_group,
         args=(main_db, context, steps, indices_a, turnstile, result_a),
@@ -4707,7 +4794,7 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
             "function does not construct — call run_interleaved_scenario_case instead"
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
-    context = _GroupContext(model, dialect, concurrency, shadow)
+    context = _CaseContext(model, dialect, concurrency, shadow)
     lowered: list[_LoweredStep] = []
     group_logs: list[ExecutionLog | None] = []
     round_trips = 0
@@ -4785,16 +4872,9 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
                     _LoweredStep(f"/scenario/{index}/write", (statement,), True, rollback)
                 )
             else:
-                entries = _write_entries(raw_write)
-                tx_instant = _entry_instant(entries[0])
-                with shadow.staged(doomed=rollback):
-                    resolved = _resolve_entries(entries, model, shadow, [])
-                    statements = _lower_resolved(
-                        resolved, entries, model, dialect, concurrency, tx_instant, shadow
-                    )
-                    _write_log, unit_trips = _execute_write_unit(
-                        port, model, dialect, concurrency, resolved, tx_instant, rollback=rollback
-                    )
+                statements, unit_trips = _execute_keyed_unit(
+                    port, context, _write_entries(raw_write), [], rollback=rollback
+                )
                 round_trips += unit_trips
                 lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
             index += 1
@@ -4826,22 +4906,16 @@ def run_write_sequence_case(
     """
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
-    concurrency = _concurrency(case)
-    shadow = TemporalShadow()
+    context = _CaseContext(model, dialect, _concurrency(case), TemporalShadow())
     group_observations: GroupObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
     round_trips = 0
     try:
-        _seed_shadow_from_fixtures(case, model, shadow)
-        _apply_given_apply(case, dialect, port, shadow)
+        _seed_shadow_from_fixtures(case, model, context.shadow)
+        _apply_given_apply(case, dialect, port, context.shadow)
         for index, entry in enumerate(_write_sequence_entries(case)):
-            tx_instant = _entry_instant(entry)
-            resolved = _resolve_entries([entry], model, shadow, group_observations)
-            statements = _lower_resolved(
-                resolved, [entry], model, dialect, concurrency, tx_instant, shadow
-            )
-            _log, unit_trips = _execute_write_unit(
-                port, model, dialect, concurrency, resolved, tx_instant, rollback=False
+            statements, unit_trips = _execute_keyed_unit(
+                port, context, [entry], group_observations, rollback=False
             )
             round_trips += unit_trips
             lowered.append((f"/writeSequence/{index}", statements))

@@ -334,24 +334,23 @@ the second grader every other claimed observable has.
 Relates to `parallax.conformance.engine._snapshot_write_entries`.
 
 **What.** The snapshot-scenario lane now executes `write:` steps, and it admits
-the buffered KEYED instruction list alone: `_snapshot_write_entries` refuses
-every other `write` form by name. Two forms fall under that one refusal for
-different reasons. A MATERIALIZING predicate write is refused permanently and
-correctly — it resolves through the find step that precedes it
-(`_run_materializing_pair`), and a find on this lane materializes a view a later
-`access` states rather than the rows a write settles against, so the two step
-roles genuinely conflict. A READLESS predicate write (the `m-batch-write-005` /
-`-006` shape) needs no find at all, so nothing about it conflicts with this lane;
-it is refused only because the one guard covers both. Wiring it would reuse
-`_lower_predicate_write_step` and `_run_readless_predicate_write` unchanged, as
-the unit-of-work lane already does.
+the buffered KEYED instruction list alone: `_snapshot_write_entries` classifies
+every other `write` form and refuses each by its own name. A MATERIALIZING
+predicate write is refused permanently and correctly — it resolves through the
+find step that precedes it (`_run_materializing_pair`), and a find on this lane
+materializes a view a later `access` states rather than the rows a write settles
+against, so the two step roles genuinely conflict. A READLESS predicate write
+(the `m-batch-write-005` / `-006` shape) needs no find at all, so nothing about
+it conflicts with this lane; its refusal says so — the shape is unwired here, not
+mis-authored. Wiring it would reuse `_lower_predicate_write_step` and
+`_run_readless_predicate_write` unchanged, as the unit-of-work lane already does.
 
 **Why it is deferred rather than fixed.** No corpus case pairs a predicate write
 with a lifecycle action step, so the branch would ship unexercised — a coverage
-cost for a shape nothing asks for — and the refusal it replaces is loud and names
-its reason. The moment a case authors one, the repair is the branch plus its own
-DB-free driver; until then the honest state is a refusal that says which half of
-itself is permanent.
+cost for a shape nothing asks for. The moment a case authors one, the repair is
+the branch plus its own DB-free driver; until then the honest state is the
+refusal this entry describes, which already says which half of itself is
+permanent.
 
 ## Forwarding pointers
 

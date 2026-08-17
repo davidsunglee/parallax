@@ -60,7 +60,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity import UnloadedRelationshipError, to_document
 from parallax.core.entity._model import model_of
 from parallax.snapshot import InvalidData, connect, edge_of, is_view_loaded, pin_of, view
-from parallax.snapshot.handle import TransactionTimePinReadOnlyError
+from parallax.snapshot.handle import Database, TransactionTimePinReadOnlyError
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 
@@ -273,16 +273,28 @@ def test_a_write_keeps_a_loaded_to_one_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-017"]
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
-    snapshot, loaded, reread = story.run(db)
+    snapshot, loaded_order, reread = story.run(db)
     item = snapshot.result()
     # What only this lane can show: the write replaced no node — the view still
     # holds the SAME object, which the case's `expectGraph` (contents alone)
     # cannot distinguish from an equal-valued rebuild. And the value it holds is
     # the one the read paid for, while the database is where the write is
     # observable, which is what the re-read is for.
-    assert item.order is loaded
-    assert (loaded.name, reread.name) == ("Ada", "Rewritten")
+    assert item.order is loaded_order
+    assert (loaded_order.name, reread.name) == ("Ada", "Rewritten")
     assert snapshot.execution.round_trips == 2
+
+
+def _committed_item_ids(db: Database) -> list[int]:
+    """The line items order 3 owns in the DATABASE, read after a story ran.
+
+    The composition stories' own oracle for the half their returned snapshot
+    cannot show: that the insert really committed against the very order whose
+    relationship the surviving view answers for. Without it a story whose
+    transaction did nothing would satisfy every assertion about that view.
+    """
+    reread = db.find(Order.where(Order.id == 3).include(Order.items)).result()
+    return [item.id for item in reread.items]
 
 
 def test_a_write_keeps_a_loaded_empty_relationship_view(provisioner: Any) -> None:
@@ -297,6 +309,9 @@ def test_a_write_keeps_a_loaded_empty_relationship_view(provisioner: Any) -> Non
     assert is_view_loaded(order, Order.items) is True
     assert order.items == ()
     assert snapshot.execution.round_trips == 2
+    # The write is load-bearing: order 3 really owns item 31 now, so the empty
+    # tuple above is a value only the surviving view can answer.
+    assert _committed_item_ids(db) == [31]
 
 
 def test_a_write_keeps_an_unloaded_relationship_absent(provisioner: Any) -> None:
@@ -315,6 +330,10 @@ def test_a_write_keeps_an_unloaded_relationship_absent(provisioner: Any) -> None
     # The access issues no SQL of its own, the write's own unit of work aside:
     # the materializing find is the only round trip this snapshot ever cost.
     assert snapshot.execution.round_trips == 1
+    # This case's lane has no corpus executor at all, so the write it composes
+    # across is proven here or nowhere: order 3 really owns item 31, and the
+    # relationship stayed absent across a write that genuinely landed on it.
+    assert _committed_item_ids(db) == [31]
 
 
 def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) -> None:

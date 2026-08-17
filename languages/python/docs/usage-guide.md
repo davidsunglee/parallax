@@ -809,7 +809,7 @@ Corpus case: `m-snapshot-read-017`
 ```python
 def a_write_keeps_a_loaded_to_one_view(db: Database) -> tuple[Snapshot[Any], Any, Any]:
     snapshot = db.find(OrderItem.where(OrderItem.id == 11).include(OrderItem.order))
-    loaded = snapshot.result().order  # the owning Order this read materialized
+    loaded_order = snapshot.result().order
 
     def rewrite(tx: Transaction) -> None:
         observed = tx.find(Order.where(Order.id == 1)).result()
@@ -817,7 +817,7 @@ def a_write_keeps_a_loaded_to_one_view(db: Database) -> tuple[Snapshot[Any], Any
 
     db.transact(rewrite)
     reread = db.find(Order.where(Order.id == 1)).result()  # where the write IS observable
-    return snapshot, loaded, reread
+    return snapshot, loaded_order, reread
 ```
 
 ## A committed write leaves a loaded-EMPTY relationship loaded and empty

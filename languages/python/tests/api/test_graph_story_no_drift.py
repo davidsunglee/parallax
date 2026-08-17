@@ -58,6 +58,20 @@ _ORDER_ITEM_ROW: Row = {
     "shipped_on": None,
 }
 
+# Order 3 — the fixture row the loaded-empty / unloaded pair is rooted on, which
+# owns no line items until each story's own insert lands.
+_ORDER_3_ROW: Row = {
+    "id": 3,
+    "name": "ada",
+    "sku": "A-300",
+    "qty": 15,
+    "price": Decimal("30.25"),
+    "active": False,
+    "ordered_on": dt.date(2024, 3, 15),
+}
+
+_ORDER_ITEM_INSERT = "insert into order_item(id, order_id, sku, quantity) values (%s, %s, %s, %s)"
+
 # Balance 1's SUPERSEDED milestone — the row a finite Transaction-Time pin at
 # 2024-03-01 selects, closed at 2024-06-01 by the milestone that replaced it.
 _BALANCE_MILESTONE_ROW: Row = {
@@ -138,11 +152,20 @@ def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
     The to-one composition story reads four times: its own root and include
     levels, the transaction's observing find, and the re-read that shows where
     the write IS observable.
+
+    The loaded-empty composition story reads twice — its root level answers
+    order 3 and its `items` level answers nothing, which is what makes the view
+    loaded and EMPTY rather than short-circuited — and its unloaded sibling once,
+    declaring no include at all.
     """
     if run is graph_stories.mutation_has_no_writeback:
         return [[_ORDER_ROW], [_ORDER_ROW]]
     if run is graph_stories.a_write_keeps_a_loaded_to_one_view:
         return [[_ORDER_ITEM_ROW], [_ORDER_ROW], [_ORDER_ROW], [_ORDER_ROW]]
+    if run is graph_stories.a_write_keeps_a_loaded_empty_relationship_view:
+        return [[_ORDER_3_ROW], []]
+    if run is graph_stories.a_write_keeps_an_unloaded_relationship_absent:
+        return [[_ORDER_3_ROW]]
     if run in (
         graph_stories.an_edited_copy_keeps_its_source_nodes_views,
         graph_stories.an_edit_keeps_a_loaded_relationship_view,
@@ -171,10 +194,51 @@ def test_the_to_one_composition_story_keeps_the_view_across_the_committed_write(
         if s.run is graph_stories.a_write_keeps_a_loaded_to_one_view
     )
     port = _WritingCannedPort(_responses_for(story.run))
-    snapshot, loaded, _reread = story.run(Database.connect(port, MODELS[story.model]))
+    snapshot, loaded_order, _reread = story.run(Database.connect(port, MODELS[story.model]))
     assert [sql for sql, _binds in port.writes] == ["update orders set name = %s where id = %s"]
-    assert snapshot.result().order is loaded
-    assert loaded.name == "Ada"
+    assert snapshot.result().order is loaded_order
+    assert loaded_order.name == "Ada"
+
+
+def test_the_loaded_empty_composition_story_keeps_an_empty_view_across_its_insert() -> None:
+    # The in-memory half of `m-snapshot-read-018`. The insert really reaches the
+    # wire — recorded below, and asserted because a story whose transaction did
+    # nothing would satisfy every claim about the view — and `items` still
+    # answers the empty tuple the include level fetched, LOADED rather than
+    # absent.
+    story = next(
+        s
+        for s in graph_stories.GRAPH_STORIES
+        if s.run is graph_stories.a_write_keeps_a_loaded_empty_relationship_view
+    )
+    port = _WritingCannedPort(_responses_for(story.run))
+    snapshot = story.run(Database.connect(port, MODELS[story.model]))
+    order = snapshot.result()
+    assert [(sql, binds) for sql, binds in port.writes] == [
+        (_ORDER_ITEM_INSERT, [31, 3, "C-300", 7])
+    ]
+    assert is_view_loaded(order, Order.items) is True
+    assert order.items == ()
+
+
+def test_the_unloaded_composition_story_keeps_an_absent_view_across_its_insert() -> None:
+    # The in-memory half of `m-snapshot-read-019`, whose api-conformance lane has
+    # no corpus executor at all: the SAME insert against the SAME order as its
+    # loaded-empty sibling, and `items` still absent rather than empty — the two
+    # halves of the distinction, differing only in the include the read declared.
+    story = next(
+        s
+        for s in graph_stories.GRAPH_STORIES
+        if s.run is graph_stories.a_write_keeps_an_unloaded_relationship_absent
+    )
+    port = _WritingCannedPort(_responses_for(story.run))
+    order = story.run(Database.connect(port, MODELS[story.model])).result()
+    assert [(sql, binds) for sql, binds in port.writes] == [
+        (_ORDER_ITEM_INSERT, [31, 3, "C-300", 7])
+    ]
+    assert is_view_loaded(order, Order.items) is False
+    with pytest.raises(UnloadedRelationshipError, match="items"):
+        order.items  # noqa: B018 - the access itself is the assertion
 
 
 def test_the_mutation_story_edits_in_memory_and_rereads_the_original() -> None:
