@@ -6797,7 +6797,10 @@ def _step_graph_nodes(
     (m-deep-fetch), so it contributes no terminal value to a path that fans out
     through any to-many hop, and the walk of such a path answers non-null nodes
     alone. An all-to-one path fans out nowhere and answers one terminal per root
-    instead — the ``None`` of a branch that reached no row included.
+    instead — the ``None`` of a branch that reached no row included. That is the
+    contents the observable itself is defined to carry (m-case-format
+    *Relationship contents at a step*), which is why every executor and adapter
+    walks a multi-hop path this way rather than each answering its own shape.
     """
     assembled = _assemble_graph(
         case, includes.query, includes.steps, includes.root_rows, includes.children_by_hop

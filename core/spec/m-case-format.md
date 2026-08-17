@@ -1467,6 +1467,22 @@ includes are judged against. The **path-less** access form resolves a
 query-backed list's own source entity and navigates no relationship at all, so
 it reaches no contents to state and admits no `expectGraph`.
 
+A multi-hop `path` is walked hop by hop over the materialized view, and a branch
+that reached **no row** contributes what the fetch left behind: such a branch
+hands its deeper levels an **empty parent set** (`m-deep-fetch`), so nothing
+below it was ever materialized to state. A path with **any to-many hop** reaches
+a set of terminals, and the contents are its **non-null** ones — a null or empty
+branch drops out at the hop it appears on, the **terminal** hop included, because
+a fanned-out position carries the rows the fetch attached and a null is not one
+of them. A path whose hops are **all to-one** reaches one terminal per object the
+source read produced, and that terminal is the node or the `null` the last hop
+holds — the "single node or null" the shape gives a to-one member. An access over
+`statuses.orderItem` therefore states the order items its statuses reach and no
+null among them, while one over `orderItem` states `null` for a status that
+reaches none. This is the walk every executor performs and every conforming
+adapter reports (`m-conformance-adapter`), so one authored `expectGraph` grades
+the same contents in every lane.
+
 That `on` is a **single index**, never the array form. The array spans sources
 at different lowered coordinates, and contents gathered across several such
 views would be a graph no one materialized view holds — while what this

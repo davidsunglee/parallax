@@ -2574,7 +2574,10 @@ def _navigate_step_view(
     A null or empty branch therefore contributes no terminal value once any hop
     fans out: such a path answers its non-null terminal nodes in traversal order.
     An all-to-one path fans out nowhere and answers one terminal per root
-    instead, ``None`` where its branch reached no row.
+    instead, ``None`` where its branch reached no row. Those contents are the
+    observable's own (`m-case-format` *Relationship contents at a step*), which
+    every adapter reports alike; the Python inspection API's traversal rule
+    (`python.md`) agrees with it rather than defining it.
     """
     identity = source.identity
     assert identity is not None, "the caller resolves the source step's Entity Identity"
