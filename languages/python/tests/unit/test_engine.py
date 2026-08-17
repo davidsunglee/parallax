@@ -5074,6 +5074,57 @@ def test_edited_copy_refuses_a_variant_naming_no_concrete_subtype() -> None:
         _edited_animal({"name": "Rexy"}, _abstract_read_of_a_dog(familyVariant="Unicorn"))
 
 
+def test_edited_copy_judges_a_concrete_target_read_against_that_target() -> None:
+    # A CONCRETE-target read carries no `familyVariant` at all (`m-case-format`):
+    # the caller already knows the variant, so a node states no provenance to
+    # resolve and the target it was published under is the Entity it is.
+    dog = engine.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Dog").identity
+    step = {"action": "mutate", "on": 0, "set": {"barkVolume": 9}}
+    source = _scenario_result({"id": 1, "name": "Rex", "barkVolume": 7}, identity=dog)
+    copy = engine._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        _ANIMAL_CASE, _ANIMAL_MODEL, step, 0, source
+    )
+    assert (copy.identity, copy.roots[0]["barkVolume"]) == (dog, 9)
+
+
+_TICKET = EntityIdentity("catalog", "Ticket")
+
+# A STANDALONE Entity declaring an ordinary Attribute spelled `familyVariant`,
+# which `m-inheritance` reserves from declared members on an inheritance
+# PARTICIPANT alone. A read of one publishes that key holding domain data.
+_TICKET_MODEL = form_metamodel(
+    source(
+        Declaration(
+            identity=_TICKET,
+            container=Table("ticket"),
+            attributes=(key(_TICKET), attribute(_TICKET, "familyVariant", type=STRING)),
+        )
+    )
+)
+
+
+def _edited_ticket(authored: Mapping[str, object]) -> Any:
+    step = {"action": "mutate", "on": 0, "set": dict(authored)}
+    source_result = _scenario_result({"id": 1, "familyVariant": "premium"}, identity=_TICKET)
+    return engine._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        _case("m-snapshot-read-010"), _TICKET_MODEL, step, 0, source_result
+    )
+
+
+def test_edited_copy_reads_a_standalone_entitys_family_variant_as_domain_state() -> None:
+    # Provenance is what that key means on a family, and nothing more: a
+    # standalone Entity may declare a member of its own by that name, and
+    # resolving its value as a variant spelling would refuse every edit of such a
+    # node — even one touching another member entirely. It stays ordinary domain
+    # state here: assignable, judged against its own declared type, and carried
+    # by a copy that is still the Entity the read named.
+    copy = _edited_ticket({"familyVariant": "standard"})
+    assert copy.roots[0] == {"id": 1, "familyVariant": "standard"}
+    assert copy.identity == _TICKET
+    with pytest.raises(engine.EngineError, match="does not match the declared type"):
+        _edited_ticket({"familyVariant": 7})
+
+
 def test_grade_mutate_step_rejects_an_on_index_naming_no_view() -> None:
     step = {"action": "mutate", "on": 5, "set": {"name": "Mutant"}}
     with pytest.raises(engine.EngineError, match="holds no view to edit"):

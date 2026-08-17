@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-76**.
+Entry numbering is continuous and never reused. The next new number is **D-77**.
 
 ## Entries
 
@@ -351,6 +351,42 @@ cost for a shape nothing asks for. The moment a case authors one, the repair is
 the branch plus its own DB-free driver; until then the honest state is the
 refusal this entry describes, which already says which half of itself is
 permanent.
+
+### D-76 — An invalid scenario `mutate` assignment has no portable outcome: one executor refuses it, the other ignores it, and no case can declare either
+
+*Medium — latent rather than live: every `set` the corpus authors today is a
+valid assignment, so no case is currently graded two ways.* **Owned by
+`core/spec/m-case-format.md` and the corpus, not this target**, and kept here
+because Python work surfaced it and nothing else tracks it. Relates to
+`parallax.conformance.engine._edited_copy` / `_judged_assignments`,
+`core/schemas/compatibility-case.schema.json` (`set`), and the reference
+harness's `case_runner._run_scenario_action`.
+
+**What.** A scenario `mutate` step's `set` is schema-typed as an arbitrary
+non-empty object, and no rule says what an executor owes an assignment the model
+refuses. The Python lane now reaches the whole edit verdict — a relationship
+name, an undeclared or sibling-branch or metadata name, a primary-key or
+read-only target, and an ill-typed value are each refused loudly as a
+case-authoring defect — while the reference harness never reads `set` at all and
+passes. So one schema-valid case would fail one executor and pass the other, and
+the case could not declare which was right: `m-case-format`'s per-step
+`expectError` is a closed application-lifecycle vocabulary with no edit-validation
+member. `m-case-format` gives a bare write row naming an undeclared member exactly
+the status this needs — a case-authoring failure, refused before grading, enforced
+by both executors — and says nothing of the same kind about `set`.
+
+**Why it is deferred rather than fixed.** The two ways to close it differ in what
+the corpus is allowed to say, which is a decision about the case format rather
+than about either executor. Making an invalid `set` a **case-authoring failure**
+states one rule in the register the bare write row already uses and needs no new
+vocabulary, but it permanently forecloses grading edit-time validation from the
+corpus — the rule that an invalid edit raises at edit time would stay a
+per-language spec claim (`spec/python.md` §1 *Explicit writes*) with no
+compatibility case behind it. Making the refusal **declarable** — an `expectError`
+member plus adapter and schema support — buys that coverage and costs a new member
+of a closed vocabulary whose members are each defined normatively where the error
+is defined, which for edit-time validation is nowhere in `core/spec` today.
+Choosing either is a normative change this target cannot make on its own.
 
 ## Forwarding pointers
 
