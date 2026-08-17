@@ -28,11 +28,12 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Sequence
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import graph_stories
+from _support.corpus import case_document, compare_binds
+from parallax.conformance import case_format, graph_stories
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order
 from parallax.core.base import INFINITY
@@ -72,11 +73,6 @@ _ORDER_3_ROW: Row = {
 }
 
 _ORDER_ITEM_INSERT = "insert into order_item(id, order_id, sku, quantity) values (%s, %s, %s, %s)"
-
-_COVERAGE_INSERT = (
-    "insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) "
-    "values (%s, %s, %s, %s, %s, %s, %s)"
-)
 
 # Policy 2 and its single coverage at the pin the rectangle-split story takes —
 # one rectangle open on both axes, which is what a bounded `updateUntil` splits
@@ -165,12 +161,49 @@ _WRITING_STORIES: frozenset[Callable[..., Any]] = frozenset(
 )
 
 
+_CASES = {case.case_id: case for case in case_format.load_cases()}
+
+
+def _golden_write_binds(case_id: str) -> list[list[object]]:
+    """The DML binds the case's own write step declares, statement for statement.
+
+    The corpus owns the SQL text and both wire executors grade it, so what a
+    story owes here is that the PUBLIC surface reached the wire with the same
+    values in the same order — a write that no-opped, addressed another row, or
+    chained a different rectangle fails, without this file restating a statement
+    the API suite is not the grader of (`m-api-conformance` "Golden SQL text is
+    out of scope").
+    """
+    steps = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
+    writes = [step for step in steps if "write" in step]
+    assert len(writes) == 1, case_id
+    return [
+        cast("list[object]", statement.get("binds", []))
+        for statement in cast("list[dict[str, Any]]", writes[0]["statements"])
+    ]
+
+
+def _assert_wire_binds(case_id: str, port: _CannedPort) -> None:
+    observed = [binds for _sql, binds in port.writes]
+    expected = _golden_write_binds(case_id)
+    assert len(observed) == len(expected), (case_id, port.writes)
+    for emitted, golden in zip(observed, expected, strict=True):
+        compare_binds(emitted, golden)
+
+
 def _port_for(run: Callable[[Database], Any], responses: Sequence[list[Row]]) -> _CannedPort:
     return (_WritingCannedPort if run in _WRITING_STORIES else _CannedPort)(responses)
 
 
+def _connect(story: graph_stories.GraphStory, port: _CannedPort) -> Database:
+    # A story's clock is a FACTORY precisely so this consumer drives its own
+    # script rather than one `test_story_run.py` already advanced.
+    clock = story.clock() if story.clock is not None else None
+    return Database.connect(port, MODELS[story.model], clock=clock)
+
+
 def _db(story: graph_stories.GraphStory, responses: Sequence[list[Row]] = ()) -> Database:
-    return Database.connect(_port_for(story.run, responses), MODELS[story.model])
+    return _connect(story, _port_for(story.run, responses))
 
 
 def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
@@ -188,11 +221,10 @@ def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
     loaded and EMPTY rather than short-circuited — and its unloaded sibling once,
     declaring no include at all.
 
-    The destructive and rectangle-split stories read five times each: their own
-    root and include levels, the transaction's observing find, and the re-read's
-    two levels. Each re-read's own child level answers nothing, because the
-    canned port is a stub rather than a store and only the real-database driver
-    can say what the write left behind.
+    The destructive and rectangle-split stories read four times each: their own
+    root and include levels, the transaction's observing find, and the read-back
+    — which answers nothing, because the canned port is a stub rather than a
+    store and only the real-database driver can say what the write left behind.
     """
     if run is graph_stories.mutation_has_no_writeback:
         return [[_ORDER_ROW], [_ORDER_ROW]]
@@ -203,15 +235,9 @@ def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
     if run is graph_stories.a_write_keeps_an_unloaded_relationship_absent:
         return [[_ORDER_3_ROW]]
     if run is graph_stories.a_delete_keeps_a_loaded_relationship_view:
-        return [[_ORDER_ROW], [_ORDER_ITEM_ROW], [_ORDER_ITEM_ROW], [_ORDER_ROW], []]
+        return [[_ORDER_ROW], [_ORDER_ITEM_ROW], [_ORDER_ITEM_ROW], []]
     if run is graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view:
-        return [
-            [_POLICY_2_ROW],
-            [_COVERAGE_20_ROW],
-            [_COVERAGE_20_ROW],
-            [_POLICY_2_ROW],
-            [],
-        ]
+        return [[_POLICY_2_ROW], [_COVERAGE_20_ROW], [_COVERAGE_20_ROW], []]
     if run in (
         graph_stories.an_edited_copy_keeps_its_source_nodes_views,
         graph_stories.an_edit_keeps_a_loaded_relationship_view,
@@ -298,29 +324,26 @@ def test_the_destructive_composition_story_keeps_the_destroyed_row_in_its_view()
         if s.run is graph_stories.a_delete_keeps_a_loaded_relationship_view
     )
     port = _WritingCannedPort(_responses_for(story.run))
-    snapshot, loaded_items, _reread = story.run(Database.connect(port, MODELS[story.model]))
-    assert port.writes == [("delete from order_item where id = %s", [11])]
+    snapshot, loaded_items, _committed, _reread = story.run(_connect(story, port))
+    _assert_wire_binds(story.case_id, port)
     assert [item.id for item in loaded_items] == [11]
     assert snapshot.result().items[0] is loaded_items[0]
 
 
 def test_the_rectangle_split_story_keeps_the_pinned_rectangle_in_its_view() -> None:
     # The in-memory half of `m-snapshot-read-025`: the split reaches the wire as
-    # the close plus the three chained rectangles, and the pinned `coverages`
-    # view still answers the rectangle its own read selected, by identity. The
-    # binds carry the ambient clock's instant, so the statement shapes are what
-    # this driver can pin; the case's own goldens hold the binds.
+    # the close plus the three chained rectangles the case's own goldens bind —
+    # the story's scripted clock is what makes those binds reachable at all —
+    # and the pinned `coverages` view still answers the rectangle its own read
+    # selected, by identity.
     story = next(
         s
         for s in graph_stories.GRAPH_STORIES
         if s.run is graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view
     )
     port = _WritingCannedPort(_responses_for(story.run))
-    snapshot, loaded_coverages, _reread = story.run(Database.connect(port, MODELS[story.model]))
-    assert [sql for sql, _binds in port.writes] == [
-        "update coverage set out_z = %s where id = %s and thru_z = %s and out_z = %s and in_z = %s",
-        *[_COVERAGE_INSERT] * 3,
-    ]
+    snapshot, loaded_coverages, _committed, _reread = story.run(_connect(story, port))
+    _assert_wire_binds(story.case_id, port)
     assert [(c.id, c.amount) for c in loaded_coverages] == [(20, Decimal("300.00"))]
     assert snapshot.result().coverages[0] is loaded_coverages[0]
 

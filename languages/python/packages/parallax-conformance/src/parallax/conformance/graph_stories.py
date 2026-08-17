@@ -85,22 +85,36 @@ from parallax.conformance.read_models import (
     Pet,
     WildBoar,
 )
+from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.story_models import Order, OrderItem
 from parallax.conformance.vo_models import Branch, Customer, CustomerPhone, Supplier
 from parallax.core.object_query import LATEST, TX_TIME
-from parallax.snapshot.handle import Database, Snapshot, Transaction
+from parallax.core.unit_work import Clock
+from parallax.snapshot.handle import Database, Snapshot, Transaction, TransactionResult
 
 __all__ = ["GRAPH_STORIES", "GraphStory", "graph_story_snippet"]
 
 
 @dataclass(frozen=True, slots=True)
 class GraphStory:
-    """One executable public-API story mirroring a corpus graph-shaped case."""
+    """One executable public-API story mirroring a corpus graph-shaped case.
+
+    ``clock`` is an optional zero-argument
+    :class:`~parallax.core.unit_work.Clock` factory, carrying the same contract
+    :data:`~parallax.conformance.stories.WriteStory.clock` does: a story whose
+    own write takes a Transaction-Time boundary sets it so the instant it
+    captures is the one its mirrored case authored, rather than whenever the
+    story happened to run — the only way a composition story's read-back can be
+    graded against that case's own rows. A FACTORY, not a shared instance, so
+    each consumer (the fake-port no-drift guard, the real-Postgres story runner)
+    drives a fresh script. ``None`` connects with the system clock.
+    """
 
     case_id: str
     title: str
     model: str
     run: Callable[[Database], Any]
+    clock: Callable[[], Clock] | None = None
 
 
 def graph_story_snippet(story: GraphStory) -> str:
@@ -180,7 +194,9 @@ def a_write_keeps_an_unloaded_relationship_absent(db: Database) -> Snapshot[Any]
     return snapshot  # absence is not emptiness, and the write does not make it one
 
 
-def a_delete_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any], Any, Any]:
+def a_delete_keeps_a_loaded_relationship_view(
+    db: Database,
+) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     loaded_items = snapshot.result().items
 
@@ -188,20 +204,18 @@ def a_delete_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[An
         observed = tx.find(OrderItem.where(OrderItem.id == 11)).result()
         tx.delete(observed)
 
-    db.transact(destroy)
-    reread = db.find(Order.where(Order.id == 1).include(Order.items)).result()
-    return snapshot, loaded_items, reread
+    committed = db.transact(destroy)
+    reread = db.find(OrderItem.where(OrderItem.order_id == 1))  # where the delete IS observable
+    return snapshot, loaded_items, committed, reread
 
 
 def a_rectangle_split_keeps_a_loaded_relationship_view(
     db: Database,
-) -> tuple[Snapshot[Any], Any, Any]:
-    pinned = (
-        Policy.where(Policy.id == 2)
-        .as_of(valid_time=dt.datetime(2024, 5, 1, tzinfo=dt.UTC), tx_time=LATEST)
-        .include(Policy.coverages)
+) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+    pin = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
+    snapshot = db.find(
+        Policy.where(Policy.id == 2).as_of(valid_time=pin, tx_time=LATEST).include(Policy.coverages)
     )
-    snapshot = db.find(pinned)
     loaded_coverages = snapshot.result().coverages
 
     def split(tx: Transaction) -> None:
@@ -212,9 +226,11 @@ def a_rectangle_split_keeps_a_loaded_relationship_view(
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 
-    db.transact(split)
-    reread = db.find(pinned).result()  # the SAME pin, where the split IS observable
-    return snapshot, loaded_coverages, reread
+    committed = db.transact(split)
+    reread = db.find(  # the SAME pin, where the split IS observable
+        Coverage.where(Coverage.policy_id == 2).as_of(valid_time=pin, tx_time=LATEST)
+    )
+    return snapshot, loaded_coverages, committed, reread
 
 
 def a_finite_transaction_time_pinned_view_is_read_only(db: Database) -> None:
@@ -526,6 +542,17 @@ def customer_locations_deep_fetch_materializes_the_child_document_too(
     return db.find(Customer.where(Customer.all).include(Customer.locations))
 
 
+def _snapshot_read_025_clock() -> Clock:
+    """`m-snapshot-read-025`'s own authored Transaction Instant.
+
+    One instant, because the story flushes one `db.transact`, and that instant
+    is the `at:` its mirrored case's `updateUntil` declares — the split's three
+    chained rectangles open at 2024-07-01 on the Transaction-Time axis, which is
+    what lets the story's read-back be graded against the case's own rows.
+    """
+    return ScriptedClock([dt.datetime(2024, 7, 1, tzinfo=dt.UTC)])
+
+
 GRAPH_STORIES: tuple[GraphStory, ...] = (
     GraphStory(
         "m-snapshot-read-001",
@@ -610,6 +637,7 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "A bitemporal rectangle split leaves a pinned view answering its own rectangle",
         "policy",
         a_rectangle_split_keeps_a_loaded_relationship_view,
+        clock=_snapshot_read_025_clock,
     ),
     GraphStory(
         "m-snapshot-read-007",

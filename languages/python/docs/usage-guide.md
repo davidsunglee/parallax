@@ -847,7 +847,9 @@ def a_write_keeps_an_unloaded_relationship_absent(db: Database) -> Snapshot[Any]
 Corpus case: `m-snapshot-read-020`
 
 ```python
-def a_delete_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any], Any, Any]:
+def a_delete_keeps_a_loaded_relationship_view(
+    db: Database,
+) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     loaded_items = snapshot.result().items
 
@@ -855,9 +857,9 @@ def a_delete_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[An
         observed = tx.find(OrderItem.where(OrderItem.id == 11)).result()
         tx.delete(observed)
 
-    db.transact(destroy)
-    reread = db.find(Order.where(Order.id == 1).include(Order.items)).result()
-    return snapshot, loaded_items, reread
+    committed = db.transact(destroy)
+    reread = db.find(OrderItem.where(OrderItem.order_id == 1))  # where the delete IS observable
+    return snapshot, loaded_items, committed, reread
 ```
 
 ## A bitemporal rectangle split leaves a pinned view answering its own rectangle
@@ -867,13 +869,11 @@ Corpus case: `m-snapshot-read-025`
 ```python
 def a_rectangle_split_keeps_a_loaded_relationship_view(
     db: Database,
-) -> tuple[Snapshot[Any], Any, Any]:
-    pinned = (
-        Policy.where(Policy.id == 2)
-        .as_of(valid_time=dt.datetime(2024, 5, 1, tzinfo=dt.UTC), tx_time=LATEST)
-        .include(Policy.coverages)
+) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+    pin = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
+    snapshot = db.find(
+        Policy.where(Policy.id == 2).as_of(valid_time=pin, tx_time=LATEST).include(Policy.coverages)
     )
-    snapshot = db.find(pinned)
     loaded_coverages = snapshot.result().coverages
 
     def split(tx: Transaction) -> None:
@@ -884,9 +884,11 @@ def a_rectangle_split_keeps_a_loaded_relationship_view(
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 
-    db.transact(split)
-    reread = db.find(pinned).result()  # the SAME pin, where the split IS observable
-    return snapshot, loaded_coverages, reread
+    committed = db.transact(split)
+    reread = db.find(  # the SAME pin, where the split IS observable
+        Coverage.where(Coverage.policy_id == 2).as_of(valid_time=pin, tx_time=LATEST)
+    )
+    return snapshot, loaded_coverages, committed, reread
 ```
 
 ## As-of read at a past instant
