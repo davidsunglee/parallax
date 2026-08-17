@@ -438,7 +438,7 @@ def test_root_pins_reads_nested_asof_by_axis():
         COMPATIBILITY_ROOT,
         COMPATIBILITY_ROOT / "cases" / "m-navigate-015-deepfetch-temporal-both-past.yaml",
     )
-    assert _root_asof_pins(case) == {
+    assert _root_asof_pins(case.object_query) == {
         "valid-time": "2024-03-01T00:00:00+00:00",
         "transaction-time": "2024-02-01T00:00:00+00:00",
     }
@@ -453,7 +453,7 @@ def test_root_pins_are_independent_of_the_result_shaping_clauses():
         COMPATIBILITY_ROOT,
         COMPATIBILITY_ROOT / "cases" / "m-navigate-024-deepfetch-temporal-ordered-root.yaml",
     )
-    assert _root_asof_pins(case) == {
+    assert _root_asof_pins(case.object_query) == {
         "valid-time": "2024-03-01T00:00:00+00:00",
         "transaction-time": "latest",
     }
@@ -470,7 +470,9 @@ def test_root_pins_record_only_the_pinned_dimensions():
     scanned = copy.deepcopy(case.raw)
     scanned["when"]["objectQuery"]["temporal"]["valid-time"] = {"history": {}}
     rebuilt = Case(path=case.path, raw=scanned, model=case.model)
-    assert case_runner._root_asof_pins(rebuilt) == {"transaction-time": "2024-02-01T00:00:00+00:00"}
+    assert case_runner._root_asof_pins(rebuilt.object_query) == {
+        "transaction-time": "2024-02-01T00:00:00+00:00"
+    }
 
 
 class _WrongAsofChildDb:

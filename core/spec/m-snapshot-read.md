@@ -224,6 +224,32 @@ After materialization a snapshot graph **never issues SQL**:
   second-query form (`find` with an `in` predicate over gathered keys), which
   costs the same single round trip a deferred load would.
 
+Every clause above survives **composition**. Deriving a node from a
+materialized one, and persisting a write, are the two things that happen to a
+graph after it exists, and neither reaches the view state the read paid for:
+
+- A **derived copy's view state IS its source's**. An authored edit produces a
+  new value carrying the same relationship views the node it derives from
+  carries — an included relationship answers the **same objects** on the copy,
+  and an un-included one is absent on both. A copy rebuilt from its declared
+  members alone loses every view the read materialized and is not conforming.
+- A **write changes nothing about a graph already materialized**. The write
+  persists; the graph is a value taken at its pin, so it neither refreshes nor
+  invalidates. Accessing an already-materialized relationship after a write
+  still issues no SQL and still answers the objects the read produced, whatever
+  the write did to the rows behind them — including deleting them. Observing
+  the write means issuing another read.
+- The **unloaded / loaded-empty distinction is preserved across both**. A
+  relationship the read included and found empty stays loaded-and-empty; one
+  the read did not include stays absent. Neither collapses into the other, and
+  composition never turns absence into emptiness.
+
+How absence surfaces is unchanged by all of this: it is the same per-language
+surfacing the first bullet above leaves each language spec to fix, answered the
+same way before and after. What composition fixes globally is the behavior —
+same objects, no SQL, the distinction preserved — because otherwise one authored
+program would answer differently per language.
+
 ## Round trips
 
 Materialization is `m-deep-fetch`'s contract observed through the graph: **at

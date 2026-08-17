@@ -264,6 +264,25 @@
         "native": {}
       }
     },
+    "stepGraphObservation": {
+      "description": "The relationship contents observed at ONE scenario step declaring `expectGraph` (m-case-format): `at` is the JSON Pointer naming the step, and `graph` the contents that step's access observed, keyed by the traversed relationship's target Entity under its local name. The contents are the ones the implementation's own materialized graph holds at that step, never a re-read — an adapter that re-queries reports that the database is right while the case asks whether the view survived.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "graph"],
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/jsonPointer"
+        },
+        "graph": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": ["object", "null"] }
+          }
+        }
+      }
+    },
     "milestoneGraphObservation": {
       "description": "One edge-pinned graph in the ordered observation for a milestone-set snapshot read. The pin is the milestone's own from-instant per as-of axis, keyed by as-of attribute name; graph has the same root-class-keyed shape as a single graph observation.",
       "type": "object",
@@ -533,6 +552,11 @@
           "description": "Lifecycle-state checks (m-detach five-state machine) an adapter reports for scenario steps declaring `expectState`. Optional and additive — an adapter that reports no lifecycle state omits it, and existing run outputs stay valid.",
           "type": "array",
           "items": { "$ref": "#/$defs/stateCheck" }
+        },
+        "stepGraphs": {
+          "description": "The relationship contents an adapter observed at each scenario step declaring `expectGraph` (m-case-format), in step order. A scenario has no single whole-read graph, so these ride their own per-step key rather than the whole-read `graph` member. Optional and additive — a run whose case declares no `expectGraph` omits it, and existing run outputs stay valid.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/stepGraphObservation" }
         },
         "errors": {
           "description": "Neutral application-lifecycle errors (m-detach / m-identity-map / m-unit-work) an adapter reports for scenario steps declaring `expectError`. Optional and additive — an adapter that raises no such error omits it, and existing run outputs stay valid.",

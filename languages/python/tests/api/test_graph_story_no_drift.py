@@ -88,12 +88,16 @@ def _db(story: graph_stories.GraphStory, responses: Sequence[list[Row]] = ()) ->
 
 
 def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
-    """The two edit stories are the ones whose bodies dereference a result, so
+    """The three edit stories are the ones whose bodies dereference a result, so
     they alone need a non-empty canned root row — twice for the no-writeback
-    story (the find and the re-read), once for the edited-copy story."""
+    story (the find and the re-read), once for each edited-copy story (whose
+    include level legally short-circuits on the empty tail response)."""
     if run is graph_stories.mutation_has_no_writeback:
         return [[_ORDER_ROW], [_ORDER_ROW]]
-    if run is graph_stories.an_edited_copy_keeps_its_source_nodes_views:
+    if run in (
+        graph_stories.an_edited_copy_keeps_its_source_nodes_views,
+        graph_stories.an_edit_keeps_a_loaded_relationship_view,
+    ):
         return [[_ORDER_ROW]]
     return []
 

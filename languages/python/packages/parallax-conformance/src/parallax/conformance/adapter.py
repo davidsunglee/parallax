@@ -168,12 +168,16 @@ def _is_scenario_lane_dispatched(case: case_format.Case) -> bool:
 
 def _scenario_actions_all_mutate(case: case_format.Case) -> bool:
     """Whether the scenario carries lifecycle action steps and every one is a
-    `mutate` — the one action verb the engine's snapshot lane grades, including
-    a step's declared `expectError` through the `errors` observation
-    (`m-conformance-adapter` / `errorObservation.errorClass`). Such an
-    api-conformance-lane scenario stays in the compile/run lanes (the finite-pin
-    mutation contrast pair); any other action verb (`access`, …) is a
-    per-language surfacing only the API Conformance Suite can verify."""
+    `mutate`, including a step's declared `expectError` through the `errors`
+    observation (`m-conformance-adapter` / `errorObservation.errorClass`). Such
+    an api-conformance-lane scenario stays in the compile/run lanes (the
+    finite-pin mutation contrast pair).
+
+    Consulted only for an api-conformance-lane scenario, which is authored to
+    assert a per-language surfacing. An `access` step there names a
+    representation the wire cannot see, so the case dispatches to the API
+    Conformance Suite — unlike a harness-lane `access`, which the engine grades
+    against `expectGraph`."""
     when = case.document.get("when")
     if not isinstance(when, Mapping):
         return False
@@ -295,7 +299,8 @@ def _run(
     error run records the raised failure's classification (``errorClass`` /
     ``nativeCode``). A scenario run reports the contract observations
     (``roundTrips``, plus one ``errors`` entry per `expectError` step whose
-    verb raised its declared application-lifecycle error); its per-step find
+    verb raised its declared application-lifecycle error and one ``stepGraphs``
+    entry per `access` step declaring `expectGraph`); its per-step find
     rows are observable at the injected port seam, where the run sweep grades
     them against each step's
     ``expectRows``. A rejected run touches no database and no port: it reports
@@ -305,10 +310,14 @@ def _run(
     if _is_scenario_lane_dispatched(case):
         raise _scenario_lane_error(case)
     if case.shape == "scenario":
-        emissions, round_trips, errors, log = engine.run_scenario_case(case, dialect, port)
+        emissions, round_trips, errors, step_graphs, log = engine.run_scenario_case(
+            case, dialect, port
+        )
         scenario_observations: dict[str, Any] = {"roundTrips": round_trips}
         if errors:
             scenario_observations["errors"] = errors
+        if step_graphs:
+            scenario_observations["stepGraphs"] = step_graphs
         _report_execution(case, scenario_observations, log, emissions)
         return emissions, scenario_observations
     if case.shape == "writeSequence":

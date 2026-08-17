@@ -149,6 +149,12 @@ def an_edited_copy_keeps_its_source_nodes_views(db: Database) -> tuple[Snapshot[
     return snapshot, edited
 
 
+def an_edit_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any], Any]:
+    snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
+    edited = snapshot.result().edit(name="Mutant")  # the copy keeps the LOADED items
+    return snapshot, edited
+
+
 def a_finite_transaction_time_pinned_view_is_read_only(db: Database) -> None:
     """SUPPLEMENTAL — not a registered ``GraphStory``, because `m-identity-map-010`
     is not in :data:`~parallax.conformance.claim.SNAPSHOT_CLAIM`'s active slice
@@ -506,6 +512,12 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "An edited copy answers its source node's views, with zero SQL",
         "orders",
         an_edited_copy_keeps_its_source_nodes_views,
+    ),
+    GraphStory(
+        "m-snapshot-read-016",
+        "An edited copy holds the SAME loaded relationship objects, with zero SQL",
+        "orders",
+        an_edit_keeps_a_loaded_relationship_view,
     ),
     GraphStory(
         "m-snapshot-read-007",

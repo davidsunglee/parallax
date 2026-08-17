@@ -228,6 +228,19 @@ def _action_scenario_case() -> dict[str, Any]:
     }
 
 
+def _action_expect_graph_case() -> dict[str, Any]:
+    """An `access` step asserting the relationship contents its source read loaded.
+
+    `expectGraph` is the step-level analogue of `then.graph`, keyed by the target
+    Entity of the relationship the step's `path` navigates to.
+    """
+    doc = _action_scenario_case()
+    doc["when"]["scenario"][2]["expectGraph"] = {
+        "OrderItem": [{"id": 11, "orderId": 1}, {"id": 12, "orderId": 1}]
+    }
+    return doc
+
+
 def _action_identity_error_case() -> dict[str, Any]:
     """A scenario action case exercising `differentObjectFrom`, `on` array, `expectError`."""
     return {
@@ -668,6 +681,7 @@ VALID_CASES = {
     "scenario": _scenario_case,
     "scenario-settled-write": _settled_write_scenario_case,
     "scenario-action": _action_scenario_case,
+    "scenario-action-expect-graph": _action_expect_graph_case,
     "scenario-action-identity-error": _action_identity_error_case,
     "scenario-action-boundary-no-on": _action_boundary_no_on_case,
     "scenario-keyed-write-value": _write_value_scenario_case,
@@ -1105,6 +1119,43 @@ def _action_on_duplicate_index() -> dict[str, Any]:
     return doc
 
 
+def _expect_graph_on_a_read_step() -> dict[str, Any]:
+    """`expectGraph` on a read step.
+
+    A read-back re-queries the database, so it proves the DATABASE is right and
+    says nothing about a materialized view; the oracle is legal on `access` alone.
+    """
+    doc = _action_scenario_case()
+    doc["when"]["scenario"][0]["expectGraph"] = {"OrderItem": [{"id": 11}]}
+    return doc
+
+
+def _expect_graph_on_a_write_step() -> dict[str, Any]:
+    """`expectGraph` on a write step, which navigates no relationship at all."""
+    doc = _settled_write_scenario_case()
+    doc["when"]["scenario"][1]["expectGraph"] = {"Position": [{"pos_id": 1}]}
+    return doc
+
+
+def _expect_graph_on_a_non_access_action() -> dict[str, Any]:
+    """`expectGraph` on a `load` — a step that RESOLVES the relationship rather
+    than reading an already-materialized one, so it grades a fresh fetch."""
+    doc = _action_scenario_case()
+    doc["when"]["scenario"][1]["expectGraph"] = {"OrderItem": [{"id": 11}]}
+    return doc
+
+
+def _expect_graph_beside_expect_rows() -> dict[str, Any]:
+    """One step declaring BOTH `expectRows` and `expectGraph`.
+
+    `expectRows` states the step's own source rows and `expectGraph` the contents
+    of the relationship it navigated TO, so the two describe different entities.
+    """
+    doc = _action_expect_graph_case()
+    doc["when"]["scenario"][2]["expectRows"] = [{"id": 1}]
+    return doc
+
+
 def _graphs_entry_missing_pin() -> dict[str, Any]:
     """A `then.graphs` entry missing `pin` — the entry requires it.
 
@@ -1293,6 +1344,10 @@ REJECTED_CASES = {
     "action-set-on-non-mutate": _action_set_on_non_mutate,
     "action-object-verb-missing-on": _action_object_verb_missing_on,
     "action-on-duplicate-index": _action_on_duplicate_index,
+    "expect-graph-on-a-read-step": _expect_graph_on_a_read_step,
+    "expect-graph-on-a-write-step": _expect_graph_on_a_write_step,
+    "expect-graph-on-a-non-access-action": _expect_graph_on_a_non_access_action,
+    "expect-graph-beside-expect-rows": _expect_graph_beside_expect_rows,
     "graphs-entry-missing-pin": _graphs_entry_missing_pin,
     "graphs-entry-stray-key": _graphs_entry_stray_key,
     "stored-data-record-missing-hydration": _stored_data_record_missing_hydration,

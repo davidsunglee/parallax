@@ -11,6 +11,7 @@ is exercised end-to-end against real Postgres by the compatibility suite.
 from __future__ import annotations
 
 import copy
+import datetime as dt
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -1489,3 +1490,82 @@ def test_settled_write_admits_a_transaction_time_only_target() -> None:
 
     with pytest.raises(CaseFailure):
         _assert_scenario_settled_write(_transaction_time_only_settled_case(on=1), "postgres")
+
+
+# --- Include Paths on a scenario read step (`m-snapshot-read` composition) ----
+#
+# A snapshot graph issues no SQL after materialization, so an `access` step's
+# `expectGraph` states contents its SOURCE read fetched. That makes two things
+# DB-free-testable here: that a read step carrying `objectQuery.includes`
+# executes EVERY listed level (the read branch used to run the root alone), and
+# that the retained buckets survive an intervening step and grade loudly. Real
+# execution against both dialects is `test_compatibility.py`'s job.
+
+_ORDER_1_ROW: dict[str, Any] = {
+    "id": 1,
+    "name": "Ada",
+    "sku": "A-100",
+    "qty": 5,
+    "price": 10.50,
+    "active": True,
+    "ordered_on": dt.date(2024, 1, 5),
+}
+
+# `Order.items` declares `id desc`, so the level returns 12 before 11 — the order
+# the declared-ordering oracle independently derives.
+_ORDER_1_ITEM_ROWS: list[dict[str, Any]] = [
+    {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1, "shipped_on": dt.date(2024, 2, 15)},
+    {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+]
+
+
+def _include_scenario_db() -> _FakeGroupedDb:
+    return _FakeGroupedDb(
+        top_responses=[[dict(_ORDER_1_ROW)], [dict(r) for r in _ORDER_1_ITEM_ROWS]]
+    )
+
+
+def test_scenario_include_read_executes_every_level_before_a_later_access() -> None:
+    case = _scenario_by_id("m-snapshot-read-016")
+    db = _include_scenario_db()
+
+    _assert_scenario(case, db)  # type: ignore[arg-type]
+
+    assert [call[1].split(" from ")[1].split(" ")[0] for call in db.top_calls] == [
+        "orders",
+        "order_item",
+    ], "the read step runs its ROOT level and its include level, in that order"
+    assert db.top_calls[1][2] == [1], "the child level is keyed by the gathered parent key"
+    assert db.sessions == [], "an ungrouped scenario opens no held session"
+
+
+def test_scenario_access_expect_graph_rejects_a_corrupted_leaf() -> None:
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
+    case.scenario[2]["expectGraph"]["OrderItem"][0]["sku"] = "WRONG"
+
+    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
+        _assert_scenario(case, _include_scenario_db())  # type: ignore[arg-type]
+
+
+def test_scenario_access_expect_graph_rejects_an_unincluded_relationship() -> None:
+    # `statuses` is a real Order relationship the step-0 read never included, so
+    # its contents were never materialized and no access can state them.
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
+    case.scenario[2]["path"] = "statuses"
+    case.scenario[2]["expectGraph"] = {"OrderStatus": []}
+
+    with pytest.raises(CaseFailure, match="did not include 'statuses'"):
+        _assert_scenario(case, _include_scenario_db())  # type: ignore[arg-type]
+
+
+def test_scenario_read_step_may_not_list_a_level_its_query_declares_none_of() -> None:
+    # Before Include Paths reached a scenario step the read branch executed the
+    # FIRST listed statement and silently ignored the rest, so a second statement
+    # was SQL nobody ran while the step still declared the round trip.
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-010"))
+    case.scenario[0]["statements"].append(
+        {"sql": {"postgres": "select t0.id from order_item t0"}, "binds": []}
+    )
+
+    with pytest.raises(CaseFailure, match="declares no `includes`"):
+        _assert_scenario(case, _FakeGroupedDb(top_responses=[[dict(_ORDER_1_ROW)]]))  # type: ignore[arg-type]

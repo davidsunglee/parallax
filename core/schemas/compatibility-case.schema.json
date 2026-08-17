@@ -595,6 +595,18 @@
                 "then": { "required": ["objectQuery"] }
               },
               {
+                "description": "`expectGraph` is legal ONLY on an `action: access` step (m-case-format *Relationship contents at a step*). A read-back step re-queries the database, so it proves the DATABASE is right and says nothing about the in-memory graph; only an access on a node the scenario already materialized proves the VIEW survived what the steps in between did. On a write step or any other action verb there is no navigated relationship for the contents to belong to.",
+                "if": { "required": ["expectGraph"] },
+                "then": {
+                  "required": ["action"],
+                  "properties": { "action": { "const": "access" } }
+                }
+              },
+              {
+                "description": "A step declares `expectRows` or `expectGraph`, never both. `expectRows` states the rows of the step's own source result while `expectGraph` states the contents of the relationship the step navigated TO, so the two would describe two DIFFERENT entities on one step. An author wanting the navigated entity's rows states them as `expectGraph` nodes.",
+                "not": { "required": ["expectRows", "expectGraph"] }
+              },
+              {
                 "description": "A scenario-step `equivalentEncodings` list supplies alternate authoring forms of that step's canonical `objectQuery`, so it is legal only on a read step.",
                 "if": { "required": ["equivalentEncodings"] },
                 "then": { "required": ["objectQuery"] }
@@ -656,6 +668,15 @@
                 "description": "The rows this step's find must return against the fixture data. A cache-hit step that reuses an earlier step's result MAY restate the same expected rows. `expectRows` is the observation channel for BOTH read lanes (m-case-format *Read result form*, m-sql *Read projection*): the form is fixed by the step's read semantics, not by this member — a managed-object find / refresh step, a relationship `load`, and a query-backed list's first `access` are INSTANCE-FORM (the object lane, projecting every applicable Storage Layout `Document` slot), while the internal materialized-predicate-write resolving find is ROW-FORM (the values lane, no instance constructed, omitting the `Document` slots by default and widening only where the write it serves needs one). Both project the same columns for a value-object-free target, so the lane adds no bind and changes no projection; the two value-object-bearing scenario witnesses are where they diverge — the subscriber witness keeps the default (a versioned resolve retains only the observed version, so it omits `address` where the managed find over the same row projects it), and the supplier witness widens it (a temporal resolve records a complete Predecessor Row, so it projects `address` even for a close that copies no payload).",
                 "type": "array",
                 "items": { "type": "object" }
+              },
+              "expectGraph": {
+                "description": "The relationship contents an `action: access` step observes — the step-level analogue of `then.graph` exactly as `expectRows` is the step-level analogue of `then.rows` (m-case-format *Relationship contents at a step*). Same shape as `then.graph`: an entity-name-keyed map whose value is a list of nodes, EVERY key a DECLARED model member name and every leaf its canonical Wire Value (m-wire), a to-many member a list and a to-one member a single node or null. Keyed by the TARGET entity of the relationship the sibling `path` navigates to, under that entity's LOCAL name. Collection kinds compare exactly as `then.graph`'s do (entity collections as multisets, a `multiplicity: many` Value Object positionally), and an unattached slot is authored ABSENT rather than empty, because a key one side carries and the other does not is simply unequal. The step's `on` read MUST carry `objectQuery.includes` covering the accessed path: an access over a relationship no read included has no materialized contents to state.",
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": "array",
+                  "items": { "type": ["object", "null"] }
+                }
               },
               "referenceSql": {
                 "description": "A read step's independent naive SQL oracle. It has the same string-or-dialect-map shape as `then.referenceSql` and, like that oracle, is self-contained rather than reusing golden binds.",

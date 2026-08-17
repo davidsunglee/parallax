@@ -972,3 +972,62 @@ def test_a_lane_with_no_single_invocation_to_describe_is_named_loudly() -> None:
     case = case_format.load_case(case_path)
     with pytest.raises(engine.EngineError, match="no single execution record"):
         adapter._report_execution(case, {}, None, [])  # pyright: ignore[reportPrivateUsage] - unit test drives the adapter's private observation seam directly
+
+
+_INCLUDE_SCENARIO_CASE = (
+    case_format.default_cases_dir() / "m-snapshot-read-016-edit-keeps-loaded-items.yaml"
+)
+
+
+class _OrderWithItemsPort:
+    """A canned ``m-db-port`` answering the root level then the include level."""
+
+    def __init__(self) -> None:
+        self._responses: list[list[Row]] = [
+            [
+                {
+                    "id": 1,
+                    "name": "Ada",
+                    "sku": "A-100",
+                    "qty": 5,
+                    "price": Decimal("10.50"),
+                    "active": True,
+                    "ordered_on": dt.date(2024, 1, 5),
+                }
+            ],
+            [
+                {
+                    "id": 12,
+                    "order_id": 1,
+                    "sku": "B-200",
+                    "quantity": 1,
+                    "shipped_on": dt.date(2024, 2, 15),
+                },
+                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+            ],
+        ]
+
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
+        return self._responses.pop(0)
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+
+def test_run_case_scenario_reports_a_step_graph_for_an_access_step() -> None:
+    # The per-step graph channel (`m-conformance-adapter` *Per-step graph
+    # observations*): an `access` step declaring `expectGraph` publishes one
+    # `stepGraphs` entry at its own pointer, beside `roundTrips`, and the envelope
+    # still validates against the adapter schema.
+    envelope = adapter.run_case(_INCLUDE_SCENARIO_CASE, "postgres", _OrderWithItemsPort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+    assert envelope["observations"]["roundTrips"] == 2
+    step_graphs = envelope["observations"]["stepGraphs"]
+    assert [entry["at"] for entry in step_graphs] == ["/scenario/2"]
+    assert sorted(node["id"] for node in step_graphs[0]["graph"]["OrderItem"]) == [11, 12]

@@ -250,6 +250,25 @@ def test_an_edited_copy_keeps_its_source_nodes_views(provisioner: Any) -> None:
     assert snapshot.execution.round_trips == 1
 
 
+def test_an_edit_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-016"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot, edited = story.run(db)
+    order = snapshot.result()
+    assert (edited.name, order.name) == ("Mutant", "Ada")
+    # What only this lane can show: the copy's items are the SAME objects, not
+    # lookalike values. The case's own `expectGraph` grades the CONTENTS at both
+    # positions and cannot tell one shared node from two equal ones.
+    assert is_view_loaded(edited, Order.items) is True
+    assert [item.id for item in edited.items] == [12, 11]
+    assert edited.items[0] is order.items[0]
+    assert edited.items[1] is order.items[1]
+    # Neither the derivation nor the access issues SQL: the materializing find's
+    # own two levels are still the only round trips on record.
+    assert snapshot.execution.round_trips == 2
+
+
 def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) -> None:
     # `m-identity-map-010` is graded here rather than through a `GraphStory`
     # because it sits outside the claimed active slice (see the story's own
