@@ -24,6 +24,7 @@ It performs m-case-format layer 1 statically (no database needed):
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -433,83 +434,153 @@ def _validate_scenario_reference_sql(
 
 
 _SAME_ENTITY_DERIVATIONS: frozenset[str] = frozenset({"mutate", "detachCopy", "mergeBack"})
-"""The action verbs whose result denotes the SAME Entity as the step they name.
+"""The action verbs whose result stands exactly where the step they name stands.
 
 An edited copy, a detached deep copy and a merged-back object are all the object
-their source step held, so a `mutate` naming one is judged against the find that
-started the chain. A `load` / `access` result is the RELATIONSHIP TARGET instead
-— a different position entirely — so a chain through one resolves to nothing
-here rather than to the find's own target.
+their source step held, so a chain of them stands at the position the step the
+chain started from answered at.
+"""
+
+_RELATIONSHIP_NAVIGATIONS: frozenset[str] = frozenset({"load", "access"})
+"""The action verbs whose result stands where their ``path`` leads.
+
+A `load` / `access` carrying a `path` holds the objects that path's LAST hop
+reaches — an `access` on `items` holds OrderItems, never the Order it navigated
+from — so the position it stands at is the relationship's target rather than its
+source's. The path-less `access` form navigates nothing (it resolves a
+query-backed list, `m-op-list`), so its members stand where its source does.
 """
 
 
-def _edited_query(steps: list[Any], index: int) -> dict[str, Any] | None:
-    """The Object Query whose result the `mutate` step at *index* edits, or ``None``.
+@dataclass(frozen=True)
+class _Position:
+    """Where a scenario step's result stands.
 
-    A `mutate` names an earlier step through ``on``: the find whose result it
-    edits, or an earlier same-Entity derivation (:data:`_SAME_ENTITY_DERIVATIONS`)
-    which the walk follows back to the find that materialized the chain.
-
-    ``None`` means the step resolves to no query at all. An out-of-range or missing
-    ``on`` is the runtime ``on`` rules'
-    (:func:`~reference_harness.case_runner._assert_action_on`) to report rather
-    than this check's to restate; a write step or a relationship step holds no node
-    of the find's own position for an edit to be about.
+    ``entity`` is the position as the model declares it, which is what a later
+    relationship hop resolves its own name against; ``concretes`` is every
+    concrete Entity a node standing there could be, which is what an assignment is
+    judged against. The two differ exactly where the position is polymorphic.
     """
-    seen: set[int] = set()
-    current = index
-    while current not in seen:
-        seen.add(current)
-        step = steps[current] if 0 <= current < len(steps) else None
-        on = step.get("on") if isinstance(step, dict) else None
-        if not isinstance(on, int) or isinstance(on, bool) or not 0 <= on < len(steps):
-            return None
-        source = steps[on]
-        if not isinstance(source, dict):
-            return None
-        query = source.get("objectQuery")
-        if isinstance(query, dict):
-            return query
-        if source.get("action") not in _SAME_ENTITY_DERIVATIONS:
-            return None
-        current = on
-    return None
+
+    entity: str
+    concretes: tuple[str, ...]
 
 
-def _edited_position(steps: list[Any], index: int, family: Family | None) -> list[str] | None:
-    """Every concrete Entity the node the `mutate` step at *index* edits could be.
+def _entity_position(entity: str, family: Family | None) -> _Position:
+    """*entity* as a position, over every concrete a node standing there could be."""
+    if family is None:
+        return _Position(entity, (entity,))
+    return _Position(entity, tuple(family.effective_concrete_set(entity)))
 
-    The read's **result** position decides it — ``target`` as narrowed by
-    ``narrowTo``, which `m-object-query` makes the position the query answers at —
-    so a narrowed read contributes only the concretes it can still return. An
+
+def _query_position(query: dict[str, Any], family: Family | None) -> _Position | None:
+    """An Object Query's **result** position — ``target`` as narrowed by ``narrowTo``.
+
+    `m-object-query` makes the Subtype Selection the position the query answers
+    at, so a narrowed read contributes only the concretes it can still return. An
     abstract position contributes its whole effective concrete set, because such a
     read materializes complete concrete instances and the case does not say which
-    one this node is.
+    one any node it hands over is.
 
-    ``None`` means the step resolves to no query at all (:func:`_edited_query`), so
-    there is no position to read. A selection that does not resolve INSIDE the
-    queried position states no position either, and falls back to the unnarrowed
-    one: narrowing only ever removes candidates, so judging against the whole
-    queried set is the strictest reading available and cannot admit an assignment
-    some coherent narrowing would refuse.
+    A selection that does not resolve INSIDE the queried position states no
+    position, and falls back to the unnarrowed one: narrowing only ever removes
+    candidates, so the whole queried set is the strictest reading available and
+    cannot admit an assignment some coherent narrowing would refuse.
     """
-    query = _edited_query(steps, index)
-    if query is None:
-        return None
     target = query.get("target")
     if not isinstance(target, str):
         return None
-    if family is None:
-        return [target]
-    queried = family.effective_concrete_set(target)
+    queried = _entity_position(target, family)
     narrow_to = query.get("narrowTo")
-    if not isinstance(narrow_to, list):
+    if family is None or not isinstance(narrow_to, list):
         return queried
     try:
-        narrowed = resolve_clamped_narrow(family, queried, narrow_to)
+        narrowed = resolve_clamped_narrow(family, list(queried.concretes), narrow_to)
     except RejectionError:
         return queried
-    return family.canonical_concrete_order(narrowed)
+    return _Position(target, tuple(family.canonical_concrete_order(narrowed)))
+
+
+def _navigated_position(source: _Position, path: str, family: Family | None) -> _Position | None:
+    """Where a `load` / `access` of *path* from *source* lands, or ``None``.
+
+    Each hop resolves through the relationships the position its own source stands
+    at DECLARES, which is how the runner resolves the same ``path``
+    (:func:`~reference_harness.case_runner._relationship_path_target`). A hop
+    naming none of them states no position at all — guessing a target here would
+    judge an edit against an Entity the step never reaches, and a path the runner
+    cannot walk is a navigation the case cannot run either.
+
+    Every hop is taken BROAD, at the relationship target's own effective concrete
+    set, even where the source read's Include Paths narrowed that hop's view. That
+    can only over-state the candidates, and a wider candidate set is the stricter
+    judgement — so it can refuse a narrowed case an executor would have run, and
+    can never pass one an executor refuses.
+    """
+    if family is None:
+        return None
+    position = source
+    for hop in path.split("."):
+        target = family.relationship_target(f"{position.entity}.{hop}")
+        if target is None:
+            return None
+        position = _entity_position(target, family)
+    return position
+
+
+def _source_index(step: dict[str, Any], *, grouped: bool) -> int | None:
+    """The earlier step this action's ``on`` names, or ``None`` for no single one.
+
+    A `load` spanning sources at DIFFERENT lowered coordinates names them as an
+    ARRAY (`m-deep-fetch`); those sources are one position pinned several ways, so
+    the first of them stands for the position they all stand at. Every other verb
+    acts on a single object, where an array names no one node to resolve.
+    """
+    on = step.get("on")
+    if grouped and isinstance(on, list):
+        on = on[0] if on else None
+    return on if isinstance(on, int) and not isinstance(on, bool) else None
+
+
+def _step_position(
+    steps: list[Any], index: int, family: Family | None, visited: frozenset[int] = frozenset()
+) -> _Position | None:
+    """Where the result of the scenario step at *index* stands, or ``None``.
+
+    A read step stands at its own query's result position (:func:`_query_position`).
+    An action step stands wherever its ``on`` chain leads: the same position for a
+    same-Entity derivation (:data:`_SAME_ENTITY_DERIVATIONS`), the navigated one
+    for a relationship read (:data:`_RELATIONSHIP_NAVIGATIONS`).
+
+    ``None`` means the position is undecidable here rather than absent. A write
+    step or a boundary verb holds no queried node; an out-of-range or missing
+    ``on`` is the runtime ``on`` rules'
+    (:func:`~reference_harness.case_runner._assert_action_on`) to report rather
+    than this check's to restate; and a step reachable from itself resolves
+    nowhere, which the cycle guard answers rather than looping.
+    """
+    if index in visited or not 0 <= index < len(steps):
+        return None
+    step = steps[index]
+    if not isinstance(step, dict):
+        return None
+    query = step.get("objectQuery")
+    if isinstance(query, dict):
+        return _query_position(query, family)
+    action = step.get("action")
+    navigates = action in _RELATIONSHIP_NAVIGATIONS
+    if not navigates and action not in _SAME_ENTITY_DERIVATIONS:
+        return None
+    source_index = _source_index(step, grouped=navigates)
+    if source_index is None:
+        return None
+    source = _step_position(steps, source_index, family, visited | {index})
+    if source is None or not navigates:
+        return source
+    path = step.get("path")
+    if path is None:
+        return source
+    return _navigated_position(source, path, family) if isinstance(path, str) else None
 
 
 def _validate_scenario_edit(
@@ -531,33 +602,36 @@ def _validate_scenario_edit(
 
     The Entity is the one the edited node IS, which an executor resolves from the
     node's own materialized variant and this check cannot see. What it has instead
-    is the read's result position (:func:`_edited_position`), so the set must be
-    one EVERY concrete there admits, WHOLE. That is what makes the static verdict
-    the same verdict a validating executor reaches at run time: a set every
-    candidate admits is admitted by whichever candidate the read answered.
-    Accepting a set some ONE concrete admits would not — an `Animal` read narrowed
-    to `Dog` and assigning `Cat`'s `indoor`, or an unnarrowed one assigning
-    `Dog`'s `barkVolume` beside `Cat`'s `indoor`, names a node no read can hand an
-    executor, which would then refuse the case this check had passed.
+    is the position that node stands at (:func:`_step_position`) — the position the
+    step's own ``on`` chain reaches, which is a relationship's target where the
+    chain runs through a `load` / `access` and the find's own result otherwise. The
+    set must be one EVERY concrete of that position admits, WHOLE. That is what
+    makes the static verdict the same verdict a validating executor reaches at run
+    time: a set every candidate admits is admitted by whichever candidate the read
+    answered. Accepting a set some ONE concrete admits would not — an `Animal` read
+    narrowed to `Dog` and assigning `Cat`'s `indoor`, or an unnarrowed one
+    assigning `Dog`'s `barkVolume` beside `Cat`'s `indoor`, names a node no read
+    can hand an executor, which would then refuse the case this check had passed.
 
-    A case says which concrete its read answers by NARROWING it: a position
-    narrowed to one concrete is judged against that concrete alone, which is how a
-    subtype's own member becomes assignable under an abstract root — and so the
-    refusal distinguishes the two things an author can be told
+    A case reaches a narrower position by NARROWING its read, and narrow enough is
+    a position every concrete of which admits the whole set: `Animal` narrowed to
+    the abstract `Pet` may assign `Pet`'s own `licenseId`, because both `Cat` and
+    `Dog` declare it, while `Cat`'s `indoor` needs the narrowing that leaves `Cat`
+    alone. So the refusal distinguishes the two things an author can be told
     (:func:`_edit_refusal`).
     """
     step = steps[index]
     assignments = step.get("set") if isinstance(step, dict) else None
     if not isinstance(assignments, dict) or not assignments:
         return
-    positions = _edited_position(steps, index, family)
-    if positions is None:
+    position = _step_position(steps, index, family)
+    if position is None:
         return
     entities: list[Entity] = []
-    for position in positions:
-        entity = _effective_entity(entity_defs, position)
+    for concrete in position.concretes:
+        entity = _effective_entity(entity_defs, concrete)
         if entity is None:
-            return  # an undeclared target is the query validator's to report
+            return  # an undeclared position is the query validator's to report
         entities.append(entity)
     judged = [(entity, _first_violation(entity, assignments)) for entity in entities]
     if all(violation is None for _, violation in judged):
@@ -579,15 +653,17 @@ def _first_violation(entity: Entity, assignments: dict[str, Any]) -> str | None:
 
 
 def _edit_refusal(judged: list[tuple[Entity, str | None]], assignments: dict[str, Any]) -> str:
-    """The refusal to report for a `set` some concrete the read answers rejects.
+    """The refusal to report for a `set` some concrete of the edited position rejects.
 
     Two different things can be wrong, an author acts on them differently, and so
     they are not one message.
 
-    Where SOME candidate would have admitted the set, the READ's position is what
-    is too wide: the set describes a node the query may or may not answer, and
-    narrowing the read to that concrete is what makes the case legal, so the
-    refusal names the alternatives and says so.
+    Where SOME candidate would have admitted the set, the POSITION is what is too
+    wide: the set describes a node the step may or may not reach, and what makes
+    the case legal is editing at a position every concrete of which admits the set
+    — not necessarily ONE concrete, since an abstract subtype whose concretes all
+    admit it is narrow enough. So the refusal names the alternatives, states the
+    bar, and names `narrowTo` as the clause a read reaches a narrower position by.
 
     Where EVERY candidate refuses, the assignment is wrong wherever it lands. It is
     reported from the candidate declaring the most of the named members, because a
@@ -601,11 +677,11 @@ def _edit_refusal(judged: list[tuple[Entity, str | None]], assignments: dict[str
     answered = ", ".join(entity.name for entity, _ in judged)
     if len(refused) < len(judged):
         return (
-            f"{refused[0][1]} — the read answers any of ({answered}), so narrow it to "
-            f"the concrete this edit means"
+            f"{refused[0][1]} — the edited node is any of ({answered}), so the set must be one "
+            f"every one of them admits; a read narrows to such a position with `narrowTo`"
         )
     closest = min(refused, key=lambda candidate: len(undeclared_members(candidate[0], assignments)))
-    return f"{closest[1]} — no concrete the read answers ({answered}) admits the whole set"
+    return f"{closest[1]} — no concrete the edited node may be ({answered}) admits the whole set"
 
 
 def validate_tree(compatibility_root: Path) -> list[str]:

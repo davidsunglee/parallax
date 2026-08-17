@@ -14,10 +14,11 @@ naming a declared, assignable member with a value that member admits is ACCEPTED
 and each of the five ways one can fail — an undeclared or relationship name, a
 protected target, an ill-typed value, a null where the member is not nullable, and
 a malformed Value Object document — is REJECTED. Two structural halves ride along:
-which Entities the set is judged against (a polymorphic read leaves the node's own
-Entity open, so every concrete its RESULT position can answer must admit the whole
-set, and a chained edit inherits the find's position), and where the check stops (a
-step whose `on` names no read at all).
+WHERE the edited node stands (a derivation stands where its source does, a
+`load` / `access` at its path's terminal position, and a polymorphic position
+leaves the node's own Entity open, so every concrete that position can answer must
+admit the whole set), and where the walk stops (a step whose `on` reaches no
+position at all).
 """
 
 from __future__ import annotations
@@ -148,14 +149,29 @@ def test_one_concretes_own_member_needs_a_read_narrowed_to_it() -> None:
     # An abstract-target read materializes complete concrete instances but does not
     # say WHICH, so a set only Dog admits describes a node the read may never
     # produce — the executor holding a Cat would refuse the case this gate passed.
-    # `narrowTo` is how a case says which concrete its edit means, and it is judged
-    # against that concrete alone.
+    # `narrowTo` is how a case reaches a narrower position, and `barkVolume` is
+    # Dog's own, so only the narrowing that leaves Dog alone admits it.
     assert _edit("models/animal.yaml", _ANIMAL, {"barkVolume": 9}) == [
         "probe: `mutate` set Cat.barkVolume: names no assignable attribute or value "
-        "object — the read answers any of (Cat, Dog, WildBoar), so narrow it to the "
-        "concrete this edit means"
+        "object — the edited node is any of (Cat, Dog, WildBoar), so the set must be one "
+        "every one of them admits; a read narrows to such a position with `narrowTo`"
     ]
     assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_DOG], {"barkVolume": 9}) == []
+
+
+def test_a_narrowing_admitting_the_set_need_not_reach_one_concrete() -> None:
+    # The bar is a position every concrete of which admits the whole set, NOT a
+    # single concrete: `licenseId` is the abstract subtype Pet's own, so narrowing
+    # Animal to Pet is narrow enough — both Cat and Dog inherit it — while the
+    # unnarrowed read still fails on the sibling branch WildBoar, which does not.
+    assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_PET], {"licenseId": "L-1"}) == []
+    assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_CAT, _DOG], {"licenseId": "L-1"}) == []
+    assert _edit("models/animal.yaml", _PET, {"licenseId": "L-1"}) == []
+    assert _edit("models/animal.yaml", _ANIMAL, {"licenseId": "L-1"}) == [
+        "probe: `mutate` set WildBoar.licenseId: names no assignable attribute or value "
+        "object — the edited node is any of (Cat, Dog, WildBoar), so the set must be one "
+        "every one of them admits; a read narrows to such a position with `narrowTo`"
+    ]
 
 
 def test_a_narrowed_read_refuses_a_sibling_branchs_member() -> None:
@@ -168,7 +184,7 @@ def test_a_narrowed_read_refuses_a_sibling_branchs_member() -> None:
     ]
     assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_PET], {"tuskLength": 1.5}) == [
         "probe: `mutate` set Cat.tuskLength: names no assignable attribute or value "
-        "object — no concrete the read answers (Cat, Dog) admits the whole set"
+        "object — no concrete the edited node may be (Cat, Dog) admits the whole set"
     ]
 
 
@@ -177,8 +193,8 @@ def test_a_set_spanning_two_branches_names_no_node_at_all() -> None:
     # admits both, so judging each key against the family's union would pass a case
     # every executor refuses.
     assert _edit("models/animal.yaml", _ANIMAL, {"barkVolume": 9, "indoor": True}) == [
-        "probe: `mutate` set Cat.barkVolume: names no assignable attribute or value "
-        "object — no concrete the read answers (Cat, Dog, WildBoar) admits the whole set"
+        "probe: `mutate` set Cat.barkVolume: names no assignable attribute or value object "
+        "— no concrete the edited node may be (Cat, Dog, WildBoar) admits the whole set"
     ]
 
 
@@ -188,8 +204,8 @@ def test_a_refusal_no_narrowing_can_fix_is_reported_from_the_declaring_concrete(
     # Dog's own verdict on the value.
     assert _edit("models/animal.yaml", _ANIMAL, {"barkVolume": "loud"}) == [
         "probe: `mutate` set Dog.barkVolume: value 'loud' does not match the declared "
-        "type 'int32' — no concrete the read answers (Cat, Dog, WildBoar) admits the "
-        "whole set"
+        "type 'int32' — no concrete the edited node may be (Cat, Dog, WildBoar) admits "
+        "the whole set"
     ]
 
 
@@ -198,7 +214,8 @@ def test_read_time_provenance_names_no_member_of_any_concrete() -> None:
     # members, and no concrete declares it.
     assert _edit("models/animal.yaml", _ANIMAL, {"familyVariant": "Cat"}) == [
         "probe: `mutate` set Cat.familyVariant: names no assignable attribute or value "
-        "object — no concrete the read answers (Cat, Dog, WildBoar) admits the whole set"
+        "object — no concrete the edited node may be (Cat, Dog, WildBoar) admits the "
+        "whole set"
     ]
 
 
@@ -210,7 +227,7 @@ def test_a_sibling_branchs_member_is_refused_on_a_concrete_target() -> None:
 
 def test_a_narrowing_to_one_concrete_is_judged_as_that_concrete_alone() -> None:
     # Narrowing an abstract SUBTYPE resolves the same way as narrowing the root, so a
-    # case reaches every concrete position through the clause the read already has.
+    # case reaches every position in the family through the clause the read already has.
     assert _narrowed_edit("models/animal.yaml", _PET, [_CAT], {"indoor": True}) == []
     assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_DOG], {"barkVolume": "loud"}) == [
         "probe: `mutate` set Dog.barkVolume: value 'loud' does not match the declared type 'int32'"
@@ -226,8 +243,8 @@ def test_an_incoherent_narrowing_falls_back_to_the_unnarrowed_position() -> None
         "models/animal.yaml", _ANIMAL, ["parallax.compatibility.Person"], {"barkVolume": 9}
     ) == [
         "probe: `mutate` set Cat.barkVolume: names no assignable attribute or value "
-        "object — the read answers any of (Cat, Dog, WildBoar), so narrow it to the "
-        "concrete this edit means"
+        "object — the edited node is any of (Cat, Dog, WildBoar), so the set must be one "
+        "every one of them admits; a read narrows to such a position with `narrowTo`"
     ]
 
 
@@ -259,31 +276,187 @@ def test_a_chain_through_a_same_entity_derivation_reaches_the_find() -> None:
         ]
 
 
-def test_a_chain_through_a_relationship_step_resolves_to_no_position() -> None:
-    # A `load` / `access` result is the relationship TARGET, a different position from
-    # the find's own, so the chain stops rather than judging against the wrong Entity.
+def test_an_edit_after_a_relationship_step_is_judged_at_the_relationship_target() -> None:
+    # A `load` / `access` result is the relationship TARGET, so an edit of one states
+    # a member of the ITEM. Judging it against the find's own Entity would be wrong,
+    # and judging it against nothing at all would let every invalid assignment on a
+    # relationship result through the gate the corpus refuses one by.
     for verb in ("load", "access"):
-        steps: list[Any] = [
+        undeclared: list[Any] = [
             {"objectQuery": {"target": _ORDER}},
             {"action": verb, "on": 0, "path": "items"},
             {"action": "mutate", "on": 1, "set": {"nickname": "Nick"}},
         ]
-        assert _judged("models/orders.yaml", steps, 2) == []
+        assert _judged("models/orders.yaml", undeclared, 2) == [
+            "probe: `mutate` set OrderItem.nickname: names no assignable attribute or value object"
+        ]
+        source_member: list[Any] = [
+            {"objectQuery": {"target": _ORDER}},
+            {"action": verb, "on": 0, "path": "items"},
+            {"action": "mutate", "on": 1, "set": {"name": "Mutant"}},
+        ]
+        assert _judged("models/orders.yaml", source_member, 2) == [
+            "probe: `mutate` set OrderItem.name: names no assignable attribute or value object"
+        ]
+        admitted: list[Any] = [
+            {"objectQuery": {"target": _ORDER}},
+            {"action": verb, "on": 0, "path": "items"},
+            {"action": "mutate", "on": 1, "set": {"sku": "COPY-ONLY"}},
+        ]
+        assert _judged("models/orders.yaml", admitted, 2) == []
+
+
+def test_a_multi_hop_path_is_judged_at_its_terminal_position() -> None:
+    # Each hop resolves at the position the previous one reached, so a dotted path
+    # lands where its LAST hop does — including a hop back through a reverse
+    # relationship, which returns to the entity the path started from.
+    forward: list[Any] = [
+        {"objectQuery": {"target": _ORDER}},
+        {"action": "load", "on": 0, "path": "items.statuses"},
+        {"action": "mutate", "on": 1, "set": {"sku": "A-100"}},
+    ]
+    assert _judged("models/orders.yaml", forward, 2) == [
+        "probe: `mutate` set OrderStatus.sku: names no assignable attribute or value object"
+    ]
+    back: list[Any] = [
+        {"objectQuery": {"target": _ORDER}},
+        {"action": "load", "on": 0, "path": "items.order"},
+        {"action": "mutate", "on": 1, "set": {"quantity": 2}},
+    ]
+    assert _judged("models/orders.yaml", back, 2) == [
+        "probe: `mutate` set Order.quantity: names no assignable attribute or value object"
+    ]
+
+
+def test_a_path_less_access_stands_where_its_source_does() -> None:
+    # The path-less `access` form navigates no relationship — it resolves a
+    # query-backed list, whose members are the source's own position.
+    steps: list[Any] = [
+        {"objectQuery": {"target": _ORDER}},
+        {"action": "access", "on": 0},
+        {"action": "mutate", "on": 1, "set": {"id": 2}},
+    ]
+    assert _judged("models/orders.yaml", steps, 2) == [
+        "probe: `mutate` set Order.id: primary-key fields may not be assigned"
+    ]
+
+
+def test_a_derivation_rooted_at_a_relationship_result_keeps_that_position() -> None:
+    # The shape `m-detach-011` authors: a copy taken of (or merged back from) a
+    # relationship result is still an item, so the position survives the derivation
+    # instead of the chain falling back to the find or to nothing.
+    for verb in ("mutate", "detachCopy", "mergeBack"):
+        derivation: dict[str, Any] = {"action": verb, "on": 1}
+        if verb == "mutate":
+            derivation["set"] = {"sku": "COPY-ONLY"}
+        steps: list[Any] = [
+            {"objectQuery": {"target": _ORDER}},
+            {"action": "access", "on": 0, "path": "items"},
+            derivation,
+            {"action": "mutate", "on": 2, "set": {"quantity": "five"}},
+        ]
+        assert _judged("models/orders.yaml", steps, 3) == [
+            "probe: `mutate` set OrderItem.quantity: value 'five' does not match the "
+            "declared type 'int32'"
+        ]
+
+
+def test_a_grouped_load_stands_where_its_sources_do() -> None:
+    # An `on` ARRAY spans sources at different lowered coordinates — one position
+    # pinned several ways — so the load lands at the same relationship target a
+    # single-source load would.
+    steps: list[Any] = [
+        {"objectQuery": {"target": _ORDER}},
+        {"objectQuery": {"target": _ORDER}},
+        {"action": "load", "on": [0, 1], "path": "items"},
+        {"action": "mutate", "on": 2, "set": {"nickname": "Nick"}},
+    ]
+    assert _judged("models/orders.yaml", steps, 3) == [
+        "probe: `mutate` set OrderItem.nickname: names no assignable attribute or value object"
+    ]
+
+
+def test_a_polymorphic_relationship_target_is_judged_as_every_concrete_it_reaches() -> None:
+    # A navigated position is judged by the same whole-set/every-concrete rule a read's
+    # own is: `Person.animals` reaches the whole family, `Person.pets` only Pet's branch.
+    root_member: list[Any] = [
+        {"objectQuery": {"target": "parallax.compatibility.Person"}},
+        {"action": "load", "on": 0, "path": "animals"},
+        {"action": "mutate", "on": 1, "set": {"name": "Mutant"}},
+    ]
+    assert _judged("models/animal.yaml", root_member, 2) == []
+    branch_member: list[Any] = [
+        {"objectQuery": {"target": "parallax.compatibility.Person"}},
+        {"action": "load", "on": 0, "path": "animals"},
+        {"action": "mutate", "on": 1, "set": {"licenseId": "L-1"}},
+    ]
+    assert _judged("models/animal.yaml", branch_member, 2) == [
+        "probe: `mutate` set WildBoar.licenseId: names no assignable attribute or value "
+        "object — the edited node is any of (Cat, Dog, WildBoar), so the set must be one "
+        "every one of them admits; a read narrows to such a position with `narrowTo`"
+    ]
+    narrower_relationship: list[Any] = [
+        {"objectQuery": {"target": "parallax.compatibility.Person"}},
+        {"action": "load", "on": 0, "path": "pets"},
+        {"action": "mutate", "on": 1, "set": {"licenseId": "L-1"}},
+    ]
+    assert _judged("models/animal.yaml", narrower_relationship, 2) == []
+
+
+def test_a_path_naming_no_relationship_reaches_no_position() -> None:
+    # The navigation itself is then broken, which the runtime reports; guessing a
+    # target here would judge the edit against an Entity the step never reaches.
+    steps: list[Any] = [
+        {"objectQuery": {"target": _ORDER}},
+        {"action": "load", "on": 0, "path": "nope"},
+        {"action": "mutate", "on": 1, "set": {"nickname": "Nick"}},
+    ]
+    assert _judged("models/orders.yaml", steps, 2) == []
+
+
+def test_a_chain_reaching_itself_resolves_to_no_position() -> None:
+    # A step whose `on` leads back to it names no earlier result at all. The runtime
+    # `on` rules report the reference; the walk answers the cycle rather than looping.
+    self_naming: list[Any] = [{"action": "mutate", "on": 0, "set": {"nickname": "Nick"}}]
+    assert _judged("models/orders.yaml", self_naming, 0) == []
+    mutual: list[Any] = [
+        {"action": "detachCopy", "on": 1},
+        {"action": "mutate", "on": 0, "set": {"nickname": "Nick"}},
+    ]
+    assert _judged("models/orders.yaml", mutual, 1) == []
 
 
 @pytest.mark.parametrize(
-    "steps",
+    ("steps", "index"),
     [
-        [{"write": []}, {"action": "mutate", "on": 0, "set": {"nickname": "Nick"}}],
-        [{"objectQuery": {"target": _ORDER}}, {"action": "mutate", "on": 7, "set": {"id": 2}}],
-        [{"objectQuery": {"target": _ORDER}}, {"action": "mutate", "set": {"id": 2}}],
+        ([{"write": []}, {"action": "mutate", "on": 0, "set": {"nickname": "Nick"}}], 1),
+        ([{"objectQuery": {"target": _ORDER}}, {"action": "mutate", "on": 7, "set": {"id": 2}}], 1),
+        ([{"objectQuery": {"target": _ORDER}}, {"action": "mutate", "set": {"id": 2}}], 1),
+        (
+            [
+                {"objectQuery": {"target": _ORDER}},
+                {"action": "mutate", "on": [0], "set": {"id": 2}},
+            ],
+            1,
+        ),
+        (
+            [
+                {"objectQuery": {"target": _ORDER}},
+                {"action": "commit", "on": 0},
+                {"action": "mutate", "on": 1, "set": {"id": 2}},
+            ],
+            2,
+        ),
     ],
 )
-def test_a_step_resolving_to_no_read_is_left_to_the_on_rules(steps: list[Any]) -> None:
-    # An `on` naming a write step, an out-of-range index, or no index at all resolves
-    # to no query: what the step edits is undecidable here, and the runtime `on`
-    # rules already report the index itself.
-    assert _judged("models/orders.yaml", steps, 1) == []
+def test_a_step_resolving_to_no_position_is_left_to_the_on_rules(
+    steps: list[Any], index: int
+) -> None:
+    # An `on` naming a write step, an out-of-range index, no index at all, a GROUP of
+    # sources where the verb acts on one object, or a boundary verb that holds no
+    # queried node resolves to no position: where the step's node stands is undecidable
+    # here, and the runtime `on` rules already report the reference itself.
+    assert _judged("models/orders.yaml", steps, index) == []
 
 
 def test_a_change_free_edit_carries_nothing_to_judge() -> None:
