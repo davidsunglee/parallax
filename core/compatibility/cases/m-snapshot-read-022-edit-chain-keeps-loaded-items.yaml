@@ -1,11 +1,12 @@
 # A POPULATED to-many relationship survives a CHAIN of authored edits
-# (m-snapshot-read *Closed world*, composition): deriving a copy of a copy leaves
-# the materialized view alone at every hop, so accessing it after the chain still
-# issues ZERO SQL and still answers both line items. This is the clause "a
-# derived copy's view state IS its source's" held over a chain rather than a
-# single derivation; m-snapshot-read-016 holds it for ONE edit, and the two
-# together say that leaving the view alone is a property of the edit verb rather
-# than of the first use of it.
+# (m-snapshot-read *Closed world*, composition): after one edit derives a copy
+# and a second derives a copy of THAT copy, accessing the view the read
+# materialized still issues ZERO SQL and still answers both line items.
+# m-snapshot-read-016 holds that for ONE edit; the two together say that leaving
+# the source's view alone is a property of the edit verb rather than of the first
+# use of it. The other half of the composition clause — what a COPY answers for
+# the same relationship — is not observable on this lane at all, and the last
+# paragraph says both why and where it is held instead.
 #
 # Step 0 materializes order 1 WITH its `items` — the ordinary 1 + L deep fetch,
 # one statement per level, two round trips. Step 1 derives an edited copy
@@ -13,30 +14,37 @@
 # rather than step 0 and assigning nothing at all. The two hops are the two kinds
 # of edit there are: an authored change and a change-free derivation, which is
 # the partition the composition rule must hold across (an edit with no changes is
-# legal and builds a copy of the value's own state). Neither hop emits DML, and
-# neither reaches the database — a snapshot graph is never enrolled in a unit of
-# work. Step 3 then accesses `items` on the view step 0 materialized and states
-# its WHOLE contents through `expectGraph`: both OrderItem rows, every declared
-# member, unchanged, in the `id desc` order the relationship declares.
+# legal and builds a copy of the value's own state). Neither hop emits DML,
+# reaches the database, or costs a round trip — a snapshot graph is never
+# enrolled in a unit of work. Step 3 then accesses `items` on the view step 0
+# materialized and states its WHOLE contents through `expectGraph`: both
+# OrderItem rows, every declared member, unchanged.
 #
-# The semantic distinction against a single edit is step 2, and it is a
-# RESOLUTION rather than a comparison: step 2 names step 1, so an implementation
-# whose `mutate` rewrites the object it names — or answers with nothing a later
-# step can name — has no copy for step 2 to derive from and fails there while
-# m-snapshot-read-016 still passes. So does one that treats a `set`-less edit as
-# anything other than a copy of the value's own state. Step 3 is the distinction
-# against a re-read: it asks the source what it still holds after the chain ran,
-# where a fresh find would re-query the database and grade a NEW materialization
-# instead, which is why `expectGraph` is legal on an access step alone.
-# `roundTrips: 0` is the closed-world half; `expectGraph` is the survival half.
+# Three implementations fail here. One that RE-QUERIES on access costs a round
+# trip that this step's `roundTrips: 0` and the case's `then.roundTrips: 2` both
+# refuse, however right the rows it answers back — the closed-world half. One
+# whose access answers other contents — an element dropped, a leaf the chain
+# disturbed — fails the graph comparison, the survival half. And step 2 is a
+# RESOLUTION rather than a comparison: it names step 1, so an implementation
+# whose `mutate` answers with nothing a later step can name, or refuses a
+# `set`-less edit outright, has nothing to derive from and fails there while
+# m-snapshot-read-016 still passes. That third one is graded only where a copy
+# exists to be named at all: an executor holding no copy checks a `mutate` step's
+# `on` for naming a real earlier step and can ask no more of it.
 #
-# What no observable here states is the CONTENTS of either copy's own view. The
-# access names step 0, the read: `on` names the step whose Include Paths
-# materialized the view whose contents are stated, and a copy carries a view it
-# never fetched rather than one it did. An implementation that published both
-# copies while dropping `items` from one of them therefore passes this case.
-# What each copy itself answers for `items` — the SAME objects, hop after hop —
-# is the reference-identity assertion each language's API Conformance Suite runs
+# Three things no observable here states, deliberately. The CONTENTS of either
+# copy's own view: the access names step 0, the read, because `on` names the step
+# whose Include Paths materialized the view whose contents are stated, and a copy
+# carries a view it never fetched. An implementation that published both copies
+# while dropping `items` from one of them passes. DERIVING rather than rewriting:
+# one whose `mutate` assigns into the node it names and republishes that same
+# node passes every observable here, because the only assignment in the chain is
+# `name` and nothing states `name` after step 0 read it. And ELEMENT ORDER: a
+# relationship collection compares as a MULTISET (m-case-format), so these two
+# entries could be written either way round — the `id desc` the relationship
+# declares is pinned by step 0's own child statement instead. What each copy
+# itself answers for `items` — the SAME objects, hop after hop — is the
+# reference-identity assertion each language's API Conformance Suite runs
 # (m-api-conformance), which is also the only lane that holds a copy at all.
 # `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
 # accesses (m-op-list-002); on the wire lane it is primary-key equality against
