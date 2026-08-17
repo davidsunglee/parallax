@@ -1409,10 +1409,17 @@ else. A language whose edit verb validates will reach the same verdict at run
 time, and MAY refuse there, but no case may depend on it — an executor that
 models `mutate` as its authored golden DML alone reaches no verdict at all, and
 two executors must agree on every case the corpus admits. Where the step's own
-read is **abstract-targeted**, the assignable domain is the widest that read could
-answer: a member ANY concrete subtype of its effective concrete set declares,
-since the node the edit holds is one complete concrete instance and the case does
-not say which.
+read is **abstract-targeted**, the case does not say which concrete instance the
+node is, so the whole `set` must be one **every** concrete that read can answer
+admits — the concretes of its **result** position, `target` as narrowed by
+`narrowTo` (`m-object-query`). Only that keeps the run-time verdict above the same
+verdict: a set every candidate admits is admitted by whichever candidate the read
+handed the executor, while one that merely SOME candidate admits describes a node
+the read may never produce. A member only some concrete of the family declares is
+therefore assignable only under a read **narrowed** to that concrete — `narrowTo`
+is how a case says which concrete its edit means — and a set drawing one key from
+one branch and another from a sibling names no node at all, exactly as a
+concrete-subtype write payload may carry no sibling field (`m-inheritance`).
 
 `path` (the navigated relationship, e.g.
 `items` or `items.statuses`) is legal only on `load` / `access`. Because golden SQL

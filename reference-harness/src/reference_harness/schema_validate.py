@@ -34,7 +34,12 @@ from referencing import Registry
 from .case import Entity
 from .corpus_yaml import read_corpus_yaml
 from .execution_validate import validate_execution
-from .inheritance import Family, resolve_effective_definition, validate_family_defs
+from .inheritance import (
+    Family,
+    resolve_clamped_narrow,
+    resolve_effective_definition,
+    validate_family_defs,
+)
 from .keyed_write_validate import (
     states_framework_marker,
     undeclared_row_members,
@@ -427,16 +432,29 @@ def _validate_scenario_reference_sql(
     _scenario_reference_sql_dialect_keys(step, label, errors)
 
 
-def _edited_target(steps: list[Any], index: int) -> str | None:
-    """The Object Query target the `mutate` step at *index* edits, or ``None``.
+_SAME_ENTITY_DERIVATIONS: frozenset[str] = frozenset({"mutate", "detachCopy", "mergeBack"})
+"""The action verbs whose result denotes the SAME Entity as the step they name.
+
+An edited copy, a detached deep copy and a merged-back object are all the object
+their source step held, so a `mutate` naming one is judged against the find that
+started the chain. A `load` / `access` result is the RELATIONSHIP TARGET instead
+— a different position entirely — so a chain through one resolves to nothing
+here rather than to the find's own target.
+"""
+
+
+def _edited_query(steps: list[Any], index: int) -> dict[str, Any] | None:
+    """The Object Query whose result the `mutate` step at *index* edits, or ``None``.
 
     A `mutate` names an earlier step through ``on``: the find whose result it
-    edits, or an earlier `mutate` whose copy it derives from, which the walk
-    follows back to the find that materialized the chain. ``None`` means the step
-    resolves to no query at all — an out-of-range or missing ``on``, or one naming
-    a write step — which the runtime ``on`` rules own
-    (:func:`~reference_harness.case_runner._assert_action_on`) and this check does
-    not restate.
+    edits, or an earlier same-Entity derivation (:data:`_SAME_ENTITY_DERIVATIONS`)
+    which the walk follows back to the find that materialized the chain.
+
+    ``None`` means the step resolves to no query at all. An out-of-range or missing
+    ``on`` is the runtime ``on`` rules'
+    (:func:`~reference_harness.case_runner._assert_action_on`) to report rather
+    than this check's to restate; a write step or a relationship step holds no node
+    of the find's own position for an edit to be about.
     """
     seen: set[int] = set()
     current = index
@@ -444,19 +462,54 @@ def _edited_target(steps: list[Any], index: int) -> str | None:
         seen.add(current)
         step = steps[current] if 0 <= current < len(steps) else None
         on = step.get("on") if isinstance(step, dict) else None
-        if not isinstance(on, int) or not 0 <= on < len(steps):
+        if not isinstance(on, int) or isinstance(on, bool) or not 0 <= on < len(steps):
             return None
         source = steps[on]
         if not isinstance(source, dict):
             return None
         query = source.get("objectQuery")
         if isinstance(query, dict):
-            target = query.get("target")
-            return target if isinstance(target, str) else None
-        if source.get("action") != "mutate":
+            return query
+        if source.get("action") not in _SAME_ENTITY_DERIVATIONS:
             return None
         current = on
     return None
+
+
+def _edited_position(steps: list[Any], index: int, family: Family | None) -> list[str] | None:
+    """Every concrete Entity the node the `mutate` step at *index* edits could be.
+
+    The read's **result** position decides it — ``target`` as narrowed by
+    ``narrowTo``, which `m-object-query` makes the position the query answers at —
+    so a narrowed read contributes only the concretes it can still return. An
+    abstract position contributes its whole effective concrete set, because such a
+    read materializes complete concrete instances and the case does not say which
+    one this node is.
+
+    ``None`` means the step resolves to no query at all (:func:`_edited_query`), so
+    there is no position to read. A selection that does not resolve INSIDE the
+    queried position states no position either, and falls back to the unnarrowed
+    one: narrowing only ever removes candidates, so judging against the whole
+    queried set is the strictest reading available and cannot admit an assignment
+    some coherent narrowing would refuse.
+    """
+    query = _edited_query(steps, index)
+    if query is None:
+        return None
+    target = query.get("target")
+    if not isinstance(target, str):
+        return None
+    if family is None:
+        return [target]
+    queried = family.effective_concrete_set(target)
+    narrow_to = query.get("narrowTo")
+    if not isinstance(narrow_to, list):
+        return queried
+    try:
+        narrowed = resolve_clamped_narrow(family, queried, narrow_to)
+    except RejectionError:
+        return queried
+    return family.canonical_concrete_order(narrowed)
 
 
 def _validate_scenario_edit(
@@ -467,7 +520,7 @@ def _validate_scenario_edit(
     label: str,
     errors: list[str],
 ) -> None:
-    """Refuse a `mutate` step whose `set` the model does not admit.
+    """Refuse a `mutate` step whose `set` the node it edits may not admit.
 
     `m-case-format` makes an assignment no member of the edited Entity admits a
     **case-authoring failure** rather than a graded observation: the closed
@@ -476,44 +529,83 @@ def _validate_scenario_edit(
     it statically is the same standard the bare write row's member honesty is held
     to, asked before any executor sees the case rather than by each of them.
 
-    The Entity is the one the edited node IS, which an abstract-target read leaves
-    open: such a read materializes complete concrete instances, so a subtype's own
-    member is assignable on a node the query answered. The set is therefore judged
-    against the target's EFFECTIVE CONCRETE SET and accepted where any member of it
-    admits the assignment — the widest position the query could have answered, so
-    the refusal reports only what no concrete could accept. A `narrowTo` clause can
-    only shrink that set, so reading the bare target stays conservative.
+    The Entity is the one the edited node IS, which an executor resolves from the
+    node's own materialized variant and this check cannot see. What it has instead
+    is the read's result position (:func:`_edited_position`), so the set must be
+    one EVERY concrete there admits, WHOLE. That is what makes the static verdict
+    the same verdict a validating executor reaches at run time: a set every
+    candidate admits is admitted by whichever candidate the read answered.
+    Accepting a set some ONE concrete admits would not — an `Animal` read narrowed
+    to `Dog` and assigning `Cat`'s `indoor`, or an unnarrowed one assigning
+    `Dog`'s `barkVolume` beside `Cat`'s `indoor`, names a node no read can hand an
+    executor, which would then refuse the case this check had passed.
 
-    A refusal spanning a family is reported from a concrete that DECLARES the
-    member where one does: every other concrete answers that the name is nothing of
-    theirs, which is true and says less than the declared position's own verdict on
-    the value.
+    A case says which concrete its read answers by NARROWING it: a position
+    narrowed to one concrete is judged against that concrete alone, which is how a
+    subtype's own member becomes assignable under an abstract root — and so the
+    refusal distinguishes the two things an author can be told
+    (:func:`_edit_refusal`).
     """
     step = steps[index]
     assignments = step.get("set") if isinstance(step, dict) else None
     if not isinstance(assignments, dict) or not assignments:
         return
-    target = _edited_target(steps, index)
-    if target is None:
+    positions = _edited_position(steps, index, family)
+    if positions is None:
         return
-    positions = family.effective_concrete_set(target) if family is not None else [target]
     entities: list[Entity] = []
     for position in positions:
         entity = _effective_entity(entity_defs, position)
         if entity is None:
             return  # an undeclared target is the query validator's to report
         entities.append(entity)
+    judged = [(entity, _first_violation(entity, assignments)) for entity in entities]
+    if all(violation is None for _, violation in judged):
+        return
+    errors.append(f"{label}: `mutate` set {_edit_refusal(judged, assignments)}")
+
+
+def _first_violation(entity: Entity, assignments: dict[str, Any]) -> str | None:
+    """Why *entity* refuses the first assignment in *assignments* it cannot take.
+
+    The whole set is one judgement: *entity* admits it only when it admits every
+    entry, so the first refusal ends the walk and stands for the set.
+    """
     for name, value in assignments.items():
-        judged = [(entity, assignment_violation(entity, name, value)) for entity in entities]
-        if any(violation is None for _, violation in judged):
-            continue
-        declaring = [
-            violation
-            for entity, violation in judged
-            if not undeclared_members(entity, {name: value}) and violation is not None
-        ]
-        reported = declaring or [violation for _, violation in judged if violation is not None]
-        errors.append(f"{label}: `mutate` set {reported[0]}")
+        violation = assignment_violation(entity, name, value)
+        if violation is not None:
+            return violation
+    return None
+
+
+def _edit_refusal(judged: list[tuple[Entity, str | None]], assignments: dict[str, Any]) -> str:
+    """The refusal to report for a `set` some concrete the read answers rejects.
+
+    Two different things can be wrong, an author acts on them differently, and so
+    they are not one message.
+
+    Where SOME candidate would have admitted the set, the READ's position is what
+    is too wide: the set describes a node the query may or may not answer, and
+    narrowing the read to that concrete is what makes the case legal, so the
+    refusal names the alternatives and says so.
+
+    Where EVERY candidate refuses, the assignment is wrong wherever it lands. It is
+    reported from the candidate declaring the most of the named members, because a
+    concrete that declares none of them only answers that the names are nothing of
+    theirs, which is true and says less than the declaring position's own verdict on
+    the value.
+    """
+    refused = [(entity, violation) for entity, violation in judged if violation is not None]
+    if len(judged) == 1:
+        return refused[0][1]
+    answered = ", ".join(entity.name for entity, _ in judged)
+    if len(refused) < len(judged):
+        return (
+            f"{refused[0][1]} — the read answers any of ({answered}), so narrow it to "
+            f"the concrete this edit means"
+        )
+    closest = min(refused, key=lambda candidate: len(undeclared_members(candidate[0], assignments)))
+    return f"{closest[1]} — no concrete the read answers ({answered}) admits the whole set"
 
 
 def validate_tree(compatibility_root: Path) -> list[str]:

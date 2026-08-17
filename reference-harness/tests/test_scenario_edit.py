@@ -14,9 +14,10 @@ naming a declared, assignable member with a value that member admits is ACCEPTED
 and each of the five ways one can fail — an undeclared or relationship name, a
 protected target, an ill-typed value, a null where the member is not nullable, and
 a malformed Value Object document — is REJECTED. Two structural halves ride along:
-which Entity the set is judged against (an abstract-target read leaves it open, so
-the family's concrete set decides, and a chained `mutate` inherits the find's
-target), and where the check stops (a step whose `on` names no read at all).
+which Entities the set is judged against (a polymorphic read leaves the node's own
+Entity open, so every concrete its RESULT position can answer must admit the whole
+set, and a chained edit inherits the find's position), and where the check stops (a
+step whose `on` names no read at all).
 """
 
 from __future__ import annotations
@@ -34,9 +35,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
 _ANIMAL = "parallax.compatibility.Animal"
+_CAT = "parallax.compatibility.Cat"
 _CUSTOMER = "parallax.compatibility.Customer"
 _DOG = "parallax.compatibility.Dog"
 _ORDER = "parallax.compatibility.Order"
+_PET = "parallax.compatibility.Pet"
 
 
 def _defs(model_rel: str) -> list[dict[str, Any]]:
@@ -52,8 +55,17 @@ def _judged(model_rel: str, steps: list[Any], index: int) -> list[str]:
 
 def _edit(model_rel: str, target: str, assignments: dict[str, Any]) -> list[str]:
     """One find + one `mutate` naming it, the shape every edit-bearing case opens with."""
+    return _narrowed_edit(model_rel, target, None, assignments)
+
+
+def _narrowed_edit(
+    model_rel: str, target: str, narrow_to: list[str] | None, assignments: dict[str, Any]
+) -> list[str]:
+    query: dict[str, Any] = {"target": target}
+    if narrow_to is not None:
+        query["narrowTo"] = narrow_to
     steps: list[Any] = [
-        {"objectQuery": {"target": target}},
+        {"objectQuery": query},
         {"action": "mutate", "on": 0, "set": assignments},
     ]
     return _judged(model_rel, steps, 1)
@@ -126,18 +138,58 @@ def test_a_value_object_assignment_binds_a_whole_document(value: Any, detail: st
     ]
 
 
-def test_an_abstract_target_admits_a_concrete_subtypes_own_member() -> None:
-    # An abstract-target read materializes complete concrete instances, so the node
-    # a `mutate` edits may be any concrete the family answers: `barkVolume` is Dog's
-    # alone and is assignable on a node found as an Animal.
-    assert _edit("models/animal.yaml", _ANIMAL, {"barkVolume": 9}) == []
+def test_an_inherited_member_is_assignable_on_every_concrete_the_read_answers() -> None:
+    # `name` is the abstract root's own, so whichever concrete the read hands the
+    # executor admits it — the one shape a broad polymorphic read may edit.
+    assert _edit("models/animal.yaml", _ANIMAL, {"name": "Mutant"}) == []
 
 
-def test_an_abstract_target_reports_the_concrete_that_declares_the_member() -> None:
-    # Every other concrete answers that the name is nothing of theirs, which is true
-    # and says less than Dog's own verdict on the value.
+def test_one_concretes_own_member_needs_a_read_narrowed_to_it() -> None:
+    # An abstract-target read materializes complete concrete instances but does not
+    # say WHICH, so a set only Dog admits describes a node the read may never
+    # produce — the executor holding a Cat would refuse the case this gate passed.
+    # `narrowTo` is how a case says which concrete its edit means, and it is judged
+    # against that concrete alone.
+    assert _edit("models/animal.yaml", _ANIMAL, {"barkVolume": 9}) == [
+        "probe: `mutate` set Cat.barkVolume: names no assignable attribute or value "
+        "object — the read answers any of (Cat, Dog, WildBoar), so narrow it to the "
+        "concrete this edit means"
+    ]
+    assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_DOG], {"barkVolume": 9}) == []
+
+
+def test_a_narrowed_read_refuses_a_sibling_branchs_member() -> None:
+    # The read's RESULT position is `target` narrowed by `narrowTo` (m-object-query),
+    # so a read narrowed to Dog is guaranteed to hand the executor a Dog. Judging the
+    # set against the bare target instead would admit Cat's `indoor` here, which the
+    # narrowed read can never satisfy.
+    assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_DOG], {"indoor": True}) == [
+        "probe: `mutate` set Dog.indoor: names no assignable attribute or value object"
+    ]
+    assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_PET], {"tuskLength": 1.5}) == [
+        "probe: `mutate` set Cat.tuskLength: names no assignable attribute or value "
+        "object — no concrete the read answers (Cat, Dog) admits the whole set"
+    ]
+
+
+def test_a_set_spanning_two_branches_names_no_node_at_all() -> None:
+    # Dog admits the first key and Cat the second, but no single concrete instance
+    # admits both, so judging each key against the family's union would pass a case
+    # every executor refuses.
+    assert _edit("models/animal.yaml", _ANIMAL, {"barkVolume": 9, "indoor": True}) == [
+        "probe: `mutate` set Cat.barkVolume: names no assignable attribute or value "
+        "object — no concrete the read answers (Cat, Dog, WildBoar) admits the whole set"
+    ]
+
+
+def test_a_refusal_no_narrowing_can_fix_is_reported_from_the_declaring_concrete() -> None:
+    # Every candidate refuses, so the assignment is wrong wherever it lands. Cat and
+    # WildBoar answer only that the name is nothing of theirs, which says less than
+    # Dog's own verdict on the value.
     assert _edit("models/animal.yaml", _ANIMAL, {"barkVolume": "loud"}) == [
-        "probe: `mutate` set Dog.barkVolume: value 'loud' does not match the declared type 'int32'"
+        "probe: `mutate` set Dog.barkVolume: value 'loud' does not match the declared "
+        "type 'int32' — no concrete the read answers (Cat, Dog, WildBoar) admits the "
+        "whole set"
     ]
 
 
@@ -145,13 +197,37 @@ def test_read_time_provenance_names_no_member_of_any_concrete() -> None:
     # `familyVariant` is the key an abstract-target read publishes beside the node's
     # members, and no concrete declares it.
     assert _edit("models/animal.yaml", _ANIMAL, {"familyVariant": "Cat"}) == [
-        "probe: `mutate` set Cat.familyVariant: names no assignable attribute or value object"
+        "probe: `mutate` set Cat.familyVariant: names no assignable attribute or value "
+        "object — no concrete the read answers (Cat, Dog, WildBoar) admits the whole set"
     ]
 
 
 def test_a_sibling_branchs_member_is_refused_on_a_concrete_target() -> None:
     assert _edit("models/animal.yaml", _DOG, {"indoor": True}) == [
         "probe: `mutate` set Dog.indoor: names no assignable attribute or value object"
+    ]
+
+
+def test_a_narrowing_to_one_concrete_is_judged_as_that_concrete_alone() -> None:
+    # Narrowing an abstract SUBTYPE resolves the same way as narrowing the root, so a
+    # case reaches every concrete position through the clause the read already has.
+    assert _narrowed_edit("models/animal.yaml", _PET, [_CAT], {"indoor": True}) == []
+    assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_DOG], {"barkVolume": "loud"}) == [
+        "probe: `mutate` set Dog.barkVolume: value 'loud' does not match the declared type 'int32'"
+    ]
+
+
+def test_an_incoherent_narrowing_falls_back_to_the_unnarrowed_position() -> None:
+    # A selection escaping the queried position states no position, so there is
+    # nothing to narrow to. Judging against the whole queried set is the strictest
+    # reading available — narrowing only ever removes candidates — so a broken
+    # selection cannot buy an assignment a coherent one would have refused.
+    assert _narrowed_edit(
+        "models/animal.yaml", _ANIMAL, ["parallax.compatibility.Person"], {"barkVolume": 9}
+    ) == [
+        "probe: `mutate` set Cat.barkVolume: names no assignable attribute or value "
+        "object — the read answers any of (Cat, Dog, WildBoar), so narrow it to the "
+        "concrete this edit means"
     ]
 
 
@@ -167,6 +243,32 @@ def test_a_chained_edit_is_judged_against_the_find_its_chain_started_from() -> N
     assert _judged("models/orders.yaml", steps, 2) == [
         "probe: `mutate` set Order.sku: value 7 does not match the declared type 'string'"
     ]
+
+
+def test_a_chain_through_a_same_entity_derivation_reaches_the_find() -> None:
+    # A detached deep copy and a merged-back object are the object their source step
+    # held, so an edit of one is judged against the find that materialized the chain.
+    for verb in ("detachCopy", "mergeBack"):
+        steps: list[Any] = [
+            {"objectQuery": {"target": _ORDER}},
+            {"action": verb, "on": 0},
+            {"action": "mutate", "on": 1, "set": {"id": 2}},
+        ]
+        assert _judged("models/orders.yaml", steps, 2) == [
+            "probe: `mutate` set Order.id: primary-key fields may not be assigned"
+        ]
+
+
+def test_a_chain_through_a_relationship_step_resolves_to_no_position() -> None:
+    # A `load` / `access` result is the relationship TARGET, a different position from
+    # the find's own, so the chain stops rather than judging against the wrong Entity.
+    for verb in ("load", "access"):
+        steps: list[Any] = [
+            {"objectQuery": {"target": _ORDER}},
+            {"action": verb, "on": 0, "path": "items"},
+            {"action": "mutate", "on": 1, "set": {"nickname": "Nick"}},
+        ]
+        assert _judged("models/orders.yaml", steps, 2) == []
 
 
 @pytest.mark.parametrize(
