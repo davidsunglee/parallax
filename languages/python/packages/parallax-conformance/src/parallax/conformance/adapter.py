@@ -310,16 +310,14 @@ def _run(
     if _is_scenario_lane_dispatched(case):
         raise _scenario_lane_error(case)
     if case.shape == "scenario":
-        emissions, round_trips, errors, step_graphs, log = engine.run_scenario_case(
-            case, dialect, port
-        )
-        scenario_observations: dict[str, Any] = {"roundTrips": round_trips}
-        if errors:
-            scenario_observations["errors"] = errors
-        if step_graphs:
-            scenario_observations["stepGraphs"] = step_graphs
-        _report_execution(case, scenario_observations, log, emissions)
-        return emissions, scenario_observations
+        run = engine.run_scenario_case(case, dialect, port)
+        scenario_observations: dict[str, Any] = {"roundTrips": run.round_trips}
+        if run.errors:
+            scenario_observations["errors"] = run.errors
+        if run.step_graphs:
+            scenario_observations["stepGraphs"] = run.step_graphs
+        _report_execution(case, scenario_observations, run.log, run.emissions)
+        return run.emissions, scenario_observations
     if case.shape == "writeSequence":
         emissions, table_state, round_trips = engine.run_write_sequence_case(case, dialect, port)
         return emissions, {"tableState": table_state, "roundTrips": round_trips}

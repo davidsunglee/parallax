@@ -1461,6 +1461,13 @@ between did. The access therefore names the read that materialized the view
 path — an access over a relationship no read included has no materialized
 contents to state, and asserting some would be asserting a fresh read.
 
+That `on` is a **single index**, never the array form. The array spans sources
+at different lowered coordinates, and contents gathered across several such
+views would be a graph no one materialized view holds — while what this
+observable asks is what **one** view answers after the steps in between. An
+access stating contents therefore names one read, and a case observing several
+views states each on its own access step.
+
 A step declares `expectRows` or `expectGraph`, never both: `expectRows` states
 the rows of the step's own source result while `expectGraph` states the contents
 of the relationship it navigated **to**, so the two would describe two different

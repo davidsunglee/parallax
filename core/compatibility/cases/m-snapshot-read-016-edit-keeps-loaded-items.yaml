@@ -3,8 +3,8 @@
 # deriving an edited copy of the node leaves that view alone — accessing it still
 # issues ZERO SQL, still answers the same objects, and its contents are intact.
 # This is the clause "a derived copy's view state IS its source's" for the arm
-# m-snapshot-read-015 cannot reach: that case's source read included nothing, so it
-# proves only the ABSENT half, and nothing anywhere states what a copy answers for a
+# m-snapshot-read-015 cannot reach: that case's source read includes nothing, so it
+# holds the ABSENT half alone, while this one holds what a copy answers for a
 # relationship the read DID materialize.
 #
 # Step 0 materializes order 1 WITH its `items` — the ordinary 1 + L deep fetch, one

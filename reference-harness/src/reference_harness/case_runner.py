@@ -3019,6 +3019,13 @@ def _graphs_equal(
     document order is semantic, so its elements compare positionally.  Passing
     the model enables that distinction; the model-free form remains useful for
     generic graph-comparison tests that contain relationships only.
+
+    A node position holds ``None`` where a to-one view is loaded and empty
+    (`m-case-format`: a to-one member is a single node or null), at the top
+    level as well as nested — the nodes a step's `expectGraph` states are the
+    ones a to-one hop reached, so a loaded-null one arrives as a top-level
+    ``None``.  Null equals null and nothing else, which is what keeps
+    loaded-null distinct from a node.
     """
 
     def equal_value(a: Any, b: Any) -> bool:
@@ -3119,6 +3126,11 @@ def _graphs_equal(
                 return False
         return True
 
+    def equal_node_or_null(a: Any, b: Any, entity: Entity) -> bool:
+        if a is None or b is None:
+            return a is None and b is None
+        return equal_entity_node(a, b, entity)
+
     if left.keys() != right.keys():
         return False
     for entity_name in left:
@@ -3130,7 +3142,7 @@ def _graphs_equal(
         remaining = list(right_nodes)
         for node in left_nodes:
             for index, candidate in enumerate(remaining):
-                if equal_entity_node(node, candidate, entity):
+                if equal_node_or_null(node, candidate, entity):
                     del remaining[index]
                     break
             else:
@@ -6702,9 +6714,9 @@ class _StepIncludes:
     A snapshot graph issues no SQL after materialization (`m-snapshot-read`), so an
     `access` step over an already-loaded relationship executes nothing at all: the
     contents it observes are the ones THIS step's own levels fetched. They are held
-    per HOP, exactly as a deep-fetch read case holds them, so the assembly a later
-    step runs is the same assembly over the same buckets
-    (:func:`_assemble_graph`) — the retention is the only new thing, not the graph.
+    per HOP, exactly as a deep-fetch read case holds them, so a later step assembles
+    its graph from the same buckets through the same assembly
+    (:func:`_assemble_graph`), over a retained view rather than a re-fetched one.
     """
 
     query: dict[str, Any]
@@ -6791,14 +6803,14 @@ def _action_source_includes(
     """What the read an action step names materialized, if that read included anything.
 
     An action's ``on`` is the read whose objects it acts on, so the view it accesses
-    is that read's — the same resolution :func:`_scenario_step_read_entity` makes for
-    the entity, made here for the contents.
+    is that read's. Only the SINGLE-index form resolves a view here: the array form
+    spans sources at different lowered coordinates (`m-case-format`), which is
+    several views rather than the one whose contents an access states.
     """
     on = step.get("on")
-    source = (on[0] if on else None) if isinstance(on, list) else on
-    if not isinstance(source, int) or not 0 <= source < len(step_includes):
+    if not isinstance(on, int) or not 0 <= on < len(step_includes):
         return None
-    return step_includes[source]
+    return step_includes[on]
 
 
 def _assert_step_graph(
@@ -6816,10 +6828,21 @@ def _assert_step_graph(
     multiset and a `multiplicity: many` Value Object positionally), applied to the
     nodes the step's ``path`` reaches, keyed by that path's TERMINAL entity — the
     entity :func:`_scenario_step_read_entity` already resolved for this step.
+
+    The step names ONE materializing read (`m-case-format`), so a multi-source
+    ``on`` is refused rather than resolved to its first source: the contents an
+    access states belong to a single view.
     """
     expected = step.get("expectGraph")
     if expected is None:
         return
+    if not isinstance(step.get("on"), int):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] declares expectGraph on "
+            f"`on: {step.get('on')!r}`. An access stating relationship contents names ONE "
+            f"read — the single step whose Include Paths materialized the view it "
+            f"navigates — never a set of sources at different lowered coordinates."
+        )
     path = step.get("path")
     if includes is None or read_entity is None or not isinstance(path, str):
         raise CaseFailure(

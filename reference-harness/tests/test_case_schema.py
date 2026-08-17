@@ -1145,6 +1145,18 @@ def _expect_graph_on_a_non_access_action() -> dict[str, Any]:
     return doc
 
 
+def _expect_graph_on_a_multi_source_access() -> dict[str, Any]:
+    """`expectGraph` on an access naming the `on` ARRAY form.
+
+    The array spans sources at different lowered coordinates, so contents gathered
+    across them are a graph no single materialized view holds; an access stating
+    contents names the one read whose Include Paths materialized them.
+    """
+    doc = _action_expect_graph_case()
+    doc["when"]["scenario"][2]["on"] = [0]
+    return doc
+
+
 def _expect_graph_beside_expect_rows() -> dict[str, Any]:
     """One step declaring BOTH `expectRows` and `expectGraph`.
 
@@ -1347,6 +1359,7 @@ REJECTED_CASES = {
     "expect-graph-on-a-read-step": _expect_graph_on_a_read_step,
     "expect-graph-on-a-write-step": _expect_graph_on_a_write_step,
     "expect-graph-on-a-non-access-action": _expect_graph_on_a_non_access_action,
+    "expect-graph-on-a-multi-source-access": _expect_graph_on_a_multi_source_access,
     "expect-graph-beside-expect-rows": _expect_graph_beside_expect_rows,
     "graphs-entry-missing-pin": _graphs_entry_missing_pin,
     "graphs-entry-stray-key": _graphs_entry_stray_key,

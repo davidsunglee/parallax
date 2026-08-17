@@ -93,6 +93,22 @@ def test_graph_comparison_is_order_insensitive_for_to_many_relationships() -> No
     assert _graphs_equal(actual, expected)
 
 
+def test_model_aware_comparison_matches_a_loaded_null_node_position() -> None:
+    # A to-one hop that reached no row leaves `None` where a node would sit, and an
+    # `access` over it states that null as its whole contents (m-case-format: a
+    # to-one member is a single node or null). Null is a node position like any
+    # other, so the model-aware comparison must match it rather than refuse
+    # everything that is not a mapping.
+    model = _orders_model()
+    assert _graphs_equal({"Order": [None]}, {"Order": [None]}, model)
+
+
+def test_model_aware_comparison_keeps_a_loaded_null_distinct_from_a_node() -> None:
+    model = _orders_model()
+    assert not _graphs_equal({"Order": [None]}, {"Order": [{"id": 1}]}, model)
+    assert not _graphs_equal({"Order": [{"id": 1}]}, {"Order": [None]}, model)
+
+
 def test_empty_root_deep_fetch_executes_no_child_sql() -> None:
     case = load_case(
         COMPATIBILITY_ROOT,

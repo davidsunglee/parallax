@@ -1497,9 +1497,10 @@ def test_settled_write_admits_a_transaction_time_only_target() -> None:
 # A snapshot graph issues no SQL after materialization, so an `access` step's
 # `expectGraph` states contents its SOURCE read fetched. That makes two things
 # DB-free-testable here: that a read step carrying `objectQuery.includes`
-# executes EVERY listed level (the read branch used to run the root alone), and
-# that the retained buckets survive an intervening step and grade loudly. Real
-# execution against both dialects is `test_compatibility.py`'s job.
+# executes EVERY level its query declares, one statement per level and each keyed
+# by the previous level's gathered parents, and that the retained per-hop buckets
+# survive an intervening step and grade loudly at any depth. Real execution
+# against both dialects is `test_compatibility.py`'s job.
 
 _ORDER_1_ROW: dict[str, Any] = {
     "id": 1,
@@ -1558,10 +1559,226 @@ def test_scenario_access_expect_graph_rejects_an_unincluded_relationship() -> No
         _assert_scenario(case, _include_scenario_db())  # type: ignore[arg-type]
 
 
+def test_scenario_access_expect_graph_refuses_a_multi_source_on() -> None:
+    # The `on` ARRAY form spans sources at different lowered coordinates, so the
+    # contents gathered across them are a graph no one materialized view holds. An
+    # access stating contents names the single read that materialized them, and a
+    # set is refused rather than silently resolved to its first element.
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
+    case.scenario[2]["on"] = [0]
+
+    with pytest.raises(CaseFailure, match="names ONE read"):
+        _assert_scenario(case, _include_scenario_db())  # type: ignore[arg-type]
+
+
+# `OrderItem.statuses` declares `code asc`, so each item's bucket returns its own
+# statuses in that order — the second hop of the 1 -> N -> N path.
+_ORDER_1_ITEM_STATUS_ROWS: list[dict[str, Any]] = [
+    {"id": 202, "order_id": 1, "order_item_id": 11, "code": "PACKED"},
+    {"id": 201, "order_id": 1, "order_item_id": 11, "code": "PICKED"},
+    {"id": 203, "order_id": 1, "order_item_id": 12, "code": "PICKED"},
+]
+
+_MULTI_LEVEL_STATEMENTS: list[dict[str, Any]] = [
+    {
+        "sql": {
+            "postgres": "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, "
+            "t0.ordered_on from orders t0 where t0.id = ?"
+        },
+        "binds": [1],
+    },
+    {
+        "sql": {
+            "postgres": "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on "
+            "from order_item t0 where t0.order_id in (?) order by t0.id desc"
+        },
+        "binds": [1],
+    },
+    {
+        "sql": {
+            "postgres": "select t0.id, t0.order_id, t0.order_item_id, t0.code "
+            "from order_status t0 where t0.order_item_id in (?, ?) order by t0.code asc"
+        },
+        "binds": [11, 12],
+    },
+]
+
+
+def _multi_level_include_case():
+    """`m-snapshot-read-016`'s shape over the 1 -> N -> N path.
+
+    The source read includes `Order.items -> OrderItem.statuses`, so it runs three
+    levels and retains a bucket per HOP; the access then states the contents of the
+    DEEPER hop, which only a retained second-level bucket can answer.
+    """
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
+    read, _mutate, access = case.scenario
+    read["objectQuery"]["includes"] = [
+        {
+            "segments": [
+                {"rel": "parallax.compatibility.Order.items"},
+                {"rel": "parallax.compatibility.OrderItem.statuses"},
+            ]
+        }
+    ]
+    read["statements"] = copy.deepcopy(_MULTI_LEVEL_STATEMENTS)
+    read["roundTrips"] = 3
+    access["path"] = "items.statuses"
+    access["expectGraph"] = {
+        "OrderStatus": [
+            {"id": 203, "orderId": 1, "orderItemId": 12, "code": "PICKED"},
+            {"id": 202, "orderId": 1, "orderItemId": 11, "code": "PACKED"},
+            {"id": 201, "orderId": 1, "orderItemId": 11, "code": "PICKED"},
+        ]
+    }
+    case.then["roundTrips"] = 3
+    return case
+
+
+def _multi_level_include_db() -> _FakeGroupedDb:
+    return _FakeGroupedDb(
+        top_responses=[
+            [dict(_ORDER_1_ROW)],
+            [dict(row) for row in _ORDER_1_ITEM_ROWS],
+            [dict(row) for row in _ORDER_1_ITEM_STATUS_ROWS],
+        ]
+    )
+
+
+def test_scenario_include_read_executes_a_multi_level_path_keyed_level_by_level() -> None:
+    db = _multi_level_include_db()
+
+    _assert_scenario(_multi_level_include_case(), db)  # type: ignore[arg-type]
+
+    assert [call[1].split(" from ")[1].split(" ")[0] for call in db.top_calls] == [
+        "orders",
+        "order_item",
+        "order_status",
+    ], "every declared level runs, in path order, and nothing beyond them"
+    assert [call[2] for call in db.top_calls] == [[1], [1], [11, 12]], (
+        "each level is keyed by the parents the PREVIOUS level gathered, so the "
+        "second hop's IN list is the item keys rather than the root key"
+    )
+    assert db.sessions == [], "an ungrouped scenario opens no held session"
+
+
+def test_scenario_access_over_a_hop_carries_each_parents_own_deeper_bucket() -> None:
+    # Retention is per HOP and per PARENT: an access over the FIRST hop answers item
+    # nodes each carrying the statuses of that item alone. A retention that pooled
+    # the deeper level would hand both items all three status rows.
+    case = _multi_level_include_case()
+    case.scenario[2]["path"] = "items"
+    case.scenario[2]["expectGraph"] = {
+        "OrderItem": [
+            {
+                "id": 12,
+                "orderId": 1,
+                "sku": "B-200",
+                "quantity": 1,
+                "shippedOn": dt.date(2024, 2, 15),
+                "statuses": [{"id": 203, "orderId": 1, "orderItemId": 12, "code": "PICKED"}],
+            },
+            {
+                "id": 11,
+                "orderId": 1,
+                "sku": "A-100",
+                "quantity": 2,
+                "shippedOn": None,
+                "statuses": [
+                    {"id": 202, "orderId": 1, "orderItemId": 11, "code": "PACKED"},
+                    {"id": 201, "orderId": 1, "orderItemId": 11, "code": "PICKED"},
+                ],
+            },
+        ]
+    }
+    db = _multi_level_include_db()
+
+    _assert_scenario(case, db)  # type: ignore[arg-type]
+
+    assert len(db.top_calls) == 3, "the access itself issues nothing"
+
+
+def _loaded_null_to_one_case():
+    """An include over a to-one hop that reaches no row: the view is loaded and null.
+
+    `m-case-format` authors a to-one member as a single node or null, so the access
+    states `null` as the whole contents its source read materialized — the state a
+    key the read never included could not be told apart from otherwise.
+    """
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
+    read, mutate, access = case.scenario
+    read["objectQuery"] = {
+        "target": "parallax.compatibility.OrderItem",
+        "predicate": {"eq": {"attr": "parallax.compatibility.OrderItem.id", "value": 11}},
+        "includes": [{"segments": [{"rel": "parallax.compatibility.OrderItem.order"}]}],
+    }
+    read["statements"] = [
+        {
+            "sql": {
+                "postgres": "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on "
+                "from order_item t0 where t0.id = ?"
+            },
+            "binds": [11],
+        },
+        {
+            "sql": {
+                "postgres": "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, "
+                "t0.ordered_on from orders t0 where t0.id in (?)"
+            },
+            "binds": [1],
+        },
+    ]
+    read["expectRows"] = [
+        {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None}
+    ]
+    mutate["set"] = {"sku": "Z-999"}
+    access["path"] = "order"
+    access["expectGraph"] = {"Order": [None]}
+    return case
+
+
+def _loaded_null_to_one_db() -> _FakeGroupedDb:
+    return _FakeGroupedDb(top_responses=[[dict(_ORDER_1_ITEM_ROWS[1])], []])
+
+
+def test_scenario_access_states_a_loaded_null_to_one_view() -> None:
+    db = _loaded_null_to_one_db()
+
+    _assert_scenario(_loaded_null_to_one_case(), db)  # type: ignore[arg-type]
+
+    assert len(db.top_calls) == 2, "the access over the null view issues nothing"
+
+
+def test_scenario_access_keeps_a_loaded_null_distinct_from_a_node() -> None:
+    case = _loaded_null_to_one_case()
+    case.scenario[2]["expectGraph"] = {"Order": [{"id": 1}]}
+
+    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
+        _assert_scenario(case, _loaded_null_to_one_db())  # type: ignore[arg-type]
+
+
+def test_scenario_access_expect_graph_rejects_a_corrupted_deep_leaf() -> None:
+    case = _multi_level_include_case()
+    case.scenario[2]["expectGraph"]["OrderStatus"][0]["code"] = "WRONG"
+
+    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
+        _assert_scenario(case, _multi_level_include_db())  # type: ignore[arg-type]
+
+
+def test_scenario_access_expect_graph_rejects_a_dropped_deep_node() -> None:
+    # A second-level bucket the retention lost would answer fewer nodes, so the
+    # oracle must reject a graph missing one of the deeper hop's rows.
+    case = _multi_level_include_case()
+    case.scenario[2]["expectGraph"]["OrderStatus"].pop()
+
+    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
+        _assert_scenario(case, _multi_level_include_db())  # type: ignore[arg-type]
+
+
 def test_scenario_read_step_may_not_list_a_level_its_query_declares_none_of() -> None:
-    # Before Include Paths reached a scenario step the read branch executed the
-    # FIRST listed statement and silently ignored the rest, so a second statement
-    # was SQL nobody ran while the step still declared the round trip.
+    # A step's listed statements are the levels its own query declares: a listed
+    # statement past them is SQL nobody executes, while the step's declared round
+    # trips still count the call it never made.
     case = copy.deepcopy(_scenario_by_id("m-snapshot-read-010"))
     case.scenario[0]["statements"].append(
         {"sql": {"postgres": "select t0.id from order_item t0"}, "binds": []}
