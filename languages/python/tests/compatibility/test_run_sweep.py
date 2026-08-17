@@ -320,6 +320,12 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
 # a Transaction-Time terminate, and a bitemporal bounded rectangle split — and
 # each closes with a read-back whose rows state what the database holds after the
 # write, so running them grades the access and the re-read against each other.
+# `-022`/`-023`/`-024` are the composite arms: a CHAIN of edits whose second hop
+# names the copy the first derived, a write rewriting the whole Value Object
+# document a loaded view carries, and a graph materialized over rows the scenario
+# itself inserted. `-026` carries no write at all — it states the fanned-out
+# multi-hop walk rule (`m-case-format`), which every other member exercises only
+# in its single-hop degenerate form.
 _SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
     {
         "m-snapshot-read-016",
@@ -327,7 +333,11 @@ _SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-snapshot-read-018",
         "m-snapshot-read-020",
         "m-snapshot-read-021",
+        "m-snapshot-read-022",
+        "m-snapshot-read-023",
+        "m-snapshot-read-024",
         "m-snapshot-read-025",
+        "m-snapshot-read-026",
     }
 )
 
