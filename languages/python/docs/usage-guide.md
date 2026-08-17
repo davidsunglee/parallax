@@ -802,6 +802,46 @@ def an_edit_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any
     return snapshot, edited
 ```
 
+## A committed write leaves a loaded to-one view holding the SAME object
+
+Corpus case: `m-snapshot-read-017`
+
+```python
+def a_write_keeps_a_loaded_to_one_view(db: Database) -> tuple[Snapshot[Any], Any, Any]:
+    snapshot = db.find(OrderItem.where(OrderItem.id == 11).include(OrderItem.order))
+    loaded = snapshot.result().order  # the owning Order this read materialized
+
+    def rewrite(tx: Transaction) -> None:
+        observed = tx.find(Order.where(Order.id == 1)).result()
+        tx.update(observed.edit(name="Rewritten"))
+
+    db.transact(rewrite)
+    reread = db.find(Order.where(Order.id == 1)).result()  # where the write IS observable
+    return snapshot, loaded, reread
+```
+
+## A committed write leaves a loaded-EMPTY relationship loaded and empty
+
+Corpus case: `m-snapshot-read-018`
+
+```python
+def a_write_keeps_a_loaded_empty_relationship_view(db: Database) -> Snapshot[Any]:
+    snapshot = db.find(Order.where(Order.id == 3).include(Order.items))  # order 3 owns no items
+    db.transact(lambda tx: tx.insert(OrderItem(id=31, order_id=3, sku="C-300", quantity=7)))
+    return snapshot  # the loaded-EMPTY view is untouched by the item now in the table
+```
+
+## A committed write leaves an UNLOADED relationship absent, not empty
+
+Corpus case: `m-snapshot-read-019`
+
+```python
+def a_write_keeps_an_unloaded_relationship_absent(db: Database) -> Snapshot[Any]:
+    snapshot = db.find(Order.where(Order.id == 3))  # no `.include(...)`: `items` stays unloaded
+    db.transact(lambda tx: tx.insert(OrderItem(id=31, order_id=3, sku="C-300", quantity=7)))
+    return snapshot  # absence is not emptiness, and the write does not make it one
+```
+
 ## As-of read at a past instant
 
 Corpus case: `m-temporal-read-003`

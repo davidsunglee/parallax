@@ -1,0 +1,87 @@
+# A POPULATED to-one relationship survives a PERSISTING WRITE (m-snapshot-read
+# *Closed world*, composition): a materialized graph is a value taken at its pin,
+# so a committed write that rewrites the very row a loaded to-one view holds
+# neither refreshes that view nor invalidates it — accessing it still issues ZERO
+# SQL and still answers the object the read produced. This is the clause "a write
+# changes nothing about a graph already materialized", held on the to-one
+# back-reference arm (OrderItem.order); m-snapshot-read-016 holds the to-many arm
+# across a derived copy instead, and the two together are the populated half of
+# the composition rule for both cardinalities.
+#
+# Step 0 materializes line item 11 WITH its owning order — the ordinary 1 + L deep
+# fetch over a reverse to-one, one statement per level, two round trips. Step 1
+# UPDATES that same order's `name` from `Ada` to `Rewritten` and commits it as its
+# OWN unit of work: one DML statement plus the resolving read a keyed update owes
+# an unversioned Non-Temporal target under the mandatory Locking fallback, so two
+# round trips. Step 2 accesses `order` on the view step 0 materialized and states
+# its WHOLE contents through `expectGraph` — every declared member of order 1,
+# `name` still `Ada`.
+#
+# That PRE-write name is the case's teeth and its semantic distinction. The write
+# is the composition under test, never a term in the expectation: what the access
+# states is what step 0 fetched, which is exactly what no re-read of the written
+# row can produce. An implementation that re-fetched, refreshed, or invalidated
+# the view on write answers `Rewritten` and fails; one that discarded the view
+# raises where it should answer; and `roundTrips: 0` fails anything that reaches
+# the database at all. Observing the write is what another read is for.
+#
+# `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
+# accesses (m-op-list-002), but on the wire lane it is primary-key equality
+# against this step's own reused source rows; the identity proof of record — that
+# the accessed order is literally the SAME object before and after the write — is
+# the reference-identity assertion each language's API Conformance Suite runs
+# (m-api-conformance). The contents divide the same way: a wire harness assembles
+# them from the rows its own read retained, while a conforming adapter reports the
+# graph ITS implementation still holds for this step (m-conformance-adapter
+# `stepGraphs`), which is the half that can tell a surviving view from a re-read.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, to-one, update, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "include level - the OrderItem.order parent IN-list binds are the distinct order keys gathered from step 0's own root read, so the child emission depends on a query result"
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.OrderItem
+        predicate:
+          eq:
+            attr: parallax.compatibility.OrderItem.id
+            value: 11
+        includes:
+          - segments:
+              - rel: parallax.compatibility.OrderItem.order
+      roundTrips: 2
+      note: materialize a snapshot of line item 11 WITH its owning order (1 + L levels)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
+          binds: [11]
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+          binds: [1]
+      expectRows:
+        - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+    - write:
+        - mutation: update
+          entity: parallax.compatibility.Order
+          rows:
+            - { id: 1, name: Rewritten }
+      roundTrips: 2
+      note: commit an update to the very row the loaded `order` view holds - one DML statement plus the resolving read the keyed update owes
+      statements:
+        - sql:
+            postgres: update orders set name = ? where id = ?
+          binds: [Rewritten, 1]
+    - action: access
+      "on": 0
+      path: order
+      roundTrips: 0
+      sameObjectAs: 0
+      note: access the ALREADY-MATERIALIZED order after the write -> ZERO SQL and the contents the read paid for
+      expectGraph:
+        Order:
+          - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, orderedOn: 2024-01-05 }
+then:
+  roundTrips: 4

@@ -1180,6 +1180,18 @@ def _expect_graph_beside_expect_rows() -> dict[str, Any]:
     return doc
 
 
+def _expect_graph_stating_no_entity() -> dict[str, Any]:
+    """`expectGraph` as an EMPTY map.
+
+    An empty to-many view is authored as the path's target entity keyed to an
+    empty list — the contents a loaded relationship answered — not as a graph
+    naming no entity, which would state nothing and pass against anything.
+    """
+    doc = _action_expect_graph_case()
+    doc["when"]["scenario"][2]["expectGraph"] = {}
+    return doc
+
+
 def _graphs_entry_missing_pin() -> dict[str, Any]:
     """A `then.graphs` entry missing `pin` — the entry requires it.
 
@@ -1374,6 +1386,7 @@ REJECTED_CASES = {
     "expect-graph-on-a-multi-source-access": _expect_graph_on_a_multi_source_access,
     "expect-graph-without-a-navigated-path": _expect_graph_without_a_navigated_path,
     "expect-graph-beside-expect-rows": _expect_graph_beside_expect_rows,
+    "expect-graph-stating-no-entity": _expect_graph_stating_no_entity,
     "graphs-entry-missing-pin": _graphs_entry_missing_pin,
     "graphs-entry-stray-key": _graphs_entry_stray_key,
     "stored-data-record-missing-hydration": _stored_data_record_missing_hydration,

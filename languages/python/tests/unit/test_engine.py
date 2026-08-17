@@ -5994,6 +5994,142 @@ def test_run_scenario_case_access_step_graph_omits_a_terminal_null_after_a_fan_o
     assert [node["id"] for node in graph["OrderItem"]] == [11]
 
 
+class _QueueWritePort(QueueDbPort):
+    """A queue-backed read port that also takes DML.
+
+    The shape a snapshot scenario needs once a `write:` step sits between the
+    find that materializes a view and the access that states its contents: the
+    reads are still answered in order, and the writes are recorded rather than
+    refused.
+    """
+
+    def __init__(self, responses: Sequence[list[Row]]) -> None:
+        super().__init__(responses)
+        self.writes: list[tuple[str, list[object]]] = []
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.writes.append((sql, list(binds)))
+        return 1
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        return body(self)
+
+
+def _write_between_find_and_access(write: object) -> case_format.Case:
+    query = {
+        "target": "Order",
+        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+        "includes": [{"segments": [{"rel": "Order.items"}]}],
+    }
+    when = {
+        "scenario": [
+            {"objectQuery": query},
+            {"write": write, "roundTrips": 2},
+            {
+                "action": "access",
+                "on": 0,
+                "path": "items",
+                "expectGraph": {"OrderItem": [{"id": 12}, {"id": 11}]},
+            },
+        ]
+    }
+    return _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+
+
+_ORDER_NAME_UPDATE: list[dict[str, object]] = [
+    {
+        "mutation": "update",
+        "entity": "parallax.compatibility.Order",
+        "rows": [{"id": 1, "name": "Rewritten"}],
+    }
+]
+
+
+def test_run_scenario_case_write_step_commits_and_leaves_the_retained_view_standing() -> None:
+    # The composition the closed-world clause is about: the write is its own unit
+    # of work — a resolving read and then its DML — and the view the find
+    # materialized stands across it, so the access still answers what THAT read
+    # fetched with nothing at the port of its own.
+    port = _QueueWritePort(
+        [
+            [dict(_ORDER_ROW)],
+            [dict(row) for row in _ORDER_1_ITEM_ROWS],
+            [dict(_ORDER_ROW)],
+        ]
+    )
+
+    run = engine.run_scenario_case(
+        _write_between_find_and_access(_ORDER_NAME_UPDATE), "postgres", port
+    )
+
+    assert [emission.case_pointer for emission in run.emissions] == [
+        "/scenario/0/objectQuery",
+        "/scenario/0/objectQuery",
+        "/scenario/1/write",
+    ]
+    assert [sql for sql, _binds in port.writes] == ["update orders set name = %s where id = %s"]
+    assert run.round_trips == 4  # the find's two levels, the write's resolve and its DML
+    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
+    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType]
+
+
+def test_run_scenario_case_refuses_a_non_keyed_write_step_on_the_snapshot_lane() -> None:
+    # A legacy string label states no instruction at all, and a predicate-selected
+    # write would want the preceding find as its resolve — but a find here
+    # materializes a view a later access states, so neither can be lowered as the
+    # keyed buffer this lane executes.
+    port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
+    with pytest.raises(engine.EngineError, match="BUFFERED KEYED instruction list"):
+        engine.run_scenario_case(_write_between_find_and_access("insert"), "postgres", port)
+    assert port.writes == []
+
+
+def test_run_scenario_case_names_the_case_when_a_snapshot_lane_write_will_not_lower() -> None:
+    # A write step this lane cannot lower fails as a case-named EngineError rather
+    # than as a raw planner exception crossing the conformance seam — the same
+    # posture the unit-of-work lane takes for its own ungrouped write step.
+    mis_authored = [
+        {
+            "mutation": "update",
+            "entity": "parallax.compatibility.Order",
+            "rows": [{"id": 1, "nope": 3}],
+        }
+    ]
+    port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
+    with pytest.raises(engine.EngineError, match="undeclared member"):
+        engine.run_scenario_case(_write_between_find_and_access(mis_authored), "postgres", port)
+    assert port.writes == []
+
+
+def test_compile_scenario_case_lowers_a_snapshot_lane_write_step() -> None:
+    # The compile peer of the run lane above: a scenario carrying an action step
+    # compiles through the snapshot path, whose find is instance-form and unlocked
+    # and whose write step is lowered by the SAME planner the unit-of-work lane's
+    # ungrouped write step uses.
+    when = {
+        "scenario": [
+            {
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                }
+            },
+            {"action": "mutate", "on": 0, "set": {"name": "Mutant"}},
+            {"write": _ORDER_NAME_UPDATE, "roundTrips": 2},
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+
+    emissions, round_trips = engine.compile_scenario_case(case, "postgres")
+
+    assert [emission.case_pointer for emission in emissions] == [
+        "/scenario/0/objectQuery",
+        "/scenario/2/write",
+    ]
+    assert emissions[1].sql == "update orders set name = ? where id = ?"
+    assert round_trips == 2
+
+
 def test_run_scenario_case_access_step_graph_keeps_an_all_to_one_terminal_null() -> None:
     # An all-to-one path fans out nowhere, so it answers one terminal per root and
     # a branch that reached no row IS that terminal: `null`, the state a case

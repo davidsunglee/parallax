@@ -1,0 +1,64 @@
+# An UNLOADED relationship stays UNLOADED across a persisting write
+# (m-snapshot-read *Closed world*, composition): order 3's `items` were never
+# included, so the view holds them absent, and a committed write that gives that
+# very order an item changes nothing about that — accessing `items` still finds it
+# absent and still issues ZERO SQL. There is no lazy load and no invalidation
+# trigger; composition never turns absence into emptiness. This is the clause "the
+# unloaded / loaded-empty distinction is preserved", held on the UNLOADED side.
+#
+# The pairing with m-snapshot-read-018 is the point: same fixture row (order 3,
+# which owns no items), same relationship, same inserted line item, same access —
+# and exactly one authored difference, whether step 0 declared `includes`. There,
+# the access answers a materialized empty list; here it finds an absence. A
+# language that collapsed either into the other would pass one case and fail the
+# other, which is what makes the distinction observable rather than asserted.
+#
+# What the two cases can OBSERVE differs accordingly, and that is why this one is
+# on the api-conformance lane while its sibling is not. An access over a
+# relationship no read included has no materialized contents to state at all
+# (m-case-format *Relationship contents at a step*), so this step carries no
+# `expectGraph` and its round trips are the whole of what a wire golden could
+# assert. What is left to observe is the absence itself, whose representation (a
+# missing property, a typed empty marker, a raised access error) is deliberately
+# unconstrained (m-snapshot-read; the language spec template's own
+# decide-and-record item). Each language's API Conformance Suite verifies that
+# (m-api-conformance), exactly as it does for m-snapshot-read-009, whose
+# un-included access this case extends across a write.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, unloaded, insert, scenario, slice-snapshot-1]
+shape: scenario
+lane: api-conformance
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.id
+            value: 3
+      roundTrips: 1
+      note: materialize a snapshot of order 3 with NO relationships included, so `items` is absent rather than empty
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
+          binds: [3]
+      expectRows:
+        - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, ordered_on: 2024-03-15 }
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 31, orderId: 3, sku: C-300, quantity: 7 }
+      roundTrips: 1
+      note: commit an item for the very order whose `items` the view never included
+      statements:
+        - sql:
+            postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+          binds: [31, 3, C-300, 7]
+    - action: access
+      "on": 0
+      path: items
+      roundTrips: 0
+      note: access the UNINCLUDED relationship after the write -> closed-world absent, ZERO SQL; the absence representation is per-language
+then:
+  roundTrips: 2

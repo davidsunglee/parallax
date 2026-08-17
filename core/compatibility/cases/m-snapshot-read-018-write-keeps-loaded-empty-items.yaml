@@ -1,0 +1,86 @@
+# A LOADED-EMPTY to-many relationship survives a persisting write and stays
+# LOADED-EMPTY (m-snapshot-read *Closed world*, composition): order 3 owns no line
+# items, so the read materializes `items` as loaded and EMPTY rather than absent,
+# and a committed write that gives that very order an item does not reach the
+# view — accessing it still issues ZERO SQL and still answers the empty set. This
+# is the clause "the unloaded / loaded-empty distinction is preserved", held on
+# the loaded-empty side; m-snapshot-read-019 holds the unloaded side over the SAME
+# fixture row, the SAME relationship and the SAME write, differing in exactly one
+# authored fact — whether step 0 included `items` at all.
+#
+# Step 0 materializes order 3 WITH its `items`: the root level returns the order,
+# the child level runs (a non-empty parent set has a level to fetch) and returns
+# nothing, so the view is loaded and empty at two round trips. Step 1 INSERTS line
+# item 31 for order 3 and commits it as its own unit of work — one statement, and
+# no resolving read, because an insert opens the key it writes rather than
+# settling against a stored one. Step 2 accesses `items` on the view step 0
+# materialized and states its whole contents through `expectGraph`: still the
+# empty list, still ZERO SQL.
+#
+# The semantic distinction runs two ways. Against a re-read: the database now
+# holds item 31, so the empty list is a value only the surviving view can answer —
+# an implementation that re-fetched on write answers that one node, and one that
+# invalidated the view raises where it should answer. Against an unloaded
+# relationship: an access over a relationship no read included has no materialized
+# contents to state at all and is refused rather than answered emptily
+# (m-case-format *Relationship contents at a step*), so `expectGraph: {OrderItem:
+# []}` is an assertion only a LOADED view can satisfy — emptiness that came from a
+# fetch, not from an absence. Loaded-empty and unloaded therefore stay apart in
+# both directions, which is what the clause forbids collapsing.
+#
+# `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
+# accesses (m-op-list-002); on the wire lane it is primary-key equality against
+# this step's own reused source rows, and the identity proof of record is the
+# reference-identity assertion each language's API Conformance Suite runs
+# (m-api-conformance), where the per-language loaded-empty representation is also
+# where the empty view is observable as a value rather than as an absence.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, loaded-empty, insert, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "include level - the Order.items child IN-list binds are the distinct root keys gathered from step 0's own root read, so the child emission depends on a query result"
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.id
+            value: 3
+        includes:
+          - segments:
+              - rel: parallax.compatibility.Order.items
+      roundTrips: 2
+      note: materialize a snapshot of order 3 WITH its items - the child level runs and returns nothing, so the view is LOADED and EMPTY
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
+          binds: [3]
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
+          binds: [3]
+      expectRows:
+        - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, ordered_on: 2024-03-15 }
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 31, orderId: 3, sku: C-300, quantity: 7 }
+      roundTrips: 1
+      note: commit an item for the very order whose `items` the view holds empty - an insert opens its key, so it owes no resolving read
+      statements:
+        - sql:
+            postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+          binds: [31, 3, C-300, 7]
+    - action: access
+      "on": 0
+      path: items
+      roundTrips: 0
+      sameObjectAs: 0
+      note: access the ALREADY-MATERIALIZED items after the write -> ZERO SQL and still the empty set the read fetched
+      expectGraph:
+        OrderItem: []
+then:
+  roundTrips: 3

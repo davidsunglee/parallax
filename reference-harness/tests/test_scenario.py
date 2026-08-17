@@ -1956,3 +1956,68 @@ def test_scenario_read_step_may_not_list_a_level_its_query_declares_none_of() ->
 
     with pytest.raises(CaseFailure, match="declares no `includes`"):
         _assert_scenario(case, _FakeGroupedDb(top_responses=[[dict(_ORDER_1_ROW)]]))  # type: ignore[arg-type]
+
+
+# --- A persisting write between the include read and the access ---------------
+#
+# The composition arm (`m-snapshot-read-018`): a write step parks an empty result
+# slot and no retained view of its own, so a later access still resolves the
+# buckets its SOURCE read filled. What that makes DB-free-testable is the
+# retention itself — that the intervening step neither disturbs the buckets nor
+# shifts the `on` index that names them — and that the write's DML really runs.
+# Whether the DATABASE then holds something else is `test_compatibility.py`'s job,
+# and is exactly what the case's own fixture arranges.
+
+_ORDER_3_ROW: dict[str, Any] = {
+    "id": 3,
+    "name": "ada",
+    "sku": "A-300",
+    "qty": 15,
+    "price": 30.25,
+    "active": False,
+    "ordered_on": dt.date(2024, 3, 15),
+}
+
+
+def _loaded_empty_write_db() -> _FakeGroupedDb:
+    # Order 3 owns no line items, so the include level runs and returns nothing.
+    return _FakeGroupedDb(top_responses=[[dict(_ORDER_3_ROW)], []])
+
+
+def test_scenario_write_step_between_an_include_read_and_an_access_keeps_the_buckets() -> None:
+    case = _scenario_by_id("m-snapshot-read-018")
+    db = _loaded_empty_write_db()
+
+    _assert_scenario(case, db)  # type: ignore[arg-type]
+
+    assert [call[0] for call in db.top_calls] == ["query", "query", "execute"], (
+        "the read's two levels run, then the write's DML — and the access runs nothing"
+    )
+    assert db.top_calls[2][1].startswith("insert into order_item"), (
+        "the write step really executes its golden DML"
+    )
+
+
+def test_scenario_write_step_does_not_shift_the_access_source_index() -> None:
+    # A write parks its own slot so `on: 0` still names the read. Pointing the
+    # access at the WRITE step instead must not silently resolve to the read's
+    # buckets: that step materialized no view, so there are no contents to state.
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-018"))
+    case.scenario[2]["on"] = 1
+    case.scenario[2]["sameObjectAs"] = 1
+
+    with pytest.raises(CaseFailure, match="names no navigated `path` on a source read"):
+        _assert_scenario(case, _loaded_empty_write_db())  # type: ignore[arg-type]
+
+
+def test_scenario_loaded_empty_access_rejects_a_stated_node() -> None:
+    # The loaded-EMPTY arm has teeth only if a non-empty expectation fails: an
+    # implementation that answered the row the write inserted, or one that refilled
+    # the view from the table, would state a node here.
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-018"))
+    case.scenario[2]["expectGraph"]["OrderItem"] = [
+        {"id": 31, "orderId": 3, "sku": "C-300", "quantity": 7, "shippedOn": None}
+    ]
+
+    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
+        _assert_scenario(case, _loaded_empty_write_db())  # type: ignore[arg-type]
