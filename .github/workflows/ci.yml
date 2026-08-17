@@ -26,7 +26,7 @@ jobs:
       # no part of this project integrates with Lob, so a real Lob key would be
       # unexplainable rather than merely leaked. Every other detector stays on.
       - name: Scan for leaked secrets
-        uses: trufflesecurity/trufflehog@v3.96.0
+        uses: trufflesecurity/trufflehog@v3.97.0
         with:
           extra_args: --results=verified,unknown --exclude-detectors=lob
 
