@@ -71,7 +71,7 @@ from decimal import Decimal
 from typing import Any
 
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
-from parallax.conformance.graph_models import Policy
+from parallax.conformance.graph_models import Coverage, Policy
 from parallax.conformance.read_models import (
     Animal,
     Balance,
@@ -178,6 +178,43 @@ def a_write_keeps_an_unloaded_relationship_absent(db: Database) -> Snapshot[Any]
     snapshot = db.find(Order.where(Order.id == 3))  # no `.include(...)`: `items` stays unloaded
     db.transact(lambda tx: tx.insert(OrderItem(id=31, order_id=3, sku="C-300", quantity=7)))
     return snapshot  # absence is not emptiness, and the write does not make it one
+
+
+def a_delete_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any], Any, Any]:
+    snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
+    loaded_items = snapshot.result().items
+
+    def destroy(tx: Transaction) -> None:
+        observed = tx.find(OrderItem.where(OrderItem.id == 11)).result()
+        tx.delete(observed)
+
+    db.transact(destroy)
+    reread = db.find(Order.where(Order.id == 1).include(Order.items)).result()
+    return snapshot, loaded_items, reread
+
+
+def a_rectangle_split_keeps_a_loaded_relationship_view(
+    db: Database,
+) -> tuple[Snapshot[Any], Any, Any]:
+    pinned = (
+        Policy.where(Policy.id == 2)
+        .as_of(valid_time=dt.datetime(2024, 5, 1, tzinfo=dt.UTC), tx_time=LATEST)
+        .include(Policy.coverages)
+    )
+    snapshot = db.find(pinned)
+    loaded_coverages = snapshot.result().coverages
+
+    def split(tx: Transaction) -> None:
+        observed = tx.find(Coverage.where(Coverage.id == 20).as_of(valid_time=LATEST)).result()
+        tx.update_until(
+            observed.edit(amount=Decimal("999.00")),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(split)
+    reread = db.find(pinned).result()  # the SAME pin, where the split IS observable
+    return snapshot, loaded_coverages, reread
 
 
 def a_finite_transaction_time_pinned_view_is_read_only(db: Database) -> None:
@@ -561,6 +598,18 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "A committed write leaves an UNLOADED relationship absent, not empty",
         "orders",
         a_write_keeps_an_unloaded_relationship_absent,
+    ),
+    GraphStory(
+        "m-snapshot-read-020",
+        "A committed DELETE leaves the destroyed row's own node in the view that held it",
+        "orders",
+        a_delete_keeps_a_loaded_relationship_view,
+    ),
+    GraphStory(
+        "m-snapshot-read-025",
+        "A bitemporal rectangle split leaves a pinned view answering its own rectangle",
+        "policy",
+        a_rectangle_split_keeps_a_loaded_relationship_view,
     ),
     GraphStory(
         "m-snapshot-read-007",

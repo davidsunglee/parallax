@@ -842,6 +842,53 @@ def a_write_keeps_an_unloaded_relationship_absent(db: Database) -> Snapshot[Any]
     return snapshot  # absence is not emptiness, and the write does not make it one
 ```
 
+## A committed DELETE leaves the destroyed row's own node in the view that held it
+
+Corpus case: `m-snapshot-read-020`
+
+```python
+def a_delete_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any], Any, Any]:
+    snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
+    loaded_items = snapshot.result().items
+
+    def destroy(tx: Transaction) -> None:
+        observed = tx.find(OrderItem.where(OrderItem.id == 11)).result()
+        tx.delete(observed)
+
+    db.transact(destroy)
+    reread = db.find(Order.where(Order.id == 1).include(Order.items)).result()
+    return snapshot, loaded_items, reread
+```
+
+## A bitemporal rectangle split leaves a pinned view answering its own rectangle
+
+Corpus case: `m-snapshot-read-025`
+
+```python
+def a_rectangle_split_keeps_a_loaded_relationship_view(
+    db: Database,
+) -> tuple[Snapshot[Any], Any, Any]:
+    pinned = (
+        Policy.where(Policy.id == 2)
+        .as_of(valid_time=dt.datetime(2024, 5, 1, tzinfo=dt.UTC), tx_time=LATEST)
+        .include(Policy.coverages)
+    )
+    snapshot = db.find(pinned)
+    loaded_coverages = snapshot.result().coverages
+
+    def split(tx: Transaction) -> None:
+        observed = tx.find(Coverage.where(Coverage.id == 20).as_of(valid_time=LATEST)).result()
+        tx.update_until(
+            observed.edit(amount=Decimal("999.00")),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(split)
+    reread = db.find(pinned).result()  # the SAME pin, where the split IS observable
+    return snapshot, loaded_coverages, reread
+```
+
 ## As-of read at a past instant
 
 Corpus case: `m-temporal-read-003`

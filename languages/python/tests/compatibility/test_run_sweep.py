@@ -316,8 +316,19 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
 # here is what makes the claim more than an argument: the write really commits
 # against a real database, and the contents the access then reports are read off
 # the view the find materialized rather than off the rows the write left.
+# `-020`/`-021`/`-025` carry the destructive and temporal write shapes — a delete,
+# a Transaction-Time terminate, and a bitemporal bounded rectangle split — and
+# each closes with a read-back whose rows state what the database holds after the
+# write, so running them grades the access and the re-read against each other.
 _SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
-    {"m-snapshot-read-016", "m-snapshot-read-017", "m-snapshot-read-018"}
+    {
+        "m-snapshot-read-016",
+        "m-snapshot-read-017",
+        "m-snapshot-read-018",
+        "m-snapshot-read-020",
+        "m-snapshot-read-021",
+        "m-snapshot-read-025",
+    }
 )
 
 

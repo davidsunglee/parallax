@@ -336,6 +336,37 @@ def test_a_write_keeps_an_unloaded_relationship_absent(provisioner: Any) -> None
     assert _committed_item_ids(db, 3) == [31]
 
 
+def test_a_delete_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-020"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot, loaded_items, reread = story.run(db)
+    # What only this lane can show: the destroyed row's own node is still IN the
+    # view, and it is the SAME object — an eviction that replaced it with an
+    # equal-valued rebuild would satisfy the case's `expectGraph` and fail here.
+    assert [item.id for item in loaded_items] == [12, 11]
+    assert snapshot.result().items[1] is loaded_items[1]
+    # The delete is load-bearing: item 11 is gone from the database, so the node
+    # the view still answers denotes a row no read can reach.
+    assert [item.id for item in reread.items] == [12]
+    assert snapshot.execution.round_trips == 2
+
+
+def test_a_rectangle_split_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-025"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot, loaded_coverages, reread = story.run(db)
+    # The pinned view answers the rectangle its own read selected, and answers it
+    # with the SAME object. The re-read takes the SAME pin and answers the middle
+    # rectangle the split chained, so the two disagree by construction — which is
+    # what a bitemporal store is for.
+    assert [(c.id, c.amount) for c in loaded_coverages] == [(20, Decimal("300.00"))]
+    assert snapshot.result().coverages[0] is loaded_coverages[0]
+    assert [(c.id, c.amount) for c in reread.coverages] == [(20, Decimal("999.00"))]
+    assert snapshot.execution.round_trips == 2
+
+
 def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) -> None:
     # `m-identity-map-010` is graded here rather than through a `GraphStory`
     # because it sits outside the claimed active slice (see the story's own
