@@ -1387,9 +1387,14 @@ has an oracle, never in this shape.
 **change-free** derivation: an edit that assigns nothing is legal and produces a
 copy of the value's own state, so the two forms are the two kinds of edit a case
 may compose (`m-snapshot-read` *Closed world*). Because a `mutate` derives a copy
-rather than rewriting the object it names, its own step is a source a later step
-may name in turn — a chain of edits is a chain of copies, and the step the chain
-starts from still answers what it held. `path` (the navigated relationship, e.g.
+rather than rewriting the object it names, its own step is a source a later
+**`mutate`** may name in turn — a chain of edits is a chain of copies, and the
+step the chain starts from still answers what it held. An `access` stating
+relationship contents still names the **read** that materialized them (see
+*Relationship contents at a step*, below): a copy carries a view it never
+fetched, so what a case observes of a copy's own view is the reference-identity
+assertion each language's API Conformance Suite runs, not an `expectGraph`.
+`path` (the navigated relationship, e.g.
 `items` or `items.statuses`) is legal only on `load` / `access`. Because golden SQL
 still lives per step, a scenario with action steps carries no top-level
 `then.statements`, and the harness executes a load / access as a relationship

@@ -27,7 +27,7 @@ from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, sweep
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, STRING, InstantError, PresentDocument
+from parallax.core.base import INFINITY, STRING, AuthoredNumber, InstantError, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 from parallax.core.metamodel import (
@@ -4960,6 +4960,51 @@ def test_edited_copy_refuses_the_whole_set_when_one_name_is_unassignable() -> No
     assert source.roots[0] == {"id": 1, "name": "Ada"}
 
 
+def test_edited_copy_refuses_an_assignment_to_the_primary_key() -> None:
+    # `python.md`'s edit contract: a primary-key target may not be assigned. The
+    # engine reaches the SAME verdict the typed `edit(**changes)` does rather
+    # than merging whatever the case authored.
+    step = {"action": "mutate", "on": 0, "set": {"id": 2}}
+    source = _order_view(id=1, name="Ada")
+    with pytest.raises(engine.EngineError, match="primary-key fields may not be assigned"):
+        _edited_copy(step, 0, source)
+
+
+def test_edited_copy_refuses_an_ill_typed_assignment() -> None:
+    # The other half of the same verdict: a value that does not match the
+    # member's declared type is refused at edit time, never carried into a copy
+    # a later step names.
+    step = {"action": "mutate", "on": 0, "set": {"qty": "five"}}
+    source = _order_view(id=1, name="Ada", qty=5)
+    with pytest.raises(engine.EngineError, match="does not match the declared type"):
+        _edited_copy(step, 0, source)
+
+
+def test_edited_copy_carries_the_decoded_value_a_member_would_hold() -> None:
+    # A case authors wire literals (`10.50` parses as a float-shaped
+    # `AuthoredNumber`); the read's own member state holds native carriers, so
+    # the copy's does too rather than mixing the two vocabularies.
+    step = {"action": "mutate", "on": 0, "set": {"price": AuthoredNumber("12.75")}}
+    copy = _edited_copy(step, 0, _order_view(id=1, price=decimal.Decimal("10.50")))
+    assert copy.roots[0]["price"] == decimal.Decimal("12.75")
+    assert isinstance(copy.roots[0]["price"], decimal.Decimal)
+
+
+def test_an_edit_chain_carries_the_sources_relationship_arm_at_every_hop() -> None:
+    # What `m-snapshot-read-022`'s access cannot ask on this lane, because it
+    # names the read: EVERY copy the chain derives answers the SAME materialized
+    # children — not equal ones, and not none at all. An implementation that
+    # carried views on the first derivation but rebuilt a copy of a copy from its
+    # declared members fails here.
+    items = ({"id": 11, "sku": "A-100"}, {"id": 12, "sku": "B-200"})
+    source = _order_view(id=1, name="Ada", items=items)
+    renamed = _edited_copy({"action": "mutate", "on": 0, "set": {"name": "Mutant"}}, 0, source)
+    restated = _edited_copy({"action": "mutate", "on": 1}, 1, renamed)
+    assert renamed.roots[0]["items"] is items
+    assert restated.roots[0]["items"] is items
+    assert source.roots[0]["items"] is items
+
+
 def test_grade_mutate_step_rejects_an_on_index_naming_no_view() -> None:
     step = {"action": "mutate", "on": 5, "set": {"name": "Mutant"}}
     with pytest.raises(engine.EngineError, match="holds no view to edit"):
@@ -5952,6 +5997,31 @@ def test_run_scenario_case_access_step_graph_rejects_an_on_naming_no_view() -> N
         includes=True,
     )
     with pytest.raises(engine.EngineError, match="holds no view to navigate"):
+        engine.run_scenario_case(case, "postgres", _include_scenario_port())
+
+
+def test_run_scenario_case_access_step_graph_refuses_an_on_naming_a_derived_copy() -> None:
+    # An accepted `mutate` publishes a copy so a LATER EDIT can name it, and a
+    # copy does carry its source's loaded arms — but it materialized nothing, and
+    # `m-case-format` has an access stating contents name the read that did. The
+    # reference harness holds no copy at all and refuses this shape, so accepting
+    # it here would make one authored `expectGraph` grade in one lane and be
+    # refused in the other.
+    when: dict[str, object] = {
+        "scenario": [
+            {
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "includes": [{"segments": [{"rel": "Order.items"}]}],
+                }
+            },
+            {"action": "mutate", "on": 0, "set": {"name": "Mutant"}},
+            {"action": "access", "on": 1, "path": "items", "expectGraph": {"OrderItem": []}},
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    with pytest.raises(engine.EngineError, match="derived its view rather than materializing it"):
         engine.run_scenario_case(case, "postgres", _include_scenario_port())
 
 
