@@ -515,16 +515,17 @@ def _synthetic_ledger_scenario(steps: list[dict[str, object]]) -> case_format.Ca
 
 def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
     port = FakeWritePort(find_rows=[{"id": 7}])
-    emissions, round_trips, errors, _step_graphs, _log = engine.run_scenario_case(
-        _case("m-unit-work-001"), "postgres", port
-    )
-    assert round_trips == 2
-    assert errors == []  # a keyed unit-of-work scenario reports no error observation
-    assert [e.case_pointer for e in emissions] == ["/scenario/0/write", "/scenario/1/objectQuery"]
-    assert emissions[0].sql.startswith("insert into account")
+    run = engine.run_scenario_case(_case("m-unit-work-001"), "postgres", port)
+    assert run.round_trips == 2
+    assert run.errors == []  # a keyed unit-of-work scenario reports no error observation
+    assert [e.case_pointer for e in run.emissions] == [
+        "/scenario/0/write",
+        "/scenario/1/objectQuery",
+    ]
+    assert run.emissions[0].sql.startswith("insert into account")
     # Account is versioned, so the case's default preference resolves it to the
     # Optimistic strategy and the participating find renders no lock suffix.
-    assert not emissions[1].sql.endswith("for share of t0")
+    assert not run.emissions[1].sql.endswith("for share of t0")
     assert len(port.writes) == 1 and len(port.reads) == 1
     # An UNGROUPED find runs in its OWN transaction, exactly as `run_read_case`
     # does: every scenario resolves a Concurrency Preference (declared or the
@@ -535,17 +536,15 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
 
 def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> None:
     port = FakeWritePort(find_rows=[])
-    emissions, round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
-        _case("m-unit-work-011"), "postgres", port
-    )
-    assert round_trips == 2  # the aborted insert still counts one round trip
+    run = engine.run_scenario_case(_case("m-unit-work-011"), "postgres", port)
+    assert run.round_trips == 2  # the aborted insert still counts one round trip
     assert len(port.writes) == 1  # the DML executed before the abort
     # An UNGROUPED find runs in its OWN transaction, exactly as `run_read_case`
     # does: every scenario resolves a Concurrency Preference (declared or the
     # default), and a participating read needs a boundary to demarcate whatever
     # lock its target Entity's own strategy calls for — so the find commits one.
     assert port.rollbacks == 1 and port.commits == 1
-    assert emissions[0].case_pointer == "/scenario/0/write"
+    assert run.emissions[0].case_pointer == "/scenario/0/write"
 
 
 # --- `uow`-grouped scenario spans --------------------------------------------
@@ -568,11 +567,9 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    emissions, round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
-        _case("m-unit-work-005"), "postgres", port
-    )
-    assert round_trips == 3
-    assert [e.case_pointer for e in emissions] == [
+    run = engine.run_scenario_case(_case("m-unit-work-005"), "postgres", port)
+    assert run.round_trips == 3
+    assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/write",
         "/scenario/2/objectQuery",
@@ -582,8 +579,8 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     # recorded, never an authored value — and the same observed 1 binds the
     # gate the default preference renders (`update ... set balance = ?,
     # version = ? where id = ? and version = ?`).
-    assert emissions[1].sql.startswith("update account set")
-    assert emissions[1].binds == (175.00, 2, 1, 1)
+    assert run.emissions[1].sql.startswith("update account set")
+    assert run.emissions[1].binds == (175.00, 2, 1, 1)
     assert len(port.writes) == 1 and len(port.reads) == 2
     assert port.commits == 1 and port.rollbacks == 0
 
@@ -596,11 +593,9 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    emissions, round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
-        _case("m-unit-work-002"), "postgres", port
-    )
-    assert round_trips == 3
-    assert [e.case_pointer for e in emissions] == [
+    run = engine.run_scenario_case(_case("m-unit-work-002"), "postgres", port)
+    assert run.round_trips == 3
+    assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/write",
         "/scenario/2/objectQuery",
@@ -635,11 +630,9 @@ def test_run_scenario_case_discards_an_aborted_ungrouped_temporal_writes_case_st
             _ledger_update("300.00", "2026-02-01T00:00:00+00:00"),
         ]
     )
-    emissions, _round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
-        case, "postgres", port
-    )
+    run = engine.run_scenario_case(case, "postgres", port)
     assert port.rollbacks == 1 and port.commits == 1
-    aborted_close, _aborted_successor, close, successor = emissions
+    aborted_close, _aborted_successor, close, successor = run.emissions
     assert aborted_close.binds[3] == "2024-02-01T00:00:00+00:00"
     assert close.case_pointer == "/scenario/1/write"
     assert close.binds[3] == "2024-02-01T00:00:00+00:00"
@@ -701,9 +694,9 @@ def test_scenario_compile_lane_discards_an_aborted_ungrouped_writes_case_state()
     # the milestone the insert left current — the value its keyed verb is
     # addressed by.
     port = FakeWritePort(find_rows=[_ledger_row(9, "100.00", in_z="2025-01-01T00:00:00+00:00")])
-    run, _rt, _errors, _step_graphs, _log = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, "postgres", port)
     assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
-        (e.case_pointer, e.sql, e.binds) for e in run
+        (e.case_pointer, e.sql, e.binds) for e in run.emissions
     ]
 
 
@@ -2150,19 +2143,17 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
             }
         ]
     )
-    emissions, round_trips, _errors, _step_graphs, log = engine.run_scenario_case(
-        _load_case("m-unit-work-015"), "postgres", port
-    )
-    assert round_trips == 5
-    assert log is not None and log.round_trips == 5
+    run = engine.run_scenario_case(_load_case("m-unit-work-015"), "postgres", port)
+    assert run.round_trips == 5
+    assert run.log is not None and run.log.round_trips == 5
     # The close plus the two rectangles the split chains, all under the write
     # step's own pointer.
-    assert [e.case_pointer for e in emissions] == [
+    assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/objectQuery",
         *["/scenario/2/write"] * 3,
     ]
-    close = emissions[2]
+    close = run.emissions[2]
     assert close.sql.startswith("update position set out_z = ?")
     # The close's address is the OBSERVED rectangle's own `thru_z`, derived from
     # the node the named find published — never the primary key alone.
@@ -2971,12 +2962,10 @@ def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
         },
     )
     port = FakeWritePort()
-    emissions, round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
-        case, "postgres", port
-    )
-    assert round_trips == 1
-    assert emissions[0].case_pointer == "/scenario/0/write"
-    assert emissions[0].sql == "delete from wallet where balance < ?"
+    run = engine.run_scenario_case(case, "postgres", port)
+    assert run.round_trips == 1
+    assert run.emissions[0].case_pointer == "/scenario/0/write"
+    assert run.emissions[0].sql == "delete from wallet where balance < ?"
     assert len(port.writes) == 1 and port.commits == 1
 
 
@@ -3017,12 +3006,13 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    emissions, round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
-        case, "postgres", port
-    )
-    assert round_trips == 2
-    assert [e.case_pointer for e in emissions] == ["/scenario/0/objectQuery", "/scenario/1/write"]
-    assert emissions[1].sql == "delete from account where id = ? and version = ?"
+    run = engine.run_scenario_case(case, "postgres", port)
+    assert run.round_trips == 2
+    assert [e.case_pointer for e in run.emissions] == [
+        "/scenario/0/objectQuery",
+        "/scenario/1/write",
+    ]
+    assert run.emissions[1].sql == "delete from account where id = ? and version = ?"
     assert len(port.writes) == 1 and len(port.reads) == 1 and port.commits == 1
 
 
@@ -3056,11 +3046,9 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
         },
     )
     port = FakeWritePort()
-    emissions, round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
-        case, "postgres", port
-    )
-    assert round_trips == 1
-    assert emissions[0].sql == "delete from wallet where balance < ?"
+    run = engine.run_scenario_case(case, "postgres", port)
+    assert run.round_trips == 1
+    assert run.emissions[0].sql == "delete from wallet where balance < ?"
     assert len(port.writes) == 1
     assert port.commits == 0 and port.rollbacks == 1
 
@@ -3101,12 +3089,13 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    emissions, round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
-        case, "postgres", port
-    )
-    assert round_trips == 2
-    assert [e.case_pointer for e in emissions] == ["/scenario/0/objectQuery", "/scenario/1/write"]
-    assert emissions[1].sql == "delete from account where id = ? and version = ?"
+    run = engine.run_scenario_case(case, "postgres", port)
+    assert run.round_trips == 2
+    assert [e.case_pointer for e in run.emissions] == [
+        "/scenario/0/objectQuery",
+        "/scenario/1/write",
+    ]
+    assert run.emissions[1].sql == "delete from account where id = ? and version = ?"
     assert len(port.writes) == 1 and len(port.reads) == 1
     assert port.commits == 0 and port.rollbacks == 1
 
@@ -3189,11 +3178,9 @@ def test_run_scenario_case_keeps_case_state_when_a_materializing_pair_aborts() -
         ]
     )
     port = _ledger_resolve_port()
-    emissions, _round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
-        case, "postgres", port
-    )
+    run = engine.run_scenario_case(case, "postgres", port)
     assert port.rollbacks == 1 and port.commits == 1
-    close, _successor = emissions[-2:]
+    close, _successor = run.emissions[-2:]
     assert close.case_pointer == "/scenario/2/write"
     assert close.binds[3] == "2024-02-01T00:00:00+00:00"
 
@@ -3210,12 +3197,12 @@ def test_run_scenario_case_chains_a_key_inserted_after_a_materializing_pair() ->
             _ledger_chain_update("300.00", "2026-02-01T00:00:00+00:00"),
         ]
     )
-    emissions, _round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
+    run = engine.run_scenario_case(
         case,
         "postgres",
         _ledger_resolve_port(_ledger_row(9, "100.00", in_z="2025-06-01T00:00:00+00:00")),
     )
-    close = emissions[-2]
+    close = run.emissions[-2]
     assert close.case_pointer == "/scenario/3/write"
     assert close.binds[3] == "2025-06-01T00:00:00+00:00"
 
@@ -5144,17 +5131,15 @@ _ORDER_ROW: dict[str, object] = {
 
 def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -> None:
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
-    emissions, round_trips, errors, _step_graphs, _log = engine.run_scenario_case(
-        _case("m-snapshot-read-010"), "postgres", port
-    )
-    assert round_trips == 2
-    assert [e.case_pointer for e in emissions] == [
+    run = engine.run_scenario_case(_case("m-snapshot-read-010"), "postgres", port)
+    assert run.round_trips == 2
+    assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/2/objectQuery",
     ]
     assert len(port.reads) == 2
     assert len(port.writes) == 0
-    assert errors == []  # an unpinned mutate is accepted: no error observation
+    assert run.errors == []  # an unpinned mutate is accepted: no error observation
 
 
 def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() -> None:
@@ -5216,12 +5201,10 @@ _POSITION_R1_ROW: dict[str, object] = {
 
 def test_run_scenario_case_grades_a_transaction_time_pin_read_only_mutate() -> None:
     port = FakeDbPort([dict(_POSITION_R1_ROW)])
-    emissions, round_trips, errors, _step_graphs, _log = engine.run_scenario_case(
-        _case("m-bitemp-write-016"), "postgres", port
-    )
-    assert round_trips == 1
-    assert [e.case_pointer for e in emissions] == ["/scenario/0/objectQuery"]
-    assert errors == [{"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}]
+    run = engine.run_scenario_case(_case("m-bitemp-write-016"), "postgres", port)
+    assert run.round_trips == 1
+    assert [e.case_pointer for e in run.emissions] == ["/scenario/0/objectQuery"]
+    assert run.errors == [{"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}]
 
 
 def test_run_scenario_case_accepts_a_finite_valid_time_pin_mutate() -> None:
@@ -5230,11 +5213,9 @@ def test_run_scenario_case_accepts_a_finite_valid_time_pin_mutate() -> None:
     # mutate applies in-memory and no error observation is reported.
     row = dict(_POSITION_R1_ROW, val=decimal.Decimal("100.00"))
     port = FakeDbPort([row])
-    _emissions, round_trips, errors, _step_graphs, _log = engine.run_scenario_case(
-        _case("m-bitemp-write-015"), "postgres", port
-    )
-    assert round_trips == 1
-    assert errors == []
+    run = engine.run_scenario_case(_case("m-bitemp-write-015"), "postgres", port)
+    assert run.round_trips == 1
+    assert run.errors == []
 
 
 def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
@@ -5421,10 +5402,8 @@ def test_a_unit_reads_each_entity_it_writes_once_however_many_entries_address_it
     port = FakeWritePort(
         find_rows=[{"id": 21, "order_id": 2, "sku": "A-300", "quantity": 4, "shipped_on": None}]
     )
-    _emissions, round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
-        _case("m-unit-work-026"), "postgres", port
-    )
-    assert round_trips == 3  # the step's own read + its one DELETE + the dependent find
+    run = engine.run_scenario_case(_case("m-unit-work-026"), "postgres", port)
+    assert run.round_trips == 3  # the step's own read + its one DELETE + the dependent find
     assert next(sql for sql, _binds in port.reads) == (
         "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on"
         " from order_item t0 where t0.id in (%s) for share of t0"
@@ -5476,11 +5455,9 @@ def test_every_materializing_predicate_mutation_reaches_its_own_wire_verb(case_i
             )
         ]
     )
-    emissions, _round_trips, errors, _step_graphs, _log = engine.run_scenario_case(
-        _load_case(case_id), "postgres", port
-    )
-    assert errors == []
-    assert any(e.sql.startswith("update position set out_z") for e in emissions)
+    run = engine.run_scenario_case(_load_case(case_id), "postgres", port)
+    assert run.errors == []
+    assert any(e.sql.startswith("update position set out_z") for e in run.emissions)
 
 
 def test_a_write_settles_against_a_row_its_own_unit_opened() -> None:
@@ -5727,14 +5704,14 @@ def test_an_aborted_framework_write_step_executes_its_dml_and_rolls_back() -> No
     # rolls it back. Committing it would leave a `rollback: true` step's DML
     # durable, which is the one thing the step declares it is not.
     port = FakeWritePort()
-    _emissions, round_trips, _errors, _step_graphs, _log = engine.run_scenario_case(
+    run = engine.run_scenario_case(
         _synthetic_scenario(
             "models/pk-sequence.yaml", "m-pk-gen-998", [_pk_sequence_advance(rollback=True)]
         ),
         "postgres",
         port,
     )
-    assert round_trips == 1
+    assert run.round_trips == 1
     assert len(port.writes) == 1
     assert port.rollbacks == 1 and port.commits == 0
 
@@ -5814,14 +5791,14 @@ def _include_scenario_port() -> QueueDbPort:
 
 
 def test_run_scenario_case_reports_an_access_step_graph_from_the_retained_view() -> None:
-    _emissions, round_trips, errors, step_graphs, _log = engine.run_scenario_case(
+    run = engine.run_scenario_case(
         _case("m-snapshot-read-016"), "postgres", _include_scenario_port()
     )
     # The find's two levels are the only calls; the mutate and the access cost none.
-    assert round_trips == 2
-    assert errors == []
-    assert [entry["at"] for entry in step_graphs] == ["/scenario/2"]
-    graph = cast("dict[str, list[dict[str, object]]]", step_graphs[0]["graph"])
+    assert run.round_trips == 2
+    assert run.errors == []
+    assert [entry["at"] for entry in run.step_graphs] == ["/scenario/2"]
+    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType]
 
 
@@ -5840,10 +5817,8 @@ def test_run_scenario_case_access_without_expect_graph_reports_no_step_graph() -
     # The observation is the case's own oracle answered: a step asserting no
     # contents reports none, exactly as a step raising no error reports none.
     case = _orders_access_scenario({"action": "access", "on": 0, "path": "items"}, includes=True)
-    _emissions, _round_trips, _errors, step_graphs, _log = engine.run_scenario_case(
-        case, "postgres", _include_scenario_port()
-    )
-    assert step_graphs == []
+    run = engine.run_scenario_case(case, "postgres", _include_scenario_port())
+    assert run.step_graphs == []
 
 
 def test_run_scenario_case_access_step_graph_rejects_an_on_naming_no_find() -> None:
@@ -5852,6 +5827,19 @@ def test_run_scenario_case_access_step_graph_rejects_an_on_naming_no_find() -> N
         includes=True,
     )
     with pytest.raises(engine.EngineError, match="no earlier find step"):
+        engine.run_scenario_case(case, "postgres", _include_scenario_port())
+
+
+def test_run_scenario_case_access_step_graph_refuses_a_multi_source_on() -> None:
+    # The `on` ARRAY form spans sources at different lowered coordinates, so no one
+    # view holds contents gathered across them: a step stating contents names the
+    # single read that materialized them, and the set is refused rather than read
+    # as its first element.
+    case = _orders_access_scenario(
+        {"action": "access", "on": [0], "path": "items", "expectGraph": {"OrderItem": []}},
+        includes=True,
+    )
+    with pytest.raises(engine.EngineError, match="names ONE materializing read"):
         engine.run_scenario_case(case, "postgres", _include_scenario_port())
 
 
@@ -5885,8 +5873,8 @@ def test_run_scenario_case_access_step_graph_refuses_an_undeclared_relationship(
 
 
 def test_run_scenario_case_access_step_graph_walks_a_to_one_arm() -> None:
-    # The to-one arm the corpus reaches only in a later case: a single nested node
-    # rather than a sequence, so the traversal appends instead of extending.
+    # The to-one arm: the loaded view carries a single nested node rather than a
+    # sequence, so the traversal appends instead of extending.
     query = {
         "target": "OrderItem",
         "predicate": {"eq": {"attr": "OrderItem.id", "value": 11}},
@@ -5906,9 +5894,7 @@ def test_run_scenario_case_access_step_graph_walks_a_to_one_arm() -> None:
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     port = QueueDbPort([[dict(_ORDER_1_ITEM_ROWS[1])], [dict(_ORDER_ROW)]])
 
-    _emissions, _round_trips, _errors, step_graphs, _log = engine.run_scenario_case(
-        case, "postgres", port
-    )
+    run = engine.run_scenario_case(case, "postgres", port)
 
-    graph = cast("dict[str, list[dict[str, object]]]", step_graphs[0]["graph"])
+    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert [node["id"] for node in graph["Order"]] == [1]

@@ -137,6 +137,7 @@ __all__ = [
     "Emission",
     "EngineError",
     "RunOnly",
+    "ScenarioRun",
     "compile_read_case",
     "compile_scenario_case",
     "compile_write_sequence_case",
@@ -216,6 +217,27 @@ class RunOnly:
     """A case the corpus declares compile-ineligible (`compileEligibility: run-only`)."""
 
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioRun:
+    """What running one scenario case observed, by channel (:func:`run_scenario_case`).
+
+    A scenario reports several observation channels of the SAME shape, so each is
+    named rather than placed: ``errors`` holds one entry per `expectError` step
+    whose verb raised its declared application-lifecycle error, ``step_graphs`` one
+    per `access` step declaring `expectGraph` (`m-conformance-adapter`). Both are
+    filled by the snapshot action-step lane alone; a keyed unit-of-work scenario
+    reports them empty. ``log`` is the scenario's execution provenance
+    (`m-execution-log`): the Execution Log of its ONE `uow` group, absent when the
+    scenario ran no group or ran more than one.
+    """
+
+    emissions: list[Emission]
+    round_trips: int
+    errors: list[dict[str, object]]
+    step_graphs: list[dict[str, object]]
+    log: ExecutionLog | None
 
 
 def eligibility(case: case_format.Case) -> RunOnly | None:
@@ -2391,9 +2413,12 @@ def _compile_snapshot_scenario(
 class _ScenarioStepResult:
     """What one snapshot-scenario step left behind for a later step to name.
 
-    The three facts are produced together and consumed together by
-    :func:`_grade_mutate_step`, so they travel as one value rather than as
-    index-aligned sequences a caller could fall out of step.
+    The three facts are produced by one find and named together by every step
+    that reaches back to it — a `mutate` grades its assignment against ``pin``
+    and ``identity`` before assigning into ``roots``
+    (:func:`_grade_mutate_step`), an `access` navigates ``roots`` under the same
+    ``identity`` (:func:`_access_step_graph`) — so they travel as one value
+    rather than as index-aligned sequences a caller could fall out of step.
 
     ``roots`` is the in-memory member state of each root the step materialized,
     keyed by declared member name — the plain detached value a `mutate` assigns
@@ -2420,7 +2445,7 @@ def _run_snapshot_scenario(
     dialect_name: str,
     port: DbPort,
     steps: Sequence[Mapping[str, object]],
-) -> tuple[list[Emission], int, list[dict[str, object]], list[dict[str, object]]]:
+) -> ScenarioRun:
     """Run a snapshot-read scenario: each find step reads through the SAME
     public Wire read every graph read uses (``db.wire.find``); `mutate` runs the
     production write seam's
@@ -2432,10 +2457,8 @@ def _run_snapshot_scenario(
     `access` navigates a relationship on the view a named earlier find step
     materialized, likewise touching the port not at all
     (:func:`_access_step_graph`).
-    Returns the ordered emissions, the total round trips, one `errors`
-    observation entry per `expectError` step whose verb raised its declared
-    application-lifecycle error, and one `stepGraphs` entry per `access` step
-    declaring `expectGraph` (`m-conformance-adapter`)."""
+    Reports its observations as a :class:`ScenarioRun`; this lane opens no `uow`
+    group, so it carries no Execution Log."""
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     # This lane resolves no milestone from case state — every node it publishes
@@ -2478,7 +2501,7 @@ def _run_snapshot_scenario(
             )
         round_trips += snapshot.execution.round_trips
         results.append(_ScenarioStepResult(_root_members(snapshot), pin, identity))
-    return emissions, round_trips, errors, step_graphs
+    return ScenarioRun(emissions, round_trips, errors, step_graphs, None)
 
 
 def _root_members(
@@ -2508,11 +2531,20 @@ def _access_step_graph(
     between did to it. Reporting a re-read here would answer that the database is
     right where the case asks whether the view survived, which is the whole point
     of the observable (`m-conformance-adapter`).
+
+    The step names ONE materializing read (`m-case-format`): the multi-source
+    `on` form spans views at different lowered coordinates, and no single view
+    holds contents gathered across them.
     """
     if "expectGraph" not in step:
         return None
     on = step.get("on")
-    source = results[on] if isinstance(on, int) and 0 <= on < len(results) else None
+    if not isinstance(on, int):
+        raise EngineError(
+            f"{case.path.name}: `access` states relationship contents on {on!r} — such a "
+            "step names ONE materializing read, never a set of sources"
+        )
+    source = results[on] if 0 <= on < len(results) else None
     if source is None or source.identity is None:
         raise EngineError(f"{case.path.name}: `access` names {on!r}, which is no earlier find step")
     path = step.get("path")
@@ -4503,11 +4535,7 @@ def run_interleaved_scenario_case(
     return emissions, round_trips, conflict_actual, find_rows
 
 
-def run_scenario_case(
-    case: case_format.Case, dialect_name: str, port: DbPort
-) -> tuple[
-    list[Emission], int, list[dict[str, object]], list[dict[str, object]], ExecutionLog | None
-]:
+def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -> ScenarioRun:
     """Run a scenario: an UNGROUPED write step commits (or aborts) as its OWN
     unit of work through ``db.transact``, and an ungrouped find reads
     committed state. A `uow`-GROUPED contiguous span of steps instead runs
@@ -4518,24 +4546,16 @@ def run_scenario_case(
     IMMEDIATELY PRECEDING find step (:func:`_run_materializing_pair`) —
     detected by a one-step LOOK-AHEAD before that find is lowered as an
     ordinary standalone step, since `m-case-format`'s own "Materializing
-    cases" convention makes the preceding find the resolve. Reports the
-    ordered emissions, the total round trips, and the `errors` and `stepGraphs`
-    observation entries (`m-conformance-adapter`) — both populated only by the
-    snapshot action-step lane, from its `expectError` grading and its `access`
-    steps' retained views (:func:`_run_snapshot_scenario`); every keyed
-    unit-of-work scenario reports two empty lists.
+    cases" convention makes the preceding find the resolve.
 
-    The last element is the scenario's execution provenance
-    (`m-execution-log`): the Execution Log of its ONE `uow` group, or ``None``
-    when the scenario ran no group or more than one — a scenario that opened
-    several transactions has no single log to report, and the observation
-    describes one invocation by contract."""
+    Reports its observations as a :class:`ScenarioRun`. The `errors` and
+    `stepGraphs` channels are filled by the snapshot action-step lane alone,
+    from its `expectError` grading and its `access` steps' retained views
+    (:func:`_run_snapshot_scenario`); a keyed unit-of-work scenario reports both
+    empty and carries the Execution Log of its ONE `uow` group."""
     steps = _scenario_steps(case)
     if _has_action_step(steps):
-        emissions, round_trips, errors, step_graphs = _run_snapshot_scenario(
-            case, dialect_name, port, steps
-        )
-        return emissions, round_trips, errors, step_graphs, None
+        return _run_snapshot_scenario(case, dialect_name, port, steps)
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
@@ -4643,7 +4663,7 @@ def run_scenario_case(
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = _emissions([(step.pointer, step.statements) for step in lowered])
     log = group_logs[0] if len(group_logs) == 1 else None
-    return emissions, round_trips, [], [], log
+    return ScenarioRun(emissions, round_trips, [], [], log)
 
 
 def run_write_sequence_case(

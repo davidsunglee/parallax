@@ -595,11 +595,11 @@
                 "then": { "required": ["objectQuery"] }
               },
               {
-                "description": "`expectGraph` is legal ONLY on an `action: access` step (m-case-format *Relationship contents at a step*). A read-back step re-queries the database, so it proves the DATABASE is right and says nothing about the in-memory graph; only an access on a node the scenario already materialized proves the VIEW survived what the steps in between did. On a write step or any other action verb there is no navigated relationship for the contents to belong to.",
+                "description": "`expectGraph` is legal ONLY on an `action: access` step (m-case-format *Relationship contents at a step*), and its `on` names ONE materializing read. A read-back step re-queries the database, so it proves the DATABASE is right and says nothing about the in-memory graph; only an access on a node the scenario already materialized proves the VIEW survived what the steps in between did. On a write step or any other action verb there is no navigated relationship for the contents to belong to. The `on` ARRAY form spans sources at DIFFERENT lowered coordinates, and contents assembled across several such views would be a graph no single materialized view holds — so an access stating contents names the single read whose Include Paths materialized them.",
                 "if": { "required": ["expectGraph"] },
                 "then": {
                   "required": ["action"],
-                  "properties": { "action": { "const": "access" } }
+                  "properties": { "action": { "const": "access" }, "on": { "type": "integer" } }
                 }
               },
               {
