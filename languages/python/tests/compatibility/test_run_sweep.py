@@ -300,16 +300,25 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
 )
 
 
-# The snapshot-scenario cases whose own find step carries `objectQuery.includes`
-# (`m-snapshot-read-016`): a deep-fetch child level's `IN`-list binds are the
-# distinct root keys gathered from that step's own root read, so the case is
-# `compileEligibility: run-only` (query-result-dependent) exactly as every
-# deep-fetch read case is — which keeps it out of `WRITE_EXERCISED`, whose
-# membership couples compile grading in and which a run-only case would fail. Run
-# grades it here in full: the per-step emissions against the authored golden
-# levels, the round trips, and the `stepGraphs` observation its `access` step's
-# `expectGraph` asserts (`_grade_step_graphs`).
-_SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset({"m-snapshot-read-016"})
+# The snapshot-scenario cases whose own find step carries `objectQuery.includes`:
+# a deep-fetch child level's `IN`-list binds are the distinct root keys gathered
+# from that step's own root read, so each is `compileEligibility: run-only`
+# (query-result-dependent) exactly as every deep-fetch read case is — which keeps
+# them out of `WRITE_EXERCISED`, whose membership couples compile grading in and
+# which a run-only case would fail. Run grades them here in full: the per-step
+# emissions against the authored golden levels, the round trips, and the
+# `stepGraphs` observation each `access` step's `expectGraph` asserts
+# (`_grade_step_graphs`).
+#
+# `m-snapshot-read-017`/`-018` add the persisting write between the materializing
+# find and the access, so their emissions span both a read level and committed
+# DML. That is the composition the whole family exists to grade, and running it
+# here is what makes the claim more than an argument: the write really commits
+# against a real database, and the contents the access then reports are read off
+# the view the find materialized rather than off the rows the write left.
+_SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
+    {"m-snapshot-read-016", "m-snapshot-read-017", "m-snapshot-read-018"}
+)
 
 
 def _reachable_write_cases() -> list[case_format.Case]:

@@ -85,7 +85,7 @@ from parallax.conformance.read_models import (
     Pet,
     WildBoar,
 )
-from parallax.conformance.story_models import Order
+from parallax.conformance.story_models import Order, OrderItem
 from parallax.conformance.vo_models import Branch, Customer, CustomerPhone, Supplier
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.snapshot.handle import Database, Snapshot, Transaction
@@ -153,6 +153,31 @@ def an_edit_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     edited = snapshot.result().edit(name="Mutant")  # the copy keeps the LOADED items
     return snapshot, edited
+
+
+def a_write_keeps_a_loaded_to_one_view(db: Database) -> tuple[Snapshot[Any], Any, Any]:
+    snapshot = db.find(OrderItem.where(OrderItem.id == 11).include(OrderItem.order))
+    loaded = snapshot.result().order  # the owning Order this read materialized
+
+    def rewrite(tx: Transaction) -> None:
+        observed = tx.find(Order.where(Order.id == 1)).result()
+        tx.update(observed.edit(name="Rewritten"))
+
+    db.transact(rewrite)
+    reread = db.find(Order.where(Order.id == 1)).result()  # where the write IS observable
+    return snapshot, loaded, reread
+
+
+def a_write_keeps_a_loaded_empty_relationship_view(db: Database) -> Snapshot[Any]:
+    snapshot = db.find(Order.where(Order.id == 3).include(Order.items))  # order 3 owns no items
+    db.transact(lambda tx: tx.insert(OrderItem(id=31, order_id=3, sku="C-300", quantity=7)))
+    return snapshot  # the loaded-EMPTY view is untouched by the item now in the table
+
+
+def a_write_keeps_an_unloaded_relationship_absent(db: Database) -> Snapshot[Any]:
+    snapshot = db.find(Order.where(Order.id == 3))  # no `.include(...)`: `items` stays unloaded
+    db.transact(lambda tx: tx.insert(OrderItem(id=31, order_id=3, sku="C-300", quantity=7)))
+    return snapshot  # absence is not emptiness, and the write does not make it one
 
 
 def a_finite_transaction_time_pinned_view_is_read_only(db: Database) -> None:
@@ -518,6 +543,24 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "An edited copy holds the SAME loaded relationship objects, with zero SQL",
         "orders",
         an_edit_keeps_a_loaded_relationship_view,
+    ),
+    GraphStory(
+        "m-snapshot-read-017",
+        "A committed write leaves a loaded to-one view holding the SAME object",
+        "orders",
+        a_write_keeps_a_loaded_to_one_view,
+    ),
+    GraphStory(
+        "m-snapshot-read-018",
+        "A committed write leaves a loaded-EMPTY relationship loaded and empty",
+        "orders",
+        a_write_keeps_a_loaded_empty_relationship_view,
+    ),
+    GraphStory(
+        "m-snapshot-read-019",
+        "A committed write leaves an UNLOADED relationship absent, not empty",
+        "orders",
+        a_write_keeps_an_unloaded_relationship_absent,
     ),
     GraphStory(
         "m-snapshot-read-007",

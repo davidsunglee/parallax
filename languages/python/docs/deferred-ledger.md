@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-75**.
+Entry numbering is continuous and never reused. The next new number is **D-76**.
 
 ## Entries
 
@@ -327,6 +327,31 @@ its fixtures, and regenerated storage and table-layout baselines, for an
 observation an interface test already pins exactly. Nothing in the write or read
 contract depends on it, and no acceptance criterion reaches it — what it buys is
 the second grader every other claimed observable has.
+
+### D-75 — A READLESS predicate write step is refused on the snapshot-scenario lane, though nothing about that shape conflicts with it
+
+*Low — a refusal narrower than it needs to be, on a shape no case authors.*
+Relates to `parallax.conformance.engine._snapshot_write_entries`.
+
+**What.** The snapshot-scenario lane now executes `write:` steps, and it admits
+the buffered KEYED instruction list alone: `_snapshot_write_entries` refuses
+every other `write` form by name. Two forms fall under that one refusal for
+different reasons. A MATERIALIZING predicate write is refused permanently and
+correctly — it resolves through the find step that precedes it
+(`_run_materializing_pair`), and a find on this lane materializes a view a later
+`access` states rather than the rows a write settles against, so the two step
+roles genuinely conflict. A READLESS predicate write (the `m-batch-write-005` /
+`-006` shape) needs no find at all, so nothing about it conflicts with this lane;
+it is refused only because the one guard covers both. Wiring it would reuse
+`_lower_predicate_write_step` and `_run_readless_predicate_write` unchanged, as
+the unit-of-work lane already does.
+
+**Why it is deferred rather than fixed.** No corpus case pairs a predicate write
+with a lifecycle action step, so the branch would ship unexercised — a coverage
+cost for a shape nothing asks for — and the refusal it replaces is loud and names
+its reason. The moment a case authors one, the repair is the branch plus its own
+DB-free driver; until then the honest state is a refusal that says which half of
+itself is permanent.
 
 ## Forwarding pointers
 

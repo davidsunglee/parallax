@@ -269,6 +269,54 @@ def test_an_edit_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     assert snapshot.execution.round_trips == 2
 
 
+def test_a_write_keeps_a_loaded_to_one_view(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-017"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot, loaded, reread = story.run(db)
+    item = snapshot.result()
+    # What only this lane can show: the write replaced no node — the view still
+    # holds the SAME object, which the case's `expectGraph` (contents alone)
+    # cannot distinguish from an equal-valued rebuild. And the value it holds is
+    # the one the read paid for, while the database is where the write is
+    # observable, which is what the re-read is for.
+    assert item.order is loaded
+    assert (loaded.name, reread.name) == ("Ada", "Rewritten")
+    assert snapshot.execution.round_trips == 2
+
+
+def test_a_write_keeps_a_loaded_empty_relationship_view(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-018"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    order = snapshot.result()
+    # Loaded and EMPTY: the view answers a value rather than raising, and the
+    # value is still empty though the table now holds item 31. The per-language
+    # half of the distinction m-snapshot-read-019 holds from the other side.
+    assert is_view_loaded(order, Order.items) is True
+    assert order.items == ()
+    assert snapshot.execution.round_trips == 2
+
+
+def test_a_write_keeps_an_unloaded_relationship_absent(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-019"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    order = snapshot.result()
+    # Unloaded, not empty — the same fixture row, relationship and write as
+    # m-snapshot-read-018, differing only in the include the read declared. This
+    # language surfaces the absence by raising, so an assertion that `items` is
+    # `()` here would fail, which is what keeps the two apart.
+    assert is_view_loaded(order, Order.items) is False
+    with pytest.raises(UnloadedRelationshipError, match="items"):
+        order.items  # noqa: B018 - the access itself is the assertion
+    # The access issues no SQL of its own, the write's own unit of work aside:
+    # the materializing find is the only round trip this snapshot ever cost.
+    assert snapshot.execution.round_trips == 1
+
+
 def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) -> None:
     # `m-identity-map-010` is graded here rather than through a `GraphStory`
     # because it sits outside the claimed active slice (see the story's own

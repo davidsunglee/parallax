@@ -14,6 +14,13 @@ state — which need no database at all. The two SUPPLEMENTAL story functions
 (not ``GRAPH_STORIES`` entries) get their own drivers here for the same
 reason: a read-only-pin refusal reached before any DML, and a milestone
 history run-through.
+
+Most graph stories read only, and their canned port refuses DML outright so a
+story that quietly acquired a write is caught here. The composition stories
+(`m-snapshot-read-017`/`-018`/`-019`) are the exception by construction: what
+they demonstrate is a materialized view standing across a COMMITTED write, so
+they need a port that opens a transaction and takes the DML
+(:class:`_WritingCannedPort`).
 """
 
 from __future__ import annotations
@@ -43,6 +50,14 @@ _ORDER_ROW: Row = {
     "ordered_on": dt.date(2024, 1, 2),
 }
 
+_ORDER_ITEM_ROW: Row = {
+    "id": 11,
+    "order_id": 1,
+    "sku": "SKU-1",
+    "quantity": 2,
+    "shipped_on": None,
+}
+
 # Balance 1's SUPERSEDED milestone — the row a finite Transaction-Time pin at
 # 2024-03-01 selects, closed at 2024-06-01 by the milestone that replaced it.
 _BALANCE_MILESTONE_ROW: Row = {
@@ -61,6 +76,7 @@ class _CannedPort:
 
     def __init__(self, responses: Sequence[list[Row]] = ()) -> None:
         self._responses = list(responses)
+        self.writes: list[tuple[str, list[Bind]]] = []
 
     def execute(
         self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
@@ -68,10 +84,10 @@ class _CannedPort:
         return self._responses.pop(0) if self._responses else []
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:  # pragma: no cover
-        raise AssertionError("a graph story issues no DML")
+        raise AssertionError("a read-only graph story issues no DML")
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        raise AssertionError("a graph story opens no transaction")
+        raise AssertionError("a read-only graph story opens no transaction")
 
 
 class _TransactingCannedPort(_CannedPort):
@@ -83,17 +99,50 @@ class _TransactingCannedPort(_CannedPort):
         return body(self)
 
 
+class _WritingCannedPort(_TransactingCannedPort):
+    """The port the composition stories need: their whole subject is a view
+    standing across a write that really commits, so the DML is part of the story
+    rather than a leak, and it is recorded for the caller to read."""
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        self.writes.append((sql, list(binds)))
+        return 1
+
+
+# The stories whose body commits DML (`m-snapshot-read-017`/`-018`/`-019`): the
+# composition arm, where what is demonstrated is the materialized view standing
+# across a persisting write.
+_WRITING_STORIES: frozenset[Callable[..., Any]] = frozenset(
+    {
+        graph_stories.a_write_keeps_a_loaded_to_one_view,
+        graph_stories.a_write_keeps_a_loaded_empty_relationship_view,
+        graph_stories.a_write_keeps_an_unloaded_relationship_absent,
+    }
+)
+
+
+def _port_for(run: Callable[[Database], Any], responses: Sequence[list[Row]]) -> _CannedPort:
+    return (_WritingCannedPort if run in _WRITING_STORIES else _CannedPort)(responses)
+
+
 def _db(story: graph_stories.GraphStory, responses: Sequence[list[Row]] = ()) -> Database:
-    return Database.connect(_CannedPort(responses), MODELS[story.model])
+    return Database.connect(_port_for(story.run, responses), MODELS[story.model])
 
 
 def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
-    """The three edit stories are the ones whose bodies dereference a result, so
-    they alone need a non-empty canned root row — twice for the no-writeback
-    story (the find and the re-read), once for each edited-copy story (whose
-    include level legally short-circuits on the empty tail response)."""
+    """Canned reads for the stories whose bodies dereference a result — every
+    other story's empty root level legally short-circuits the rest.
+
+    The no-writeback story reads twice (the find and the re-read); each
+    edited-copy story once (its include level short-circuits on the empty tail).
+    The to-one composition story reads four times: its own root and include
+    levels, the transaction's observing find, and the re-read that shows where
+    the write IS observable.
+    """
     if run is graph_stories.mutation_has_no_writeback:
         return [[_ORDER_ROW], [_ORDER_ROW]]
+    if run is graph_stories.a_write_keeps_a_loaded_to_one_view:
+        return [[_ORDER_ITEM_ROW], [_ORDER_ROW], [_ORDER_ROW], [_ORDER_ROW]]
     if run in (
         graph_stories.an_edited_copy_keeps_its_source_nodes_views,
         graph_stories.an_edit_keeps_a_loaded_relationship_view,
@@ -109,6 +158,23 @@ def test_every_graph_story_runs_through_the_shipped_surface(
     story: graph_stories.GraphStory,
 ) -> None:
     story.run(_db(story, _responses_for(story.run)))
+
+
+def test_the_to_one_composition_story_keeps_the_view_across_the_committed_write() -> None:
+    # The in-memory half of `m-snapshot-read-017`, which needs no database: the
+    # write reaches the wire (recorded below) and the already-materialized
+    # `order` view still answers the SAME object holding the value the read
+    # produced, never the one the write buffered.
+    story = next(
+        s
+        for s in graph_stories.GRAPH_STORIES
+        if s.run is graph_stories.a_write_keeps_a_loaded_to_one_view
+    )
+    port = _WritingCannedPort(_responses_for(story.run))
+    snapshot, loaded, _reread = story.run(Database.connect(port, MODELS[story.model]))
+    assert [sql for sql, _binds in port.writes] == ["update orders set name = %s where id = %s"]
+    assert snapshot.result().order is loaded
+    assert loaded.name == "Ada"
 
 
 def test_the_mutation_story_edits_in_memory_and_rereads_the_original() -> None:
