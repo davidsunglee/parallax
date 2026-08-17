@@ -2250,19 +2250,25 @@ def _doomed_group_spans(case_name: str, steps: Sequence[Mapping[str, object]]) -
 def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_LoweredStep]:
     """Lower every scenario step to its pointer + DML — pure (no database).
 
-    One :class:`TemporalShadow` spans the whole scenario:
-    a later write step's temporal close/chain observes an
-    earlier step's own opened milestone(s), never the database. The compile
-    lane consults NO find-derived observation:
+    One :class:`TemporalShadow` spans the whole scenario, seeded from the case's
+    own fixture documents (:func:`_seed_shadow_from_fixtures`) and then advanced
+    by each step's plan: a write step's temporal close/chain observes the
+    milestone persisted history declares or one an earlier step opened, and no
+    query answers either — the seed reads the fixtures the run lane's database is
+    provisioned FROM, which is what makes the two lanes the same computation
+    while this one stays pure.
+
+    The compile lane consults NO find-derived observation:
     a keyed write whose version bind is the framework-owned
     advance of a version this SAME scenario's own observing find returned is
     query-result-dependent (`m-conformance-adapter` "Compile eligibility") and
     is therefore declared `compileEligibility: run-only` in the corpus, so it
     short-circuits at :func:`eligibility` before this function ever runs
-    (`adapter.compile_case`). The group observation store stays permanently
-    empty here — every keyed write this lane reaches resolves its observation
-    from its OWN row's reserved ``observedVersion`` control key only
-    (:func:`_durable_row`), exactly as a writeSequence entry does.
+    (`adapter.compile_case`). The group observation store therefore stays
+    permanently empty here: a keyed write's Version Observation comes from its
+    OWN row's reserved ``observedVersion`` control key alone
+    (:func:`_durable_row`), exactly as a writeSequence entry's does, and a
+    temporal write's whole-milestone observation from the tracker above.
 
     A DOOMED unit's advances are staged on that unit's own outcome, exactly as
     the run lane stages them
@@ -2275,10 +2281,6 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     model = load_case_metamodel(case)
     concurrency = _concurrency(case)
     context = _CaseContext(model, dialect_for(dialect_name), concurrency, TemporalShadow())
-    # The same seeding the RUN lane applies: a scenario loads its model's
-    # fixtures, so its first temporal close observes a persisted milestone rather
-    # than none at all. Both lanes must start from the same tracked state or they
-    # are not the same computation.
     _seed_shadow_from_fixtures(case, model, context.shadow)
     group_observations: GroupObservations = []
     lowered: list[_LoweredStep] = []
@@ -2311,13 +2313,14 @@ def _write_sequence_lowered(
     case: case_format.Case, dialect_name: str
 ) -> list[tuple[str, tuple[LoweredStatement, ...]]]:
     """Lower each writeSequence entry independently to ``(pointer, statements)`` —
-    pure. One :class:`TemporalShadow` spans the whole sequence:
-    a later entry's temporal close/chain observes an earlier
-    entry's own opened milestone(s), never the database. A writeSequence
-    carries no find steps at all (`m-case-format`), so its own
-    group observation store stays permanently empty — every keyed
-    write's observation still comes from its row's own ``observedVersion``
-    control key."""
+    pure. One :class:`TemporalShadow` spans the whole sequence, seeded from the
+    case's own fixture documents where it opted in
+    (:func:`_seed_shadow_from_fixtures`): an entry's temporal close/chain
+    observes the milestone that opt-in declares or one an earlier entry opened,
+    and no query answers either. A writeSequence carries no find steps at all
+    (`m-case-format`), so its own group observation store stays permanently
+    empty — a keyed write's Version Observation still comes from its row's own
+    ``observedVersion`` control key."""
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)

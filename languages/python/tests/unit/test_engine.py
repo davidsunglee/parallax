@@ -641,11 +641,38 @@ def test_run_scenario_case_discards_an_aborted_ungrouped_temporal_writes_case_st
     assert successor.binds[1] == "B"
 
 
+def test_scenario_compile_lane_closes_the_fixture_milestone_the_run_lane_closes() -> None:
+    # A keyed unit-of-work scenario whose only temporal write settles against
+    # PERSISTED history: the milestone it closes was declared by the model's
+    # fixtures, never opened by a step of this case. Both lanes owe the same DML
+    # for the same case, so the compile lane starts from the same fixture-declared
+    # history the run lane's database is provisioned with — otherwise the close
+    # has no Temporal Observation to address and the case is refused at compile
+    # while the run lane executes it.
+    case = _synthetic_ledger_scenario([_ledger_update("300.00", "2024-05-01T00:00:00+00:00")])
+    port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
+
+    compiled, _round_trips = engine.compile_scenario_case(case, "postgres")
+    run = engine.run_scenario_case(case, "postgres", port)
+
+    assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
+        (e.case_pointer, e.sql, e.binds) for e in run.emissions
+    ]
+    close, successor = compiled
+    # The fixture milestone's OWN edge is what the close gates on, and the
+    # successor carries the fixture's acct_num forward: facts only a seeded
+    # tracker holds.
+    assert close.binds[3] == "2024-02-01T00:00:00+00:00"
+    assert successor.binds[:3] == (2, "B", decimal.Decimal("300.00"))
+
+
 def _ledger_insert(at: str) -> dict[str, object]:
-    """One scenario write step inserting Ledger id 9 — a key no fixture holds, so
-    the milestone every later step in these cases closes is one the case's own
-    steps opened. The compile lane loads no fixtures, so this is the only way
-    both lanes start a temporal chain from the same tracked state."""
+    """One scenario write step inserting Ledger id 9 — a key NO fixture holds, so
+    every milestone a later step of these cases closes is one this case's own
+    steps opened. That is what isolates the tracker's in-scenario advance and its
+    staged restore from the fixture history both lanes seed themselves with: an
+    assertion about which milestone a later step gates on can only be answering
+    for a milestone an earlier step put there."""
     return {
         "write": [
             {
@@ -6045,7 +6072,7 @@ _ORDER_NAME_UPDATE: list[dict[str, object]] = [
 ]
 
 
-def _ledger_write_between_find_and_mutate(write: object) -> case_format.Case:
+def _ledger_write_after_find_and_mutate(write: object) -> case_format.Case:
     """A snapshot-lane scenario over the Transaction-Time-Only Ledger: the find
     materializes the one CURRENT milestone of id 2 (the fixture key holding
     exactly one, so a write naming no observed edge resolves unambiguously), a
@@ -6120,10 +6147,10 @@ def test_run_scenario_case_write_step_commits_and_leaves_the_retained_view_stand
 
 
 def test_run_scenario_case_refuses_a_non_keyed_write_step_on_the_snapshot_lane() -> None:
-    # A legacy string label states no instruction at all, and a predicate-selected
-    # write would want the preceding find as its resolve — but a find here
-    # materializes a view a later access states, so neither can be lowered as the
-    # keyed buffer this lane executes.
+    # A legacy string label states no instruction at all, so there is nothing to
+    # lower as the keyed buffer this lane executes and no question about the
+    # lane's own shape behind the refusal — which is what keeps it apart from the
+    # two predicate forms below, each refused for a reason of its own.
     port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
     with pytest.raises(engine.EngineError, match="BUFFERED KEYED instruction list"):
         engine.run_scenario_case(_write_between_find_and_access("insert"), "postgres", port)
@@ -6193,7 +6220,7 @@ def test_run_scenario_case_refuses_a_materializing_predicate_write_on_the_snapsh
     }
     port = _QueueWritePort([[dict(_LEDGER_2_ROW)]])
     with pytest.raises(engine.EngineError, match="MATERIALIZING predicate write"):
-        engine.run_scenario_case(_ledger_write_between_find_and_mutate(write), "postgres", port)
+        engine.run_scenario_case(_ledger_write_after_find_and_mutate(write), "postgres", port)
     assert port.writes == []
 
 
@@ -6223,7 +6250,7 @@ def test_snapshot_lane_compile_and_run_reach_the_same_temporal_dml() -> None:
     # for the same case, which is the whole reason this lane has a compile path —
     # so the run's own emissions ARE the compile oracle here, not a transcription
     # of one.
-    case = _ledger_write_between_find_and_mutate(_LEDGER_VALUE_UPDATE)
+    case = _ledger_write_after_find_and_mutate(_LEDGER_VALUE_UPDATE)
     # The find, then the resolving read the keyed write's own unit of work owes.
     port = _QueueWritePort([[dict(_LEDGER_2_ROW)], [dict(_LEDGER_2_ROW)]])
 
