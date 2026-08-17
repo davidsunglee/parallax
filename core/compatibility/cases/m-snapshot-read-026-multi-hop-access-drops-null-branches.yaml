@@ -1,0 +1,82 @@
+# A MULTI-HOP access over a FANNED-OUT path states its non-null terminals alone
+# (m-case-format *Relationship contents at a step*): the walk follows the
+# materialized view hop by hop, and a branch that reached no row hands its deeper
+# levels an empty parent set (m-deep-fetch), so it contributes no terminal — the
+# null drops out at the hop it appears on, the terminal hop included. This is the
+# only corpus case that states the FANNED-OUT MULTI-HOP form of that walk: every
+# other `expectGraph` names a single hop, where there is no intermediate branch
+# to drop and a to-many arm holds only the rows the fetch attached.
+#
+# Order 1 owns FOUR statuses and they are exactly the two kinds: 101 is
+# order-level, so its `orderItemId` is NULL and its `orderItem` view is
+# loaded-NULL, while 201, 202 and 203 are item-level and reach items 11, 11 and
+# 12. The read materializes all three levels — order, statuses, then the items
+# those statuses point at — in three round trips, the second level's IN-list
+# gathering the root key and the third's the DISTINCT non-null `orderItemId`s,
+# which is where the null branch already costs nothing. The access then walks
+# `statuses.orderItem` over that view and states `[11, 11, 12]`: item 11 TWICE,
+# because two statuses reach it and the walk answers per branch rather than per
+# distinct node, and no `null` at all, because status 101's branch reached no row.
+#
+# The semantic distinction is against both of the other shapes the rule
+# distinguishes. Against a to-one path with no fan-out: an access over
+# `OrderStatus.orderItem` from a read rooted on statuses would state one terminal
+# per root — the node, or the `null` its last hop holds — because a position that
+# never fanned out carries the "single node or null" a to-one member is defined
+# to hold. Against de-duplication: `[11, 12]` would be the DISTINCT nodes the
+# walk reached, which is a different question from what the traversal answers.
+# An implementation that emitted `null` for the order-level status, or that
+# collapsed the two branches reaching item 11 into one, fails here while every
+# single-hop case in the family still passes.
+#
+# `roundTrips: 0` on the access is the closed-world half as everywhere else: the
+# whole walk is over rows the read already fetched, so a multi-hop path costs no
+# more at access time than a single-hop one. `sameObjectAs: 0` rides along for
+# consistency with the other zero-round-trip accesses (m-op-list-002); on the
+# wire lane it is primary-key equality against this step's own reused source rows.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-case-format, m-deep-fetch, closed-world, relationship, to-many, multi-hop, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "include levels - the Order.statuses and OrderStatus.orderItem IN-list binds are the distinct parent keys gathered from the level above, so both child emissions depend on a query result"
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.id
+            value: 1
+        includes:
+          - segments:
+              - rel: parallax.compatibility.Order.statuses
+              - rel: parallax.compatibility.OrderStatus.orderItem
+      roundTrips: 3
+      note: materialize order 1 with its statuses AND the items those statuses point at - three levels, the third keyed on the DISTINCT non-null orderItemIds
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
+          binds: [1]
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_id in (?)
+          binds: [1]
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id in (?, ?)
+          binds: [11, 12]
+      expectRows:
+        - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+    - action: access
+      "on": 0
+      path: statuses.orderItem
+      roundTrips: 0
+      sameObjectAs: 0
+      note: walk the whole fanned-out path over the materialized view -> ZERO SQL, item 11 twice, and no null for the order-level status
+      expectGraph:
+        OrderItem:
+          - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
+          - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
+          - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+then:
+  roundTrips: 3

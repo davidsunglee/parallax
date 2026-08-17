@@ -1,0 +1,126 @@
+# A relationship view materialized over FRESHLY INSERTED rows survives a
+# persisting write exactly as one over fixture rows does (m-snapshot-read *Closed
+# world*, composition): where the rows came from is no part of the rule, so a
+# graph read after an insert is an ordinary materialized graph, and a later
+# committed write that rewrites the very row it holds neither refreshes nor
+# invalidates it — accessing it still issues ZERO SQL and still answers the line
+# item the read produced. This is the clause "a write changes nothing about a
+# graph already materialized" held over rows this scenario itself created;
+# m-snapshot-read-017 holds it over rows the fixtures supplied.
+#
+# The insert is the graph's PROVENANCE, never its oracle. Step 0 commits order 6
+# and its line item 61 as one unit of work — two statements, no resolving read,
+# because an insert opens the keys it writes rather than settling against stored
+# ones. Step 1 then materializes order 6 WITH its `items`, the ordinary 1 + L
+# deep fetch. A reader who takes step 1 for the assertion has misread the case:
+# a read after an insert grades a FRESH materialization, which is the very thing
+# this family says cannot prove survival — the database still holds the rows, so
+# such a read passes on an implementation that discards every view. Step 1 is
+# here to produce a view whose rows have a known origin, and nothing more.
+#
+# The assertion is step 3, on the survival axis. Step 2 UPDATES item 61's `sku`
+# from `C-610` to `Rewritten` and commits it as its own unit of work — one DML
+# statement plus the resolving read a keyed update owes an unversioned
+# Non-Temporal target under the mandatory Locking fallback, so two round trips.
+# Step 3 accesses `items` on the view step 1 materialized and states its WHOLE
+# contents through `expectGraph`, `sku` still `C-610`: the PRE-write value, which
+# is exactly what no re-read of the written row can produce. Step 4 then re-reads
+# that same line item FROM THE DATABASE and observes `Rewritten`. An
+# implementation that re-fetched or refreshed the view on write answers
+# `Rewritten` at step 3 and fails; one that discarded it raises where it should
+# answer; one whose UPDATE reached nothing fails step 4; and `roundTrips: 0`
+# fails anything that reaches the database at step 3 at all.
+#
+# Both writes are load-bearing for the case as well as for the clause: without
+# step 0 there is no order 6 for step 1 to find, and without step 2 step 4 still
+# observes `C-610` — so the scenario cannot be satisfied by a database this case
+# did not build and then rewrite.
+# `sameObjectAs: 1` rides along for consistency with the other zero-round-trip
+# accesses (m-op-list-002), but on the wire lane it is primary-key equality
+# against this step's own reused source rows; the identity proof of record — that
+# the accessed item is literally the SAME object before and after the write — is
+# the reference-identity assertion each language's API Conformance Suite runs
+# (m-api-conformance).
+model: models/orders.yaml
+tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, to-many, insert, update, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "include level - the Order.items child IN-list binds are the distinct root keys gathered from step 1's own root read, so the child emission depends on a query result"
+when:
+  scenario:
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.Order
+          rows:
+            - { id: 6, name: Hopper, sku: F-600, qty: 2, price: 60.00, active: true, orderedOn: 2024-07-07 }
+        - mutation: insert
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 61, orderId: 6, sku: C-610, quantity: 4 }
+      roundTrips: 2
+      note: create the order and the line item this scenario's graph is made of - two inserts, each opening its own key, so neither owes a resolving read
+      statements:
+        - sql:
+            postgres: insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [6, Hopper, F-600, 2, 60.00, true, 2024-07-07]
+        - sql:
+            postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+          binds: [61, 6, C-610, 4]
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.id
+            value: 6
+        includes:
+          - segments:
+              - rel: parallax.compatibility.Order.items
+      roundTrips: 2
+      note: materialize a snapshot of the FRESH order 6 WITH its line item (1 + L levels) - provenance, not the assertion
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
+          binds: [6]
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
+          binds: [6]
+      expectRows:
+        - { id: 6, name: Hopper, sku: F-600, qty: 2, price: 60.00, active: true, ordered_on: 2024-07-07 }
+    - write:
+        - mutation: update
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 61, sku: Rewritten }
+      roundTrips: 2
+      note: rewrite the very row the loaded `items` view holds - one DML statement plus the resolving read the keyed update owes
+      statements:
+        - sql:
+            postgres: update order_item set sku = ? where id = ?
+          binds: [Rewritten, 61]
+    - action: access
+      "on": 1
+      path: items
+      roundTrips: 0
+      sameObjectAs: 1
+      note: access the ALREADY-MATERIALIZED items after the write -> ZERO SQL and the sku the read paid for
+      expectGraph:
+        OrderItem:
+          - { id: 61, orderId: 6, sku: C-610, quantity: 4, shippedOn: null }
+    - objectQuery:
+        target: parallax.compatibility.OrderItem
+        predicate:
+          eq:
+            attr: parallax.compatibility.OrderItem.id
+            value: 61
+      roundTrips: 1
+      note: observing the write means issuing another read - the same line item, re-read, holds the rewritten sku
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
+          binds: [61]
+      expectRows:
+        - { id: 61, order_id: 6, sku: Rewritten, quantity: 4, shipped_on: null }
+then:
+  roundTrips: 7

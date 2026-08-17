@@ -1,0 +1,171 @@
+# A VALUE OBJECT riding a loaded relationship view survives a persisting write,
+# and its `multiplicity: many` member survives IN ORDER (m-snapshot-read *Closed
+# world*, composition; m-value-object): the view holds a whole embedded
+# composite, not a scalar, so a committed write that rewrites the very document
+# the view carries neither refreshes it nor reorders it — accessing the
+# relationship still issues ZERO SQL and still answers the document the read
+# decoded, element for element in the positions it decoded them. This is the
+# clause "a write changes nothing about a graph already materialized" held where
+# what the graph holds is a Value Object; m-snapshot-read-017 holds the same
+# clause where the surviving to-one carried scalars alone. The `customer` model
+# is what makes the contrast statable: Location and Customer each declare the
+# same recursive `address` composite AND a relationship to the other, so the
+# entity the access lands on carries a document rather than scalars, and that
+# document's `phones` is a `multiplicity: many` member whose element ORDER is
+# semantic.
+#
+# Step 0 materializes location 100 WITH its owning customer — the ordinary 1 + L
+# deep fetch over a reverse to-one, two round trips, each level projecting its
+# own entity's instance-form list and its `address` presence/value pair LAST
+# (m-sql *Read projection*). Both levels decode a document: Location's own, and
+# Customer 1's recursive composite with its two `phones` elements. Step 1
+# UPDATES that customer's whole `address` in one cell and commits it as its own
+# unit of work — one DML statement plus the resolving read a keyed update owes an
+# unversioned Non-Temporal target under the mandatory Locking fallback, so two
+# round trips. The new document differs from the old in exactly two ways: `city`
+# reads `Bergen`, and the two `phones` elements are written in the OPPOSITE
+# order. Step 2 accesses `customer` on the view step 0 materialized and states
+# its WHOLE contents through `expectGraph` — `city: Oslo`, and `phones` in the
+# order the read decoded them. Step 3 then re-reads that same customer FROM THE
+# DATABASE and observes the rewritten document, so the write is load-bearing for
+# the case and not only for the composition it names: with step 1 removed, step 3
+# fails.
+#
+# Steps 2 and 3 are the case's teeth and its semantic distinction. They ask the
+# same question of the same row at the same moment and MUST answer differently,
+# and the two differences fail differently. `city` is an ordinary contradicted
+# leaf: an implementation that re-fetched, refreshed, or invalidated the view on
+# write answers `Bergen` at step 2. The `phones` order is the one only a Value
+# Object can pose — the same two documents, the same multiset, a different
+# sequence — so a re-fetching implementation is caught by it ONLY because a
+# `multiplicity: many` Value Object compares POSITIONALLY while an entity
+# collection compares as a multiset (m-case-format *Relationship contents at a
+# step*). An executor that graded `phones` as a multiset would report this view
+# intact after re-reading the swapped document, which is the distinction that
+# rule exists to draw and the reason this case states the order rather than only
+# the leaves.
+#
+# `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
+# accesses (m-op-list-002), but on the wire lane it is primary-key equality
+# against this step's own reused source rows; the identity proof of record — that
+# the accessed customer is literally the SAME object before and after the write —
+# is the reference-identity assertion each language's API Conformance Suite runs
+# (m-api-conformance).
+model: models/customer.yaml
+tags: [m-snapshot-read, m-deep-fetch, m-value-object, m-unit-work, closed-world, relationship, to-one, json, update, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "include level - the Location.customer parent IN-list binds are the distinct customer keys gathered from step 0's own root read, so the child emission depends on a query result"
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Location
+        predicate:
+          eq:
+            attr: parallax.compatibility.Location.id
+            value: 100
+        includes:
+          - segments:
+              - rel: parallax.compatibility.Location.customer
+      roundTrips: 2
+      note: materialize a snapshot of location 100 WITH its owning customer - both levels decode their own address document
+      statements:
+        - sql:
+            postgres: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.id = ?
+          binds: [100]
+        - sql:
+            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id in (?)
+          binds: [1]
+      expectRows:
+        - id: 100
+          customer_id: 1
+          label: HQ
+          address:
+            street: 1 Harbour Way
+            city: Oslo
+            geo:
+              country: "NO"
+              elevation: 12.0
+              point: { lat: 59.91, lon: 10.75 }
+            phones:
+              - { type: work, number: '555-0100' }
+    - write:
+        - mutation: update
+          entity: parallax.compatibility.Customer
+          rows:
+            - id: 1
+              address:
+                street: 1 Park Ave
+                city: Bergen
+                geo:
+                  country: "NO"
+                  elevation: 10.5
+                  point: { lat: 59.9, lon: 10.7 }
+                phones:
+                  - { type: work, number: '555-9999' }
+                  - { type: home, number: '555-1234' }
+      roundTrips: 2
+      note: rewrite the very document the loaded `customer` view holds - a changed city AND the two phones in the opposite order
+      statements:
+        - sql:
+            postgres: update customer set address = ? where id = ?
+          binds:
+            - street: 1 Park Ave
+              city: Bergen
+              geo:
+                country: "NO"
+                elevation: 10.5
+                point: { lat: 59.9, lon: 10.7 }
+              phones:
+                - { type: work, number: '555-9999' }
+                - { type: home, number: '555-1234' }
+            - 1
+    - action: access
+      "on": 0
+      path: customer
+      roundTrips: 0
+      sameObjectAs: 0
+      note: access the ALREADY-MATERIALIZED customer after the write -> ZERO SQL, the pre-write city, and the phones in the order the read decoded them
+      expectGraph:
+        Customer:
+          - id: 1
+            name: Ada
+            address:
+              street: 1 Park Ave
+              city: Oslo
+              geo:
+                country: "NO"
+                elevation: 10.5
+                point: { lat: 59.9, lon: 10.7 }
+              phones:
+                - { type: home, number: '555-1234' }
+                - { type: work, number: '555-9999' }
+    - objectQuery:
+        target: parallax.compatibility.Customer
+        predicate:
+          eq:
+            attr: parallax.compatibility.Customer.id
+            value: 1
+      roundTrips: 1
+      note: observing the write means issuing another read - the same customer, re-read, holds the rewritten document
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - id: 1
+          name: Ada
+          address:
+            street: 1 Park Ave
+            city: Bergen
+            geo:
+              country: "NO"
+              elevation: 10.5
+              point: { lat: 59.9, lon: 10.7 }
+            phones:
+              - { type: work, number: '555-9999' }
+              - { type: home, number: '555-1234' }
+then:
+  roundTrips: 5
