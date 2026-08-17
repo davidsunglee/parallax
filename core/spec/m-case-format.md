@@ -1394,6 +1394,26 @@ relationship contents still names the **read** that materialized them (see
 *Relationship contents at a step*, below): a copy carries a view it never
 fetched, so what a case observes of a copy's own view is the reference-identity
 assertion each language's API Conformance Suite runs, not an `expectGraph`.
+
+**What a `set` may state.** Every key must name an **assignable member** of the
+Entity the edited node is — a declared Attribute or Value Object occurrence that
+is not a primary key, a read-only member, or a framework-owned one — and every
+value must be one that member admits, judged exactly as a write row's value is
+(*What decides a bare write row*), a Value Object occurrence binding one whole
+document. A `set` that states otherwise is a **case-authoring failure**, refused
+before any executor runs the case, exactly as a bare write row naming an
+undeclared member is. It is deliberately **not** an `expectError`: that
+vocabulary is closed and carries no edit-validation member, so an edit refusal is
+not a declarable observation and a case states edits the model admits and nothing
+else. A language whose edit verb validates will reach the same verdict at run
+time, and MAY refuse there, but no case may depend on it — an executor that
+models `mutate` as its authored golden DML alone reaches no verdict at all, and
+two executors must agree on every case the corpus admits. Where the step's own
+read is **abstract-targeted**, the assignable domain is the widest that read could
+answer: a member ANY concrete subtype of its effective concrete set declares,
+since the node the edit holds is one complete concrete instance and the case does
+not say which.
+
 `path` (the navigated relationship, e.g.
 `items` or `items.statuses`) is legal only on `load` / `access`. Because golden SQL
 still lives per step, a scenario with action steps carries no top-level

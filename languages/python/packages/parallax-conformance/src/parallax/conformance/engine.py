@@ -3069,11 +3069,14 @@ def _judged_assignments(
     and judged assignable, or a loud refusal naming the case.
 
     An unassignable target or an ill-typed value is a case-AUTHORING defect
-    rather than a graded observation: `m-case-format`'s per-step `expectError`
-    vocabulary has no member for it, so a case cannot declare the refusal, and an
-    engine that accepted the assignment anyway would report a pass for an edit
-    the language's own surface raises on. It is therefore refused exactly as a
-    bare write row naming an undeclared member is
+    rather than a graded observation: `m-case-format` says in so many words that
+    such a `set` is a case-authoring failure and deliberately not an `expectError`,
+    so a case cannot declare the refusal and no executor owes a graded one. The
+    corpus refuses such a case before either executor runs it, which is what makes
+    the outcome portable; this verdict is the same rule reached again at run time,
+    where it also guards the shapes a case never carries — a hand-built step, or a
+    node whose concrete Entity only the read knows. It is refused exactly as a bare
+    write row naming an undeclared member is
     (:func:`_reject_undeclared_bare_row_members`).
     """
     entity = case_entity(model, identity.canonical)
