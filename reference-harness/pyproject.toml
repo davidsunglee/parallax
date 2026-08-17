@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "basedpyright>=1.31",
+    "basedpyright>=1.39.10",
     "pytest>=8.0",
     "ruff>=0.16.1",
 ]
@@ -35,7 +35,7 @@ default-groups = ["dev"]
 
 [dependency-groups]
 dev = [
-    "basedpyright>=1.31",
+    "basedpyright>=1.39.10",
     "pytest>=8.0",
     "ruff>=0.16.1",
 ]
