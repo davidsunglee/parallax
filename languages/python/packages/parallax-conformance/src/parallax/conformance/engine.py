@@ -132,7 +132,7 @@ from parallax.snapshot.handle import (
     stream_lowered,
     validate_source_pin,
 )
-from parallax.snapshot.materialize import source_hint_of
+from parallax.snapshot.materialize import FAMILY_VARIANT_KEY, source_hint_of
 
 __all__ = [
     "Emission",
@@ -2521,8 +2521,8 @@ def _compile_snapshot_scenario(
 class _ScenarioStepResult:
     """What one snapshot-scenario step left behind for a later step to name.
 
-    The three facts are produced together and named together by every step that
-    reaches back to them — a `mutate` grades its assignment against ``pin`` and
+    Its facts are produced together and named together by every step that reaches
+    back to them — a `mutate` grades its assignment against ``pin`` and
     ``identity`` and derives a copy of ``roots`` (:func:`_grade_mutate_step`), an
     `access` navigates ``roots`` under the same ``identity``
     (:func:`_access_step_graph`) — so they travel as one value rather than as
@@ -2540,16 +2540,20 @@ class _ScenarioStepResult:
 
     Two step kinds fill one: a find, with what it materialized, and an ACCEPTED
     `mutate`, with the Edited Copy it derived (:func:`_edited_copy`) — a copy
-    carries its source's views, pin and Identity, so a later `mutate` naming it
-    answers exactly as one naming the read does (`m-snapshot-read` *Closed
-    world*, composition). ``materialized`` is what separates them: a find's own
-    read fetched the contents, a copy only carries them, and an `access` stating
-    relationship contents names the read that materialized them (`m-case-format`
-    *Relationship contents at a step*) — a distinction every executor draws
-    alike, so the flag is the one place this lane draws it. A write step, an
-    `access`, and a `mutate` the pin rule refused carry the empty result instead
-    — their slot exists so a later step's `on` index still names the step it
-    means.
+    carries its source's views and pin, so a later `mutate` naming it answers
+    exactly as one naming the read does (`m-snapshot-read` *Closed world*,
+    composition). ``identity`` is the one fact they state at different
+    precisions: a find records the Object Query's own TARGET, which spans a whole
+    family when that target is abstract, while a copy holds exactly one node and
+    records the CONCRETE Entity that node is
+    (:func:`_edited_node_identity`). ``materialized`` is what separates them: a
+    find's own read fetched the contents, a copy only carries them, and an
+    `access` stating relationship contents names the read that materialized them
+    (`m-case-format` *Relationship contents at a step*) — a distinction every
+    executor draws alike, so the flag is the one place this lane draws it. A
+    write step, an `access`, and a `mutate` the pin rule refused carry the empty
+    result instead — their slot exists so a later step's `on` index still names
+    the step it means.
     """
 
     roots: tuple[dict[str, object], ...]
@@ -2816,6 +2820,66 @@ def _relationship_declaration(
     return None if declared is None else relationship.view(model).relationship(declared.identity)
 
 
+def _assignable_member_names(model: AcceptedMetamodel, identity: EntityIdentity) -> frozenset[str]:
+    """Every member name an authored payload may target on ``identity``: its
+    family-effective attributes and Value Object occurrences.
+
+    The one place that domain is derived, shared by a `mutate` step's `set`
+    (:func:`_edited_copy`) and a bare write row
+    (:func:`_reject_undeclared_bare_row_members`), so one authored name is judged
+    declared or not the same way whichever form carries it. A key a read
+    publishes BESIDE the declared members is absent by construction — framework
+    metadata such as `familyVariant` names no declaration, so it is no more
+    assignable than a name the model never heard of, however plainly the
+    materialized node carries it.
+    """
+    position = inheritance.view(model).entity(identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        return frozenset()
+    return frozenset(
+        {attribute.identity.name for attribute in position.applicable_attributes}
+        | {occurrence.identity.path[-1] for occurrence in position.applicable_value_objects}
+    )
+
+
+def _edited_node_identity(
+    case: case_format.Case,
+    model: AcceptedMetamodel,
+    target: EntityIdentity,
+    node: Mapping[str, object],
+) -> EntityIdentity:
+    """The Entity one retained node IS, which its find step's ``target`` names
+    only where the read cannot be polymorphic.
+
+    An abstract-target read materializes COMPLETE CONCRETE instances
+    (`m-case-format`), so a node published under an abstract `Animal` carries
+    `Dog`'s own members and the `familyVariant` spelling saying which concrete it
+    is. An edit is judged against THAT Entity: its applicable members are the
+    assignable ones and its declared types are what a value is judged against,
+    where the abstract target declares neither and would wave both through. The
+    resolution belongs here rather than at the read because one read answers many
+    concretes at once; only a step holding exactly one node has a concrete to
+    name.
+
+    A variant spelling naming no concrete subtype of ``target`` is refused rather
+    than fallen back on: falling back would judge a subtype member against the
+    abstract position again, which is the hole this resolution exists to close.
+    """
+    variant = node.get(FAMILY_VARIANT_KEY)
+    if not isinstance(variant, str):
+        return target
+    facet = inheritance.view(model)
+    position = facet.entity(target)
+    concretes = () if position is None else position.concrete_subtypes
+    for concrete in concretes:
+        if inheritance.family_variant_name(facet, concrete) == variant:
+            return concrete
+    raise EngineError(
+        f"{case.path.name}: the view holds a {variant!r} node, which is no concrete subtype "
+        f"of {target.name} — an edit is judged against the Entity its node IS"
+    )
+
+
 def _related_direction(
     case: case_format.Case, model: AcceptedMetamodel, identity: EntityIdentity, name: str
 ) -> relationship.RelationshipMetadata:
@@ -2904,20 +2968,29 @@ def _edited_copy(
     alone: the result is a NEW value carrying the source's own relationship
     views, and the source itself is untouched — an edit answers with a copy
     rather than rewriting the node it derives from, which is why a scenario can
-    hold both and ask each what it answers. It carries the source's pin and
-    Entity Identity too, so a later `mutate` naming the copy resolves exactly as
-    one naming the read does; what it does NOT carry is a read of its own, which
-    is why an `access` stating contents still names the find
-    (:func:`_access_step_graph`). No DML follows either way: no unit of work
-    holds the view (`m-snapshot-read`).
+    hold both and ask each what it answers. It carries the source's pin too, so a
+    later `mutate` naming the copy resolves exactly as one naming the read does;
+    what it does NOT carry is a read of its own, which is why an `access` stating
+    contents still names the find (:func:`_access_step_graph`). No DML follows
+    either way: no unit of work holds the view (`m-snapshot-read`).
+
+    Every verdict below is reached against the Entity the retained node IS
+    (:func:`_edited_node_identity`), never against the query target that
+    published it: an abstract-target read answers concrete instances, so it is
+    the concrete subtype that declares which names are assignable and what type
+    each holds. That resolved Identity rides on the copy, so a chain of edits
+    keeps judging the same Entity.
 
     Three verdicts stand between a `set` and the copy, in this order. A
     RELATIONSHIP name is refused outright — no edit changes a relationship
     member, so a carried view can only ever describe what a read observed, and a
     copy whose `items` the author replaced would describe a fetch that never
-    happened. A name the materialized view carries no member of is refused as an
-    assignment with nowhere to land — a case the verb cannot perform, not a
-    mutation it silently drops. What survives both is judged as any written value
+    happened. A name the node's Entity declares no assignable member of is
+    refused as an assignment with nowhere to land — a case the verb cannot
+    perform, not a mutation it silently drops. The DECLARATION is what that gate
+    asks, rather than the materialized mapping's own keys: a node publishes
+    framework metadata beside its members, and `familyVariant` is read-time
+    provenance no edit authors. What survives both is judged as any written value
     is (:func:`~parallax.core.inheritance.validate_write_assignment`), so a
     primary-key, read-only or framework-owned target and an ill-typed value are
     refused by the SAME verdict the typed `edit(**changes)` and the serialized
@@ -2949,24 +3022,24 @@ def _edited_copy(
     assignments = cast("Mapping[str, object]", raw)
     members = source.roots[0]
     assert source.identity is not None, "the caller resolves the source step's Entity Identity"
+    identity = _edited_node_identity(case, model, source.identity, members)
     related = sorted(
-        name
-        for name in assignments
-        if _relationship_declaration(model, source.identity, name) is not None
+        name for name in assignments if _relationship_declaration(model, identity, name) is not None
     )
     if related:
         raise EngineError(
             f"{case.path.name}: `mutate` assigns {related!r}, which name relationship members — "
             "an edit carries the views its source read materialized and authors none"
         )
-    unassignable = sorted(name for name in assignments if name not in members)
+    declared = _assignable_member_names(model, identity)
+    unassignable = sorted(name for name in assignments if name not in declared)
     if unassignable:
         raise EngineError(
-            f"{case.path.name}: `mutate` assigns {unassignable!r}, which the view step {on} "
-            "holds no member of"
+            f"{case.path.name}: `mutate` on step {on} assigns {unassignable!r}, which "
+            f"{identity.name} declares no assignable member of"
         )
-    edited = _judged_assignments(case, model, source.identity, assignments)
-    return _ScenarioStepResult(({**members, **edited},), source.pin, source.identity)
+    edited = _judged_assignments(case, model, identity, assignments)
+    return _ScenarioStepResult(({**members, **edited},), source.pin, identity)
 
 
 def _judged_assignments(
@@ -6291,11 +6364,7 @@ def _reject_undeclared_bare_row_members(
     carrying both an undeclared name and a real defect is refused rather than graded
     on the defect.
     """
-    view = inheritance.view(model).entity(target.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return
-    declared = {attribute.identity.name for attribute in view.applicable_attributes}
-    declared.update(vo.identity.path[-1] for vo in view.applicable_value_objects)
+    declared = _assignable_member_names(model, target.identity)
     unknown = sorted(key for key in row if key not in declared and key not in _ROW_CONTROL_KEYS)
     if unknown:
         raise EngineError(

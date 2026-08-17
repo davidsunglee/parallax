@@ -4955,7 +4955,7 @@ def test_edited_copy_refuses_the_whole_set_when_one_name_is_unassignable() -> No
     # still holds the state the find step materialized.
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant", "nickname": "Nick"}}
     source = _order_view(id=1, name="Ada")
-    with pytest.raises(engine.EngineError, match="holds no member of"):
+    with pytest.raises(engine.EngineError, match="declares no assignable member of"):
         _edited_copy(step, 0, source)
     assert source.roots[0] == {"id": 1, "name": "Ada"}
 
@@ -5003,6 +5003,75 @@ def test_an_edit_chain_carries_the_sources_relationship_arm_at_every_hop() -> No
     assert renamed.roots[0]["items"] is items
     assert restated.roots[0]["items"] is items
     assert source.roots[0]["items"] is items
+
+
+_ANIMAL_CASE = _case("m-inheritance-004")
+_ANIMAL_MODEL = engine.load_case_metamodel(_ANIMAL_CASE)
+_ANIMAL_IDENTITY = engine.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Animal").identity
+
+
+def _abstract_read_of_a_dog(**overrides: object) -> Any:
+    # What an ABSTRACT-target read publishes: one complete concrete instance —
+    # Dog's own `barkVolume` beside the root's members — plus the framework's
+    # `familyVariant` provenance key, all under the query's abstract target.
+    node: dict[str, object] = {
+        "id": 1,
+        "name": "Rex",
+        "ownerId": 10,
+        "licenseId": "L-100",
+        "barkVolume": 7,
+        "familyVariant": "Dog",
+    }
+    return _scenario_result(node | overrides, identity=_ANIMAL_IDENTITY)
+
+
+def _edited_animal(authored: Mapping[str, object], source: Any) -> Any:
+    step = {"action": "mutate", "on": 0, "set": dict(authored)}
+    return engine._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        _ANIMAL_CASE, _ANIMAL_MODEL, step, 0, source
+    )
+
+
+def test_edited_copy_judges_a_subtype_member_against_the_node_it_edits() -> None:
+    # The read's target is the ABSTRACT `Animal`, which declares no `barkVolume`
+    # at all; the node is a `Dog`, which declares it as an `int32`. Judging
+    # against the target would wave the string through, because a name the
+    # position does not declare is nobody's assignment to refuse.
+    with pytest.raises(engine.EngineError, match="does not match the declared type"):
+        _edited_animal({"barkVolume": "loud"}, _abstract_read_of_a_dog())
+
+
+def test_edited_copy_refuses_an_assignment_to_read_time_provenance() -> None:
+    # `familyVariant` is a key the read publishes, not a member the model
+    # declares, so a gate asking the materialized mapping would accept it and
+    # carry a node claiming to be a `Cat`. The gate asks the declaration.
+    with pytest.raises(engine.EngineError, match="Dog declares no assignable member of"):
+        _edited_animal({"familyVariant": "Cat"}, _abstract_read_of_a_dog())
+
+
+def test_edited_copy_refuses_a_sibling_branchs_member() -> None:
+    # `indoor` is declared on `Cat`, the sibling concrete branch: it is no more
+    # assignable on a `Dog` node than a name the family declares nowhere.
+    with pytest.raises(engine.EngineError, match="Dog declares no assignable member of"):
+        _edited_animal({"indoor": True}, _abstract_read_of_a_dog())
+
+
+def test_edited_copy_carries_the_concrete_identity_its_node_resolves_to() -> None:
+    # The accepted half: a member the node's own concrete Entity declares lands,
+    # and the copy states the Entity it IS rather than the abstract target that
+    # published it — so a chain of edits keeps judging against `Dog`.
+    copy = _edited_animal({"barkVolume": 9}, _abstract_read_of_a_dog())
+    assert copy.identity == engine.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Dog").identity
+    assert copy.roots[0]["barkVolume"] == 9
+    assert _edited_animal({"barkVolume": 3}, copy).identity == copy.identity
+
+
+def test_edited_copy_refuses_a_variant_naming_no_concrete_subtype() -> None:
+    # An unresolvable variant is refused rather than fallen back on: judging
+    # against the abstract target instead is exactly the hole the resolution
+    # closes, so it may not be the failure mode when resolution fails.
+    with pytest.raises(engine.EngineError, match="no concrete subtype of Animal"):
+        _edited_animal({"name": "Rexy"}, _abstract_read_of_a_dog(familyVariant="Unicorn"))
 
 
 def test_grade_mutate_step_rejects_an_on_index_naming_no_view() -> None:
@@ -5287,8 +5356,8 @@ def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -
 
 def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() -> None:
     # The end-to-end half of the assignment: the `set` resolves against the
-    # members the find step actually materialized, so a name no materialized view
-    # carries is refused at the verb rather than silently dropped.
+    # members the retained node's own Entity declares, so a name it declares none
+    # of is refused at the verb rather than silently dropped.
     when = {
         "scenario": [
             {
@@ -5302,7 +5371,7 @@ def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() 
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
-    with pytest.raises(engine.EngineError, match="holds no member of"):
+    with pytest.raises(engine.EngineError, match="Order declares no assignable member of"):
         engine.run_scenario_case(case, "postgres", port)
     assert len(port.writes) == 0
 
