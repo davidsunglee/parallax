@@ -65,12 +65,21 @@ from parallax.snapshot.handle import Database, TransactionTimePinReadOnlyError
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 
 
+def _scenario_steps(case_id: str) -> list[dict[str, Any]]:
+    """The case's own ``when.scenario`` steps, in authored order."""
+    return cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
+
+
+def _scenario_finds(case_id: str) -> list[dict[str, Any]]:
+    """The scenario's find steps, in authored order."""
+    finds = [step for step in _scenario_steps(case_id) if "objectQuery" in step]
+    assert finds, case_id
+    return finds
+
+
 def _final_find_expect_rows(case_id: str) -> list[dict[str, Any]]:
     """The last scenario find step's ``expectRows`` — the story's returned oracle."""
-    steps = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
-    finds = [step for step in steps if "objectQuery" in step]
-    assert finds, case_id
-    return cast("list[dict[str, Any]]", finds[-1]["expectRows"])
+    return cast("list[dict[str, Any]]", _scenario_finds(case_id)[-1]["expectRows"])
 
 
 def _reset_for(case_id: str, provisioner: Any) -> DomainModel:
@@ -338,8 +347,7 @@ def test_a_write_keeps_an_unloaded_relationship_absent(provisioner: Any) -> None
 
 def _access_expect_graph(case_id: str) -> dict[str, Any]:
     """The scenario's single ``expectGraph`` — the surviving view's own oracle."""
-    steps = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
-    graphs = [step["expectGraph"] for step in steps if "expectGraph" in step]
+    graphs = [step["expectGraph"] for step in _scenario_steps(case_id) if "expectGraph" in step]
     assert len(graphs) == 1, case_id
     return cast("dict[str, Any]", graphs[0])
 
@@ -356,25 +364,45 @@ def _assert_surviving_view(case_id: str, entity: str, instances: Sequence[Any]) 
     )
 
 
-def _assert_read_back(case_id: str, snapshot: Any) -> None:
-    """Grade a composition story's read-back against the case's own final find —
-    the same query, so the same rows: the oracle for the write having genuinely
-    landed on the very rows the surviving view still answers for."""
+def _assert_find_step_rows(case_id: str, index: int, snapshot: Any) -> None:
+    """Grade one of a composition story's own finds against the ``expectRows``
+    the scenario's find at ``index`` states.
+
+    Both of them: the materializing read whose root the surviving view hangs off,
+    and the read-back where the write IS observable. A story that rooted on
+    another row — or whose read-back reached rows the case does not state —
+    fails on the step it mirrors rather than on the relationship view alone.
+    """
     compare_rows(
         [instance_row(instance) for instance in snapshot.results()],
-        _final_find_expect_rows(case_id),
+        cast("list[dict[str, Any]]", _scenario_finds(case_id)[index]["expectRows"]),
     )
 
 
 def _assert_composition_round_trips(
     case_id: str, snapshot: Any, committed: Any, reread: Any
 ) -> None:
-    """A composition story's three units of work cost the case's own
-    ``then.roundTrips``: the materializing find, the write's committed attempt,
-    and the read-back. The zero-round-trip access sits inside the first count —
-    it holds only because touching the surviving view left it untouched."""
+    """A composition story's three units of work each cost the round trips the
+    scenario step they mirror authors, and together the case's own
+    ``then.roundTrips``.
+
+    Per step and in total, because the aggregate alone admits compensating
+    errors: a read-back that re-read the root with an include costs one round
+    trip too many, which a write that skipped its resolving read would pay for.
+    The access step's own count rides on the materializing find's counter, read
+    after the story touched the surviving view, so a re-fetching access breaks
+    that first equality.
+    """
+    materialize, read_back = _scenario_finds(case_id)
+    steps = _scenario_steps(case_id)
+    write = next(step for step in steps if "write" in step)
+    access = next(step for step in steps if step.get("action") == "access")
+    assert snapshot.execution.round_trips == materialize["roundTrips"] + access["roundTrips"], (
+        case_id
+    )
+    assert committed.execution.round_trips == write["roundTrips"], case_id
+    assert reread.execution.round_trips == read_back["roundTrips"], case_id
     total = cast("int", case_document(_CASES[case_id])["then"]["roundTrips"])
-    assert snapshot.execution.round_trips == 2, case_id
     assert (
         snapshot.execution.round_trips
         + committed.execution.round_trips
@@ -388,6 +416,7 @@ def test_a_delete_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot, loaded_items, committed, reread = story.run(db)
+    _assert_find_step_rows(story.case_id, 0, snapshot)
     _assert_surviving_view(story.case_id, "OrderItem", loaded_items)
     # The multiset comparison above cannot see order; the relationship declares
     # `id desc`, and the destroyed row is still in its declared position.
@@ -398,7 +427,7 @@ def test_a_delete_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     assert snapshot.result().items[1] is loaded_items[1]
     # The delete is load-bearing: item 11 is gone from the database, so the node
     # the view still answers denotes a row no read can reach.
-    _assert_read_back(story.case_id, reread)
+    _assert_find_step_rows(story.case_id, 1, reread)
     _assert_composition_round_trips(story.case_id, snapshot, committed, reread)
 
 
@@ -410,12 +439,13 @@ def test_a_rectangle_split_keeps_a_loaded_relationship_view(provisioner: Any) ->
     clock = story.clock() if story.clock is not None else None
     db = connect(provisioner.port, meta, clock=clock)
     snapshot, loaded_coverages, committed, reread = story.run(db)
+    _assert_find_step_rows(story.case_id, 0, snapshot)
     _assert_surviving_view(story.case_id, "Coverage", loaded_coverages)
     assert snapshot.result().coverages[0] is loaded_coverages[0]
     # The re-read takes the SAME pin and answers the middle rectangle the split
     # chained, so the two disagree by construction — which is what a bitemporal
     # store is for.
-    _assert_read_back(story.case_id, reread)
+    _assert_find_step_rows(story.case_id, 1, reread)
     _assert_composition_round_trips(story.case_id, snapshot, committed, reread)
 
 

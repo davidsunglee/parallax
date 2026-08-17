@@ -21,6 +21,12 @@ story that quietly acquired a write is caught here. The composition stories
 construction: what they demonstrate is a materialized view standing across a
 COMMITTED write, so they need a port that opens a transaction and takes the DML
 (:class:`_WritingCannedPort`).
+
+Running the bodies here is also what makes a scenario case's per-step finds
+reachable for the Object Query no-drift guard `m-api-conformance` requires: those
+queries are locals inside a story body rather than entries in
+``test_object_query_no_drift.BUILDERS``, so they are canonicalized where the body
+runs (:class:`_RecordingDatabase`).
 """
 
 from __future__ import annotations
@@ -33,14 +39,17 @@ from typing import Any, cast
 import pytest
 
 from _support.corpus import case_document, compare_binds
+from _support.query_probes import canonical_document
 from parallax.conformance import case_format, graph_stories
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order
+from parallax.core import DomainModel, ObjectQuery
 from parallax.core.base import INFINITY
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.entity import UnloadedRelationshipError
+from parallax.core.unit_work import Clock
 from parallax.snapshot import is_view_loaded
-from parallax.snapshot.handle import Database, TransactionTimePinReadOnlyError
+from parallax.snapshot.handle import Database, Snapshot, TransactionTimePinReadOnlyError
 
 _ORDER_ROW: Row = {
     "id": 1,
@@ -346,6 +355,94 @@ def test_the_rectangle_split_story_keeps_the_pinned_rectangle_in_its_view() -> N
     _assert_wire_binds(story.case_id, port)
     assert [(c.id, c.amount) for c in loaded_coverages] == [(20, Decimal("300.00"))]
     assert snapshot.result().coverages[0] is loaded_coverages[0]
+
+
+class _RecordingDatabase(Database):
+    """The shipped handle, recording the Object Query each ``find`` receives.
+
+    A scenario step's query is a local inside the story's own body, so reading it
+    where the public surface takes it is the only way to compare it with the step
+    it mirrors; a second, hand-written copy of the expression would be exactly
+    the drift the comparison exists to catch. ``Transaction.find`` is deliberately
+    untouched — a keyed write's own resolving read is the framework's, counted by
+    the write step rather than authored as one.
+    """
+
+    __slots__ = ("queries",)
+
+    def __init__(self, port: DbPort, model: DomainModel, *, clock: Clock | None = None) -> None:
+        super().__init__(port, model, clock=clock)
+        self.queries: list[ObjectQuery[Any, Any]] = []
+
+    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
+        self.queries.append(query)
+        return super().find(query)
+
+
+def _recording_db(story: graph_stories.GraphStory) -> _RecordingDatabase:
+    clock = story.clock() if story.clock is not None else None
+    return _RecordingDatabase(
+        _port_for(story.run, _responses_for(story.run)), MODELS[story.model], clock=clock
+    )
+
+
+def _scenario_object_queries(case_id: str) -> list[dict[str, Any]]:
+    """The Object Query documents the case's own scenario finds author, in order."""
+    steps = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
+    return [cast("dict[str, Any]", step["objectQuery"]) for step in steps if "objectQuery" in step]
+
+
+# The scenario-shaped stories whose own `db.find` calls ARE their case's
+# authored finds, one for one and in order.
+_SCENARIO_FIND_STORIES = (
+    "m-snapshot-read-009",
+    "m-snapshot-read-010",
+    "m-snapshot-read-015",
+    "m-snapshot-read-016",
+    "m-snapshot-read-018",
+    "m-snapshot-read-019",
+    "m-snapshot-read-020",
+    "m-snapshot-read-025",
+)
+
+# The one scenario-shaped story whose find sequence is not its case's, and why.
+_SCENARIO_FIND_EXCLUSIONS = {
+    "m-snapshot-read-017": (
+        "the story re-reads the written row to show where the write IS observable, and the "
+        "case authors no find step for that read, so the two sequences differ by construction"
+    )
+}
+
+
+@pytest.mark.parametrize("case_id", _SCENARIO_FIND_STORIES)
+def test_a_scenario_story_builds_its_cases_object_queries(case_id: str) -> None:
+    # The no-drift half `m-api-conformance` requires of a scenario's own finds:
+    # each query the story builds must CANONICALIZE to the step it mirrors, not
+    # merely answer the same rows at the same cost. A different predicate or a
+    # different include shape over the same fixture is exactly what a row
+    # comparison and a round-trip count cannot see — a read-back keyed on the
+    # surviving item's own id returns the case's `expectRows` in one round trip
+    # and still asks a different question from `orderId = 1`.
+    story = next(s for s in graph_stories.GRAPH_STORIES if s.case_id == case_id)
+    db = _recording_db(story)
+    story.run(db)
+    assert [canonical_document(query) for query in db.queries] == _scenario_object_queries(case_id)
+
+
+def test_every_scenario_story_is_query_graded_or_reasoned() -> None:
+    # A scenario case carries no top-level `when.objectQuery`, so it has no
+    # `test_object_query_no_drift.BUILDERS` entry to fall back on: a story whose
+    # ids reach neither side above would be silently unasserted, which is the
+    # gap the partition requirement (`m-api-conformance` requirement 3) exists
+    # to refuse everywhere else in this suite.
+    graded, excluded = set(_SCENARIO_FIND_STORIES), set(_SCENARIO_FIND_EXCLUSIONS)
+    assert graded.isdisjoint(excluded)
+    assert graded | excluded == {
+        story.case_id
+        for story in graph_stories.GRAPH_STORIES
+        if _CASES[story.case_id].shape == "scenario"
+    }
+    assert all(_SCENARIO_FIND_EXCLUSIONS.values())
 
 
 def test_the_mutation_story_edits_in_memory_and_rereads_the_original() -> None:

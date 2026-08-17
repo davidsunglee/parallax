@@ -14,10 +14,12 @@ but building it through the idiomatic surface never returns a ``ObjectQuery`` at
 own query-input path) proves no-drift by comparing
 the RAW built predicate's own serialization to the case's ``when.objectQuery`` and
 separately asserting the SAME build raises the classified ``then.rejectedRule``;
-a ``scenario`` case's per-step ``find`` bodies are graded by the executable graph
-stories (``test_story_run.py``) instead, when their own query is trivial
-(a bare primary-key equality already proven by the ``m-predicate`` examples
-above) or their behavior is not a query at all (a mutation/access step).
+a ``scenario`` case's per-step queries are built inside the executable graph
+stories' own bodies rather than by a ``BUILDERS`` entry, so they are compared
+with their authored steps where those bodies run — ``test_graph_story_no_drift``
+records the query each story's ``db.find`` receives and compares the sequence
+with the case's own find steps — and its mutation and access steps are not
+queries at all.
 
 Most read-only entries below are **derived** from
 ``parallax.conformance.read_stories.READ_STORIES`` — the SAME ``build()`` the
