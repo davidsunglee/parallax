@@ -1408,18 +1408,26 @@ not a declarable observation and a case states edits the model admits and nothin
 else. A language whose edit verb validates will reach the same verdict at run
 time, and MAY refuse there, but no case may depend on it — an executor that
 models `mutate` as its authored golden DML alone reaches no verdict at all, and
-two executors must agree on every case the corpus admits. Where the step's own
-read is **abstract-targeted**, the case does not say which concrete instance the
-node is, so the whole `set` must be one **every** concrete that read can answer
-admits — the concretes of its **result** position, `target` as narrowed by
-`narrowTo` (`m-object-query`). Only that keeps the run-time verdict above the same
-verdict: a set every candidate admits is admitted by whichever candidate the read
-handed the executor, while one that merely SOME candidate admits describes a node
-the read may never produce. A member only some concrete of the family declares is
-therefore assignable only under a read **narrowed** to that concrete — `narrowTo`
-is how a case says which concrete its edit means — and a set drawing one key from
-one branch and another from a sibling names no node at all, exactly as a
-concrete-subtype write payload may carry no sibling field (`m-inheritance`).
+two executors must agree on every case the corpus admits. The node an edit is
+about is the one its `on` chain reaches: a `mutate` / `detachCopy` / `mergeBack`
+result stands where the step it names stands, while a `load` / `access` stands at
+the **terminal** position of the `path` it navigated — so a `set` on an edit
+reached through an access on `items` states a member of an ITEM, and none of the
+object that access started from. Where that position is **polymorphic** — an
+abstract-targeted read, or a relationship whose target is abstract — the case does
+not say which concrete instance the node is, so the whole `set` must be one
+**every** concrete that position can answer admits; a read's position is its
+**result** position, `target` as narrowed by `narrowTo` (`m-object-query`). Only
+that keeps the run-time verdict above the same verdict: a set every candidate
+admits is admitted by whichever candidate the executor was handed, while one that
+merely SOME candidate admits describes a node the step may never reach. A member
+some concrete of the family does not declare is therefore assignable only under a
+read **narrowed** to a position every concrete of which DOES declare it — one
+concrete for a concrete's own member (`Cat`'s `indoor`), an abstract subtype for a
+member all of its concretes share (`Pet`'s `licenseId`, which both `Cat` and `Dog`
+inherit) — and a set drawing one key from one branch and another from a sibling
+names no node at all, exactly as a concrete-subtype write payload may carry no
+sibling field (`m-inheritance`).
 
 `path` (the navigated relationship, e.g.
 `items` or `items.statuses`) is legal only on `load` / `access`. Because golden SQL
