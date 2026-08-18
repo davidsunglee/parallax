@@ -51,7 +51,9 @@ For every supported adapter, the smoke suite covers:
 - a Structured Column read whose SQL presence/value pair becomes one managed
   `DocumentRead`, with the presence cell absent from the returned row and SQL
   `NULL` distinct from JSON null
-- a transaction callback that commits on success and returns the callback value
+- a transaction callback that commits on success and reports `Committed(value)`
+- distinct `BeginFailed`, callback- and commit-triggered `RolledBack`, and
+  callback- and commit-triggered `RollbackFailed` boundary outcomes
 - a bytes write round trip through the dialect bind seam
 - affected-row semantics for matched and unmatched DML
 - feasible transient classification through the portable database error surface

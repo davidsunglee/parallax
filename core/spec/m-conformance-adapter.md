@@ -327,7 +327,7 @@ observations to `then.rows`, `then.graph`, `then.graphs`, `then.tableState`,
 
 The `roundTrips` a `run` reports is what its execution actually cost: every
 database call the run made, a failed one included, with begin, commit, and
-rollback counting none (`m-execution-log`). It is therefore not a tally of the
+rollback counting none (`m-execution-lifecycle`). It is therefore not a tally of the
 statements the adapter emitted — the two differ whenever a statement is planned
 but never executed, and whenever a retry re-executes one — so an adapter reports
 the count its own execution recorded rather than the length of its `emissions`
@@ -401,8 +401,9 @@ assert different things:
   (`m-case-format`), which the single-connection `run` command cannot drive —
   the harness's provider choreography proves it instead, and an adapter asked
   to `run` one returns `error` with a diagnostic naming that lane.
-- any case authoring `then.execution` additionally reports `execution` — the
-  observed Read Trace or Execution Log (see *Execution provenance*, below)
+- any case authoring `then.executionLifecycle` additionally reports
+  `executionLifecycle` — the normalized transient Root Executions and events
+  (see *Execution lifecycle*, below)
 - a rejected case executes **no SQL** and requires **no provisioning or
   dialect**: an adapter whose claim includes the `rejected` caseShape **MUST**
   report `rejectedRule` — the classified normative rule identifier
@@ -412,40 +413,26 @@ assert different things:
   optional and additive, exactly like `errorClass` before it, so an existing
   run output that never claims `rejected` stays valid unchanged.
 
-### Execution provenance (`execution`)
+### Execution lifecycle (`executionLifecycle`)
 
-A case may author the `m-execution-log` oracle `then.execution` (`m-case-format`).
-The adapter answers it with a matching optional `execution` observation in the
-**same closed-union shape**: exactly one `readTrace` for a case whose whole
-observable is a standalone read, or one `transactionLog` for a transactional
-case. Mirroring the oracle's shape rather than inventing a second one is what
-lets a runner compare the two structurally.
+A case may author the `m-execution-lifecycle` oracle
+`then.executionLifecycle` (`m-case-format`). The adapter answers it with the
+same optional normalized `executionLifecycle` shape: ordered Root Executions
+whose UUIDs are replaced by positive first-observation indexes, each carrying
+its kind and ordered correlated events. Mirroring the oracle lets a runner
+compare the two structurally without making portable assertions about UUIDs,
+durations, runtime type names, or diagnostic text.
 
-The observation reports the provenance the *implementation's own* execution
-produced — never a re-derivation from the case. A call names the statement it ran
-by **index into this envelope's own `emissions` array**, exactly as the oracle
-names it by index into the case's flattened authored golden statements, so
-neither side repeats SQL or binds and `emissions` stays the single record of what
-was emitted. `roundTrips` remains the count oracle: the log's own `roundTrips`
-counts the same calls, so the two agree or the case fails.
+The observation reports events the implementation's own installed recording
+Handler received, never a re-derivation from the case. A Database Call names its
+statement by index into this envelope's own `emissions` array, just as the oracle
+uses the case's flattened authored statements. Every present index must be in
+range; JSON Schema cannot express that cross-array bound, so the adapter and
+reference harness enforce it semantically.
 
-Both indexes **MUST** name something the envelope already carries: a call's
-`statement` is in range of `emissions` and is present whenever the envelope
-reports any emission at all, and an attempt failure's `databaseCall` is in range
-of that attempt's own flattened calls. An index naming nothing makes the
-observation agree with an oracle structurally while describing no statement, so
-it is a malformed envelope rather than a case failure. JSON Schema cannot state a
-bound between two arrays, so both are semantic checks. The reference harness
-holds one implementation of them, stated over whichever index space it is given:
-the case's flattened goldens for the oracle, the envelope's own `emissions` for
-the observation. The obligation is the adapter's whether or not a reader has
-applied that check to a given envelope.
-
-The key is optional and additive — an adapter reporting no provenance omits it
-and every existing `run` output stays valid — but an adapter whose claim includes
-`m-execution-log` **MUST** report it for every case authoring the oracle. An
-adapter **MUST NOT** synthesize the observation from the authored golden: a
-provenance report re-derived from the case asserts nothing about what ran.
+The key is optional and additive, but an adapter claiming
+`m-execution-lifecycle` MUST report it for every case authoring the oracle. It
+MUST NOT synthesize the observation from authored goldens.
 
 ### Lifecycle observations (`stateChecks`, `errors`)
 

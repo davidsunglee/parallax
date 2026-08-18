@@ -30,6 +30,22 @@ driver's `Date`, a binary-float `numeric`, a raw byte buffer, or a raw
 structured-document value. `executeWrite`
 returns the concrete driver's native affected-row count and no rows.
 
+`transaction(body)` returns one closed, ephemeral boundary outcome rather than
+raising away which boundary failed:
+
+```text
+Committed(value)
+BeginFailed(error)
+RolledBack(CallbackRaised(error) | CommitFailed(error))
+RollbackFailed(CallbackRaised(error) | CommitFailed(error), rollbackError)
+```
+
+The composition root consumes this value immediately. It returns a committed
+callback value, propagates a triggering error after successful rollback, and
+preserves both triggering and rollback errors when rollback fails. The outcome
+is not public provenance and transaction begin, commit, and rollback remain
+outside Database Call accounting.
+
 For each `documentReads` pair, the adapter reads both cells before building the
 managed row. The presence ordinal MUST immediately precede the document ordinal
 and MUST hold the SQL boolean projected by `m-sql`; malformed or overlapping
@@ -44,37 +60,36 @@ the tag from the raw document cell after the adapter boundary.
 
 ## One error instance per failed invocation
 
-An error the port *itself raises* to report a failure — a statement failure
-surfaced by `execute` or `executeWrite`, or a transaction-boundary failure
-surfaced by `transaction`, which is the boundary's begin, its commit, or its
-rollback — is an instance **shared with no other invocation**. An
-implementation MUST build that error where the failure occurs and MUST NOT raise
-a cached, pooled, or otherwise reused error object, however identical two
-failures' category, native code, and message are (`m-db-error` constrains what a
-raised error *carries*; this constrains its *identity*).
+An error the port itself produces — raised by `execute` or `executeWrite`, or
+carried by a `transaction` outcome for begin, commit, or rollback failure — is
+an instance **shared with no other invocation**. An implementation MUST build
+that error where the failure occurs and MUST NOT report a cached, pooled, or
+otherwise reused error object, however identical two failures' category, native
+code, and message are (`m-db-error` constrains what an error carries; this
+constrains its identity).
 
-The rule exists because the port hands back no call handle a failure could be
-tied to: the raised error is the whole of what a caller learns about which
+The rule exists because the port hands back no call handle a statement failure
+could be tied to: the error is the whole of what a caller learns about which
 invocation failed. A caller MAY catch one failed call and keep working — so
 several failures can occur in one transaction and only one of them unwinds — and
-a consumer that must name the failing call, as `m-execution-log` does for an
+a consumer that must name the failing call, as `m-execution-lifecycle` does for an
 attempt failure, therefore has only the raised object to distinguish them. One
 instance raised twice makes those occurrences indistinguishable, and the failure
 is recorded against a sibling invocation's call. A boundary failure names no
-call — and a begin or rollback failure is outside `m-execution-log` entirely —
+call — while begin and rollback failures are boundary outcomes rather than calls —
 but a reused instance would let one resurface carrying the identity of the
 failed call it stood for earlier, so the rule covers every error the port makes.
 
 The rule reaches exactly the errors the port makes. An exception raised by the
-caller's own `transaction` body is not one of them: it propagates through the
-seam unchanged, and the port could only govern its identity by replacing the
-caller's own failure with an error of its own. Nothing needs that — such an
-exception is a callback failure, which `m-execution-log` attributes to no
+caller's own `transaction` body is not one of them: `CallbackRaised` carries the
+same object, and the port could only govern its identity by replacing the
+caller's failure with an error of its own. Nothing needs that — such an
+exception is a callback failure, which `m-execution-lifecycle` attributes to no
 Database Call — and two bodies that raise one shared object are two occurrences
 the caller chose not to distinguish.
 
-The rule binds the raise site alone, and an adapter that classifies each failure
-into a fresh error at the point of failure satisfies it structurally. Enforcing
+The rule binds the failure site alone, and an adapter that classifies each
+port-owned failure into a fresh error there satisfies it structurally. Enforcing
 it is an obligation of the adapter's proof, not of the port's consumers: no
 consumer is required to check, and one that does learns of a reuse only by
 retaining the failures it caught earlier and comparing each new one against them

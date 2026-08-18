@@ -347,8 +347,8 @@ keeps the assertion honest across engines.
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind) |
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
-| `then.execution` | `then` | no | the execution-provenance oracle (`m-execution-log`) — exactly one `readTrace` or `transactionLog` describing the attempts, traces, calls, and completions the run produced (see *The execution oracle*, below); disallowed on a `rejected` case, which reaches no database |
-| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-log` counts them, so a case authoring both this and `then.execution` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two are the only shapes admitting `0`: every other shape asserts one operation that reaches the database |
+| `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
+| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two are the only shapes admitting `0`: every other shape asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 #### How a case spells an Entity
@@ -1632,41 +1632,31 @@ The action list also spells the **joined** boundary (`m-unit-work`): a `join`
 action opens a unit of work that shares the current one rather than a nested
 boundary of its own, and every action after it runs inside that joined scope.
 The list stays flat because the arrangement is one linear body; what a case
-asserts about the sharing rides `then.outcome` and `then.execution`, never the
+asserts about the sharing rides `then.outcome` and `then.executionLifecycle`, never the
 list's shape.
 
-### The execution oracle (`m-execution-log`)
+### The execution lifecycle oracle (`m-execution-lifecycle`)
 
-`then.execution` states what the run's **execution provenance** looks like. It is
-optional on every shape that reaches the database and disallowed on a `rejected`
-case, which reaches none. It is a closed union of exactly one wrapper:
+`then.executionLifecycle` states the transient lifecycle events a run produces.
+It is optional on every shape that reaches the database and disallowed on a
+`rejected` case. It contains ordered `roots`; each root replaces its runtime
+UUID with a positive first-observation `execution` index, names its `kind`, and
+contains ordered events. Every event names its one-based `sequence`,
+`activity`, nullable `parent`, and exactly one concrete transition wrapper.
 
-- **`readTrace`** — for a case whose whole observable is one read: `calls` plus
-  `roundTrips`.
-- **`transactionLog`** — for a transactional case: the resolved `concurrency`
-  and `retryPolicy`, the ordered `attempts` (each with its `status`, its ordered
-  `traces`, its own `roundTrips`, and — when it rolled back — its detached
-  `failure`), and the log's own `roundTrips`. A trace entry is itself exactly one
-  `readTrace` or `writeBatch`, and a `writeBatch` names its closed `trigger`.
+The portable projection retains activity topology, stable outcomes and codes,
+database categories, physical row counts, retry classification, and statement
+indexes. It omits UUIDs, durations, implementation type names, messages, stack
+traces, and native database codes. A Database Call names its statement by
+zero-based index into the case's flattened authored golden statement order. On
+the `api-conformance` lane, where a case authors no golden SQL, that index is
+absent. `then.statements` remains the sole SQL and bind oracle, and
+`then.roundTrips` the sole count oracle.
 
-A **call** names its statement by **index** into the case's flattened authored
-golden-statement order and never repeats SQL or binds: `then.statements` and the
-per-step / per-attempt `statements` stay the sole SQL and bind oracles, and
-`then.roundTrips` stays the sole count oracle. On the `api-conformance` lane,
-where a case authors no golden SQL, the index is simply omitted and the call's
-`kind` and `completion` are the whole portable oracle. An attempt failure's
-`databaseCall` is likewise an index — into that **attempt's own** flattened
-calls.
-
-Duration and the implementation-level error type name are deliberately **absent**
-from the oracle: neither is portable, and both are checked against their general
-API contracts instead. The shape is a **case assertion format, not a public
-serialization contract**; an implementation is free to expose provenance in
-whatever surface its language makes idiomatic.
-
-The compatibility harness **validates `then.execution` and does not grade it**;
-each language implementation grades it through the conformance adapter's
-matching `execution` observation (`m-conformance-adapter`).
+The shape is a case assertion format, not a public serialization contract. The
+compatibility harness validates `then.executionLifecycle` without producing
+events of its own; each language grades it through the conformance adapter's
+identically shaped `executionLifecycle` observation (`m-conformance-adapter`).
 
 ### Rejected cases (`m-value-object` / `m-predicate` / `m-inheritance` / `m-storage-layout` / `m-unit-work`)
 

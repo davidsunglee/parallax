@@ -29,7 +29,7 @@ never something an application developer hand-writes.
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "python", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-log", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-lifecycle", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -48,11 +48,11 @@ never something an application developer hand-writes.
   `unsupported-module`; a case not carrying `slice-snapshot-1` →
   `unsupported-case-tag`. Each response carries a diagnostic naming the first
   failed filter.
-- **Single-witness execution provenance.** `m-execution-log`'s `then.execution`
-  oracle is graded against a running implementation by this target alone: the
-  compatibility harness validates the authored oracle itself but records no
-  execution provenance of its own to compare with it, so a disagreement between
-  Python and the specification has no second reader. The `then.roundTrips` a
+- **Single-witness execution lifecycle.** `m-execution-lifecycle`'s
+  `then.executionLifecycle` oracle is graded against a running implementation
+  by this target alone: the compatibility harness validates the authored oracle
+  but opens no lifecycle Handler of its own, so a disagreement between Python
+  and the specification has no second reader. The `then.roundTrips` a
   `boundary` case or a retry-shaped `conflict` case authors is single-witness for
   the same reason and by a second mechanism: the harness executes no
   `api-conformance`-lane case at all, and its retry branch asserts per-attempt
@@ -1913,10 +1913,8 @@ or descriptor authoring form and performs no audit stamping.
   that closes a cycle makes the derived hash non-terminating, so such nodes
   are shareable but not hashable. `Snapshot[T]`'s
   complete surface: `result()`, `result_or_none()`, `results()` (a fresh
-  `list[T]` per call), `pin` (the lowered as-of coordinates), `execution`
-  (the read's own Read Trace — each Database Call's Lowered Statement,
-  informational `duration_ns`, and completion, plus `round_trips`;
-  `m-execution-log`), and `__repr__`. Deliberately
+  `list[T]` per call), `pin` (the lowered as-of coordinates), and `__repr__`.
+  The result retains no execution-lifecycle record. Deliberately
   absent: iteration/len/truthiness/indexing on the container, refresh or
   write methods, and any lazy behavior. Accessors are pure in-memory reads.
 - **Graph-local identity.** Within one materialized graph, one node per
@@ -2375,7 +2373,7 @@ or descriptor authoring form and performs no audit stamping.
   its subtree; declared descriptor `orderBy` governs child ordering; narrowed
   relationship views load exactly the requested narrowed set keyed by
   relationship name and effective concrete-subtype set; the `1 + L` round-trip
-  ceiling holds and is observable via `snapshot.execution.round_trips`.
+  ceiling is pinned by the authored statements and `then.roundTrips` oracle.
 - **Explicit writes.** All writes go through the Parallax Transaction
   (§5) — the handle has no write methods. Graph edits are impossible (nodes
   are frozen); the only mutation idiom is deriving an **Edited Copy** through
@@ -2809,7 +2807,7 @@ or descriptor authoring form and performs no audit stamping.
   `result_or_none()` therefore report exactly their sole element's record, and
   `results()` aggregates every invalid root in result order.
   `Snapshot.checked() -> CheckedSnapshot[T]` is a read-only view over the same
-  result storage: it performs no I/O, forwards `pin` and `execution`, keeps the
+  result storage: it performs no I/O, forwards `pin`, keeps the
   same arity errors, and returns `T | InvalidData[T]` in band from `result()`,
   `result_or_none()`, and `results()`. `checked().results()` is the complete
   eager checked surface; a caller partitions that finite union with ordinary
@@ -2824,7 +2822,7 @@ or descriptor authoring form and performs no audit stamping.
   enum, and no `db.typed` or `tx.typed` namespace. `db.wire` and `tx.wire` are
   lightweight views over the same connected model and adapter; `tx.wire`
   additionally shares the Unit of Work, observation ledger, locking, and
-  Execution Log with the Typed transaction interface, so the two are not
+  Execution Lifecycle with the Typed transaction interface, so the two are not
   separate connections or transaction modes.
 - **Capability follows the model, not the constructor.** `connect(adapter,
   model)` accepts a Domain Model of either provenance. A class-backed model
@@ -2895,8 +2893,8 @@ or descriptor authoring form and performs no audit stamping.
   the active transaction's settings when this call joins one*. The closure
   receives the Parallax Transaction (`def fn(tx): ...`),
   `tx.find(query)` reads inside the transaction (participating according to each
-  Entity's Effective Concurrency Strategy), and the call returns a `TransactionResult[T]` carrying that callback's
-  `.value` **only after a durable commit** — on rollback, or on commit failure,
+  Entity's Effective Concurrency Strategy), and the call returns the callback's
+  `T` directly **only after a durable commit** — on rollback, or on commit failure,
   the call raises instead of returning the value as though durable. A `with`-block demarcation is
   deliberately not offered: the core retry contract requires re-executing the
   closure, which a `with` block cannot do; a decorator form is a possible
@@ -2905,18 +2903,140 @@ or descriptor authoring form and performs no audit stamping.
   loop, exhaustion surfaces diagnosably with the attempt count;
   optimistic-lock conflicts join the retriable set only via
   `retry_optimistic_conflicts=True`.
-- **Execution provenance.** The `TransactionResult[T]` a `db.transact` call
-  returns carries the invocation's whole `ExecutionLog` (`m-execution-log`)
-  beside the callback value, and `.execution` is the common view of it — the
-  committed attempt. The same live log object is reachable from the closure's own
-  `tx.execution_log` while the body runs, which is how a caller inspects the
-  attempts of an invocation that raised and returned no result. A JOINING call's
-  result carries the OUTER transaction's same log rather than a fictitious nested
-  one, so its `.execution` raises `TransactionInProgressError` while that
-  boundary is active and `TransactionNotCommittedError` if it later rolls back.
-  A participating `tx.find` shares its `ReadTrace` object with the attempt that
-  issued it, so `snapshot.execution` and `tx.execution_log` never disagree about
-  what a level cost.
+- **Transient execution lifecycle.** `Database`, `Transaction`, `Snapshot`, and
+  stream values expose no lifecycle accessors. An installed Provider receives
+  one transaction-invocation Root Execution spanning every physical retry and
+  joined invocation; a joined call emits a child Transaction Invocation under
+  the current attempt and creates no additional root or attempt.
+
+### Execution lifecycle observability
+
+The canonical public module is `parallax.core.execution_lifecycle`; the Snapshot
+package does not re-export it. `connect` adds one keyword-only composition seam:
+
+```python
+connect(
+    adapter: DatabasePort,
+    model: DomainModel,
+    *,
+    lifecycle_provider: ExecutionLifecycleProvider | None = None,
+) -> Database
+
+class ExecutionLifecycleProvider(Protocol):
+    def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None: ...
+    def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None: ...
+
+class ExecutionLifecycleHandler(Protocol):
+    def handle(self, event: ExecutionEvent, /) -> None: ...
+```
+
+`RootExecution` is a frozen, slotted value carrying only `id: UUID` and
+`kind: RootExecutionKind`; kinds are `READ`, `TRANSACTION_INVOCATION`, and
+`SNAPSHOT_STREAM`. Deterministic public preflight runs first. With no installed
+Provider the Handle branches before allocating UUIDs, descriptors, events,
+publishers, counters, diagnostics, no-op handlers, or lifecycle clock reads. An
+installed Provider receives one UUIDv4 descriptor for each accepted root;
+returning `None` declines it and performs no later lifecycle work. `open` may be
+called concurrently and every accepted root receives a distinct Handler whose
+`handle` calls are serial.
+
+An ordinary exception from `open` raises
+`ExecutionLifecycleProviderError` before execution work and preserves the
+exception as `__cause__`. The Provider's `report_handler_error` method is the
+Error Reporter for the same connection, keeping `connect` to one lifecycle
+argument. An ordinary Handler exception quarantines only that Handler for the
+rest of the root and calls the owning Provider with a detached
+`ExecutionLifecycleHandlerError`; execution behavior is unchanged. That error
+carries root ID, event sequence, activity ID, qualified handler type, nested
+fan-out path, and Failure Diagnostic, but no event, statement, or binds. An
+ordinary reporting failure writes one sanitized correlation-only line to
+`sys.__stderr__` and is silently dropped if that path is unavailable. A
+`BaseException` from handling or reporting deactivates all lifecycle delivery
+for the root, aborts and cleans up without further events, and propagates
+unchanged; it produces no Handler Error.
+
+Calls through the originating `Database` or `Transaction` from `open`,
+`handle`, or `report_handler_error` raise `ExecutionLifecycleReentryError`
+before execution state or database work. During opening it becomes the
+Provider Error's cause; from a Handler it is an ordinary delivery failure if it
+escapes. Unrelated Handles remain usable.
+
+`ExecutionEvent` is a closed union of frozen, slotted concrete classes:
+`ReadStarted`/`ReadFinished`, `WriteBatchStarted`/`WriteBatchFinished`,
+`DatabaseCallStarted`/`DatabaseCallFinished`,
+`TransactionInvocationStarted`/`TransactionInvocationFinished`,
+`TransactionAttemptStarted`/`TransactionAttemptFinished`,
+`SnapshotStreamStarted`/`SnapshotStreamFinished`, and
+`StreamBatchStarted`/`StreamBatchFinished`. `ActivityStarted` and
+`ActivityFinished` are union aliases or parent interfaces, not constructible
+kind-plus-payload records. Every event carries `execution_id`, one-based
+contiguous `sequence`, one-based contiguous `activity_id`, and
+`parent_activity_id: int | None`; only the root activity has no parent. One
+event object is delivered to every fan-out child.
+
+The concrete payloads and closed outcomes follow `m-execution-lifecycle`.
+Database Call Started and Finished borrow the exact deeply immutable
+`LoweredStatement`; a Handler must not retain it. Finished carries integer
+`duration_ns` measured by `time.perf_counter_ns` around the port call only.
+`FailureDiagnostic` is detached, deeply immutable, total to construct, bounded
+to 8 KiB of message and 64 KiB of chained stack without locals, and carries
+qualified type, optional safely readable string code, and truncation flags.
+Database failures add the existing Category and native code without
+reclassification. `DirectFailure` and `CausedFailure` make causal attribution
+explicit and enclosing failure events share the same diagnostic object.
+
+The database port's transaction callback returns one internal closed value:
+`Committed[T]`, `BeginFailed`, `RolledBack[CallbackRaised | CommitFailed]`, or
+`RollbackFailed[CallbackRaised | CommitFailed]`. Composition consumes it
+immediately. A rollback failure after an ordinary trigger raises public
+`TransactionRollbackError`, exposing `triggering_error` and `rollback_error`
+and chaining the rollback failure; successful rollback propagates the original
+error. A fatal trigger remains primary and attaches rollback failure through
+native chaining. Rollback failure never retries and discards the connection.
+
+`FanoutLifecycleProvider` takes an ordered nonempty sequence of Providers,
+rejects the same object twice, opens children in order, and declines when all
+children decline. A child open failure aborts the root and discards already
+opened child handlers. Delivery is ordered; an ordinary child failure
+quarantines only that child and later siblings still receive the current and
+subsequent events. Distinct Providers may share a concurrency-safe backend.
+
+`LoggingLifecycleProvider` accepts an application-configured `logging.Logger`
+and a `LifecycleLogDetail` of `SAFE` (default) or `DIAGNOSTIC`. It owns no queue,
+listener, sink, overflow policy, flush, or shutdown. Both modes emit detached
+structured records without SQL or binds; Safe includes correlation, activity
+and outcome types, entity/interface, counters, duration, error type/code,
+database category/native code, and truncation flags, while Diagnostic adds the
+bounded message and stack. Started and ordinary non-root Finished events use
+DEBUG, successful root summaries INFO, retry-eligible rollbacks WARNING, and
+failed roots or rollback failures ERROR. Applications use standard-library
+queue handlers or custom Providers for structlog, Loguru, OpenTelemetry, and
+other backends.
+
+`parallax.core.execution_lifecycle.testing.RecordingLifecycleProvider` is the
+testing-only complete recorder. It detaches events, groups concurrent roots,
+and grows `O(events)` deliberately; it is absent from production re-exports and
+must not be used as the production observability path.
+
+The production performance proof uses one `FanoutLifecycleProvider` containing
+Safe INFO logging to an application-owned bounded queue, bounded metrics, and
+sampled tracing to a bounded exporter. With `N` concurrent roots, `P` active
+Providers, and maximum activity depth `D`, Parallax-owned live lifecycle memory
+is `O(N * (P + D))`, independent of completed events, retries, stream length,
+result cardinality, and materialized graph size; completed roots leave no core
+references, sequential roots show no retained-memory slope, and concurrent
+growth is linear. Delivery is `O(events * active providers)` and copies neither
+statements nor binds.
+
+On the pinned performance runner, the initial Python ratchet is p95 no greater
+than 5 microseconds of Parallax-owned dispatch per event for three lightweight
+Handlers, plus p50 no greater than 5 percent and p95 no greater than 10 percent
+end-to-end overhead against the same workload without a Provider. The first
+implementation records the reproducible baseline and may tighten these
+provisional ceilings; exporter latency and application queueing are excluded.
+These feature tests do not claim the deferred `benchmark` command or general
+`m-perf-bench` module.
+
 - **The first-party seam beside the developer surface.** One capability lives on
   the handles without being developer surface, and it has no `Neutral*`
   vocabulary: the public read interfaces are `db.find` / `tx.find` and
@@ -2930,8 +3050,8 @@ or descriptor authoring form and performs no audit stamping.
   the representation; the shared read gate refuses a query naming Include Paths
   before any I/O. A participating `tx.read_rows` force-flushes, renders the
   read-lock suffix its target Entity's Effective Concurrency Strategy calls for,
-  and brackets its Read Trace exactly as
-  `tx.find` does, and records no observation — the values lane projects scalars
+  and brackets its Read activity exactly as
+  `tx.find` does, and records no write observation — the values lane projects scalars
   only, so a Predecessor Row read off it would be incomplete under Relational
   Document Layout. It is not a third public result format: it exists for a
   first-party caller grading flat results, and its element type is the same union
@@ -3695,8 +3815,8 @@ or descriptor authoring form and performs no audit stamping.
   Change Record already names its effective change; a Wire verb takes the frozen
   mapping a Wire read published plus an explicit changes document. Everything
   after that is the one pipeline: the same evidence resolver, the same claim
-  algebra, the same instruction IR, the same buffer, the same planner, the same
-  Execution Log. A Typed write and a Wire write of one object therefore merge,
+  algebra, the same instruction IR, the same buffer, the same planner, and the
+  same transient lifecycle publisher. A Typed write and a Wire write of one object therefore merge,
   deduplicate, supersede, and conflict by the rules above rather than by any
   interface-specific one, and the buffered-insert ledger read-your-own-writes
   consults is one ledger, so an insert through either verb exempts a later write
@@ -3915,8 +4035,8 @@ remains observable rather than making Python its own oracle.
   body-authored deadlock-class failure from reading as retriable to
   `m-auto-retry` and having the body replayed. The translation constructs that error at the
   failing call and caches nothing, satisfying the `m-db-port` rule that no two
-  invocations share an error instance — which is what lets the Execution Log
-  attribute an attempt failure to the call whose error escaped. The provider test
+  invocations share an error instance — which lets Execution Lifecycle causal
+  attribution identify the call whose error escaped. The provider test
   contract's failure-instance obligation is discharged Docker-free in
   `tests/unit/test_postgres_adapter.py`, which drives every raise site twice each
   over one connection stub that raises a single reused psycopg exception for all
@@ -4043,16 +4163,13 @@ never pulls the typed surface in, and one that wants the typed surface names thi
 module. That is what keeps the widening contained rather than leaking through the
 package.
 
-A behavioral module maps to the scope that needs its WHOLE edge set, which for
-`m-snapshot-read` is not the materialization package: only the read result names
-the Read Trace `m-snapshot-read --> m-execution-log` declares, while the
-row-to-graph modules need a strictly narrower grant. The tag therefore maps to
-`parallax.snapshot._read_result`, and `parallax.snapshot.materialize` carries a
-support row holding every other `m-snapshot-read` edge. The mapping has to be
-this fine grained because a forbidden row is the complement of a closure:
-`m-execution-log` reaches `m-sql`, so a scope granted it could not also be the
-grant `parallax.snapshot.handle._materializer` holds in order to be forbidden
-SQL generation.
+A behavioral module maps to the scope that needs its whole edge set.
+`m-execution-lifecycle` is owned by `parallax.core.execution_lifecycle`, while
+the Snapshot handle is the composition scope that publishes snapshot reads and
+streams through the injected internal publisher. Snapshot results and
+materialization scopes neither import the lifecycle module nor retain events.
+This keeps observation at the Handle boundary without granting SQL generation
+to row-to-graph materialization.
 
 import-linter forbids every production scope-pair import the DAG does not
 permit — the generated forbidden-edge complement below, with the
@@ -4084,7 +4201,7 @@ legalizes a forbidden edge.
 | `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-predicate`, `m-db-port`, `m-temporal-read` | generated forbidden contracts |
 | `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
-| `m-execution-log` | `parallax.core.execution_log` | `parallax.core.execution_log` | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | generated forbidden contracts |
+| `m-execution-lifecycle` | `parallax.core.execution_lifecycle` | `parallax.core.execution_lifecycle` | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | generated forbidden contracts |
 | `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-predicate`, `m-object-query`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-txtime-write` | `parallax.core.txtime_write` | `parallax.core.txtime_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
@@ -4092,8 +4209,8 @@ legalizes a forbidden edge.
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance` | generated forbidden contracts |
-| `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-log`, `m-wire` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-log`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
+| `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire` | generated forbidden contracts + cross-package contract |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot row-to-graph conversion and Graph Input carriers (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
@@ -4185,7 +4302,7 @@ parallax.snapshot.handle --> parallax.core.sql_gen
 parallax.snapshot.handle --> parallax.core.unit_work
 parallax.snapshot.handle --> parallax.core.read_lock
 parallax.snapshot.handle --> parallax.core.auto_retry
-parallax.snapshot.handle --> parallax.core.execution_log
+parallax.snapshot.handle --> parallax.core.execution_lifecycle
 parallax.snapshot.handle --> parallax.core.opt_lock
 parallax.snapshot.handle --> parallax.core.batch_write
 parallax.snapshot.handle --> parallax.core.txtime_write
@@ -4461,9 +4578,9 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `WireValue`, `InvalidData[T]`, `StoredDataIssue`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `ReadTrace`, `DatabaseCall`, `ExecutionLog`, `TransactionAttempt`, `TransactionResult`, `TransactionInProgressError`, `TransactionNotCommittedError`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `WireValue`, `InvalidData[T]`, `StoredDataIssue`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

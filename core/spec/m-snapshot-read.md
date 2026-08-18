@@ -261,13 +261,11 @@ observability rides the lazy query-backed list, `m-op-list`; a snapshot
 read is **not** a query-backed list — the count is pinned here instead,
 on the same golden statements.)
 
-A snapshot result carries the **Read Trace** (`m-execution-log`) of the calls it
-issued, and the ceiling is observed through that record rather than through a
-bare number the read invents: each Database Call names the Lowered Statement it
-ran and how it completed, and the trace's round-trip count is what `1 + L`
-bounds. A read that PARTICIPATES in a transaction shares that one trace object
-with the Transaction Attempt that issued it, so the graph and the transaction's
-own provenance never disagree about what a level cost.
+When an Execution Lifecycle Provider accepts the Root Execution, the read
+publishes one transient Read activity containing its Database Call children
+(`m-execution-lifecycle`). The snapshot result retains no trace or lifecycle
+record. The portable `then.roundTrips` oracle and authored statements continue
+to pin the `1 + L` ceiling independently of whether observation is installed.
 
 ## What the suite pins down
 

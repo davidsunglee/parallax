@@ -121,7 +121,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-unit-work` | Transactions & unit of work | active | cases |
 | `m-read-lock` | In-transaction shared read lock | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |
-| `m-execution-log` | Transaction execution provenance | active | cases |
+| `m-execution-lifecycle` | Transient execution observability | active | cases |
 | `m-identity-map` | Transaction-scoped identity map (managed-object interning) | active | cases |
 | `m-process-cache` | Process-wide identity & query cache | deferred | cases |
 | `m-temporal-read` | As-of temporal reads (all flavors) | active | cases |
@@ -200,11 +200,11 @@ m-read-lock --> m-unit-work
 m-read-lock --> m-dialect
 m-auto-retry --> m-unit-work
 m-auto-retry --> m-db-error
-m-execution-log --> m-sql
-m-execution-log --> m-db-port
-m-execution-log --> m-db-error
-m-execution-log --> m-unit-work
-m-execution-log --> m-auto-retry
+m-execution-lifecycle --> m-sql
+m-execution-lifecycle --> m-db-port
+m-execution-lifecycle --> m-db-error
+m-execution-lifecycle --> m-unit-work
+m-execution-lifecycle --> m-auto-retry
 m-identity-map --> m-unit-work
 m-identity-map --> m-temporal-read
 m-process-cache --> m-unit-work
@@ -229,7 +229,7 @@ m-snapshot-read --> m-metamodel
 m-snapshot-read --> m-inheritance
 m-snapshot-read --> m-relationship
 m-snapshot-read --> m-temporal-read
-m-snapshot-read --> m-execution-log
+m-snapshot-read --> m-execution-lifecycle
 m-snapshot-read --> m-wire
 m-temporal-read --> m-predicate
 m-temporal-read --> m-object-query
@@ -378,15 +378,13 @@ construction it may reference any behavioral module it harnesses.
   inventing an opaque parallel one. The edge is to the read *model* only: nothing here
   reaches as-of lowering, and the direction stays one-way, since
   `m-temporal-read` names no unit-of-work construct.
-- **`m-execution-log --> m-unit-work`, `--> m-auto-retry`, `--> m-db-port`,
-  `--> m-db-error`, `--> m-sql`.** Execution provenance is a **composition-level
-  observer**: it records the statement a call executed, the call boundary
-  itself, the category a failed call classified to, the transaction and its two
-  write-batch triggers, and the retry policy and classifier verdict — so it
-  names all five, and none of them names it. A composition root threads the
-  recorder down as an ordinary parameter, which is what keeps the observed from
-  depending on its observer and the vocabulary in the common runtime rather than
-  in a lifecycle surface.
+- **`m-execution-lifecycle --> m-unit-work`, `--> m-auto-retry`, `--> m-db-port`,
+  `--> m-db-error`, `--> m-sql`.** Transient observability is a
+  **composition-level publisher**: its event vocabulary names the statement a
+  call executes, call and boundary outcomes, write-batch triggers, retry policy,
+  and classifier verdict. A composition root threads one publisher down as an
+  ordinary parameter; observed modules discover no Provider and retain no
+  lifecycle history.
 - **`m-identity-map --> m-temporal-read`.** A temporal object's identity key
   includes its **lowered as-of coordinates** — a managed temporal object is a
   view pinned at a coordinate, so the identity module references the as-of read
@@ -414,12 +412,10 @@ construction it may reference any behavioral module it harnesses.
   `m-deep-fetch`; naming them directly is what makes the vocabulary a snapshot
   graph is built from legible to every language target rather than an accident of
   the planner's own closure.
-- **`m-snapshot-read --> m-execution-log`.** A snapshot read's round-trip ceiling
-  is *observed* through the **Read Trace** its result carries, so the read module
-  names the record it publishes. The direction is the only one available:
-  execution provenance is a composition-level observer with no reason to know
-  what a materialized graph is, and the reverse edge would make the observed
-  depend on its observer.
+- **`m-snapshot-read --> m-execution-lifecycle`.** Snapshot reads and streams
+  publish their transient Read, Stream Batch, and Snapshot Stream activities
+  through the composition-supplied lifecycle seam. Their returned graphs and
+  stream values retain no observation record.
 - **`m-opt-lock --> m-temporal-read`.** For a Transaction-Time Entity the
   optimistic-lock version analogue is derived from `txStart` / physical `in_z`, so
   an optimistic close references the milestoning read model.
