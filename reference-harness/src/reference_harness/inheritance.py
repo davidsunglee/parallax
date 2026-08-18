@@ -439,11 +439,17 @@ class Family:
         return result
 
     def relationship_target(self, rel_ref: str) -> str | None:
-        """The target a canonical ``Class.relationship`` declaration reaches.
+        """The target the relationship DECLARED on ``rel_ref``'s class reaches.
 
         Used to resolve the polymorphic position a navigation filter (or deep-fetch
-        hop) reaches: ``Person.pets`` -> ``Pet``. Returns ``None`` when the class or
-        relationship is absent (the caller then treats the target as non-polymorphic).
+        hop) reaches: ``Person.pets`` -> ``Pet``. A ``rel`` reference spells the
+        relationship's own identity, which for an inheritance family is always the
+        DECLARING ancestor's (`m-inheritance`), so this reads that one class's own
+        declarations. Resolving a bare member name against a POSITION — where an
+        inherited relationship must answer for every descendant — is
+        :func:`applicable_relationship_target` instead. Returns ``None`` when the
+        class or the declaration is absent (the caller then treats the target as
+        non-polymorphic).
         """
         if not isinstance(rel_ref, str) or "." not in rel_ref:
             return None
@@ -463,6 +469,25 @@ class Family:
             if isinstance(reverse_of, str) and "." in reverse_of:
                 owner, _relationship_name = reverse_of.rsplit(".", 1)
                 return self.defs.canonical_key(owner)
+        return None
+
+    def applicable_relationship_target(self, position: str, local_name: str) -> str | None:
+        """The target the relationship *local_name* reaches FROM *position*.
+
+        The applicable-member lookup of `m-inheritance`: a relationship declared on
+        an ancestor is a member of every descendant under the ancestor's identity,
+        so a bare hop name is resolved across *position*'s whole ancestry chain
+        (nearest declaration first) rather than on its own declarations alone —
+        ``Dog`` reaches the ``Person`` that ``Animal.owner`` names, exactly as
+        ``Animal`` does. Ancestry-wide member-name uniqueness makes the chain
+        lookup unambiguous, and a standalone Entity's chain is itself, so this is
+        total over every declared entity. Returns ``None`` when no entity on the
+        chain declares *local_name*, which is a member the position does not have.
+        """
+        for ancestor in reversed(self.ancestry(position)):
+            target = self.relationship_target(f"{ancestor}.{local_name}")
+            if target is not None:
+                return target
         return None
 
     def canonical_concrete_order(self, concretes: list[str]) -> list[str]:
