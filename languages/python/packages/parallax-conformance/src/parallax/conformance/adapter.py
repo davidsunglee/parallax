@@ -300,7 +300,9 @@ def _run(
     ``nativeCode``). A scenario run reports the contract observations
     (``roundTrips``, plus one ``errors`` entry per `expectError` step whose
     verb raised its declared application-lifecycle error and one ``stepGraphs``
-    entry per `access` step declaring `expectGraph`); its per-step find
+    entry per step declaring `expectGraph` in either placement — an `access`
+    step's retained view, or an include-bearing read step's own materialized
+    graph); its per-step find
     rows are observable at the injected port seam, where the run sweep grades
     them against each step's
     ``expectRows``. A rejected run touches no database and no port: it reports
