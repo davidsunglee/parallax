@@ -3,9 +3,12 @@
 # deep-fetches, not only in the row it keys on.
 #
 # m-unit-work-005 pins read-your-own-writes for a scalar UPDATE — one account,
-# re-read by primary key, one changed column. Every other read-your-own-writes
-# case in the corpus is that shape. The semantic distinction this one pins down is
-# that the rule reaches the relationship arms a read materializes: step 2 issues
+# re-read by its own primary key. Its siblings vary the verb and nothing else
+# (m-unit-work-001 an insert, -006 a delete observed as absence), and not one
+# read-your-own-writes case in the corpus re-reads a RELATIONSHIP: every dependent
+# find in the family declares no `includes` at all. The semantic distinction this
+# one pins down is that the rule reaches the relationship arms a read
+# materializes: step 2 issues
 # the SAME `Order 1 +include items` read step 0 did, inside the SAME `uow` group,
 # and its `expectGraph` states an `items` collection that DIFFERS from step 0's in
 # both ways a relationship can differ — a MEMBER the group's insert added (item
