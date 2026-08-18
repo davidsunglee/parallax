@@ -585,6 +585,128 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     assert port.commits == 1 and port.rollbacks == 0
 
 
+_ORDER_1_ROW: Row = {
+    "id": 1,
+    "name": "Ada",
+    "sku": "A-100",
+    "qty": 5,
+    "price": decimal.Decimal("10.50"),
+    "active": True,
+    "ordered_on": dt.date(2024, 1, 5),
+}
+
+_ORDER_ITEM_11_ROW: Row = {
+    "id": 11,
+    "order_id": 1,
+    "sku": "A-100",
+    "quantity": 2,
+    "shipped_on": None,
+}
+
+_ORDER_ITEM_13_ROW: Row = {
+    "id": 13,
+    "order_id": 1,
+    "sku": "D-130",
+    "quantity": 6,
+    "shipped_on": None,
+}
+
+
+def _ryow_relationship_port() -> _ScriptedPort:
+    """The four level reads `m-unit-work-029`'s two grouped finds issue.
+
+    The second find's item level answers what the group's own writes left: the
+    inserted row beside the rewritten one. A scripted port is what makes the
+    difference between the two finds authorable at all here — `FakeWritePort`
+    answers one canned row set to every read, so both finds would state one graph.
+    """
+    return _ScriptedPort(
+        read_rows=[
+            [dict(_ORDER_1_ROW)],
+            [dict(_ORDER_ITEM_11_ROW)],
+            [dict(_ORDER_1_ROW)],
+            [dict(_ORDER_ITEM_13_ROW), dict(_ORDER_ITEM_11_ROW) | {"sku": "Rewritten"}],
+        ]
+    )
+
+
+def test_run_scenario_case_reports_a_grouped_finds_own_materialized_graph() -> None:
+    # `m-unit-work-029`: the READ placement of `expectGraph`. Each find reports
+    # what IT materialized — roots plus the relationship its own Include Path
+    # populated — at its own step pointer, so the two graphs differ by exactly
+    # what the group's write did between them.
+    run = engine.run_scenario_case(_case("m-unit-work-029"), "postgres", _ryow_relationship_port())
+
+    assert [entry["at"] for entry in run.step_graphs] == ["/scenario/0", "/scenario/2"]
+    graphs = [cast("dict[str, list[Any]]", entry["graph"]) for entry in run.step_graphs]
+    assert [
+        sorted(item["id"] for item in root["items"]) for graph in graphs for root in graph["Order"]
+    ] == [
+        [11],
+        [11, 13],
+    ]
+    assert [root["items"][-1]["sku"] for graph in graphs for root in graph["Order"]] == [
+        "A-100",
+        "Rewritten",
+    ]
+
+
+def test_run_scenario_case_reports_an_ungrouped_finds_own_materialized_graph() -> None:
+    # The read placement carries no `uow` requirement: an ungrouped read-back
+    # states what the committed database answered, which is a legitimate claim in
+    # its own right — just not the survival one an `access` step makes.
+    when: dict[str, object] = {
+        "scenario": [
+            {
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "includes": [{"segments": [{"rel": "Order.items"}]}],
+                },
+                "expectGraph": {"Order": [{"id": 1}]},
+            }
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    run = engine.run_scenario_case(
+        case,
+        "postgres",
+        _ScriptedPort(read_rows=[[dict(_ORDER_1_ROW)], [dict(_ORDER_ITEM_11_ROW)]]),
+    )
+    assert [entry["at"] for entry in run.step_graphs] == ["/scenario/0"]
+    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
+    (root,) = graph["Order"]
+    assert [item["id"] for item in cast("list[dict[str, object]]", root["items"])] == [11]
+
+
+def test_run_scenario_case_refuses_a_read_step_graph_over_no_include_path() -> None:
+    # The read placement states the relationships that read materialized, and a
+    # read declaring no Include Path materialized none. The schema refuses the
+    # shape; the lane refuses it too rather than reporting an empty graph.
+    case = _load_case("m-unit-work-029")
+    when = cast("dict[str, Any]", case.document["when"])
+    steps = cast("list[dict[str, Any]]", when["scenario"])
+    del steps[0]["objectQuery"]["includes"]
+
+    with pytest.raises(engine.EngineError, match="declares no `includes`"):
+        engine.run_scenario_case(case, "postgres", _ryow_relationship_port())
+
+
+def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_contents() -> None:
+    # That entry point reports emissions, round trips and find rows and carries no
+    # `stepGraphs` channel, so an `expectGraph` authored on an interleaved case
+    # would be an oracle nothing answers. It is refused rather than left silent.
+    case = _load_case("m-opt-lock-012")
+    when = cast("dict[str, Any]", case.document["when"])
+    steps = cast("list[dict[str, Any]]", when["scenario"])
+    steps[0]["expectGraph"] = {"Account": [{"id": 2}]}
+
+    with pytest.raises(engine.EngineError, match="carries no `stepGraphs` channel"):
+        engine.run_interleaved_scenario_case(
+            case, "postgres", _ScriptedPort(), lambda: _ScriptedPort()
+        )
+
+
 def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     # m-unit-work-002: steps 0-1 share the doomed `doomed-update` group (its
     # write declares `rollback: true`); step 2 is an UNGROUPED post-abort find.
@@ -6037,11 +6159,13 @@ def test_a_write_settles_against_a_hydratable_invalid_published_root() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The scenario `expectGraph` grading (m-conformance-adapter `stepGraphs`): an   #
-# `access` step over a relationship an earlier find step's own Include Paths    #
-# materialized reads its contents off the RETAINED view — nothing at the port,  #
-# which is what makes the observation about survival rather than about the      #
-# database (m-snapshot-read *Closed world*, composition).                       #
+# The scenario `expectGraph` grading (m-conformance-adapter `stepGraphs`), in   #
+# its two placements. An `access` step over a relationship an earlier find      #
+# step's own Include Paths materialized reads its contents off the RETAINED     #
+# view — nothing at the port, which is what makes the observation about         #
+# survival rather than about the database (m-snapshot-read *Closed world*,      #
+# composition). A FIND step reports what it materialized itself, which is the   #
+# opposite claim and reaches the port by definition.                            #
 # --------------------------------------------------------------------------- #
 _ORDER_1_ITEM_ROWS: list[dict[str, object]] = [
     {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1, "shipped_on": dt.date(2024, 2, 15)},
@@ -6063,6 +6187,33 @@ def test_run_scenario_case_reports_an_access_step_graph_from_the_retained_view()
     assert [entry["at"] for entry in run.step_graphs] == ["/scenario/2"]
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType]
+
+
+def test_run_scenario_case_reports_a_snapshot_lane_finds_own_materialized_graph() -> None:
+    # The read placement on the ACTION-step lane: a find there reports what it
+    # materialized exactly as a `uow` lane find does, so one authored
+    # `expectGraph` means the same thing wherever the scenario's own shape sends
+    # it. Both entries appear, in step order, at their own pointers.
+    when: dict[str, object] = {
+        "scenario": [
+            {
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    "includes": [{"segments": [{"rel": "Order.items"}]}],
+                },
+                "expectGraph": {"Order": [{"id": 1}]},
+            },
+            {"action": "access", "on": 0, "path": "items", "expectGraph": {"OrderItem": []}},
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    run = engine.run_scenario_case(case, "postgres", _include_scenario_port())
+    assert [entry["at"] for entry in run.step_graphs] == ["/scenario/0", "/scenario/1"]
+    root_graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
+    (root,) = root_graph["Order"]
+    assert root["id"] == 1
+    assert sorted(node["id"] for node in cast("list[dict[str, object]]", root["items"])) == [11, 12]  # pyright: ignore[reportArgumentType]
 
 
 def test_run_scenario_case_lets_an_edit_chain_name_the_copy_before_it() -> None:

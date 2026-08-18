@@ -1,0 +1,144 @@
+# Read-your-own-writes across a RELATIONSHIP (m-unit-work): a dependent find
+# inside the unit of work observes its own buffered writes in the relationship it
+# deep-fetches, not only in the row it keys on.
+#
+# m-unit-work-005 pins read-your-own-writes for a scalar UPDATE — one account,
+# re-read by primary key, one changed column. Every other read-your-own-writes
+# case in the corpus is that shape. The semantic distinction this one pins down is
+# that the rule reaches the relationship arms a read materializes: step 2 issues
+# the SAME `Order 1 +include items` read step 0 did, inside the SAME `uow` group,
+# and its `expectGraph` states an `items` collection that DIFFERS from step 0's in
+# both ways a relationship can differ — a MEMBER the group's insert added (item
+# 13), and a LEAF the group's update rewrote (item 11's sku). Neither difference
+# is expressible by re-reading one row: membership is a property of the
+# relationship, which is what makes this more than the scalar case restated.
+#
+# `expectGraph` on a find step is the observable's READ placement (m-case-format
+# *Relationship contents at a step*), and it states what THAT read materialized —
+# roots and included relationships together, keyed by the read's own target.
+# Grouped, that is what the group's own connection observes MID-TRANSACTION: the
+# buffered insert and update are forced out by the dependent find and are visible
+# to it before any commit. It is deliberately NOT the access placement, which
+# states what an already-materialized view still holds; a read-back proves the
+# store answered correctly and proves nothing about a surviving view, which is why
+# the two placements are separate and why this case reaches for this one.
+#
+# The scenario:
+#   step 0 find  : observe order 1 WITH its two fixture items (12, then 11 by the
+#                  relationship's declared `id desc`), 1 + 1 levels = 2 round trips.
+#   step 1 write : buffer an INSERT of item 13 into that very relationship and an
+#                  UPDATE of item 11's sku, 2 statements. A GROUPED write owes no
+#                  resolving read (m-case-format *Resolving reads a write owes*):
+#                  the update settles against the row this group's own find already
+#                  published — published as a deep-fetch CHILD of the relationship,
+#                  not as a root, which is the one place in the corpus a write
+#                  consumes an observation a relationship level produced.
+#   step 2 find  : the same read again. It MUST observe three items, with 11's sku
+#                  rewritten. The group COMMITS after this, its last step.
+# Both finds are cache MISSES — the dependent find's forced flush precedes step 2 —
+# and both levels of both carry the m-read-lock shared-row-lock suffix, because
+# Order and OrderItem are unversioned and so resolve to Locking under the default
+# preference. roundTrips = 6.
+#
+# What this case does NOT state, so a reader does not over-read it. Relationship
+# collections compare as MULTISETS (m-case-format), so reversing either
+# `expectGraph`'s `items` passes; the declared `id desc` ordering is pinned by each
+# child statement's own `order by` instead. And the group is load-bearing here for
+# the ROUND TRIPS rather than for the contents: ungrouping the three steps and
+# paying the resolving read an ungrouped keyed update then owes leaves both finds
+# stating exactly these contents, because a committed write is observable too. What
+# the grouping buys is the write's resolving read, which the relationship read
+# already paid for — and the case fails on the count the moment that is untrue.
+model: models/orders.yaml
+tags: [m-unit-work, m-deep-fetch, read-your-own-writes, relationship, to-many, insert, update, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "include level - the Order.items child IN-list binds are the distinct root keys gathered from each find's own root read, so the child emission depends on a query result"
+when:
+  scenario:
+    - uow: observed-items
+      objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.id
+            value: 1
+        includes:
+          - segments:
+              - rel: parallax.compatibility.Order.items
+      roundTrips: 2
+      note: observe order 1 WITH its items inside the unit of work the write below shares
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ? for share of t0
+          binds: [1]
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc for share of t0
+          binds: [1]
+      expectGraph:
+        Order:
+          - id: 1
+            name: Ada
+            sku: A-100
+            qty: 5
+            price: 10.50
+            active: true
+            orderedOn: 2024-01-05
+            items:
+              - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+              - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
+    - uow: observed-items
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 13, orderId: 1, sku: D-130, quantity: 6 }
+        - mutation: update
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 11, sku: Rewritten }
+      roundTrips: 2
+      note: add a line item to the very relationship the find above materialized and rewrite one it already held; both settle inside the group, so neither owes a resolving read
+      statements:
+        - sql:
+            postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+          binds: [13, 1, D-130, 6]
+        - sql:
+            postgres: update order_item set sku = ? where id = ?
+          binds: [Rewritten, 11]
+    - uow: observed-items
+      objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.id
+            value: 1
+        includes:
+          - segments:
+              - rel: parallax.compatibility.Order.items
+      roundTrips: 2
+      note: the SAME read again, still inside the group - it MUST observe its own writes across the relationship; the group COMMITS after this, its last step
+      expectGraph:
+        Order:
+          - id: 1
+            name: Ada
+            sku: A-100
+            qty: 5
+            price: 10.50
+            active: true
+            orderedOn: 2024-01-05
+            items:
+              - { id: 13, orderId: 1, sku: D-130, quantity: 6, shippedOn: null }
+              - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+              - { id: 11, orderId: 1, sku: Rewritten, quantity: 2, shippedOn: null }
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ? for share of t0
+          binds: [1]
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc for share of t0
+          binds: [1]
+then:
+  roundTrips: 6

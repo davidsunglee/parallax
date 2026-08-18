@@ -2021,3 +2021,91 @@ def test_scenario_loaded_empty_access_rejects_a_stated_node() -> None:
 
     with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
         _assert_scenario(case, _loaded_empty_write_db())  # type: ignore[arg-type]
+
+
+# --- `expectGraph` on a READ step (`m-unit-work-029`) -------------------------
+#
+# The observable's other placement. A grouped find's own levels run on the
+# GROUP's held session, so what its graph states is what THAT transaction
+# observes — which is what makes read-your-own-writes across a relationship
+# authorable at all. DB-free that is testable as three things: the levels really
+# run on the session rather than the top-level connection, the graph assembled
+# from that step's OWN buckets is what grades, and a read carrying no Include
+# Path is refused rather than passing on an empty graph.
+
+_ORDER_ITEM_13_ROW: dict[str, Any] = {
+    "id": 13,
+    "order_id": 1,
+    "sku": "D-130",
+    "quantity": 6,
+    "shipped_on": None,
+}
+
+
+def _ryow_relationship_db() -> _FakeGroupedDb:
+    # One session for the whole group: the first find's two levels, then — after
+    # the write's own DML — the second find's two, whose item level answers the
+    # row the insert added and the sku the update rewrote.
+    rewritten = dict(_ORDER_1_ITEM_ROWS[1]) | {"sku": "Rewritten"}
+    return _FakeGroupedDb(
+        session_responses=[
+            [
+                [dict(_ORDER_1_ROW)],
+                [dict(r) for r in _ORDER_1_ITEM_ROWS],
+                [dict(_ORDER_1_ROW)],
+                [dict(_ORDER_ITEM_13_ROW), dict(_ORDER_1_ITEM_ROWS[0]), rewritten],
+            ]
+        ]
+    )
+
+
+def test_scenario_grouped_include_read_runs_its_levels_on_the_groups_own_session() -> None:
+    case = _scenario_by_id("m-unit-work-029")
+    db = _ryow_relationship_db()
+
+    _assert_scenario(case, db)  # type: ignore[arg-type]
+
+    assert len(db.sessions) == 1, "the whole group shares ONE session"
+    session = db.sessions[0]
+    assert [call[0] for call in session.calls] == [
+        "query",
+        "query",
+        "execute",
+        "execute",
+        "query",
+        "query",
+    ], "both levels of both finds and both DML statements run on the held session"
+    assert session.committed is True
+    assert db.top_calls == [], "no step of a fully-grouped scenario touches the top-level db"
+
+
+def test_scenario_read_step_expect_graph_rejects_a_corrupted_leaf() -> None:
+    case = copy.deepcopy(_scenario_by_id("m-unit-work-029"))
+    case.scenario[2]["expectGraph"]["Order"][0]["items"][0]["sku"] = "WRONG"
+
+    with pytest.raises(CaseFailure, match="materialized graph != expectGraph"):
+        _assert_scenario(case, _ryow_relationship_db())  # type: ignore[arg-type]
+
+
+def test_scenario_read_step_expect_graph_grades_the_step_that_declares_it() -> None:
+    # Each find states its OWN graph, so the pre-write step cannot be satisfied by
+    # the post-write contents: an executor that answered every step from one
+    # materialization would pass one of the two and fail the other.
+    case = copy.deepcopy(_scenario_by_id("m-unit-work-029"))
+    case.scenario[0]["expectGraph"] = copy.deepcopy(case.scenario[2]["expectGraph"])
+
+    with pytest.raises(CaseFailure, match=r"scenario\[0\] materialized graph != expectGraph"):
+        _assert_scenario(case, _ryow_relationship_db())  # type: ignore[arg-type]
+
+
+def test_scenario_read_step_expect_graph_refuses_a_read_that_included_nothing() -> None:
+    # The read placement states the relationships that read materialized, and a
+    # read declaring no Include Path materialized none. The schema refuses the
+    # shape; the executor refuses it too rather than grading an empty graph.
+    case = copy.deepcopy(_scenario_by_id("m-unit-work-029"))
+    del case.scenario[0]["objectQuery"]["includes"]
+    del case.scenario[0]["statements"][1]
+    case.scenario[0]["roundTrips"] = 1
+
+    with pytest.raises(CaseFailure, match="carries no `objectQuery.includes`"):
+        _assert_scenario(case, _ryow_relationship_db())  # type: ignore[arg-type]
