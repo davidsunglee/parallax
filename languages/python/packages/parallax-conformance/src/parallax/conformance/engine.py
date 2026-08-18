@@ -2529,7 +2529,7 @@ class _ScenarioStepResult:
     index-aligned sequences a caller could fall out of step.
 
     ``roots`` is the in-memory member state of each root the step holds, keyed by
-    declared member name — the plain detached value an `access` navigates from
+    member name — the plain detached value an `access` navigates from
     (`m-snapshot-read` closed world). Its length is what a `mutate` step's
     single-node requirement is checked against. A relationship a find step's own
     read included rides ON that state as the nested nodes the Wire result
@@ -2809,7 +2809,8 @@ def _navigate_step_view(
 def _relationship_declaration(
     model: AcceptedMetamodel, identity: EntityIdentity, name: str
 ) -> relationship.RelationshipMetadata | None:
-    """The relationship ``name`` declares one hop from ``identity``, or ``None``.
+    """The relationship ``name`` names one hop from ``identity`` — declared on it
+    or on an ancestor (`m-inheritance`) — or ``None``.
 
     The one place a member name is asked whether it is a relationship at all, so
     the navigating caller (:func:`_related_direction`) and the refusing one
@@ -2860,12 +2861,16 @@ def _edited_node_identity(
     An abstract-target read materializes COMPLETE CONCRETE instances
     (`m-case-format`), so a node published under an abstract `Animal` carries
     `Dog`'s own members and the `familyVariant` spelling saying which concrete it
-    is. An edit is judged against THAT Entity: its applicable members are the
-    assignable ones and its declared types are what a value is judged against,
-    where the abstract target declares neither and would wave both through. The
-    resolution belongs here rather than at the read because one read answers many
-    concretes at once; only a step holding exactly one node has a concrete to
-    name.
+    is. An edit is judged against THAT Entity: its applicable members — the ones
+    it declares and the ones it inherits alike — are the vocabulary an authored
+    name resolves in (:func:`_applicable_member_names`), and their declared types
+    are what a value is judged against, where the abstract target has neither and
+    would wave both through. Whether a member of that vocabulary may then be
+    ASSIGNED is the separate later verdict (:func:`_judged_assignments`), which is
+    what refuses the primary-key, read-only and framework-owned members applicable
+    membership deliberately includes. The resolution belongs here rather than at
+    the read because one read answers many concretes at once; only a step holding
+    exactly one node has a concrete to name.
 
     ``familyVariant`` is read as PROVENANCE only where the target position
     participates in a family, because that is the only place the name is reserved
@@ -3002,15 +3007,15 @@ def _edited_copy(
     RELATIONSHIP name is refused outright — no edit changes a relationship
     member, so a carried view can only ever describe what a read observed, and a
     copy whose `items` the author replaced would describe a fetch that never
-    happened. A name that is no assignable member of the node's Entity is
-    refused as an assignment with nowhere to land — a case the verb cannot
-    perform, not a mutation it silently drops. The MODEL is what that gate asks,
-    rather than the materialized mapping's own keys: an inheritance participant's
-    node publishes the synthetic `familyVariant` beside its members, and that key
-    is read-time provenance no edit authors — while on a standalone Entity the
-    same spelling is an ordinary declared member the gate admits. What survives
-    both is judged as any written value
-    is (:func:`~parallax.core.inheritance.validate_write_assignment`), so a
+    happened. A name that is no APPLICABLE member of the node's Entity — neither
+    one it declares nor one it inherits — is refused as an assignment with
+    nowhere to land: a case the verb cannot perform, not a mutation it silently
+    drops. The MODEL is what that gate asks, rather than the materialized
+    mapping's own keys: an inheritance participant's node publishes the synthetic
+    `familyVariant` beside its members, and that key is read-time provenance no
+    edit authors — while on a standalone Entity the same spelling is an ordinary
+    declared member the gate admits. What survives both is judged as any written
+    value is (:func:`~parallax.core.inheritance.validate_write_assignment`), so a
     primary-key, read-only or framework-owned target and an ill-typed value are
     refused by the SAME verdict the typed `edit(**changes)` and the serialized
     write boundary reach — one rule, whichever surface the assignment arrives

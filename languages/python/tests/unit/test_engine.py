@@ -5407,8 +5407,8 @@ def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -
 
 def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() -> None:
     # The end-to-end half of the assignment: the `set` resolves against the
-    # members the retained node's own Entity declares, so a name it declares none
-    # of is refused at the verb rather than silently dropped.
+    # members the retained node's own Entity has, so a name that is no member of
+    # it is refused at the verb rather than silently dropped.
     when = {
         "scenario": [
             {
