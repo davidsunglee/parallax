@@ -15,10 +15,11 @@ and each of the five ways one can fail — an undeclared or relationship name, a
 protected target, an ill-typed value, a null where the member is not nullable, and
 a malformed Value Object document — is REJECTED. Two structural halves ride along:
 WHERE the edited node stands (a derivation stands where its source does, a
-`load` / `access` at its path's terminal position, and a polymorphic position
-leaves the node's own Entity open, so every concrete that position can answer must
-admit the whole set), and where the walk stops (a step whose `on` reaches no
-position at all).
+`load` / `access` at its path's terminal position — each hop resolved through the
+relationship APPLICABLE to every concrete the position holds, inherited or its
+own — and a polymorphic position leaves the node's own Entity open, so every
+concrete that position can answer must admit the whole set), and where the walk
+stops (a step whose `on` reaches no position at all).
 """
 
 from __future__ import annotations
@@ -40,18 +41,69 @@ _CAT = "parallax.compatibility.Cat"
 _CUSTOMER = "parallax.compatibility.Customer"
 _DOG = "parallax.compatibility.Dog"
 _ORDER = "parallax.compatibility.Order"
+_PERSON = "parallax.compatibility.Person"
 _PET = "parallax.compatibility.Pet"
+
+# A relationship declared on ONE concrete branch of a family, which no corpus model
+# carries: every corpus relationship over an inheritance family is declared on the
+# abstract root. It is what makes a hop resolvable at one position and unresolvable
+# at the broader one above it.
+_BRANCH_RELATIONSHIP_DEFS: list[dict[str, Any]] = [
+    {
+        "name": "Animal",
+        "namespace": "probe",
+        "table": "animal",
+        "inheritance": {
+            "role": "root",
+            "strategy": "table-per-hierarchy",
+            "tag": {"column": "kind"},
+        },
+        "attributes": [
+            {"name": "id", "type": "int64", "primaryKey": True},
+            {"name": "toyId", "type": "int64", "nullable": True},
+        ],
+    },
+    {
+        "name": "Dog",
+        "namespace": "probe",
+        "inheritance": {"role": "concrete-subtype", "parent": "probe.Animal", "tagValue": "dog"},
+        "relationships": [
+            {
+                "name": "favouriteToy",
+                "cardinality": "many-to-one",
+                "join": {"source": "toyId", "target": {"entity": "probe.Toy", "attribute": "id"}},
+            }
+        ],
+    },
+    {
+        "name": "Cat",
+        "namespace": "probe",
+        "inheritance": {"role": "concrete-subtype", "parent": "probe.Animal", "tagValue": "cat"},
+    },
+    {
+        "name": "Toy",
+        "namespace": "probe",
+        "table": "toy",
+        "attributes": [
+            {"name": "id", "type": "int64", "primaryKey": True},
+            {"name": "label", "type": "string", "maxLength": 32, "nullable": True},
+        ],
+    },
+]
 
 
 def _defs(model_rel: str) -> list[dict[str, Any]]:
     return load_model(_COMPATIBILITY_ROOT, model_rel).entity_defs
 
 
-def _judged(model_rel: str, steps: list[Any], index: int) -> list[str]:
-    entity_defs = _defs(model_rel)
+def _judged_defs(entity_defs: list[dict[str, Any]], steps: list[Any], index: int) -> list[str]:
     errors: list[str] = []
     _validate_scenario_edit(steps, index, entity_defs, Family(entity_defs), "probe", errors)
     return errors
+
+
+def _judged(model_rel: str, steps: list[Any], index: int) -> list[str]:
+    return _judged_defs(_defs(model_rel), steps, index)
 
 
 def _edit(model_rel: str, target: str, assignments: dict[str, Any]) -> list[str]:
@@ -239,9 +291,7 @@ def test_an_incoherent_narrowing_falls_back_to_the_unnarrowed_position() -> None
     # nothing to narrow to. Judging against the whole queried set is the strictest
     # reading available — narrowing only ever removes candidates — so a broken
     # selection cannot buy an assignment a coherent one would have refused.
-    assert _narrowed_edit(
-        "models/animal.yaml", _ANIMAL, ["parallax.compatibility.Person"], {"barkVolume": 9}
-    ) == [
+    assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_PERSON], {"barkVolume": 9}) == [
         "probe: `mutate` set Cat.barkVolume: names no assignable attribute or value "
         "object — the edited node is any of (Cat, Dog, WildBoar), so the set must be one "
         "every one of them admits; a read narrows to such a position with `narrowTo`"
@@ -380,13 +430,13 @@ def test_a_polymorphic_relationship_target_is_judged_as_every_concrete_it_reache
     # A navigated position is judged by the same whole-set/every-concrete rule a read's
     # own is: `Person.animals` reaches the whole family, `Person.pets` only Pet's branch.
     root_member: list[Any] = [
-        {"objectQuery": {"target": "parallax.compatibility.Person"}},
+        {"objectQuery": {"target": _PERSON}},
         {"action": "load", "on": 0, "path": "animals"},
         {"action": "mutate", "on": 1, "set": {"name": "Mutant"}},
     ]
     assert _judged("models/animal.yaml", root_member, 2) == []
     branch_member: list[Any] = [
-        {"objectQuery": {"target": "parallax.compatibility.Person"}},
+        {"objectQuery": {"target": _PERSON}},
         {"action": "load", "on": 0, "path": "animals"},
         {"action": "mutate", "on": 1, "set": {"licenseId": "L-1"}},
     ]
@@ -396,11 +446,101 @@ def test_a_polymorphic_relationship_target_is_judged_as_every_concrete_it_reache
         "every one of them admits; a read narrows to such a position with `narrowTo`"
     ]
     narrower_relationship: list[Any] = [
-        {"objectQuery": {"target": "parallax.compatibility.Person"}},
+        {"objectQuery": {"target": _PERSON}},
         {"action": "load", "on": 0, "path": "pets"},
         {"action": "mutate", "on": 1, "set": {"licenseId": "L-1"}},
     ]
     assert _judged("models/animal.yaml", narrower_relationship, 2) == []
+
+
+def test_an_inherited_relationship_is_navigable_from_every_concrete_that_inherits_it() -> None:
+    # `owner` is declared on the abstract ROOT `Animal` and inherited by every
+    # concrete descendant under that one identity (m-inheritance), so a read of the
+    # concrete `Dog` — or of the abstract subtype `Pet` — navigates it and the edit
+    # that follows stands on the `Person` it reaches. Resolving the hop against the
+    # source's own declarations alone would find nothing on `Dog` and let every
+    # invalid assignment behind an inherited hop through the gate.
+    for source in (_DOG, _PET, _ANIMAL):
+        for verb in ("load", "access"):
+            undeclared: list[Any] = [
+                {"objectQuery": {"target": source}},
+                {"action": verb, "on": 0, "path": "owner"},
+                {"action": "mutate", "on": 1, "set": {"nope": 1}},
+            ]
+            assert _judged("models/animal.yaml", undeclared, 2) == [
+                "probe: `mutate` set Person.nope: names no assignable attribute or value object"
+            ]
+            source_member: list[Any] = [
+                {"objectQuery": {"target": source}},
+                {"action": verb, "on": 0, "path": "owner"},
+                {"action": "mutate", "on": 1, "set": {"barkVolume": 9}},
+            ]
+            assert _judged("models/animal.yaml", source_member, 2) == [
+                "probe: `mutate` set Person.barkVolume: names no assignable attribute or "
+                "value object"
+            ]
+            admitted: list[Any] = [
+                {"objectQuery": {"target": source}},
+                {"action": verb, "on": 0, "path": "owner"},
+                {"action": "mutate", "on": 1, "set": {"name": "Ann"}},
+            ]
+            assert _judged("models/animal.yaml", admitted, 2) == []
+
+
+def test_an_inherited_hop_survives_a_later_hop_and_a_later_derivation() -> None:
+    # The two ways the bypass outlived a single hop: `pets` lands on the abstract
+    # subtype `Pet`, whose own `owner` is the root's, and a copy taken of a
+    # relationship result still stands where that result does.
+    later_hop: list[Any] = [
+        {"objectQuery": {"target": _PERSON}},
+        {"action": "access", "on": 0, "path": "pets.owner"},
+        {"action": "mutate", "on": 1, "set": {"nope": 1}},
+    ]
+    assert _judged("models/animal.yaml", later_hop, 2) == [
+        "probe: `mutate` set Person.nope: names no assignable attribute or value object"
+    ]
+    for verb in ("mutate", "detachCopy", "mergeBack"):
+        derivation: dict[str, Any] = {"action": verb, "on": 1}
+        if verb == "mutate":
+            derivation["set"] = {"name": "Ann"}
+        steps: list[Any] = [
+            {"objectQuery": {"target": _DOG}},
+            {"action": "access", "on": 0, "path": "owner"},
+            derivation,
+            {"action": "mutate", "on": 2, "set": {"id": 2}},
+        ]
+        assert _judged("models/animal.yaml", steps, 3) == [
+            "probe: `mutate` set Person.id: primary-key fields may not be assigned"
+        ]
+
+
+def test_a_hop_only_some_concrete_of_the_position_has_reaches_no_position() -> None:
+    # `favouriteToy` is `Dog`'s own, so a read that may hand the executor a `Cat`
+    # states a navigation that node cannot make. The path is what is broken there,
+    # which the runtime reports; judging the edit at `Toy` anyway would judge it for
+    # a node the step may never reach.
+    unreachable: list[Any] = [
+        {"objectQuery": {"target": "probe.Animal"}},
+        {"action": "access", "on": 0, "path": "favouriteToy"},
+        {"action": "mutate", "on": 1, "set": {"nope": 1}},
+    ]
+    assert _judged_defs(_BRANCH_RELATIONSHIP_DEFS, unreachable, 2) == []
+    # Narrowing the read to the declaring concrete makes the hop applicable to every
+    # node the position holds, so the terminal position resolves and is judged.
+    narrowed: list[Any] = [
+        {"objectQuery": {"target": "probe.Animal", "narrowTo": ["probe.Dog"]}},
+        {"action": "access", "on": 0, "path": "favouriteToy"},
+        {"action": "mutate", "on": 1, "set": {"nope": 1}},
+    ]
+    assert _judged_defs(_BRANCH_RELATIONSHIP_DEFS, narrowed, 2) == [
+        "probe: `mutate` set Toy.nope: names no assignable attribute or value object"
+    ]
+    admitted: list[Any] = [
+        {"objectQuery": {"target": "probe.Animal", "narrowTo": ["probe.Dog"]}},
+        {"action": "access", "on": 0, "path": "favouriteToy"},
+        {"action": "mutate", "on": 1, "set": {"label": "ball"}},
+    ]
+    assert _judged_defs(_BRANCH_RELATIONSHIP_DEFS, admitted, 2) == []
 
 
 def test_a_path_naming_no_relationship_reaches_no_position() -> None:

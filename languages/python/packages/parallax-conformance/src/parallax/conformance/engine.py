@@ -2820,22 +2820,24 @@ def _relationship_declaration(
     return None if declared is None else relationship.view(model).relationship(declared.identity)
 
 
-def _declared_member_names(model: AcceptedMetamodel, identity: EntityIdentity) -> frozenset[str]:
-    """Every member name ``identity`` DECLARES: its family-effective attributes
-    and Value Object occurrences, whatever each one's own assignability.
+def _applicable_member_names(model: AcceptedMetamodel, identity: EntityIdentity) -> frozenset[str]:
+    """Every member name APPLICABLE to ``identity``: the attributes and Value
+    Object occurrences it declares and the ones it inherits alike, whatever each
+    one's own assignability.
 
-    Declaration membership alone, which is the question both callers ask — a
-    `mutate` step's `set` (:func:`_edited_copy`) and a bare write row
+    Membership alone, which is the question both callers ask — a `mutate` step's
+    `set` (:func:`_edited_copy`) and a bare write row
     (:func:`_reject_undeclared_bare_row_members`) — so one authored name is judged
-    declared or not the same way whichever form carries it. Whether a DECLARED
-    name may then be assigned is a later and separate verdict
-    (:func:`_judged_assignments`), which is what refuses a primary-key or
-    read-only target; a name absent from this set is refused earlier and for the
-    different reason that it names no member at all. A key a read publishes
-    BESIDE the declared members is absent by construction — an inheritance
-    participant's synthetic `familyVariant` names no declaration, so it is no
-    more assignable than a name the model never heard of, however plainly the
-    materialized node carries it.
+    a member or not the same way whichever form carries it. Inheritance is part of
+    that question and not a later one: `Dog` has `Pet`'s `licenseId` as plainly as
+    its own `barkVolume`, so both are here. Whether a member may then be ASSIGNED
+    is the later and separate verdict (:func:`_judged_assignments`), which is what
+    refuses a primary-key or read-only target; a name absent from this set is
+    refused earlier and for the different reason that it names no member at all. A
+    key a read publishes BESIDE the members is absent by construction — an
+    inheritance participant's synthetic `familyVariant` names no member of any
+    ancestor, so it is no more assignable than a name the model never heard of,
+    however plainly the materialized node carries it.
     """
     position = inheritance.view(model).entity(identity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
@@ -2992,22 +2994,22 @@ def _edited_copy(
     Every verdict below is reached against the Entity the retained node IS
     (:func:`_edited_node_identity`), never against the query target that
     published it: an abstract-target read answers concrete instances, so it is
-    the concrete subtype that declares which names are assignable and what type
-    each holds. That resolved Identity rides on the copy, so a chain of edits
-    keeps judging the same Entity.
+    the concrete subtype that fixes which names are assignable — its own members
+    and its ancestors' alike — and what type each holds. That resolved Identity
+    rides on the copy, so a chain of edits keeps judging the same Entity.
 
     Three verdicts stand between a `set` and the copy, in this order. A
     RELATIONSHIP name is refused outright — no edit changes a relationship
     member, so a carried view can only ever describe what a read observed, and a
     copy whose `items` the author replaced would describe a fetch that never
-    happened. A name the node's Entity declares no assignable member of is
+    happened. A name that is no assignable member of the node's Entity is
     refused as an assignment with nowhere to land — a case the verb cannot
-    perform, not a mutation it silently drops. The DECLARATION is what that gate
-    asks, rather than the materialized mapping's own keys: an inheritance
-    participant's node publishes the synthetic `familyVariant` beside its
-    members, and that key is read-time provenance no edit authors — while on a
-    standalone Entity the same spelling is an ordinary declared member the gate
-    admits. What survives both is judged as any written value
+    perform, not a mutation it silently drops. The MODEL is what that gate asks,
+    rather than the materialized mapping's own keys: an inheritance participant's
+    node publishes the synthetic `familyVariant` beside its members, and that key
+    is read-time provenance no edit authors — while on a standalone Entity the
+    same spelling is an ordinary declared member the gate admits. What survives
+    both is judged as any written value
     is (:func:`~parallax.core.inheritance.validate_write_assignment`), so a
     primary-key, read-only or framework-owned target and an ill-typed value are
     refused by the SAME verdict the typed `edit(**changes)` and the serialized
@@ -3048,12 +3050,12 @@ def _edited_copy(
             f"{case.path.name}: `mutate` assigns {related!r}, which name relationship members — "
             "an edit carries the views its source read materialized and authors none"
         )
-    declared = _declared_member_names(model, identity)
-    unassignable = sorted(name for name in assignments if name not in declared)
+    applicable = _applicable_member_names(model, identity)
+    unassignable = sorted(name for name in assignments if name not in applicable)
     if unassignable:
         raise EngineError(
             f"{case.path.name}: `mutate` on step {on} assigns {unassignable!r}, which "
-            f"{identity.name} declares no assignable member of"
+            f"{identity.name} has no assignable member of"
         )
     edited = _judged_assignments(case, model, identity, assignments)
     return _ScenarioStepResult(({**members, **edited},), source.pin, identity)
@@ -3065,7 +3067,7 @@ def _judged_assignments(
     identity: EntityIdentity,
     assignments: Mapping[str, object],
 ) -> dict[str, object]:
-    """One `mutate` step's `set`, decoded against ``identity``'s declared members
+    """One `mutate` step's `set`, decoded against ``identity``'s applicable members
     and judged assignable, or a loud refusal naming the case.
 
     An unassignable target or an ill-typed value is a case-AUTHORING defect
@@ -6364,7 +6366,7 @@ def _reject_undeclared_bare_row_members(
     row: Mapping[str, object],
     model: AcceptedMetamodel,
 ) -> None:
-    """Refuse a bare `when.write` row naming members ``target`` does not declare.
+    """Refuse a bare `when.write` row naming members ``target`` does not have.
 
     Member honesty is a case-authoring judgement, not a violated normative MUST: an
     undeclared name resolves to no declared position, so no rule of the closed
@@ -6380,12 +6382,12 @@ def _reject_undeclared_bare_row_members(
     a row may not carry — the tag column and the `tag` / `tagValue` / `familyVariant`
     handles as `subtype-write-metadata-field`, a sibling branch's attribute as
     `subtype-write-sibling-attribute` — which are classified rules rather than
-    authoring defects. It is asked BEFORE the declared-member walk so that a row
-    carrying both an undeclared name and a real defect is refused rather than graded
-    on the defect.
+    authoring defects. It is asked BEFORE the member walk so that a row carrying
+    both an undeclared name and a real defect is refused rather than graded on the
+    defect.
     """
-    declared = _declared_member_names(model, target.identity)
-    unknown = sorted(key for key in row if key not in declared and key not in _ROW_CONTROL_KEYS)
+    applicable = _applicable_member_names(model, target.identity)
+    unknown = sorted(key for key in row if key not in applicable and key not in _ROW_CONTROL_KEYS)
     if unknown:
         raise EngineError(
             f"{case.path.name}: the bare write row names {unknown}, which are not "

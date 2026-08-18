@@ -1396,16 +1396,18 @@ fetched, so what a case observes of a copy's own view is the reference-identity
 assertion each language's API Conformance Suite runs, not an `expectGraph`.
 
 **What a `set` may state.** Every key must name an **assignable member** of the
-Entity the edited node is — a declared Attribute or Value Object occurrence that
-is not a primary key, a read-only member, or a framework-owned one — and every
-value must be one that member admits, judged exactly as a write row's value is
-(*What decides a bare write row*), a Value Object occurrence binding one whole
-document. A `set` that states otherwise is a **case-authoring failure**, refused
-before any executor runs the case, exactly as a bare write row naming an
-undeclared member is. It is deliberately **not** an `expectError`: that
-vocabulary is closed and carries no edit-validation member, so an edit refusal is
-not a declarable observation and a case states edits the model admits and nothing
-else. A language whose edit verb validates will reach the same verdict at run
+Entity the edited node is — an **applicable** Attribute or Value Object
+occurrence, one the Entity declares or inherits from an ancestor
+(`m-inheritance`), that is not a primary key, a read-only member, or a
+framework-owned one — and every value must be one that member admits, judged
+exactly as a write row's value is (*What decides a bare write row*), a Value
+Object occurrence binding one whole document. A `set` that states otherwise is a
+**case-authoring failure**, refused before any executor runs the case, exactly as
+a bare write row naming an undeclared member is. It is deliberately **not** an
+`expectError`: that vocabulary is closed and carries no edit-validation member,
+so an edit refusal is not a declarable observation and a case states edits the
+model admits and nothing else.
+A language whose edit verb validates will reach the same verdict at run
 time, and MAY refuse there, but no case may depend on it — an executor that
 models `mutate` as its authored golden DML alone reaches no verdict at all, and
 two executors must agree on every case the corpus admits. The node an edit is
@@ -1421,13 +1423,13 @@ not say which concrete instance the node is, so the whole `set` must be one
 that keeps the run-time verdict above the same verdict: a set every candidate
 admits is admitted by whichever candidate the executor was handed, while one that
 merely SOME candidate admits describes a node the step may never reach. A member
-some concrete of the family does not declare is therefore assignable only under a
-read **narrowed** to a position every concrete of which DOES declare it — one
+some concrete of the family does not have is therefore assignable only under a
+read **narrowed** to a position every concrete of which DOES have it — one
 concrete for a concrete's own member (`Cat`'s `indoor`), an abstract subtype for a
-member all of its concretes share (`Pet`'s `licenseId`, which both `Cat` and `Dog`
-inherit) — and a set drawing one key from one branch and another from a sibling
-names no node at all, exactly as a concrete-subtype write payload may carry no
-sibling field (`m-inheritance`).
+member all of its concretes inherit (`Pet`'s `licenseId`, which `Pet` declares and
+both `Cat` and `Dog` inherit) — and a set drawing one key from one branch and
+another from a sibling names no node at all, exactly as a concrete-subtype write
+payload may carry no sibling field (`m-inheritance`).
 
 `path` (the navigated relationship, e.g.
 `items` or `items.statuses`) is legal only on `load` / `access`. Because golden SQL

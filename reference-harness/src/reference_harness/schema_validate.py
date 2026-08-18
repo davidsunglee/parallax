@@ -24,9 +24,8 @@ It performs m-case-format layer 1 statically (no database needed):
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
@@ -452,25 +451,27 @@ query-backed list, `m-op-list`), so its members stand where its source does.
 """
 
 
-@dataclass(frozen=True)
-class _Position:
-    """Where a scenario step's result stands.
+_Position: TypeAlias = tuple[str, ...]
+"""Where a scenario step's result stands: every concrete Entity a node there could be.
 
-    ``entity`` is the position as the model declares it, which is what a later
-    relationship hop resolves its own name against; ``concretes`` is every
-    concrete Entity a node standing there could be, which is what an assignment is
-    judged against. The two differ exactly where the position is polymorphic.
-    """
+A position is known by its concretes and by nothing else — never by a declared
+position name — because both model questions the walk asks are questions about the
+node itself, and a node is one concrete. Which relationship a `path` hop names is
+asked of each concrete (:func:`_navigated_position`, through the applicable
+declaration on that concrete's ancestry), and which assignments it admits is asked
+of each concrete too (:func:`_validate_scenario_edit`). So a member reaches a
+descendant by inheritance exactly as one declared on it does.
 
-    entity: str
-    concretes: tuple[str, ...]
+The empty tuple is a position no concrete instance stands at; ``None``, which is
+never a ``_Position``, is a position this check cannot decide.
+"""
 
 
 def _entity_position(entity: str, family: Family | None) -> _Position:
     """*entity* as a position, over every concrete a node standing there could be."""
     if family is None:
-        return _Position(entity, (entity,))
-    return _Position(entity, tuple(family.effective_concrete_set(entity)))
+        return (entity,)
+    return tuple(family.effective_concrete_set(entity))
 
 
 def _query_position(query: dict[str, Any], family: Family | None) -> _Position | None:
@@ -495,21 +496,28 @@ def _query_position(query: dict[str, Any], family: Family | None) -> _Position |
     if family is None or not isinstance(narrow_to, list):
         return queried
     try:
-        narrowed = resolve_clamped_narrow(family, list(queried.concretes), narrow_to)
+        narrowed = resolve_clamped_narrow(family, list(queried), narrow_to)
     except RejectionError:
         return queried
-    return _Position(target, tuple(family.canonical_concrete_order(narrowed)))
+    return tuple(family.canonical_concrete_order(narrowed))
 
 
 def _navigated_position(source: _Position, path: str, family: Family | None) -> _Position | None:
     """Where a `load` / `access` of *path* from *source* lands, or ``None``.
 
-    Each hop resolves through the relationships the position its own source stands
-    at DECLARES, which is how the runner resolves the same ``path``
-    (:func:`~reference_harness.case_runner._relationship_path_target`). A hop
-    naming none of them states no position at all — guessing a target here would
-    judge an edit against an Entity the step never reaches, and a path the runner
-    cannot walk is a navigation the case cannot run either.
+    Each hop is resolved from EVERY concrete the source position holds, through the
+    relationship APPLICABLE to that concrete — its own declaration or an ancestor's,
+    since `m-inheritance` makes a relationship declared on an ancestor a member of
+    every concrete descendant under the ancestor's identity. So an `access` on
+    `owner` from a `Dog` reaches the `Person` that `Animal.owner` names, exactly as
+    it does from an `Animal`, and the edit that follows is judged there rather than
+    slipping through unjudged. Where the source concretes reach different targets,
+    the hop lands on the union of what each reaches, deduplicated by first
+    appearance, because a node there may be any one of them.
+
+    A hop SOME concrete of the position does not have states no position at all:
+    the navigation is one the step cannot make from every node it may hold, and
+    guessing past it would judge an edit against an Entity that node never becomes.
 
     Every hop is taken BROAD, at the relationship target's own effective concrete
     set, even where the source read's Include Paths narrowed that hop's view. That
@@ -521,10 +529,19 @@ def _navigated_position(source: _Position, path: str, family: Family | None) -> 
         return None
     position = source
     for hop in path.split("."):
-        target = family.relationship_target(f"{position.entity}.{hop}")
-        if target is None:
+        if not position:
             return None
-        position = _entity_position(target, family)
+        reached: list[str] = []
+        for concrete in position:
+            target = family.applicable_relationship_target(concrete, hop)
+            if target is None:
+                return None
+            reached.extend(
+                landing
+                for landing in family.effective_concrete_set(target)
+                if landing not in reached
+            )
+        position = tuple(reached)
     return position
 
 
@@ -613,11 +630,14 @@ def _validate_scenario_edit(
     assigning `Dog`'s `barkVolume` beside `Cat`'s `indoor`, names a node no read
     can hand an executor, which would then refuse the case this check had passed.
 
-    A case reaches a narrower position by NARROWING its read, and narrow enough is
-    a position every concrete of which admits the whole set: `Animal` narrowed to
-    the abstract `Pet` may assign `Pet`'s own `licenseId`, because both `Cat` and
-    `Dog` declare it, while `Cat`'s `indoor` needs the narrowing that leaves `Cat`
-    alone. So the refusal distinguishes the two things an author can be told
+    Each candidate is judged over its APPLICABLE members — the ones it declares and
+    the ones it inherits alike (:func:`~reference_harness.inheritance.resolve_effective_definition`)
+    — because that is the set a node of that Entity actually carries. A case reaches
+    a narrower position by NARROWING its read, and narrow enough is a position every
+    concrete of which admits the whole set: `Animal` narrowed to the abstract `Pet`
+    may assign `licenseId`, which `Pet` declares and both `Cat` and `Dog` inherit,
+    while `Cat`'s own `indoor` needs the narrowing that leaves `Cat` alone. So the
+    refusal distinguishes the two things an author can be told
     (:func:`_edit_refusal`).
     """
     step = steps[index]
@@ -628,7 +648,7 @@ def _validate_scenario_edit(
     if position is None:
         return
     entities: list[Entity] = []
-    for concrete in position.concretes:
+    for concrete in position:
         entity = _effective_entity(entity_defs, concrete)
         if entity is None:
             return  # an undeclared position is the query validator's to report

@@ -4955,7 +4955,7 @@ def test_edited_copy_refuses_the_whole_set_when_one_name_is_unassignable() -> No
     # still holds the state the find step materialized.
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant", "nickname": "Nick"}}
     source = _order_view(id=1, name="Ada")
-    with pytest.raises(engine.EngineError, match="declares no assignable member of"):
+    with pytest.raises(engine.EngineError, match="has no assignable member of"):
         _edited_copy(step, 0, source)
     assert source.roots[0] == {"id": 1, "name": "Ada"}
 
@@ -5042,17 +5042,17 @@ def test_edited_copy_judges_a_subtype_member_against_the_node_it_edits() -> None
 
 
 def test_edited_copy_refuses_an_assignment_to_read_time_provenance() -> None:
-    # `familyVariant` is a key the read publishes, not a member the model
-    # declares, so a gate asking the materialized mapping would accept it and
-    # carry a node claiming to be a `Cat`. The gate asks the declaration.
-    with pytest.raises(engine.EngineError, match="Dog declares no assignable member of"):
+    # `familyVariant` is a key the read publishes, not a member anything on the
+    # node's ancestry declares, so a gate asking the materialized mapping would
+    # accept it and carry a node claiming to be a `Cat`. The gate asks the model.
+    with pytest.raises(engine.EngineError, match="Dog has no assignable member of"):
         _edited_animal({"familyVariant": "Cat"}, _abstract_read_of_a_dog())
 
 
 def test_edited_copy_refuses_a_sibling_branchs_member() -> None:
     # `indoor` is declared on `Cat`, the sibling concrete branch: it is no more
     # assignable on a `Dog` node than a name the family declares nowhere.
-    with pytest.raises(engine.EngineError, match="Dog declares no assignable member of"):
+    with pytest.raises(engine.EngineError, match="Dog has no assignable member of"):
         _edited_animal({"indoor": True}, _abstract_read_of_a_dog())
 
 
@@ -5422,7 +5422,7 @@ def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() 
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
-    with pytest.raises(engine.EngineError, match="Order declares no assignable member of"):
+    with pytest.raises(engine.EngineError, match="Order has no assignable member of"):
         engine.run_scenario_case(case, "postgres", port)
     assert len(port.writes) == 0
 
