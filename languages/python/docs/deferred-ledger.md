@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-77**.
+Entry numbering is continuous and never reused. The next new number is **D-78**.
 
 ## Entries
 
@@ -351,6 +351,36 @@ cost for a shape nothing asks for. The moment a case authors one, the repair is
 the branch plus its own DB-free driver; until then the honest state is the
 refusal this entry describes, which already says which half of itself is
 permanent.
+
+### D-77 — The interleaved-`uow`-group runner refuses a step stating relationship contents, though its own find interpreter already holds what would answer one
+
+*Low — a refusal on a shape no case authors.* Relates to
+`parallax.conformance.engine.run_interleaved_scenario_case`.
+
+**What.** `expectGraph`'s READ placement is legal on any include-bearing read step
+(`core/spec/m-case-format.md` *Relationship contents at a step*), and three of
+this target's four find interpreters answer it: the ungrouped standalone find,
+`_run_uow_group`'s own step loop, and the snapshot lane's find each publish a
+`stepGraphs` entry through `_read_step_graph`. The fourth —
+`run_interleaved_scenario_case`, the two-group optimistic-lock race entry point —
+refuses such a step by name before either worker thread starts, because its
+return is a four-tuple (emissions, round trips, the conflict's `actual`, every
+find's own rows) carrying no `stepGraphs` channel at all. Nothing about the
+interleaved shape conflicts with the observable: `_run_interleaved_group` drives
+the SAME `_run_group_step` interpreter the contiguous runner does and already
+holds each find's own published output, which is exactly what `_read_step_graph`
+takes. The reference harness grades the same authored `expectGraph` on an
+interleaved read step today, so the limit is this target's rather than the case
+format's — the shape is unwired here, not mis-authored.
+
+**Why it is deferred rather than fixed.** No corpus case pairs an interleaved race
+with an include-bearing read, so the channel would ship unexercised — a coverage
+cost for a shape nothing asks for. Reaching it also costs more than the call
+site: this entry point's tuple would widen to five across the run sweep and its
+unit drivers, repeating the width `run_scenario_case` already retired into
+`ScenarioRun`. The moment a case authors the combination, the repair is the
+channel, a value object for the return, and its own DB-free driver; until then
+the honest state is the refusal, which names precisely what it lacks.
 
 ## Forwarding pointers
 

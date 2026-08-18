@@ -6725,14 +6725,18 @@ def _scenario_step_read_entity(
 
 @dataclass(frozen=True)
 class _StepIncludes:
-    """What one scenario read step's Include Paths materialized, kept for a later step.
+    """What one scenario read step's Include Paths materialized.
 
-    A snapshot graph issues no SQL after materialization (`m-snapshot-read`), so an
-    `access` step over an already-loaded relationship executes nothing at all: the
-    contents it observes are the ones THIS step's own levels fetched. They are held
-    per HOP, exactly as a deep-fetch read case holds them, so a later step assembles
-    its graph from the same buckets through the same assembly
-    (:func:`_assemble_graph`), over a retained view rather than a re-fetched one.
+    Both placements of ``expectGraph`` are answered from here. The step's OWN
+    graph is this whole assembly (:func:`_assert_read_step_graph`). A LATER
+    `access` step navigates it instead: a snapshot graph issues no SQL after
+    materialization (`m-snapshot-read`), so an access over an already-loaded
+    relationship executes nothing at all, and the contents it observes are the
+    ones THIS step's own levels fetched.
+
+    They are held per HOP, exactly as a deep-fetch read case holds them, so either
+    reader assembles through the same :func:`_assemble_graph`, over a retained view
+    rather than a re-fetched one.
     """
 
     query: dict[str, Any]
@@ -7220,8 +7224,9 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
     results: list[list[dict[str, Any]]] = []
     step_entities: list[Entity | None] = []
     # Parallel to `results`, holding what each step's Include Paths materialized so
-    # a later zero-round-trip `access` can state its contents (`_StepIncludes`). A
-    # step that included nothing parks `None`, exactly as a write parks `[]`.
+    # the step's own graph and a later zero-round-trip `access` can both state
+    # contents from it (`_StepIncludes`). A step that included nothing parks
+    # `None`, exactly as a write parks `[]`.
     step_includes: list[_StepIncludes | None] = []
     with contextlib.ExitStack() as stack:
         for index, step in enumerate(case.scenario):
@@ -7345,8 +7350,9 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 )
                 rows = [_materialize_owner_node(read_entity, row) for row in rows]
                 # A read step's own Include Paths are the levels after the root, run
-                # and retained here so a later `access` states contents THIS read
-                # materialized rather than ones it re-fetched.
+                # and retained here so this step's own graph and any later `access`
+                # both state contents THIS read materialized rather than re-fetched
+                # ones.
                 includes = _run_step_includes(case, reader, index, step, rows, pairs)
             else:
                 # A cache hit (or an m-op-list construction that has not resolved yet): no

@@ -3,18 +3,31 @@
 # deep-fetches, not only in the row it keys on.
 #
 # m-unit-work-005 pins read-your-own-writes for a scalar UPDATE — one account,
-# re-read by its own primary key. Its siblings vary the verb and nothing else
-# (m-unit-work-001 an insert, -006 a delete observed as absence), and not one
-# read-your-own-writes case in the corpus re-reads a RELATIONSHIP: every dependent
-# find in the family declares no `includes` at all. The semantic distinction this
-# one pins down is that the rule reaches the relationship arms a read
-# materializes: step 2 issues
+# observed and then re-read by its own primary key, all three steps in ONE `uow`
+# group. Its siblings differ in more than the verb: -006 is that same grouped
+# observe/write/re-read shape for a DELETE seen as absence, while -001 is
+# UNGROUPED — a committed insert followed by a find of the new row, with no prior
+# observation at all. What none of them does is re-read a RELATIONSHIP: every
+# dependent find in the family declares no `includes` at all. The semantic
+# distinction this one pins down is that the rule reaches the relationship arms a
+# read materializes: step 2 issues
 # the SAME `Order 1 +include items` read step 0 did, inside the SAME `uow` group,
 # and its `expectGraph` states an `items` collection that DIFFERS from step 0's in
 # both ways a relationship can differ — a MEMBER the group's insert added (item
-# 13), and a LEAF the group's update rewrote (item 11's sku). Neither difference
-# is expressible by re-reading one row: membership is a property of the
-# relationship, which is what makes this more than the scalar case restated.
+# 13), and a LEAF the group's update rewrote (item 11's sku).
+#
+# The two differences do not prove the same thing, and only ONE of them needs a
+# relationship to state it. The LEAF is ordinary scalar read-your-own-writes
+# wearing a join: a keyed re-read of OrderItem 11 alone answers the rewritten sku,
+# which is -005 one entity down. The MEMBER is not re-describable that way — a
+# keyed re-read of item 13 says the ROW exists, which is -001, and never that
+# order 1's `items` HOLDS it, because membership is a property of the collection
+# and no keyed row read states a collection's contents. Either mutation alone,
+# with the counts corrected, leaves a case both executors still pass, so the pair
+# is carried deliberately: the insert is what makes this more than the scalar rule
+# with an extra join, and the update is what gives the case a contradicted leaf
+# and makes the grouped write settle against a value a relationship LEVEL
+# published.
 #
 # `expectGraph` on a find step is the observable's READ placement (m-case-format
 # *Relationship contents at a step*), and it states what THAT read materialized —
