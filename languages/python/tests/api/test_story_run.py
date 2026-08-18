@@ -386,6 +386,33 @@ def _assert_surviving_view(case_id: str, entity: str, instances: Sequence[Any]) 
     )
 
 
+def _assert_read_step_graph(
+    case_id: str, index: int, entity: str, member: str, snapshot: Any
+) -> None:
+    """Grade one of a story's own finds against the whole ``expectGraph`` the
+    scenario's step at ``index`` authors — the observable's READ placement.
+
+    The graded value is the whole graph that find materialized: each root's own
+    members, plus the ``member`` relationship its Include Path populated, read
+    off the typed nodes the story holds and compared through the SAME
+    model-driven comparator the wire lane grades the step by. `instance_graph_node`
+    renders scalar and value-object members alone, so a loaded arm is attached
+    here from the developer surface — which is what makes this the typed lane's
+    answer to the same authored expectation rather than a second rendering of the
+    wire's.
+    """
+    step = _scenario_steps(case_id)[index]
+    expected = cast("dict[str, list[dict[str, Any]]]", step["expectGraph"])
+    observed = {
+        entity: [
+            _vo_owner_row(root)
+            | {member: [_vo_owner_row(child) for child in getattr(root, member)]}
+            for root in snapshot.results()
+        ]
+    }
+    compare_graph(observed, expected, CollectionKinds(engine.load_case_metamodel(_CASES[case_id])))
+
+
 def _assert_find_step_rows(case_id: str, index: int, snapshot: Any) -> None:
     """Grade one of a composition story's own finds against the ``expectRows``
     the scenario's find at ``index`` states.
@@ -561,6 +588,41 @@ def test_a_multi_hop_access_drops_its_null_branches(provisioner: Any) -> None:
         True,
     ]
     _assert_composition_units(story.case_id, snapshot)
+
+
+def test_a_grouped_read_observes_its_own_relationship_writes(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-unit-work-029"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    committed = story.run(db)
+    before, after = committed.value
+    # Both finds, against the graph each of them authors: step 0's two fixture
+    # items and step 2's three, with the group's own insert and update in them.
+    _assert_read_step_graph(story.case_id, 0, "Order", "items", before)
+    _assert_read_step_graph(story.case_id, 2, "Order", "items", after)
+    # The two reads are separate materializations of one relationship, so the
+    # second answers NEW nodes rather than the first's — the half a contents
+    # comparison cannot see, and the opposite of what a surviving-view story
+    # asserts. The first still answers what it fetched.
+    assert [item.id for item in before.result().items] == [12, 11]
+    assert [item.id for item in after.result().items] == [13, 12, 11]
+    assert after.result().items[2] is not before.result().items[1]
+    assert before.result().items[1].sku == "A-100"
+    # Per step and in total: two levels for each find, two statements for the
+    # write, and no resolving read for it — the group's own find already
+    # published the row its update settles against.
+    steps = _scenario_steps(story.case_id)
+    assert [before.execution.round_trips, after.execution.round_trips] == [
+        steps[0]["roundTrips"],
+        steps[2]["roundTrips"],
+    ]
+    assert (
+        committed.execution.round_trips
+        == case_document(_CASES[story.case_id])["then"]["roundTrips"]
+    )
+    # The group really committed: a fresh read outside it observes what the
+    # dependent find observed inside it.
+    assert _committed_item_ids(db, 1) == [13, 12, 11]
 
 
 def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) -> None:

@@ -1310,6 +1310,25 @@ def customer_update_settles_against_classified_stored_data(db: Database) -> None
     db.transact(rename)
 ```
 
+## A dependent find observes its own writes across a relationship
+
+Corpus case: `m-unit-work-029`
+
+```python
+def a_grouped_read_observes_its_own_relationship_writes(
+    db: Database,
+) -> TransactionResult[tuple[Snapshot[Any], Snapshot[Any]]]:
+    def read_your_own_writes(tx: Transaction) -> tuple[Snapshot[Any], Snapshot[Any]]:
+        before = tx.find(Order.where(Order.id == 1).include(Order.items))
+        loaded_item = before.result().items[1]  # item 11, by the declared `id desc`
+        tx.insert(OrderItem(id=13, order_id=1, sku="D-130", quantity=6))
+        tx.update(loaded_item.edit(sku="Rewritten"))  # settles against the RELATIONSHIP's own row
+        after = tx.find(Order.where(Order.id == 1).include(Order.items))  # sees both, uncommitted
+        return before, after
+
+    return db.transact(read_your_own_writes)
+```
+
 ## A nested equality predicate through a value-object attribute
 
 Corpus case: `m-value-object-001`

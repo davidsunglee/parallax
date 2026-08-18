@@ -2,8 +2,9 @@
 
 Each story is ONE executable function over the **public** developer surface
 (``parallax.snapshot.connect`` -> ``db.find``), mirroring one corpus
-``m-snapshot-read`` (or a closely related ``m-navigate``/``m-value-object``)
-case whose oracle is a materialized **graph** — a `then.graph`/`then.graphs`
+``m-snapshot-read`` (or a closely related ``m-navigate``/``m-value-object``/
+``m-unit-work``) case whose oracle is a materialized **graph** — a
+`then.graph`/`then.graphs`
 document or a scenario's own per-step observable. This is the read-side sibling
 of ``stories.py``'s write stories: an example whose behavior is only observable
 by executing it must run through the
@@ -284,6 +285,20 @@ def a_write_keeps_a_view_over_freshly_inserted_rows(
     committed = db.transact(rewrite)
     reread = db.find(OrderItem.where(OrderItem.id == 61))  # where the write IS observable
     return created, snapshot, loaded_items, committed, reread
+
+
+def a_grouped_read_observes_its_own_relationship_writes(
+    db: Database,
+) -> TransactionResult[tuple[Snapshot[Any], Snapshot[Any]]]:
+    def read_your_own_writes(tx: Transaction) -> tuple[Snapshot[Any], Snapshot[Any]]:
+        before = tx.find(Order.where(Order.id == 1).include(Order.items))
+        loaded_item = before.result().items[1]  # item 11, by the declared `id desc`
+        tx.insert(OrderItem(id=13, order_id=1, sku="D-130", quantity=6))
+        tx.update(loaded_item.edit(sku="Rewritten"))  # settles against the RELATIONSHIP's own row
+        after = tx.find(Order.where(Order.id == 1).include(Order.items))  # sees both, uncommitted
+        return before, after
+
+    return db.transact(read_your_own_writes)
 
 
 def a_multi_hop_access_drops_its_null_branches(db: Database) -> Snapshot[Any]:
@@ -743,6 +758,12 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "A fanned-out multi-hop access answers its non-null terminals alone",
         "orders",
         a_multi_hop_access_drops_its_null_branches,
+    ),
+    GraphStory(
+        "m-unit-work-029",
+        "A dependent find observes its own writes across a relationship",
+        "orders",
+        a_grouped_read_observes_its_own_relationship_writes,
     ),
     GraphStory(
         "m-snapshot-read-007",

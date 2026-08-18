@@ -17,10 +17,11 @@ history run-through.
 
 Most graph stories read only, and their canned port refuses DML outright so a
 story that quietly acquired a write is caught here. The composition stories
-(`m-snapshot-read-017`/`-018`/`-019`/`-020`/`-023`/`-024`/`-025`) are the
-exception by construction: what they demonstrate is a materialized view standing
-across a COMMITTED write, so they need a port that opens a transaction and takes
-the DML (:class:`_WritingCannedPort`).
+(`m-snapshot-read-017`/`-018`/`-019`/`-020`/`-023`/`-024`/`-025`) and the
+read-your-own-writes story (`m-unit-work-029`) are the exception by
+construction: what they demonstrate is a materialized view standing across a
+COMMITTED write, or a find inside the write's own unit of work, so they need a
+port that opens a transaction and takes the DML (:class:`_WritingCannedPort`).
 
 Running the bodies here is also what makes a scenario case's per-step finds
 reachable for the Object Query no-drift guard `m-api-conformance` requires: those
@@ -48,9 +49,15 @@ from parallax.core import DomainModel, ObjectQuery
 from parallax.core.base import INFINITY
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.unit_work import Clock
+from parallax.core.unit_work import Clock, Concurrency
 from parallax.snapshot import is_view_loaded
-from parallax.snapshot.handle import Database, Snapshot, TransactionTimePinReadOnlyError
+from parallax.snapshot.handle import (
+    Database,
+    Snapshot,
+    Transaction,
+    TransactionResult,
+    TransactionTimePinReadOnlyError,
+)
 
 _ORDER_ROW: Row = {
     "id": 1,
@@ -224,8 +231,10 @@ class _WritingCannedPort(_TransactingCannedPort):
 
 
 # The stories whose body commits DML (`m-snapshot-read-017`/`-018`/`-019`/`-020`/
-# `-023`/`-024`/`-025`): the composition arm, where what is demonstrated is the
-# materialized view standing across a persisting write.
+# `-023`/`-024`/`-025` and `m-unit-work-029`): the composition arm, where what is
+# demonstrated is the materialized view standing across a persisting write — and,
+# for the read-your-own-writes story, a dependent find inside the write's own unit
+# of work.
 _WRITING_STORIES: frozenset[Callable[..., Any]] = frozenset(
     {
         graph_stories.a_write_keeps_a_loaded_to_one_view,
@@ -235,6 +244,7 @@ _WRITING_STORIES: frozenset[Callable[..., Any]] = frozenset(
         graph_stories.a_write_keeps_a_loaded_value_object_document,
         graph_stories.a_write_keeps_a_view_over_freshly_inserted_rows,
         graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view,
+        graph_stories.a_grouped_read_observes_its_own_relationship_writes,
     }
 )
 
@@ -320,6 +330,12 @@ def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
     row the write settles against, and a read-back that answers nothing here
     because the canned port is a stub rather than a store — and the multi-hop
     story three times, one per level of the `statuses.orderItem` path.
+
+    The read-your-own-writes story reads four times, two levels for each of the
+    two finds its own `uow` group issues. Its second find answers the SAME rows
+    here as its first: a canned port is a stub rather than a store, so what the
+    dependent find observes of the group's own writes is the real-database
+    driver's to say.
     """
     if run is graph_stories.mutation_has_no_writeback:
         return [[_ORDER_ROW], [_ORDER_ROW]]
@@ -341,6 +357,9 @@ def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
         return [[_ORDER_ROW], [_ORDER_ITEM_ROW], [_ORDER_ITEM_ROW], []]
     if run is graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view:
         return [[_POLICY_2_ROW], [_COVERAGE_20_ROW], [_COVERAGE_20_ROW], []]
+    if run is graph_stories.a_grouped_read_observes_its_own_relationship_writes:
+        items = [_ORDER_ITEM_12_ROW, _ORDER_ITEM_ROW]
+        return [[_ORDER_ROW], items, [_ORDER_ROW], items]
     if run in (
         graph_stories.an_edited_copy_keeps_its_source_nodes_views,
         graph_stories.an_edit_keeps_a_loaded_relationship_view,
@@ -486,32 +505,109 @@ def test_the_multi_hop_story_drops_its_null_branch_in_memory() -> None:
     assert reached[0] is reached[1]
 
 
+def test_the_read_your_own_writes_story_addresses_the_relationships_own_row() -> None:
+    # The in-memory half of `m-unit-work-029`. What the dependent find observes of
+    # the group's own writes needs a real store, so that half is
+    # `test_story_run.py`'s; what needs no database is where the update's own
+    # address came from — the item the RELATIONSHIP level published, never a read
+    # of its own. Both writes reach the wire with the case's own binds, and the
+    # `11` in the update's is that provenance stated as a value.
+    story = _STORIES_BY_RUN[graph_stories.a_grouped_read_observes_its_own_relationship_writes]
+    port = _WritingCannedPort(_responses_for(story.run))
+    committed = story.run(_connect(story, port))
+    _assert_wire_binds(story.case_id, port)
+    before, _after = committed.value
+    assert [item.id for item in before.result().items] == [12, 11]
+
+
+class _RecordingTransaction:
+    """A ``Transaction`` façade recording the Object Query each ``find`` receives.
+
+    A GROUPED scenario's own find steps run inside the group's transaction, so
+    the queries mirroring those steps are taken here rather than at the handle.
+    Every other verb passes straight through, and a story whose case does NOT
+    group its finds is never driven this way: there a ``tx.find`` is the
+    resolving read a keyed write owes, counted by its write step and authored as
+    no find step at all.
+    """
+
+    __slots__ = ("_queries", "_tx")
+
+    def __init__(self, tx: Transaction, queries: list[ObjectQuery[Any, Any]]) -> None:
+        self._tx = tx
+        self._queries = queries
+
+    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
+        self._queries.append(query)
+        return self._tx.find(query)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._tx, name)
+
+
 class _RecordingDatabase(Database):
     """The shipped handle, recording the Object Query each ``find`` receives.
 
     A scenario step's query is a local inside the story's own body, so reading it
     where the public surface takes it is the only way to compare it with the step
     it mirrors; a second, hand-written copy of the expression would be exactly
-    the drift the comparison exists to catch. ``Transaction.find`` is deliberately
-    untouched — a keyed write's own resolving read is the framework's, counted by
-    the write step rather than authored as one.
+    the drift the comparison exists to catch. ``group_finds`` extends the same
+    recording to the transaction a `uow`-grouped case's find steps run inside
+    (:class:`_RecordingTransaction`); off, a ``tx.find`` stays untouched, because
+    an ungrouped story's own is the framework's resolving read rather than an
+    authored step.
     """
 
-    __slots__ = ("queries",)
+    __slots__ = ("_group_finds", "queries")
 
-    def __init__(self, port: DbPort, model: DomainModel, *, clock: Clock | None = None) -> None:
+    def __init__(
+        self,
+        port: DbPort,
+        model: DomainModel,
+        *,
+        clock: Clock | None = None,
+        group_finds: bool = False,
+    ) -> None:
         super().__init__(port, model, clock=clock)
         self.queries: list[ObjectQuery[Any, Any]] = []
+        self._group_finds = group_finds
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         self.queries.append(query)
         return super().find(query)
 
+    def transact[T](
+        self,
+        fn: Callable[[Transaction], T],
+        *,
+        retries: int | None = None,
+        concurrency: Concurrency | None = None,
+        retry_optimistic_conflicts: bool | None = None,
+    ) -> TransactionResult[T]:
+        def recording(tx: Transaction) -> T:
+            return fn(cast("Transaction", _RecordingTransaction(tx, self.queries)))
+
+        body: Callable[[Transaction], T] = recording if self._group_finds else fn
+        return super().transact(
+            body,
+            retries=retries,
+            concurrency=concurrency,
+            retry_optimistic_conflicts=retry_optimistic_conflicts,
+        )
+
+
+# The scenario stories whose case groups its own find steps, so the queries that
+# mirror them are the transaction's rather than the handle's.
+_GROUPED_FIND_STORIES = frozenset({"m-unit-work-029"})
+
 
 def _recording_db(story: graph_stories.GraphStory) -> _RecordingDatabase:
     clock = story.clock() if story.clock is not None else None
     return _RecordingDatabase(
-        _port_for(story.run, _responses_for(story.run)), MODELS[story.model], clock=clock
+        _port_for(story.run, _responses_for(story.run)),
+        MODELS[story.model],
+        clock=clock,
+        group_finds=story.case_id in _GROUPED_FIND_STORIES,
     )
 
 
@@ -536,6 +632,7 @@ _SCENARIO_FIND_STORIES = (
     "m-snapshot-read-024",
     "m-snapshot-read-025",
     "m-snapshot-read-026",
+    "m-unit-work-029",
 )
 
 # The one scenario-shaped story whose find sequence is not its case's, and why.
