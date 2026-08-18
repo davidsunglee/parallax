@@ -475,17 +475,23 @@ A scenario has no single whole-read graph, so a step's relationship contents
 cannot ride the `graph` key: they are one observation **per step**. `stepGraphs`
 is the optional `observations` array carrying them — one `{ at, graph }` entry
 per scenario step declaring `expectGraph` (`m-case-format`), `at` the JSON
-Pointer naming the step and `graph` the contents that step's access observed, in
-the same entity-keyed shape a `graph` observation carries. Entries appear in step
-order, and a step declaring the oracle whose entry is missing is an unanswered
-oracle rather than a pass.
+Pointer naming the step and `graph` the contents that step observed, in the same
+entity-keyed shape a `graph` observation carries. Entries appear in step order,
+and a step declaring the oracle whose entry is missing is an unanswered oracle
+rather than a pass.
 
-The contents reported are the ones the implementation's own materialized graph
-holds at that step — never a re-read. An adapter that re-queries to answer this
-observation reports that the database is right while the case asks whether the
-view survived, which is the distinction the oracle exists to draw.
+The contents reported are the ones **that step's own graph** holds, which the
+observable's two placements make two different things. For an **access** step
+they are what the already-materialized view the step navigates still holds —
+**never a re-read**: an adapter that re-queries to answer it reports that the
+database is right while the case asks whether the view survived, which is the
+distinction the oracle exists to draw. For a **read** step they are what that
+read itself materialized, roots and included relationships together — the same
+value a whole-read `graph` observation carries, reported per step because a
+scenario has many reads. An adapter answering a read step from some earlier
+step's retained view would report the same confusion from the other side.
 
-A multi-hop `path` is walked under the null-branch rule `m-case-format` states:
+A multi-hop access `path` is walked under the null-branch rule `m-case-format` states:
 a path fanning out through any to-many hop reports its **non-null** terminals,
 and an all-to-one path reports one terminal per root, `null` where its branch
 reached no row. That rule belongs to the observable rather than to any one

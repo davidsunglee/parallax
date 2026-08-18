@@ -6891,6 +6891,48 @@ def _assert_step_graph(
         )
 
 
+def _assert_read_step_graph(
+    case: Case,
+    index: int,
+    step: dict[str, Any],
+    includes: _StepIncludes | None,
+    read_entity: Entity | None,
+) -> None:
+    """Assert a READ step's ``expectGraph`` — the graph that read materialized
+    (`m-case-format` *Relationship contents at a step*).
+
+    The other placement of one observable, and the opposite claim: an `access`
+    states what an already-materialized view still holds, while this states what
+    a fresh query answered. Inside a `uow` group that query runs on the group's
+    own held session, so the contents are the mid-transaction state that
+    connection observes — read-your-own-writes over a relationship — and
+    ungrouped they are the committed database.
+
+    Assembly is the same the graph read case runs (:func:`_assemble_graph`), over
+    this step's own retained buckets, and the comparison the same model-aware
+    :func:`_graphs_equal`. A step declaring the oracle without Include Paths
+    materialized no relationship to state.
+    """
+    expected = step.get("expectGraph")
+    if expected is None:
+        return
+    if includes is None or read_entity is None:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] declares expectGraph on a read that "
+            f"carries no `objectQuery.includes`. The contents a read step states are the "
+            f"relationships its own Include Paths materialized."
+        )
+    observed = _assemble_graph(
+        case, includes.query, includes.steps, includes.root_rows, includes.children_by_hop
+    )
+    if not _graphs_equal(observed, expected, case.model):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] materialized graph != expectGraph.\n"
+            f"  observed: {observed!r}\n"
+            f"  expected: {expected!r}"
+        )
+
+
 def _reuse_prior_rows(
     case: Case, step: dict[str, Any], index: int, results: list[list[dict[str, Any]]]
 ) -> list[dict[str, Any]]:
@@ -7317,6 +7359,10 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             _assert_step_row_observables(
                 case, index, step, rows, results, tolerance, default_identity
             )
+            # `expectGraph` here states what THIS read materialized — grouped, on
+            # the group's own held session, so it is what that transaction
+            # observes mid-flight rather than what any earlier view retained.
+            _assert_read_step_graph(case, index, step, includes, read_entity)
             _finish_uow_group(case, index, label, group_states, dialect)
 
 

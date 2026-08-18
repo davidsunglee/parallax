@@ -265,7 +265,7 @@
       }
     },
     "stepGraphObservation": {
-      "description": "The relationship contents observed at ONE scenario step declaring `expectGraph` (m-case-format): `at` is the JSON Pointer naming the step, and `graph` the contents that step's access observed, keyed by the traversed relationship's target Entity under its local name. The contents are the ones the implementation's own materialized graph holds at that step, never a re-read — an adapter that re-queries reports that the database is right while the case asks whether the view survived.",
+      "description": "The relationship contents observed at ONE scenario step declaring `expectGraph` (m-case-format): `at` is the JSON Pointer naming the step, and `graph` the contents that step observed. The observable's two placements report two different graphs. An ACCESS step reports what the already-materialized view it navigates still holds, keyed by the traversed relationship's target Entity under its local name — never a re-read, since an adapter that re-queries reports that the database is right while the case asks whether the view survived. A READ step reports what that read itself materialized, roots and included relationships together, keyed by its own target Entity — the same value a whole-read `graph` observation carries, reported per step because a scenario has many reads.",
       "type": "object",
       "additionalProperties": false,
       "required": ["at", "graph"],

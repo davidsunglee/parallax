@@ -1462,8 +1462,8 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
   identical** (two finite coordinates in one milestone, `m-identity-map`), which
   value equality alone cannot distinguish, so it is graded as reference identity
   only. A single step declares at most one of the two.
-- **`expectGraph`** — the relationship contents an `access` step observes, in
-  `then.graph`'s own shape (see *Relationship contents at a step*, below).
+- **`expectGraph`** — the relationship contents a step observes, in `then.graph`'s
+  own shape (see *Relationship contents at a step*, below).
 - **`expectState`** — the lifecycle state the target object is in after the step,
   from the `m-detach` five-state machine (`in-memory` / `persisted` / `deleted` /
   `detached` / `detached-deleted`).
@@ -1493,29 +1493,46 @@ step-level analogue of `then.graph` exactly as `expectRows` is the step-level
 analogue of `then.rows`: it carries `then.graph`'s own shape — an
 entity-name-keyed map whose value is a list of nodes, every key a declared member
 name, every leaf a canonical Wire Value, a to-many member a list and a to-one
-member a single node or null — keyed by the **target** entity of the relationship
-the step's `path` navigates to, under that entity's local name. Collection kinds
-compare exactly as `then.graph`'s do (entity collections as multisets, a
-`multiplicity: many` Value Object positionally), and an unattached slot is
-authored **absent** rather than empty, because a key one side carries and the
-other does not is simply unequal.
+member a single node or null. Collection kinds compare exactly as `then.graph`'s
+do (entity collections as multisets, a `multiplicity: many` Value Object
+positionally), and an unattached slot is authored **absent** rather than empty,
+because a key one side carries and the other does not is simply unequal.
 
-It is legal **only on an `action: access` step**, and that placement is the
-point. A read-back step re-queries the database, so it proves the **database** is
-right and says nothing about the in-memory graph; only an access on a node the
-scenario already materialized proves the **view survived** whatever the steps in
-between did. The access therefore names the read that materialized the view
-(`on`), and that read MUST carry `objectQuery.includes` covering the accessed
-path — an access over a relationship no read included has no materialized
-contents to state, and asserting some would be asserting a fresh read.
+It has exactly **two placements**, and they state different things about
+different graphs. Both require Include Paths, because relationship contents are
+what the observable carries; no other step admits it, a write step and every
+other action verb materializing no graph and navigating no relationship.
 
-It also names the navigated relationship itself (`path`), which is the path
-whose target entity keys the contents and whose coverage the source read's
-includes are judged against. The **path-less** access form resolves a
-query-backed list's own source entity and navigates no relationship at all, so
-it reaches no contents to state and admits no `expectGraph`.
+**On an `action: access` step** the contents are the ones an
+**already-materialized** view still holds, so what the step proves is that the
+**view survived** whatever the steps in between did. The access names the read
+that materialized the view (`on`), and that read MUST carry
+`objectQuery.includes` covering the accessed path — an access over a relationship
+no read included has no materialized contents to state, and asserting some would
+be asserting a fresh read. It also names the navigated relationship itself
+(`path`), which is the path whose **target** entity keys the contents and whose
+coverage the source read's includes are judged against. The **path-less** access
+form resolves a query-backed list's own source entity and navigates no
+relationship at all, so it reaches no contents to state and admits no
+`expectGraph`.
 
-A multi-hop `path` is walked hop by hop over the materialized view, and a branch
+**On a read step carrying `objectQuery.includes`** the contents are the ones
+**that read materialized**: the whole graph it produced, keyed by its own
+`objectQuery.target` under the local name `then.graph` uses, each root carrying
+the relationship members its own Include Paths populated. What such a step proves
+is what its own connection **observed** — for an ungrouped read, that the
+**database** is right; for a read inside a `uow` group, what that transaction
+sees mid-flight, which is read-your-own-writes stated over a relationship rather
+than over a scalar (`m-unit-work`). It proves nothing about survival, because it
+re-queries: a step that re-read every row can satisfy it while holding no view at
+all. The two placements are therefore not interchangeable, and a case asking
+whether a materialized view outlived a write reaches for the access placement
+while one asking what a write left behind reaches for the read placement.
+
+A read step declaring no `includes` admits no `expectGraph`: it materializes root
+rows and no relationship, which is exactly what `expectRows` already states.
+
+An access's multi-hop `path` is walked hop by hop over the materialized view, and a branch
 that reached **no row** contributes what the fetch left behind: such a branch
 hands its deeper levels an **empty parent set** (`m-deep-fetch`), so nothing
 below it was ever materialized to state. A path with **any to-many hop** reaches
@@ -1531,18 +1548,23 @@ reaches none. This is the walk every executor performs and every conforming
 adapter reports (`m-conformance-adapter`), so one authored `expectGraph` grades
 the same contents in every lane.
 
-That `on` is a **single index**, never the array form. The array spans sources
-at different lowered coordinates, and contents gathered across several such
-views would be a graph no one materialized view holds — while what this
+An access's `on` is a **single index**, never the array form. The array spans
+sources at different lowered coordinates, and contents gathered across several
+such views would be a graph no one materialized view holds — while what this
 observable asks is what **one** view answers after the steps in between. An
 access stating contents therefore names one read, and a case observing several
 views states each on its own access step.
 
-A step declares `expectRows` or `expectGraph`, never both: `expectRows` states
-the rows of the step's own source result while `expectGraph` states the contents
-of the relationship it navigated **to**, so the two would describe two different
-entities on one step. An author wanting the navigated entity's rows states them
-as `expectGraph` nodes.
+A step declares `expectRows` or `expectGraph`, never both — one content oracle
+per step, in each placement for its own reason. On an access step they would
+describe two different entities: `expectRows` states the rows of the step's own
+source result while `expectGraph` states the contents of the relationship it
+navigated **to**. On a read step they describe the same roots in two
+vocabularies — `expectRows` in the projection's physical column spelling,
+`expectGraph` in declared member names — and the graph's roots already carry
+every value the rows do, so stating both restates one observation twice and lets
+the two drift. An author wanting the navigated entity's rows states them as
+`expectGraph` nodes.
 
 ### Coherence cases (`m-coherence`)
 
