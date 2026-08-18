@@ -29,7 +29,7 @@
 # resolves to the mandatory Locking fallback, and neither insert needs an
 # observation or a gate either way.
 model: models/orders.yaml
-tags: [m-execution-log, m-unit-work, write-batch, finalization, slice-snapshot-1]
+tags: [m-execution-log, m-unit-work, write-batch, finalization]
 shape: scenario
 when:
   scenario:

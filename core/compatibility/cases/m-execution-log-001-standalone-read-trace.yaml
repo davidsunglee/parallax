@@ -17,7 +17,7 @@
 # stays the single SQL and bind oracle. No lock suffix appears — the read runs on
 # no transaction, so the m-read-lock in-transaction rule never applies.
 model: models/account.yaml
-tags: [m-execution-log, m-snapshot-read, read-trace, slice-snapshot-1]
+tags: [m-execution-log, m-snapshot-read, read-trace]
 shape: read
 when:
   objectQuery:

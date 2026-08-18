@@ -123,11 +123,6 @@ _BUCKET_FREE_MODULES: frozenset[str] = frozenset(
         "m-inheritance",
         "m-read-lock",
         "m-metamodel",
-        # m-execution-log's whole spine is case-scoped: the module is claimed
-        # because the slice claims it, while its runtime provenance is unbuilt,
-        # so each of the seven carries its own registration reason rather than a
-        # module bucket that would outlive the gap.
-        "m-execution-log",
     }
 )
 

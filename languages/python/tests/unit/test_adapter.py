@@ -940,23 +940,12 @@ class _AccountPort:
         return body(self)
 
 
-def test_a_case_authoring_the_oracle_gets_the_provenance_its_run_produced() -> None:
+def test_a_legacy_execution_log_case_is_outside_the_active_claim() -> None:
     case_path = case_format.default_cases_dir() / "m-execution-log-001-standalone-read-trace.yaml"
     envelope = adapter.run_case(case_path, "postgres", _AccountPort())
     jsonschema.validate(envelope, _SCHEMA)
-    assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["execution"] == {
-        "readTrace": {
-            "calls": [
-                {
-                    "kind": "read",
-                    "completion": {"readCompleted": {"returnedRows": 1}},
-                    "statement": 0,
-                }
-            ],
-            "roundTrips": 1,
-        }
-    }
+    assert envelope["status"] == "unsupported", envelope
+    assert envelope["diagnostics"][0]["code"] == "unsupported-module"
 
 
 def test_a_case_not_authoring_the_oracle_reports_no_execution_observation() -> None:

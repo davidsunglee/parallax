@@ -140,13 +140,11 @@ def test_boundary_case_runs_through_the_shipped_surface(
         assert logs[0].round_trips == expected_round_trips, case.case_id
 
 
-def test_reachable_boundary_cases_cover_the_expected_eleven() -> None:
+def test_reachable_boundary_cases_cover_the_expected_eight() -> None:
     # Grep-verified complete set (the corpus's complete boundary
     # population): `m-auto-retry-001..005`, `m-opt-lock-010/011`,
-    # `m-unit-work-004`, and the three `m-execution-log` spine cases whose
-    # observables need an injected fault or a nested boundary — never a hand list
-    # at the RUNNER level (the corpus itself drives `_CASES` above); this is a
-    # coverage assertion only.
+    # and `m-unit-work-004` — never a hand list at the RUNNER level (the corpus
+    # itself drives `_CASES` above); this is a coverage assertion only.
     assert _CASE_IDS
     assert set(_CASE_IDS) == {
         "m-auto-retry-001",
@@ -154,9 +152,6 @@ def test_reachable_boundary_cases_cover_the_expected_eleven() -> None:
         "m-auto-retry-003",
         "m-auto-retry-004",
         "m-auto-retry-005",
-        "m-execution-log-004",
-        "m-execution-log-005",
-        "m-execution-log-007",
         "m-opt-lock-010",
         "m-opt-lock-011",
         "m-unit-work-004",

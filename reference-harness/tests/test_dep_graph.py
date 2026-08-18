@@ -96,7 +96,7 @@ def test_real_catalog_matches_the_graph() -> None:
     graph_modules = {m for edge in parse_edges(markdown) for m in edge}
     # The catalog table and the dependency graph list exactly the same modules.
     assert graph_modules == set(catalog)
-    assert catalog["m-db-port"]["coverage"] == "contract"  # the sole contract-covered module
+    assert catalog["m-db-port"]["coverage"] == "contract"
     assert catalog["m-agg"]["status"] == "deferred"  # aggregation is deferred
     assert catalog["m-core"]["status"] == "active"
     assert catalog["m-storage-layout"] == {"status": "active", "coverage": "cases"}
@@ -658,7 +658,7 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
 @pytest.mark.parametrize(
     ("slice_tag", "expected"),
     [
-        ("slice-snapshot-1", 487),
+        ("slice-snapshot-1", 481),
         ("slice-managed-1", 480),
     ],
 )

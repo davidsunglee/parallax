@@ -26,7 +26,7 @@
 # spelling, so no golden SQL is authored and each Database Call omits its
 # `statement` index, so that story grades the whole case.
 model: models/account.yaml
-tags: [m-execution-log, m-unit-work, m-api-conformance, joined, slice-snapshot-1]
+tags: [m-execution-log, m-unit-work, m-api-conformance, joined]
 lane: api-conformance
 shape: boundary
 compileEligibility:

@@ -135,63 +135,6 @@ def customer_locations_deep_fetch_materializes_the_child_document_too(
     return db.find(Customer.where(Customer.all).include(Customer.locations))
 ```
 
-## A joined unit of work appends to the OUTER transaction's live Execution Log
-
-Corpus case: `m-execution-log-007`
-
-```python
-def a_joined_unit_of_work_appends_to_the_outer_live_log(db: Database) -> JoinedLog:
-    """A joined write reaches the database under the OUTER boundary's own
-    finalization, and the joined result reads the outer transaction's live log.
-
-    ``db`` is connected to the story model and holds the seeded account row the
-    joined body bumps. The returned ``JoinedLog`` carries what the terminal
-    oracle cannot state — the attempt's status before any work completed, the
-    trace count either side of the join, that the joined result exposed the same
-    log OBJECT rather than a copy, that the log was still unsealed, and the name
-    of the refusal its execution view raised while the outer boundary ran —
-    beside the committed invocation's own result.
-    """
-    seen: list[LiveJoin] = []
-
-    def outer(tx: Transaction) -> ExecutionLog:
-        live = tx.execution_log
-        # The attempt is visible before any work completes, so the log never
-        # shows a gap between "the invocation started" and "something happened".
-        status = live.final_attempt.status
-        current = tx.find(Account.where(Account.id == _TARGET_ID)).result()
-        before = len(live.final_attempt.traces)
-
-        def joined_body(joined_tx: Transaction) -> None:
-            joined_tx.update(current.edit(balance=current.balance + _BUMP))
-
-        # A joined call shares the outer transaction rather than opening a
-        # nested one, so its result carries the SAME live log object — and its
-        # common execution view is unavailable until that boundary commits.
-        joined = db.transact(joined_body)
-        try:
-            refusal = type(joined.execution).__name__
-        except TransactionInProgressError as exc:
-            refusal = type(exc).__name__
-        seen.append(
-            LiveJoin(
-                status_while_running=status,
-                traces_before_join=before,
-                # The read's trace was appended as it closed; the joined write is
-                # still buffered, and reaches the database under the OUTER
-                # boundary's own finalization.
-                traces_after_join=len(live.final_attempt.traces),
-                shares_the_outer_log=joined.execution_log is live,
-                sealed_while_running=live.is_sealed,
-                execution_refusal=refusal,
-            )
-        )
-        return live
-
-    result = db.transact(outer)
-    return JoinedLog(live=seen[0], result=result)
-```
-
 ## Table-per-hierarchy concrete-target read
 
 Corpus case: `m-inheritance-001`

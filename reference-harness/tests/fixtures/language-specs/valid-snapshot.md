@@ -15,7 +15,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
     "version": "1.0.0"
   },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-log", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -25,7 +25,8 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 }
 ```
 
-The one unclaimed implementation prerequisite is `m-db-port`.
+The unclaimed implementation prerequisites are `m-db-port` and
+`m-execution-lifecycle`.
 Deferred behavior is recorded separately. Verification selects the active slice
 tag intersected with the relevant capability tags.
 
@@ -61,7 +62,7 @@ shared-node states remain distinct without issuing later SQL.
 | `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel`, `m-inheritance` | depcheck.toml |
 | `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |
 | `m-document-codec` | src/document-codec | document-codec | `m-core`, `m-metamodel`, `m-wire` | depcheck.toml |
-| `m-execution-log` | src/execution-log | execution-log | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | depcheck.toml |
+| `m-execution-lifecycle` | src/execution-lifecycle | execution-lifecycle | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | depcheck.toml |
 | `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-storage-layout` | src/storage-layout | storage-layout | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | depcheck.toml |
 | `m-metamodel` | src/metamodel | metamodel | `m-core` | depcheck.toml |
@@ -72,7 +73,7 @@ shared-node states remain distinct without issuing later SQL.
 | `m-opt-lock` | src/opt-lock | opt-lock | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |
 | `m-read-lock` | src/read-lock | read-lock | `m-unit-work`, `m-dialect` | depcheck.toml |
-| `m-snapshot-read` | src/snapshot | snapshot | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-log`, `m-wire` | depcheck.toml |
+| `m-snapshot-read` | src/snapshot | snapshot | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire` | depcheck.toml |
 | `m-sql` | src/sql | sql | `m-predicate`, `m-object-query`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec` | depcheck.toml |
 | `m-relationship` | src/relationship | relationship | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-temporal-read` | src/temporal-read | temporal-read | `m-predicate`, `m-object-query`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |

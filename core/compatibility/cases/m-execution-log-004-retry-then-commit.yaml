@@ -33,7 +33,7 @@
 # authored, so each Database Call omits its `statement` index. Satisfied by each
 # language's API Conformance Suite.
 model: models/account.yaml
-tags: [m-execution-log, m-opt-lock, m-auto-retry, m-api-conformance, retry, slice-snapshot-1]
+tags: [m-execution-log, m-opt-lock, m-auto-retry, m-api-conformance, retry]
 lane: api-conformance
 shape: boundary
 compileEligibility:

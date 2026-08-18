@@ -84,7 +84,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-unit-work": "parallax.core.unit_work",
     "m-read-lock": "parallax.core.read_lock",
     "m-auto-retry": "parallax.core.auto_retry",
-    "m-execution-log": "parallax.core.execution_log",
+    "m-execution-lifecycle": "parallax.core.execution_log",
     "m-opt-lock": "parallax.core.opt_lock",
     "m-temporal-read": "parallax.core.temporal_read",
     "m-txtime-write": "parallax.core.txtime_write",
@@ -93,7 +93,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-navigate": "parallax.core.navigate",
     "m-deep-fetch": "parallax.core.deep_fetch",
     # The tag maps to the read-RESULT module rather than to the row-to-graph
-    # package: `m-snapshot-read --> m-execution-log` reaches `m-sql`, and a
+    # package: `m-snapshot-read --> m-execution-lifecycle` reaches `m-sql`, and a
     # forbidden row is the complement of a closure, so granting that package the
     # provenance edge would hand every consumer of the row-to-graph surface SQL
     # generation with it.
@@ -254,7 +254,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot._read_result": frozenset({"parallax.snapshot.materialize"}),
     # The row-to-graph half of `m-snapshot-read`, scoped apart from the read
     # result `parallax.snapshot._read_result` publishes. It holds every
-    # `m-snapshot-read` edge EXCEPT `m-execution-log`, plus the shared carrier
+    # `m-snapshot-read` edge EXCEPT `m-execution-lifecycle`, plus the shared carrier
     # algebra, which has no language-neutral module tag either. Withholding the
     # provenance edge here is what keeps `m-sql`, `m-db-error`, `m-auto-retry`
     # and `m-dialect` outside this scope's closure — and therefore outside the

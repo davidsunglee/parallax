@@ -233,10 +233,6 @@ _STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS: Final[frozenset[str]] = frozenset(
 # same reference bare over the same model and is refused, so only this half has a
 # golden to grade.
 _CANONICAL_ENTITY_SPELLING_READS: Final[frozenset[str]] = frozenset({"m-predicate-051"})
-# The execution-provenance standalone read (`m-execution-log-001`): an ordinary
-# single-statement row-form read whose golden this lane grades exactly as it
-# grades every other, plus the Read Trace the run lane grades on top of it.
-_EXECUTION_LOG_READS: Final[frozenset[str]] = frozenset({"m-execution-log-001"})
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _DOCUMENT_CODEC_READS
@@ -260,7 +256,6 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _STORAGE_LAYOUT_READS
     | _STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS
     | _CANONICAL_ENTITY_SPELLING_READS
-    | _EXECUTION_LOG_READS
 )
 
 # Keyed, non-temporal unit-of-work writes graded byte-exact across `m-unit-work`,
@@ -558,18 +553,9 @@ _PIN_CONTRAST_SCENARIOS: Final[frozenset[str]] = frozenset(
 # node; and the mutate lane enrolls no view in a unit of work, so it says nothing about
 # write-observation keying.
 _PER_VIEW_PIN_SCENARIOS: Final[frozenset[str]] = frozenset({"m-bitemp-write-023"})
-# The execution-provenance write spine (`m-execution-log-002`/`-003`): two
-# `uow`-grouped scenarios whose golden DML this lane grades like any other
-# grouped scenario's, and whose `then.execution` the run lane grades on top —
-# `-002`'s two writes buffered into one finalization batch, `-003`'s insert
-# forced out early by the dependent find that reads it back.
-_EXECUTION_LOG_SCENARIOS: Final[frozenset[str]] = frozenset(
-    {"m-execution-log-002", "m-execution-log-003"}
-)
 
 WRITE_EXERCISED: Final[frozenset[str]] = (
     _WRITE_SCENARIOS
-    | _EXECUTION_LOG_SCENARIOS
     | _LAYOUT_TWIN_WRITES
     | _WRITE_SEQUENCES
     | _SNAPSHOT_MUTATE_SCENARIOS

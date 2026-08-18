@@ -23,7 +23,6 @@ from typing import Final
 
 from parallax.conformance import (
     case_format,
-    execution_log_stories,
     read_models,
     snapshot_recipes,
     stale_web_edit,
@@ -384,21 +383,6 @@ EXAMPLES: Final[list[Example]] = [
     # closed-world `UnloadedRelationshipError`, a `pin`/`edge_of` coordinate, or
     # a scenario's own per-step observable, `sameObjectAs` included).
     *(Example(story.case_id, story.title, graph_story_snippet(story)) for story in GRAPH_STORIES),
-    # The joined-transaction Execution Log (m-execution-log): the case's own
-    # `then.execution` oracle is a TERMINAL value graph the boundary runner
-    # already grades, so what this executable story adds is the LIVE half no
-    # terminal oracle can express — the log reachable and `active` before
-    # anything completes, the joined result carrying the SAME log object, a
-    # trace appearing on it as it closes, the seal at the outer boundary, and
-    # the two intermediate states surfacing as two distinct refusals. Executed
-    # against real Postgres by `tests/api/test_execution_log_story.py`.
-    Example(
-        "m-execution-log-007",
-        "A joined unit of work appends to the OUTER transaction's live Execution Log",
-        inspect.getsource(
-            execution_log_stories.a_joined_unit_of_work_appends_to_the_outer_live_log
-        ).rstrip("\n"),
-    ),
 ]
 
 # Primary module -> reason its active cases have no idiomatic API example.
@@ -1249,35 +1233,7 @@ _WRITE_VALUE_PROVENANCE_REASON: Final[str] = (
     "value the other verb accepts"
 )
 
-_EXECUTION_LOG_SWEEP_GRADED_REASON: Final[str] = (
-    "the harness-lane half of the m-execution-log spine: each carries golden SQL and its "
-    "`then.execution` oracle is graded end-to-end by the run sweep "
-    "(`tests/compatibility/test_run_sweep.py`) against the provenance the REAL execution "
-    "produced — a Read Trace for the standalone read, an Execution Log for the "
-    "transactional shapes. The observable is the provenance itself rather than a developer "
-    "verb, and reading a log back is the ordinary `db.transact(...).execution_log` every "
-    "transactional example already returns, so an idiomatic example would narrate the "
-    "accessor rather than the behavior"
-)
-
-_EXECUTION_LOG_BOUNDARY_RUNNER_REASON: Final[str] = (
-    "an m-execution-log spine case whose provenance needs an injected fault and an "
-    "exhausted retry bound — observables a single-connection harness cannot provoke — "
-    "graded end-to-end by the case-driven boundary runner "
-    "(`tests/api/test_boundary_run.py`), which drives the REAL `db.transact` against the "
-    "provisioned database and compares its whole Execution Log to the case's own "
-    "`then.execution`. A retry/exhaustion choreography has no single-callback idiomatic "
-    "spelling distinct from what that runner already exercises directly"
-)
-
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
-    # -- m-execution-log: the spine's own two graders ------------------------ #
-    # (`-007` is an exercised story above: the live half of the joined lifecycle)
-    "m-execution-log-001": _EXECUTION_LOG_SWEEP_GRADED_REASON,
-    "m-execution-log-002": _EXECUTION_LOG_SWEEP_GRADED_REASON,
-    "m-execution-log-003": _EXECUTION_LOG_SWEEP_GRADED_REASON,
-    "m-execution-log-004": _EXECUTION_LOG_BOUNDARY_RUNNER_REASON,
-    "m-execution-log-005": _EXECUTION_LOG_BOUNDARY_RUNNER_REASON,
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
     "m-unit-work-021": _OBSERVED_STATE_COALESCING_REASON,

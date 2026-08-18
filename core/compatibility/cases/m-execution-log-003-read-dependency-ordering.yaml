@@ -22,7 +22,7 @@
 # the m-read-lock shared-row-lock suffix, and its Database Call's `readCompleted`
 # reports the one row the just-flushed insert made visible.
 model: models/account.yaml
-tags: [m-execution-log, m-unit-work, write-batch, read-dependency, slice-snapshot-1]
+tags: [m-execution-log, m-unit-work, write-batch, read-dependency]
 shape: scenario
 when:
   uow:

@@ -121,7 +121,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-unit-work` | Transactions & unit of work | active | cases |
 | `m-read-lock` | In-transaction shared read lock | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |
-| `m-execution-lifecycle` | Transient execution observability | active | cases |
+| `m-execution-lifecycle` | Transient execution observability | active | contract |
 | `m-identity-map` | Transaction-scoped identity map (managed-object interning) | active | cases |
 | `m-process-cache` | Process-wide identity & query cache | deferred | cases |
 | `m-temporal-read` | As-of temporal reads (all flavors) | active | cases |

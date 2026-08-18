@@ -135,7 +135,7 @@ uses `None` for both.
 The read transitions are:
 
 ```text
-ReadStarted(targetEntity, interface)
+ReadStarted(target, interface)
 ReadFinished(ReadCompleted | ReadFailed(failure))
 ```
 
@@ -161,7 +161,7 @@ enables are siblings in that order under their current Transaction Attempt.
 The database-call transitions are:
 
 ```text
-DatabaseCallStarted(targetEntity, kind, statement)
+DatabaseCallStarted(target, kind, statement)
 DatabaseCallFinished(statement, durationNs,
     DatabaseReadCompleted(returnedRows)
   | DatabaseWriteCompleted(affectedRows)
@@ -272,7 +272,7 @@ the current Transaction Attempt. Construction alone emits nothing. The stream
 starts only after successful context entry and finishes exactly once as:
 
 ```text
-SnapshotStreamStarted(targetEntity, interface, batchSize)
+SnapshotStreamStarted(target, interface, batchSize)
 SnapshotStreamFinished(
     StreamExhausted
   | StreamClosedEarly

@@ -19,8 +19,8 @@ never something an application developer hand-writes.
 |---|---|
 | Conformance Slice | `slice-snapshot-1` — tag `slice-snapshot-1`, plain-value **snapshot** lifecycle profile, defined in [`core/spec/slices.md`](../../../core/spec/slices.md). |
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
-| Claimed capability coverage | Copied verbatim from the canonical claim: the 29 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
-| Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
+| Claimed capability coverage | Copied verbatim from the canonical claim: the `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
+| Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`. `m-execution-lifecycle` — reached directly by `m-snapshot-read` and supplied by `parallax.core.execution_lifecycle`. Both are contract-covered rather than case-advertised. |
 | Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public query-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
 
@@ -29,7 +29,7 @@ never something an application developer hand-writes.
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "python", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-lifecycle", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -48,19 +48,13 @@ never something an application developer hand-writes.
   `unsupported-module`; a case not carrying `slice-snapshot-1` →
   `unsupported-case-tag`. Each response carries a diagnostic naming the first
   failed filter.
-- **Single-witness execution lifecycle.** `m-execution-lifecycle`'s
-  `then.executionLifecycle` oracle is graded against a running implementation
-  by this target alone: the compatibility harness validates the authored oracle
-  but opens no lifecycle Handler of its own, so a disagreement between Python
-  and the specification has no second reader. The `then.roundTrips` a
-  `boundary` case or a retry-shaped `conflict` case authors is single-witness for
-  the same reason and by a second mechanism: the harness executes no
-  `api-conformance`-lane case at all, and its retry branch asserts per-attempt
-  affected rows and table state without ever counting round trips. Every other
-  claimed module's runtime observables are double-witnessed. Both exceptions are
-  deliberate and hold only until a second grader exists, not permanent properties
-  of the module; [`docs/deferred-ledger.md`](../docs/deferred-ledger.md) forwards
-  to the issue that owns building one.
+- **Single-witness API observations.** The `then.roundTrips` a `boundary` case or
+  a retry-shaped `conflict` case authors is single-witness: the compatibility
+  harness executes no `api-conformance`-lane case, and its retry branch asserts
+  per-attempt affected rows and table state without counting round trips. Every
+  claimed module's other runtime observables are double-witnessed. The exception
+  holds only until a second grader exists; [`docs/deferred-ledger.md`](../docs/deferred-ledger.md)
+  forwards to the issue that owns building one.
 - **Case-selection expression.** Verification selects
   `("slice-snapshot-1" ∈ case.tags) ∧ (dialect = postgres) ∧ (case.shape ∈ claimed caseShapes) ∧ (case module-tags ⊆ claimed modules)`;
   milestone-scoped runs intersect further with capability tags via
@@ -4302,7 +4296,7 @@ parallax.snapshot.handle --> parallax.core.sql_gen
 parallax.snapshot.handle --> parallax.core.unit_work
 parallax.snapshot.handle --> parallax.core.read_lock
 parallax.snapshot.handle --> parallax.core.auto_retry
-parallax.snapshot.handle --> parallax.core.execution_lifecycle
+parallax.snapshot.handle --> parallax.core.execution_log
 parallax.snapshot.handle --> parallax.core.opt_lock
 parallax.snapshot.handle --> parallax.core.batch_write
 parallax.snapshot.handle --> parallax.core.txtime_write
@@ -4715,8 +4709,8 @@ rows receive the transaction's shared lock.
   branch are retained; all managed-object instructions are removed.
 - `slice-snapshot-1` exists in `slices.md`, is lifecycle-complete, and the §1
   envelope equals its canonical claim except for the `adapter` identity.
-- Claimed coverage is the canonical tagged-case union; the sole transitive
-  unclaimed prerequisite and every explicit deferral are listed separately.
+- Claimed coverage is the canonical tagged-case union; the contract-covered
+  unclaimed prerequisites and every explicit deferral are listed separately.
 - No conditional section's applicability condition is true, and none is
   present.
 - The §7 map covers all claimed modules, the prerequisite, and the support

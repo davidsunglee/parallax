@@ -34,7 +34,7 @@ appears in fixture ``tags``. The DAG check asserts:
 The **coverage gate** reads the module catalog table from ``modules.md`` and
 asserts each ``active`` / ``cases`` module has fixture coverage, measured against
 the ``tags`` of every fixture under ``core/compatibility/`` (cases *and*
-benchmarks). ``deferred`` modules and the one ``contract``-covered module
+benchmarks). ``deferred`` modules and ``contract``-covered modules
 (``m-db-port``) are excluded from the gate by construction.
 """
 
