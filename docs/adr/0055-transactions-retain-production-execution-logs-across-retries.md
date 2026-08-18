@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0060
+---
+
 # Transactions retain production execution logs across retries
 
 The core `m-execution-log` module owns the language-neutral production record

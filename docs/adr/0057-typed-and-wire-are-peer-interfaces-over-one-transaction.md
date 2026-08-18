@@ -2,7 +2,8 @@
 
 Typed and Wire reads and writes are peer interfaces over the same handle and,
 inside a transaction, the same Unit Work, observation ledger, locking, and
-Execution Log. Each keyed write takes an observed source from its own
+transient Execution Lifecycle. Each keyed write takes an observed source from
+its own
 representation, while writes from both representations coalesce and flush
 through the shared transaction machinery. A Wire Entity returned by a Parallax
 Wire read may carry an opaque Source Hint identifying its exact concrete Entity

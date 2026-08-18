@@ -23,6 +23,7 @@ The consequence is that `concurrency="optimistic"` means gate-preferred rather
 than universally lock-free. Current-transaction read participation remains
 mandatory whenever the derived strategy is Locking, including the unversioned
 fallback; authentic standalone Typed or Wire evidence is sufficient only when a
-version or milestone gate makes the Entity effectively Optimistic. Execution
-Logs retain the resolved preference once, while their Database Calls expose the
-actual mixed locking and gated statements.
+version or milestone gate makes the Entity effectively Optimistic. An accepted
+Execution Lifecycle root reports the resolved preference on its outer
+Transaction Invocation, while Database Call events expose the actual mixed
+locking and gated statements transiently.

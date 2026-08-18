@@ -511,9 +511,17 @@ _Avoid_: setter call, update object
 
 **Sort Key**:
 One ordering term of an Object Query: an attribute reference, a direction, and a
-Null Placement. The clause's list order is key precedence, and sorting is exactly
-as authored — no primary-key or temporal-edge tiebreaker is injected.
+Null Placement. The clause's list order is key precedence, and an eager read
+sorts exactly as authored; a Snapshot Stream's separate Continuation Order may
+refine ties without changing the Object Query.
 _Avoid_: comparator callback, order callback, orderBy wrapper
+
+**Continuation Order**:
+The deterministic total order in which a Snapshot Stream advances: authored
+Sort Keys in precedence order, followed by primary key and, for history roots,
+temporal Edge. It is delivery state rather than an Object Query clause and does
+not change eager read ordering.
+_Avoid_: injected Sort Key, pagination order, batch order
 
 **Null Placement**:
 Where NULLs sort on one Sort Key — first or last, independent of direction and
@@ -529,6 +537,20 @@ _Avoid_: array, result array
 **Snapshot Graph**:
 A typed plain value graph returned by a snapshot read: identity-resolved within the graph (one node per row), connected by hard pointers, pinned whole-graph at one set of as-of coordinates, and closed-world — it never issues further database work.
 _Avoid_: domain snapshot, JSON output, serialization form, lazy collection
+
+**Snapshot Stream**:
+A scope-bound, single-pass delivery of roots materialized and published in
+bounded batches under one Continuation Order; a transactional stream makes its
+batches participate in one Transaction Attempt without promising one database
+snapshot.
+_Avoid_: cursor, lazy Snapshot, result set, batch iterator
+
+**Stream Batch**:
+An Execution Activity spanning planning, lowering, Database Calls, conversion,
+and materialization of one Snapshot Stream page. It starts after any dependent
+Write Batch and finishes Completed once the whole page is ready to yield,
+including an empty terminal page, or Failed if page preparation raises.
+_Avoid_: Read, Stream Segment, caller iteration batch, retained page trace
 
 **Wire Snapshot**:
 A plain-value tree returned by a Wire read, keyed by declared model member names,
@@ -617,52 +639,137 @@ _Avoid_: manual tag filter, type cast, per-position narrow shape
 A typed path that starts at an entity-owned value object and addresses a nested member inside that value.
 _Avoid_: relationship path, join path, dotted JSON string
 
-### Execution Provenance
+### Execution Lifecycle
+
+**Root Execution**:
+One outermost Parallax Handle operation and everything it causally contains,
+identified by an opaque Root Execution ID and a Read, Transaction Invocation,
+or Snapshot Stream kind.
+_Avoid_: request, handler instance, Transaction Invocation, Transaction Attempt
+
+**Root Execution ID**:
+The random UUIDv4 identifying one Root Execution across all of its lifecycle
+events; only equality and canonical text are meaningful.
+_Avoid_: timestamp ID, sequence number, database transaction ID, trace ID
+
+**Execution Activity**:
+One bracketed unit of work within a Root Execution that starts once and finishes
+with a kind-specific terminal outcome.
+_Avoid_: log entry, retained trace, uncorrelated operation
+
+**Execution Activity ID**:
+The positive, contiguous identifier assigned when an Execution Activity starts
+and paired with the Root Execution ID.
+_Avoid_: UUID, global activity ID, Event Sequence, database call number
+
+**Execution Event**:
+One immutable Started or Finished transition for an Execution Activity,
+delivered transiently rather than retained as execution history.
+_Avoid_: log record, audit event, domain event, Write Observation
+
+**Event Sequence**:
+The one-based delivery position of an Execution Event within one Root Execution;
+concurrent roots have independent sequences.
+_Avoid_: timestamp, Activity ID, global sequence, database round-trip count
+
+**Failure Diagnostic**:
+A bounded, detached, deeply immutable description of a failure that retains no
+live exception, traceback graph, locals, statement, binds, or transaction state.
+_Avoid_: exception object, traceback object, log record, public error result
+
+**Activity Failure**:
+A Direct Failure of an Execution Activity or a Caused Failure attributed to its
+most specific already-finished descendant activity.
+_Avoid_: optional cause bag, last-call inference, exception chain, failure event
+
+**Execution Lifecycle Provider**:
+The connected composition seam that may open one fresh Execution Lifecycle
+Handler for each Root Execution and reports errors from quarantined handlers.
+_Avoid_: Execution Observer, observer factory, Database Provider, lifecycle extension
+
+**Execution Lifecycle Provider Error**:
+The public failure raised when an Execution Lifecycle Provider cannot open a
+Root Execution before execution begins.
+_Avoid_: deliberate provider decline, Handler Quarantine, raw provider exception
+
+**Execution Lifecycle Handler**:
+A Root Execution-scoped sink receiving its Execution Events synchronously and
+serially without retaining borrowed event data.
+_Avoid_: Execution Observer, callback hook, audit sink, handler singleton
+
+**Execution Lifecycle Re-entry**:
+An attempt from lifecycle handling to invoke an operation through the
+originating Handle or Transaction, which is refused before execution work.
+_Avoid_: nested execution, recursive handling, joined invocation
+
+**Execution Lifecycle Re-entry Error**:
+The public refusal raised for Execution Lifecycle Re-entry.
+_Avoid_: provider failure, database failure, nested transaction failure
+
+**Handler Quarantine**:
+The suppression of one Execution Lifecycle Handler after an ordinary delivery
+failure for the remainder of its Root Execution.
+_Avoid_: handler removal, circuit breaker, retry, provider disablement
+
+**Execution Lifecycle Handler Error**:
+The detached, correlated failure report passed to the Provider after Handler
+Quarantine, without the event, statement, or binds.
+_Avoid_: failure event, handler exception, database failure, recursive logging
+
+**Execution Lifecycle Fan-out**:
+An ordered, nonempty composition of Execution Lifecycle Providers whose child
+failures are isolated after successful opening.
+_Avoid_: observer list, unordered broadcast, global quarantine, empty provider
+
+**Lifecycle Log Detail**:
+The Safe or Diagnostic projection policy of the Logging Lifecycle Provider;
+both exclude SQL and binds, while Diagnostic adds bounded failure text.
+_Avoid_: logging level, raw event, statement logger, bind logger
+
+**Recorded Execution Event**:
+An owned testing projection of an Execution Event, deliberately retained by the
+testing-only Recording Lifecycle Provider.
+_Avoid_: production recorder, retained Execution Event, Execution Log, audit record
 
 **Database Call**:
-One attempted database round trip for a Read or Write Lowered Statement,
-carrying its elapsed duration and a closed completion that distinguishes a
-completed read, completed write, and database failure. A failed call still
-counts as one round trip; transaction demarcation does not.
+An Execution Activity spanning one attempted database round trip for a Read or
+Write Lowered Statement.
 _Avoid_: Executed Statement, emission, SQL log entry, operation group
 
-**Read Trace**:
-The immutable provenance of one read that reached the database: its ordered,
-non-empty Database Calls and derived round-trip count.
-_Avoid_: Execution Record, query log, profiler output
+**Read**:
+An Execution Activity spanning one logical read from planning through
+publication of its public result.
+_Avoid_: Read Trace, query log, individual Database Call, preflight attempt
 
-**Write Batch Trace**:
-The immutable provenance of one flushed write batch: its ordered, non-empty DML
-Database Calls, plus whether Read Dependency or Finalization triggered it. A read
-that resolved rows for one of those writes is its own Read Trace, not part of
-this one.
-_Avoid_: Write Execution, flush result, plan log, statement prediction
+**Write Batch**:
+An Execution Activity spanning one nonempty unit-of-work buffer flush caused by
+a Read Dependency or Pre-Commit boundary.
+_Avoid_: Write Batch Trace, Write Execution, flush result, plan log
+
+**Transaction Invocation**:
+One call to transactional callback demarcation, either an Outer Invocation that
+owns physical attempts or a Joined Invocation within the current attempt.
+_Avoid_: nested transaction, Transaction Attempt, commit receipt
 
 **Transaction Attempt**:
-One physical database transaction within a logical transaction invocation,
-carrying its ordered Read Traces and Write Batch Traces and an Active, Committed,
-or Rolled Back status. A Rolled Back attempt carries an Attempt Failure.
+One successfully begun physical database transaction within an outer
+Transaction Invocation.
 _Avoid_: Execution Attempt, retry log, nested transaction, Transaction Result
 
 **Attempt Failure**:
-The immutable diagnostic explaining why one Transaction Attempt rolled back,
-carrying its Body, Finalization, or Commit phase, stable error facts,
-retry-eligibility classification, and any causative Database Call without
-retaining the raised exception or transaction state.
+The Callback-, Pre-Commit-, or Commit-phase Activity Failure that triggered a
+Transaction Attempt's rollback, paired with retry eligibility.
 _Avoid_: caught exception, traceback record, Database Call failure, retry decision
 
-**Execution Log**:
-The production-owned, read-only history of one logical transaction invocation,
-grouping traces by Transaction Attempt across automatic retries and retaining
-the resolved Concurrency Preference and retry policy. It is live while the boundary is
-active and seals at terminal completion.
-_Avoid_: mutable logger, query log, profiler output, Write Plan history
+**Transaction Rollback Error**:
+The public error preserving both an ordinary triggering failure and a later
+rollback failure.
+_Avoid_: Rollback Only Error, original transaction failure, rollback diagnostic
 
-**Transaction Result**:
-The value returned by a successful transaction invocation, containing the
-Transaction Body's value and its Execution Log while exposing the Committed
-Transaction Attempt as the common execution view.
-_Avoid_: callback value alone, transaction tuple, commit receipt
+**Transaction Boundary Outcome**:
+The port's closed, ephemeral result distinguishing commit, begin failure,
+rollback, and rollback failure before composition maps them to public behavior.
+_Avoid_: Transaction Result, public return value, lifecycle event, exception inference
 
 ### Relationships And Object Graphs
 
