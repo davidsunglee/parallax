@@ -29,8 +29,12 @@
 # steps could substitute for: a fresh find after the edit re-queries the database
 # and grades a NEW materialization, so it would pass on an implementation that
 # discarded every view. Only an access on the node the scenario already materialized
-# tells a surviving view from a re-derived one, which is why `expectGraph` is legal
-# on an access step alone.
+# tells a surviving view from a re-derived one, which is why this case reaches for
+# `expectGraph`'s ACCESS placement. The observable's READ placement would be admitted
+# here too — step 0 carries `includes`, and would state its graph in place of the
+# `expectRows` it states now — but what a read step's `expectGraph` states is the graph
+# THAT read materialized, so it grades a materialization and never a survival
+# (m-case-format *Relationship contents at a step*).
 #
 # Two things no observable here states. The CONTENTS OF THE COPY'S OWN VIEW: the
 # access names step 0, because `on` names the step whose Include Paths materialized
