@@ -10,16 +10,16 @@ executor runs it, exactly as it refuses a bare write row naming an undeclared
 member.
 
 These DB-free probes pin the judgement over real corpus models: an assignment
-naming a declared, assignable member with a value that member admits is ACCEPTED,
-and each of the five ways one can fail — an undeclared or relationship name, a
-protected target, an ill-typed value, a null where the member is not nullable, and
-a malformed Value Object document — is REJECTED. Two structural halves ride along:
-WHERE the edited node stands (a derivation stands where its source does, a
-`load` / `access` at its path's terminal position — each hop resolved through the
-relationship APPLICABLE to every concrete the position holds, inherited or its
-own — and a polymorphic position leaves the node's own Entity open, so every
-concrete that position can answer must admit the whole set), and where the walk
-stops (a step whose `on` reaches no position at all).
+naming an applicable, assignable member with a value that member admits is
+ACCEPTED, and each of the five ways one can fail — a name the Entity does not have
+or a relationship name, a protected target, an ill-typed value, a null where the
+member is not nullable, and a malformed Value Object document — is REJECTED. Two
+structural halves ride along: WHERE the edited node stands (a derivation stands
+where its source does, a `load` / `access` at its path's terminal position — each
+hop resolved through the relationship APPLICABLE to every concrete the position
+holds, inherited or its own — and a polymorphic position leaves the node's own
+Entity open, so every concrete that position can answer must admit the whole
+set), and where the walk stops (a step whose `on` reaches no position at all).
 """
 
 from __future__ import annotations
@@ -250,7 +250,7 @@ def test_a_set_spanning_two_branches_names_no_node_at_all() -> None:
     ]
 
 
-def test_a_refusal_no_narrowing_can_fix_is_reported_from_the_declaring_concrete() -> None:
+def test_a_refusal_no_narrowing_can_fix_is_reported_from_the_concrete_that_has_it() -> None:
     # Every candidate refuses, so the assignment is wrong wherever it lands. Cat and
     # WildBoar answer only that the name is nothing of theirs, which says less than
     # Dog's own verdict on the value.

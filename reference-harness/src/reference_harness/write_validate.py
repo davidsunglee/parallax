@@ -2,8 +2,9 @@
 
 A write `rejected` case (m-case-format, resolved Q7) carries a neutral write row
 (①) that a model-aware validator MUST refuse **before any DML is emitted**. The row
-is resolved against the target's **declared** structure — its scalar Attributes and
-its Value Objects, recursively — and this module raises
+is resolved against the target's **applicable** structure — the scalar Attributes
+and Value Objects it declares and, for an inheritance participant, the ones it
+inherits (`m-inheritance`), recursively — and this module raises
 :class:`~reference_harness.value_object_resolve.RejectionError` naming the rule:
 
 * ``write-required-attribute-missing`` — a required (`nullable: false`) attribute is
@@ -21,15 +22,15 @@ its Value Objects, recursively — and this module raises
   a type mismatch rather than an absence.
 
 The bare `when.write` row carries no mutation context, so it is graded as a FULL
-document: every declared member must be present, save a `many` occurrence, whose
+document: every applicable member must be present, save a `many` occurrence, whose
 absence IS its empty collection. Two member kinds are outside the walk because the
 framework, never the caller, supplies their values — the optimistic-lock version
 and the As-Of Axis endpoints (:func:`framework_owned_names`), plus a
 table-per-hierarchy tag column, whose presence the concrete-subtype protocol below
 refuses outright.
 
-The same declared structure answers a narrower question for an authored ASSIGNMENT
-— one member named with one value, rather than a whole row
+The same applicable structure answers a narrower question for an authored
+ASSIGNMENT — one member named with one value, rather than a whole row
 (:func:`assignment_violation`) — so a case that assigns a value no member of the
 model admits is refused from the same walk that refuses a row.
 
@@ -72,7 +73,7 @@ _MARKER_KEYS = (frozenset({"computed"}), frozenset({"increment"}))
 
 
 def framework_owned_names(entity: Entity) -> frozenset[str]:
-    """The declared attribute names on *entity* whose values the FRAMEWORK supplies.
+    """The attribute names APPLICABLE to *entity* whose values the FRAMEWORK supplies.
 
     A neutral write input never authors these, so their absence from a row is not a
     caller omission to report: the optimistic-lock version (a write derives its
@@ -101,16 +102,16 @@ _ROW_CONTROL_KEYS = frozenset({"observedVersion"})
 
 
 def undeclared_members(entity: Entity, row: Mapping[str, Any]) -> list[str]:
-    """The keys *row* names that *entity* declares no member for, sorted.
+    """The keys *row* names that *entity* has no member for, sorted.
 
-    Read from the same declarations :func:`validate_write` walks — *entity*'s
+    Read from the same members :func:`validate_write` walks — *entity*'s
     ancestry-effective Attributes and Value Objects — so the names a row may carry
     and the positions a row is graded against are provably one set, and a concrete
     subtype's row may name an inherited member (`m-inheritance`).
     """
-    declared = {attribute["name"] for attribute in entity.attributes}
-    declared.update(value_object["name"] for value_object in entity.value_objects)
-    return sorted(key for key in row if key not in declared and key not in _ROW_CONTROL_KEYS)
+    applicable = {attribute["name"] for attribute in entity.attributes}
+    applicable.update(value_object["name"] for value_object in entity.value_objects)
+    return sorted(key for key in row if key not in applicable and key not in _ROW_CONTROL_KEYS)
 
 
 def assignment_violation(entity: Entity, name: str, value: Any) -> str | None:
@@ -118,12 +119,14 @@ def assignment_violation(entity: Entity, name: str, value: Any) -> str | None:
 
     One member with one value, which is what an EDIT authors, where
     :func:`validate_write` judges a whole row: the member must be one this entity
-    declares and one a caller may assign, and the value must be one that member
-    admits. A primary-key, read-only or framework-owned target is refused whatever
-    the value — those are the framework's to supply — and a name naming neither a
-    declared Attribute nor a declared Value Object occurrence (a relationship, a
-    sibling branch's attribute, a misspelling) is refused as naming nothing to
-    assign to.
+    HAS — declared on it or inherited from an ancestor (`m-inheritance`), so a
+    `Dog` answers for `Pet`'s `licenseId` — and one a caller may assign, and the
+    value must be one that member admits. Membership and assignability are two
+    verdicts, not one: a primary-key, read-only or framework-owned target is an
+    applicable member and is still refused whatever the value, those being the
+    framework's to supply, while a name naming neither an applicable Attribute nor
+    an applicable Value Object occurrence (a relationship, a sibling branch's
+    attribute, a misspelling) is refused as naming nothing to assign to.
 
     The value itself is judged by the SAME walk a row's is: a scalar against its
     declared neutral type, `null` only where the member is nullable, and a Value
@@ -173,10 +176,10 @@ def _violation_detail(judge: Callable[[], None]) -> str | None:
 
 
 def validate_write(entity: Entity, row: dict[str, Any]) -> None:
-    """Reject *row* pre-SQL if it is invalid against *entity*'s declared structure.
+    """Reject *row* pre-SQL if it is invalid against *entity*'s applicable structure.
 
     Raises :class:`RejectionError` (``.rule`` one of the write rules) on the first
-    violation, walking *entity*'s declared Attributes and then its Value Objects in
+    violation, walking *entity*'s applicable Attributes and then its Value Objects in
     DECLARATION order, each document depth-first. Declaration order is what makes
     the classification a property of the model rather than of the row's authoring
     order, so a row carrying two defects names the same rule however it is spelled.

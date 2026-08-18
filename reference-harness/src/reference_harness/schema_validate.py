@@ -686,10 +686,12 @@ def _edit_refusal(judged: list[tuple[Entity, str | None]], assignments: dict[str
     bar, and names `narrowTo` as the clause a read reaches a narrower position by.
 
     Where EVERY candidate refuses, the assignment is wrong wherever it lands. It is
-    reported from the candidate declaring the most of the named members, because a
-    concrete that declares none of them only answers that the names are nothing of
-    theirs, which is true and says less than the declaring position's own verdict on
-    the value.
+    reported from the candidate that HAS the most of the named members — applicable
+    members, the ones it inherits counted with the ones it declares
+    (:func:`~reference_harness.write_validate.undeclared_members`) — because a
+    concrete that has none of them only answers that the names are nothing of
+    theirs, which is true and says less than the verdict of a candidate the member
+    is real on.
     """
     refused = [(entity, violation) for entity, violation in judged if violation is not None]
     if len(judged) == 1:
