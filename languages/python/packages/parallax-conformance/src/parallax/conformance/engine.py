@@ -226,12 +226,13 @@ class ScenarioRun:
 
     A scenario reports several observation channels of the SAME shape, so each is
     named rather than placed: ``errors`` holds one entry per `expectError` step
-    whose verb raised its declared application-lifecycle error, ``step_graphs`` one
-    per `access` step declaring `expectGraph` (`m-conformance-adapter`). Both are
-    filled by the snapshot action-step lane alone; a keyed unit-of-work scenario
-    reports them empty. ``log`` is the scenario's execution provenance
-    (`m-execution-log`): the Execution Log of its ONE `uow` group, absent when the
-    scenario ran no group or ran more than one.
+    whose verb raised its declared application-lifecycle error, and is filled by
+    the snapshot action-step lane alone; ``step_graphs`` one per step declaring
+    `expectGraph` (`m-conformance-adapter`), in step order, from either placement
+    of that observable — an `access` step's retained view on the snapshot lane, a
+    find step's own materialized graph on both. ``log`` is the scenario's
+    execution provenance (`m-execution-log`): the Execution Log of its ONE `uow`
+    group, absent when the scenario ran no group or ran more than one.
     """
 
     emissions: list[Emission]
@@ -2648,6 +2649,9 @@ def _run_snapshot_scenario(
                     for call in snapshot.execution.calls
                 )
                 round_trips += snapshot.execution.round_trips
+                observed = _read_step_graph(case, model, index, step, query, snapshot)
+                if observed is not None:
+                    step_graphs.append(observed)
                 results.append(
                     _ScenarioStepResult(_root_members(snapshot), pin, identity, materialized=True)
                 )
@@ -2748,6 +2752,45 @@ def _access_step_graph(
         raise EngineError(f"{case.path.name}: an `access` asserting a graph needs a `path`")
     entity_name, nodes = _navigate_step_view(case, model, source, path)
     return {"at": f"/scenario/{index}", "graph": {entity_name: nodes}}
+
+
+def _read_step_graph(
+    case: case_format.Case,
+    model: AcceptedMetamodel,
+    index: int,
+    step: Mapping[str, object],
+    query: ObjectQueryNode,
+    snapshot: handle.Snapshot[handle.WireEntity],
+) -> dict[str, object] | None:
+    """One find step's own graph observation, or ``None`` when it asserts none.
+
+    The observable's other placement (`m-case-format` *Relationship contents at a
+    step*), and the opposite claim to an `access` step's: what THIS read
+    materialized — its roots and the relationships its own Include Paths
+    populated — rather than what a view materialized earlier still holds. It is
+    the whole-read `then.graph` value, reported per step because a scenario has
+    many reads.
+
+    Inside a `uow` group the read runs on the group's own transaction, so the
+    contents are what that connection observes mid-flight: read-your-own-writes
+    stated over a relationship. Ungrouped they are the committed database. Either
+    way they come from the read's own published result, so nothing here can
+    answer from a retained view — the confusion the access placement forbids from
+    the other side.
+    """
+    if "expectGraph" not in step:
+        return None
+    if not query.includes:
+        raise EngineError(
+            f"{case.path.name}: a find step states relationship contents but declares no "
+            "`includes` — the contents a read states are the relationships its own Include "
+            "Paths materialized"
+        )
+    roots = snapshot.checked().results()
+    graph: dict[str, object] = {
+        _graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]
+    }
+    return {"at": f"/scenario/{index}", "graph": graph}
 
 
 def _navigate_step_view(
@@ -4169,12 +4212,13 @@ def _run_group_step(
 
 
 def _run_uow_group(
+    case: case_format.Case,
     port: DbPort,
     context: _CaseContext,
     steps: Sequence[Mapping[str, object]],
     start: int,
     end: int,
-) -> tuple[list[_LoweredStep], ExecutionLog | None]:
+) -> tuple[list[_LoweredStep], ExecutionLog | None, list[dict[str, object]]]:
     """Execute one CONTIGUOUS `uow` group's steps (index *start*..*end*
     inclusive) inside ONE ``db.transact``, in step order, each through the shared
     :func:`_run_group_step` interpreter.
@@ -4191,7 +4235,10 @@ def _run_uow_group(
     to the group's own later steps, discarded with the rows when it aborts.
 
     Its own find rows are graded elsewhere, so the read output each find step
-    answers is discarded here.
+    answers is used here for one thing only: the graph observation a find step
+    declaring `expectGraph` owes (:func:`_read_step_graph`). Those contents are
+    what that read observed THROUGH this transaction, which is where
+    read-your-own-writes over a relationship becomes visible at all.
     """
     tx_instant = _group_tx_instant(steps, start, end)
     doomed = _group_is_doomed(steps, start, end)
@@ -4205,12 +4252,20 @@ def _run_uow_group(
     )
     lowered: list[_LoweredStep] = []
     logs: list[ExecutionLog] = []
+    step_graphs: list[dict[str, object]] = []
 
     def body(tx: handle.Transaction) -> None:
         logs.append(tx.execution_log)
         for index in range(start, end + 1):
-            step, _output = _run_group_step(tx, context, state, steps[index], index, tx_instant)
+            step, output = _run_group_step(tx, context, state, steps[index], index, tx_instant)
             lowered.append(step)
+            if output is None:
+                continue
+            observed = _read_step_graph(
+                case, context.model, index, steps[index], _step_query(steps[index]), output
+            )
+            if observed is not None:
+                step_graphs.append(observed)
 
     with context.shadow.staged(doomed=doomed), contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=context.concurrency)
@@ -4218,7 +4273,7 @@ def _run_uow_group(
     # transaction did, which is where the `execution` observation and this
     # group's round trips come from rather than from a second count this lane
     # keeps.
-    return lowered, logs[-1] if logs else None
+    return lowered, logs[-1] if logs else None, step_graphs
 
 
 # --------------------------------------------------------------------------- #
@@ -4906,6 +4961,13 @@ def run_interleaved_scenario_case(
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
+    if any("expectGraph" in step for step in steps):
+        raise EngineError(
+            f"{case.path.name}: this entry point reports emissions, round trips and find "
+            "rows, and carries no `stepGraphs` channel — a step stating relationship "
+            "contents is an oracle nothing here would answer, so it is refused rather "
+            "than silently unasserted"
+        )
     groups = _scenario_group_step_indices(steps)
     if len(groups) != 2:
         raise EngineError(  # pragma: no cover - defensive: only m-opt-lock-012 reaches this entry
@@ -5002,11 +5064,14 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
     ordinary standalone step, since `m-case-format`'s own "Materializing
     cases" convention makes the preceding find the resolve.
 
-    Reports its observations as a :class:`ScenarioRun`. The `errors` and
-    `stepGraphs` channels are filled by the snapshot action-step lane alone,
-    from its `expectError` grading and its `access` steps' retained views
-    (:func:`_run_snapshot_scenario`); a keyed unit-of-work scenario reports both
-    empty and carries the Execution Log of its ONE `uow` group."""
+    Reports its observations as a :class:`ScenarioRun`. The `errors` channel is
+    filled by the snapshot action-step lane alone, from its `expectError`
+    grading (:func:`_run_snapshot_scenario`); a keyed unit-of-work scenario
+    reports it empty and carries the Execution Log of its ONE `uow` group.
+    `stepGraphs` is filled on both lanes, from whichever placement of
+    `expectGraph` the case authors: an `access` step's retained view there, and
+    here a find step's own materialized graph (:func:`_read_step_graph`) —
+    grouped, the contents that read observed inside the group's transaction."""
     steps = _scenario_steps(case)
     if _has_action_step(steps):
         return _run_snapshot_scenario(case, dialect_name, port, steps)
@@ -5014,6 +5079,7 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
+    step_graphs: list[dict[str, object]] = []
     spans = _scenario_uow_spans(case.path.name, steps)
     if spans is None:
         raise EngineError(
@@ -5042,9 +5108,12 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
             label = span_start_labels.get(index)
             if label is not None:
                 start, end = spans[label]
-                group_lowered, group_log = _run_uow_group(port, context, steps, start, end)
+                group_lowered, group_log, group_graphs = _run_uow_group(
+                    case, port, context, steps, start, end
+                )
                 lowered.extend(group_lowered)
                 group_logs.append(group_log)
+                step_graphs.extend(group_graphs)
                 round_trips += group_log.round_trips if group_log is not None else 0
                 index = end + 1
                 continue
@@ -5070,6 +5139,9 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
                         f"/scenario/{index}/objectQuery", _trace_statements(read), False, False
                     )
                 )
+                observed = _read_step_graph(case, model, index, step, _step_query(step), read)
+                if observed is not None:
+                    step_graphs.append(observed)
                 index += 1
                 continue
             raw_write = step["write"]
@@ -5110,7 +5182,7 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = _emissions([(step.pointer, step.statements) for step in lowered])
     log = group_logs[0] if len(group_logs) == 1 else None
-    return ScenarioRun(emissions, round_trips, [], [], log)
+    return ScenarioRun(emissions, round_trips, [], step_graphs, log)
 
 
 def run_write_sequence_case(

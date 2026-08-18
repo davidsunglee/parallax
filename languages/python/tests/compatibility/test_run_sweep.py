@@ -429,7 +429,8 @@ def _scenario_read_schedule(
     (``None`` asserts nothing) and its own row transform — plus one UNGRADED read
     per Include level after the root: a deep fetch costs ``1 + L`` reads at the
     port and ``expectRows`` states the ROOT rows alone, the child levels being
-    graded by the step-graph observation an `access` step asserts instead. A
+    graded by the step-graph observation an `expectGraph` step asserts instead —
+    an `access` step's, or the find's own where it states one. A
     write step contributes the
     RESOLVING READS its keyed verbs owe (`m-case-format` *Resolving reads a write
     owes*), which grade nothing here — the values they publish are graded by the
@@ -606,12 +607,16 @@ def _grade_step_graphs(
 ) -> None:
     """Grade every `expectGraph` step against the run's own `stepGraphs` observation.
 
-    The relationship contents an `access` step observes are what
+    The relationship contents a step observes are what
     `m-conformance-adapter`'s `stepGraphs` reports — one entry per declaring step,
     at that step's own pointer, in step order — compared through the SAME
     model-driven graph comparator `then.graph` is graded by, so an entity
     collection is a multiset and a `multiplicity: many` Value Object positional.
-    A declaring step with no entry is an unanswered oracle rather than a pass.
+    A declaring step with no entry is an unanswered oracle rather than a pass,
+    which is what makes this generic over the observable's two placements: an
+    `access` step's retained view and a find step's own materialized graph are
+    both reported here, and a lane that answered only one of them fails on the
+    pointer list rather than passing on the half it did answer.
     """
     expected = [
         (f"/scenario/{index}", cast("dict[str, Any]", step["expectGraph"]))

@@ -241,6 +241,49 @@ def _action_expect_graph_case() -> dict[str, Any]:
     return doc
 
 
+def _read_expect_graph_case() -> dict[str, Any]:
+    """A grouped read step asserting the graph it materialized.
+
+    The observable's other placement: keyed by the read's OWN target, each root
+    carrying the relationship its Include Path populated. Inside a `uow` group
+    those contents are what that transaction observes mid-flight, which is
+    read-your-own-writes stated over a relationship.
+    """
+    return {
+        "model": "models/orders.yaml",
+        "tags": ["m-unit-work", "m-deep-fetch"],
+        "shape": "scenario",
+        "when": {
+            "scenario": [
+                {
+                    "uow": "ryow",
+                    "objectQuery": {
+                        "target": "Order",
+                        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                        "includes": [{"segments": [{"rel": "Order.items"}]}],
+                    },
+                    "roundTrips": 2,
+                    "statements": [
+                        {
+                            "sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"},
+                            "binds": [1],
+                        },
+                        {
+                            "sql": {
+                                "postgres": "select t0.id, t0.order_id from order_item t0 "
+                                "where t0.order_id in (?)"
+                            },
+                            "binds": [1],
+                        },
+                    ],
+                    "expectGraph": {"Order": [{"id": 1, "items": [{"id": 11, "orderId": 1}]}]},
+                }
+            ]
+        },
+        "then": {"roundTrips": 2},
+    }
+
+
 def _action_identity_error_case() -> dict[str, Any]:
     """A scenario action case exercising `differentObjectFrom`, `on` array, `expectError`."""
     return {
@@ -682,6 +725,7 @@ VALID_CASES = {
     "scenario-settled-write": _settled_write_scenario_case,
     "scenario-action": _action_scenario_case,
     "scenario-action-expect-graph": _action_expect_graph_case,
+    "scenario-read-expect-graph": _read_expect_graph_case,
     "scenario-action-identity-error": _action_identity_error_case,
     "scenario-action-boundary-no-on": _action_boundary_no_on_case,
     "scenario-keyed-write-value": _write_value_scenario_case,
@@ -1119,14 +1163,17 @@ def _action_on_duplicate_index() -> dict[str, Any]:
     return doc
 
 
-def _expect_graph_on_a_read_step() -> dict[str, Any]:
-    """`expectGraph` on a read step.
+def _expect_graph_on_an_includeless_read_step() -> dict[str, Any]:
+    """`expectGraph` on a read step declaring no `objectQuery.includes`.
 
-    A read-back re-queries the database, so it proves the DATABASE is right and
-    says nothing about a materialized view; the oracle is legal on `access` alone.
+    The read placement states the relationships that read materialized, and a
+    read declaring no Include Path materializes none — its roots are what
+    `expectRows` already states.
     """
     doc = _action_scenario_case()
-    doc["when"]["scenario"][0]["expectGraph"] = {"OrderItem": [{"id": 11}]}
+    step = doc["when"]["scenario"][0]
+    del step["expectRows"]
+    step["expectGraph"] = {"Order": [{"id": 1}, {"id": 2}]}
     return doc
 
 
@@ -1380,7 +1427,7 @@ REJECTED_CASES = {
     "action-set-on-non-mutate": _action_set_on_non_mutate,
     "action-object-verb-missing-on": _action_object_verb_missing_on,
     "action-on-duplicate-index": _action_on_duplicate_index,
-    "expect-graph-on-a-read-step": _expect_graph_on_a_read_step,
+    "expect-graph-on-an-includeless-read-step": _expect_graph_on_an_includeless_read_step,
     "expect-graph-on-a-write-step": _expect_graph_on_a_write_step,
     "expect-graph-on-a-non-access-action": _expect_graph_on_a_non_access_action,
     "expect-graph-on-a-multi-source-access": _expect_graph_on_a_multi_source_access,
