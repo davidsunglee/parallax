@@ -289,11 +289,15 @@ def test_a_literal_percent_is_escaped_for_the_driver_parameter_style(dialect: Di
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_from_driver_sql_reverses_percent_escaping(dialect: Dialect) -> None:
-    # Undoubling is the inverse of the escape above, and runs after the
-    # placeholder recovery so the `%%` a `%s` was just recovered out of is never
-    # read as an escape of its own.
+    # Undoubling is the inverse of the escape above. It shares one left-to-right
+    # pass with the placeholder recovery because the two spellings overlap from
+    # both sides: the `%%` a `%s` was just recovered out of must not be read as
+    # an escape, and an escaped `%` standing before an `s` must not be read
+    # tail-first as a bind.
     canonical = 'update "t%s" t0 set "rate%" = ? where t0.id = ?'
     assert dialect.from_driver_sql(dialect.to_driver_sql(canonical)) == canonical
+    modulo = "select t0.rate%s from t t0 where t0.id = ?"
+    assert dialect.from_driver_sql(dialect.to_driver_sql(modulo)) == modulo
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
