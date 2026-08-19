@@ -39,7 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Final
 
-from parallax.core.auto_retry import run_with_retry
+from parallax.core.auto_retry import check_retry_bound, run_with_retry
 from parallax.core.db_port import (
     BeginFailed,
     Committed,
@@ -485,7 +485,9 @@ class Database:
         ``concurrency`` is a Concurrency PREFERENCE: each Entity's own Optimistic
         Lock Facet decides whether it participates optimistically or falls back
         to the shared read lock, so one transaction mixes both (`m-unit-work`
-        "Strategy selection"). A call
+        "Strategy selection"). ``retries`` bounds re-executions rather than total
+        attempts, and a negative bound is a deterministic refusal raised before
+        any transaction is opened or observed. A call
         while a transaction is active on the current thread joins it, but only
         through the exact ``Database`` that opened the boundary — any other
         handle raises :class:`TransactionOwnershipError` before every later
@@ -554,6 +556,11 @@ class Database:
                 retry_optimistic_conflicts if retry_optimistic_conflicts is not None else False
             ),
         )
+        # The last deterministic refusal, and it belongs here rather than at the
+        # retry loop's own entry: the loop runs inside the root opened below, so
+        # a bound rejected only there would have called the Provider and emitted
+        # this invocation's Started and Finished first (`m-execution-lifecycle`).
+        check_retry_bound(options.retries)
 
         # The unit of work plans against the accepted model the ``Database`` already
         # holds; a joining call inherits the active unit of work's own.
