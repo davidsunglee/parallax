@@ -19,6 +19,7 @@ import gc
 import weakref
 from collections.abc import Callable, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -36,6 +37,7 @@ from _support import mirrored_models as mm
 from _support.db_port import body_outcome
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution_lifecycle import (
     AttemptCommitted,
     AttemptFailure,
@@ -712,6 +714,84 @@ def test_a_flush_that_dies_in_planning_is_a_batch_that_started_and_ran_nothing()
     assert isinstance(batch.outcome, WriteBatchFailed)
     assert isinstance(batch.outcome.failure, DirectFailure)
     assert port.ops == [("begin",), ("rollback",)]
+
+
+def test_a_failure_caught_and_re_raised_still_names_the_read_it_came_from() -> None:
+    # A failure is the exception VALUE, so catching one, doing further work, and
+    # re-raising it reports the Read the value came from rather than the callback
+    # that performed the raise. This is the ordinary catch / clean up / re-raise
+    # shape, and naming the descendant is what makes the chain worth walking.
+    recorder = RecordingLifecycleProvider()
+    port = RecordingPort(rows=[NEW_ROW])
+    port.read_faults = [deadlock()]
+
+    def body(tx: Transaction) -> None:
+        with pytest.raises(DatabaseError) as caught:
+            tx.find(mm.Account.where(mm.Account.id == 7)).result()
+        tx.find(mm.Account.where(mm.Account.id == 8)).result()
+        raise caught.value
+
+    with pytest.raises(DatabaseError):
+        _db(port, recorder).transact(body, retries=0)
+
+    root = _only(recorder)
+    failed_read, _later_read = (event for event in root.events if isinstance(event, ReadFinished))
+    assert isinstance(failed_read.outcome, ReadFailed)
+    (rolled_back,) = _attempt_outcomes(root)
+    assert isinstance(rolled_back, AttemptRolledBack)
+    assert rolled_back.failure.failure == CausedFailure(
+        failed_read.outcome.failure.diagnostic, failed_read.activity_id
+    )
+
+
+def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_raises() -> None:
+    # The occurrence-level distinction the value rule gives up, pinned so it is
+    # documented rather than discovered. One Dialect raises one PREALLOCATED
+    # exception object, so two sibling Reads fail with the SAME value; the
+    # callback catches both and raises that value a third time. Identity cannot
+    # separate "the second Read is still unwinding" from "both were caught and
+    # this is a third raise", so the attempt reports Caused naming the higher
+    # Activity ID rather than Direct. Nothing inside Parallax reuses an exception
+    # object, so only a caller-supplied extension can reach this.
+    shared = ValueError("one planning failure, raised three times")
+
+    @dataclass(frozen=True, slots=True)
+    class _OneObjectDialect(Dialect):
+        def quote(self, identifier: str) -> str:
+            raise shared
+
+    dialect = _OneObjectDialect(
+        name=POSTGRES.name,
+        reserved=POSTGRES.reserved,
+        quote_char=POSTGRES.quote_char,
+        error_codes=POSTGRES.error_codes,
+    )
+    recorder = RecordingLifecycleProvider()
+    port = RecordingPort(rows=[NEW_ROW])
+
+    def body(tx: Transaction) -> None:
+        with suppress(ValueError):
+            tx.find(mm.Account.where(mm.Account.id == 7)).result()
+        with suppress(ValueError):
+            tx.find(mm.Account.where(mm.Account.id == 8)).result()
+        raise shared
+
+    with pytest.raises(ValueError, match="raised three times"):
+        connect(
+            port,
+            ACCOUNT,
+            dialect=dialect,
+            clock=FixedClock(FIXED),
+            lifecycle_provider=recorder,
+        ).transact(body, retries=0)
+
+    root = _only(recorder)
+    first_read, later_read = (event for event in root.events if isinstance(event, ReadFinished))
+    assert first_read.activity_id < later_read.activity_id
+    (rolled_back,) = _attempt_outcomes(root)
+    assert isinstance(rolled_back, AttemptRolledBack)
+    assert isinstance(rolled_back.failure.failure, CausedFailure)
+    assert rolled_back.failure.failure.cause_activity_id == later_read.activity_id
 
 
 def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:

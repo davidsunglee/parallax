@@ -20,8 +20,12 @@ Invocations, Transaction Attempts, Snapshot Streams, and Stream Batches. Each
 activity has one Started event and one terminal Finished outcome, with per-root
 execution, sequence, activity, and parent correlation. Failure events carry
 bounded, detached diagnostics and causal activity IDs rather than live
-exceptions. Exact immutable Lowered Statements are borrowed during synchronous
-Database Call delivery and must not be retained by handlers.
+exceptions. A failure is identified by its exception value rather than by the
+raise that produced it, so a value re-raised past the descendant that produced
+it still names that descendant; each activity holds one attribution, which is
+what keeps the causal chain from growing with failures already completed. Exact
+immutable Lowered Statements are borrowed during synchronous Database Call
+delivery and must not be retained by handlers.
 
 Provider opening is allowed to fail the operation because no execution effects
 have begun. An ordinary Handler failure instead quarantines that handler for the
