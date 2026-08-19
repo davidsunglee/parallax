@@ -19,14 +19,15 @@ import pytest
 
 from _support.corpus import case_document, case_fixtures
 from parallax.conformance import boundary_runner, case_format, engine
-from parallax.conformance._observed_port import StatementObservation
+from parallax.conformance._lifecycle_observation import (
+    LifecycleObservation,
+    execution_lifecycle_observation,
+)
 from parallax.conformance.boundary_runner import BoundaryAbort, FaultInjectingPort
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
-from parallax.core.dialect import POSTGRES
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
-from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
@@ -70,17 +71,15 @@ def test_boundary_case_runs_through_the_shipped_surface(
     persistent = fault is not None and outcome != "committed"
 
     port = FaultInjectingPort(provisioner.port, fault=fault, persistent=persistent)
-    # What the boundary actually put on the wire, observed where it happens: a
-    # failing invocation answers no result, and nothing it returns describes
-    # what its attempts did (`m-execution-lifecycle` — observability is
-    # transient and belongs to an installed Provider).
-    observed = StatementObservation()
-    # How many attempts ran is observable only while they run, so the count comes
-    # from the lifecycle stream a Provider receives rather than from anything the
-    # invocation hands back (`m-execution-lifecycle` — a transaction retains no
-    # record of what it did).
-    lifecycle = RecordingLifecycleProvider()
-    db = connect(observed.observing(port, POSTGRES), meta, lifecycle_provider=lifecycle)
+    # What the boundary did is observable only WHILE it runs: a failing
+    # invocation answers no result, and nothing it returns describes what its
+    # attempts did (`m-execution-lifecycle` — observability is transient and
+    # belongs to an installed Provider). One installed Provider therefore
+    # answers all three of this suite's questions — the statements that reached
+    # the wire, how many attempts ran, and the event stream the case authors —
+    # because all three are projections of one delivery.
+    observed = LifecycleObservation()
+    db = connect(port, meta, lifecycle_provider=observed.provider)
     # The post-transaction verify read runs through a SEPARATE, un-instrumented
     # `Database` (the real adapter directly, no `FaultInjectingPort`): it is
     # out-of-band housekeeping, not part of the boundary mechanism under test,
@@ -130,7 +129,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # begin, so this counts attempts rather than demarcations that never ran one.
     attempts = sum(
         1
-        for root in lifecycle.roots
+        for root in observed.roots
         for event in root.events
         if isinstance(event, TransactionAttemptStarted)
     )
@@ -146,12 +145,23 @@ def test_boundary_case_runs_through_the_shipped_surface(
     if expected_round_trips is not None:
         assert observed.round_trips == expected_round_trips, case.case_id
 
+    # The stream itself, where the case authors it. A boundary case carries no
+    # golden SQL, so every Database Call names its statement by no index at all
+    # — `kind` and the outcome are the whole portable oracle here.
+    expected_lifecycle = then.get("executionLifecycle")
+    if expected_lifecycle is not None:
+        assert execution_lifecycle_observation(observed.roots, []) == expected_lifecycle, (
+            case.case_id
+        )
 
-def test_reachable_boundary_cases_cover_the_expected_eight() -> None:
+
+def test_reachable_boundary_cases_cover_the_expected_eleven() -> None:
     # Grep-verified complete set (the corpus's complete boundary
     # population): `m-auto-retry-001..005`, `m-opt-lock-010/011`,
-    # and `m-unit-work-004` — never a hand list at the RUNNER level (the corpus
-    # itself drives `_CASES` above); this is a coverage assertion only.
+    # `m-unit-work-004`, and the three `m-execution-lifecycle` spine cases whose
+    # observables need an injected fault or a joined boundary — never a hand list
+    # at the RUNNER level (the corpus itself drives `_CASES` above); this is a
+    # coverage assertion only.
     assert _CASE_IDS
     assert set(_CASE_IDS) == {
         "m-auto-retry-001",
@@ -159,6 +169,9 @@ def test_reachable_boundary_cases_cover_the_expected_eight() -> None:
         "m-auto-retry-003",
         "m-auto-retry-004",
         "m-auto-retry-005",
+        "m-execution-lifecycle-004",
+        "m-execution-lifecycle-005",
+        "m-execution-lifecycle-006",
         "m-opt-lock-010",
         "m-opt-lock-011",
         "m-unit-work-004",

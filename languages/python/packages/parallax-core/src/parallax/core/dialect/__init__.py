@@ -428,12 +428,13 @@ class Dialect:
         escaped `%` nor the `%%` a placeholder was recovered out of can be read as
         the other.
 
-        Used only where a caller must REPORT a statement it did not itself lower:
-        the conformance engine observes what reached the Database Port, where the
-        driver SQL is the only source, while every other emission it reports is
-        canonical text — so a captured statement must round-trip back before
-        joining them. Production code never calls this; it always starts from
-        canonical text and translates outward, never back.
+        Being an EXACT inverse is what it is for: it makes
+        :meth:`to_driver_sql`'s escaping provably lossless over every statement a
+        model can produce, which is a property a one-way translation could only
+        be inspected for. Execution never travels this direction — a statement
+        always starts as canonical text and is translated outward — so a caller
+        recovering canonical text from driver text is reporting a statement it
+        did not lower, which the dialect admits rather than needs.
         """
         return _recover_placeholders(driver_sql, self.quote_char, "?")
 

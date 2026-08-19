@@ -1,0 +1,173 @@
+# Retry then commit (m-execution-lifecycle): ONE Root Execution spans both
+# physical attempts of one logical invocation, and zero-row enforcement is
+# attributed to the call that COMPLETED.
+#
+# An injected optimistic-lock conflict makes the first attempt's gated UPDATE
+# match nothing, and `retryOptimisticConflicts: true` joins that conflict to the
+# retriable set, so the boundary RE-EXECUTES the whole closure: the second
+# attempt re-reads the now-current version and its re-applied UPDATE lands.
+#
+# Two distinctions ride on that. The first is that both attempts are ONE root:
+# activity 1 is the Transaction Invocation, activities 2 and 7 are the two
+# Transaction Attempts under it, and one `sequence` runs 1..22 across both. A
+# retry is a physical re-execution of the same logical invocation, so the
+# rolled-back attempt is delivered rather than discarded with the transaction
+# that produced it — nothing else in the corpus can observe a failed attempt at
+# all, because nothing retains one.
+#
+# The second is causal attribution. The first attempt's UPDATE is an ordinary
+# `writeCompleted` with `affectedRows: 0` — the call REACHED the database and
+# came back, so a shortfall is not a failed call. What records the shortfall is
+# the Write Batch, which finishes `failed` naming `cause: 6`: the call that
+# completed. Attribution follows exception identity, never "the last call", so a
+# completed call can be named as what caused an enclosing failure. The chain is
+# then walked one link at a time — the batch (5) names the call (6), the attempt
+# (2) names the batch (5) — because each level names its own DIRECT child rather
+# than the deepest activity beneath it.
+#
+# The attempt's failure states `phase: pre-commit` (the boundary-owned batch
+# raised it, not the callback) and `retryEligible: true` — the classifier's
+# verdict under this invocation's optimistic-conflict opt-in. That verdict is
+# what licensed the second attempt, and its sibling
+# m-execution-lifecycle-005 is the SAME verdict with the budget spent instead of
+# left. The committed attempt carries no failure at all, and neither does the
+# invocation: `committed` is a terminal outcome with no payload.
+#
+# No failure here carries a stable `code`: `code` is the string an exception
+# publishes as its OWN, and the Write Effect Error family publishes none, so the
+# oracle states the shape rather than a name. `then.roundTrips` counts every
+# attempted call across attempts — 4 for a read-then-write closure retried once,
+# the one number a per-attempt count cannot reconstruct — and the four
+# `databaseCallStarted` events are the same four calls.
+#
+# `lane: api-conformance`: an injected conflict and a re-executed closure are
+# observables a single-connection harness cannot provoke, and the conflict-shape
+# `when.attempts` form cannot express them either — that form authors each
+# attempt's own write and drives each as its own transaction, which is a
+# sequence of invocations rather than one invocation retried. No golden SQL is
+# authored, so each Database Call omits its `statement` index. Satisfied by each
+# language's API Conformance Suite.
+model: models/account.yaml
+tags: [m-execution-lifecycle, m-opt-lock, m-auto-retry, m-api-conformance, slice-snapshot-1, retry]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
+given:
+  fault: optimistic-lock-conflict
+when:
+  uow:
+    concurrency: optimistic
+    retryOptimisticConflicts: true
+  boundary:
+    - action: read
+      note: observe the versioned row (records the observed version)
+    - action: update
+      note: the gated UPDATE conflicts once; the auto-retry re-reads and the second attempt commits
+then:
+  outcome: committed
+  roundTrips: 4
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: true
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 4
+            activity: 4
+            parent: 3
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 5
+            activity: 4
+            parent: 3
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 6
+            activity: 3
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 7
+            activity: 5
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 8
+            activity: 6
+            parent: 5
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 9
+            activity: 6
+            parent: 5
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 0 }
+          - sequence: 10
+            activity: 5
+            parent: 2
+            writeBatchFinished: { outcome: failed, attribution: caused, cause: 6 }
+          - sequence: 11
+            activity: 2
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: pre-commit
+              retryEligible: true
+              attribution: caused
+              cause: 5
+          - sequence: 12
+            activity: 7
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 13
+            activity: 8
+            parent: 7
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 14
+            activity: 9
+            parent: 8
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 15
+            activity: 9
+            parent: 8
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 16
+            activity: 8
+            parent: 7
+            readFinished: { outcome: completed }
+          - sequence: 17
+            activity: 10
+            parent: 7
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 18
+            activity: 11
+            parent: 10
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 19
+            activity: 11
+            parent: 10
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 20
+            activity: 10
+            parent: 7
+            writeBatchFinished: { outcome: completed }
+          - sequence: 21
+            activity: 7
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 22
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }

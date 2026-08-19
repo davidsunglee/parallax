@@ -1,0 +1,171 @@
+# Retry exhaustion (m-execution-lifecycle): every failure FINISHES before the
+# next attempt starts, and the BOUND — not the classifier — is what stops the
+# loop.
+#
+# A persistent injected deadlock fails the write on every attempt under
+# `retries: 1`, so the root holds two attempts and both roll back. Two
+# distinctions ride on that.
+#
+# The first is balance under failure. Every activity the first attempt opened is
+# finished before the second one starts: the failed call (activity 6) finishes
+# at sequence 9, its batch (5) at 10, its attempt (2) at 11, and only then does
+# activity 7 start at 12. A stream where a retry began while a failed activity
+# was still open would describe a tree that never existed — and it is the SCOPE
+# that guarantees this, not any call site's discipline, because a Finished is
+# emitted however the body leaves.
+#
+# The second is that each failure still reports `retryEligible: true`. Retry
+# eligibility is the CLASSIFIER's verdict under the effective policy,
+# INDEPENDENT of the remaining budget, and claims nothing about whether another
+# attempt occurred. Reading it beside the invocation's own `retries: 1` is what
+# explains the missing successor: a caller sees a retriable failure that ran out
+# of budget, not a failure reclassified as non-retriable after the fact. The
+# sibling m-execution-lifecycle-004 is the same verdict with budget left.
+#
+# The failed write is still a Database Call: it reached the port and came back,
+# so it counts one round trip and finishes `failed` carrying the neutral
+# `m-db-error` category. That category is portable and the driver's native code
+# is not, so the oracle states `deadlock` and nothing else. A failed call is the
+# ONE place a category appears at all: begin, commit, and rollback are not
+# Database Calls, so a boundary failure's category reaches no event. Four round
+# trips across two attempts is therefore two reads plus two failed writes — a
+# total no per-attempt count reconstructs.
+#
+# The invocation's own failure is `caused` by the last attempt (7), which is
+# caused by its batch (10), which is caused by its call (11): three links over
+# one exception, each naming its own direct child, walkable from the root down
+# to the statement that failed.
+#
+# `lane: api-conformance`: a persistent injected transient and an exhausted
+# bound need a fault a real database cannot be asked to produce, so no golden
+# SQL is authored and each Database Call omits its `statement` index. Satisfied
+# by each language's API Conformance Suite.
+model: models/account.yaml
+tags: [m-execution-lifecycle, m-auto-retry, m-api-conformance, slice-snapshot-1, transient]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
+given:
+  fault: deadlock
+when:
+  uow:
+    concurrency: locking
+    retries: 1
+  boundary:
+    - action: read
+      note: observe the row the write addresses
+    - action: update
+      note: the write deadlocks on every attempt — the bound, not the classifier, ends the loop
+then:
+  outcome: deadlock
+  roundTrips: 4
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: locking
+              retries: 1
+              retryOptimisticConflicts: false
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 4
+            activity: 4
+            parent: 3
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 5
+            activity: 4
+            parent: 3
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 6
+            activity: 3
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 7
+            activity: 5
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 8
+            activity: 6
+            parent: 5
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 9
+            activity: 6
+            parent: 5
+            databaseCallFinished: { outcome: failed, category: deadlock }
+          - sequence: 10
+            activity: 5
+            parent: 2
+            writeBatchFinished: { outcome: failed, attribution: caused, cause: 6 }
+          - sequence: 11
+            activity: 2
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: pre-commit
+              retryEligible: true
+              attribution: caused
+              cause: 5
+          - sequence: 12
+            activity: 7
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 13
+            activity: 8
+            parent: 7
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 14
+            activity: 9
+            parent: 8
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 15
+            activity: 9
+            parent: 8
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 16
+            activity: 8
+            parent: 7
+            readFinished: { outcome: completed }
+          - sequence: 17
+            activity: 10
+            parent: 7
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 18
+            activity: 11
+            parent: 10
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 19
+            activity: 11
+            parent: 10
+            databaseCallFinished: { outcome: failed, category: deadlock }
+          - sequence: 20
+            activity: 10
+            parent: 7
+            writeBatchFinished: { outcome: failed, attribution: caused, cause: 11 }
+          - sequence: 21
+            activity: 7
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: pre-commit
+              retryEligible: true
+              attribution: caused
+              cause: 10
+          - sequence: 22
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 7 }

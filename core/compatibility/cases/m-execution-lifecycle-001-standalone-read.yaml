@@ -1,0 +1,70 @@
+# Standalone read (m-execution-lifecycle): a read issued outside any transaction
+# is a Root Execution of its own.
+#
+# The smallest complete stream in the lifecycle spine, and the only one whose
+# root is a Read rather than a Transaction Invocation: `kind: read` is the whole
+# distinction this case pins down against its five siblings, every one of which
+# opens `transaction-invocation`. Nothing brackets the Read — no invocation, no
+# attempt, no write batch — so its `parent` is null, which is what "the root
+# activity" means and is stated rather than left absent.
+#
+# The four events are one activity bracketing another. Activity 1 is the Read,
+# opened after public preflight and closed when the public result is ready;
+# activity 2 is its one Database Call, whose `parent: 1` is the containment.
+# `sequence` is delivery position and `activity` is identity, and the two
+# deliberately disagree here: activity 2 owns sequences 2 and 3, because a
+# Started and its Finished are one activity delivered twice. The Database Call's
+# `readCompleted` carries the PHYSICAL row count the statement returned — one
+# row for account 3 (Grace) — never a count of result roots or graph nodes,
+# which for this flat single-table read happen to coincide and therefore prove
+# nothing on their own.
+#
+# The Database Call names its statement by INDEX (`statement: 0`) into the
+# authored golden order rather than repeating the SQL or the bind:
+# `then.statements` stays the single SQL and bind oracle, and `then.roundTrips`
+# stays the single count oracle — one Database Call activity, so the two agree
+# by construction or the case fails. No lock suffix appears: the read runs on no
+# transaction, so the m-read-lock in-transaction rule never applies.
+model: models/account.yaml
+tags: [m-execution-lifecycle, m-snapshot-read, slice-snapshot-1, standalone]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Account
+    predicate:
+      eq:
+        attr: parallax.compatibility.Account.id
+        value: 3
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      binds: [3]
+  referenceSql: select id, owner, balance, version from account where id = 3
+  rows:
+    - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+  roundTrips: 1
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: read
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            readStarted: { target: parallax.compatibility.Account, interface: rows }
+          - sequence: 2
+            activity: 2
+            parent: 1
+            databaseCallStarted:
+              target: parallax.compatibility.Account
+              kind: read
+              statement: 0
+          - sequence: 3
+            activity: 2
+            parent: 1
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 4
+            activity: 1
+            parent: null
+            readFinished: { outcome: completed }

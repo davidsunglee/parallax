@@ -111,10 +111,13 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 # m-read-lock (its runtime object-find pair -002/-005 are real idiomatic
 # read-story examples; its harness-lane and two-session proofs
 # -001/-006/-007/-010/-011 are case-scoped — no case needs a generic
-# module-wide reason), and m-metamodel (its one
-# primary-module case is a foundational model reject, reasoned case-scoped).
+# module-wide reason), m-metamodel (its one
+# primary-module case is a foundational model reject, reasoned case-scoped), and
+# m-execution-lifecycle (its joined case is a real idiomatic story and the other
+# five name the grader that runs them, so no case needs a module-wide reason).
 _BUCKET_FREE_MODULES: frozenset[str] = frozenset(
     {
+        "m-execution-lifecycle",
         "m-unit-work",
         "m-navigate",
         "m-deep-fetch",

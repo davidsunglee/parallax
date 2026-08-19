@@ -445,3 +445,19 @@ def compare_stored_data_issues(observed: object, expected: object) -> None:
     assert observed == expected, (
         f"stored-data classification mismatch:\n  observed: {observed!r}\n  expected: {expected!r}"
     )
+
+
+def compare_execution_lifecycle(observed: object, expected: object) -> None:
+    """Assert a run's delivered event stream equals what the case authored.
+
+    Compared WHOLE and exactly, unlike every other oracle here: an event stream
+    is not a projection to normalize but the delivery itself, and the two facts
+    that matter most about it — that nothing extra was delivered and that
+    nothing was delivered out of order — are exactly what a per-field
+    comparison would give up. The adapter has already reduced its side to the
+    portable shape, so the only difference two conforming implementations can
+    have here is one the case means to state.
+    """
+    assert observed == expected, (
+        f"execution lifecycle mismatch:\n  observed: {observed!r}\n  expected: {expected!r}"
+    )

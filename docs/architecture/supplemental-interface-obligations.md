@@ -196,7 +196,7 @@ compatibility case is.
 ### SIO-008 — A zero-row write under a non-conflict classification is not retried
 
 - **Module tag**: `m-auto-retry`
-- **Supplements**: `m-execution-log-004` (which grades the zero-row enforcement
+- **Supplements**: `m-execution-lifecycle-004` (which grades the zero-row enforcement
   shape but not the retry verdict)
 - **Why the corpus cannot state it**: the state is unreachable through public
   verbs. A zero-row write in these classes requires a row to have been deleted

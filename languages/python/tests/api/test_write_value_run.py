@@ -20,11 +20,10 @@ import pytest
 
 from _support.corpus import case_fixtures
 from parallax.conformance import case_format, engine, write_value_runner
-from parallax.conformance._observed_port import StatementObservation
+from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.core.dialect import POSTGRES
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
 
@@ -38,8 +37,8 @@ def test_write_value_case_runs_through_the_shipped_verbs(
 ) -> None:
     provisioner.reset(engine.load_case_metamodel(case), case_fixtures(case))
     model = MODELS[Path(case.model).stem]
-    observed = StatementObservation()
-    db = connect(observed.observing(provisioner.port, POSTGRES), model)
+    observed = LifecycleObservation()
+    db = connect(provisioner.port, model, lifecycle_provider=observed.provider)
     # A `anotherSource` value is read through this second managed source, which
     # materializes and recognizes its own independently of the Snapshot lifecycle
     # the verbs under test write through.

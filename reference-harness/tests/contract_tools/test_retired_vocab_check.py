@@ -406,6 +406,36 @@ def test_query_violation_names_its_own_family() -> None:
     assert violations == ["docs/x.md:2: retired query vocabulary 'operation tree'"]
 
 
+def test_the_retired_execution_log_module_is_denied_in_every_spelling() -> None:
+    retired = [
+        "the `m-execution-log` module owns the record",
+        "`parallax.core.execution_log` is the scope",
+        "core/spec/m-execution-log.md states it",
+        "the retained Execution Log is handed back",
+        "an ExecutionLogBuilder appends to it",
+        "the execution logs it retained across retries",
+    ]
+    for line in retired:
+        assert check_text("f.md", line), line
+
+
+def test_the_live_execution_lifecycle_spelling_stays_legal() -> None:
+    legal = [
+        "the `m-execution-lifecycle` module owns the transient stream",
+        "`parallax.core.execution_lifecycle` is the scope",
+        "one Execution Lifecycle Provider is installed at composition",
+        "the executor logs nothing at all",
+        "core/compatibility/cases/m-execution-lifecycle-001-standalone-read.yaml",
+    ]
+    for line in legal:
+        assert check_text("f.md", line) == [], line
+
+
+def test_an_execution_log_violation_names_its_own_family() -> None:
+    violations = check_text("docs/x.md", "one\nthe retained execution log\n")
+    assert violations == ["docs/x.md:2: retired execution log vocabulary 'execution log'"]
+
+
 def test_a_urls_own_text_is_not_repository_vocabulary() -> None:
     # A URL's text is fixed by whatever system issued it, so no edit in this
     # repository can change the vocabulary it spells.
@@ -481,12 +511,15 @@ def test_historical_and_fixture_trees_are_pruned(tmp_path: Path) -> None:
     assert main([str(tmp_path)]) == 1
 
 
-def test_a_decision_record_is_exempt_only_from_the_temporal_family() -> None:
+def test_a_decision_record_is_exempt_only_from_the_superseded_families() -> None:
     temporal = "the business date this decision fixed\n"
+    execution_log = "the retained Execution Log this decision supersedes\n"
     query = "prevented by the operation no-drift guard\n"
     assert check_text("docs/adr/0009-x.md", temporal) == []
+    assert check_text("docs/adr/0009-x.md", execution_log) == []
     assert check_text("docs/adr/0009-x.md", query)
     assert check_text("core/spec/m-x.md", temporal)
+    assert check_text("core/spec/m-x.md", execution_log)
 
 
 def test_a_decision_records_retirement_table_names_the_spellings_it_retires() -> None:

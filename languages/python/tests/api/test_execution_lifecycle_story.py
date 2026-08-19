@@ -10,6 +10,9 @@ happened.
 The decline is here for the opposite reason — it must be observable nowhere at
 all. A Provider that answers ``None`` is asked once and told nothing after, and
 the query it declined is the query an unobserved caller would have run.
+
+The joined story is the Usage Guide's own source, executed here so the
+documented spelling of the composition seam cannot drift from a working one.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from decimal import Decimal
 from typing import Any
 
 from _support.corpus import case_fixtures
-from parallax.conformance import case_format, engine
+from parallax.conformance import case_format, engine, execution_lifecycle_stories
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.execution_lifecycle import (
@@ -35,7 +38,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.snapshot import connect
 
-_CASE_ID = "m-execution-log-001"
+_CASE_ID = "m-execution-lifecycle-001"
 
 
 def _seeded(provisioner: Any) -> Any:
@@ -107,3 +110,15 @@ def test_a_declining_provider_changes_nothing_about_the_query(provisioner: Any) 
     assert db.find(Account.where(Account.id == 2)).result().balance == Decimal("250.00")
     assert [execution.kind for execution in provider.opened] == ["READ"]
     assert provider.reported == []
+
+
+def test_the_joined_usage_guide_story_runs_against_a_real_database(provisioner: Any) -> None:
+    shape = execution_lifecycle_stories.a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
+        _seeded(provisioner), MODELS["account"]
+    )
+    # One outermost operation is one root, however many joined calls it makes,
+    # and a joined call runs no attempt of its own.
+    assert shape.roots == 1
+    assert shape.attempts == 1
+    assert shape.joined_parent_is_the_attempt
+    assert shape.balance == Decimal("251.00")

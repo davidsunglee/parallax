@@ -1,0 +1,120 @@
+# Pre-commit batch (m-execution-lifecycle): the boundary's own flush is ONE
+# Write Batch activity carrying the `pre-commit` trigger.
+#
+# Both writes are buffered in ONE unit of work (the shared `uow` label) and
+# neither is read back, so nothing forces an early flush: the unit of work
+# reaches its boundary with a full buffer and flushes it in one pass. The stream
+# therefore holds exactly ONE `writeBatchStarted`, and its trigger is
+# `pre-commit` — the distinction this case pins down against its sibling
+# m-execution-lifecycle-003, where an identical buffered insert is forced out
+# early by a dependent read and the batch carries `read-dependency` instead.
+#
+# Two statements inside one batch is the point: a batch is a FLUSH, not a
+# statement, so activity 3 opens once and holds two Database Calls (activities 4
+# and 5) rather than appearing twice. Both name activity 3 as their `parent`,
+# and both finish before it does — a batch spans planning, lowering, every call
+# it issues, and affected-row enforcement, so nothing it caused outlives it.
+#
+# The steps must share one unit of work for that to be observable at all: an
+# ordered write SEQUENCE is a sequence of independent units of work, and two
+# independent boundaries would produce two Transaction Invocation roots with one
+# call each, which is a different claim entirely. The FK ordering is the ordinary
+# m-unit-work rule (the parent Order before the child OrderItem that references
+# it), reused here so the two calls have a deterministic order to assert. Each
+# call is a `write` whose `writeCompleted` reports the single row it affected,
+# and `then.roundTrips` counts those two calls — begin and commit are not
+# Database Calls and appear nowhere in the stream, which is why a transaction
+# that reached the database three times reports two.
+#
+# The case declares no `when.uow`, so the invocation states the resolved DEFAULT
+# Concurrency Preference, `optimistic` (m-unit-work strategy selection), beside
+# the resolved retry policy. What it states is that PREFERENCE, not a claim that
+# every Entity took one strategy: Order and OrderItem are unversioned, so each
+# resolves to the mandatory Locking fallback, and neither insert needs an
+# observation or a gate either way.
+model: models/orders.yaml
+tags: [m-execution-lifecycle, m-unit-work, slice-snapshot-1, write-batch, pre-commit]
+shape: scenario
+when:
+  scenario:
+    - uow: batch
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.Order
+          rows:
+            - { id: 300, name: Lovelace, sku: E-1, qty: 2, price: 12.50, active: true, orderedOn: "2024-08-01" }
+      roundTrips: 1
+      note: buffer the parent Order; nothing reads it back, so nothing flushes yet
+      statements:
+        - sql:
+            postgres: insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [300, Lovelace, E-1, 2, 12.50, true, 2024-08-01]
+    - uow: batch
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 301, orderId: 300, sku: E-1, quantity: 4 }
+      roundTrips: 1
+      note: buffer the child OrderItem in the SAME unit of work; the boundary flushes both in one pre-commit batch
+      statements:
+        - sql:
+            postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+          binds: [301, 300, E-1, 4]
+then:
+  roundTrips: 2
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: false
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 4
+            activity: 4
+            parent: 3
+            databaseCallStarted:
+              target: parallax.compatibility.Order
+              kind: write
+              statement: 0
+          - sequence: 5
+            activity: 4
+            parent: 3
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 6
+            activity: 5
+            parent: 3
+            databaseCallStarted:
+              target: parallax.compatibility.OrderItem
+              kind: write
+              statement: 1
+          - sequence: 7
+            activity: 5
+            parent: 3
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 8
+            activity: 3
+            parent: 2
+            writeBatchFinished: { outcome: completed }
+          - sequence: 9
+            activity: 2
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 10
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }

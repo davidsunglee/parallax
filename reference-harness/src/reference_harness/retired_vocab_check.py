@@ -9,6 +9,14 @@ a module, a schema, and a corpus case each carry vocabulary in their filename.
 Active is git's own view of the working tree: every tracked file plus every
 untracked one it does not ignore, whatever its directory or suffix.
 
+**Execution log.** ADR 0060 supersedes ADR 0055: execution observability is a
+transient event stream a Provider receives, never a record a result retains, and
+the module that owned the retained record is retired in favor of
+`m-execution-lifecycle`. Only the IDENTIFIER-shaped spellings are retired — the
+module slug, its scope name, and the camel type — because the compound names one
+retired subject wherever it is written, unlike the two families below whose stems
+are ordinary English.
+
 **Temporal.** The root glossary's `_Avoid_` registry retires the
 Reladomo-derived temporal spellings — business time/date, processing time/date,
 effective date, system date, and the business/processing dimension family — in
@@ -24,9 +32,9 @@ the read envelope's sibling `targetEntity` field, and the `FindQuery` /
 `LoweredFindQuery` pair. Predicate, Object Query, Includes, Deep Fetch, Subtype
 Selection, Temporal Selection, and Sort Key are the accepted names.
 
-Both deny-lists match whole retired PHRASES rather than bare words, because both
-retired stems are ordinary English. What makes a phrase retired depends on where
-it is written:
+The temporal and query deny-lists match whole retired PHRASES rather than bare
+words, because both of those retired stems are ordinary English. What makes a
+phrase retired depends on where it is written:
 
 - in prose, the stem counts only beside a listed noun — a temporal noun for
   business/processing, a query-surface noun for operation — so "business key",
@@ -62,10 +70,13 @@ Allow-list (explicitly labeled historical / prior-art / rejection text):
 - ``docs/research/reladomo/**`` — prior-art notes keep the vocabulary of the
   system they describe (other research documents are active prose and are
   scanned);
-- every ``adr`` directory, for the TEMPORAL family only — a decision record
-  states the temporal vocabulary current when it was written. The query
-  deny-list still applies there, because a decision record names live
-  machinery;
+- every ``adr`` directory, for the two SUPERSEDED families — temporal and
+  execution log. A decision record states the vocabulary current when it was
+  written, and one that supersedes another has to name what it replaced: ADR
+  0055's whole subject is the retained Execution Log. The query deny-list still
+  applies there, because that family retired a wrong NAME for live machinery
+  rather than a design, so a decision record naming it names something live
+  by the wrong name;
 - ``core/compatibility/descriptor-errors/`` — negative-test fixtures exist to
   spell the retired forms so serde provably rejects them;
 - glossary ``_Avoid_`` lines, the labeled ``Prior art:`` paragraph, and a table
@@ -394,9 +405,21 @@ _RETIRED_QUERY_PATTERNS = (
     re.compile(rf"FindQuer(?:y|ies){_CAMEL_RIGHT}"),
 )
 
+# The retired execution-log vocabulary: the module ADR 0060 superseded, its
+# Python scope, and the record type it owned. One pattern is enough where the
+# temporal and query families need many, because the compound is a NAME rather
+# than an English phrase — `execution` opens it and `log` closes it, in prose,
+# in a slug, in snake_case, and across a wrapped line alike. The live spelling
+# it makes room for is `execution lifecycle`, which shares only the first word.
+_RETIRED_EXECUTION_LOG_PATTERNS = (
+    re.compile(rf"{_LEFT}execution{_JOIN}logs?{_RIGHT}", re.IGNORECASE),
+    re.compile(rf"ExecutionLogs?{_CAMEL_RIGHT}"),
+)
+
 _RETIRED_FAMILIES = (
     ("temporal", _RETIRED_TEMPORAL_PATTERNS),
     ("query", _RETIRED_QUERY_PATTERNS),
+    ("execution log", _RETIRED_EXECUTION_LOG_PATTERNS),
 )
 
 # The host this repository issues names under: a canonical schema `$id` spells a
@@ -453,10 +476,13 @@ _GENERATED_NAMES = {"uv.lock", "pnpm-lock.yaml", "package-lock.json", "yarn.lock
 # other research document is active prose and stays scanned.
 _EXEMPT_TREES = ("docs/research/reladomo", "core/compatibility/descriptor-errors")
 
-# A directory whose documents state the temporal vocabulary current when they
-# were written. Only that family is exempt: a decision record also names live
-# machinery, and the name of a live guard, module, or type is current prose.
-_TEMPORAL_EXEMPT_DIR_NAME = "adr"
+# A directory whose documents state the vocabulary current when they were
+# written, and — where one decision supersedes another — the vocabulary of what
+# it replaced. The two SUPERSEDED families are exempt there; the query family is
+# not, because it retired a wrong name for machinery that is still live, and the
+# name of a live guard, module, or type is current prose.
+_SUPERSEDED_EXEMPT_DIR_NAME = "adr"
+_SUPERSEDED_FAMILIES = frozenset({"temporal", "execution log"})
 
 # Repo-root-relative files exempt because they exist to spell the retired
 # phrases: this module (whose deny-list and examples name them) and its test
@@ -505,8 +531,8 @@ def scanned_files(root: Path) -> Iterator[Path]:
 
 def _applicable_families(relative_path: str) -> tuple[tuple[str, tuple[re.Pattern[str], ...]], ...]:
     directories = relative_path.split("/")[:-1]
-    if _TEMPORAL_EXEMPT_DIR_NAME in directories:
-        return tuple(entry for entry in _RETIRED_FAMILIES if entry[0] != "temporal")
+    if _SUPERSEDED_EXEMPT_DIR_NAME in directories:
+        return tuple(entry for entry in _RETIRED_FAMILIES if entry[0] not in _SUPERSEDED_FAMILIES)
     return _RETIRED_FAMILIES
 
 
@@ -600,7 +626,7 @@ def main(argv: list[str]) -> int:
     as ``path: retired <family> vocabulary '<match>' in the path`` or
     ``path:line: retired <family> vocabulary '<match>'``.
 
-    Exit codes: 0 — no retired temporal or query vocabulary on any scanned
+    Exit codes: 0 — no retired vocabulary of any family on any scanned
     surface; 1 — at least one violation; 2 — usage error (argument count, or
     *argv[0]* is not a directory or not a git working tree).
     """
@@ -635,7 +661,7 @@ def main(argv: list[str]) -> int:
             print(f"  - {violation}", file=sys.stderr)
         return 1
 
-    print("retired-vocabulary check OK: no retired temporal or query vocabulary in active sources")
+    print("retired-vocabulary check OK: no retired vocabulary in active sources")
     return 0
 
 

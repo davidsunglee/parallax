@@ -24,6 +24,7 @@ from _support.corpus import (
     case_document,
     case_fixtures,
     compare_binds,
+    compare_execution_lifecycle,
     compare_graph,
     compare_rows,
     compare_stored_data_issues,
@@ -146,6 +147,21 @@ def _read_golden_statements(case: case_format.Case) -> list[tuple[str, list[Any]
     return out
 
 
+def _grade_execution_lifecycle(then: dict[str, Any], observations: dict[str, Any]) -> None:
+    """The delivered stream against `then.executionLifecycle`, where a case authors it.
+
+    The adapter reports the observation for exactly the cases that author the
+    oracle (`m-conformance-adapter`), so an authoring case whose envelope omits
+    it is an adapter that installed no Provider rather than a case that asserted
+    nothing — which is why the absence is asserted rather than skipped past.
+    """
+    expected = then.get("executionLifecycle")
+    if expected is None:
+        assert "executionLifecycle" not in observations
+        return
+    compare_execution_lifecycle(observations["executionLifecycle"], expected)
+
+
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
 def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     model = engine.load_case_metamodel(case)
@@ -184,6 +200,7 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
     observations = envelope["observations"]
     assert observations["roundTrips"] == then.get("roundTrips", 1), case.case_id
+    _grade_execution_lifecycle(then, observations)
 
     if "rows" in then:
         compare_rows(observations["rows"], then["rows"])
@@ -549,6 +566,7 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         # only reconciles against in Decimal space, not by bare wire equality.
         compare_binds(emission["binds"], golden_binds)
     assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
+    _grade_execution_lifecycle(case_document(case)["then"], envelope["observations"])
 
     if case.shape == "scenario":
         schedule = _scenario_read_schedule(case, model)

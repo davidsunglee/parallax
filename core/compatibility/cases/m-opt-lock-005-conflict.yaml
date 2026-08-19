@@ -23,7 +23,7 @@
 #
 # The zero-row enforcement this reaches — a port call that COMPLETED with a
 # count of zero, whose post-call enforcement is what failed — is graded as
-# provenance by m-execution-log-004, which records the identical shape on its
+# a lifecycle stream by m-execution-lifecycle-004, which records the identical shape on its
 # first attempt.
 #
 # The resulting table state confirms our write did NOT apply: id 2 still carries

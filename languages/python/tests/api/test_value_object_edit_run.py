@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from parallax.conformance import engine
-from parallax.conformance._observed_port import StatementObservation
+from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.vo_models import (
     Customer,
@@ -49,10 +49,10 @@ unpopulated, so it is absent from the document rather than stored as null — th
 state every assertion below weighs its own stored document against."""
 
 
-def _connect_and_seed(provisioner: Any, observed: StatementObservation | None = None) -> Database:
+def _connect_and_seed(provisioner: Any, observed: LifecycleObservation | None = None) -> Database:
     provisioner.reset(model_of(_CUSTOMER), {})
-    port = provisioner.port if observed is None else observed.observing(provisioner.port, POSTGRES)
-    db = connect(port, _CUSTOMER)
+    provider = None if observed is None else observed.provider
+    db = connect(provisioner.port, _CUSTOMER, lifecycle_provider=provider)
     db.transact(
         lambda tx: tx.insert(
             Customer(
@@ -166,7 +166,7 @@ def _away_and_back(address: CustomerAddress) -> CustomerAddress:
 def test_an_occurrence_carrying_no_net_change_writes_nothing(
     provisioner: Any, derive: Callable[[CustomerAddress], CustomerAddress]
 ) -> None:
-    observed = StatementObservation()
+    observed = LifecycleObservation()
     db = _connect_and_seed(provisioner, observed)
     seeded = observed.round_trips
 
