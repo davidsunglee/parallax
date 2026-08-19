@@ -9,6 +9,8 @@ import uuid
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
+from unittest import mock
 
 import jsonschema
 import pytest
@@ -16,6 +18,7 @@ import pytest
 from _support.db_port import body_outcome
 from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import adapter, case_format, engine
+from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.core.base import PresentDocument
 from parallax.core.db_error import DatabaseError
@@ -936,12 +939,13 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> No
 
 
 # --------------------------------------------------------------------------- #
-# What a run does NOT report (m-conformance-adapter): execution observability  #
-# is delivered to a Provider while the work runs, so a legacy provenance case  #
-# is outside the active claim and no envelope carries a lifecycle observation. #
+# The lifecycle observation (m-conformance-adapter): a run installs a Provider #
+# and reports the stream it delivered, for a case that authors the oracle and  #
+# for no other — a case asserting nothing about the stream is handed no        #
+# observed key to explain.                                                     #
 # --------------------------------------------------------------------------- #
 class _AccountPort:
-    """Returns the one `account.yaml` row `m-execution-log-001` reads."""
+    """Returns the one `account.yaml` row `m-execution-lifecycle-001` reads."""
 
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
@@ -957,19 +961,79 @@ class _AccountPort:
         return body_outcome(self, body)
 
 
-def test_a_legacy_execution_log_case_is_outside_the_active_claim() -> None:
-    case_path = case_format.default_cases_dir() / "m-execution-log-001-standalone-read-trace.yaml"
+def test_a_case_authoring_the_oracle_gets_the_stream_its_run_delivered() -> None:
+    case_path = case_format.default_cases_dir() / "m-execution-lifecycle-001-standalone-read.yaml"
     envelope = adapter.run_case(case_path, "postgres", _AccountPort())
     jsonschema.validate(envelope, _SCHEMA)
-    assert envelope["status"] == "unsupported", envelope
-    assert envelope["diagnostics"][0]["code"] == "unsupported-module"
+    assert envelope["status"] == "ok", envelope
+    assert envelope["observations"]["executionLifecycle"] == {
+        "roots": [
+            {
+                "execution": 1,
+                "kind": "read",
+                "events": [
+                    {
+                        "sequence": 1,
+                        "activity": 1,
+                        "parent": None,
+                        "readStarted": {
+                            "target": "parallax.compatibility.Account",
+                            "interface": "rows",
+                        },
+                    },
+                    {
+                        "sequence": 2,
+                        "activity": 2,
+                        "parent": 1,
+                        "databaseCallStarted": {
+                            "target": "parallax.compatibility.Account",
+                            "kind": "read",
+                            "statement": 0,
+                        },
+                    },
+                    {
+                        "sequence": 3,
+                        "activity": 2,
+                        "parent": 1,
+                        "databaseCallFinished": {"outcome": "readCompleted", "returnedRows": 1},
+                    },
+                    {
+                        "sequence": 4,
+                        "activity": 1,
+                        "parent": None,
+                        "readFinished": {"outcome": "completed"},
+                    },
+                ],
+            }
+        ]
+    }
 
 
-def test_no_run_reports_a_lifecycle_observation() -> None:
-    # Nothing a run answers describes the execution that produced it: the
-    # lifecycle is delivered to an installed Provider while the work runs
-    # (`m-execution-lifecycle`), and the adapter's observation envelope
-    # therefore carries only what the case's own oracles grade.
+def test_a_lifecycle_index_naming_a_different_statement_is_an_adapter_error() -> None:
+    # A call's index and the emission it names are built independently on the
+    # grouped-write lanes, so an index that would name a DIFFERENT statement is
+    # an ADAPTER defect rather than a case failure: it is reported as an error
+    # envelope, never as an observation the runner would then go on to grade.
+    real_run = adapter._run  # pyright: ignore[reportPrivateUsage] - the adapter's own dispatch
+
+    def _drifted(
+        case: case_format.Case, dialect: str, port: DbPort, lifecycle: LifecycleRun
+    ) -> tuple[list[engine.Emission], dict[str, Any]]:
+        emissions, observations = real_run(case, dialect, port, lifecycle)
+        drifted = [engine.Emission(e.case_pointer, "select 0", e.binds) for e in emissions]
+        return drifted, observations
+
+    case_path = case_format.default_cases_dir() / "m-execution-lifecycle-001-standalone-read.yaml"
+    with mock.patch.object(adapter, "_run", _drifted):
+        envelope = adapter.run_case(case_path, "postgres", _AccountPort())
+    assert envelope["status"] == "error", envelope
+    assert "would name a different statement" in envelope["diagnostics"][0]["message"]
+
+
+def test_a_case_authoring_no_oracle_reports_no_lifecycle_observation() -> None:
+    # The stream a run delivers is reported where a case asks for it and
+    # nowhere else: an observed key a case left unasserted is one the corpus
+    # comparator would have to be told to ignore.
     envelope = adapter.run_case(_VO_READ_CASE, "postgres", _FakePort())
     assert set(envelope["observations"]) == {"rows", "roundTrips"}
 

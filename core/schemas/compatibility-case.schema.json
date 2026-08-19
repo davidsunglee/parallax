@@ -169,7 +169,7 @@
           "required": ["rejectedRule"],
           "allOf": [
             { "not": { "required": ["statements"] } },
-            { "not": { "required": ["execution"] } }
+            { "not": { "required": ["executionLifecycle"] } }
           ]
         }
       },
@@ -293,23 +293,6 @@
       },
       "then": {
         "properties": { "then": { "properties": { "roundTrips": { "const": 0 } } } }
-      }
-    },
-    {
-      "description": "Which branch of `then.execution` a case may author is decided by its SHAPE, not chosen freely. A `read` case's whole observable is one read issued outside any unit of work, so its provenance is the Read Trace itself and it authors `readTrace`; every other executing shape runs inside a transaction boundary, whose provenance is the Execution Log spanning its attempts, so it authors `transactionLog`. Without this the closed union is closed over its own members only: a transactional case could author a bare `readTrace` — discarding the attempt, status, and retry-policy assertions that are the whole point of a transactional oracle — and a standalone read could author a log describing a boundary it never opened.",
-      "if": {
-        "required": ["shape"],
-        "properties": { "shape": { "const": "read" } }
-      },
-      "then": {
-        "properties": {
-          "then": { "properties": { "execution": { "required": ["readTrace"] } } }
-        }
-      },
-      "else": {
-        "properties": {
-          "then": { "properties": { "execution": { "required": ["transactionLog"] } } }
-        }
       }
     }
   ],
@@ -846,7 +829,7 @@
             "required": ["action"],
             "properties": {
               "action": {
-                "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language). `join` opens a JOINED unit of work that shares the current one rather than a nested boundary of its own (m-unit-work), so every action after it runs inside that joined scope; the list stays FLAT because the body is one linear sequence, and what a case asserts about the sharing rides `then.outcome` and `then.execution` rather than the list's shape.",
+                "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language). `join` opens a JOINED unit of work that shares the current one rather than a nested boundary of its own (m-unit-work), so every action after it runs inside that joined scope; the list stays FLAT because the body is one linear sequence, and what a case asserts about the sharing rides `then.outcome` and `then.executionLifecycle` rather than the list's shape.",
                 "enum": ["read", "create", "update", "terminate", "delete", "join"]
               },
               "note": {
@@ -994,7 +977,7 @@
       ]
     },
     "then": {
-      "description": "Everything the case asserts after the action runs: the golden SQL an implementation is expected to emit (`statements`), the naive oracle (`referenceSql`), the observed data (`rows` / `graph` / `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` / `roundTrips`), the portable boundary `outcome`, the execution-provenance `execution`, and the numeric-comparison `tolerance`.",
+      "description": "Everything the case asserts after the action runs: the golden SQL an implementation is expected to emit (`statements`), the naive oracle (`referenceSql`), the observed data (`rows` / `graph` / `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` / `roundTrips`), the portable boundary `outcome`, the transient execution-lifecycle `executionLifecycle`, and the numeric-comparison `tolerance`.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1182,18 +1165,12 @@
           "minimum": 0,
           "default": 1
         },
-        "execution": {
-          "description": "The execution-provenance oracle (m-execution-log): what the run's Execution Log or Read Trace looks like. A CLOSED union of exactly one wrapper — `readTrace` for a case whose whole observable is one read, `transactionLog` for a transactional one — narrowed by the same `propertyNames` enum idiom the `when` branches use. Calls name their statement by INDEX into the case's flattened authored golden-statement order and never repeat SQL or binds: `then.statements` (and the per-step / per-attempt `statements`) stay the sole SQL and bind oracles, `then.roundTrips` the sole count oracle. Duration and the implementation-level error type name are omitted because neither is portable; they are checked against their general API contracts instead. This is a CASE ASSERTION FORMAT, not a public serialization contract, and the compatibility harness validates it without grading it — each language grades it through the conformance adapter's matching `execution` observation.",
+        "executionLifecycle": {
+          "description": "The transient execution-lifecycle oracle (m-execution-lifecycle): the ordered Root Executions a run opened and the complete Started/Finished stream each delivered to an installed Provider. The thing under assertion is the DELIVERY itself rather than a projection of it, which is why correlation is authored: a runtime that emitted the right transitions in the wrong tree fails here. A Database Call names its statement by INDEX into the case's flattened authored golden order and never repeats SQL or binds, so `then.statements` stays the sole SQL and bind oracle; `then.roundTrips` stays the sole count oracle and a case authoring both states one number twice, which the harness cross-checks. Durations, UUIDs, implementation type names, messages, stacks, and native database codes are not portable and are absent. This is a CASE ASSERTION FORMAT, not a public serialization contract, and the compatibility harness validates it without producing events of its own — each language grades it through the conformance adapter's matching `executionLifecycle` observation.",
           "type": "object",
           "additionalProperties": false,
-          "oneOf": [
-            { "required": ["readTrace"], "propertyNames": { "enum": ["readTrace"] } },
-            { "required": ["transactionLog"], "propertyNames": { "enum": ["transactionLog"] } }
-          ],
-          "properties": {
-            "readTrace": { "$ref": "#/$defs/readTrace" },
-            "transactionLog": { "$ref": "#/$defs/transactionLog" }
-          }
+          "required": ["roots"],
+          "properties": {"roots": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/lifecycleRoot"}}}
         },
         "tolerance": {
           "description": "Absolute tolerance for numeric row comparison. Omit for exact comparison (the default; money/counts/exact aggregates compare exactly in Decimal space). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) that cannot be authored exactly and differ in scale across dialects; comparison then becomes abs(actual - expected) <= tolerance.",
@@ -1218,178 +1195,275 @@
         "stored-data-primary-key-undecodable"
       ]
     },
-    "databaseCall": {
-      "description": "One ATTEMPTED database round trip (m-execution-log Database Call). `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds — and is OMITTED on a lane that authors no golden SQL (`api-conformance`), where `kind` and `completion` are the whole portable oracle. `kind` keeps a failed call classifiable without parsing SQL.",
+    "lifecycleTarget": {
+      "description": "The Entity an activity names. Constrained here to a nonempty spelling rather than to the `identity.schema.json` Entity-name grammar: the adapter envelope this oracle mirrors is deliberately consumable as one self-contained document, and restating the grammar in both files would put a second copy of it where nothing keeps the two in step.",
+      "type": "string",
+      "minLength": 1
+    },
+    "lifecycleRoot": {
+      "description": "One normalized Root Execution (m-execution-lifecycle): one outermost Handle operation and everything it causally contains. `execution` replaces the runtime UUIDv4 with a positive FIRST-OBSERVATION index, which orders concurrent roots without stating an identity no run reproduces. `kind` names which outermost operation opened it. `events` is the delivered stream in delivery order, a failed activity's transitions included: a Started and its Finished are the same activity delivered twice, so the shortest possible root holds two.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "completion"],
+      "required": ["execution", "kind", "events"],
       "properties": {
-        "statement": { "type": "integer", "minimum": 0 },
-        "kind": { "enum": ["read", "write"] },
-        "completion": { "$ref": "#/$defs/callCompletion" }
+        "execution": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["read", "transaction-invocation", "snapshot-stream"]},
+        "events": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/lifecycleEvent"}}
+      }
+    },
+    "lifecycleEvent": {
+      "description": "One delivered transition: the correlation envelope every event carries, plus EXACTLY ONE concrete transition wrapper naming what happened. `sequence` is the one-based contiguous delivery position within the root and `activity` the one-based contiguous ID a Started assigns and its Finished reuses, so the two deliberately disagree. `parent` is the Activity ID containing this one and is `null` on the root activity ALONE — authored rather than omitted, because \"this activity is the root\" is the assertion. The wrapper is the same closed-union idiom the rest of this schema uses: naming the transition is what keeps a reader from telling two transitions apart by which fields happen to be present.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "activity", "parent"],
+      "properties": {
+        "sequence": {"type": "integer", "minimum": 1},
+        "activity": {"type": "integer", "minimum": 1},
+        "parent": {"type": ["integer", "null"], "minimum": 1},
+        "readStarted": {"$ref": "#/$defs/lifecycleReadStarted"},
+        "readFinished": {"$ref": "#/$defs/lifecycleActivityOutcome"},
+        "writeBatchStarted": {"$ref": "#/$defs/lifecycleWriteBatchStarted"},
+        "writeBatchFinished": {"$ref": "#/$defs/lifecycleActivityOutcome"},
+        "databaseCallStarted": {"$ref": "#/$defs/lifecycleDatabaseCallStarted"},
+        "databaseCallFinished": {"$ref": "#/$defs/lifecycleDatabaseCallFinished"},
+        "transactionInvocationStarted": {"$ref": "#/$defs/lifecycleInvocationStarted"},
+        "transactionInvocationFinished": {"$ref": "#/$defs/lifecycleInvocationFinished"},
+        "transactionAttemptStarted": {"$ref": "#/$defs/lifecycleNoFields"},
+        "transactionAttemptFinished": {"$ref": "#/$defs/lifecycleAttemptFinished"},
+        "snapshotStreamStarted": {"$ref": "#/$defs/lifecycleStreamStarted"},
+        "snapshotStreamFinished": {"$ref": "#/$defs/lifecycleStreamFinished"},
+        "streamBatchStarted": {"$ref": "#/$defs/lifecycleNoFields"},
+        "streamBatchFinished": {"$ref": "#/$defs/lifecycleActivityOutcome"}
+      },
+      "oneOf": [
+        {"required": ["readStarted"]},
+        {"required": ["readFinished"]},
+        {"required": ["writeBatchStarted"]},
+        {"required": ["writeBatchFinished"]},
+        {"required": ["databaseCallStarted"]},
+        {"required": ["databaseCallFinished"]},
+        {"required": ["transactionInvocationStarted"]},
+        {"required": ["transactionInvocationFinished"]},
+        {"required": ["transactionAttemptStarted"]},
+        {"required": ["transactionAttemptFinished"]},
+        {"required": ["snapshotStreamStarted"]},
+        {"required": ["snapshotStreamFinished"]},
+        {"required": ["streamBatchStarted"]},
+        {"required": ["streamBatchFinished"]}
+      ]
+    },
+    "lifecycleNoFields": {
+      "description": "A transition whose payload is its correlation alone. A Transaction Attempt names no attempt-specific field, because which attempt of the invocation it is reads off the envelope and everything about the policy it runs under was stated by the invocation that opened it; a Stream Batch names none for the same reason about the stream that opened it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "lifecycleReadStarted": {
+      "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Write Batch. `interface` is the public read interface that publishes the result — `typed`, `wire`, or the internal `rows` values lane — which is what distinguishes two reads of one Entity differing only in what they materialize.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "interface"],
+      "properties": {
+        "target": {"$ref": "#/$defs/lifecycleTarget"},
+        "interface": {"enum": ["typed", "wire", "rows"]}
+      }
+    },
+    "lifecycleWriteBatchStarted": {
+      "description": "A nonempty unit-of-work buffer is being flushed, naming the CLOSED `m-unit-work` trigger that produced it: `read-dependency` for the batch a dependent read forced — which finishes before the Read it enabled starts — or `pre-commit` for the boundary-owned final batch. An empty buffer emits nothing at all, so a batch in the stream always had something to write.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trigger"],
+      "properties": {"trigger": {"enum": ["read-dependency", "pre-commit"]}}
+    },
+    "lifecycleDatabaseCallStarted": {
+      "description": "One attempted round trip is about to run. `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is OMITTED on a lane that authors no golden SQL (`api-conformance`), where `kind` and the outcome are the whole portable oracle. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "kind"],
+      "properties": {
+        "target": {"$ref": "#/$defs/lifecycleTarget"},
+        "kind": {"enum": ["read", "write"]},
+        "statement": {"type": "integer", "minimum": 0}
+      }
+    },
+    "lifecycleDatabaseCallFinished": {
+      "description": "The round trip came back, however it came back — a CLOSED union of exactly one outcome. `readCompleted` carries the PHYSICAL row count the statement returned, never a count of result roots, unique graph nodes, or projection views; `writeCompleted` the affected-row count, which is a COMPLETION even when it falls short of what the step addressed. `failed` carries the neutral `m-db-error` category the failure classified to, `null` where it classified to none — the ONE place a category is portable at all, because a failed Database Call is the one activity carrying a Database Failure Diagnostic, and begin, commit, and rollback are no Database Call. The monotonic duration, the message, the native code, and the raised type are not portable and are absent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {"enum": ["readCompleted", "writeCompleted", "failed"]},
+        "returnedRows": {"type": "integer", "minimum": 0},
+        "affectedRows": {"type": "integer", "minimum": 0},
+        "category": {"enum": ["uniqueViolation", "deadlock", "lockWaitTimeout", null]},
+        "code": {"type": "string", "minLength": 1}
       },
       "allOf": [
         {
-          "description": "A `read` call admits Read Completed or Database Call Failed; a `write` call admits Write Completed or Database Call Failed. Keying the completion on the call's own kind is what makes the pair a closed algebra rather than two independent enums.",
-          "if": {
-            "required": ["kind"],
-            "properties": { "kind": { "const": "read" } }
-          },
+          "description": "Each outcome admits its own payload and no other's. Keying the payload on the outcome is what makes this a closed algebra rather than three independent optional fields, so a row count can never stand beside a failure.",
+          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "readCompleted"}}},
           "then": {
-            "properties": { "completion": { "not": { "required": ["writeCompleted"] } } }
-          },
+            "required": ["returnedRows"],
+            "allOf": [
+              {"not": {"required": ["affectedRows"]}},
+              {"not": {"required": ["category"]}},
+              {"not": {"required": ["code"]}}
+            ]
+          }
+        },
+        {
+          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "writeCompleted"}}},
+          "then": {
+            "required": ["affectedRows"],
+            "allOf": [
+              {"not": {"required": ["returnedRows"]}},
+              {"not": {"required": ["category"]}},
+              {"not": {"required": ["code"]}}
+            ]
+          }
+        },
+        {
+          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "failed"}}},
+          "then": {
+            "required": ["category"],
+            "allOf": [{"not": {"required": ["returnedRows"]}}, {"not": {"required": ["affectedRows"]}}]
+          }
+        }
+      ]
+    },
+    "lifecycleInvocationStarted": {
+      "description": "One call to callback demarcation opened, as exactly one of the two invocation kinds. An `outer` invocation opened the boundary and is therefore the root activity, so it states the RESOLVED Concurrency Preference and retry policy it runs under — resolved values only, never whether the caller supplied them. A `joined` invocation shares the outer root, unit of work, and transaction, runs no Transaction Attempt of its own, and states neither: both were resolved by the invocation it joined, which a joined boundary may not renegotiate.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invocation"],
+      "properties": {
+        "invocation": {"enum": ["outer", "joined"]},
+        "concurrency": {"enum": ["locking", "optimistic"]},
+        "retries": {"type": "integer", "minimum": 0},
+        "retryOptimisticConflicts": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "description": "The resolved policy belongs to the invocation that resolved it: an outer invocation states all three, and a joined one states none, because restating an inherited value would read as a renegotiation.",
+          "if": {"required": ["invocation"], "properties": {"invocation": {"const": "outer"}}},
+          "then": {"required": ["concurrency", "retries", "retryOptimisticConflicts"]},
           "else": {
-            "properties": { "completion": { "not": { "required": ["readCompleted"] } } }
+            "allOf": [
+              {"not": {"required": ["concurrency"]}},
+              {"not": {"required": ["retries"]}},
+              {"not": {"required": ["retryOptimisticConflicts"]}}
+            ]
           }
         }
       ]
     },
-    "callCompletion": {
-      "description": "How a Database Call ended (m-execution-log), a CLOSED union of exactly one member. `readCompleted` carries the PHYSICAL row count the statement returned — never a count of result roots, unique graph nodes, or projection views. `writeCompleted` carries the affected-row count. `failed` carries the detached diagnostic's portable half alone: the neutral `m-db-error` category the failure classified to, `null` where it classified to none. The message, the native code, and the raised exception are not portable and are absent here.",
+    "lifecycleInvocationFinished": {
+      "description": "The invocation reached its terminal outcome, a CLOSED union of exactly one member. `committed` and `failed` belong to an OUTER invocation and describe the physical boundary; `returned` and `raised` belong to a JOINED one and describe the nested callback ALONE, never claiming the physical transaction committed or rolled back.",
       "type": "object",
       "additionalProperties": false,
-      "oneOf": [
-        { "required": ["readCompleted"], "propertyNames": { "enum": ["readCompleted"] } },
-        { "required": ["writeCompleted"], "propertyNames": { "enum": ["writeCompleted"] } },
-        { "required": ["failed"], "propertyNames": { "enum": ["failed"] } }
-      ],
+      "required": ["outcome"],
       "properties": {
-        "readCompleted": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["returnedRows"],
-          "properties": { "returnedRows": { "type": "integer", "minimum": 0 } }
+        "outcome": {"enum": ["committed", "failed", "returned", "raised"]},
+        "attribution": {"enum": ["direct", "caused"]},
+        "cause": {"type": "integer", "minimum": 1},
+        "code": {"type": "string", "minLength": 1}
+      },
+      "allOf": [{"$ref": "#/$defs/lifecycleFailure"}]
+    },
+    "lifecycleActivityOutcome": {
+      "description": "A Read, Write Batch, or Stream Batch reached its terminal outcome: `completed` or `failed`. A Write Batch that planning reduced to zero DML completes exactly like one that ran statements — the buffer was spent either way — and a Read completes when its public result is ready.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {"enum": ["completed", "failed"]},
+        "attribution": {"enum": ["direct", "caused"]},
+        "cause": {"type": "integer", "minimum": 1},
+        "code": {"type": "string", "minLength": 1}
+      },
+      "allOf": [{"$ref": "#/$defs/lifecycleFailure"}]
+    },
+    "lifecycleAttemptFinished": {
+      "description": "One physical attempt reached its terminal outcome. `committed` ends the invocation. `rolledBack` and `rollbackFailed` carry the Attempt Failure: `phase` locates it inside the attempt — `callback` (the callback and everything it caused, joined invocations and read-dependency batches included), `pre-commit` (the boundary-owned final batch), `commit` (the durability call) — without exposing a stack location or an internal planner stage, and `retryEligible` is the CLASSIFIER's verdict under the effective policy, independent of the remaining budget and claiming nothing about whether another attempt occurred. `rollbackFailed` additionally admits `rollbackCode`, the stable code of the SECOND live failure, prefixed because two failures collide on one event.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {"enum": ["committed", "rolledBack", "rollbackFailed"]},
+        "phase": {"enum": ["callback", "pre-commit", "commit"]},
+        "retryEligible": {"type": "boolean"},
+        "attribution": {"enum": ["direct", "caused"]},
+        "cause": {"type": "integer", "minimum": 1},
+        "code": {"type": "string", "minLength": 1},
+        "rollbackCode": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {"$ref": "#/$defs/lifecycleFailure"},
+        {
+          "description": "A committed attempt carries no failure: stating one beside `committed` states two outcomes for one attempt.",
+          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "committed"}}},
+          "then": {"allOf": [{"not": {"required": ["phase"]}}, {"not": {"required": ["retryEligible"]}}]},
+          "else": {"required": ["phase", "retryEligible"]}
         },
-        "writeCompleted": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["affectedRows"],
-          "properties": { "affectedRows": { "type": "integer", "minimum": 0 } }
+        {
+          "description": "Only a FAILED rollback names a second failure's code: an attempt whose rollback completed has one live failure and reports one.",
+          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "rollbackFailed"}}},
+          "else": {"not": {"required": ["rollbackCode"]}}
         },
-        "failed": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["category"],
-          "properties": {
-            "category": { "enum": ["uniqueViolation", "deadlock", "lockWaitTimeout", null] }
+        {
+          "description": "A `commit`-phase failure names no cause. The durability boundary is no Database Call and opens no activity, so there is nothing beneath the attempt for it to name.",
+          "if": {"required": ["phase"], "properties": {"phase": {"const": "commit"}}},
+          "then": {"not": {"required": ["cause"]}}
+        }
+      ]
+    },
+    "lifecycleStreamStarted": {
+      "description": "A stream over `target` opened and is about to be iterated; construction alone emits nothing. `batchSize` is the positive page size the stream requests, which is what makes its Stream Batch children countable against a result the events never size.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "interface", "batchSize"],
+      "properties": {
+        "target": {"$ref": "#/$defs/lifecycleTarget"},
+        "interface": {"enum": ["typed", "wire", "rows"]},
+        "batchSize": {"type": "integer", "minimum": 1}
+      }
+    },
+    "lifecycleStreamFinished": {
+      "description": "The stream reached its terminal outcome. `exhausted` finishes at the moment exhaustion is discovered. `closedEarly` is a caller break, explicit close, caller exception, or cancellation before exhaustion, and rewrites no caller control flow. `failed` is reserved for Parallax's own planning, database, conversion, materialization, invalid-data, or cleanup work.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {"enum": ["exhausted", "closedEarly", "failed"]},
+        "attribution": {"enum": ["direct", "caused"]},
+        "cause": {"type": "integer", "minimum": 1},
+        "code": {"type": "string", "minLength": 1}
+      },
+      "allOf": [{"$ref": "#/$defs/lifecycleFailure"}]
+    },
+    "lifecycleFailure": {
+      "description": "How a failing outcome is attributed, applied to every transition carrying an Activity Failure. `attribution` is STATED rather than implied by the presence of `cause`, because which child a failure names — or that it names none — is the assertion, and an absent key would read as an unwritten one. `caused` names the DIRECT child this activity holds its one attribution for, so a cause is walked one link at a time rather than read off a single event, and a call that COMPLETED can be that child: attribution follows exception identity, never temporal proximity. `code` is the stable string the failing exception publishes as its own, absent for one publishing none. The qualified type, the message, and the stack are implementation-level and absent.",
+      "allOf": [
+        {
+          "if": {
+            "required": ["outcome"],
+            "properties": {"outcome": {"enum": ["failed", "raised", "rolledBack", "rollbackFailed"]}}
+          },
+          "then": {"required": ["attribution"]},
+          "else": {
+            "allOf": [
+              {"not": {"required": ["attribution"]}},
+              {"not": {"required": ["cause"]}},
+              {"not": {"required": ["code"]}}
+            ]
           }
-        }
-      }
-    },
-    "readTrace": {
-      "description": "The calls one read issued (m-execution-log Read Trace). NON-EMPTY by invariant: a trace proves work that reached the database, and planning that fails before its first call creates no trace at all — the attempt's `failure` records that instead.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["calls", "roundTrips"],
-      "properties": {
-        "calls": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/databaseCall" }
         },
-        "roundTrips": { "type": "integer", "minimum": 1 }
-      }
-    },
-    "writeBatchTrace": {
-      "description": "The calls one flushed write batch issued (m-execution-log Write Batch Trace), naming the CLOSED `m-unit-work` trigger that produced it: `read-dependency` for the batch a dependent read forced — which appears immediately BEFORE the read trace it enabled — or `finalization` for the boundary-owned final batch. Non-empty by the same invariant as a read trace.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["trigger", "calls", "roundTrips"],
-      "properties": {
-        "trigger": { "enum": ["read-dependency", "finalization"] },
-        "calls": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/databaseCall" }
-        },
-        "roundTrips": { "type": "integer", "minimum": 1 }
-      }
-    },
-    "attemptTrace": {
-      "description": "One entry in a Transaction Attempt's ORDERED traces: exactly one `readTrace` or `writeBatch`, narrowed by the same `propertyNames` idiom the top-level union uses. The order is the order the work reached the database, which is what makes a dependency-triggered batch's position in front of its read an assertion rather than a convention.",
-      "type": "object",
-      "additionalProperties": false,
-      "oneOf": [
-        { "required": ["readTrace"], "propertyNames": { "enum": ["readTrace"] } },
-        { "required": ["writeBatch"], "propertyNames": { "enum": ["writeBatch"] } }
-      ],
-      "properties": {
-        "readTrace": { "$ref": "#/$defs/readTrace" },
-        "writeBatch": { "$ref": "#/$defs/writeBatchTrace" }
-      }
-    },
-    "attemptFailure": {
-      "description": "The DETACHED diagnostic a rolled-back Transaction Attempt retains (m-execution-log Attempt Failure). `phase` locates a failure that has no call at all — `body` (callback work, explicit reads, read-forced write batches), `finalization` (the boundary-owned final batch), `commit` (the durability boundary) — without exposing a stack location or an internal planner stage. `retryEligible` is the CLASSIFIER's verdict under the effective policy, independent of the remaining budget and claiming nothing about whether another attempt occurred. `databaseCall` is the zero-based index into THIS attempt's own flattened calls, present only where a failed port call or post-call enforcement of a completed one caused the failure. The error type name and message are implementation-level and absent here.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["phase", "retryEligible"],
-      "properties": {
-        "phase": { "enum": ["body", "finalization", "commit"] },
-        "code": { "type": "string", "minLength": 1 },
-        "retryEligible": { "type": "boolean" },
-        "databaseCall": { "type": "integer", "minimum": 0 }
-      },
-      "allOf": [
         {
-          "description": "A `commit` failure references NO Database Call. The durability boundary is not a recorded call — begin, commit, and rollback count zero round trips and appear in no trace — so an index authored beside `phase: commit` can only name some earlier, unrelated statement.",
-          "if": {
-            "required": ["phase"],
-            "properties": { "phase": { "const": "commit" } }
-          },
-          "then": { "not": { "required": ["databaseCall"] } }
+          "if": {"required": ["attribution"], "properties": {"attribution": {"const": "caused"}}},
+          "then": {"required": ["cause"]},
+          "else": {"not": {"required": ["cause"]}}
         }
       ]
-    },
-    "transactionAttempt": {
-      "description": "One PHYSICAL attempt of the logical invocation (m-execution-log Transaction Attempt). `traces` is the ordered Read Traces and Write Batch Traces the attempt produced; it MAY be empty for an attempt that failed before reaching the database. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback. `status` omits the live `active` value the module's own algebra carries: this is a TERMINAL value graph, so every attempt it states has already transitioned. A `failure` belongs to a ROLLED-BACK attempt alone, which the conditional below states structurally.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "traces", "roundTrips"],
-      "properties": {
-        "status": { "enum": ["committed", "rolled-back"] },
-        "traces": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/attemptTrace" }
-        },
-        "roundTrips": { "type": "integer", "minimum": 0 },
-        "failure": { "$ref": "#/$defs/attemptFailure" }
-      },
-      "allOf": [
-        {
-          "description": "Only a ROLLED-BACK attempt carries a failure. The diagnostic describes the attempt that rolled back, so authoring one beside `committed` states two outcomes for one attempt.",
-          "if": {
-            "required": ["status"],
-            "properties": { "status": { "const": "rolled-back" } }
-          },
-          "else": { "not": { "required": ["failure"] } }
-        }
-      ]
-    },
-    "retryPolicy": {
-      "description": "The immutable effective Retry Policy the Execution Log retains once (m-execution-log / m-auto-retry), after defaults and outer-transaction inheritance resolve. It records the RESOLVED values only; whether the caller supplied one explicitly is not retained and has no authored spelling here.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["maxRetries", "retryOptimisticConflicts"],
-      "properties": {
-        "maxRetries": { "type": "integer", "minimum": 0 },
-        "retryOptimisticConflicts": { "type": "boolean" }
-      }
-    },
-    "transactionLog": {
-      "description": "The whole Execution Log of one logical transaction invocation (m-execution-log), spanning every physical attempt including a joined body's, which shares this log rather than opening a second one. `concurrency` is the resolved Concurrency Preference, not a claim that every Entity used one strategy; `retryPolicy` is likewise the resolved value retained once. `roundTrips` is the sum over the attempts.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["concurrency", "retryPolicy", "attempts", "roundTrips"],
-      "properties": {
-        "concurrency": { "enum": ["locking", "optimistic"] },
-        "retryPolicy": { "$ref": "#/$defs/retryPolicy" },
-        "attempts": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/transactionAttempt" }
-        },
-        "roundTrips": { "type": "integer", "minimum": 0 }
-      }
     },
     "entityName": {
       "description": "A metamodel Entity spelling, bare or namespace-qualified (identity.schema.json) — the entity a write-sequence step mutates or a write instruction targets. The same grammar the Predicate schema's attribute/relationship references use before the member dot; a read names its queried entity inside its own Object Query.",

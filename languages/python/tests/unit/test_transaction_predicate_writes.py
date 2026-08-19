@@ -38,6 +38,7 @@ from _transact_support import (
 from _support import inheritance_models as im
 from _support import mirrored_models as mm
 from parallax.conformance import case_format, engine
+from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
 from parallax.core import (
@@ -1799,6 +1800,7 @@ def test_the_engines_readless_predicate_ingress_refuses_before_any_statement(
             "optimistic",
             {"mutation": "delete", "target": {"entity": "Wallet", "predicate": predicate}},
             _ENGINE_TX_INSTANT,
+            LifecycleRun(),
             rollback=False,
         )
     assert port.ops == [("begin",), ("rollback",)]

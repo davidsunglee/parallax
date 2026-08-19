@@ -32,7 +32,11 @@ from parallax.conformance import (
     provision,
     temporal_state,
 )
-from parallax.conformance._observed_port import StatementObservation
+from parallax.conformance._lifecycle_observation import (
+    LifecycleObservation,
+    LifecycleRun,
+    lifecycle_run,
+)
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import (
     batch_write,
@@ -407,7 +411,10 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
 
 
 def run_read_case(
-    case: case_format.Case, dialect_name: str, port: DbPort
+    case: case_format.Case,
+    dialect_name: str,
+    port: DbPort,
+    lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[Row], int]:
     """Run a row-form read case through the production values lane.
 
@@ -444,8 +451,8 @@ def run_read_case(
     query = _read_query(case)
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
-    observed = StatementObservation()
-    db = handle.Database(observed.observing(port, dialect), model, dialect=dialect)
+    observed = lifecycle_run(lifecycle).observation()
+    db = handle.Database(port, model, dialect=dialect, lifecycle_provider=observed.provider)
     concurrency = _read_case_concurrency(case)
     try:
         result = (
@@ -496,7 +503,8 @@ def _wire_read(
     model: AcceptedMetamodel,
     port: DbPort,
     dialect_name: str,
-) -> tuple[handle.Snapshot[handle.WireEntity], StatementObservation]:
+    lifecycle: LifecycleRun,
+) -> tuple[handle.Snapshot[handle.WireEntity], LifecycleObservation]:
     """One graph-form Wire read of the case's own Object Query, and what it ran.
 
     The whole lane is ``db.wire.find``: target resolution, validation, deep-fetch
@@ -508,8 +516,8 @@ def _wire_read(
     retains nothing about the execution that produced it.
     """
     dialect = dialect_for(dialect_name)
-    observed = StatementObservation()
-    db = handle.Database(observed.observing(port, dialect), model, dialect=dialect)
+    observed = lifecycle.observation()
+    db = handle.Database(port, model, dialect=dialect, lifecycle_provider=observed.provider)
     try:
         return db.wire.find(query), observed
     except _READ_ERRORS as exc:
@@ -517,7 +525,10 @@ def _wire_read(
 
 
 def run_graph_case(
-    case: case_format.Case, dialect_name: str, port: DbPort
+    case: case_format.Case,
+    dialect_name: str,
+    port: DbPort,
+    lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], dict[str, list[Row | None]], int, list[dict[str, object]] | None]:
     """Run a single-graph deep-fetch / snapshot read, reporting the Wire result
     production published as the wire `then.graph` shape (root-class-keyed) and,
@@ -526,7 +537,9 @@ def run_graph_case(
     """
     query = _read_query(case)
     model = load_case_metamodel(case)
-    snapshot, observed = _wire_read(case, query, model, port, dialect_name)
+    snapshot, observed = _wire_read(
+        case, query, model, port, dialect_name, lifecycle_run(lifecycle)
+    )
     if not _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a `then.graph` case read a milestone SET — "
@@ -542,7 +555,10 @@ def run_graph_case(
 
 
 def run_graphs_case(
-    case: case_format.Case, dialect_name: str, port: DbPort
+    case: case_format.Case,
+    dialect_name: str,
+    port: DbPort,
+    lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[dict[str, object]], int]:
     """Run a milestone-set (`history` / `asOfRange`) snapshot read, reporting
     production's ordered per-milestone roots as the wire `then.graphs` shape: an
@@ -556,7 +572,9 @@ def run_graphs_case(
     """
     query = _read_query(case)
     model = load_case_metamodel(case)
-    snapshot, observed = _wire_read(case, query, model, port, dialect_name)
+    snapshot, observed = _wire_read(
+        case, query, model, port, dialect_name, lifecycle_run(lifecycle)
+    )
     if _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a `then.graphs` case read a single instant — "
@@ -640,7 +658,7 @@ def _graph_root(root: object) -> Row | None:
     return cast("Row", root)
 
 
-def _read_emissions(observed: StatementObservation) -> list[Emission]:
+def _read_emissions(observed: LifecycleObservation) -> list[Emission]:
     """The read's own emissions: the statements production actually ran, in order."""
     return [
         Emission("/objectQuery", statement.sql, statement.binds)
@@ -2146,7 +2164,8 @@ def _run_standalone_find(
     dialect: Dialect,
     concurrency: Concurrency,
     step: Mapping[str, object],
-) -> tuple[handle.Snapshot[handle.WireEntity], StatementObservation]:
+    lifecycle: LifecycleRun,
+) -> tuple[handle.Snapshot[handle.WireEntity], LifecycleObservation]:
     """Run one UNGROUPED scenario find step through the production Wire read.
 
     A step carrying its scenario's Concurrency Preference runs inside a real
@@ -2157,8 +2176,8 @@ def _run_standalone_find(
     goes on to write.
     """
     query = _step_query(step)
-    observed = StatementObservation()
-    db = handle.Database(observed.observing(port, dialect), model, dialect=dialect)
+    observed = lifecycle.observation()
+    db = handle.Database(port, model, dialect=dialect, lifecycle_provider=observed.provider)
     return db.transact(lambda tx: tx.wire.find(query), concurrency=concurrency), observed
 
 
@@ -2586,6 +2605,7 @@ def _run_snapshot_scenario(
     dialect_name: str,
     port: DbPort,
     steps: Sequence[Mapping[str, object]],
+    lifecycle: LifecycleRun,
 ) -> ScenarioRun:
     """Run a snapshot-read scenario: each find step reads through the SAME
     public Wire read every graph read uses (``db.wire.find``); `mutate` runs the
@@ -2618,8 +2638,8 @@ def _run_snapshot_scenario(
     # fixtures, then `given.apply`, then the first step.
     _seed_shadow_from_fixtures(case, model, context.shadow)
     _apply_given_apply(case, dialect, port, context.shadow)
-    observation = StatementObservation()
-    db = handle.Database(observation.observing(port, dialect), model, dialect=dialect)
+    observation = lifecycle.observation()
+    db = handle.Database(port, model, dialect=dialect, lifecycle_provider=observation.provider)
     emissions: list[Emission] = []
     round_trips = 0
     results: list[_ScenarioStepResult] = []
@@ -2640,7 +2660,9 @@ def _run_snapshot_scenario(
                         errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
                     results.append(edited)
             case "write":
-                statements, unit_trips = _run_snapshot_write_step(case, context, port, step)
+                statements, unit_trips = _run_snapshot_write_step(
+                    case, context, port, step, lifecycle
+                )
                 emissions.extend(
                     Emission(f"/scenario/{index}/write", statement.sql, statement.binds)
                     for statement in statements
@@ -2693,6 +2715,7 @@ def _run_snapshot_write_step(
     context: _CaseContext,
     port: DbPort,
     step: Mapping[str, object],
+    lifecycle: LifecycleRun,
 ) -> tuple[tuple[LoweredStatement, ...], int]:
     """Execute one `write:` step of a snapshot-read scenario and report the DML
     it emitted beside the round trips it cost.
@@ -2711,7 +2734,7 @@ def _run_snapshot_write_step(
     try:
         entries = _snapshot_write_entries(case, context.model, step)
         return _execute_keyed_unit(
-            port, context, entries, [], rollback=step.get("rollback") is True
+            port, context, entries, [], lifecycle, rollback=step.get("rollback") is True
         )
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -3409,6 +3432,7 @@ def _execute_write_unit(
     concurrency: Concurrency,
     resolved: Sequence[_ResolvedWrite],
     tx_instant: str,
+    lifecycle: LifecycleRun,
     *,
     rollback: bool,
 ) -> int:
@@ -3460,12 +3484,13 @@ def _execute_write_unit(
             port, model, dialect, concurrency, resolved[0], tx_instant, rollback=rollback
         )
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
-    observed = StatementObservation()
+    observed = lifecycle.observation()
     database = handle.Database(
-        observed.observing(_write_port(port, rollback=rollback), dialect),
+        _write_port(port, rollback=rollback),
         model,
         dialect=dialect,
         clock=FixedClock(instant),
+        lifecycle_provider=observed.provider,
     )
 
     def body(tx: handle.Transaction) -> None:
@@ -3485,6 +3510,7 @@ def _execute_keyed_unit(
     context: _CaseContext,
     entries: Sequence[Mapping[str, object]],
     group_observations: GroupObservations,
+    lifecycle: LifecycleRun,
     *,
     rollback: bool,
 ) -> tuple[tuple[LoweredStatement, ...], int]:
@@ -3525,6 +3551,7 @@ def _execute_keyed_unit(
             context.concurrency,
             resolved,
             tx_instant,
+            lifecycle,
             rollback=rollback,
         )
     return statements, unit_trips
@@ -3537,6 +3564,7 @@ def _run_readless_predicate_write(
     concurrency: Concurrency,
     raw_write: Mapping[str, object],
     tx_instant: str,
+    lifecycle: LifecycleRun,
     *,
     rollback: bool,
 ) -> int:
@@ -3555,12 +3583,13 @@ def _run_readless_predicate_write(
     whatever the verb does with its copy.
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
-    observed = StatementObservation()
+    observed = lifecycle.observation()
     database = handle.Database(
-        observed.observing(_write_port(port, rollback=rollback), dialect),
+        _write_port(port, rollback=rollback),
         model,
         dialect=dialect,
         clock=FixedClock(instant),
+        lifecycle_provider=observed.provider,
     )
 
     def body(tx: handle.Transaction) -> None:
@@ -3653,6 +3682,7 @@ def _run_materializing_pair(
     steps: Sequence[Mapping[str, object]],
     index: int,
     shadow: TemporalShadow,
+    lifecycle: LifecycleRun,
 ) -> tuple[list[_LoweredStep], int]:
     """Execute a MATERIALIZING predicate-write step (``index + 1``) whose
     IMMEDIATELY PRECEDING step (``index``) is the resolving find that shares
@@ -3717,12 +3747,13 @@ def _run_materializing_pair(
     tx_instant = _entry_instant(cast("Mapping[str, object]", write_step["write"]))
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     rollback = write_step.get("rollback") is True
-    observed = StatementObservation()
+    observed = lifecycle.observation()
     database = handle.Database(
-        observed.observing(_write_port(port, rollback=rollback), dialect),
+        _write_port(port, rollback=rollback),
         model,
         dialect=dialect,
         clock=FixedClock(instant),
+        lifecycle_provider=observed.provider,
     )
 
     def body(tx: handle.Transaction) -> None:
@@ -4142,7 +4173,7 @@ def _run_group_step(
     step: Mapping[str, object],
     index: int,
     tx_instant: str,
-    observation: StatementObservation,
+    observation: LifecycleObservation,
 ) -> tuple[_LoweredStep, handle.Snapshot[handle.WireEntity] | None]:
     """One `uow` group step, inside the group's own open transaction — the ONE
     interpreter both group runners share, contiguous span and interleaved index
@@ -4219,6 +4250,7 @@ def _run_uow_group(
     steps: Sequence[Mapping[str, object]],
     start: int,
     end: int,
+    lifecycle: LifecycleRun,
 ) -> tuple[list[_LoweredStep], int, list[dict[str, object]]]:
     """Execute one CONTIGUOUS `uow` group's steps (index *start*..*end*
     inclusive) inside ONE ``db.transact``, in step order, each through the shared
@@ -4245,12 +4277,13 @@ def _run_uow_group(
     doomed = _group_is_doomed(steps, start, end)
     state = _GroupState()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
-    observation = StatementObservation()
+    observation = lifecycle.observation()
     database = handle.Database(
-        observation.observing(_write_port(port, rollback=doomed), context.dialect),
+        _write_port(port, rollback=doomed),
         context.model,
         dialect=context.dialect,
         clock=FixedClock(instant),
+        lifecycle_provider=observation.provider,
     )
     lowered: list[_LoweredStep] = []
     step_graphs: list[dict[str, object]] = []
@@ -4367,7 +4400,7 @@ class _InterleavedGroupResult:
 
 def _run_interleaved_group(
     database: handle.Database,
-    observation: StatementObservation,
+    observation: LifecycleObservation,
     context: _CaseContext,
     steps: Sequence[Mapping[str, object]],
     indices: Sequence[int],
@@ -4981,10 +5014,18 @@ def run_interleaved_scenario_case(
     _seed_shadow_from_fixtures(case, model, shadow)
     _apply_given_apply(case, dialect, port, shadow)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
-    observed_a = StatementObservation()
-    observed_b = StatementObservation()
+    # This lane reports no lifecycle oracle, and could not: two connections
+    # driven at once have no single root order to state. The run is here so the
+    # trailing ungrouped verify find has one to open its own Handle through.
+    lifecycle = LifecycleRun()
+    observed_a = lifecycle.observation()
+    observed_b = lifecycle.observation()
     main_db = handle.Database(
-        observed_a.observing(port, dialect), model, dialect=dialect, clock=FixedClock(instant)
+        port,
+        model,
+        dialect=dialect,
+        clock=FixedClock(instant),
+        lifecycle_provider=observed_a.provider,
     )
     peer_connection = peer_factory()
     try:
@@ -5000,10 +5041,11 @@ def run_interleaved_scenario_case(
             peer_connection.close()
         raise
     peer_db = handle.Database(
-        observed_b.observing(peer_connection, dialect),
+        peer_connection,
         model,
         dialect=dialect,
         clock=FixedClock(instant),
+        lifecycle_provider=observed_b.provider,
     )
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
@@ -5044,7 +5086,9 @@ def run_interleaved_scenario_case(
                 "interleaved uow race is unsupported — m-opt-lock-012's own ungrouped "
                 "step is a trailing verify find only"
             )
-        read, read_observed = _run_standalone_find(port, model, dialect, concurrency, step)
+        read, read_observed = _run_standalone_find(
+            port, model, dialect, concurrency, step, lifecycle
+        )
         rows_by_index[index] = _graph_rows(model, _step_query(step).target.canonical, read)
         round_trips += read_observed.round_trips
         lowered[index] = _LoweredStep(
@@ -5060,7 +5104,12 @@ def run_interleaved_scenario_case(
     return emissions, round_trips, conflict_actual, find_rows
 
 
-def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -> ScenarioRun:
+def run_scenario_case(
+    case: case_format.Case,
+    dialect_name: str,
+    port: DbPort,
+    lifecycle: LifecycleRun | None = None,
+) -> ScenarioRun:
     """Run a scenario: an UNGROUPED write step commits (or aborts) as its OWN
     unit of work through ``db.transact``, and an ungrouped find reads
     committed state. A `uow`-GROUPED contiguous span of steps instead runs
@@ -5082,8 +5131,9 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
     here a find step's own materialized graph (:func:`_read_step_graph`) —
     grouped, the contents that read observed inside the group's transaction."""
     steps = _scenario_steps(case)
+    lifecycle = lifecycle_run(lifecycle)
     if _has_action_step(steps):
-        return _run_snapshot_scenario(case, dialect_name, port, steps)
+        return _run_snapshot_scenario(case, dialect_name, port, steps, lifecycle)
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
@@ -5117,7 +5167,7 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
             if label is not None:
                 start, end = spans[label]
                 group_lowered, group_trips, group_graphs = _run_uow_group(
-                    case, port, context, steps, start, end
+                    case, port, context, steps, start, end, lifecycle
                 )
                 lowered.extend(group_lowered)
                 step_graphs.extend(group_graphs)
@@ -5133,13 +5183,15 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
                     and _step_query(step).target.canonical == pairing.target.entity
                 ):
                     pair_lowered, pair_trips = _run_materializing_pair(
-                        port, model, dialect, concurrency, steps, index, shadow
+                        port, model, dialect, concurrency, steps, index, shadow, lifecycle
                     )
                     lowered.extend(pair_lowered)
                     round_trips += pair_trips
                     index += 2
                     continue
-                read, read_observed = _run_standalone_find(port, model, dialect, concurrency, step)
+                read, read_observed = _run_standalone_find(
+                    port, model, dialect, concurrency, step, lifecycle
+                )
                 round_trips += read_observed.round_trips
                 lowered.append(
                     _LoweredStep(
@@ -5172,6 +5224,7 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
                     concurrency,
                     raw_predicate_write,
                     tx_instant,
+                    lifecycle,
                     rollback=rollback,
                 )
                 lowered.append(
@@ -5179,7 +5232,7 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
                 )
             else:
                 statements, unit_trips = _execute_keyed_unit(
-                    port, context, _write_entries(raw_write), [], rollback=rollback
+                    port, context, _write_entries(raw_write), [], lifecycle, rollback=rollback
                 )
                 round_trips += unit_trips
                 lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
@@ -5191,7 +5244,10 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
 
 
 def run_write_sequence_case(
-    case: case_format.Case, dialect_name: str, port: DbPort
+    case: case_format.Case,
+    dialect_name: str,
+    port: DbPort,
+    lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], dict[str, list[Row]], int]:
     """Run a writeSequence: each entry executes as its OWN unit of work through
     ``db.transact`` (one transaction per entry, never the whole sequence in
@@ -5211,6 +5267,7 @@ def run_write_sequence_case(
     """
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
+    lifecycle = lifecycle_run(lifecycle)
     context = _CaseContext(model, dialect, _concurrency(case), TemporalShadow())
     group_observations: GroupObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
@@ -5220,7 +5277,7 @@ def run_write_sequence_case(
         _apply_given_apply(case, dialect, port, context.shadow)
         for index, entry in enumerate(_write_sequence_entries(case)):
             statements, unit_trips = _execute_keyed_unit(
-                port, context, [entry], group_observations, rollback=False
+                port, context, [entry], group_observations, lifecycle, rollback=False
             )
             round_trips += unit_trips
             lowered.append((f"/writeSequence/{index}", statements))
@@ -5677,6 +5734,7 @@ def _run_conflict_write(
     write_rows: Sequence[Mapping[str, object]],
     mutation: Literal["update", "delete"],
     nodes: Mapping[ObjectKey, handle.WireEntity],
+    lifecycle: LifecycleRun,
 ) -> tuple[tuple[LoweredStatement, ...], int, int]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
     ``db.transact`` — ONE
@@ -5703,9 +5761,13 @@ def _run_conflict_write(
     resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
     statements = _lower_conflict_write(model, dialect, concurrency, resolved)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
-    observed = StatementObservation()
+    observed = lifecycle.observation()
     database = handle.Database(
-        observed.observing(port, dialect), model, dialect=dialect, clock=FixedClock(instant)
+        port,
+        model,
+        dialect=dialect,
+        clock=FixedClock(instant),
+        lifecycle_provider=observed.provider,
     )
     landed = _landed_conflict_rows(resolved)
     sources = [_conflict_source_node(target, write, nodes) for write in resolved]
@@ -6002,7 +6064,10 @@ def _refuse_unentitled_observed_edge(
 
 
 def run_conflict_case(
-    case: case_format.Case, dialect_name: str, port: DbPort
+    case: case_format.Case,
+    dialect_name: str,
+    port: DbPort,
+    lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], int, dict[str, list[Row]] | None, int]:
     """Run a `conflict` case (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`):
     the single-attempt form (`when.write`), or the `when.attempts` retry
@@ -6033,6 +6098,7 @@ def run_conflict_case(
     """
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
+    lifecycle = lifecycle_run(lifecycle)
     when = _when(case)
     concurrency = _concurrency(case)
     target = _conflict_target(case, model)
@@ -6097,6 +6163,7 @@ def run_conflict_case(
                     _conflict_write_rows(attempt),
                     mutation,
                     sources_for(attempt) if sources is None else sources,
+                    lifecycle,
                 )
                 sources = None
             emissions.extend(Emission(pointer, s.sql, s.binds) for s in statements)
@@ -6148,9 +6215,13 @@ def run_error_case(
     golden reverse-engineering. Every statement before the last must succeed;
     the last must raise a classified :class:`DatabaseError`, whose neutral
     category and preserved native code are the observations
-    (``errorClass`` / ``nativeCode``). Every statement this lane issues counts a
-    round trip, the failing one included, so what it reports is what reached the
-    database rather than what it meant to emit. A
+    (``errorClass`` / ``nativeCode``). The trigger runs at the PORT rather than
+    through a Handle — it is authored DML, not a write a verb buffers — so it
+    opens no Execution Activity and its round trips are stated rather than
+    observed: the lane reaches the final statement only by having issued every
+    one before it, so the count is the trigger's own length. Every statement it
+    issues counts, the failing one included, so what it reports is what reached
+    the database rather than what it meant to emit. A
     ``when.concurrency`` trigger needs
     two barrier-synchronized sessions this single-connection lane cannot drive
     at all — it is refused here UNCONDITIONALLY, never dispatched to from a
@@ -6174,14 +6245,12 @@ def run_error_case(
         )
     trigger = _error_trigger(case, dialect_name)
     dialect = dialect_for(dialect_name)
-    observed = StatementObservation()
-    observing = observed.observing(port, dialect)
     emissions: list[Emission] = []
     final = len(trigger) - 1
     for index, (sql, binds) in enumerate(trigger):
         emissions.append(Emission(f"/then/statements/{index}", sql, binds))
         try:
-            observing.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
+            port.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
         except DatabaseError as exc:
             if index != final:
                 raise EngineError(
@@ -6192,7 +6261,7 @@ def run_error_case(
                 raise EngineError(
                     f"{case.path.name}: the trigger raised an unclassified database error: {exc}"
                 ) from exc
-            return emissions, exc.category, exc.native_code, observed.round_trips
+            return emissions, exc.category, exc.native_code, len(trigger)
     raise EngineError(f"{case.path.name}: the final trigger statement did not raise")
 
 

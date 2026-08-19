@@ -1,0 +1,127 @@
+# Read dependency (m-execution-lifecycle): the batch a dependent read forced
+# carries the `read-dependency` trigger and FINISHES before the Read it enabled
+# starts.
+#
+# The two steps share one `uow` group, so the insert is still buffered when the
+# find that depends on it runs. Read-your-own-writes (m-unit-work) forces the
+# buffer out first, and the stream records that causality in delivery order: the
+# Write Batch (activity 3) finishes at sequence 6, and only then does the Read
+# (activity 5) start at sequence 7. Both name the same `parent: 2` — the
+# Transaction Attempt — so they are ORDERED SIBLINGS rather than one nested
+# inside the other, which is the distinction a trace tree cannot state and an
+# event stream can. The trigger names WHICH of m-unit-work's two flush triggers
+# produced the batch, which is the semantic contrast against
+# m-execution-lifecycle-002, where the very same insert reaches the database
+# under `pre-commit` because no read depends on it.
+#
+# The boundary contributes no second batch: the dependency flush emptied the
+# buffer, so pre-commit has nothing left to write and starts no activity. That
+# is why the attempt holds exactly two children for two round trips, and why a
+# stream showing a third — an empty pre-commit batch — would be wrong: a Write
+# Batch exists only for a NONEMPTY buffer, so a flush with nothing to write
+# emits nothing at all.
+#
+# The find runs inside the group's declared `locking` unit of work, so it
+# carries the m-read-lock shared-row-lock suffix, and its Database Call's
+# `readCompleted` reports the one row the just-flushed insert made visible. The
+# read is a `wire` interface read, which is the interface a scenario find step
+# drives; m-execution-lifecycle-001's standalone read is `rows`.
+model: models/account.yaml
+tags: [m-execution-lifecycle, m-unit-work, slice-snapshot-1, write-batch, read-dependency]
+shape: scenario
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: dependency
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 7, owner: Newton, balance: 5.00, version: 1 }
+      roundTrips: 1
+      note: buffer an insert of a brand-new account 7 inside the group; nothing flushes yet
+      statements:
+        - sql:
+            postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+          binds: [7, Newton, 5.00, 1]
+    - uow: dependency
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 7
+      roundTrips: 1
+      note: the dependent find forces the buffered insert out as a read-dependency batch, then observes it; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          binds: [7]
+      expectRows:
+        - { id: 7, owner: Newton, balance: 5.00, version: 1 }
+then:
+  roundTrips: 2
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: locking
+              retries: 10
+              retryOptimisticConflicts: false
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            writeBatchStarted: { trigger: read-dependency }
+          - sequence: 4
+            activity: 4
+            parent: 3
+            databaseCallStarted:
+              target: parallax.compatibility.Account
+              kind: write
+              statement: 0
+          - sequence: 5
+            activity: 4
+            parent: 3
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 6
+            activity: 3
+            parent: 2
+            writeBatchFinished: { outcome: completed }
+          - sequence: 7
+            activity: 5
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: wire }
+          - sequence: 8
+            activity: 6
+            parent: 5
+            databaseCallStarted:
+              target: parallax.compatibility.Account
+              kind: read
+              statement: 1
+          - sequence: 9
+            activity: 6
+            parent: 5
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 10
+            activity: 5
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 11
+            activity: 2
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 12
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }

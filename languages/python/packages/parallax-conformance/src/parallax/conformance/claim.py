@@ -75,6 +75,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-descriptor",
         "m-dialect",
         "m-document-codec",
+        "m-execution-lifecycle",
         "m-inheritance",
         "m-metamodel",
         "m-model-formation",

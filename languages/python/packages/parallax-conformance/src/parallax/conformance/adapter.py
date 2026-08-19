@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 from parallax.conformance import case_format, engine
+from parallax.conformance._lifecycle_observation import (
+    LifecycleRun,
+    StatementIndexError,
+    execution_lifecycle_observation,
+)
 from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
 from parallax.core.db_port import DbPort
 
@@ -229,7 +234,9 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
     return engine.compile_read_case(case, dialect)
 
 
-def _read_observations(case: case_format.Case, dialect: str, port: DbPort) -> dict[str, Any]:
+def _read_observations(
+    case: case_format.Case, dialect: str, port: DbPort, lifecycle: LifecycleRun
+) -> dict[str, Any]:
     """A read case's own observation shape (m-case-format "Read result form"):
     ``then.graphs`` (a milestone-set snapshot read) / ``then.graph`` (a deep
     fetch or a plain instance-form materialization) / ``then.rows`` (row-form) —
@@ -239,25 +246,49 @@ def _read_observations(case: case_format.Case, dialect: str, port: DbPort) -> di
     has_graphs = isinstance(then, Mapping) and "graphs" in then
     has_graph = isinstance(then, Mapping) and "graph" in then
     if has_graphs:
-        emissions, graphs, round_trips = engine.run_graphs_case(case, dialect, port)
+        emissions, graphs, round_trips = engine.run_graphs_case(case, dialect, port, lifecycle)
         return {
             "emissions": emissions,
             "observations": {"graphs": graphs, "roundTrips": round_trips},
         }
     if has_graph:
         emissions, graph, round_trips, stored_data_issues = engine.run_graph_case(
-            case, dialect, port
+            case, dialect, port, lifecycle
         )
         observations: dict[str, Any] = {"graph": graph, "roundTrips": round_trips}
         if stored_data_issues is not None:
             observations["storedDataIssues"] = stored_data_issues
         return {"emissions": emissions, "observations": observations}
-    emissions, rows, round_trips = engine.run_read_case(case, dialect, port)
+    emissions, rows, round_trips = engine.run_read_case(case, dialect, port, lifecycle)
     return {"emissions": emissions, "observations": {"rows": rows, "roundTrips": round_trips}}
 
 
+def _report_execution_lifecycle(
+    case: case_format.Case,
+    observations: dict[str, Any],
+    lifecycle: LifecycleRun,
+    emissions: list[engine.Emission],
+) -> None:
+    """Attach the `executionLifecycle` observation for a case authoring the oracle.
+
+    The key is optional and additive (`m-conformance-adapter`) and reported
+    exactly where a case asks for it, because a case not authoring it states
+    nothing about the stream and the run sweep admits no observed key a case
+    left unasserted.
+    """
+    then = case.document.get("then")
+    if not isinstance(then, Mapping) or "executionLifecycle" not in then:
+        return
+    try:
+        observations["executionLifecycle"] = execution_lifecycle_observation(
+            lifecycle.roots, [emission.sql for emission in emissions]
+        )
+    except StatementIndexError as exc:
+        raise engine.EngineError(f"{case.path.name}: {exc}") from exc
+
+
 def _run(
-    case: case_format.Case, dialect: str, port: DbPort
+    case: case_format.Case, dialect: str, port: DbPort, lifecycle: LifecycleRun
 ) -> tuple[list[engine.Emission], dict[str, Any]]:
     """Run a claimed case by shape, returning its emissions and observation envelope.
 
@@ -283,7 +314,7 @@ def _run(
     if _is_scenario_lane_dispatched(case):
         raise _scenario_lane_error(case)
     if case.shape == "scenario":
-        run = engine.run_scenario_case(case, dialect, port)
+        run = engine.run_scenario_case(case, dialect, port, lifecycle)
         scenario_observations: dict[str, Any] = {"roundTrips": run.round_trips}
         if run.errors:
             scenario_observations["errors"] = run.errors
@@ -291,11 +322,13 @@ def _run(
             scenario_observations["stepGraphs"] = run.step_graphs
         return run.emissions, scenario_observations
     if case.shape == "writeSequence":
-        emissions, table_state, round_trips = engine.run_write_sequence_case(case, dialect, port)
+        emissions, table_state, round_trips = engine.run_write_sequence_case(
+            case, dialect, port, lifecycle
+        )
         return emissions, {"tableState": table_state, "roundTrips": round_trips}
     if case.shape == "conflict":
         emissions, affected_rows, table_state, round_trips = engine.run_conflict_case(
-            case, dialect, port
+            case, dialect, port, lifecycle
         )
         observations: dict[str, Any] = {"affectedRows": affected_rows, "roundTrips": round_trips}
         if table_state is not None:
@@ -315,7 +348,7 @@ def _run(
     if case.shape == "rejected":
         rule = engine.run_rejected_case(case)
         return [], {"rejectedRule": rule, "roundTrips": 0}
-    result = _read_observations(case, dialect, port)
+    result = _read_observations(case, dialect, port, lifecycle)
     return result["emissions"], result["observations"]
 
 
@@ -390,8 +423,10 @@ def run_case(
     diagnostic = classify("run", dialect, case, claim)
     if diagnostic is not None:
         return _non_ok("run", "unsupported", diagnostic, adapter)
+    lifecycle = LifecycleRun()
     try:
-        emissions, observations = _run(case, dialect, port)
+        emissions, observations = _run(case, dialect, port, lifecycle)
+        _report_execution_lifecycle(case, observations, lifecycle, emissions)
     except engine.EngineError as exc:
         return _non_ok("run", "error", Diagnostic("run-failed", str(exc)), adapter)
     envelope = _common("run", "ok", adapter)

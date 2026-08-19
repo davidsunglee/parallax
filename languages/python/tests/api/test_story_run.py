@@ -44,7 +44,7 @@ from _support.corpus import (
     instance_row,
 )
 from parallax.conformance import case_format, engine
-from parallax.conformance._observed_port import StatementObservation
+from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_stories import (
@@ -172,8 +172,8 @@ class _CountingDatabase(Database):
     """
 
     def __init__(self, port: Any, model: Any, clock: Any = None) -> None:
-        self.observation = StatementObservation()
-        super().__init__(self.observation.observing(port, POSTGRES), model, clock=clock)
+        self.observation = LifecycleObservation()
+        super().__init__(port, model, clock=clock, lifecycle_provider=self.observation.provider)
         self.round_trips: list[int] = []
 
     def _counted[T](self, run: Callable[[], T]) -> T:

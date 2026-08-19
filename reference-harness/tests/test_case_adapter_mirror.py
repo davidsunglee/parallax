@@ -1,7 +1,7 @@
 """The case oracle and the adapter envelope are one algebra, MIRRORED not shared.
 
-`compatibility-case.schema.json` states what a case ASSERTS about execution
-provenance; `conformance-adapter.schema.json` states what an adapter REPORTS. A
+`compatibility-case.schema.json` states what a case ASSERTS about the execution
+lifecycle; `conformance-adapter.schema.json` states what an adapter REPORTS. A
 runner grades one against the other, so the two must admit exactly the same
 documents — a constraint present on one side alone makes the comparison reject
 pairs the other side could have produced.
@@ -19,10 +19,11 @@ own context, and the statement index in particular points at different things.
 :data:`MIRRORED_DEFS` is a floor beneath that derivation, not the scope itself;
 it fails when a rename on one side silently shrinks the intersection.
 
-Name-derivation reaches every mirrored pair the two files spell alike. The union
-wrapper is the one they do not: the case authors it INLINE at `then.execution`
-and the adapter names it `$defs.executionObservation`, so :data:`RENAMED_MIRRORS`
-registers that pair explicitly and it is compared the same way.
+Name-derivation reaches every mirrored pair the two files spell alike. The
+oracle wrapper is the one they do not: the case authors it INLINE at
+`then.executionLifecycle` and the adapter names it
+`$defs.executionLifecycleObservation`, so :data:`RENAMED_MIRRORS` registers that
+pair explicitly and it is compared the same way.
 """
 
 from __future__ import annotations
@@ -42,20 +43,28 @@ _ADAPTER_DEFS: dict[str, Any] = _SCHEMAS["conformance-adapter.schema.json"]["$de
 
 MIRRORED_DEFS = frozenset(
     {
-        "databaseCall",
-        "callCompletion",
-        "readTrace",
-        "writeBatchTrace",
-        "attemptTrace",
-        "attemptFailure",
-        "transactionAttempt",
-        "retryPolicy",
-        "transactionLog",
+        "lifecycleRoot",
+        "lifecycleEvent",
+        "lifecycleNoFields",
+        "lifecycleTarget",
+        "lifecycleReadStarted",
+        "lifecycleWriteBatchStarted",
+        "lifecycleDatabaseCallStarted",
+        "lifecycleDatabaseCallFinished",
+        "lifecycleInvocationStarted",
+        "lifecycleInvocationFinished",
+        "lifecycleActivityOutcome",
+        "lifecycleAttemptFinished",
+        "lifecycleStreamStarted",
+        "lifecycleStreamFinished",
+        "lifecycleFailure",
     }
 )
 
 RENAMED_MIRRORS: dict[str, Any] = {
-    "executionObservation": _CASE_SCHEMA["properties"]["then"]["properties"]["execution"],
+    "executionLifecycleObservation": _CASE_SCHEMA["properties"]["then"]["properties"][
+        "executionLifecycle"
+    ],
 }
 
 
@@ -104,14 +113,16 @@ def test_each_side_keeps_its_own_statement_index_description() -> None:
     order on the oracle side and the envelope's own `emissions` on the observed
     side. The prose says so per file; the structure is identical regardless.
     """
-    case_call = _CASE_DEFS["databaseCall"]["description"]
-    adapter_call = _ADAPTER_DEFS["databaseCall"]["description"]
+    case_call = _CASE_DEFS["lifecycleDatabaseCallStarted"]["description"]
+    adapter_call = _ADAPTER_DEFS["lifecycleDatabaseCallStarted"]["description"]
     assert "golden" in case_call and "emissions" not in case_call
     assert "emissions" in adapter_call
 
 
 def test_the_comparison_detects_a_constraint_present_on_one_side_alone() -> None:
     """The gate's own proof: a dropped conditional is drift, not a description."""
-    weakened = copy.deepcopy(_ADAPTER_DEFS["databaseCall"])
+    weakened = copy.deepcopy(_ADAPTER_DEFS["lifecycleDatabaseCallFinished"])
     del weakened["allOf"]
-    assert _without_descriptions(_CASE_DEFS["databaseCall"]) != _without_descriptions(weakened)
+    assert _without_descriptions(
+        _CASE_DEFS["lifecycleDatabaseCallFinished"]
+    ) != _without_descriptions(weakened)

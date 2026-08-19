@@ -7,9 +7,9 @@ representation-specific is only how a write's TARGET and its VALUES are stated:
 a Typed verb takes an Entity value whose Change Record already names the
 effective change, and a Wire verb takes the frozen mapping a Wire read published
 plus an explicit changes document. Everything after that — the evidence
-resolver, the claim, the instruction IR, the buffer, the planner, the Execution
-Log — is the one pipeline both share, which is why a Typed write and a Wire
-write of one object coalesce.
+resolver, the claim, the instruction IR, the buffer, the planner, the observed
+lifecycle — is the one pipeline both share, which is why a Typed write and a
+Wire write of one object coalesce.
 
 Three rules give the ingress its shape.
 

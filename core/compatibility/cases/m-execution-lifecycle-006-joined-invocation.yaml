@@ -1,0 +1,117 @@
+# Joined invocation (m-execution-lifecycle): a joined unit of work is an
+# activity of its own that runs NO attempt, and its buffered write reaches the
+# database in the OUTER attempt's pre-commit batch.
+#
+# The body reads, then opens a joined unit of work (`action: join`) and writes
+# inside it. A joined boundary shares the outer transaction rather than opening
+# a nested one (m-unit-work), and the stream says exactly that in three ways.
+#
+# It is a child of the ATTEMPT, not of the invocation: activity 5's `parent` is
+# 2, so the joined call is inside the physical attempt that was running when it
+# was made. It runs no attempt of its own: no `transactionAttemptStarted`
+# follows it, and there is exactly one in the whole root. And it carries no
+# concurrency and no retry policy — `invocation: joined` is the whole payload,
+# because both were resolved by the invocation it joined and a joined boundary
+# may not renegotiate them.
+#
+# `returned` is likewise narrower than `committed`. A joined invocation finishes
+# as `returned` or `raised`, which describes the nested CALLBACK only and never
+# claims the physical transaction did anything: sequence 8 says the joined body
+# came back, while the transaction it joined is still open and does not commit
+# until sequence 13.
+#
+# The write it buffered proves the sharing. It appears at sequence 10, after the
+# joined invocation already finished, inside the OUTER boundary's own
+# `pre-commit` batch (activity 6, `parent: 2`) — because that boundary is the
+# one that finalizes the shared buffer. A stream showing two attempts, or two
+# roots, would describe a nested transaction that never existed physically.
+#
+# `lane: api-conformance`: a joined boundary is an API arrangement with no wire
+# spelling, so no golden SQL is authored and each Database Call omits its
+# `statement` index. Satisfied by each language's API Conformance Suite.
+model: models/account.yaml
+tags: [m-execution-lifecycle, m-unit-work, m-api-conformance, slice-snapshot-1, joined]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection unit-of-work boundary intent (shape:boundary)"
+when:
+  uow:
+    concurrency: locking
+  boundary:
+    - action: read
+      note: the OUTER body observes the row it will write
+    - action: join
+      note: open a joined unit of work — it shares the outer transaction, not a nested boundary of its own
+    - action: update
+      note: the joined body writes; the OUTER boundary flushes the shared buffer
+then:
+  outcome: committed
+  roundTrips: 2
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: locking
+              retries: 10
+              retryOptimisticConflicts: false
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 4
+            activity: 4
+            parent: 3
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 5
+            activity: 4
+            parent: 3
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 6
+            activity: 3
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 7
+            activity: 5
+            parent: 2
+            transactionInvocationStarted: { invocation: joined }
+          - sequence: 8
+            activity: 5
+            parent: 2
+            transactionInvocationFinished: { outcome: returned }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 10
+            activity: 7
+            parent: 6
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 11
+            activity: 7
+            parent: 6
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 12
+            activity: 6
+            parent: 2
+            writeBatchFinished: { outcome: completed }
+          - sequence: 13
+            activity: 2
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 14
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }

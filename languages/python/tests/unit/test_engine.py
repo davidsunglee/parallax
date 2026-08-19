@@ -26,6 +26,7 @@ from _metamodel_support import Declaration, attribute, key, source
 from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, sweep
+from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, STRING, AuthoredNumber, InstantError, PresentDocument
@@ -3430,7 +3431,7 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
     ]
     with pytest.raises(engine.EngineError, match="not preceded by"):
         engine._run_materializing_pair(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            FakeWritePort(), meta, POSTGRES, "locking", steps, 0, TemporalShadow()
+            FakeWritePort(), meta, POSTGRES, "locking", steps, 0, TemporalShadow(), LifecycleRun()
         )
 
 

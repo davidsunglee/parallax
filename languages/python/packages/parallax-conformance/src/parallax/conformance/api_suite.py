@@ -23,6 +23,7 @@ from typing import Final
 
 from parallax.conformance import (
     case_format,
+    execution_lifecycle_stories,
     read_models,
     snapshot_recipes,
     stale_web_edit,
@@ -383,6 +384,18 @@ EXAMPLES: Final[list[Example]] = [
     # closed-world `UnloadedRelationshipError`, a `pin`/`edge_of` coordinate, or
     # a scenario's own per-step observable, `sameObjectAs` included).
     *(Example(story.case_id, story.title, graph_story_snippet(story)) for story in GRAPH_STORIES),
+    # The joined transaction under an installed Provider (m-execution-lifecycle):
+    # the case's own oracle states the whole delivered stream and the boundary
+    # runner grades it, so what this executable story adds is the SPELLING no
+    # oracle can state — the Provider named at composition, the fresh Handler
+    # per root, and events arriving while the boundary runs rather than a record
+    # read back after it. Executed against real Postgres by
+    # `tests/api/test_execution_lifecycle_story.py`.
+    Example(
+        "m-execution-lifecycle-006",
+        "A joined unit of work is observed inside the OUTER transaction attempt",
+        execution_lifecycle_stories.joined_lifecycle_snippet(),
+    ),
 ]
 
 # Primary module -> reason its active cases have no idiomatic API example.
@@ -1233,7 +1246,33 @@ _WRITE_VALUE_PROVENANCE_REASON: Final[str] = (
     "value the other verb accepts"
 )
 
+_EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON: Final[str] = (
+    "the harness-lane half of the m-execution-lifecycle spine: each carries golden SQL and "
+    "its `then.executionLifecycle` oracle is graded end-to-end by the run sweep "
+    "(`tests/compatibility/test_run_sweep.py`) against the stream a REAL execution delivered "
+    "to an installed Provider. The observable is the delivery itself rather than a developer "
+    "verb — an application reaches it by naming a Provider at `connect`, which the joined "
+    "story above already shows — so an idiomatic example would narrate the same seam twice"
+)
+
+_EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON: Final[str] = (
+    "an m-execution-lifecycle spine case whose stream needs an injected fault and an "
+    "exhausted retry bound — observables a single-connection harness cannot provoke — "
+    "graded end-to-end by the case-driven boundary runner "
+    "(`tests/api/test_boundary_run.py`), which drives the REAL `db.transact` against the "
+    "provisioned database and compares the whole delivered stream to the case's own "
+    "`then.executionLifecycle`. A retry/exhaustion choreography has no single-callback "
+    "idiomatic spelling distinct from what that runner already exercises directly"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
+    # -- m-execution-lifecycle: the spine's own two graders -------------------- #
+    # (`-006` is an exercised story above: the composition spelling no oracle states)
+    "m-execution-lifecycle-001": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
+    "m-execution-lifecycle-002": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
+    "m-execution-lifecycle-003": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
+    "m-execution-lifecycle-004": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
+    "m-execution-lifecycle-005": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
     "m-unit-work-021": _OBSERVED_STATE_COALESCING_REASON,
