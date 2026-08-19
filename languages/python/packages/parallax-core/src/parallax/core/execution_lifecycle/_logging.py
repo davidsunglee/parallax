@@ -358,7 +358,7 @@ def _rendered(event: ExecutionEvent, detail: LifecycleLogDetail) -> _Rendered:
     The one exhaustive match over the event union: a transition added to the
     algebra fails to type-check here until it is answered, which is what makes
     this Handler's coverage of the algebra a compile-time fact rather than a
-    review habit.
+    property re-established by inspection.
     """
     match event:
         case ReadStarted(target=target, interface=interface):
