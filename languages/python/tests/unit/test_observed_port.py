@@ -7,9 +7,10 @@ Lifecycle Provider is installed, and keeps them from becoming one witness
 wearing two names.
 
 Three things have to hold for that observation to be usable as an emission: the
-canonical `?`-placeholder spelling comes back, the read/write split is the port
-method that ran the statement, and the work inside a transaction lands in the
-same ordered list as the work outside one.
+canonical `?`-placeholder spelling comes back and nothing else about the
+statement moves, the read/write split is the port method that ran the statement,
+and the work inside a transaction lands in the same ordered list as the work
+outside one.
 """
 
 from __future__ import annotations
@@ -59,6 +60,35 @@ def test_a_captured_statement_comes_back_in_canonical_form() -> None:
     assert call.statement.sql == "select t0.id from account t0 where t0.id = ?"
     assert call.statement.binds == (7,)
     assert call.kind == "read"
+
+
+def test_a_driver_placeholder_inside_a_quoted_identifier_stays_part_of_the_name() -> None:
+    # A physical name is any non-empty string, so `rate%s` is an admissible
+    # column and renders as a quoted identifier. Only the statement's own bind is
+    # a placeholder: recovering the canonical spelling must leave the two names
+    # standing, or a run would disagree with its golden over its own schema.
+    observation = StatementObservation()
+    observing = observation.observing(_Port(), POSTGRES)
+
+    observing.execute('select t0."rate%s", t0."account%s" from t t0 where t0.id = %s', [7])
+
+    (call,) = observation.calls
+    assert call.statement.sql == 'select t0."rate%s", t0."account%s" from t t0 where t0.id = ?'
+
+
+def test_the_canonical_spelling_survives_the_trip_out_to_the_driver_and_back() -> None:
+    # The two translations are inverses over the WHOLE statement: a `?` inside a
+    # quoted identifier or a string literal is that name's or that value's own
+    # text, so the outbound direction may not turn it into a driver placeholder
+    # and the inbound direction may not turn a name's `%s` into a bind.
+    canonical = 'update "t%s" t0 set note = ? where t0."rate?" = ? and t0.tag = \'a?b\''
+    observation = StatementObservation()
+    observing = observation.observing(_Port(), POSTGRES)
+
+    observing.execute_write(POSTGRES.to_driver_sql(canonical), ["x", 7])
+
+    (call,) = observation.calls
+    assert call.statement.sql == canonical
 
 
 def test_the_split_is_the_port_method_that_ran_the_statement() -> None:

@@ -90,6 +90,24 @@ whole rather than reaching inside it.
 # A "simple" identifier needs no quoting: lowercase, starts with a letter.
 _SIMPLE = re.compile(r"^[a-z][a-z0-9_]*$")
 
+
+def _translate_placeholders(sql: str, quote_char: str, source: str, target: str) -> str:
+    """``sql`` with each ``source`` placeholder OUTSIDE a quoted run spelled ``target``.
+
+    A quoted run is a string literal or a quoted identifier, ending at its first
+    undoubled delimiter. Placeholder translation is a rewrite of syntax, so it
+    must not reach text a quote protects: a physical name is any non-empty string
+    (`m-descriptor`), so a column named ``rate%s`` or ``rate?`` renders as a
+    quoted identifier whose body is a name rather than a bind.
+    """
+    quote = re.escape(quote_char)
+    runs = rf"('(?:[^']|'')*'|{quote}(?:[^{quote}]|{quote}{quote})*{quote})"
+    return "".join(
+        run if index % 2 else run.replace(source, target)
+        for index, run in enumerate(re.split(runs, sql))
+    )
+
+
 # The neutral infinity sentinel (the open upper bound of a temporal interval,
 # m-core); Postgres binds it as native `'infinity'::timestamptz` at the adapter.
 INFINITY: Final[str] = "infinity"
@@ -353,24 +371,29 @@ class Dialect:
 
     # -- placeholders ------------------------------------------------------ #
     def to_driver_sql(self, canonical_sql: str) -> str:
-        """Translate the canonical `?` placeholders to this driver's form (`%s`)."""
-        return canonical_sql.replace("?", "%s")
+        """Translate the canonical `?` placeholders to this driver's form (`%s`).
+
+        A `?` inside a string literal or a quoted identifier is that value's or
+        that name's own text, never a bind, so it crosses unchanged.
+        """
+        return _translate_placeholders(canonical_sql, self.quote_char, "?", "%s")
 
     def from_driver_sql(self, driver_sql: str) -> str:
         """The reverse of :meth:`to_driver_sql` — recover canonical `?`-placeholder
         SQL text from this driver's own form.
 
-        Used only where a caller must REPORT a statement it did not itself lower
-        (the conformance engine's materializing-predicate-write capture: its
-        per-row writes are query-result-dependent, so
-        there is no independent pure re-lowering to draw canonical emission text
-        from — the executed driver SQL is the only source, and every OTHER
-        emission this engine reports is canonical text, so a captured statement
-        must round-trip back before joining them). Production code never calls
-        this — it always starts from canonical text and translates outward, never
-        back.
+        Inverse over the whole statement, quoted runs included: a `%s` inside a
+        string literal or a quoted identifier is text this driver never bound, so
+        recovering the canonical spelling leaves it standing.
+
+        Used only where a caller must REPORT a statement it did not itself lower:
+        the conformance engine observes what reached the Database Port, where the
+        driver SQL is the only source, while every other emission it reports is
+        canonical text — so a captured statement must round-trip back before
+        joining them. Production code never calls this; it always starts from
+        canonical text and translates outward, never back.
         """
-        return driver_sql.replace("%s", "?")
+        return _translate_placeholders(driver_sql, self.quote_char, "%s", "?")
 
     # -- inheritance (m-inheritance / m-sql) -------------------------------- #
     def null_cast(self, neutral_type: NeutralType, max_length: int | None) -> str:
