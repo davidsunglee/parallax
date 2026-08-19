@@ -66,7 +66,7 @@ from parallax.core.object_query import (
 from parallax.core.object_query import TemporalDimension as TemporalDimensionName
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 from parallax.core.predicate import PredicateNode, QueryDefinitionError
-from parallax.core.sql_gen import compile_read
+from parallax.core.sql_gen import CompiledRead, compile_read
 from parallax.core.storage_layout import DocumentPath
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
@@ -449,8 +449,6 @@ def _materialize_predicate_write(
     if layout is None:  # pragma: no cover - a predicate-write target always owns rows
         raise ValueError(f"{entity.identity.canonical}: predicate-write target has no Table")
     lock: LockMode | None = entity_read_lock(meta, entity.identity, uow.settings.concurrency)
-    selection = _current_selection(entity.identity, instruction.target.predicate, declaring_entity)
-    plan_ = deep_fetch.plan(entity, selection, meta)
     assignments = {
         assignment_member(assignment.attr): assignment.value
         for assignment in instruction.assignments
@@ -507,41 +505,45 @@ def _materialize_predicate_write(
         needs_documents = frozenset(member for member in assignments if member_columns[member][1])
     else:
         needs_documents = False
-    # A materializing predicate write's resolving read is row-form over a
-    # non-family target (a family predicate write is rejected before SQL), so
-    # its compiled row transform is the identity under `Columns` layout. Under
-    # Relational Document Layout it is the document fan-out instead, and every
-    # per-row helper below reads a member by name, so each driver row is
-    # materialized here rather than consumed raw. Materializing is what answers
-    # BOTH needs at once: the fan-out drops the raw Structured Column it decoded
-    # from, and the materialized row carries that document beside its values, so
-    # a temporal target's Predecessor Row retains it (`m-unit-work`) — which is
-    # what lets a successor be patched from the document the row actually held —
-    # without a second extraction that could disagree with the first.
-    compiled = compile_read(
-        plan_.root,
-        meta,
-        dialect,
-        result_form="row",
-        lock=lock,
-        include_value_objects=needs_documents,
-    )
-    structured_column = compiled.structured_column
 
     # The resolve is a Read of its own (`m-execution-lifecycle`: every
     # statement-reaching operation belongs to exactly one Read, Write Batch, or
     # Stream Batch), opened INSIDE the force-flush so the dependency batch it
-    # forces out is its ordered sibling rather than its parent. It is row-form,
-    # so it names the internal `ROWS` interface — no caller ever sees its result,
-    # which is exactly why it is not published through either public one. Its
-    # Database Call brackets through the package's one read-call seam, never a
-    # second copy of those rules.
-    def resolve() -> StagedRows:
+    # forces out is its ordered sibling rather than its parent, and spanning its
+    # own planning and lowering so a compile refusal is a FAILED Read rather than
+    # work outside every activity. It is row-form, so it names the internal
+    # `ROWS` interface — no caller ever sees its result, which is exactly why it
+    # is not published through either public one. Its Database Call brackets
+    # through the package's one read-call seam, never a second copy of those
+    # rules.
+    #
+    # Row form is what answers BOTH projection needs above at once: a family
+    # predicate write is rejected before SQL, so the compiled row transform is
+    # the identity under `Columns` layout and the document fan-out under
+    # Relational Document Layout, and every per-row helper below reads a member
+    # by name. The fan-out drops the raw Structured Column it decoded from while
+    # the materialized row carries that document beside its values, so a temporal
+    # target's Predecessor Row retains it (`m-unit-work`) — which is what lets a
+    # successor be patched from the document the row actually held — without a
+    # second extraction that could disagree with the first.
+    def resolve() -> tuple[CompiledRead, StagedRows]:
         with attempt.read(entity.identity, "ROWS") as read:
+            selection = _current_selection(
+                entity.identity, instruction.target.predicate, declaring_entity
+            )
+            compiled = compile_read(
+                deep_fetch.plan(entity, selection, meta).root,
+                meta,
+                dialect,
+                result_form="row",
+                lock=lock,
+                include_value_objects=needs_documents,
+            )
             driver_rows = execute_read(conn, dialect, compiled, read)
-            return stage_publishable_rows(meta, compiled, driver_rows, pin=Pin())
+            return compiled, stage_publishable_rows(meta, compiled, driver_rows, pin=Pin())
 
-    stage = uow.read(resolve)
+    compiled, stage = uow.read(resolve)
+    structured_column = compiled.structured_column
     resolved = stage.rows
     if not resolved:
         return
