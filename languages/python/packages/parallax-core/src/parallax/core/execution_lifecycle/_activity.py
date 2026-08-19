@@ -576,19 +576,19 @@ class _LiveActivity:
         activity ID, because among children of one parent a child that reports
         later but started earlier can only be a scope the exception unwound out
         through — a joined invocation reporting after the read it encloses. So
-        the slot ends up holding, for the one identity it holds, the
-        highest-numbered child that reported it.
+        the slot ends up holding the highest-numbered child that has reported
+        the identity it holds SINCE that identity took the slot; a report that
+        evicted it takes its earlier reporters out of the running for good.
 
         What identity alone cannot see: a value raised more than once is one
         identity but several occurrences. A scope that re-raises a value one of
         its finished children reported is attributed to that child rather than
-        reporting the raise as its own, and where several children reported that
-        value the attribution names the highest-numbered of them, which need not
-        be the child whose occurrence is unwinding now. An exception stashed PAST
-        a later failure escapes this only because the later failure is a
-        different object: it evicts the slot, and the re-raise is then reported
-        as the scope's own direct failure carrying that same exception's
-        diagnostic.
+        reporting the raise as its own, and it names the highest-numbered child
+        of that run of reports, which need not be the child whose occurrence is
+        unwinding now. An exception stashed PAST a later failure escapes this
+        only because the later failure is a different object: it evicts the
+        slot, and the re-raise is then reported as the scope's own direct
+        failure carrying that same exception's diagnostic.
         """
         attributed = self._attributed(exc)
         if attributed is not None and attributed[0] > activity_id:
@@ -606,11 +606,14 @@ class _LiveActivity:
     def _failure(self, exc: BaseException) -> ActivityFailure:
         """How this activity's failure is attributed.
 
-        Matched by exception IDENTITY: a conversion error that merely unwound
-        past a successful call is a direct failure however recently a child
-        failed, while the exact exception a failed child reported names that
-        child. Enclosing events reuse that child's own diagnostic object rather
-        than rendering the same exception twice.
+        Matched by exception IDENTITY against the ONE attribution this scope
+        holds. A conversion error that merely unwound past a successful call is
+        a direct failure however recently a child failed, and so is an exception
+        a child did report once a different failure took the slot: the failure
+        is Caused exactly while the slot still holds that value, and it names
+        whichever child the slot ended up on. Enclosing events reuse that
+        child's own diagnostic object rather than rendering the same exception
+        twice.
         """
         attributed = self._attributed(exc)
         if attributed is not None:

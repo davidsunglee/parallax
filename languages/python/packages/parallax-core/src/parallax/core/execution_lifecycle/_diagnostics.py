@@ -42,8 +42,9 @@ class FailureDiagnostic:
     own ``code`` attribute, absent for one that publishes none.
 
     Nothing here references the exception, its traceback, its cause graph, a
-    frame, a local, transaction state, a statement, or a bind: an enclosing
-    failure reuses this same object rather than copying its bounded strings.
+    frame, a local, transaction state, a statement, or a bind, so a failure with
+    this projection already at hand reports this same object rather than copying
+    its bounded strings.
     """
 
     qualified_type: str
@@ -72,19 +73,26 @@ class DatabaseFailureDiagnostic:
 
 @dataclass(frozen=True, slots=True)
 class DirectFailure:
-    """The activity itself produced the failure."""
+    """The failure this activity has no child to name for.
+
+    Either no child of it ever reported this exception value, or one did and a
+    different value has since taken the activity's one attribution: a value a
+    scope does not hold when it fails is the scope's own.
+    """
 
     diagnostic: FailureDiagnostic
 
 
 @dataclass(frozen=True, slots=True)
 class CausedFailure:
-    """The failure is attributed to an already-finished descendant activity.
+    """The failure is attributed to an already-finished DIRECT child: the one
+    this activity holds its single attribution for.
 
     Attribution follows exception identity or an explicit enforcement relation,
     never temporal proximity, so a completed zero-row write call can be named by
     a Write Batch failure while a conversion error that merely unwound past a
-    successful call names nothing.
+    successful call names nothing. Every level names its own child, so a deeper
+    cause is reached by walking the chain rather than read off one event.
     """
 
     diagnostic: FailureDiagnostic
