@@ -13,8 +13,9 @@ judgement and one buffer for both.
 
 It also owns the row-form read (:meth:`Transaction.read_rows`), which the
 conformance harness reaches and no developer surface does. It is not a second
-lifecycle: the read enters the same force-flush, lock derivation, evidence
-retention, and Read activity bracket ``find`` does.
+lifecycle: the read enters the same force-flush and lock derivation ``find``
+does, and runs against the same shared inert activity every participating read
+here does.
 
 The predicate-selected ``_where`` family is NOT owned here: those five public
 verbs are thin delegates that thread ``(uow, meta, conn, dialect)`` into
@@ -629,11 +630,12 @@ class Transaction:
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Run a PARTICIPATING row-form read and return its published rows.
 
-        The values lane's peer of :meth:`find`, participating in three of the
-        same four ways: it force-flushes pending writes first
-        (read-your-own-writes), renders the read-lock suffix its target Entity's
-        Effective Concurrency Strategy calls for, and publishes its Read
-        activity under this attempt exactly as the graph form does.
+        The values lane's peer of :meth:`find`, participating exactly as the
+        graph form does: it force-flushes pending writes first
+        (read-your-own-writes) and renders the read-lock suffix its target
+        Entity's Effective Concurrency Strategy calls for. Like every
+        participating read it runs against the shared inert activity, so it
+        emits no lifecycle event (`m-execution-lifecycle`).
 
         It records NO observation. The values lane projects scalars only, so a
         Predecessor Row read off it would be incomplete under Relational Document
