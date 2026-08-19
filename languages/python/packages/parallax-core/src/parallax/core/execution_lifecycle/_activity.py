@@ -531,15 +531,15 @@ class _Publisher:
 
 class _LiveActivity:
     """What every observed scope owns: its correlation, its place in the tree,
-    and the failures its children told it they caused."""
+    and the most recent failure a child told it it caused."""
 
-    __slots__ = ("_activity_id", "_attributions", "_parent", "_publisher")
+    __slots__ = ("_activity_id", "_attribution", "_parent", "_publisher")
 
     def __init__(self, publisher: _Publisher, parent: _LiveActivity | None) -> None:
         self._publisher = publisher
         self._parent = parent
         self._activity_id = 0
-        self._attributions: list[tuple[BaseException, int, FailureDiagnostic]] = []
+        self._attribution: tuple[BaseException, int, FailureDiagnostic] | None = None
 
     def _open(self) -> None:
         """Take this activity's ID, which its own Started transition assigns.
@@ -562,29 +562,36 @@ class _LiveActivity:
         """Record that ``activity_id`` produced ``exc``, for a parent that may
         later fail with it.
 
-        The reference is STRONG, which a scope can afford where a retained
-        record could not: an attribution lives exactly as long as the activity
-        that may still fail with it, so a caller that swallows a failed call
-        pins that exception only until the enclosing scope closes. A weak
-        reference is not an option in any case — Python's built-in exception
-        types do not support one, so a `ValueError` escaping a Database Call
-        would fail the attribution rather than being recorded by it.
+        ONE slot, overwritten by each failed child: a scope holds the failure
+        that may still be unwinding through it and holds nothing of the ones a
+        caller already handled, so what it keeps does not grow with the failures
+        it has already seen or the attempts it has already retried. The
+        reference is STRONG — Python's built-in exception types support no weak
+        one, so a `ValueError` escaping a Database Call would fail the
+        attribution rather than being recorded by it — which makes the slot one
+        retained exception and traceback graph rather than every failed child's.
+
+        What one slot gives up: an exception a caller stashed PAST a later
+        failure is no longer attributable when it is re-raised, and the activity
+        reports it as its own direct failure carrying that same exception's
+        diagnostic rather than naming the child that raised it first.
         """
-        self._attributions.append((exc, activity_id, diagnostic))
+        self._attribution = (exc, activity_id, diagnostic)
 
     def _failure(self, exc: BaseException) -> ActivityFailure:
         """How this activity's failure is attributed.
 
-        Matched by exception IDENTITY, never by which child finished most
-        recently: a conversion error that merely unwound past a successful call
-        is a direct failure, while the exact exception a child reported names
-        that child. Where one exception object was reported by more than one
-        child — raised again after a caller handled the earlier occurrence —
-        the newest attribution is the one propagating now and is the one that
-        names the cause. Enclosing events reuse the child's own diagnostic
-        object rather than rendering the same exception twice.
+        Matched by exception IDENTITY: a conversion error that merely unwound
+        past a successful call is a direct failure however recently a child
+        failed, while the exact exception the last failed child reported names
+        that child. One exception object reported by two children therefore
+        names the later one, which is the occurrence propagating now. Enclosing
+        events reuse the child's own diagnostic object rather than rendering the
+        same exception twice.
         """
-        for attributed, activity_id, diagnostic in reversed(self._attributions):
+        attribution = self._attribution
+        if attribution is not None:
+            attributed, activity_id, diagnostic = attribution
             if attributed is exc:
                 return CausedFailure(diagnostic, activity_id)
         return DirectFailure(diagnostic_for(exc))

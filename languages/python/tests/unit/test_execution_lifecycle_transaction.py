@@ -15,6 +15,8 @@ one is a different boundary phase, and the attempt activity says so.
 
 from __future__ import annotations
 
+import gc
+import weakref
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from decimal import Decimal
@@ -626,6 +628,106 @@ def test_a_flush_that_dies_in_planning_is_a_batch_that_started_and_ran_nothing()
     assert isinstance(batch.outcome, WriteBatchFailed)
     assert isinstance(batch.outcome.failure, DirectFailure)
     assert port.ops == [("begin",), ("rollback",)]
+
+
+def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:
+    # An activity keeps ONE attribution, the most recent, so a failure a caller
+    # stashed past a later one is no longer attributable when it is re-raised.
+    # The degradation is bounded and is the price of keeping nothing of the
+    # failures a caller already handled: the attempt renders the re-raised
+    # exception itself, never a wrong cause, and the read that first reported it
+    # still names it in its own Finished event.
+    recorder = RecordingLifecycleProvider()
+    port = RecordingPort(rows=[NEW_ROW])
+    port.read_faults = [
+        DatabaseError(category="deadlock", native_code="40P01", message="the stashed failure"),
+        DatabaseError(category="deadlock", native_code="40P01", message="the later failure"),
+    ]
+
+    def body(tx: Transaction) -> None:
+        with pytest.raises(DatabaseError) as stashed:
+            tx.find(mm.Account.where(mm.Account.id == 7)).result()
+        with suppress(DatabaseError):
+            tx.find(mm.Account.where(mm.Account.id == 8)).result()
+        raise stashed.value
+
+    with pytest.raises(DatabaseError, match="the stashed failure"):
+        _db(port, recorder).transact(body, retries=0)
+
+    root = _only(recorder)
+    stashed_read, _later_read = (event for event in root.events if isinstance(event, ReadFinished))
+    assert isinstance(stashed_read.outcome, ReadFailed)
+    assert isinstance(stashed_read.outcome.failure, CausedFailure)
+    assert "the stashed failure" in stashed_read.outcome.failure.diagnostic.message
+    (rolled_back,) = _attempt_outcomes(root)
+    assert isinstance(rolled_back, AttemptRolledBack)
+    assert rolled_back.failure.phase == "CALLBACK"
+    assert isinstance(rolled_back.failure.failure, DirectFailure)
+    assert "the stashed failure" in rolled_back.failure.failure.diagnostic.message
+
+
+# --------------------------------------------------------------------------- #
+# What a live activity keeps.                                                  #
+# --------------------------------------------------------------------------- #
+def test_an_attempt_keeps_one_handled_failure_however_many_it_sees() -> None:
+    # Two hundred handled read failures, so a collection that grew with them
+    # could not hide in any floor. A weak reference is the only instrument that
+    # sees what a live activity still holds, and it reaches `DatabaseError`
+    # because that is a Python class — a built-in exception supports none.
+    handled = 200
+    recorder = RecordingLifecycleProvider()
+    port = RecordingPort(rows=[NEW_ROW])
+    port.read_faults = [deadlock() for _ in range(handled)]
+    watched: list[weakref.ref[DatabaseError]] = []
+
+    def body(tx: Transaction) -> None:
+        for _ in range(handled):
+            try:
+                tx.find(mm.Account.where(mm.Account.id == 7)).result()
+            except DatabaseError as failure:
+                watched.append(weakref.ref(failure))
+        gc.collect()
+        # The one still alive is the most recent, which is the only one that can
+        # still be the failure unwinding through this attempt.
+        assert [index for index, held in enumerate(watched) if held() is not None] == [handled - 1]
+
+    _db(port, recorder).transact(body)
+
+    assert len(watched) == handled
+    gc.collect()
+    assert all(held() is None for held in watched)
+
+
+def test_an_invocation_keeps_one_failed_attempt_however_many_it_retries() -> None:
+    # Every rolled-back attempt attributes its failure to the invocation, so the
+    # invocation is the second place a per-event collection would grow — here
+    # with the retry count rather than with the failures one attempt handled.
+    recorder = RecordingLifecycleProvider()
+    port = RecordingPort()
+    watched: list[weakref.ref[DatabaseError]] = []
+
+    def commit_failure() -> DatabaseError:
+        failure = deadlock()
+        watched.append(weakref.ref(failure))
+        return failure
+
+    port.txn_faults = [commit_failure(), commit_failure()]
+    attempts = 0
+
+    def body(tx: Transaction) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 3:
+            gc.collect()
+            assert [index for index, held in enumerate(watched) if held() is not None] == [1]
+        tx.insert(new_account())
+
+    _db(port, recorder).transact(body, retries=2)
+
+    assert attempts == 3
+    assert _finished(_only(recorder)) == OuterInvocationCommitted()
+    gc.collect()
+    assert all(held() is None for held in watched)
 
 
 # --------------------------------------------------------------------------- #
