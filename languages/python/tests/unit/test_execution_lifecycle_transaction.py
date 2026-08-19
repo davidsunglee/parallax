@@ -572,11 +572,13 @@ def test_a_read_that_failed_is_what_its_attempt_names() -> None:
     assert rolled_back.failure.failure.diagnostic is read_finished.outcome.failure.diagnostic
 
 
-def test_one_exception_raised_twice_names_the_read_that_is_still_propagating() -> None:
+def test_the_higher_numbered_read_reporting_one_value_is_what_the_attempt_names() -> None:
     # The same exception object reaches two reads: the callback handles the
-    # first and lets the second escape. Identity alone cannot tell the two
-    # occurrences apart, so the attempt must name the one unwinding through it
-    # rather than the first on record.
+    # first and lets the second escape. Both report ONE value to the attempt, so
+    # the report of a value already held replaces the child named only on a
+    # HIGHER Activity ID, and the second read is what the attempt answers with.
+    # Which occurrence is unwinding takes no part in that: the same answer is
+    # required when a handler catches the value and something else raises it.
     recorder = RecordingLifecycleProvider()
     port = RecordingPort(rows=[NEW_ROW])
     fault = deadlock()
@@ -597,16 +599,17 @@ def test_one_exception_raised_twice_names_the_read_that_is_still_propagating() -
     assert isinstance(rolled_back, AttemptRolledBack)
     caused = rolled_back.failure.failure
     assert isinstance(caused, CausedFailure)
+    assert handled.activity_id < escaping.activity_id
     assert caused.cause_activity_id == escaping.activity_id
-    assert caused.cause_activity_id != handled.activity_id
     assert caused.diagnostic is escaping.outcome.failure.diagnostic
 
 
-def test_a_join_the_failure_only_unwound_through_does_not_displace_the_read() -> None:
+def test_a_join_reporting_a_value_after_the_read_it_encloses_does_not_displace_it() -> None:
     # A joined invocation and the read inside it are SIBLINGS under the attempt,
-    # and the join finishes last because it encloses the read. The attempt must
-    # still name the read: the exception never stopped unwinding, so the join is
-    # a scope it passed through rather than a later, independent failure.
+    # and the join reports the value last because it encloses the read. Reporting
+    # last is what must not decide the answer: the join started FIRST, so its
+    # Activity ID is the lower of the two, and a second report of the value held
+    # replaces the child named only on a HIGHER ID. The read stays named.
     recorder = RecordingLifecycleProvider()
     port = RecordingPort(rows=[NEW_ROW])
     port.read_faults = [deadlock()]
@@ -653,10 +656,11 @@ def test_a_join_the_failure_only_unwound_through_does_not_displace_the_read() ->
     assert caused.diagnostic is read_failure.diagnostic
 
 
-def test_every_join_a_failure_unwound_through_leaves_the_read_named() -> None:
-    # Two joins deep, so the enclosing scopes are passed through one after the
-    # other: neither may take the attribution from the read, and neither may
-    # render the exception a second time on the way out.
+def test_neither_of_two_nested_joins_outranks_the_read_they_enclose() -> None:
+    # Two joins deep, so two scopes report the value to the attempt after the
+    # read does. Both started before it and are therefore lower-numbered, so
+    # neither takes the attribution from the read, and neither renders the
+    # exception a second time on the way out.
     recorder = RecordingLifecycleProvider()
     port = RecordingPort(rows=[NEW_ROW])
     port.read_faults = [deadlock()]
@@ -673,13 +677,14 @@ def test_every_join_a_failure_unwound_through_leaves_the_read_named() -> None:
     assert isinstance(read_finished.outcome, ReadFailed)
     diagnostic = read_finished.outcome.failure.diagnostic
     joins = [
-        event.outcome
+        (event.activity_id, event.outcome)
         for event in root.events
         if isinstance(event, TransactionInvocationFinished)
         and isinstance(event.outcome, JoinedInvocationRaised)
     ]
     assert len(joins) == 2
-    assert all(join.failure.diagnostic is diagnostic for join in joins)
+    assert all(activity_id < read_finished.activity_id for activity_id, _ in joins)
+    assert all(raised.failure.diagnostic is diagnostic for _, raised in joins)
     (rolled_back,) = _attempt_outcomes(root)
     assert isinstance(rolled_back, AttemptRolledBack)
     caused = rolled_back.failure.failure
