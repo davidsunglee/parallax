@@ -600,6 +600,90 @@ def test_one_exception_raised_twice_names_the_read_that_is_still_propagating() -
     assert caused.diagnostic is escaping.outcome.failure.diagnostic
 
 
+def test_a_join_the_failure_only_unwound_through_does_not_displace_the_read() -> None:
+    # A joined invocation and the read inside it are SIBLINGS under the attempt,
+    # and the join finishes last because it encloses the read. The attempt must
+    # still name the read: the exception never stopped unwinding, so the join is
+    # a scope it passed through rather than a later, independent failure.
+    recorder = RecordingLifecycleProvider()
+    port = RecordingPort(rows=[NEW_ROW])
+    port.read_faults = [deadlock()]
+    db = _db(port, recorder)
+
+    def inner(tx: Transaction) -> None:
+        tx.find(mm.Account.where(mm.Account.id == 7)).result()
+
+    with pytest.raises(DatabaseError):
+        db.transact(lambda _outer: db.transact(inner), retries=0)
+
+    root = _only(recorder)
+    assert _tree(root.events) == [
+        ("TransactionInvocationStarted", 1, None),
+        ("TransactionAttemptStarted", 2, 1),
+        ("TransactionInvocationStarted", 3, 2),
+        ("ReadStarted", 4, 2),
+        ("DatabaseCallStarted", 5, 4),
+        ("DatabaseCallFinished", 5, 4),
+        ("ReadFinished", 4, 2),
+        ("TransactionInvocationFinished", 3, 2),
+        ("TransactionAttemptFinished", 2, 1),
+        ("TransactionInvocationFinished", 1, None),
+    ]
+    read_finished = root.events[6]
+    assert isinstance(read_finished, ReadFinished)
+    assert isinstance(read_finished.outcome, ReadFailed)
+    read_failure = read_finished.outcome.failure
+    assert isinstance(read_failure, CausedFailure)
+    assert read_failure.cause_activity_id == 5
+    joined = root.events[7]
+    assert isinstance(joined, TransactionInvocationFinished)
+    assert isinstance(joined.outcome, JoinedInvocationRaised)
+    # The join has no descendant of its own to name, so its own failure is
+    # direct — but it renders nothing, reusing the diagnostic already made.
+    assert isinstance(joined.outcome.failure, DirectFailure)
+    assert joined.outcome.failure.diagnostic is read_failure.diagnostic
+    (rolled_back,) = _attempt_outcomes(root)
+    assert isinstance(rolled_back, AttemptRolledBack)
+    caused = rolled_back.failure.failure
+    assert isinstance(caused, CausedFailure)
+    assert caused.cause_activity_id == read_finished.activity_id
+    assert caused.diagnostic is read_failure.diagnostic
+
+
+def test_every_join_a_failure_unwound_through_leaves_the_read_named() -> None:
+    # Two joins deep, so the enclosing scopes are passed through one after the
+    # other: neither may take the attribution from the read, and neither may
+    # render the exception a second time on the way out.
+    recorder = RecordingLifecycleProvider()
+    port = RecordingPort(rows=[NEW_ROW])
+    port.read_faults = [deadlock()]
+    db = _db(port, recorder)
+
+    def innermost(tx: Transaction) -> None:
+        tx.find(mm.Account.where(mm.Account.id == 7)).result()
+
+    with pytest.raises(DatabaseError):
+        db.transact(lambda _outer: db.transact(lambda _middle: db.transact(innermost)), retries=0)
+
+    root = _only(recorder)
+    read_finished = next(event for event in root.events if isinstance(event, ReadFinished))
+    assert isinstance(read_finished.outcome, ReadFailed)
+    diagnostic = read_finished.outcome.failure.diagnostic
+    joins = [
+        event.outcome
+        for event in root.events
+        if isinstance(event, TransactionInvocationFinished)
+        and isinstance(event.outcome, JoinedInvocationRaised)
+    ]
+    assert len(joins) == 2
+    assert all(join.failure.diagnostic is diagnostic for join in joins)
+    (rolled_back,) = _attempt_outcomes(root)
+    assert isinstance(rolled_back, AttemptRolledBack)
+    caused = rolled_back.failure.failure
+    assert isinstance(caused, CausedFailure)
+    assert caused.cause_activity_id == read_finished.activity_id
+
+
 def test_a_flush_that_dies_in_planning_is_a_batch_that_started_and_ran_nothing() -> None:
     # A Write Batch starts BEFORE planning precisely so a planning refusal is
     # attributable to the batch rather than to the callback around it.
@@ -631,12 +715,13 @@ def test_a_flush_that_dies_in_planning_is_a_batch_that_started_and_ran_nothing()
 
 
 def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:
-    # An activity keeps ONE attribution, the most recent, so a failure a caller
-    # stashed past a later one is no longer attributable when it is re-raised.
-    # The degradation is bounded and is the price of keeping nothing of the
-    # failures a caller already handled: the attempt renders the re-raised
-    # exception itself, never a wrong cause, and the read that first reported it
-    # still names it in its own Finished event.
+    # An activity keeps ONE attribution — the latest child failure, handled or
+    # not — so a failure a caller stashed past a later one is no longer
+    # attributable when it is re-raised. The degradation is bounded and is the
+    # price of retaining one exception graph rather than every failed child's:
+    # the attempt renders the re-raised exception itself, never a wrong cause,
+    # and the read that first reported it still names it in its own Finished
+    # event.
     recorder = RecordingLifecycleProvider()
     port = RecordingPort(rows=[NEW_ROW])
     port.read_faults = [
@@ -687,8 +772,9 @@ def test_an_attempt_keeps_one_handled_failure_however_many_it_sees() -> None:
             except DatabaseError as failure:
                 watched.append(weakref.ref(failure))
         gc.collect()
-        # The one still alive is the most recent, which is the only one that can
-        # still be the failure unwinding through this attempt.
+        # The one still alive is the latest, held whether or not the caller
+        # caught it, and its identity is the only one this attempt can still
+        # attribute.
         assert [index for index, held in enumerate(watched) if held() is not None] == [handled - 1]
 
     _db(port, recorder).transact(body)

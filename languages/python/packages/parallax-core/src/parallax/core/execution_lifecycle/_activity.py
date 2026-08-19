@@ -531,7 +531,7 @@ class _Publisher:
 
 class _LiveActivity:
     """What every observed scope owns: its correlation, its place in the tree,
-    and the most recent failure a child told it it caused."""
+    and the one child failure it may later be asked to name."""
 
     __slots__ = ("_activity_id", "_attribution", "_parent", "_publisher")
 
@@ -562,39 +562,73 @@ class _LiveActivity:
         """Record that ``activity_id`` produced ``exc``, for a parent that may
         later fail with it.
 
-        ONE slot, overwritten by each failed child: a scope holds the failure
-        that may still be unwinding through it and holds nothing of the ones a
-        caller already handled, so what it keeps does not grow with the failures
+        ONE slot, holding the LATEST child failure whether a caller went on to
+        handle it or not, so what a scope keeps does not grow with the failures
         it has already seen or the attempts it has already retried. The
         reference is STRONG — Python's built-in exception types support no weak
         one, so a `ValueError` escaping a Database Call would fail the
-        attribution rather than being recorded by it — which makes the slot one
-        retained exception and traceback graph rather than every failed child's.
+        attribution rather than being recorded by it — which bounds retention to
+        one exception and traceback graph rather than every failed child's, and
+        leaves that one identity the only failure the scope can attribute.
+
+        Latest is latest-STARTED rather than latest-reported, which matters only
+        when two children report the SAME exception object. Either one of them
+        ran inside the other — a joined invocation reports after the read it
+        encloses, having merely been unwound through — or they are separate
+        occurrences of a stashed exception, where the one that started later is
+        the occurrence propagating now. Keeping the higher activity ID names the
+        more specific child in both readings.
 
         What one slot gives up: an exception a caller stashed PAST a later
         failure is no longer attributable when it is re-raised, and the activity
         reports it as its own direct failure carrying that same exception's
         diagnostic rather than naming the child that raised it first.
         """
+        attributed = self._attributed(exc)
+        if attributed is not None and attributed[0] > activity_id:
+            return
         self._attribution = (exc, activity_id, diagnostic)
+
+    def _attributed(self, exc: BaseException) -> tuple[int, FailureDiagnostic] | None:
+        """The child this activity holds for ``exc`` and that child's diagnostic,
+        or ``None`` when the slot holds no failure or holds another exception."""
+        attribution = self._attribution
+        if attribution is None or attribution[0] is not exc:
+            return None
+        return attribution[1], attribution[2]
 
     def _failure(self, exc: BaseException) -> ActivityFailure:
         """How this activity's failure is attributed.
 
         Matched by exception IDENTITY: a conversion error that merely unwound
         past a successful call is a direct failure however recently a child
-        failed, while the exact exception the last failed child reported names
-        that child. One exception object reported by two children therefore
-        names the later one, which is the occurrence propagating now. Enclosing
-        events reuse the child's own diagnostic object rather than rendering the
-        same exception twice.
+        failed, while the exact exception a failed child reported names that
+        child. Enclosing events reuse that child's own diagnostic object rather
+        than rendering the same exception twice.
         """
-        attribution = self._attribution
-        if attribution is not None:
-            attributed, activity_id, diagnostic = attribution
-            if attributed is exc:
-                return CausedFailure(diagnostic, activity_id)
-        return DirectFailure(diagnostic_for(exc))
+        attributed = self._attributed(exc)
+        if attributed is not None:
+            activity_id, diagnostic = attributed
+            return CausedFailure(diagnostic, activity_id)
+        return DirectFailure(self._rendered(exc))
+
+    def _rendered(self, exc: BaseException) -> FailureDiagnostic:
+        """``exc`` projected for an activity with no child of its own to name.
+
+        A joined invocation is the SIBLING of the read it encloses rather than
+        its parent, so an exception leaving that read unwinds out through a
+        scope owning no attribution for it. The shared parent holds one, and a
+        higher activity ID than this scope's is exactly the case of a child that
+        started after this scope did and therefore ran inside it: reusing its
+        diagnostic renders the exception once rather than once per scope it
+        unwinds through.
+        """
+        parent = self._parent
+        if parent is not None:
+            attributed = parent._attributed(exc)
+            if attributed is not None and attributed[0] > self._activity_id:
+                return attributed[1]
+        return diagnostic_for(exc)
 
     def _propagated(self, exc: BaseException) -> ActivityFailure:
         """This activity's failure, told to its parent as the parent's own cause.
