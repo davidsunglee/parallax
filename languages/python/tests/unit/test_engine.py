@@ -26,7 +26,10 @@ from _metamodel_support import Declaration, attribute, key, source
 from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, sweep
-from parallax.conformance._lifecycle_observation import LifecycleRun
+from parallax.conformance._lifecycle_observation import (
+    LifecycleRun,
+    execution_lifecycle_observation,
+)
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
@@ -594,6 +597,80 @@ def test_a_document_bind_reconciles_by_content_rather_than_key_order() -> None:
         _lowered("insert into voyage(payload) values (?)", JsonDocument({"b": 2, "a": 1})),
     )
     assert engine._delivered(plan, delivered, "a unit") == plan  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+
+
+def test_a_bind_reconciles_only_against_its_own_json_type() -> None:
+    """The carrier a decode produces changes the SPELLING of a value, never its
+    JSON type, so a type difference is a difference the case must see.
+
+    Python equality alone would not say so: ``True == 1`` and ``False == 0``
+    hold, and a mapping compared with ``==`` carries that hole into every member
+    of a value-object document. A production defect binding the number 1 where
+    the plan holds ``true`` is exactly the drift this reconciliation exists to
+    report.
+    """
+    for planned, delivered in (
+        (True, 1),
+        (1, True),
+        (False, 0),
+        (None, 0),
+        (None, ""),
+        (JsonDocument({"active": True}), JsonDocument({"active": 1})),
+        (JsonDocument({"tags": [1, True]}), JsonDocument({"tags": [1, 1]})),
+        (JsonDocument({"geo": {"lat": True}}), JsonDocument({"geo": {"lat": 1}})),
+        (JsonDocument({"a": 1}), JsonDocument({"a": 1, "b": 2})),
+        (JsonDocument({"tags": [1]}), JsonDocument({"tags": [1, 2]})),
+    ):
+        with pytest.raises(engine.EngineError, match="is planned with binds"):
+            engine._delivered(  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+                (_lowered("update account set flag = ?", planned),),
+                (_lowered("update account set flag = ?", delivered),),
+                "a unit",
+            )
+
+
+def test_a_document_member_reconciles_by_carrier_the_way_a_bind_does() -> None:
+    """One rule, at every depth: a member's decimal carrier reconciles against
+    the number the case authored.
+
+    A byte buffer is the carrier that would read as an array under a structural
+    rule — :func:`wire_value` spells it as hex instead, so it reconciles as the
+    string it renders to and a buffer differing in content differs.
+    """
+    plan = (
+        _lowered(
+            "insert into voyage(payload, seal) values (?, ?)",
+            JsonDocument({"totals": [250.00, {"fee": 1.5}]}),
+            b"\x01\x02",
+        ),
+    )
+    delivered = (
+        _lowered(
+            "insert into voyage(payload, seal) values (?, ?)",
+            JsonDocument({"totals": [decimal.Decimal("250.00"), {"fee": decimal.Decimal("1.5")}]}),
+            b"\x01\x02",
+        ),
+    )
+    assert engine._delivered(plan, delivered, "a unit") == plan  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+    with pytest.raises(engine.EngineError, match="is planned with binds"):
+        engine._delivered(  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+            (_lowered("insert into voyage(seal) values (?)", b"\x01\x02"),),
+            (_lowered("insert into voyage(seal) values (?)", b"\x01\x03"),),
+            "a unit",
+        )
+
+
+def test_a_carrier_the_wire_renderer_leaves_alone_reconciles_by_its_own_equality() -> None:
+    """A value :func:`engine.wire_value` recognizes no spelling for names no JSON
+    type, so the only reconciliation left for it is equality with its own kind."""
+    for delivered, refused in ((dt.timedelta(hours=1), False), (dt.timedelta(hours=2), True)):
+        plan = (_lowered("insert into shift(span) values (?)", dt.timedelta(hours=1)),)
+        ran = (_lowered("insert into shift(span) values (?)", delivered),)
+        if refused:
+            with pytest.raises(engine.EngineError, match="is planned with binds"):
+                engine._delivered(plan, ran, "a unit")  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+        else:
+            assert engine._delivered(plan, ran, "a unit") == plan  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
 
 
 def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
@@ -2575,6 +2652,39 @@ def test_run_write_sequence_case_settles_a_temporal_write_against_its_resolving_
     ]
     assert len(port.writes) == 3 and port.commits == 2
     assert table_state is not None and "balance" in table_state
+
+
+def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation() -> None:
+    """The one call inside a write unit that the emissions do not hold.
+
+    m-txtime-write-002 costs four round trips for three golden statements: the
+    update entry reads the milestone it closes before writing it. A case counts
+    that read and authors no golden for it, so the delivered stream carries a
+    Database Call the emission order has no entry for — and the remaining calls
+    still name that order in full, which is what makes the omission readable as
+    the resolving read rather than as a lost index.
+    """
+    port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
+    run = LifecycleRun()
+    emissions, _table_state, round_trips = engine.run_write_sequence_case(
+        _load_case("m-txtime-write-002"), "postgres", port, run
+    )
+    observed = execution_lifecycle_observation(
+        run.roots, [emission.sql for emission in emissions], run.resolving_read_calls
+    )
+    calls = [
+        event["databaseCallStarted"]
+        for root in cast("list[dict[str, Any]]", observed["roots"])
+        for event in cast("list[dict[str, Any]]", root["events"])
+        if "databaseCallStarted" in event
+    ]
+    assert [(call["kind"], call.get("statement")) for call in calls] == [
+        ("write", 0),
+        ("read", None),
+        ("write", 1),
+        ("write", 2),
+    ]
+    assert round_trips == len(calls)
 
 
 def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window() -> None:

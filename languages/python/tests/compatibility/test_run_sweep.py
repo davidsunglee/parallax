@@ -860,7 +860,11 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     (`m-opt-lock-007`) grades each attempt's own statements flattened in order
     (proving the `0`-then-`1` transition through each attempt's own distinct gate
     bind) and the FINAL affected-row count. A case authoring `then.roundTrips`
-    grades the calls that reached the database across every attempt. Every case
+    grades the calls that reached the database across every attempt — its
+    resolving reads among them, which is the one shape where such a read stands
+    outside the transaction it licenses — and a case authoring
+    `then.executionLifecycle` grades the delivered stream those calls came from,
+    where that read is the Root Execution naming no golden statement. Every case
     that authors `then.tableState` grades the committed table contents; a case
     whose write is refused authors none, since the unit of work rolls back.
     """
@@ -901,11 +905,13 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         assert observations["affectedRows"] == attempts[-1]["affectedRows"], case.case_id
 
     # `then.roundTrips` where the case authors it: the calls that actually
-    # reached the database, summed across every attempt, which is a different
-    # number from the emission count whenever a statement is planned but not
-    # executed.
+    # reached the database, summed across every attempt and counting each
+    # attempt's own resolving read, which is a different number from the emission
+    # count whenever a call ran no authored golden.
     if "roundTrips" in then:
         assert observations["roundTrips"] == then["roundTrips"], case.case_id
+
+    _grade_execution_lifecycle(then, observations)
 
     if "tableState" in then:
         expected_state = cast("dict[str, list[dict[str, Any]]]", then["tableState"])

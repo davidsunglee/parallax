@@ -11,6 +11,9 @@
 # exactly ONE row — success — so the new document lands and the version advances to
 # 2. The harness loads the version-1 fixture, applies the golden UPDATE, and asserts
 # affectedRows = 1 and the resulting row (decoding the document column).
+# `roundTrips: 2` is that UPDATE plus the resolving read whose observation licenses
+# it — a keyed write is addressed by a value a read published, and both calls
+# reached the database.
 model: models/subscriber.yaml
 tags: [m-value-object, m-opt-lock, m-sql, conflict, json, slice-snapshot-1, slice-managed-1]
 shape: conflict
@@ -52,4 +55,4 @@ then:
           city: Oslo
           geo:
             country: "NO"
-  roundTrips: 1
+  roundTrips: 2

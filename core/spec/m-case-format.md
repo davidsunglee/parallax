@@ -348,7 +348,7 @@ keeps the assertion honest across engines.
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind) |
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
 | `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
-| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two are the only shapes admitting `0`: every other shape asserts one operation that reaches the database |
+| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two are the only shapes admitting `0`: every other shape asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 #### How a case spells an Entity
@@ -835,6 +835,16 @@ A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare
 their own `roundTrips`.
 
+A **non-temporal conflict attempt** owes one, and a `when.attempts` sequence owes
+one PER attempt, because every attempt settles against a state of its own
+(*Conflict cases*). That read stands OUTSIDE the transaction it licenses instead
+of inside it, which decides WHERE it happens and not whether it counts. A
+temporal close settles against a coordinate the case names and owes none.
+
+A resolving read is counted and never authored: `then.statements` is the DML a
+case states, so no resolving read appears in it, and none names a statement
+index in `then.executionLifecycle` either (*The execution lifecycle oracle*).
+
 ### Conflict cases (`m-opt-lock`)
 
 A **conflict** case proves optimistic-lock conflict detection by the **affected-
@@ -851,7 +861,8 @@ apply (there is no `when.objectQuery`).
 
 **The interference a conflict case describes must be one a correct client can
 meet.** A NON-temporal conflict write is settled against a value a real read
-published, and `given.apply`'s concurrent writer commits BETWEEN that read and
+published — one of the calls `then.roundTrips` counts (*Resolving reads a write
+owes*) — and `given.apply`'s concurrent writer commits BETWEEN that read and
 the write it invalidates — which is why `when.write`'s `observedVersion` is a
 declared fact cross-checked against the read rather than evidence handed to the
 write. That ordering is reachable only under the **Optimistic** strategy, whose
@@ -1648,10 +1659,14 @@ The portable projection retains activity topology, stable outcomes and codes,
 database categories, physical row counts, retry classification, and statement
 indexes. It omits UUIDs, durations, implementation type names, messages, stack
 traces, and native database codes. A Database Call names its statement by
-zero-based index into the case's flattened authored golden statement order. On
-the `api-conformance` lane, where a case authors no golden SQL, that index is
-absent. `then.statements` remains the sole SQL and bind oracle, and
-`then.roundTrips` the sole count oracle.
+zero-based index into the case's flattened authored golden statement order. Two
+calls name none: every call on the `api-conformance` lane, where a case authors
+no golden SQL at all, and a **resolving read** a keyed write owes (*Resolving
+reads a write owes*), which reaches the database and is counted but which the
+case authors no golden for. The indexes the remaining calls name ARE that order
+— in delivery order, once each — so a record naming a statement twice, or
+leaving one unnamed, contradicts its own goldens. `then.statements` remains the
+sole SQL and bind oracle, and `then.roundTrips` the sole count oracle.
 
 The shape is a case assertion format, not a public serialization contract. The
 compatibility harness validates `then.executionLifecycle` without producing

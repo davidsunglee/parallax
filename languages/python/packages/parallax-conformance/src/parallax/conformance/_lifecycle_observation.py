@@ -9,6 +9,11 @@ is how many Database Call activities the run opened, so transaction demarcation
 counts none without the counter having to know that; and
 `then.executionLifecycle` is the stream itself, normalized.
 
+The three do not hold the same calls: a resolving read a keyed write owes is in
+the count and in the stream while no emission holds it, so a lane issuing one
+says so where it happens (:meth:`LifecycleObservation.resolving_reads`) instead
+of leaving the index space to infer it.
+
 Reading them from the delivered stream rather than from a decorator around the
 Database Port is what keeps the adapter thin over production: a statement
 arrives here in its canonical `?`-placeholder form because that is the form the
@@ -17,7 +22,8 @@ activity borrowed, so nothing has to recover it from driver text.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import contextlib
+from collections.abc import Collection, Generator, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, assert_never
 
@@ -134,15 +140,40 @@ class LifecycleObservation:
     :class:`LifecycleRun`'s.
     """
 
-    __slots__ = ("_recorder",)
+    __slots__ = ("_recorder", "_resolving")
 
     def __init__(self) -> None:
         self._recorder = RecordingLifecycleProvider()
+        self._resolving: set[int] = set()
 
     @property
     def provider(self) -> ExecutionLifecycleProvider:
         """The Provider to install on the Handle whose work this observes."""
         return self._recorder
+
+    @contextlib.contextmanager
+    def resolving_reads(self) -> Generator[None]:
+        """Charge every Database Call opened inside the block to the resolving
+        reads a keyed write owes.
+
+        Such a read reaches the database — it is one of the round trips the case
+        counts — but the case authors no golden statement for it (`m-case-format`
+        "Resolving reads a write owes"), so it stands outside the emission order
+        a Database Call names by index. Which calls those are is knowable only
+        where they are issued: nothing in the delivered stream tells a keyed
+        write's source SELECT apart from a find step's own.
+        """
+        first = len(self.calls)
+        try:
+            yield
+        finally:
+            self._resolving.update(range(first, len(self.calls)))
+
+    @property
+    def resolving_read_calls(self) -> frozenset[int]:
+        """The positions, in this observation's own delivery order, of the calls
+        no emission names."""
+        return frozenset(self._resolving)
 
     @property
     def roots(self) -> tuple[RecordedRoot, ...]:
@@ -235,6 +266,22 @@ class LifecycleRun:
     def roots(self) -> tuple[RecordedRoot, ...]:
         return tuple(root for observation in self._observations for root in observation.roots)
 
+    @property
+    def resolving_read_calls(self) -> frozenset[int]:
+        """The same calls each observation charged to a keyed write's resolving
+        reads, positioned in the WHOLE run's delivery order.
+
+        :attr:`roots` concatenates the observations in the order they were
+        minted, so a run-wide call position is one observation's own position
+        plus every call the observations before it opened.
+        """
+        positions: set[int] = set()
+        opened = 0
+        for observation in self._observations:
+            positions.update(opened + local for local in observation.resolving_read_calls)
+            opened += len(observation.calls)
+        return frozenset(positions)
+
 
 def lifecycle_run(supplied: LifecycleRun | None) -> LifecycleRun:
     """``supplied``, or a run of this call's own.
@@ -248,7 +295,9 @@ def lifecycle_run(supplied: LifecycleRun | None) -> LifecycleRun:
 
 
 def execution_lifecycle_observation(
-    roots: Sequence[RecordedRoot], statements: Sequence[str]
+    roots: Sequence[RecordedRoot],
+    statements: Sequence[str],
+    resolving_reads: Collection[int] = (),
 ) -> dict[str, object]:
     """One run's `executionLifecycle` observation, in the shape the case authors.
 
@@ -256,9 +305,15 @@ def execution_lifecycle_observation(
     names by index instead of repeating its SQL. A lane reporting no emission at
     all — `api-conformance` — leaves every call's index absent, which is exactly
     what its cases author.
+
+    ``resolving_reads`` names the calls that stand OUTSIDE that order, by their
+    position in the run's own delivery order
+    (:attr:`LifecycleRun.resolving_read_calls`): the source read a keyed write
+    owes reaches the database and is counted, but the case authors no golden for
+    it, so it names no index. Everything else is indexed positionally.
     """
-    indexer = _StatementIndexer(statements)
-    return {
+    indexer = _StatementIndexer(statements, resolving_reads)
+    observation: dict[str, object] = {
         "roots": [
             {
                 "execution": position,
@@ -268,6 +323,8 @@ def execution_lifecycle_observation(
             for position, root in enumerate(roots, start=1)
         ]
     }
+    indexer.exhausted()
+    return observation
 
 
 class _StatementIndexer:
@@ -291,25 +348,37 @@ class _StatementIndexer:
     — so they are compared where the difference is known, in wire space with the
     exact-Decimal reconciliation goldens are graded under. What is left here is
     the index's own question, which the SQL answers.
+
+    The positions the delivering lane charged to a keyed write's resolving reads
+    are the calls the emission order does not hold at all: they are skipped
+    WITHOUT consuming an emission, which is what keeps the correspondence
+    positional for every call that is in it. Read against that, the exhaustion
+    check is the other half of the same claim — an emission no call named means
+    the two orders disagree even though every index that was handed out landed.
     """
 
-    __slots__ = ("_position", "_statements")
+    __slots__ = ("_delivered", "_position", "_resolving", "_statements")
 
-    def __init__(self, statements: Sequence[str]) -> None:
+    def __init__(self, statements: Sequence[str], resolving_reads: Collection[int] = ()) -> None:
         self._statements = statements
+        self._resolving = frozenset(resolving_reads)
+        self._delivered = 0
         self._position = 0
 
     def take(self, statement: LoweredStatement) -> int | None:
-        """``statement``'s index, or ``None`` on a lane reporting no emission."""
-        if not self._statements:
+        """``statement``'s index, or ``None`` where the emission order holds none
+        — a lane reporting no emission at all, or a resolving read."""
+        delivered = self._delivered
+        self._delivered += 1
+        if not self._statements or delivered in self._resolving:
             return None
         index = self._position
         self._position += 1
         if index >= len(self._statements):
             raise StatementIndexError(
-                f"the lifecycle delivered {index + 1} database call(s) but the envelope "
-                f"reports only {len(self._statements)} emission(s): the observation's "
-                "statement index would name nothing (m-conformance-adapter)"
+                f"the lifecycle delivered {index + 1} database call(s) the envelope emits a "
+                f"statement for, but it reports only {len(self._statements)} emission(s): the "
+                "observation's statement index would name nothing (m-conformance-adapter)"
             )
         emitted = self._statements[index]
         if statement.sql != emitted:
@@ -319,6 +388,21 @@ class _StatementIndexer:
                 "statement index would name a different statement (m-conformance-adapter)"
             )
         return index
+
+    def exhausted(self) -> None:
+        """Refuse an emission order the delivered calls left unnamed.
+
+        A call wrongly charged to the resolving reads takes no index, and every
+        index it would have shifted still lands on the SQL it names, so the only
+        evidence left is an emission nothing pointed at.
+        """
+        if self._position != len(self._statements):
+            raise StatementIndexError(
+                f"the envelope reports {len(self._statements)} emission(s) but the lifecycle "
+                f"named only {self._position}: every emission is the statement of some "
+                "database call, so one no call named leaves the observation's index space "
+                "and its delivery disagreeing (m-conformance-adapter)"
+            )
 
 
 def _portable(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, object]:

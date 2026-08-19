@@ -386,7 +386,7 @@
       "properties": {"trigger": {"enum": ["read-dependency", "pre-commit"]}}
     },
     "lifecycleDatabaseCallStarted": {
-      "description": "One attempted round trip is about to run. `statement` is the zero-based index into this envelope's own `emissions` array — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is omitted where the envelope reports no emission at all (an `api-conformance` case), where `kind` and the outcome are the whole portable oracle. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
+      "description": "One attempted round trip is about to run. `statement` is the zero-based index into this envelope's own `emissions` array — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is omitted where `emissions` holds no statement to name: an envelope reporting no emission at all (an `api-conformance` case), where `kind` and the outcome are the whole portable oracle, and the resolving read a keyed write owes, which `roundTrips` counts and no emission states. The indexes the remaining calls name are the emission order exactly, in delivery order and once each. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "kind"],

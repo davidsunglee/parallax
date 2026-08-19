@@ -426,9 +426,12 @@ durations, runtime type names, or diagnostic text.
 The observation reports events the implementation's own installed recording
 Handler received, never a re-derivation from the case. A Database Call names its
 statement by index into this envelope's own `emissions` array, just as the oracle
-uses the case's flattened authored statements. Every present index must be in
-range; JSON Schema cannot express that cross-array bound, so the adapter and
-reference harness enforce it semantically.
+uses the case's flattened authored statements. A call the envelope emits no
+statement for — the resolving read a keyed write owes (`m-case-format`) — names
+no index, and the indexes the rest name are the emission order exactly, in
+delivery order and once each. Every present index must be in range; JSON Schema
+cannot express those cross-array relations, so the adapter and reference harness
+enforce them semantically.
 
 The key is optional and additive, but an adapter claiming
 `m-execution-lifecycle` MUST report it for every case authoring the oracle. It

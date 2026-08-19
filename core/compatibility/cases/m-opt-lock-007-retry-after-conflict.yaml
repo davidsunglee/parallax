@@ -20,11 +20,12 @@
 # attempt's write is an effective change rather than a restoration of what the
 # row already held.
 #
-# `roundTrips: 2` is what the two authored attempts cost between them — one gated
-# UPDATE each. The first REACHED the database and reported zero rows, so it counts
-# exactly as the second does; the count spans every attempt rather than the last.
-# Each attempt's own resolving read stands outside its transaction and is no part
-# of the attempt it licenses, which is what `then.roundTrips` sums.
+# `roundTrips: 4` is what the two authored attempts cost between them — a
+# resolving read and the gated UPDATE it licenses, each. The first UPDATE REACHED
+# the database and reported zero rows, so it counts exactly as the second does;
+# the count spans every attempt rather than the last. The resolving read stands
+# OUTSIDE the transaction it licenses and is counted all the same: `roundTrips`
+# is every call that reached the database, while the goldens are the DML alone.
 #
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, conflict, success, slice-snapshot-1, slice-managed-1]
@@ -55,7 +56,7 @@ when:
       write: { id: 2, balance: 275.00, observedVersion: 2 }
       affectedRows: 1
 then:
-  roundTrips: 2
+  roundTrips: 4
   tableState:
     account:
       - { id: 1, owner: Ada, balance: 100.00, version: 1 }
