@@ -1,20 +1,16 @@
 """What one run put on the wire, observed at the Database Port.
 
 `then.statements` and `then.roundTrips` are the corpus's SQL and count oracles,
-and both are facts about what reached the driver. This observes them at the port
-because the engine installs no Execution Lifecycle Provider: until it does, the
-port is the only place both oracles are answerable for every lane. It is a
-stand-in for a seam still being built, not a second witness the corpus wants —
-once the engine consumes the delivered event stream, both oracles come off the
-Database Call events it carries, which is the one source they were read from
-before the Execution Log was retired.
+and both are facts about what reached the driver. The engine installs no
+Execution Lifecycle Provider, so the port is where both oracles are answerable
+for every lane: every statement any handle, transaction, or attempt issues
+crosses it, and crosses it once per round trip.
 
 The canonical `?`-placeholder form is what every emission this engine reports
-carries, so a captured driver statement is round-tripped back through
+carries, so a captured statement — driver text by the time it reaches the port —
+is round-tripped back through
 :meth:`~parallax.core.dialect.Dialect.from_driver_sql` before it joins them.
-That recovery is a cost of observing driver SQL rather than the canonical
-statement a Database Call event already carries. Binds cross the port unchanged
-and need no such recovery.
+Binds cross the port unchanged and need no such recovery.
 """
 
 from __future__ import annotations
@@ -108,10 +104,12 @@ class StatementObservation:
     def boundaries(self) -> int:
         """How many transaction demarcations this run opened.
 
-        One PHYSICAL transaction attempt is one ``transaction`` call on the port
-        (`m-unit-work`), so a retry loop's attempt count is readable here without
-        the loop reporting a second tally of its own. A joined invocation opens
-        no demarcation and is therefore not counted, which is the same
+        One demarcation is one ``transaction`` call on the port (`m-unit-work`),
+        counted where the call is issued rather than where it begins: a boundary
+        the database refuses to begin is still a demarcation, and it is the one
+        kind that runs no PHYSICAL attempt, so a retry loop's attempt count is
+        readable here for every run whose boundaries began. A joined invocation
+        opens no demarcation and is therefore not counted, which is the same
         distinction the lifecycle draws.
         """
         return self._boundaries

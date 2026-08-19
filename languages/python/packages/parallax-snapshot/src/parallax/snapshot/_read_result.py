@@ -17,7 +17,7 @@ to be granted a scope that does not reach it.
 Every lane's result sits here rather than beside the merge because a result is
 what the read ANSWERS, while the row-to-graph vocabulary is what a materializer
 consumes; keeping the answer in the wider scope is what leaves the narrower one
-free of everything the provenance grant drags in.
+free of everything `m-execution-lifecycle` drags in, `m-sql` included.
 """
 
 from __future__ import annotations
