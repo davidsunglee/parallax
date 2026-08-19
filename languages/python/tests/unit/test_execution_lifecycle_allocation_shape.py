@@ -25,18 +25,23 @@ inside the window visible. Neither number is compared against a byte count that
 would drift: the free paths are graded at zero, and the declined path against the
 cost of exactly one permitted opening. :func:`_first_run` grades those two
 numbers for the first run a process makes, in a child interpreter, because a
-lazily built cache is paid once and a warmed measurement would never see it.
+lazily built cache is paid once and a warmed measurement would never see it —
+and one seam per child, so no measured first run has been warmed by another.
 
-**Survivors.** :func:`_survivors` grades objects rather than bytes: those alive at
-the innermost point of the sequence that were not alive before it began. CPython
-serves some construction from a free list, which reaches no allocator and moves
-no byte counter — a warmed ``lambda: []`` measures as zero bytes — while every
-such object is one the collector tracks and this one sees.
+**Survivors.** :func:`_survivors` grades objects rather than bytes: the GC-tracked
+ones alive at the innermost point of the sequence that were not alive before it
+began. CPython serves some construction from a free list, which reaches no
+allocator and moves no byte counter — a warmed ``lambda: []`` measures as zero
+bytes — and a list, a populated dict, or a bound method is a container the
+collector tracks, so this instrument sees what the byte count cannot.
 
-Outside both: an object born and dropped inside a single seam call that the free
-list also serves, since no sample point holds it and no counter moves; and the
-allocation of the read AROUND the seam — the driver SQL, the binds, the rows, the
-graph — which is the query's own cost, is not zero, and end to end swamps the
+Outside both, stated rather than implied. An object born and dropped inside a
+single seam call that the free list also serves: no sample point holds it and no
+counter moves. An UNTRACKED survivor: :func:`gc.get_objects` answers only what
+the collector tracks, so a retained empty dictionary, all-immutable tuple, or
+integer is as invisible to the survivor sample as it is to the byte count. And
+the allocation of the read AROUND the seam — the driver SQL, the binds, the rows,
+the graph — which is the query's own cost, is not zero, and end to end swamps the
 seam's by three orders of magnitude. That is why the window holds the sequence a
 read drives the seam through rather than a whole ``find``, and why what a real
 call site hands the seam is graded where that call site runs.
@@ -76,9 +81,6 @@ REPEATS: Final = 200
 bytes, so anything kept per run — the smallest object is tens of bytes — clears
 it by two orders of magnitude, and "under one byte per run" needs no threshold
 anyone has to justify."""
-
-FIRST_RUN: Final = "--first-run"
-"""Argument that runs this module as the child interpreter :func:`_first_run` needs."""
 
 type _Seam = Callable[[Callable[[], None]], None]
 """One sequence through the seam, calling its argument at its innermost point.
@@ -147,7 +149,7 @@ def _first_run(work: _Seam) -> tuple[int, int]:
     Retention is read before the peak is reset, so the reading's own objects land
     in the retained figure rather than in the transient one and the caller's
     control carries the identical harness cost. Meaningful only in a process that
-    has never run ``work``, which is why :data:`FIRST_RUN` exists.
+    has never run ``work``, which is why :func:`_first_run_in_a_child` exists.
     """
     gc.collect()
     gc.collect()
@@ -159,8 +161,12 @@ def _first_run(work: _Seam) -> tuple[int, int]:
 
 
 def _survivors(seam: _Seam) -> list[object]:
-    """Tracked objects alive at ``seam``'s innermost point that were not alive
+    """GC-TRACKED objects alive at ``seam``'s innermost point that were not alive
     before it began.
+
+    :func:`gc.get_objects` answers the collector's own containers, so an
+    untracked survivor — an empty dictionary, an all-immutable tuple, an integer
+    — is outside this instrument exactly as it is outside the byte count.
 
     Both snapshots and the sampler itself are built before the first one is
     taken, so the only objects the comparison has to discount are the two it
@@ -235,6 +241,32 @@ def _scopes_under(root: ReadActivity) -> _Seam:
     return run
 
 
+FIRST_RUN_SEAMS: Final[dict[str, _Seam]] = {
+    "control": _nothing,
+    "read": _unobserved_read,
+    "flush": _flush_under(INERT),
+    "declined": _declined_read,
+    "opening": _one_declined_opening,
+}
+"""The seams a child interpreter can be asked to measure, by argument name.
+
+One seam per child, because a first run exists once per process: two seams
+measured in the same child would leave the later one warmed by whatever the
+earlier built. The declined pair shows why that is not hypothetical — both run a
+UUID and a descriptor, so measuring them together would grade the second against
+a cost the first had already paid.
+"""
+
+
+def _first_run_in_a_child(seam: str) -> tuple[int, int]:
+    """:func:`_first_run` for ``seam``, in a process that has run nothing else."""
+    report = subprocess.run(
+        [sys.executable, __file__, seam], capture_output=True, text=True, check=True
+    )
+    kept, transient = report.stdout.split()
+    return int(kept), int(transient)
+
+
 def test_an_unobserved_read_allocates_nothing_at_all() -> None:
     tracemalloc.start()
     try:
@@ -296,7 +328,7 @@ def test_an_unobserved_write_batch_allocates_nothing_either() -> None:
     assert kept < REPEATS
 
 
-def test_an_unobserved_read_leaves_no_object_alive_behind_it() -> None:
+def test_an_unobserved_read_leaves_no_tracked_object_alive_behind_it() -> None:
     # The claim the byte count cannot make. A list, a dict, or a method object
     # the free list serves moves no byte counter at all, and an activity that
     # built one to hold its own state would measure as free while every scope
@@ -304,14 +336,14 @@ def test_an_unobserved_read_leaves_no_object_alive_behind_it() -> None:
     assert _survivors(_unobserved_read) == []
 
 
-def test_a_declined_root_keeps_nothing_of_its_opening_alive() -> None:
+def test_a_declined_root_keeps_no_tracked_object_of_its_opening_alive() -> None:
     # The permitted UUID and descriptor are the opening's own transients: by the
     # time the scopes the decline hands back are running, neither is reachable,
     # which is what "the same path as the default one" means for a declined root.
     assert _survivors(_declined_read) == []
 
 
-def test_an_unobserved_write_batch_leaves_no_object_alive_either() -> None:
+def test_an_unobserved_write_batch_leaves_no_tracked_object_alive_either() -> None:
     assert _survivors(_flush_under(INERT)) == []
 
 
@@ -319,25 +351,26 @@ def test_the_first_run_in_a_process_costs_what_a_warmed_one_does() -> None:
     # A warmed measurement pays every one-time cost outside its own window, so a
     # cache filled on first use — the shape the specification's "no allocation"
     # covers just as much as a per-call one — would be invisible to it. A child
-    # interpreter is the only place a first run exists, so the seams are measured
-    # there against a control that has already absorbed the harness's own
-    # first-call cost.
-    report = subprocess.run(
-        [sys.executable, __file__, FIRST_RUN],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    control, read, flush = (
-        tuple(int(number) for number in line.split()) for line in report.stdout.splitlines()
-    )
-    assert read == control
-    assert flush == control
+    # interpreter is the only place a first run exists, so each free seam is
+    # measured in one of its own, against a control that has already absorbed the
+    # harness's own first-call cost.
+    control = _first_run_in_a_child("control")
+    assert _first_run_in_a_child("read") == control
+    assert _first_run_in_a_child("flush") == control
+
+
+def test_a_declined_roots_first_run_costs_only_its_permitted_opening() -> None:
+    # The warmed declined measurement grades a REPEATED opening, so a cost the
+    # decline path pays once — a cache filled the first time a root is refused —
+    # would sit outside its window as much as outside the free paths'. Each side
+    # of the comparison therefore gets its own fresh interpreter, where the
+    # declined read and the opening the specification permits it are both first
+    # runs and neither has warmed the other.
+    assert _first_run_in_a_child("declined") == _first_run_in_a_child("opening")
 
 
 if __name__ == "__main__":
     tracemalloc.start()
     _first_run(_nothing)
-    for measured in (_nothing, _unobserved_read, _flush_under(INERT)):
-        print(*_first_run(measured))
+    print(*_first_run(FIRST_RUN_SEAMS[sys.argv[1]]))
     tracemalloc.stop()
