@@ -1141,8 +1141,10 @@ def open_transaction_root(
 
     ``extra_retriable`` is the caller's classification extension, the same one
     the bounded retry loop is given, so the verdict an attempt reports and the
-    decision the loop takes are one computation rather than two that could
-    disagree.
+    decision the loop takes read one policy rather than two spellings of it.
+    Each side evaluates that policy where it needs the answer — the attempt when
+    its outcome is built, the loop when it reaches its decision — so only an
+    extension that answers differently for one exception can separate them.
     """
     if provider is None:
         return INERT
