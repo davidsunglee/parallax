@@ -3065,7 +3065,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   Model. There is no `read_neutral`, `connect_neutral`, `plan_neutral`,
   `compile_neutral`, neutral write on `Database`, or public flush: runtime returns
   and retains no `WritePlan`, and a buffered write executes only when a dependency
-  batch or the outer boundary's finalization requires it.
+  batch or the outer boundary's pre-commit batch requires it.
 - **Nesting, ownership, and concurrency preference.** A `db.transact` call while
   a transaction is already active on the current thread **joins** it, but only
   through the exact `Database` object that opened the boundary. The outermost

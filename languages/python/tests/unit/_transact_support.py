@@ -32,6 +32,7 @@ from parallax.core.db_port import (
     Committed,
     DbPort,
     DocumentReadOrdinals,
+    RollbackFailed,
     RolledBack,
     Row,
     TransactionOutcome,
@@ -151,8 +152,11 @@ class RecordingPort:
 
     ``txn_faults`` ends the next ``transaction`` calls as rolled back after a
     commit failure (a driver failure the adapter translated, whose rollback then
-    completed) and ``begin_faults`` ends them as never begun, which is the one
-    boundary outcome no attempt ran under; ``read_faults`` raises from the
+    completed) — after running the body, because a commit failure is by
+    definition what follows a body that returned — and ``begin_faults`` ends them
+    as never begun, which is the one boundary outcome no attempt ran under;
+    ``rollback_faults`` ends them with the undo itself failing, whatever
+    triggered it. ``read_faults`` raises from the
     next ``execute`` calls (a failure inside the transaction body).
     ``row_queue`` scripts a SEQUENCE of result sets across successive ``execute``
     calls — what a multi-statement read (a deep fetch's root then each level)
@@ -181,6 +185,7 @@ class RecordingPort:
         self.write_affected_queue: list[int] = []
         self.txn_faults: list[DatabaseError] = []
         self.begin_faults: list[DatabaseError] = []
+        self.rollback_faults: list[DatabaseError] = []
         self.read_faults: list[DatabaseError] = []
 
     def execute(
@@ -210,10 +215,12 @@ class RecordingPort:
         self.ops.append(("begin",))
         if self.begin_faults:
             return BeginFailed(self.begin_faults.pop(0))
-        if self.txn_faults:
-            self.ops.append(("rollback",))
-            return RolledBack(CommitFailed(self.txn_faults.pop(0)))
         outcome = body_outcome(self, body)
+        if self.txn_faults and isinstance(outcome, Committed):
+            outcome = RolledBack(CommitFailed(self.txn_faults.pop(0)))
+        if self.rollback_faults and isinstance(outcome, RolledBack):
+            self.ops.append(("rollback",))
+            return RollbackFailed(outcome.trigger, self.rollback_faults.pop(0))
         self.ops.append(("commit",) if isinstance(outcome, Committed) else ("rollback",))
         return outcome
 

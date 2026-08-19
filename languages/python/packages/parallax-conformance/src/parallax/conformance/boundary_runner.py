@@ -162,7 +162,7 @@ def run_boundary_actions(
       REMAINING action inside it, carrying the row already observed. A joined
       call shares the outer transaction (`m-unit-work`), so its closure receives
       the same :class:`Transaction` and its buffered writes reach the database
-      under the OUTER boundary's own finalization — which is exactly what
+      in the OUTER boundary's own pre-commit batch — which is exactly what
       `m-execution-lifecycle-006` asserts. It needs the ``Database`` that opened the
       boundary, since only that object joins.
     - ``terminate`` has no legal target on this NON-temporal model — a loud

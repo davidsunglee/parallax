@@ -57,10 +57,10 @@ from collections.abc import Callable
 from parallax.core.db_error import DatabaseError
 from parallax.core.unit_work import OptimisticLockConflictError, RollbackOnlyError
 
-__all__ = ["run_with_retry"]
+__all__ = ["retriable_failure", "run_with_retry"]
 
 
-def _retriable_failure(exc: BaseException) -> bool:
+def retriable_failure(exc: BaseException, /) -> bool:
     """Whether ``exc``'s retriability-bearing core is a retriable database error.
 
     Two raise shapes carry one: the failure itself (a ``deadlock``-category
@@ -68,6 +68,15 @@ def _retriable_failure(exc: BaseException) -> bool:
     ``__cause__`` preserves the original failure's classification (spec §5 —
     the outer callback may have caught the original, but the retry loop still
     applies per its category).
+
+    Published because the verdict outlives the decision it drives: an observer
+    reports whether an attempt's failure was retry-eligible *under the effective
+    policy* independently of the budget that remained, and this loop reaches its
+    own verdict after the attempt it belongs to has already ended. One function
+    answering both is what keeps the reported verdict and the taken decision from
+    disagreeing. It states this module's own half alone: a caller's
+    ``extra_retriable`` extension composes with it as an OR, exactly as
+    :func:`run_with_retry` does below.
     """
     if isinstance(exc, RollbackOnlyError):
         return isinstance(exc.__cause__, DatabaseError) and exc.__cause__.is_retriable
@@ -93,7 +102,7 @@ def run_with_retry[T](
     category) and carries its retry history diagnosably.
 
     ``extra_retriable`` is consulted ONLY for an exception this
-    module's own :func:`_retriable_failure` calls non-retriable, so the two
+    module's own :func:`retriable_failure` calls non-retriable, so the two
     predicates compose as an OR, never override one another (a transient
     database failure's retriability is decided here, unconditionally on the
     injected extension).
@@ -111,7 +120,7 @@ def run_with_retry[T](
         try:
             return attempt()
         except exception_types as exc:
-            retriable = _retriable_failure(exc) or (
+            retriable = retriable_failure(exc) or (
                 extra_retriable is not None and extra_retriable(exc)
             )
             if not retriable:

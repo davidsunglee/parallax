@@ -20,11 +20,12 @@ here it is a neutral callable, so the shell stays DML-free and testable.
 A flush has TWO injection points for that reason and not one. The executor
 receives a plan, so nothing can be told through it about the work that produces
 that plan — and planning is where a flush most often fails. The optional
-:class:`WriteBatchStarting` notification is the other half: it carries the
-trigger before planning begins, so a composition layer that observes the
-transaction learns which batch is under way while the flush can still fail with
-nothing executed. Both are plain callables of vocabulary this module already
-owns, so neither costs `m-unit-work` a dependency.
+:class:`WriteBatchOpening` is the other half: it is entered with the trigger
+before planning begins and left when the flush is over, so a composition layer
+that observes the transaction sees the whole batch — including a flush that
+fails with nothing executed, and one planning reduces to no DML at all. Both are
+plain callables of vocabulary this module already owns, so neither costs
+`m-unit-work` a dependency.
 
 The active transaction is tracked **per thread**; the object is owned by its
 outermost invocation and is not thread-safe. A reference used after its scope ends
@@ -36,6 +37,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import TracebackType
 from typing import Literal, Protocol
 from weakref import WeakValueDictionary
 
@@ -57,20 +59,26 @@ __all__ = [
     "TransactionSettings",
     "UnitOfWork",
     "UnitOfWorkError",
-    "WriteBatchStarting",
+    "WriteBatchOpening",
+    "WriteBatchScope",
     "WriteBatchTrigger",
     "active_unit_of_work",
     "run_unit_of_work",
 ]
 
-type WriteBatchTrigger = Literal["read_dependency", "finalization"]
+type WriteBatchTrigger = Literal["read_dependency", "pre_commit"]
 """The CLOSED set of reasons a unit of work flushes its buffer.
 
 ``read_dependency`` is the batch :meth:`UnitOfWork.read` forces out so a
-dependent read observes it; ``finalization`` is the boundary-owned final batch
-:meth:`UnitOfWork.run_outermost` flushes. There is no size-based, periodic, or
-caller-invoked third trigger, which is what lets an observer state which of the
-two produced a batch instead of guessing from position.
+dependent read observes it; ``pre_commit`` is the boundary-owned final batch
+:meth:`UnitOfWork.run_outermost` flushes once the callback has returned. There
+is no size-based, periodic, or caller-invoked third trigger, which is what lets
+an observer state which of the two produced a batch instead of guessing from
+position.
+
+The second trigger is named for WHEN it runs rather than for what it does,
+because "finalization" already names the planner stage every batch of either
+trigger goes through.
 """
 
 
@@ -87,18 +95,39 @@ class FlushExecutor(Protocol):
     def __call__(self, plan: WritePlan, /, *, trigger: WriteBatchTrigger) -> None: ...
 
 
-class WriteBatchStarting(Protocol):
-    """The composition-layer notification that a write batch is beginning.
+class WriteBatchScope(Protocol):
+    """The composition-layer scope one flush runs inside.
 
-    Called once per flush that has something to flush, BEFORE the buffered
-    writes are planned and therefore before any statement exists. A flush that
-    fails in planning reaches the notification and never reaches the executor,
-    which is the whole distinction it exists to make available: an observer can
-    tell a batch that failed before it ran anything from work that is not a batch
-    at all. Optional, because the shell itself needs nothing from it.
+    Left however the flush leaves — a planning refusal, a failed statement, a
+    shortfall the enforcer raised, or success — so a composition layer that
+    observes the transaction can never be told a batch began and not told how it
+    ended.
     """
 
-    def __call__(self, trigger: WriteBatchTrigger, /) -> None: ...
+    def __enter__(self) -> object: ...
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
+
+class WriteBatchOpening(Protocol):
+    """The composition-layer opener a flush announces itself to.
+
+    Called once per flush that has something to flush, BEFORE the buffered
+    writes are planned and therefore before any statement exists, and the scope
+    it answers spans planning as well as execution. A flush that fails in
+    planning is therefore inside the scope and never reaches the executor, which
+    is the whole distinction this exists to make available: an observer can tell
+    a batch that failed before it ran anything from work that is not a batch at
+    all. Optional, because the shell itself needs nothing from it.
+    """
+
+    def __call__(self, trigger: WriteBatchTrigger, /) -> WriteBatchScope: ...
 
 
 class UnitOfWorkError(RuntimeError):
@@ -157,7 +186,7 @@ class UnitOfWork:
         "flush_executor",
         "meta",
         "settings",
-        "write_batch_starting",
+        "write_batch_opening",
     )
 
     def __init__(
@@ -169,13 +198,13 @@ class UnitOfWork:
         flush_executor: FlushExecutor,
         planner: WritePlanner,
         subject_identity: SubjectIdentity,
-        write_batch_starting: WriteBatchStarting | None = None,
+        write_batch_opening: WriteBatchOpening | None = None,
     ) -> None:
         self.settings = settings
         self.clock = clock
         self.meta = meta
         self.flush_executor = flush_executor
-        self.write_batch_starting = write_batch_starting
+        self.write_batch_opening = write_batch_opening
         # The injected Write Planner (`m-unit-work`'s single finalization
         # authority) — constructed once per accepted Metamodel by the
         # composition layer (`parallax.snapshot.handle.build_write_planner`),
@@ -328,9 +357,10 @@ class UnitOfWork:
 
         ``trigger`` names which of the two flush reasons this call is, and every
         caller already knows its own: :meth:`read` serves a read dependency and
-        :meth:`run_outermost` finalizes the boundary. It reaches the injected
-        :class:`WriteBatchStarting` notification first and the executor second,
-        so the batch is announced before planning can fail it.
+        :meth:`run_outermost` runs the boundary's pre-commit batch. The whole
+        flush runs inside the injected :class:`WriteBatchOpening`'s scope, so a
+        planning refusal is inside the batch rather than beside it and a batch
+        planning reduces to no DML at all still ends the way it began.
 
         Evidence is spent AFTER the executor returns, and only by the writes that
         survived finalization: a buffered intent coalesced away or eliminated as
@@ -347,8 +377,15 @@ class UnitOfWork:
         self._ensure_open()
         if not self._buffer:
             return
-        if self.write_batch_starting is not None:
-            self.write_batch_starting(trigger)
+        opening = self.write_batch_opening
+        if opening is None:
+            self._flush_buffer(trigger)
+            return
+        with opening(trigger):
+            self._flush_buffer(trigger)
+
+    def _flush_buffer(self, trigger: WriteBatchTrigger) -> None:
+        """Plan the buffer, execute what survived, and spend the survivors' claims."""
         request = PlanningRequest(
             subject_identity=self._subject_identity,
             transaction_instant=self._transaction_instant,
@@ -408,7 +445,7 @@ class UnitOfWork:
                 raise RollbackOnlyError(
                     "transaction is rollback-only; commit refused"
                 ) from self._rollback_cause
-            self.flush(trigger="finalization")
+            self.flush(trigger="pre_commit")
             return result
         except BaseException:
             # Abort: discard buffered effects and withhold the callback value.
@@ -472,7 +509,7 @@ def run_unit_of_work[T](
     flush_executor: FlushExecutor,
     planner: WritePlanner,
     subject_identity: SubjectIdentity,
-    write_batch_starting: WriteBatchStarting | None = None,
+    write_batch_opening: WriteBatchOpening | None = None,
 ) -> T:
     """Run ``body`` in a unit of work — joining the active one or opening a new frame.
 
@@ -480,7 +517,7 @@ def run_unit_of_work[T](
     body receives the same unit of work and its return value is returned
     immediately (commit and abort belong to the outermost frame), and the passed
     ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` /
-    ``write_batch_starting`` / ``planner`` / ``subject_identity`` are ignored in
+    ``write_batch_opening`` / ``planner`` / ``subject_identity`` are ignored in
     favor of the active transaction's (``db.transact`` performs the
     option-conflict check before calling).
     Otherwise a new outermost frame is opened, and its value is returned only
@@ -499,6 +536,6 @@ def run_unit_of_work[T](
         flush_executor=flush_executor,
         planner=planner,
         subject_identity=subject_identity,
-        write_batch_starting=write_batch_starting,
+        write_batch_opening=write_batch_opening,
     )
     return uow.run_outermost(body)
