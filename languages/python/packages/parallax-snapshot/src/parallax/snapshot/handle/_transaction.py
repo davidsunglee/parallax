@@ -607,8 +607,8 @@ class Transaction:
         A participating read's Read activity is a child of the current
         Transaction Attempt, opened AFTER the dependency Write Batch the
         force-flush produces so the two are ordered siblings
-        (`m-execution-lifecycle`). The attempt that would open it is Phase 3's,
-        so today this runs against the shared inert activity and emits nothing.
+        (`m-execution-lifecycle`). No Transaction Attempt activity exists yet, so
+        this runs against the shared inert activity and emits nothing.
         """
         preflight(node, model=self._meta, form="graph")
         if scans_an_axis(node):
