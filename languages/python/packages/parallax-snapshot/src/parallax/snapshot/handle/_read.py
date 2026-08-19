@@ -57,8 +57,9 @@ publish a verdict through.
 What a find EXECUTES is `m-execution-lifecycle`'s vocabulary, not this module's:
 each read runs inside the activity its composition root handed down, and each
 call is bracketed into a Database Call child of it. A standalone read is handed
-the live Read activity its root opened; a participating read is handed the shared
-inert activity, and the same bracket then emits nothing. Nothing is retained — a
+the Read its own root opened; a participating read is handed the Read its
+transaction's attempt opened; an unobserved one is handed the shared inert
+activity, and the same bracket then emits nothing. Nothing is retained — a
 result carries no record of the calls that produced it — so an executor takes the
 activity it brackets against and answers the result alone. :func:`execute_read`
 is where the call bracket actually happens, and it is deliberately the package's
@@ -417,11 +418,11 @@ def find(
     effective-Locking one cannot.
 
     ``read`` is the activity this executor brackets its Database Calls against,
-    handed down by whichever composition root owns the operation. A standalone
-    read passes the live Read activity its root opened. Passing the shared inert
-    activity — which omitting the argument does — runs the same code and emits
-    nothing, and is what a participating read, the default path, and a declined
-    root all do.
+    handed down by whichever composition root owns the operation: the Read a
+    standalone read's own root opened, or the Read a participating read's
+    transaction attempt opened. Passing the shared inert activity — which
+    omitting the argument does — runs the same code and emits nothing, and is
+    what the default path and a declined root do.
     """
     # ``meta`` is the accepted model the connected ``Database`` already holds, so
     # every level's own Entity resolves against it directly.
@@ -1101,7 +1102,7 @@ class ResultPublication[R]:
     equivalence the Typed and Wire interfaces promise is structural rather than
     maintained by inspection.
 
-    ``interface`` is the same choice named for the Read activity a standalone
+    ``interface`` is the same choice named for the Read activity that
     orchestration opens: which materializer publishes IS which read interface
     ran, so the two are one value rather than two that could disagree.
     """

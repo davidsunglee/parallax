@@ -14,8 +14,8 @@ judgement and one buffer for both.
 It also owns the row-form read (:meth:`Transaction.read_rows`), which the
 conformance harness reaches and no developer surface does. It is not a second
 lifecycle: the read enters the same force-flush and lock derivation ``find``
-does, and runs against the same shared inert activity every participating read
-here does.
+does, and opens its own Read under this transaction's attempt exactly as every
+participating read here does.
 
 The predicate-selected ``_where`` family is NOT owned here: those five public
 verbs are thin delegates that thread ``(uow, meta, conn, dialect)`` into
