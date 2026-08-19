@@ -24,7 +24,6 @@ from _support.corpus import (
     case_document,
     case_fixtures,
     compare_binds,
-    compare_execution_lifecycle,
     compare_graph,
     compare_rows,
     compare_stored_data_issues,
@@ -154,12 +153,23 @@ def _grade_execution_lifecycle(then: dict[str, Any], observations: dict[str, Any
     oracle (`m-conformance-adapter`), so an authoring case whose envelope omits
     it is an adapter that installed no Provider rather than a case that asserted
     nothing — which is why the absence is asserted rather than skipped past.
+
+    The stream is compared WHOLE and exactly, unlike every other oracle this
+    sweep grades: an event stream is not a projection to normalize but the
+    delivery itself, and the two facts that matter most about it — that nothing
+    extra was delivered and that nothing was delivered out of order — are
+    exactly what a per-field comparison would give up. The adapter has already
+    reduced its side to the portable shape, so the only difference two
+    conforming implementations can have here is one the case means to state.
     """
     expected = then.get("executionLifecycle")
     if expected is None:
         assert "executionLifecycle" not in observations
         return
-    compare_execution_lifecycle(observations["executionLifecycle"], expected)
+    observed = observations["executionLifecycle"]
+    assert observed == expected, (
+        f"execution lifecycle mismatch:\n  observed: {observed!r}\n  expected: {expected!r}"
+    )
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
