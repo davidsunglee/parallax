@@ -87,7 +87,8 @@ def retriable_failure(exc: BaseException, /) -> bool:
     policy* independently of the budget that remained, and this loop reaches its
     own verdict after the attempt it belongs to has already ended. One function
     answering both is what keeps the reported verdict and the taken decision from
-    disagreeing. It states this module's own half alone: a caller's
+    classifying by different rules, each calling it where it needs the answer.
+    It states this module's own half alone: a caller's
     ``extra_retriable`` extension composes with it as an OR, exactly as
     :func:`run_with_retry` does below.
     """
@@ -118,7 +119,10 @@ def run_with_retry[T](
     module's own :func:`retriable_failure` calls non-retriable, so the two
     predicates compose as an OR, never override one another (a transient
     database failure's retriability is decided here, unconditionally on the
-    injected extension).
+    injected extension). It must decide from the exception alone: an observer
+    reporting an attempt's retry eligibility asks the same extension at a
+    different point in that failure's life, and only an answer that varies can
+    make the two differ.
     """
     check_retry_bound(retries)
     exception_types: tuple[type[BaseException], ...] = (
