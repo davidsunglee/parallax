@@ -562,27 +562,33 @@ class _LiveActivity:
         """Record that ``activity_id`` produced ``exc``, for a parent that may
         later fail with it.
 
-        ONE slot, holding the LATEST child failure whether a caller went on to
-        handle it or not, so what a scope keeps does not grow with the failures
-        it has already seen or the attempts it has already retried. The
-        reference is STRONG — Python's built-in exception types support no weak
-        one, so a `ValueError` escaping a Database Call would fail the
-        attribution rather than being recorded by it — which bounds retention to
-        one exception and traceback graph rather than every failed child's, and
-        leaves that one identity the only failure the scope can attribute.
+        ONE slot, kept whether a caller went on to handle the failure or not, so
+        what a scope keeps does not grow with the failures it has already seen or
+        the attempts it has already retried. The reference is STRONG — Python's
+        built-in exception types support no weak one, so a `ValueError` escaping
+        a Database Call would fail the attribution rather than being recorded by
+        it — which bounds retention to one exception and traceback graph rather
+        than every failed child's, and leaves that one identity the only failure
+        the scope can attribute.
 
-        Latest is latest-STARTED rather than latest-reported, which matters only
-        when two children report the SAME exception object. Either one of them
-        ran inside the other — a joined invocation reports after the read it
-        encloses, having merely been unwound through — or they are separate
-        occurrences of a stashed exception, where the one that started later is
-        the occurrence propagating now. Keeping the higher activity ID names the
-        more specific child in both readings.
+        A report naming a DIFFERENT exception always takes the slot. A second
+        report of the same exception takes it only when it names a HIGHER
+        activity ID, because among children of one parent a child that reports
+        later but started earlier can only be a scope the exception unwound out
+        through — a joined invocation reporting after the read it encloses. So
+        the slot ends up holding, for the one identity it holds, the
+        highest-numbered child that reported it.
 
-        What one slot gives up: an exception a caller stashed PAST a later
-        failure is no longer attributable when it is re-raised, and the activity
-        reports it as its own direct failure carrying that same exception's
-        diagnostic rather than naming the child that raised it first.
+        What identity alone cannot see: a value raised more than once is one
+        identity but several occurrences. A scope that re-raises a value one of
+        its finished children reported is attributed to that child rather than
+        reporting the raise as its own, and where several children reported that
+        value the attribution names the highest-numbered of them, which need not
+        be the child whose occurrence is unwinding now. An exception stashed PAST
+        a later failure escapes this only because the later failure is a
+        different object: it evicts the slot, and the re-raise is then reported
+        as the scope's own direct failure carrying that same exception's
+        diagnostic.
         """
         attributed = self._attributed(exc)
         if attributed is not None and attributed[0] > activity_id:

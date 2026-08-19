@@ -715,13 +715,13 @@ def test_a_flush_that_dies_in_planning_is_a_batch_that_started_and_ran_nothing()
 
 
 def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:
-    # An activity keeps ONE attribution — the latest child failure, handled or
-    # not — so a failure a caller stashed past a later one is no longer
-    # attributable when it is re-raised. The degradation is bounded and is the
-    # price of retaining one exception graph rather than every failed child's:
-    # the attempt renders the re-raised exception itself, never a wrong cause,
-    # and the read that first reported it still names it in its own Finished
-    # event.
+    # An activity keeps ONE attribution, handled or not, so a failure a caller
+    # stashed past a later one is no longer attributable when it is re-raised.
+    # The degradation is bounded and is the price of retaining one exception
+    # graph rather than every failed child's: the attempt renders the re-raised
+    # exception itself, and the read that first reported it still names it in
+    # its own Finished event. Eviction is what buys that here — the two failures
+    # are distinct objects, and identity is all the slot matches on.
     recorder = RecordingLifecycleProvider()
     port = RecordingPort(rows=[NEW_ROW])
     port.read_faults = [

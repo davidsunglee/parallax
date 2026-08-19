@@ -1,14 +1,16 @@
-"""The Root Execution descriptor and the closed event algebra its activities emit.
+"""The Root Execution descriptor and the transitions its activities emit.
 
 Every transition is its own immutable concrete type admitting only its own
 fields: there is no generic attribute bag, no kind-plus-payload record, and no
 callback return value. :data:`ActivityStarted` and :data:`ActivityFinished` are
-union aliases over those concretes, which is what lets a consumer match them
-exhaustively.
+union aliases over those concretes, so a consumer matches a transition type
+rather than a discriminator — and the aliases gain a member for each activity
+kind that becomes observable, which is why matching them is not a stable
+exhaustiveness claim.
 
 The correlation envelope is shared by inheritance rather than restated per
 transition, so ``event.sequence`` reads the same off any member of the union
-while the union itself stays a closed set of concrete types.
+while each transition stays a concrete type of its own.
 """
 
 from __future__ import annotations
@@ -61,8 +63,8 @@ class _Event:
     activity; otherwise it names an activity started earlier in the same root.
 
     Never constructed directly: it exists so the envelope has one definition
-    rather than fourteen, while the event union stays a closed set of concrete
-    transitions.
+    rather than one per transition, while each transition stays a concrete type
+    admitting only its own fields.
     """
 
     execution_id: UUID
@@ -387,4 +389,4 @@ type ActivityFinished = (
 """Every transition that closes an activity with its terminal outcome."""
 
 type ExecutionEvent = ActivityStarted | ActivityFinished
-"""The closed union of concrete transitions a Handler receives."""
+"""Every concrete transition a Handler receives."""
