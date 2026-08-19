@@ -578,10 +578,13 @@ class _LiveActivity:
         Matched by exception IDENTITY, never by which child finished most
         recently: a conversion error that merely unwound past a successful call
         is a direct failure, while the exact exception a child reported names
-        that child. Enclosing events reuse the child's own diagnostic object
-        rather than rendering the same exception twice.
+        that child. Where one exception object was reported by more than one
+        child — raised again after a caller handled the earlier occurrence —
+        the newest attribution is the one propagating now and is the one that
+        names the cause. Enclosing events reuse the child's own diagnostic
+        object rather than rendering the same exception twice.
         """
-        for attributed, activity_id, diagnostic in self._attributions:
+        for attributed, activity_id, diagnostic in reversed(self._attributions):
             if attributed is exc:
                 return CausedFailure(diagnostic, activity_id)
         return DirectFailure(diagnostic_for(exc))
