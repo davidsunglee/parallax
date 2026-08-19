@@ -48,7 +48,7 @@ from parallax.core.entity import (
     EntityRowCodec,
 )
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.execution_lifecycle._activity import INERT
+from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
@@ -137,6 +137,7 @@ class Transaction:
     """
 
     __slots__ = (
+        "_attempt",
         "_codec",
         "_conn",
         "_construction",
@@ -154,6 +155,7 @@ class Transaction:
         dialect: Dialect,
         construction: EntityGraphConstruction | None,
         codec: EntityRowCodec,
+        attempt: TransactionAttemptActivity,
     ) -> None:
         self._uow = uow
         self._conn = conn
@@ -161,6 +163,11 @@ class Transaction:
         self._dialect = dialect
         self._construction = construction
         self._codec = codec
+        # The physical attempt every activity this transaction opens hangs
+        # under: a read, the dependency batch that precedes it, and the
+        # resolving read a materializing predicate write runs are all its
+        # children, so the tree an observer sees is the call tree that made it.
+        self._attempt = attempt
         # What THIS transaction buffered an insert of — a same-transaction insert
         # IS the provenance a subsequent keyed write builds on, so both
         # read-your-own-writes exemptions (the value-provenance refusal and the
@@ -581,7 +588,7 @@ class Transaction:
                 self._uow,
                 self._conn,
                 self._dialect,
-                INERT,
+                self._attempt,
                 self._inserted_objects,
             ),
         )
@@ -605,27 +612,32 @@ class Transaction:
         milestone-set read retains no evidence at all: its roots stand at
         coordinates no keyed write may address.
 
-        A participating read runs against the shared inert activity, so it emits
-        no lifecycle event (`m-execution-lifecycle`).
+        The Read activity opens INSIDE the force-flush, which is what makes the
+        dependency batch this read forces out an ordered SIBLING of it rather
+        than a scope containing it (`m-execution-lifecycle`), and it spans
+        through publication exactly as a standalone read's does.
         """
         preflight(node, model=self._meta, form="graph")
-        if scans_an_axis(node):
-            history_result = self._uow.read(
-                lambda: find_history(node, self._meta, self._dialect, self._conn, read=INERT)
+        return self._uow.read(lambda: self._published(node, publication))
+
+    def _published[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
+        """One participating read's own activity: execute, convert, publish."""
+        with self._attempt.read(node.target, publication.interface) as read:
+            if scans_an_axis(node):
+                return publication.from_history(
+                    find_history(node, self._meta, self._dialect, self._conn, read=read)
+                )
+            return publication.from_find(
+                find(
+                    node,
+                    self._meta,
+                    self._dialect,
+                    self._conn,
+                    preference=self._uow.settings.concurrency,
+                    ledger=self._uow,
+                    read=read,
+                )
             )
-            return publication.from_history(history_result)
-        find_result = self._uow.read(
-            lambda: find(
-                node,
-                self._meta,
-                self._dialect,
-                self._conn,
-                preference=self._uow.settings.concurrency,
-                ledger=self._uow,
-                read=INERT,
-            )
-        )
-        return publication.from_find(find_result)
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Run a PARTICIPATING row-form read and return its published rows.
@@ -634,8 +646,8 @@ class Transaction:
         graph form does: it force-flushes pending writes first
         (read-your-own-writes) and renders the read-lock suffix its target
         Entity's Effective Concurrency Strategy calls for. Like every
-        participating read it runs against the shared inert activity, so it
-        emits no lifecycle event (`m-execution-lifecycle`).
+        participating read it opens its Read activity inside that force-flush,
+        under this transaction's attempt (`m-execution-lifecycle`).
 
         It records NO observation. The values lane projects scalars only, so a
         Predecessor Row read off it would be incomplete under Relational Document
@@ -647,16 +659,19 @@ class Transaction:
         # that read force-flushes pending buffered writes, so a refused read must
         # be refused before it or a refusal turns into a write.
         preflight(query, model=self._meta, form="rows")
-        return self._uow.read(
-            lambda: find_rows(
+        return self._uow.read(lambda: self._published_rows(query))
+
+    def _published_rows(self, query: ObjectQueryNode) -> RowsResult:
+        """One participating row-form read's own activity."""
+        with self._attempt.read(query.target, "ROWS") as read:
+            return find_rows(
                 query,
                 self._meta,
                 self._dialect,
                 self._conn,
                 preference=self._uow.settings.concurrency,
-                read=INERT,
+                read=read,
             )
-        )
 
     def _buffer(
         self,
@@ -728,7 +743,7 @@ class Transaction:
             query,
             assignments,
             valid_from=valid_from,
-            read=INERT,
+            attempt=self._attempt,
         )
 
     def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
@@ -747,7 +762,7 @@ class Transaction:
             query,
             (),
             valid_from=None,
-            read=INERT,
+            attempt=self._attempt,
         )
 
     def terminate_where(
@@ -766,7 +781,7 @@ class Transaction:
             query,
             (),
             valid_from=valid_from,
-            read=INERT,
+            attempt=self._attempt,
         )
 
     def update_until_where(
@@ -789,7 +804,7 @@ class Transaction:
             assignments,
             valid_from=valid_from,
             until=until,
-            read=INERT,
+            attempt=self._attempt,
         )
 
     def terminate_until_where(
@@ -809,7 +824,7 @@ class Transaction:
             (),
             valid_from=valid_from,
             until=until,
-            read=INERT,
+            attempt=self._attempt,
         )
 
 

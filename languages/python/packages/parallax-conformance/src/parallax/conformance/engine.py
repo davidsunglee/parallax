@@ -852,7 +852,7 @@ class _AbortingPort:
     Case-only choreography for a `rollback: true` step (`m-case-format`), and
     the sibling of the boundary lane's own fault injector: it arranges an
     outcome a caller cannot ask a real database for. The abort is raised once
-    the body returns — after the boundary's finalization flush has already put
+    the body returns — after the boundary's pre-commit flush has already put
     the buffered DML on the wire — so the case's own contract is reproduced
     exactly (`m-unit-work` "Abort": "the forced flush is safe precisely because
     it lands inside the still-open atomic scope the abort discards"): the write's
@@ -3437,7 +3437,7 @@ def _execute_write_unit(
     meant to grade.
 
     A ``rollback: true`` step runs on the aborting port (`m-unit-work` abort
-    contract): the boundary's own finalization flush still puts the buffered DML
+    contract): the boundary's own pre-commit flush still puts the buffered DML
     on the wire — and counts its round trips — before the provider rolls the
     transaction back.
     """
@@ -4228,7 +4228,7 @@ def _run_uow_group(
     the single Transaction Instant every step in the span runs at
     (:func:`_group_tx_instant`), and the doom decision — `rollback: true` on any
     of the group's own write steps dooms the WHOLE group, which then runs on the
-    aborting port, so the boundary's finalization flush still puts the buffered
+    aborting port, so the boundary's pre-commit flush still puts the buffered
     DML on the wire before the provider rolls it back (the `m-unit-work` abort
     contract applied to the group rather than to one step). The group's case-state
     advances are staged on that same outcome

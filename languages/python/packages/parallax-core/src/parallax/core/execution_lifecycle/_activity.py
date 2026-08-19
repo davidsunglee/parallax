@@ -22,11 +22,13 @@ from __future__ import annotations
 
 import sys
 import time
-from collections.abc import Sized
+from collections.abc import Callable, Sized
 from types import TracebackType
 from typing import Final, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
+from parallax.core.auto_retry import retriable_failure
+from parallax.core.db_port import CommitFailed, RollbackTrigger
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
     CausedFailure,
@@ -41,6 +43,11 @@ from parallax.core.execution_lifecycle._errors import (
     ExecutionLifecycleProviderError,
 )
 from parallax.core.execution_lifecycle._events import (
+    AttemptCommitted,
+    AttemptFailure,
+    AttemptPhase,
+    AttemptRollbackFailed,
+    AttemptRolledBack,
     DatabaseCallFailed,
     DatabaseCallFinished,
     DatabaseCallKind,
@@ -49,14 +56,31 @@ from parallax.core.execution_lifecycle._events import (
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
     ExecutionEvent,
+    JoinedInvocation,
+    JoinedInvocationRaised,
+    JoinedInvocationReturned,
+    OuterInvocation,
+    OuterInvocationCommitted,
+    OuterInvocationFailed,
     ReadCompleted,
     ReadFailed,
     ReadFinished,
     ReadInterface,
     ReadStarted,
+    RetryPolicy,
     RootExecution,
+    TransactionAttemptFinished,
+    TransactionAttemptOutcome,
+    TransactionAttemptStarted,
+    TransactionInvocationFinished,
+    TransactionInvocationStarted,
+    WriteBatchCompleted,
+    WriteBatchFailed,
+    WriteBatchFinished,
+    WriteBatchStarted,
 )
 from parallax.core.sql_gen import LoweredStatement
+from parallax.core.unit_work import Concurrency, WriteBatchTrigger
 
 
 @runtime_checkable
@@ -179,6 +203,31 @@ class WriteBatchActivity(Protocol):
         presented to the port."""
         ...
 
+    def enforcing(self, call: DatabaseCallActivity, /) -> EnforcementScope:
+        """Bracket the post-call enforcement of what ``call`` returned.
+
+        The one relation causality cannot read off exception identity alone: a
+        write call that COMPLETED can still be the cause of this batch's failure,
+        because the shortfall in what it affected is only judged afterwards.
+        Naming the call explicitly is what keeps proximity — "the last call" —
+        from ever being the test.
+        """
+        ...
+
+
+class EnforcementScope(Protocol):
+    """The bracket a Write Batch attributes a post-call judgement through."""
+
+    def __enter__(self) -> object: ...
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
 
 class ReadActivity(Protocol):
     """One Read's scope: which children it may open, and nothing else.
@@ -202,6 +251,97 @@ class ReadActivity(Protocol):
     ) -> DatabaseCallActivity:
         """Open this Read's next Database Call over the exact ``statement``
         presented to the port."""
+        ...
+
+
+class TransactionAttemptActivity(Protocol):
+    """One physical attempt's scope: what runs inside it, and how it ended.
+
+    The scope brackets the whole ``m-db-port`` transaction call, but the attempt
+    itself begins only once the boundary has begun — which only the port body
+    knows — so :meth:`begun` is what opens it and a boundary that never began
+    runs no attempt at all. Its terminal outcome is likewise a value the port
+    reports rather than an exception passing through, which is why an outcome is
+    announced here instead of being read off the way the scope was left.
+    """
+
+    def __enter__(self) -> TransactionAttemptActivity: ...
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
+    def begun(self) -> None:
+        """The boundary began, so this attempt is running."""
+        ...
+
+    def committed(self) -> None:
+        """The attempt committed."""
+        ...
+
+    def rolled_back(self, trigger: RollbackTrigger, /) -> None:
+        """``trigger`` ended the attempt and the rollback completed."""
+        ...
+
+    def rollback_failed(self, trigger: RollbackTrigger, rollback_error: Exception, /) -> None:
+        """``trigger`` ended the attempt and undoing it did not complete."""
+        ...
+
+    def read(self, target: ActivityTarget, interface: ReadInterface, /) -> ReadActivity:
+        """Open a participating Read under this attempt."""
+        ...
+
+    def write_batch(self, trigger: WriteBatchTrigger, /) -> WriteBatchActivity:
+        """Open the Write Batch one flush of this attempt's buffer runs inside."""
+        ...
+
+    def joined_invocation(self) -> JoinedInvocationActivity:
+        """Open the child Invocation a joining ``transact`` call runs inside."""
+        ...
+
+
+class JoinedInvocationActivity(Protocol):
+    """A joining call's scope, which runs no attempt of its own.
+
+    Returning and raising describe the nested callback alone; the physical
+    transaction belongs to the invocation this one joined, and finishes with it.
+    """
+
+    def __enter__(self) -> JoinedInvocationActivity: ...
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
+
+class TransactionInvocationActivity(Protocol):
+    """The outer invocation's scope — the root activity of a transaction.
+
+    It spans every physical attempt the bounded retry loop runs and finishes
+    committed or failed, which is the only pair of outcomes a caller of
+    ``transact`` can be handed.
+    """
+
+    def __enter__(self) -> TransactionInvocationActivity: ...
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
+    def attempt(self) -> TransactionAttemptActivity:
+        """The scope this invocation's next physical attempt runs inside."""
         ...
 
 
@@ -243,9 +383,32 @@ class _InertActivity:
     ) -> _InertActivity:
         return self
 
+    def enforcing(self, call: DatabaseCallActivity, /) -> _InertActivity:
+        return self
+
+    def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _InertActivity:
+        return self
+
+    def write_batch(self, trigger: WriteBatchTrigger, /) -> _InertActivity:
+        return self
+
+    def joined_invocation(self) -> _InertActivity:
+        return self
+
+    def attempt(self) -> _InertActivity:
+        return self
+
     def read_completed(self, returned_rows: Sized, /) -> None: ...
 
     def write_completed(self, affected_rows: int, /) -> None: ...
+
+    def begun(self) -> None: ...
+
+    def committed(self) -> None: ...
+
+    def rolled_back(self, trigger: RollbackTrigger, /) -> None: ...
+
+    def rollback_failed(self, trigger: RollbackTrigger, rollback_error: Exception, /) -> None: ...
 
 
 INERT: Final = _InertActivity()
@@ -375,15 +538,25 @@ class _LiveActivity:
     def __init__(self, publisher: _Publisher, parent: _LiveActivity | None) -> None:
         self._publisher = publisher
         self._parent = parent
-        self._activity_id = publisher.open_activity()
+        self._activity_id = 0
         self._attributions: list[tuple[BaseException, int, FailureDiagnostic]] = []
+
+    def _open(self) -> None:
+        """Take this activity's ID, which its own Started transition assigns.
+
+        Taken here rather than at construction because an attempt is built
+        before the boundary that decides whether it runs at all: a transaction
+        that never began must consume no ID, or every activity after it in that
+        root would be numbered past a gap nothing explains.
+        """
+        self._activity_id = self._publisher.open_activity()
 
     @property
     def _parent_activity_id(self) -> int | None:
         parent = self._parent
         return None if parent is None else parent._activity_id
 
-    def _attribute(
+    def attribute(
         self, exc: BaseException, activity_id: int, diagnostic: FailureDiagnostic
     ) -> None:
         """Record that ``activity_id`` produced ``exc``, for a parent that may
@@ -413,6 +586,19 @@ class _LiveActivity:
                 return CausedFailure(diagnostic, activity_id)
         return DirectFailure(diagnostic_for(exc))
 
+    def _propagated(self, exc: BaseException) -> ActivityFailure:
+        """This activity's failure, told to its parent as the parent's own cause.
+
+        Each level names its own DIRECT child, and every level reuses the one
+        diagnostic the deepest failing activity rendered, so an enclosing failure
+        costs no second render and the chain stays walkable one link at a time.
+        """
+        failure = self._failure(exc)
+        parent = self._parent
+        if parent is not None:
+            parent.attribute(exc, self._activity_id, failure.diagnostic)
+        return failure
+
 
 class _LiveRead(_LiveActivity):
     """One observed Read: its Database Calls, and its own bracket."""
@@ -434,6 +620,9 @@ class _LiveRead(_LiveActivity):
 
     def __enter__(self) -> _LiveRead:
         publisher = self._publisher
+        if not publisher.active:
+            return self
+        self._open()
         publisher.deliver(
             ReadStarted(
                 publisher.execution_id,
@@ -462,7 +651,7 @@ class _LiveRead(_LiveActivity):
                 publisher.take_sequence(),
                 self._activity_id,
                 self._parent_activity_id,
-                ReadCompleted() if exc is None else ReadFailed(self._failure(exc)),
+                ReadCompleted() if exc is None else ReadFailed(self._propagated(exc)),
             )
         )
 
@@ -503,6 +692,7 @@ class _LiveDatabaseCall(_LiveActivity):
         publisher = self._publisher
         if not publisher.active:
             return self
+        self._open()
         publisher.deliver(
             DatabaseCallStarted(
                 publisher.execution_id,
@@ -540,7 +730,7 @@ class _LiveDatabaseCall(_LiveActivity):
             outcome = DatabaseCallFailed(diagnostic)
             parent = self._parent
             if parent is not None:
-                parent._attribute(exc, self._activity_id, diagnostic.failure)
+                parent.attribute(exc, self._activity_id, diagnostic.failure)
         publisher.deliver(
             DatabaseCallFinished(
                 publisher.execution_id,
@@ -558,6 +748,335 @@ class _LiveDatabaseCall(_LiveActivity):
 
     def write_completed(self, affected_rows: int, /) -> None:
         self._outcome = DatabaseWriteCompleted(affected_rows)
+
+
+class _LiveEnforcement:
+    """The bracket that lets a COMPLETED call be named as what caused a batch's
+    failure.
+
+    It records nothing on the way in: an enforcement that passes leaves the batch
+    exactly as it found it, and only a judgement that raised is worth attributing.
+    """
+
+    __slots__ = ("_batch", "_call_id")
+
+    def __init__(self, batch: _LiveWriteBatch, call_id: int) -> None:
+        self._batch = batch
+        self._call_id = call_id
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        if exc is None:
+            return
+        self._batch.attribute(exc, self._call_id, diagnostic_for(exc))
+
+
+class _LiveWriteBatch(_LiveActivity):
+    """One observed flush: its Database Calls, and the enforcement that follows
+    each of them."""
+
+    __slots__ = ("_attempt", "_trigger")
+
+    _trigger: WriteBatchTrigger
+
+    def __init__(
+        self, publisher: _Publisher, parent: _LiveTransactionAttempt, trigger: WriteBatchTrigger
+    ) -> None:
+        super().__init__(publisher, parent)
+        self._attempt = parent
+        self._trigger = trigger
+
+    def __enter__(self) -> _LiveWriteBatch:
+        publisher = self._publisher
+        if not publisher.active:
+            return self
+        self._open()
+        publisher.deliver(
+            WriteBatchStarted(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                self._trigger,
+            )
+        )
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        publisher = self._publisher
+        if not publisher.active:
+            return
+        if exc is None:
+            outcome: WriteBatchCompleted | WriteBatchFailed = WriteBatchCompleted()
+        else:
+            outcome = WriteBatchFailed(self._propagated(exc))
+            if self._trigger == "pre_commit":
+                self._attempt.pre_commit_failed(exc)
+        publisher.deliver(
+            WriteBatchFinished(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                outcome,
+            )
+        )
+
+    def database_call(
+        self, statement: LoweredStatement, kind: DatabaseCallKind, target: ActivityTarget, /
+    ) -> _LiveDatabaseCall:
+        return _LiveDatabaseCall(self._publisher, self, statement, kind, target)
+
+    def enforcing(self, call: DatabaseCallActivity, /) -> _LiveEnforcement:
+        return _LiveEnforcement(self, call._activity_id if isinstance(call, _LiveActivity) else 0)
+
+
+class _LiveTransactionAttempt(_LiveActivity):
+    """One observed physical attempt.
+
+    The scope brackets the whole port transaction call, so an attempt that began
+    is finished however that call leaves — but the attempt starts only when the
+    port body says the boundary began, and ends with the outcome the port
+    reported rather than with whatever exception happens to be passing through.
+    """
+
+    __slots__ = ("_extra_retriable", "_outcome", "_pre_commit_failure", "_started")
+
+    def __init__(
+        self,
+        publisher: _Publisher,
+        parent: _LiveActivity,
+        extra_retriable: Callable[[BaseException], bool] | None,
+    ) -> None:
+        super().__init__(publisher, parent)
+        self._extra_retriable = extra_retriable
+        self._started = False
+        self._outcome: TransactionAttemptOutcome | None = None
+        self._pre_commit_failure: BaseException | None = None
+
+    def __enter__(self) -> _LiveTransactionAttempt:
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        publisher = self._publisher
+        if not self._started or not publisher.active:
+            return
+        outcome = self._outcome
+        if outcome is None:
+            # The port gave up without reporting an outcome, which its contract
+            # forbids. The attempt still ran and still has to be accounted for,
+            # and rolled back is the honest reading: an adapter owes the boundary
+            # an undo before it stops answering for it.
+            outcome = AttemptRolledBack(
+                self._attempt_failure("CALLBACK", exc if exc is not None else RuntimeError())
+            )
+        publisher.deliver(
+            TransactionAttemptFinished(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                outcome,
+            )
+        )
+
+    def begun(self) -> None:
+        publisher = self._publisher
+        if not publisher.active:
+            return
+        self._started = True
+        self._open()
+        publisher.deliver(
+            TransactionAttemptStarted(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+            )
+        )
+
+    def committed(self) -> None:
+        self._outcome = AttemptCommitted()
+
+    def rolled_back(self, trigger: RollbackTrigger, /) -> None:
+        self._outcome = AttemptRolledBack(self._triggered(trigger))
+
+    def rollback_failed(self, trigger: RollbackTrigger, rollback_error: Exception, /) -> None:
+        self._outcome = AttemptRollbackFailed(
+            self._triggered(trigger), diagnostic_for(rollback_error)
+        )
+
+    def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _LiveRead:
+        return _LiveRead(self._publisher, self, target, interface)
+
+    def write_batch(self, trigger: WriteBatchTrigger, /) -> _LiveWriteBatch:
+        return _LiveWriteBatch(self._publisher, self, trigger)
+
+    def joined_invocation(self) -> _LiveJoinedInvocation:
+        return _LiveJoinedInvocation(self._publisher, self)
+
+    def pre_commit_failed(self, exc: BaseException) -> None:
+        """Remember what the pre-commit batch failed with.
+
+        The port reports a body failure without saying which half of the body
+        produced it, and the two halves are different phases: the callback the
+        caller wrote, and the automatic batch that follows it. Matching by
+        exception identity is what tells them apart without the port having to
+        know there are two.
+        """
+        self._pre_commit_failure = exc
+
+    def _triggered(self, trigger: RollbackTrigger) -> AttemptFailure:
+        """The attempt failure ``trigger`` describes, told to the invocation too.
+
+        Attribution names the triggering error rather than whatever composition
+        goes on to raise from it, so a rollback failure — which surfaces as an
+        error of its own — leaves the invocation reporting that error directly
+        instead of pointing at an attempt it does not describe.
+        """
+        error = trigger.error
+        phase: AttemptPhase = (
+            "COMMIT"
+            if isinstance(trigger, CommitFailed)
+            else ("PRE_COMMIT" if error is self._pre_commit_failure else "CALLBACK")
+        )
+        failure = self._attempt_failure(phase, error)
+        parent = self._parent
+        if parent is not None:
+            parent.attribute(error, self._activity_id, failure.failure.diagnostic)
+        return failure
+
+    def _attempt_failure(self, phase: AttemptPhase, error: BaseException) -> AttemptFailure:
+        return AttemptFailure(
+            phase,
+            self._failure(error),
+            retriable_failure(error)
+            or (self._extra_retriable is not None and self._extra_retriable(error)),
+        )
+
+
+class _LiveJoinedInvocation(_LiveActivity):
+    """One observed joining call: the nested callback, and nothing physical."""
+
+    __slots__ = ()
+
+    def __enter__(self) -> _LiveJoinedInvocation:
+        publisher = self._publisher
+        if not publisher.active:
+            return self
+        self._open()
+        publisher.deliver(
+            TransactionInvocationStarted(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                JoinedInvocation(),
+            )
+        )
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        publisher = self._publisher
+        if not publisher.active:
+            return
+        publisher.deliver(
+            TransactionInvocationFinished(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                JoinedInvocationReturned()
+                if exc is None
+                else JoinedInvocationRaised(self._propagated(exc)),
+            )
+        )
+
+
+class _LiveOuterInvocation(_LiveActivity):
+    """One observed outer invocation: the root activity of a transaction.
+
+    The one scope that does not ask whether delivery is still live before
+    opening: it is entered immediately after the Provider accepted the root, so
+    there is nothing that could have deactivated delivery in between.
+    """
+
+    __slots__ = ("_extra_retriable", "_invocation")
+
+    def __init__(
+        self,
+        publisher: _Publisher,
+        invocation: OuterInvocation,
+        extra_retriable: Callable[[BaseException], bool] | None,
+    ) -> None:
+        super().__init__(publisher, None)
+        self._invocation = invocation
+        self._extra_retriable = extra_retriable
+
+    def __enter__(self) -> _LiveOuterInvocation:
+        publisher = self._publisher
+        self._open()
+        publisher.deliver(
+            TransactionInvocationStarted(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                None,
+                self._invocation,
+            )
+        )
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        publisher = self._publisher
+        if not publisher.active:
+            return
+        publisher.deliver(
+            TransactionInvocationFinished(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                None,
+                OuterInvocationCommitted()
+                if exc is None
+                else OuterInvocationFailed(self._failure(exc)),
+            )
+        )
+
+    def attempt(self) -> _LiveTransactionAttempt:
+        return _LiveTransactionAttempt(self._publisher, self, self._extra_retriable)
 
 
 def _opened(
@@ -601,3 +1120,38 @@ def open_read_root(
     if handler is None:
         return INERT
     return _LiveRead(_Publisher(execution.id, provider, handler), None, target, interface)
+
+
+def open_transaction_root(
+    provider: ExecutionLifecycleProvider | None,
+    *,
+    concurrency: Concurrency,
+    retries: int,
+    retry_optimistic_conflicts: bool,
+    extra_retriable: Callable[[BaseException], bool] | None,
+) -> TransactionInvocationActivity:
+    """The Transaction Invocation root activity for one outermost ``transact``
+    call, or :data:`INERT`.
+
+    Called after the deterministic refusals a joining call is measured by —
+    ownership and option conflict — and before the boundary is asked to begin,
+    because a begin failure is an OUTCOME of this invocation rather than a
+    refusal of it. With no Provider installed nothing at all is allocated here,
+    not even the resolved policy the Started transition would carry.
+
+    ``extra_retriable`` is the caller's classification extension, the same one
+    the bounded retry loop is given, so the verdict an attempt reports and the
+    decision the loop takes are one computation rather than two that could
+    disagree.
+    """
+    if provider is None:
+        return INERT
+    execution = RootExecution(uuid4(), "TRANSACTION_INVOCATION")
+    handler = _opened(provider, execution)
+    if handler is None:
+        return INERT
+    return _LiveOuterInvocation(
+        _Publisher(execution.id, provider, handler),
+        OuterInvocation(concurrency, RetryPolicy(retries, retry_optimistic_conflicts)),
+        extra_retriable,
+    )

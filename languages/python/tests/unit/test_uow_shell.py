@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 from collections.abc import Callable, Mapping
+from types import TracebackType
 
 import pytest
 from _corpus_identity_support import corpus_object_key
@@ -42,7 +43,7 @@ from parallax.core.unit_work import (
     UnitOfWork,
     VersionedStateKey,
     VersionObservation,
-    WriteBatchStarting,
+    WriteBatchOpening,
     WriteBatchTrigger,
     WritePlan,
     WritePlanningError,
@@ -82,7 +83,7 @@ def _run[T](
     executor: FlushExecutor | None = None,
     settings: TransactionSettings | None = None,
     meta: Metamodel | None = None,
-    starting: WriteBatchStarting | None = None,
+    opening: WriteBatchOpening | None = None,
 ) -> T:
     resolved_meta = meta or _ACCOUNT
     return run_unit_of_work(
@@ -93,7 +94,7 @@ def _run[T](
         flush_executor=executor or _noop,
         planner=build_write_planner(resolved_meta),
         subject_identity=TEST_SUBJECT_IDENTITY,
-        write_batch_starting=starting,
+        write_batch_opening=opening,
     )
 
 
@@ -474,13 +475,35 @@ def test_reentry_into_a_rollback_only_transaction_is_refused() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The batch-starting notification.                                             #
+# The batch scope.                                                             #
 # --------------------------------------------------------------------------- #
-def test_each_batch_is_announced_with_its_own_trigger_before_it_is_planned() -> None:
-    order: list[str] = []
+class _Scope:
+    """One opened batch scope, recording each transition it makes."""
 
-    def starting(trigger: WriteBatchTrigger) -> None:
-        order.append(f"starting:{trigger}")
+    def __init__(self, order: list[str], trigger: WriteBatchTrigger) -> None:
+        self._order = order
+        self._trigger = trigger
+
+    def __enter__(self) -> object:
+        self._order.append(f"opened:{self._trigger}")
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None:
+        self._order.append(f"{'left' if exc is None else 'failed'}:{self._trigger}")
+
+
+def _opener(order: list[str]) -> WriteBatchOpening:
+    return lambda trigger: _Scope(order, trigger)
+
+
+def test_each_batch_is_a_scope_around_its_own_planning_and_execution() -> None:
+    order: list[str] = []
 
     def executor(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
         order.append(f"executed:{trigger}")
@@ -490,39 +513,42 @@ def test_each_batch_is_announced_with_its_own_trigger_before_it_is_planned() -> 
         tx.read(lambda: None)
         tx.buffer(_account_insert(2))
 
-    _run(body, executor=executor, starting=starting)
+    _run(body, executor=executor, opening=_opener(order))
     assert order == [
-        "starting:read_dependency",
+        "opened:read_dependency",
         "executed:read_dependency",
-        "starting:finalization",
-        "executed:finalization",
+        "left:read_dependency",
+        "opened:pre_commit",
+        "executed:pre_commit",
+        "left:pre_commit",
     ]
 
 
-def test_a_flush_that_fails_in_planning_is_announced_and_never_executed() -> None:
-    # The whole reason the notification is not folded into the executor: the
-    # executor receives a settled plan, so a flush that dies while planning
-    # would otherwise be invisible to an observer of the transaction.
-    announced: list[WriteBatchTrigger] = []
+def test_a_flush_that_fails_in_planning_fails_inside_its_own_batch() -> None:
+    # The whole reason the scope is not folded into the executor: the executor
+    # receives a settled plan, so a flush that dies while planning would
+    # otherwise be invisible to an observer of the transaction — and here it is
+    # a batch that opened and failed rather than work outside every batch.
+    order: list[str] = []
     recorder = _Recorder()
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(KeyedWrite("insert", "Gadget", ({"id": 1, "name": "G"},)))
 
     with pytest.raises(WritePlanningError, match="Gadget"):
-        _run(body, executor=recorder, starting=announced.append)
-    assert announced == ["finalization"]
+        _run(body, executor=recorder, opening=_opener(order))
+    assert order == ["opened:pre_commit", "failed:pre_commit"]
     assert recorder.plans == []
 
 
-def test_a_unit_of_work_without_the_notification_still_flushes() -> None:
+def test_a_unit_of_work_without_a_batch_opening_still_flushes() -> None:
     recorder = _Recorder()
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(_account_insert(3))
 
     _run(body, executor=recorder)
-    assert recorder.triggers == ["finalization"]
+    assert recorder.triggers == ["pre_commit"]
 
 
 # --------------------------------------------------------------------------- #
@@ -547,6 +573,6 @@ def test_escaped_reference_raises_on_every_use() -> None:
             )
         )
     with pytest.raises(EscapedTransactionError):
-        tx.flush(trigger="finalization")
+        tx.flush(trigger="pre_commit")
     with pytest.raises(EscapedTransactionError):
         tx.read(lambda: None)

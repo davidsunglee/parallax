@@ -63,6 +63,7 @@ from parallax.core.execution_lifecycle._activity import (
     ReadActivity,
     WriteBatchActivity,
     open_read_root,
+    open_transaction_root,
 )
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.sql_gen import LoweredStatement
@@ -215,6 +216,33 @@ def _one_declined_opening(sample: Callable[[], None]) -> None:
     sample()
 
 
+def _unobserved_transaction(sample: Callable[[], None]) -> None:
+    """The whole transaction seam, driven the way composition drives it.
+
+    The scopes a transaction opens are the ones no read reaches — the invocation,
+    the attempt whose start the port body announces, the batch a flush runs
+    inside, and the enforcement bracket that follows each write — so the free
+    path they take is graded here rather than inferred from the read's.
+    """
+    with (
+        open_transaction_root(
+            None,
+            concurrency="optimistic",
+            retries=10,
+            retry_optimistic_conflicts=False,
+            extra_retriable=None,
+        ) as invocation,
+        invocation.attempt() as attempt,
+    ):
+        attempt.begun()
+        with attempt.write_batch("pre_commit") as batch:
+            with batch.database_call(STATEMENT, "WRITE", TARGET) as call:
+                call.write_completed(AFFECTED)
+            with batch.enforcing(call):
+                sample()
+        attempt.committed()
+
+
 def _flush_under(batch: WriteBatchActivity) -> _Seam:
     """The other seam an unobserved operation drives: a flush's Database Call.
 
@@ -245,6 +273,7 @@ FIRST_RUN_SEAMS: Final[dict[str, _Seam]] = {
     "control": _nothing,
     "read": _unobserved_read,
     "flush": _flush_under(INERT),
+    "transaction": _unobserved_transaction,
     "declined": _declined_read,
     "opening": _one_declined_opening,
 }
@@ -328,6 +357,19 @@ def test_an_unobserved_write_batch_allocates_nothing_either() -> None:
     assert kept < REPEATS
 
 
+def test_an_unobserved_transaction_allocates_nothing_across_its_whole_seam() -> None:
+    # The invocation, the attempt, the batch, and the enforcement bracket are
+    # four more scopes an unobserved operation opens, and the specification costs
+    # every one of them at nothing.
+    tracemalloc.start()
+    try:
+        kept, transient = _allocation(_unobserved_transaction)
+    finally:
+        tracemalloc.stop()
+    assert transient == 0
+    assert kept < REPEATS
+
+
 def test_an_unobserved_read_leaves_no_tracked_object_alive_behind_it() -> None:
     # The claim the byte count cannot make. A list, a dict, or a method object
     # the free list serves moves no byte counter at all, and an activity that
@@ -347,6 +389,10 @@ def test_an_unobserved_write_batch_leaves_no_tracked_object_alive_either() -> No
     assert _survivors(_flush_under(INERT)) == []
 
 
+def test_an_unobserved_transaction_leaves_no_tracked_object_alive_either() -> None:
+    assert _survivors(_unobserved_transaction) == []
+
+
 def test_the_first_run_in_a_process_costs_what_a_warmed_one_does() -> None:
     # A warmed measurement pays every one-time cost outside its own window, so a
     # cache filled on first use — the shape the specification's "no allocation"
@@ -357,6 +403,7 @@ def test_the_first_run_in_a_process_costs_what_a_warmed_one_does() -> None:
     control = _first_run_in_a_child("control")
     assert _first_run_in_a_child("read") == control
     assert _first_run_in_a_child("flush") == control
+    assert _first_run_in_a_child("transaction") == control
 
 
 def test_a_declined_roots_first_run_costs_only_its_permitted_opening() -> None:

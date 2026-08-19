@@ -59,7 +59,6 @@ from parallax.core.base import INFINITY, DocumentValue, InstantError, PresentDoc
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.unit_work import (
     FixedClock,
@@ -1950,7 +1949,7 @@ def test_the_buffering_seam_refuses_an_unvalidated_inheritance_family_instructio
                 tx._conn,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
                 tx._dialect,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
                 instruction,
-                INERT,
+                tx._attempt,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
             )
         assert port.ops == [("begin",)]
         raise _Abandon

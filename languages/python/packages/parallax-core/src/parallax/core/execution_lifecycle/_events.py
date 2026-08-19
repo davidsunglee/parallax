@@ -20,8 +20,10 @@ from uuid import UUID
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
     DatabaseFailureDiagnostic,
+    FailureDiagnostic,
 )
 from parallax.core.sql_gen import LoweredStatement
+from parallax.core.unit_work import Concurrency, WriteBatchTrigger
 
 type RootExecutionKind = Literal["READ", "TRANSACTION_INVOCATION", "SNAPSHOT_STREAM"]
 """Which outermost Handle operation a Root Execution describes."""
@@ -167,10 +169,221 @@ class DatabaseCallFinished(_Event):
     outcome: DatabaseCallOutcome
 
 
-type ActivityStarted = ReadStarted | DatabaseCallStarted
+@dataclass(frozen=True, slots=True)
+class WriteBatchCompleted:
+    """Every write the batch still held after planning reached the database.
+
+    A batch planning reduced to no DML at all completes exactly like one that
+    ran statements: the buffer was spent either way.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class WriteBatchFailed:
+    """The batch did not spend its buffer."""
+
+    failure: ActivityFailure
+
+
+type WriteBatchOutcome = WriteBatchCompleted | WriteBatchFailed
+"""How a Write Batch ended, a closed union of exactly one member."""
+
+
+@dataclass(frozen=True, slots=True)
+class WriteBatchStarted(_Event):
+    """A nonempty unit-of-work buffer is being flushed for ``trigger``.
+
+    It starts BEFORE planning, so a batch a planning refusal ended is still a
+    batch that started, and it spans planning, lowering, every Database Call, and
+    affected-row enforcement. An empty buffer produces no activity at all.
+    """
+
+    trigger: WriteBatchTrigger
+
+
+@dataclass(frozen=True, slots=True)
+class WriteBatchFinished(_Event):
+    """The batch reached its terminal outcome."""
+
+    outcome: WriteBatchOutcome
+
+
+@dataclass(frozen=True, slots=True)
+class RetryPolicy:
+    """The bounded-retry policy one outer invocation resolved.
+
+    ``retries`` bounds RE-EXECUTIONS rather than total attempts.
+    ``retry_optimistic_conflicts`` is the caller opt-in that widens the
+    classifier, so the two together are the effective policy an attempt's
+    ``retry_eligible`` verdict is reached under.
+    """
+
+    retries: int
+    retry_optimistic_conflicts: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OuterInvocation:
+    """The invocation that opened the boundary, and therefore the root activity.
+
+    It contains every physical attempt and every joined invocation beneath them.
+    """
+
+    concurrency: Concurrency
+    retry_policy: RetryPolicy
+
+
+@dataclass(frozen=True, slots=True)
+class JoinedInvocation:
+    """An invocation that joined the boundary already active on this thread.
+
+    It shares the outer root, sequence, unit of work, and transaction, and runs
+    no attempt of its own, so it carries neither concurrency nor retry policy:
+    both were resolved by the invocation it joined.
+    """
+
+
+type TransactionInvocation = OuterInvocation | JoinedInvocation
+"""Which of the two calls to callback demarcation started, a closed union."""
+
+
+@dataclass(frozen=True, slots=True)
+class OuterInvocationCommitted:
+    """The boundary committed and the callback's value is the caller's."""
+
+
+@dataclass(frozen=True, slots=True)
+class OuterInvocationFailed:
+    """The boundary did not commit, whatever its attempts did on the way."""
+
+    failure: ActivityFailure
+
+
+@dataclass(frozen=True, slots=True)
+class JoinedInvocationReturned:
+    """The nested callback returned.
+
+    It says nothing about the physical transaction, which is still open and
+    still owned by the invocation this one joined.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class JoinedInvocationRaised:
+    """The nested callback raised, which dooms the transaction it joined."""
+
+    failure: ActivityFailure
+
+
+type TransactionInvocationOutcome = (
+    OuterInvocationCommitted
+    | OuterInvocationFailed
+    | JoinedInvocationReturned
+    | JoinedInvocationRaised
+)
+"""How a Transaction Invocation ended, a closed union of exactly one member."""
+
+
+@dataclass(frozen=True, slots=True)
+class TransactionInvocationStarted(_Event):
+    """One call to callback demarcation opened."""
+
+    invocation: TransactionInvocation
+
+
+@dataclass(frozen=True, slots=True)
+class TransactionInvocationFinished(_Event):
+    """The invocation reached its terminal outcome."""
+
+    outcome: TransactionInvocationOutcome
+
+
+type AttemptPhase = Literal["CALLBACK", "PRE_COMMIT", "COMMIT"]
+"""Where inside a physical attempt its failure arose.
+
+``CALLBACK`` covers the callback itself and everything it caused — joined
+invocations, reads, and read-dependency batches. ``PRE_COMMIT`` is the final
+automatic batch after the callback returned. ``COMMIT`` is the durability call.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptFailure:
+    """What ended one physical attempt.
+
+    ``retry_eligible`` is the classifier's verdict under the effective policy and
+    is INDEPENDENT of the budget that remained: an exhausting attempt still
+    reports the truth about the failure, and a rollback failure reports it even
+    though it is never retried.
+    """
+
+    phase: AttemptPhase
+    failure: ActivityFailure
+    retry_eligible: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptCommitted:
+    """The attempt committed, so the invocation it belongs to is over."""
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptRolledBack:
+    """Something ended the attempt and the rollback completed."""
+
+    failure: AttemptFailure
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptRollbackFailed:
+    """The rollback the attempt's failure required did not complete.
+
+    Both live failures are reported because either alone misreports what
+    happened, and what the attempt left behind is unknown — which is why this
+    outcome is never retried however retry-eligible its trigger was.
+    """
+
+    triggering_failure: AttemptFailure
+    rollback_failure: FailureDiagnostic
+
+
+type TransactionAttemptOutcome = AttemptCommitted | AttemptRolledBack | AttemptRollbackFailed
+"""How a Transaction Attempt ended, a closed union of exactly one member."""
+
+
+@dataclass(frozen=True, slots=True)
+class TransactionAttemptStarted(_Event):
+    """The database boundary began, so one physical attempt is running.
+
+    It carries no attempt-specific fields: which attempt of the invocation this
+    is reads off the correlation envelope, and everything about the policy it
+    runs under was stated by the invocation that opened it.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class TransactionAttemptFinished(_Event):
+    """The attempt reached its terminal outcome."""
+
+    outcome: TransactionAttemptOutcome
+
+
+type ActivityStarted = (
+    ReadStarted
+    | WriteBatchStarted
+    | DatabaseCallStarted
+    | TransactionInvocationStarted
+    | TransactionAttemptStarted
+)
 """Every transition that opens an activity and assigns its ``activity_id``."""
 
-type ActivityFinished = ReadFinished | DatabaseCallFinished
+type ActivityFinished = (
+    ReadFinished
+    | WriteBatchFinished
+    | DatabaseCallFinished
+    | TransactionInvocationFinished
+    | TransactionAttemptFinished
+)
 """Every transition that closes an activity with its terminal outcome."""
 
 type ExecutionEvent = ActivityStarted | ActivityFinished

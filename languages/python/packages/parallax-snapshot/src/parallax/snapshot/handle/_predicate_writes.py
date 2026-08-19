@@ -47,7 +47,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import AttributeAssignment
-from parallax.core.execution_lifecycle._activity import ReadActivity
+from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -104,6 +104,7 @@ from parallax.snapshot.handle._family import (
     version_attribute,
 )
 from parallax.snapshot.handle._read import (
+    StagedRows,
     entity_read_lock,
     execute_read,
     stage_publishable_rows,
@@ -147,7 +148,7 @@ def buffer_predicate(
     *,
     valid_from: dt.datetime | None,
     until: dt.datetime | None = None,
-    read: ReadActivity,
+    attempt: TransactionAttemptActivity,
 ) -> None:
     """The typed-authoring entry to the predicate-write lane: it turns a
     mutation-compatible :class:`~parallax.core.object_query.ObjectQuery` plus typed
@@ -245,7 +246,7 @@ def buffer_predicate(
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
-    buffer_predicate_instruction(uow, meta, conn, dialect, instruction, read)
+    buffer_predicate_instruction(uow, meta, conn, dialect, instruction, attempt)
 
 
 def _reject_uncomposable_assignments(
@@ -306,7 +307,7 @@ def buffer_predicate_instruction(
     conn: DbPort,
     dialect: Dialect,
     instruction: PredicateWrite,
-    read: ReadActivity,
+    attempt: TransactionAttemptActivity,
 ) -> None:
     """The neutral seam UNDERLYING every ``_where`` verb and the
     conformance engine's own predicate-write translation (`m-case-format`
@@ -369,7 +370,7 @@ def buffer_predicate_instruction(
         uow.buffer(instruction)
         return
     _materialize_predicate_write(
-        uow, meta, conn, dialect, instruction, entity, declaring_entity, version_attr, read
+        uow, meta, conn, dialect, instruction, entity, declaring_entity, version_attr, attempt
     )
 
 
@@ -412,7 +413,7 @@ def _materialize_predicate_write(
     entity: EntityMetadata,
     declaring_entity: EntityMetadata,
     version_attr: AttributeMetadata | None,
-    read: ReadActivity,
+    attempt: TransactionAttemptActivity,
 ) -> None:
     """Materialize a predicate write on a VERSIONED or TEMPORAL target
     (`m-opt-lock` "Predicate-selected writes materialize when observations
@@ -526,13 +527,21 @@ def _materialize_predicate_write(
         include_value_objects=needs_documents,
     )
     structured_column = compiled.structured_column
-    # The resolving read reaches the database, so it brackets its Database Call
-    # like any other read (`m-execution-lifecycle`) — through the package's one
-    # read-call seam, never a second copy of its rules. The activity it brackets
-    # against is its caller's, and a predicate write always has a transaction for
-    # a caller, so that is the shared inert activity and the bracket emits nothing.
-    driver_rows = uow.read(lambda: execute_read(conn, dialect, compiled, read))
-    stage = stage_publishable_rows(meta, compiled, driver_rows, pin=Pin())
+
+    # The resolve is a Read of its own (`m-execution-lifecycle`: every
+    # statement-reaching operation belongs to exactly one Read, Write Batch, or
+    # Stream Batch), opened INSIDE the force-flush so the dependency batch it
+    # forces out is its ordered sibling rather than its parent. It is row-form,
+    # so it names the internal `ROWS` interface — no caller ever sees its result,
+    # which is exactly why it is not published through either public one. Its
+    # Database Call brackets through the package's one read-call seam, never a
+    # second copy of those rules.
+    def resolve() -> StagedRows:
+        with attempt.read(entity.identity, "ROWS") as read:
+            driver_rows = execute_read(conn, dialect, compiled, read)
+            return stage_publishable_rows(meta, compiled, driver_rows, pin=Pin())
+
+    stage = uow.read(resolve)
     resolved = stage.rows
     if not resolved:
         return

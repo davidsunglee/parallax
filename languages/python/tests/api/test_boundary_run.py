@@ -25,6 +25,8 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution_lifecycle import TransactionAttemptStarted
+from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
@@ -73,7 +75,12 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # what its attempts did (`m-execution-lifecycle` — observability is
     # transient and belongs to an installed Provider).
     observed = StatementObservation()
-    db = connect(observed.observing(port, POSTGRES), meta)
+    # How many attempts ran is observable only while they run, so the count comes
+    # from the lifecycle stream a Provider receives rather than from anything the
+    # invocation hands back (`m-execution-lifecycle` — a transaction retains no
+    # record of what it did).
+    lifecycle = RecordingLifecycleProvider()
+    db = connect(observed.observing(port, POSTGRES), meta, lifecycle_provider=lifecycle)
     # The post-transaction verify read runs through a SEPARATE, un-instrumented
     # `Database` (the real adapter directly, no `FaultInjectingPort`): it is
     # out-of-band housekeeping, not part of the boundary mechanism under test,
@@ -116,11 +123,18 @@ def test_boundary_case_runs_through_the_shipped_surface(
             run()
         assert excinfo.value.category == category, (case.case_id, excinfo.value)
 
-    # How many attempts ran is what the boundary itself did — one physical
-    # attempt is one `m-db-port` transaction demarcation — never a count the
-    # fault decorator kept beside it: a second tally could agree with the oracle
-    # while the loop did something else.
-    assert observed.boundaries == boundary_runner.expected_attempts(
+    # How many attempts ran is what the boundary itself did — one Transaction
+    # Attempt activity is one physical attempt — never a count the fault
+    # decorator kept beside it: a second tally could agree with the oracle while
+    # the loop did something else. An attempt begins only after a successful
+    # begin, so this counts attempts rather than demarcations that never ran one.
+    attempts = sum(
+        1
+        for root in lifecycle.roots
+        for event in root.events
+        if isinstance(event, TransactionAttemptStarted)
+    )
+    assert attempts == boundary_runner.expected_attempts(
         fault=fault,
         outcome_kind=outcome,
         retries=uow.retries,

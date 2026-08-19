@@ -545,7 +545,7 @@ def test_optimistic_conflict_opt_in_is_inert_for_a_transient_failure() -> None:
     # The opt-in gates ONLY the conflict classification branch; a transient
     # database failure is retriable regardless of the flag's value (m-auto-retry
     # "Which failures are retriable" — transients are always retriable). This
-    # RETRIABLE deadlock is classified retriable by `_retriable_failure` alone
+    # RETRIABLE deadlock is classified retriable by `retriable_failure` alone
     # (the `or`'s left operand), so it never actually reaches the opt-in's own
     # predicate at all — see the NON-retriable sibling below for that.
     port = RecordingPort()
@@ -558,7 +558,7 @@ def test_optimistic_conflict_opt_in_is_inert_for_a_non_retriable_database_error(
     # A NON-retriable `DatabaseError` (neither a direct
     # `OptimisticLockConflictError` nor a `RollbackOnlyError` wrapping one)
     # reaches the opt-in's own predicate (`_optimistic_conflict_retriable`,
-    # since `_retriable_failure` alone already calls it non-retriable) and
+    # since `retriable_failure` alone already calls it non-retriable) and
     # is classified non-retriable there too — the opt-in's structural
     # extension never widens the retriable set beyond the optimistic-lock
     # conflict shape itself.
