@@ -16,6 +16,7 @@ one is a different boundary phase, and the attempt activity says so.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from decimal import Decimal
 from typing import Any
 
@@ -565,6 +566,36 @@ def test_a_read_that_failed_is_what_its_attempt_names() -> None:
     # the one diagnostic the failing call rendered.
     assert rolled_back.failure.failure.cause_activity_id == read_finished.activity_id
     assert rolled_back.failure.failure.diagnostic is read_finished.outcome.failure.diagnostic
+
+
+def test_one_exception_raised_twice_names_the_read_that_is_still_propagating() -> None:
+    # The same exception object reaches two reads: the callback handles the
+    # first and lets the second escape. Identity alone cannot tell the two
+    # occurrences apart, so the attempt must name the one unwinding through it
+    # rather than the first on record.
+    recorder = RecordingLifecycleProvider()
+    port = RecordingPort(rows=[NEW_ROW])
+    fault = deadlock()
+    port.read_faults = [fault, fault]
+
+    def body(tx: Transaction) -> None:
+        with suppress(DatabaseError):
+            tx.find(mm.Account.where(mm.Account.id == 7)).result()
+        tx.find(mm.Account.where(mm.Account.id == 8)).result()
+
+    with pytest.raises(DatabaseError):
+        _db(port, recorder).transact(body, retries=0)
+
+    root = _only(recorder)
+    handled, escaping = (event for event in root.events if isinstance(event, ReadFinished))
+    assert isinstance(escaping.outcome, ReadFailed)
+    (rolled_back,) = _attempt_outcomes(root)
+    assert isinstance(rolled_back, AttemptRolledBack)
+    caused = rolled_back.failure.failure
+    assert isinstance(caused, CausedFailure)
+    assert caused.cause_activity_id == escaping.activity_id
+    assert caused.cause_activity_id != handled.activity_id
+    assert caused.diagnostic is escaping.outcome.failure.diagnostic
 
 
 def test_a_flush_that_dies_in_planning_is_a_batch_that_started_and_ran_nothing() -> None:
