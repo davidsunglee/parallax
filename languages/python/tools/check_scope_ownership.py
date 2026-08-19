@@ -69,7 +69,8 @@ import — everywhere except inside the scopes that DO contain it. A ``forbidden
 row is sourced at a package, and import-linter silently skips a forbidden module
 overlapping that source, so an ancestor's row can never name its own descendant.
 This walks those ancestors' files and rejects the import directly, resolving
-relative imports so the spelling cannot evade it. Contracts and files are
+relative imports and reading an imported name as a possible submodule, so no
+spelling of that import evades it. Contracts and files are
 complementary halves of one invariant, and neither half alone states it.
 
 The scope inventory is *imported* from ``check_dag_sync`` rather than restated,
@@ -183,6 +184,14 @@ def first_party_imports(source: str, package: str) -> frozenset[str]:
     first-party whatever it resolves to, and resolving it is what lets a caller
     ask which module it reached. Imports guarded by ``TYPE_CHECKING`` count:
     import-linter's graph contains them too.
+
+    ``from <package> import <name>`` names ``<package>.<name>`` as well as
+    ``<package>``, because that is the form Python imports a SUBMODULE through:
+    ``from parallax.core.execution_lifecycle import testing`` reaches the child
+    package as surely as spelling its dotted path does, and import-linter's own
+    graph records that edge. Where the name is an attribute rather than a
+    submodule the extra entry is a module path nothing declares, which no caller
+    can confuse with a scope.
     """
     roots = frozenset(root.split(".", 1)[0] for root in dag.ROOT_PACKAGES)
 
@@ -195,9 +204,13 @@ def first_party_imports(source: str, package: str) -> frozenset[str]:
             found.update(alias.name for alias in node.names if first_party(alias.name))
         elif isinstance(node, ast.ImportFrom):
             if node.level:
-                found.add(resolve_relative(node.module, node.level, package))
+                base = resolve_relative(node.module, node.level, package)
             elif node.module is not None and first_party(node.module):
-                found.add(node.module)
+                base = node.module
+            else:
+                continue
+            found.add(base)
+            found.update(f"{base}.{alias.name}" for alias in node.names if alias.name != "*")
     return frozenset(found)
 
 
@@ -217,8 +230,10 @@ def imports_reaching_an_isolated_scope(paths: list[str]) -> list[str]:
     instead, which makes "no production scope imports the isolated scope" whole
     rather than nearly whole.
 
-    Relative imports are resolved, because the import this closes would be
-    spelled ``from .testing import ...`` as naturally as by its dotted path.
+    Every spelling that reaches the scope is one import: the dotted path and the
+    relative one, naming the scope itself or a member of it. ``from .testing
+    import ...`` and ``from ... import testing`` both import the child package,
+    so both are the edge this rejects.
     """
     found: set[str] = set()
     for scope in dag.ISOLATED_CHILD_SCOPES:
