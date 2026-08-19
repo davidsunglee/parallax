@@ -22,8 +22,8 @@ observed module is HANDED, not a surface an application names.
 
 The private modules split by change rate rather than by tidiness:
 
-* ``_events`` — the Root Execution descriptor and the closed event algebra.
-  Fixed by the specification, so it should rarely move.
+* ``_events`` — the Root Execution descriptor and the transitions its activities
+  emit. Its shape answers to the specified algebra rather than to any caller.
 * ``_diagnostics`` — the detached, byte-bounded projection of an exception and
   the causal attribution an activity failure carries.
 * ``_activity`` — the Provider and Handler Protocols, the per-root publisher,
