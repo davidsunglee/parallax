@@ -245,9 +245,9 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
 # --------------------------------------------------------------------------- #
 # ONE default transaction over two Entities whose Optimistic Lock Facets       #
 # disagree: both strategies, both halves (read lock and write gate), one       #
-# commit (m-unit-work "Strategy selection"; m-opt-lock; m-execution-log). The  #
-# read half alone is `test_transaction_reads.py`'s per-level pair; these two   #
-# carry it through the writes the reads license and the log that records them. #
+# commit (m-unit-work "Strategy selection"; m-opt-lock). The read half alone   #
+# is `test_transaction_reads.py`'s per-level pair; these two carry it through  #
+# the writes those reads license, graded at the port they reach.               #
 # --------------------------------------------------------------------------- #
 def _mixed_port() -> RecordingPort:
     return RecordingPort(

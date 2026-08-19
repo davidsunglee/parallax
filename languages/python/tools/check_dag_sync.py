@@ -353,6 +353,19 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.snapshot.handle._step_lowering": "parallax.snapshot.handle",
 }
 
+# Child scopes a grant on the PARENT does not carry. A forbidden row is the
+# complement of a closure over whole scopes, so a scope granted a parent may
+# ordinarily import anything nested inside it; a scope named here is the
+# exception, forbidden to every production scope that neither contains it nor is
+# contained by it, whatever those scopes reach. That is what turns "no
+# production path imports this" from a fact about the grant table — which states
+# only what a scope MAY import, never what it may not — into a rejected import.
+#
+# The one containment this cannot state is a scope importing its own descendant:
+# import-linter silently skips a forbidden module overlapping the contract's
+# source package, so the parent's row can never name its own child.
+ISOLATED_CHILD_SCOPES: frozenset[str] = frozenset({"parallax.core.execution_lifecycle.testing"})
+
 # The conformance-family enforcement scopes that carry a module tag and thus
 # appear as nodes in the DAG (m-case-format, m-conformance-adapter). They are
 # exempt on the *importing* side: no forbidden contract is sourced from them.
@@ -616,12 +629,16 @@ def check_support_scope_parity(
 
 
 def check_child_scopes() -> None:
-    """Fail when a declared child scope is not nested under its declared parent."""
+    """Fail when a declared child scope is not nested under its declared parent,
+    or when an isolated child is not a declared child at all."""
     for child, parent in CHILD_SCOPE_PARENT.items():
         if parent not in SUPPORT_SCOPE_DEPS and parent not in MODULE_SCOPE.values():
             raise ValueError(f"child scope {child!r} names an undeclared parent scope {parent!r}")
         if not child.startswith(f"{parent}."):
             raise ValueError(f"child scope {child!r} is not nested inside its parent {parent!r}")
+    undeclared = ISOLATED_CHILD_SCOPES - set(CHILD_SCOPE_PARENT)
+    if undeclared:
+        raise ValueError(f"isolated scopes are not declared child scopes: {sorted(undeclared)}")
 
 
 def scope_ancestors(scope: str) -> frozenset[str]:
@@ -748,6 +765,13 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     already forbids for every descendant. For the same overlap reason a child's
     own row omits its ancestors.
 
+    That restatement argument holds only where the parent is itself forbidden. A
+    scope GRANTED the parent reaches every child through the parent's package,
+    which is why :data:`ISOLATED_CHILD_SCOPES` names the children no grant on the
+    parent carries: each is a target in every row that neither contains it nor is
+    contained by it, granted or not, so importing one is a rejected import rather
+    than an absent grant.
+
     A **zero-grant** scope is the one source that also takes its SIBLING child
     scopes as targets (:func:`scope_siblings`). A scope granted nothing may
     import nothing, and the general target set cannot say so: everything left
@@ -776,7 +800,7 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     """
     production_sources = sorted(node for node in adjacency if node not in CONFORMANCE_SCOPES)
     production_targets = set(adjacency) - CONFORMANCE_SCOPES - set(CHILD_SCOPE_PARENT)
-    all_targets = production_targets | {CONFORMANCE_ROOT}
+    all_targets = production_targets | {CONFORMANCE_ROOT} | ISOLATED_CHILD_SCOPES
     forbidden: dict[str, list[str]] = {}
     for scope in production_sources:
         allowed = transitive_closure(adjacency, scope)
@@ -784,7 +808,14 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
         targets = all_targets
         if not adjacency[scope]:
             targets = all_targets | scope_siblings(scope)
-        blocked = targets - allowed - {scope} - scope_ancestors(scope) - reached_ancestors
+        blocked = (
+            targets
+            - allowed
+            - {scope}
+            - scope_ancestors(scope)
+            - scope_descendants(scope)
+            - reached_ancestors
+        )
         forbidden[scope] = sorted(blocked)
     return forbidden
 

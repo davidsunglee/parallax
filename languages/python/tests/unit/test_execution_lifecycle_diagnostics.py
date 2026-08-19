@@ -9,7 +9,8 @@ collapsed to one fallback would still be total and would still be useless.
 Bounds are byte bounds over encoded UTF-8, so the two interesting inputs are a
 message longer than its ceiling and a cut that lands inside a multi-byte code
 point. Detachment is the last claim: nothing here holds the exception, its
-traceback, or its cause graph.
+traceback, or its cause graph — including through a ``str`` subclass, which is
+how a reference walks back in wearing a string's shape.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from __future__ import annotations
 import gc
 import weakref
 
-from parallax.core.db_error import DatabaseError
+from parallax.core.db_error import Category, DatabaseError
 from parallax.core.execution_lifecycle import (
     MESSAGE_LIMIT_BYTES,
     STACK_LIMIT_BYTES,
@@ -48,6 +49,46 @@ class _FatalCode(RuntimeError):
     @property
     def code(self) -> str:
         raise KeyboardInterrupt
+
+
+class _Smuggled(str):
+    """A ``str`` subclass carrying a reference and refusing to be encoded."""
+
+    __slots__ = ("owner",)
+
+    def __new__(cls, value: str, owner: object) -> _Smuggled:
+        text = super().__new__(cls, value)
+        text.owner = owner
+        return text
+
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:
+        raise KeyboardInterrupt
+
+
+class _SmugglingMessage(RuntimeError):
+    def __str__(self) -> str:
+        return _Smuggled("legible but hostile", self)
+
+
+class _SmugglingCode(RuntimeError):
+    @property
+    def code(self) -> str:
+        return _Smuggled("a-stable-code", self)
+
+
+class _ShadowedDatabaseError(DatabaseError):
+    """A port error whose two neutral facts refuse to be read."""
+
+    def __init__(self) -> None:
+        Exception.__init__(self, "this error shadows its own classification")
+
+    @property
+    def category(self) -> Category:  # pyright: ignore[reportIncompatibleVariableOverride]
+        raise KeyboardInterrupt
+
+    @property
+    def native_code(self) -> str:  # pyright: ignore[reportIncompatibleVariableOverride]
+        raise ValueError("this error refuses to publish a native code")
 
 
 def _raised(error: BaseException) -> BaseException:
@@ -121,6 +162,45 @@ def test_a_control_flow_exception_from_a_field_never_escapes() -> None:
     diagnostic = diagnostic_for(_raised(_FatalCode("legible")))
     assert diagnostic.code is None
     assert diagnostic.message == "legible"
+
+
+def test_a_hostile_encoding_never_reaches_the_bound() -> None:
+    # `__str__` may legally answer a `str` SUBCLASS, and the bound is a byte
+    # count — so a subclass whose `encode` raises `KeyboardInterrupt` would abort
+    # the query being observed if the bound called its method. The bound calls
+    # `str`'s own, so the message survives whole and the field costs nothing.
+    diagnostic = diagnostic_for(_raised(_SmugglingMessage()))
+    assert diagnostic.message == "legible but hostile"
+    assert not diagnostic.message_truncated
+    assert diagnostic.qualified_type.endswith("._SmugglingMessage")
+
+
+def test_every_projected_string_is_an_exact_str() -> None:
+    # A `str` subclass is a reference back into the failure wearing a string's
+    # shape: this one pins the exception, its traceback, and its frames for as
+    # long as the diagnostic lives, and overrides the methods a consumer calls.
+    # A projection that retains nothing may keep neither.
+    diagnostic = diagnostic_for(_raised(_SmugglingCode("legible")))
+    assert diagnostic.code == "a-stable-code"
+    assert type(diagnostic.code) is str
+    assert type(diagnostic.message) is str
+    assert type(diagnostic.stack) is str
+
+    smuggling = DatabaseError(category="deadlock", native_code="40P01", message="dup")
+    smuggling.native_code = _Smuggled("40P01", smuggling)
+    database = database_diagnostic_for(smuggling)
+    assert database.native_code == "40P01"
+    assert type(database.native_code) is str
+
+
+def test_a_database_error_shadowing_its_own_facts_costs_those_facts_alone() -> None:
+    # The port raises whatever it raises, and a subclass may shadow either
+    # neutral field. Each is read behind its own guard, so the diagnostic still
+    # arrives and the failure the caller came for is still the one propagating.
+    diagnostic = database_diagnostic_for(_raised(_ShadowedDatabaseError()))
+    assert (diagnostic.category, diagnostic.native_code) == (None, None)
+    assert diagnostic.failure.qualified_type.endswith("._ShadowedDatabaseError")
+    assert "shadows its own classification" in diagnostic.failure.message
 
 
 def test_a_message_beyond_its_ceiling_is_cut_and_flagged() -> None:

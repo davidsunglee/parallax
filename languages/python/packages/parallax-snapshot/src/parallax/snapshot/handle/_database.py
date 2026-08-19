@@ -376,7 +376,7 @@ class Database:
         """
         preflight(node, model=self._meta, form="graph")
         with open_read_root(
-            self._lifecycle, target=node.target.canonical, interface=publication.interface
+            self._lifecycle, target=node.target, interface=publication.interface
         ) as read:
             if scans_an_axis(node):
                 return publication.from_history(
@@ -404,7 +404,7 @@ class Database:
         after the same gate the graph form crosses.
         """
         preflight(query, model=self._meta, form="rows")
-        root = open_read_root(self._lifecycle, target=query.target.canonical, interface="ROWS")
+        root = open_read_root(self._lifecycle, target=query.target, interface="ROWS")
         with root as read:
             return find_rows(query, self._meta, self._dialect, self._port, read=read)
 
@@ -618,7 +618,7 @@ def _flush_executor(
 
     def execute(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
         for step, statement in stream_lowered(plan, model, dialect):
-            with batch.database_call(statement, "WRITE", step.entity.canonical) as call:
+            with batch.database_call(statement, "WRITE", step.entity) as call:
                 affected = conn.execute_write(
                     dialect.to_driver_sql(statement.sql), list(statement.binds)
                 )

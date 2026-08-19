@@ -286,8 +286,8 @@ def test_every_failed_port_invocation_raises_its_own_error_instance() -> None:
     # distinctness can only come from translating at the failing call. Driving
     # every site over one adapter also rules out reuse ACROSS paths, which a
     # per-path cache would produce while each path alone looked clean. This is
-    # what lets a caller (the Execution Log) tell which invocation the error it
-    # caught came from.
+    # what lets a caller (an activity attributing its own failure) tell which
+    # invocation the error it caught came from.
     driver_error = errors.UniqueViolation("dup")
     connection = _FakeConnection(
         cursor_error=driver_error, commit_error=driver_error, rollback_error=driver_error

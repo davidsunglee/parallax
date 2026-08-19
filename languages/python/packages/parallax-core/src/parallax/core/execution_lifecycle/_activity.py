@@ -33,6 +33,7 @@ from parallax.core.execution_lifecycle._diagnostics import (
     FailureDiagnostic,
     database_diagnostic_for,
     diagnostic_for,
+    qualified_type,
 )
 from parallax.core.execution_lifecycle._errors import (
     ExecutionLifecycleHandlerError,
@@ -101,6 +102,21 @@ class ExecutionLifecycleProvider(Protocol):
         ...
 
 
+class ActivityTarget(Protocol):
+    """What an activity reports as the Entity it ran against.
+
+    Structural rather than the metamodel's own identity: this module observes
+    `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work` and `m-auto-retry` and
+    names no model type. Passing the identity rather than its spelling is what
+    keeps the canonical name UNBUILT on the default path — an activity reads
+    ``canonical`` only where a Handler is waiting for it, so an unobserved read
+    of a namespaced Entity builds no string nobody asked for.
+    """
+
+    @property
+    def canonical(self) -> str: ...
+
+
 class DatabaseCallActivity(Protocol):
     """One attempted round trip's scope.
 
@@ -150,7 +166,7 @@ class WriteBatchActivity(Protocol):
     ) -> None: ...
 
     def database_call(
-        self, statement: LoweredStatement, kind: DatabaseCallKind, target: str, /
+        self, statement: LoweredStatement, kind: DatabaseCallKind, target: ActivityTarget, /
     ) -> DatabaseCallActivity:
         """Open this batch's next Database Call over the exact ``statement``
         presented to the port."""
@@ -175,7 +191,7 @@ class ReadActivity(Protocol):
     ) -> None: ...
 
     def database_call(
-        self, statement: LoweredStatement, kind: DatabaseCallKind, target: str, /
+        self, statement: LoweredStatement, kind: DatabaseCallKind, target: ActivityTarget, /
     ) -> DatabaseCallActivity:
         """Open this Read's next Database Call over the exact ``statement``
         presented to the port."""
@@ -188,7 +204,8 @@ class _InertActivity:
     One object satisfies every activity Protocol because each opener answers
     itself and every outcome method is empty, which is what lets the default
     path and a declined root run the same code as an observed one while
-    allocating nothing, reading no clock, and constructing no event.
+    allocating nothing, reading no clock, constructing no event, and leaving
+    even an event's payload unread in the values it is handed.
     """
 
     __slots__ = ()
@@ -205,7 +222,7 @@ class _InertActivity:
     ) -> None: ...
 
     def database_call(
-        self, statement: LoweredStatement, kind: DatabaseCallKind, target: str, /
+        self, statement: LoweredStatement, kind: DatabaseCallKind, target: ActivityTarget, /
     ) -> _InertActivity:
         return self
 
@@ -218,11 +235,6 @@ INERT: Final = _InertActivity()
 """The one activity every unobserved operation runs against."""
 
 
-def _qualified_type(value: object) -> str:
-    runtime_type = type(value)
-    return f"{runtime_type.__module__}.{runtime_type.__qualname__}"
-
-
 def _last_resort(execution_id: UUID, sequence: int, activity_id: int) -> None:
     """One sanitized correlation-only line, dropped silently if unavailable.
 
@@ -230,14 +242,15 @@ def _last_resort(execution_id: UUID, sequence: int, activity_id: int) -> None:
     configuration an application may have wired a Handler into, and carries no
     event, message, statement, or bind — only the three numbers that let the
     dropped report be located. ``sys.__stderr__`` is absent under some embedding
-    and packaging topologies, and writing to it can itself fail on a closed or
-    detached stream, so both are treated as "no path" rather than as failures of
-    the query being observed.
+    and packaging topologies — missing outright as well as ``None`` — and
+    writing to it can itself fail on a closed or detached stream, so finding the
+    path and using it are contained together and every failure of either is "no
+    path" rather than a failure of the query being observed.
     """
-    stream = sys.__stderr__
-    if stream is None:
-        return
     try:
+        stream = sys.__stderr__
+        if stream is None:
+            return
         stream.write(
             "parallax execution lifecycle: reporting a handler failure itself failed "
             f"(execution={execution_id} sequence={sequence} activity={activity_id})\n"
@@ -274,6 +287,19 @@ class _Publisher:
     @property
     def execution_id(self) -> UUID:
         return self._execution_id
+
+    @property
+    def active(self) -> bool:
+        """Whether this root still has a Handler that would see an event.
+
+        False once a Handler was quarantined or lifecycle delivery was
+        deactivated by a control-flow or fatal exception, and never true again:
+        an activity that finds it false does the rest of its lifecycle work not
+        at all rather than doing it and dropping the result at delivery. That is
+        what makes cleanup after a fatal deactivation genuinely free of further
+        event, sequence, and diagnostic work.
+        """
+        return self._handler is not None
 
     def take_sequence(self) -> int:
         """The next delivery position, taken immediately before delivery."""
@@ -313,7 +339,7 @@ class _Publisher:
             execution_id=self._execution_id,
             sequence=event.sequence,
             activity_id=event.activity_id,
-            handler_type=_qualified_type(handler),
+            handler_type=qualified_type(handler),
             fanout_path=(),
             diagnostic=diagnostic_for(failure),
         )
@@ -382,11 +408,11 @@ class _LiveRead(_LiveActivity):
         self,
         publisher: _Publisher,
         parent: _LiveActivity | None,
-        target: str,
+        target: ActivityTarget,
         interface: ReadInterface,
     ) -> None:
         super().__init__(publisher, parent)
-        self._target = target
+        self._target = target.canonical
         self._interface = interface
 
     def __enter__(self) -> _LiveRead:
@@ -411,6 +437,8 @@ class _LiveRead(_LiveActivity):
         /,
     ) -> None:
         publisher = self._publisher
+        if not publisher.active:
+            return
         publisher.deliver(
             ReadFinished(
                 publisher.execution_id,
@@ -422,7 +450,7 @@ class _LiveRead(_LiveActivity):
         )
 
     def database_call(
-        self, statement: LoweredStatement, kind: DatabaseCallKind, target: str, /
+        self, statement: LoweredStatement, kind: DatabaseCallKind, target: ActivityTarget, /
     ) -> _LiveDatabaseCall:
         return _LiveDatabaseCall(self._publisher, self, statement, kind, target)
 
@@ -445,17 +473,19 @@ class _LiveDatabaseCall(_LiveActivity):
         parent: _LiveActivity,
         statement: LoweredStatement,
         kind: DatabaseCallKind,
-        target: str,
+        target: ActivityTarget,
     ) -> None:
         super().__init__(publisher, parent)
         self._statement = statement
         self._kind = kind
-        self._target = target
+        self._target = target.canonical
         self._outcome: DatabaseCallOutcome | None = None
         self._started_ns = 0
 
     def __enter__(self) -> _LiveDatabaseCall:
         publisher = self._publisher
+        if not publisher.active:
+            return self
         publisher.deliver(
             DatabaseCallStarted(
                 publisher.execution_id,
@@ -477,6 +507,9 @@ class _LiveDatabaseCall(_LiveActivity):
         _traceback: TracebackType | None,
         /,
     ) -> None:
+        publisher = self._publisher
+        if not publisher.active:
+            return
         duration_ns = time.perf_counter_ns() - self._started_ns
         outcome = self._outcome
         if outcome is None:
@@ -491,7 +524,6 @@ class _LiveDatabaseCall(_LiveActivity):
             parent = self._parent
             if parent is not None:
                 parent._attribute(exc, self._activity_id, diagnostic.failure)
-        publisher = self._publisher
         publisher.deliver(
             DatabaseCallFinished(
                 publisher.execution_id,
@@ -530,7 +562,10 @@ def _opened(
 
 
 def open_read_root(
-    provider: ExecutionLifecycleProvider | None, *, target: str, interface: ReadInterface
+    provider: ExecutionLifecycleProvider | None,
+    *,
+    target: ActivityTarget,
+    interface: ReadInterface,
 ) -> ReadActivity:
     """The Read root activity for one standalone read, or :data:`INERT`.
 
@@ -538,8 +573,9 @@ def open_read_root(
     which the opening event's payload is both complete and validated: an invalid
     target or query therefore creates no root and calls no Provider. With no
     Provider installed nothing at all is allocated here — no UUID, no
-    descriptor, no publisher, no counter, and no clock read — and a declining
-    Provider costs only the UUID, the descriptor, and the opening call.
+    descriptor, no publisher, no counter, no clock read, and not even the
+    target's canonical spelling — and a declining Provider costs only the UUID,
+    the descriptor, and the opening call.
     """
     if provider is None:
         return INERT

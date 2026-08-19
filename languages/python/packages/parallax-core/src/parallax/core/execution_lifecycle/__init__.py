@@ -32,9 +32,10 @@ The private modules split by change rate rather than by tidiness:
   about out of band.
 
 ``testing`` is a separate enforcement scope with no production importer: the
-recorder there grows with the number of events by design, and a scope is what
-turns "not a production observability path" from a sentence into a build
-failure.
+recorder there grows with the number of events by design, and declaring the
+scope ISOLATED — a child a grant on this package does not carry — is what turns
+"not a production observability path" from a sentence into a rejected import
+outside this package.
 """
 
 from __future__ import annotations
