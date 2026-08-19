@@ -19,12 +19,23 @@ from decimal import Decimal
 from typing import Final, cast
 
 from _support import mirrored_models as mm
+from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance.class_models import MODELS
 from parallax.core import Attr, Bitemporal, DomainModel, attr
 from parallax.core.base import PresentDocument, SqlNull
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, DbPort, DocumentReadOrdinals, Row
+from parallax.core.db_port import (
+    BeginFailed,
+    Bind,
+    CommitFailed,
+    Committed,
+    DbPort,
+    DocumentReadOrdinals,
+    RolledBack,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import FixedClock, RetainedObservation
 from parallax.snapshot import InvalidData, connect
@@ -138,8 +149,10 @@ def deadlock() -> DatabaseError:
 class RecordingPort:
     """An in-memory ``m-db-port`` recording every call in order (no Docker).
 
-    ``txn_faults`` raises at the next ``transaction`` entries (a driver failure
-    the adapter translated and rolled back); ``read_faults`` raises from the
+    ``txn_faults`` ends the next ``transaction`` calls as rolled back after a
+    commit failure (a driver failure the adapter translated, whose rollback then
+    completed) and ``begin_faults`` ends them as never begun, which is the one
+    boundary outcome no attempt ran under; ``read_faults`` raises from the
     next ``execute`` calls (a failure inside the transaction body).
     ``row_queue`` scripts a SEQUENCE of result sets across successive ``execute``
     calls — what a multi-statement read (a deep fetch's root then each level)
@@ -167,6 +180,7 @@ class RecordingPort:
         self.write_affected = write_affected
         self.write_affected_queue: list[int] = []
         self.txn_faults: list[DatabaseError] = []
+        self.begin_faults: list[DatabaseError] = []
         self.read_faults: list[DatabaseError] = []
 
     def execute(
@@ -192,18 +206,16 @@ class RecordingPort:
             return self.write_affected_queue.pop(0)
         return self.write_affected
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
         self.ops.append(("begin",))
+        if self.begin_faults:
+            return BeginFailed(self.begin_faults.pop(0))
         if self.txn_faults:
             self.ops.append(("rollback",))
-            raise self.txn_faults.pop(0)
-        try:
-            result = body(self)
-        except BaseException:
-            self.ops.append(("rollback",))
-            raise
-        self.ops.append(("commit",))
-        return result
+            return RolledBack(CommitFailed(self.txn_faults.pop(0)))
+        outcome = body_outcome(self, body)
+        self.ops.append(("commit",) if isinstance(outcome, Committed) else ("rollback",))
+        return outcome
 
     @property
     def begins(self) -> int:
@@ -291,5 +303,5 @@ class NoIoPort:
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         raise AssertionError("no write expected — the guard runs first")
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        return body(cast("DbPort", self))
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        return body_outcome(cast("DbPort", self), body)

@@ -36,7 +36,7 @@ from parallax.conformance.snapshot_recipes import (
     read_to_one_relationship_states,
 )
 from parallax.conformance.story_models import Order, OrderItem, OrderStatus
-from parallax.core.db_port import Bind, DbPort, Row
+from parallax.core.db_port import Bind, DbPort, Row, TransactionOutcome
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
 from parallax.snapshot import connect, is_view_loaded
@@ -174,7 +174,9 @@ class _CannedPort:
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:  # pragma: no cover
         raise AssertionError("a read recipe issues no DML")
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a read recipe opens no transaction")
 
 

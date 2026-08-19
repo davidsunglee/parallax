@@ -28,13 +28,14 @@ from _metamodel_support import Declaration, key, source
 from _snapshot_graph_support import documents_of, identity_of
 from _transact_support import NoIoPort
 
+from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
 from _support.sql import compile_read
 from parallax.conformance import class_models, models
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, STRING, PresentDocument
-from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row
+from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -91,8 +92,8 @@ class QueuePort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        return body(cast("DbPort", self))
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        return body_outcome(cast("DbPort", self), body)
 
 
 def _order_row(order_id: int = 1) -> Row:

@@ -24,10 +24,11 @@ This is the TOP of the package's internal graph: it imports
 :mod:`~parallax.snapshot.handle._write_types`, and
 :mod:`~parallax.snapshot.handle._planning` for the one Write Planner it builds
 once per connected Metamodel, and nothing in the package imports it except
-``handle/__init__.py``, which re-exports its four public names
+``handle/__init__.py``, which re-exports its five public names
 (:class:`Database`, :func:`connect`, :class:`TransactionOptionConflictError`,
-:class:`TransactionOwnershipError`) through the frozen ``__all__``. Because only
-those four cross the boundary, every helper here keeps its leading underscore —
+:class:`TransactionOwnershipError`, :class:`TransactionRollbackError`) through
+the frozen ``__all__``. Because only
+those five cross the boundary, every helper here keeps its leading underscore —
 the cross-module bare-name convention the sibling modules follow has nothing to
 bite on.
 """
@@ -39,7 +40,14 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from parallax.core.auto_retry import run_with_retry
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import (
+    BeginFailed,
+    Committed,
+    DbPort,
+    RollbackFailed,
+    RolledBack,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 
 # Sibling implementation modules. None of these names carries a leading
@@ -104,6 +112,7 @@ __all__ = [
     "Database",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",
+    "TransactionRollbackError",
     "connect",
 ]
 
@@ -143,6 +152,49 @@ class TransactionOwnershipError(RuntimeError):
     """
 
     code: Final[str] = "transaction-owner-mismatch"
+
+
+class TransactionRollbackError(RuntimeError):
+    """The transaction could not be undone after something ended it.
+
+    Two failures are live at once and reporting either alone misreports what
+    happened: :attr:`triggering_error` ended the transaction, and
+    :attr:`rollback_error` is why undoing it did not complete. The rollback error
+    is the ``__cause__`` as well, so a reader of the traceback sees why the
+    trigger is no longer the whole story.
+
+    What the transaction left behind is therefore unknown, which is why this is
+    never retried however retriable the trigger was, and why the port discards
+    the connection it happened on. A control-flow or fatal trigger — a
+    ``KeyboardInterrupt``, a cancellation — is never wrapped in this: it stays
+    primary and carries the rollback failure as its own cause instead, so a
+    shutdown in progress is not downgraded to an ordinary error.
+    """
+
+    def __init__(self, triggering_error: BaseException, rollback_error: Exception) -> None:
+        super().__init__(
+            f"the transaction could not be rolled back after {triggering_error!r}; "
+            f"the rollback failed with {rollback_error!r}, so what it left behind is unknown"
+        )
+        self.triggering_error = triggering_error
+        self.rollback_error = rollback_error
+
+
+class _UnattemptedBoundary(Exception):
+    """A begin failure in transit past the bounded retry loop.
+
+    A transaction that never began ran no attempt, so `m-execution-lifecycle`
+    makes its failure terminal however retriable the error's own category is —
+    but ``m-auto-retry`` classifies by the exception it catches, and a begin
+    failure is an ordinary :class:`~parallax.core.db_error.DatabaseError` like
+    any other. Travelling as a type the loop does not catch is what makes it
+    terminal; :meth:`Database.transact` unwraps it immediately outside the loop,
+    so nothing above ever sees this class.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(error)
+        self.error = error
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,6 +489,14 @@ class Database:
         withholds the callback value, and an inner failure dooms the whole
         transaction (rollback-only) even if caught.
 
+        A failure that ends the transaction reaches the caller as itself once the
+        rollback has completed — the callback's own exception, or the database's.
+        The exception is a rollback that did NOT complete: both live errors then
+        matter, so the caller sees :class:`TransactionRollbackError` carrying
+        each, and that outcome is never retried. A boundary that never began is
+        terminal for the same reason inverted: no attempt ran, so there is
+        nothing to re-execute.
+
         The callback's value is what this answers, directly: an invocation
         retains no record of what it did, and what a Provider observed about it
         was delivered while it ran (`m-execution-lifecycle`).
@@ -522,15 +582,50 @@ class Database:
                     subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
                 )
 
-            return self._port.transaction(in_txn)
+            return _attempted(self._port.transaction(in_txn))
 
-        return run_with_retry(
-            attempt,
-            retries=options.retries,
-            extra_retriable=(
-                _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
-            ),
-        )
+        try:
+            return run_with_retry(
+                attempt,
+                retries=options.retries,
+                extra_retriable=(
+                    _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
+                ),
+            )
+        except _UnattemptedBoundary as unattempted:
+            # Re-raised here rather than at the port, so the loop sees a type it
+            # does not retry. `from` its own cause keeps the carrier out of the
+            # chain the caller reads, leaving exactly the error the port made.
+            raise unattempted.error from unattempted.error.__cause__
+
+
+def _attempted[T](outcome: TransactionOutcome[T]) -> T:
+    """What one physical attempt answers, from the boundary outcome the port reported.
+
+    The port reports what happened; this decides what a caller sees, which is the
+    only place the two can be reconciled — the port cannot know that a rollback
+    failure must never be retried while a rolled-back deadlock must be, and the
+    retry loop cannot know which phase failed.
+
+    A rolled-back transaction propagates its triggering error unchanged, so what
+    a caller catches is what their own callback or the database raised. Only a
+    failed rollback substitutes an error of its own, because then neither live
+    error tells the whole story.
+    """
+    match outcome:
+        case Committed(value):
+            return value
+        case BeginFailed(error):
+            raise _UnattemptedBoundary(error) from error
+        case RolledBack(trigger):
+            raise trigger.error
+        case RollbackFailed(trigger, rollback_error):
+            triggering_error = trigger.error
+            if isinstance(triggering_error, Exception):
+                raise TransactionRollbackError(triggering_error, rollback_error) from rollback_error
+            # A control-flow or fatal trigger stays primary: an interrupt or a
+            # cancellation is not an ordinary failure to be wrapped in one.
+            raise triggering_error from rollback_error
 
 
 def _optimistic_conflict_retriable(exc: BaseException) -> bool:

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from parallax.core.base import DocumentReadOrdinals
-from parallax.core.db_port import Bind, DbPort, Row
+from parallax.core.db_port import Bind, DbPort, Row, TransactionOutcome
 from parallax.core.dialect import Dialect
 from parallax.core.sql_gen import LoweredStatement
 
@@ -163,7 +163,7 @@ class _ObservingPort:
         self._observation.record("write", self._dialect.from_driver_sql(sql), binds)
         return self._inner.execute_write(sql, binds)
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
         self._observation.record_boundary()
         return self._inner.transaction(
             lambda conn: body(_ObservingPort(conn, self._dialect, self._observation))

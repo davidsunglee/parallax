@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Final
 
 from parallax.conformance import adapter, case_format
-from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row
+from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
 
 __all__ = ["main"]
 
@@ -45,7 +45,9 @@ class _NoProvisioningPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a rejected-case run must not open a transaction")
 
 

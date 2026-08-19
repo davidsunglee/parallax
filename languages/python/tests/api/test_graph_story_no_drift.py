@@ -40,6 +40,7 @@ from typing import Any, cast
 import pytest
 
 from _support.corpus import case_document, compare_binds
+from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
 from _support.query_probes import canonical_document
 from parallax.conformance import case_format, graph_stories
@@ -47,7 +48,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order, OrderStatus
 from parallax.core import DomainModel, ObjectQuery
 from parallax.core.base import INFINITY
-from parallax.core.db_port import Bind, DbPort, Row
+from parallax.core.db_port import Bind, DbPort, Row, TransactionOutcome
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.unit_work import Clock, Concurrency
 from parallax.snapshot import is_view_loaded
@@ -206,7 +207,9 @@ class _CannedPort:
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:  # pragma: no cover
         raise AssertionError("a read-only graph story issues no DML")
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a read-only graph story opens no transaction")
 
 
@@ -215,8 +218,8 @@ class _TransactingCannedPort(_CannedPort):
     its refusal is a write verb's. ``execute_write`` still refuses, which is the
     guard that matters: the verb rejects the value before anything is buffered."""
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        return body(self)
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        return body_outcome(self, body)
 
 
 class _WritingCannedPort(_TransactingCannedPort):

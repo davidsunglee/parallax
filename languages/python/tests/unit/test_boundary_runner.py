@@ -19,11 +19,19 @@ from typing import Any
 
 import pytest
 
+from _support.db_port import body_outcome
 from parallax.conformance import boundary_runner, case_format
 from parallax.conformance.boundary_runner import FaultInjectingPort
 from parallax.conformance.class_models import MODELS
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, DbPort, DocumentReadOrdinals, Row
+from parallax.core.db_port import (
+    Bind,
+    Committed,
+    DbPort,
+    DocumentReadOrdinals,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot.handle import Database, Transaction
 
@@ -137,9 +145,9 @@ class _FakePort:
         self.ops.append("write")
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
         self.boundaries += 1
-        return body(self)
+        return body_outcome(self, body)
 
 
 def _db(port: DbPort) -> Database:
@@ -288,8 +296,8 @@ def test_fault_injecting_port_delegates_every_transaction_call() -> None:
     def body(_conn: DbPort) -> str:
         return "ok"
 
-    assert port.transaction(body) == "ok"
-    assert port.transaction(body) == "ok"
+    assert port.transaction(body) == Committed("ok")
+    assert port.transaction(body) == Committed("ok")
 
 
 def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> None:

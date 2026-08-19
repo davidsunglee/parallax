@@ -17,11 +17,17 @@ exhaustion — per its two DAG edges:
 
 The m-auto-retry rollback / fresh-state steps are the caller's obligations, met
 by construction: each ``attempt`` runs ``port.transaction(...)`` (the adapter
-rolls the database back on any raise) around a **fresh** unit of work (a new
+rolls the database back on any failure and reports whether the rollback
+completed) around a **fresh** unit of work (a new
 buffer, new observations, a re-read Clock), so a re-execution re-reads current
 state rather than replaying a stale shadow. No cached state currently exists
 to invalidate; an identity map, if one is added, must hook its invalidation
 into this path.
+
+The loop classifies the exception an attempt raises, so an outcome that must not
+be re-executed however its error classifies — a transaction that never began, a
+rollback that did not complete — is kept out of the loop by the caller rather
+than made a second policy here.
 
 **Optimistic-lock conflicts**:
 :class:`~parallax.core.unit_work.OptimisticLockConflictError` is a Write Effect

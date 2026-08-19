@@ -7,16 +7,17 @@ managed Python values (psycopg already decodes `numeric` to ``Decimal``, `int8`
 to ``int``, `timestamptz` to aware ``datetime``, and so on), never raw driver
 text. ``execute`` runs row-returning reads; ``execute_write`` runs DML and returns
 the affected-row count without appending row-returning clauses; ``transaction``
-runs a callback in one transaction, committing on success and rolling back on any
-exception.
+runs a callback in one transaction, committing on success, rolling back on any
+exception, and reporting which phase decided the outcome.
 
 The adapter is also the `m-db-error` **port boundary**: every psycopg exception
 raised by work the port itself performs — a statement, or the transaction
-boundary's begin, commit, or rollback — is re-raised as a neutral
+boundary's begin, commit, or rollback — becomes a neutral
 :class:`~parallax.core.db_error.DatabaseError` carrying the classified category,
 the preserved native SQLSTATE, and the driver message, so no driver exception
-type raised by the PORT ever crosses above it (`m-db-port`
-normalize-at-boundary, `m-db-error`). An exception the caller's own
+type produced by the PORT ever crosses above it (`m-db-port`
+normalize-at-boundary, `m-db-error`); a statement raises it and a transaction
+boundary carries it back in its outcome. An exception the caller's own
 ``transaction`` body raises is not the port's work and is not translated
 (`m-db-port`). Category interpretation is delegated to the pure dialect strategy;
 the adapter only extracts psycopg's driver-specific SQLSTATE and message.
@@ -35,7 +36,20 @@ from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
 from parallax.core.base import INFINITY, AuthoredNumber
 from parallax.core.db_error import DatabaseError, classify_error
-from parallax.core.db_port import DbPort, DocumentReadOrdinals, JsonDocument, Row
+from parallax.core.db_port import (
+    BeginFailed,
+    CallbackRaised,
+    CommitFailed,
+    Committed,
+    DbPort,
+    DocumentReadOrdinals,
+    JsonDocument,
+    RollbackFailed,
+    RollbackTrigger,
+    RolledBack,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES
 
 __all__ = ["PostgresAdapter"]
@@ -105,6 +119,21 @@ def translate_driver_error(exc: psycopg.Error) -> DatabaseError:
     return classify_error(POSTGRES, exc.sqlstate, str(exc))
 
 
+def boundary_failure(exc: psycopg.Error) -> DatabaseError:
+    """The neutral error a transaction outcome carries for a boundary failure.
+
+    A statement failure reaches its caller through ``raise ... from``, which is
+    what leaves the driver's own exception on it as the cause. A boundary failure
+    is reported rather than raised, so the same chaining happens here: without it
+    the psycopg exception the classification came from would be dropped on the way
+    into the outcome, and a caller re-raising the error later would see no cause
+    at all.
+    """
+    error = translate_driver_error(exc)
+    error.__cause__ = exc
+    return error
+
+
 @contextlib.contextmanager
 def translating_driver_errors() -> Generator[None]:
     """Re-raise any psycopg exception inside the block as a neutral ``DatabaseError``.
@@ -118,68 +147,6 @@ def translating_driver_errors() -> Generator[None]:
         yield
     except psycopg.Error as exc:
         raise translate_driver_error(exc) from exc
-
-
-class _EscapedBodyFailure(BaseException):
-    """The caller's own transaction-body failure, in transit out of the boundary.
-
-    Nothing else can tell the two failures apart. A body's exception and the
-    rollback it triggers reach the boundary the same way — propagating out of
-    one ``with`` — and a driver that raises a cached or reused exception object
-    makes them the same object as well as the same class, so neither identity
-    nor type separates them. Carrying the body's failure as something that is
-    NOT a ``psycopg.Error`` does: whatever a translating block then catches is a
-    failure of the boundary itself.
-
-    A ``BaseException`` rather than an ``Exception`` so that carrying a
-    base-level failure — a ``KeyboardInterrupt``, a cancellation — does not make
-    it catchable as an ordinary error on the way out. The boundary unwraps it
-    and re-raises what it holds, so this is never the exception a caller
-    receives.
-    """
-
-    def __init__(self, escaped: BaseException) -> None:
-        super().__init__(escaped)
-        self.escaped = escaped
-
-
-@contextlib.contextmanager
-def _translating_boundary_errors() -> Generator[None]:
-    """Translate a psycopg failure of the transaction BOUNDARY, and only that.
-
-    Wrapping the whole boundary is what puts its begin and the rollback an
-    escaping body triggers inside a translating block alongside its commit. The
-    body runs inside that block too, and reaches it carried — so a
-    ``psycopg.Error`` arriving here is the port's own work by construction, and
-    the carrier is opened and its exception re-raised as the caller's, which
-    ``m-db-port`` has cross the seam unchanged. A rollback that itself fails
-    with a driver exception raises that failure past the carrier, and it
-    translates whether or not the driver handed back the same object the body
-    raised.
-    """
-    escaped: BaseException | None = None
-    try:
-        yield
-    except _EscapedBodyFailure as carried:
-        escaped = carried.escaped
-    except psycopg.Error as exc:
-        raise translate_driver_error(exc) from exc
-    if escaped is not None:
-        raise escaped
-
-
-@contextlib.contextmanager
-def _carrying_body_failure() -> Generator[None]:
-    """Carry whatever the caller's transaction body raised past the boundary.
-
-    Wrapping runs before the driver's transaction exit sees the failure, which
-    still rolls back on any exception, and the boundary unwraps it again, so the
-    carrier is confined to these two seams.
-    """
-    try:
-        yield
-    except BaseException as exc:
-        raise _EscapedBodyFailure(exc) from exc
 
 
 def adapt_binds(binds: Sequence[object]) -> list[object]:
@@ -303,32 +270,89 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
             cursor.execute(sql.encode(), adapt_binds(binds))
             return cursor.rowcount
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        """Run ``body`` in one transaction, committing on success and rolling
-        back on any exception.
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        """Run ``body`` in one transaction and report which boundary phase decided
+        the outcome.
 
-        The whole boundary translates, not only the statements inside it: a
-        driver error at its begin, at its commit (a deferred constraint, a
-        serialization failure), or at the rollback an escaping body triggers
-        reaches the caller as a neutral ``DatabaseError``, exactly as a statement
-        error raised through the port methods above does.
+        Every phase the port itself performs translates, not only the statements
+        inside it: a driver error at the begin, at the commit (a deferred
+        constraint, a serialization failure), or at the rollback an escaping body
+        triggers becomes a neutral ``DatabaseError``, exactly as a statement error
+        raised through the port methods above does — but it is REPORTED rather
+        than raised, because which phase failed is what decides whether the work
+        may be retried and whether this connection is still trustworthy.
 
         An exception ``body`` itself raises is the CALLER's failure rather than
-        one the port made, so it crosses the seam unchanged even when it is a
-        psycopg exception (``m-db-port``). Translating it would substitute a port
-        error for the caller's own — and a body-authored deadlock-class exception
-        would then read as retriable to ``m-auto-retry``, which would replay the
-        body over a failure the database never reported. The body's failure
-        therefore leaves the block carried rather than bare, which is what keeps
-        it distinguishable from the rollback it triggers even when the driver
-        raises one reused exception object for both.
+        one the port made, so :class:`~parallax.core.db_port.CallbackRaised`
+        carries the identical object (``m-db-port``). Translating it would
+        substitute a port error for the caller's own — and a body-authored
+        deadlock-class exception would then read as retriable to
+        ``m-auto-retry``, which would replay the body over a failure the database
+        never reported. Catching it at its own call site is what keeps it
+        distinguishable from the rollback it triggers even when the driver raises
+        one reused exception object for both.
+
+        The driver's transaction context is driven a phase at a time rather than
+        through a ``with`` statement, because a ``with`` reports only the single
+        exception that escapes it: begin, commit, and rollback would arrive
+        indistinguishable, and a rollback failure — which psycopg's context logs
+        and discards — would not arrive at all.
         """
-        with (
-            _translating_boundary_errors(),
-            self._connection.transaction(),
-            _carrying_body_failure(),
-        ):
-            return body(self)
+        boundary = self._connection.transaction()
+        try:
+            boundary.__enter__()
+        except psycopg.Error as exc:
+            return BeginFailed(boundary_failure(exc))
+        try:
+            value = body(self)
+        except BaseException as raised:
+            return self._undone(CallbackRaised(raised), boundary=boundary)
+        try:
+            boundary.__exit__(None, None, None)
+        except psycopg.Error as exc:
+            return self._undone(CommitFailed(boundary_failure(exc)), boundary=None)
+        return Committed(value)
+
+    def _undone(
+        self,
+        trigger: RollbackTrigger,
+        *,
+        boundary: contextlib.AbstractContextManager[psycopg.Transaction] | None,
+    ) -> RolledBack | RollbackFailed:
+        """Undo the transaction ``trigger`` ended, reporting whether the undo completed.
+
+        ``boundary`` is the driver's still-open transaction context when the
+        callback failed, and ``None`` once a failed commit has already closed it.
+
+        The connection is asked to roll back after that context has exited
+        because psycopg's own exit logs and discards a failed ROLLBACK rather
+        than raising it, so a rollback failure would otherwise be invisible to
+        this port. The second request is a no-op when the transaction already
+        ended — the driver sends nothing on an idle session — and is where a
+        connection too broken to undo the work raises an error this port can
+        classify. Then the outcome of the work is unknown, so the connection is
+        discarded rather than handed back for more.
+        """
+        error = trigger.error
+        try:
+            if boundary is not None:
+                boundary.__exit__(type(error), error, error.__traceback__)
+            self._connection.rollback()
+        except psycopg.Error as exc:
+            rollback_error = boundary_failure(exc)
+            self._discard()
+            return RollbackFailed(trigger, rollback_error)
+        return RolledBack(trigger)
+
+    def _discard(self) -> None:
+        """Drop the connection whose transaction outcome is unknown.
+
+        Closing a connection already broken enough to fail a rollback may itself
+        fail, and that failure adds nothing to what the rollback error already
+        reports.
+        """
+        with contextlib.suppress(psycopg.Error):
+            self.close()
 
     def close(self) -> None:
         """Close the underlying connection."""
