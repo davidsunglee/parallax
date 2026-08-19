@@ -33,20 +33,23 @@ from parallax.core.execution_lifecycle import (
     DatabaseReadCompleted,
     DirectFailure,
     ExecutionEvent,
+    ExecutionLifecycleProvider,
     ReadCompleted,
     ReadFailed,
     ReadFinished,
+    ReadInterface,
     ReadStarted,
 )
 from parallax.core.execution_lifecycle import _activity as activity_module
-from parallax.core.execution_lifecycle._activity import ActivityTarget, open_read_root
+from parallax.core.execution_lifecycle._activity import ActivityTarget, ReadActivity, open_read_root
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
-from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen import CompiledRead, LoweredStatement, compile_read
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, QueryTargetError, SnapshotMaterializationError
+from parallax.snapshot.handle import _database as database_module
+from parallax.snapshot.handle import _read as read_module
 
 _ORDER_ROW: Row = {
     "id": 1,
@@ -446,24 +449,74 @@ class _ReturningPort(RecordingPort):
         return rows
 
 
+def _recorded_openings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[ActivityTarget, ReadInterface]]:
+    """What every root opening is HANDED, in the order the composition opens them.
+
+    An activity is what the opener answers, so no stand-in — inert, borrowing, or
+    live — ever sees the root's own target and interface. Only the opening does.
+    """
+    recorded: list[tuple[ActivityTarget, ReadInterface]] = []
+
+    def recording(
+        provider: ExecutionLifecycleProvider | None,
+        *,
+        target: ActivityTarget,
+        interface: ReadInterface,
+    ) -> ReadActivity:
+        recorded.append((target, interface))
+        return open_read_root(provider, target=target, interface=interface)
+
+    monkeypatch.setattr(database_module, "open_read_root", recording)
+    return recorded
+
+
+def _recorded_compilations(monkeypatch: pytest.MonkeyPatch) -> list[CompiledRead]:
+    """Every compiled read the executor produces, which is where the objects a
+    Database Call reports come from when the call site prepares nothing."""
+    recorded: list[CompiledRead] = []
+
+    def recording(*args: Any, **kwargs: Any) -> CompiledRead:
+        compiled = compile_read(*args, **kwargs)
+        recorded.append(compiled)
+        return compiled
+
+    monkeypatch.setattr(read_module, "compile_read", recording)
+    return recorded
+
+
 def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The probes above drive the seam directly, which is exactly what a call site
     # preparing an argument for the lifecycle would slip past: the preparation
     # would live in the caller, not in the activity. So a whole find runs here
-    # against an activity that keeps its arguments, and every one of them must be
-    # an object the read already had — the port's own row list rather than a copy
-    # or a count, and the compiled Entity identity rather than a spelling of it.
+    # with its root opening and its compilation both recorded, and every
+    # lifecycle argument is graded by IDENTITY against the object the read
+    # already holds — a freshly built Entity identity and a re-lowered statement
+    # are EQUAL to the right ones, so anything weaker than identity would pass
+    # while the call site allocated per read.
     borrowing = _Borrowing()
     monkeypatch.setattr(activity_module, "INERT", borrowing)
+    openings = _recorded_openings(monkeypatch)
+    compilations = _recorded_compilations(monkeypatch)
+
     port = _ReturningPort(rows=[NEW_ROW])
     connect(port, ACCOUNT, clock=FixedClock(FIXED)).find(
         mm.Account.where(mm.Account.id == 7)
     ).result()
-    (statement, kind, target), *rest = borrowing.calls
-    assert rest == []
-    assert kind == "READ"
+
+    (compiled,) = compilations
+    (root_target, interface), *further_openings = openings
+    (statement, kind, call_target), *further_calls = borrowing.calls
+    assert further_openings == []
+    assert further_calls == []
+    assert (interface, kind) == ("TYPED", "READ")
+    assert root_target is compiled.target
+    assert call_target is compiled.target
+    assert statement is compiled.statement
     assert borrowing.rows is port.returned[0]
-    assert isinstance(target, EntityIdentity)
+    # The borrowed statement is the one the port ran, not merely the one the
+    # compilation produced: the two together leave a re-lowered spelling nowhere.
     assert POSTGRES_DRIVER_SQL(statement.sql) == port.ops[0][1]
