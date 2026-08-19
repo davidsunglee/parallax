@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from parallax.conformance import engine
+from parallax.conformance._observed_port import StatementObservation
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.vo_models import (
     Customer,
@@ -48,9 +49,10 @@ unpopulated, so it is absent from the document rather than stored as null — th
 state every assertion below weighs its own stored document against."""
 
 
-def _connect_and_seed(provisioner: Any) -> Database:
+def _connect_and_seed(provisioner: Any, observed: StatementObservation | None = None) -> Database:
     provisioner.reset(model_of(_CUSTOMER), {})
-    db = connect(provisioner.port, _CUSTOMER)
+    port = provisioner.port if observed is None else observed.observing(provisioner.port, POSTGRES)
+    db = connect(port, _CUSTOMER)
     db.transact(
         lambda tx: tx.insert(
             Customer(
@@ -90,7 +92,7 @@ def test_an_edited_occurrence_stores_what_it_names_and_carries_the_rest(
         tx.update(customer.edit(address=address.edit(city="Bergen")))
         return address
 
-    published = db.transact(relocate).value
+    published = db.transact(relocate)
 
     assert _stored_address(provisioner) == {
         "street": "Storgata 1",
@@ -139,7 +141,7 @@ def test_edits_compose_and_leave_every_value_they_derive_from_untouched(
         tx.update(customer.edit(address=renumbered))
         return address, moved
 
-    published, intermediate = db.transact(compose).value
+    published, intermediate = db.transact(compose)
 
     assert _stored_address(provisioner) == {
         "street": "Nedre gate 2",
@@ -164,18 +166,15 @@ def _away_and_back(address: CustomerAddress) -> CustomerAddress:
 def test_an_occurrence_carrying_no_net_change_writes_nothing(
     provisioner: Any, derive: Callable[[CustomerAddress], CustomerAddress]
 ) -> None:
-    db = _connect_and_seed(provisioner)
+    observed = StatementObservation()
+    db = _connect_and_seed(provisioner, observed)
+    seeded = observed.round_trips
 
     def rewrite(tx: Transaction) -> None:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
         tx.update(customer.edit(address=derive(_address_of(customer))))
 
-    result = db.transact(rewrite)
+    db.transact(rewrite)
 
-    assert [
-        call
-        for attempt in result.execution_log.attempts
-        for call in attempt.calls
-        if call.kind == "write"
-    ] == []
+    assert [call for call in observed.calls[seeded:] if call.kind == "write"] == []
     assert _stored_address(provisioner) == _SEEDED_ADDRESS

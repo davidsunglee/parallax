@@ -19,7 +19,7 @@ exists to end):
   (wraps a REAL adapter): it SIMULATES the case's `given.fault` at the write
   seam; the real classification / retry-loop / optimistic-gate machinery
   does the classifying, never this module, and how many attempts ran is read
-  off the invocation's own Execution Log rather than counted here.
+  off the delivered lifecycle events rather than counted here.
 - :func:`expected_attempts` derives the authored attempt count from the
   SAME fields `m-auto-retry.md` / `m-opt-lock.md` fix the retriability rules
   from (never a per-case hand table).
@@ -163,7 +163,7 @@ def run_boundary_actions(
       call shares the outer transaction (`m-unit-work`), so its closure receives
       the same :class:`Transaction` and its buffered writes reach the database
       under the OUTER boundary's own finalization — which is exactly what
-      `m-execution-log-007` asserts. It needs the ``Database`` that opened the
+      `m-execution-lifecycle-006` asserts. It needs the ``Database`` that opened the
       boundary, since only that object joins.
     - ``terminate`` has no legal target on this NON-temporal model — a loud
       refusal (no reachable corpus witness authors it either).
@@ -207,7 +207,7 @@ def _run_actions(
                 lambda joined, rest=actions[index + 1 :], seen=current: _run_actions(
                     joined, rest, seen, database
                 )
-            ).value
+            )
         elif action == "terminate":
             raise AssertionError(
                 "`terminate` has no legal target on the non-temporal account.yaml model "
@@ -244,9 +244,9 @@ class _FaultState:
     across a WHOLE `db.transact` retry loop — never reset per attempt.
 
     Whether the fault has already fired, and nothing else. How many attempts ran
-    is the invocation's own Execution Log to answer (`m-execution-log`), so this
-    decorator counts none: a second count kept here could disagree with the one
-    the retry loop actually produced."""
+    is the delivered lifecycle stream's to answer (`m-execution-lifecycle`), so
+    this decorator counts none: a second count kept here could disagree with the
+    one the retry loop actually produced."""
 
     fired: bool = False
 

@@ -47,7 +47,7 @@ from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution_log import TraceRecorder
+from parallax.core.execution_lifecycle._activity import INERT, ReadActivity
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.unit_work import (
@@ -100,7 +100,7 @@ def _recording_find(calls: list[_RecordedFind]) -> Callable[..., FindResult]:
         *,
         preference: Concurrency | None = None,
         ledger: ObservationLedger | None = None,
-        recorder: TraceRecorder | None = None,
+        read: ReadActivity = INERT,
     ) -> FindResult:
         result = real(
             query,
@@ -109,7 +109,7 @@ def _recording_find(calls: list[_RecordedFind]) -> Callable[..., FindResult]:
             port,
             preference=preference,
             ledger=ledger,
-            recorder=recorder,
+            read=read,
         )
         calls.append(_RecordedFind(None if ledger is None else ledger.participation, result))
         return result
@@ -232,7 +232,7 @@ def test_find_force_flushes_pending_writes_first() -> None:
         tx.insert(new_account())
         return tx.find(mm.Account.where(mm.Account.id == 7)).results()
 
-    assert account_db(port).transact(fn).value == [read_account()]
+    assert account_db(port).transact(fn) == [read_account()]
     assert port.ops == [
         ("begin",),
         ("write", INSERT_SQL, (7, "Newton", 5.00, 1)),
@@ -563,7 +563,7 @@ def test_a_materialized_temporal_node_still_populates_real_axis_values() -> None
     # the row's coordinates rather than fresh-instance defaults.
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
-    fetched = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result()).value
+    fetched = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     assert fetched.tx_start == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     assert fetched.tx_end is not None
 
@@ -606,7 +606,7 @@ def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
     port = RecordingPort(rows=_balance_history_rows())
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
     statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)
-    snapshot = db.transact(lambda tx: tx.find(statement)).value
+    snapshot = db.transact(lambda tx: tx.find(statement))
     assert len(snapshot.results()) == 2
 
 

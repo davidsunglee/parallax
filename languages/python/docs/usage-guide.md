@@ -24,7 +24,7 @@ def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
         tx.delete_where(Wallet.where(Wallet.balance < 200.00))
         return list(tx.find(Wallet.where(Wallet.balance < 200.00)).results())
 
-    return db.transact(fn).value
+    return db.transact(fn)
 ```
 
 ## Bitemporal update-until splits head/middle/tail
@@ -624,7 +624,7 @@ Corpus case: `m-read-lock-002`
 
 ```python
 query = Account.where(Account.id == 2)
-db.transact(lambda tx: tx.find(query), concurrency="locking").value
+db.transact(lambda tx: tx.find(query), concurrency="locking")
 ```
 
 ## An optimistic-mode object find omits the shared read lock
@@ -633,7 +633,7 @@ Corpus case: `m-read-lock-005`
 
 ```python
 query = Account.where(Account.id == 2)
-db.transact(lambda tx: tx.find(query), concurrency="optimistic").value
+db.transact(lambda tx: tx.find(query), concurrency="optimistic")
 ```
 
 ## Diamond identity: two include paths reaching the same rows share one node
@@ -792,7 +792,7 @@ Corpus case: `m-snapshot-read-020`
 ```python
 def a_delete_keeps_a_loaded_relationship_view(
     db: Database,
-) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     loaded_items = snapshot.result().items
 
@@ -826,7 +826,7 @@ Corpus case: `m-snapshot-read-023`
 ```python
 def a_write_keeps_a_loaded_value_object_document(
     db: Database,
-) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     snapshot = db.find(Location.where(Location.id == 100).include(Location.customer))
     loaded_customer = snapshot.result().customer
 
@@ -860,7 +860,7 @@ Corpus case: `m-snapshot-read-024`
 ```python
 def a_write_keeps_a_view_over_freshly_inserted_rows(
     db: Database,
-) -> tuple[TransactionResult[None], Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+) -> tuple[None, Snapshot[Any], Any, None, Snapshot[Any]]:
     def create(tx: Transaction) -> None:
         tx.insert(
             Order(
@@ -895,7 +895,7 @@ Corpus case: `m-snapshot-read-025`
 ```python
 def a_rectangle_split_keeps_a_loaded_relationship_view(
     db: Database,
-) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     pin = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
     snapshot = db.find(
         Policy.where(Policy.id == 2).as_of(valid_time=pin, tx_time=LATEST).include(Policy.coverages)
@@ -1033,7 +1033,7 @@ def insert_then_read_your_own_write(db: Database) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         return list(tx.find(Account.where(Account.id == 7)).results())
 
-    return db.transact(fn).value  # the dependent find observes the flushed insert
+    return db.transact(fn)  # the dependent find observes the flushed insert
 ```
 
 ## An aborted update is discarded
@@ -1042,7 +1042,7 @@ Corpus case: `m-unit-work-002`
 
 ```python
 def aborted_update_is_discarded(db: Database) -> list[Entity]:
-    fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).value.result()
+    fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).result()
     edited = fetched.edit(balance=Decimal("999.00"))
 
     def doomed(tx: Transaction) -> None:
@@ -1052,7 +1052,7 @@ def aborted_update_is_discarded(db: Database) -> list[Entity]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The same find re-resolves and observes the ORIGINAL balance, not 999.00.
-    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).value.results())
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).results())
 ```
 
 ## Foreign-key-ordered inserts in one transaction
@@ -1090,7 +1090,7 @@ def callback_value_withheld_on_abort(db: Database) -> list[Entity]:
         tx.find(Account.where(Account.id == 1))  # forces the flush
         raise RuntimeError("abort")  # even the force-flushed write is rolled back
 
-    return db.transact(fn).value  # raises — no value is returned as though durable
+    return db.transact(fn)  # raises — no value is returned as though durable
 ```
 
 ## Keyed update, observed in-transaction
@@ -1104,7 +1104,7 @@ def keyed_update_observed_in_transaction(db: Database) -> list[Entity]:
         tx.update(current.edit(balance=Decimal("175.00")))
         return list(tx.find(Account.where(Account.id == 1)).results())
 
-    return db.transact(fn).value
+    return db.transact(fn)
 ```
 
 ## Keyed delete, observed in-transaction
@@ -1118,7 +1118,7 @@ def keyed_delete_observed_in_transaction(db: Database) -> list[Entity]:
         tx.delete(current)
         return list(tx.find(Account.where(Account.id == 3)).results())
 
-    return db.transact(fn).value  # [] — the dependent find observes the deletion
+    return db.transact(fn)  # [] — the dependent find observes the deletion
 ```
 
 ## Create, then later delete, a parent/child pair
@@ -1163,7 +1163,7 @@ def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
         tx.delete(deleted)
         return list(tx.find(Account.where(Account.balance < 50.00)).results())
 
-    return db.transact(fn).value  # observe, then one flush: insert, update, delete — then the find
+    return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find
 ```
 
 ## An aborted insert never becomes durable
@@ -1179,7 +1179,7 @@ def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The aborted insert was discarded: the find observes NO rows for account 7.
-    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).value.results())
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).results())
 ```
 
 ## An aborted delete leaves the row standing
@@ -1197,7 +1197,7 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The aborted delete was discarded: account 3 still stands.
-    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).value.results())
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).results())
 ```
 
 ## A close settles against the milestone its own find observed
@@ -1260,7 +1260,7 @@ Corpus case: `m-unit-work-029`
 ```python
 def a_grouped_read_observes_its_own_relationship_writes(
     db: Database,
-) -> TransactionResult[tuple[Snapshot[Any], Snapshot[Any]]]:
+) -> tuple[Snapshot[Any], Snapshot[Any]]:
     def read_your_own_writes(tx: Transaction) -> tuple[Snapshot[Any], Snapshot[Any]]:
         before = tx.find(Order.where(Order.id == 1).include(Order.items))
         loaded_item = before.result().items[1]  # item 11, by the declared `id desc`

@@ -157,14 +157,15 @@ _Avoid_: unsupported capability, invalid query, adapter limitation
 
 **Snapshot**:
 The fully materialized generic container returned by a Typed or Wire `find`,
-with arity accessors plus the result's Pin and Read Trace. Its element is an
+with arity accessors plus the result's Pin. Its element is an
 Entity Class instance on the Typed interface and a Wire Entity Mapping on the
-Wire interface; no method touches the database.
+Wire interface; no method touches the database, and it retains no record of the
+execution that produced it.
 _Avoid_: result set, lazy list, query result proxy, domain snapshot
 
 **Checked Snapshot**:
 The read-only `CheckedSnapshot[T]` view returned by `Snapshot.checked()`. It
-shares the Snapshot's result storage, Pin, and Read Trace while its ordinary
+shares the Snapshot's result storage and Pin while its ordinary
 arity accessors return `InvalidData` in-band; constructing or using the view
 performs no database work. Its ordinary accessors are the complete surface;
 there is no separate valid/invalid partition method.

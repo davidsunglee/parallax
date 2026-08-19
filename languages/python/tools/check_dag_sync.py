@@ -84,7 +84,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-unit-work": "parallax.core.unit_work",
     "m-read-lock": "parallax.core.read_lock",
     "m-auto-retry": "parallax.core.auto_retry",
-    "m-execution-lifecycle": "parallax.core.execution_log",
+    "m-execution-lifecycle": "parallax.core.execution_lifecycle",
     "m-opt-lock": "parallax.core.opt_lock",
     "m-temporal-read": "parallax.core.temporal_read",
     "m-txtime-write": "parallax.core.txtime_write",
@@ -229,7 +229,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.unit_work",
             "parallax.core.read_lock",
             "parallax.core.auto_retry",
-            "parallax.core.execution_log",
+            "parallax.core.execution_lifecycle",
             "parallax.core.opt_lock",
             "parallax.core.batch_write",
             "parallax.core.txtime_write",
@@ -297,6 +297,12 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # sits beside it undeclared. What keeps the two consumers legal is their own
     # rows — a dependency added here would break the row of whichever consumer
     # is not already granted it.
+    # The complete recorder is testing-only: it retains every event of every
+    # root by design, which is exactly what a production observability path may
+    # not do. No production scope is granted it, so the grant table itself is
+    # what states "not a production path" — and this row bounds what the
+    # recorder may reach in return.
+    "parallax.core.execution_lifecycle.testing": frozenset({"parallax.core.execution_lifecycle"}),
     "parallax.snapshot.handle._errors": frozenset(),
     "parallax.snapshot.handle._family": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._write_types": _LOWERING_GROUP_DEPS,
@@ -332,6 +338,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
 #   fails when a module beside one is import-free and undeclared — a sibling
 #   shape such a row cannot reach.
 CHILD_SCOPE_PARENT: Mapping[str, str] = {
+    "parallax.core.execution_lifecycle.testing": "parallax.core.execution_lifecycle",
     "parallax.core.entity._expressions": "parallax.core.entity",
     "parallax.core.object_query._fluent": "parallax.core.object_query",
     "parallax.core.entity._graph_input": "parallax.core.entity",

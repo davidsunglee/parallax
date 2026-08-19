@@ -20,9 +20,11 @@ import pytest
 
 from _support.corpus import case_fixtures
 from parallax.conformance import case_format, engine, write_value_runner
+from parallax.conformance._observed_port import StatementObservation
 from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
+from parallax.core.dialect import POSTGRES
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
 
@@ -36,7 +38,8 @@ def test_write_value_case_runs_through_the_shipped_verbs(
 ) -> None:
     provisioner.reset(engine.load_case_metamodel(case), case_fixtures(case))
     model = MODELS[Path(case.model).stem]
-    db = connect(provisioner.port, model)
+    observed = StatementObservation()
+    db = connect(observed.observing(provisioner.port, POSTGRES), model)
     # A `anotherSource` value is read through this second managed source, which
     # materializes and recognizes its own independently of the Snapshot lifecycle
     # the verbs under test write through.
@@ -46,21 +49,15 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     def fn(tx: Transaction) -> list[str | None]:
         return write_value_runner.graded_outcomes(tx, steps, another)
 
-    result = db.transact(fn)
-    assert result.value == [step.expect_error for step in steps]
+    outcomes = db.transact(fn)
+    assert outcomes == [step.expect_error for step in steps]
     # The case's `then.roundTrips` graded against what the transaction actually
-    # did (`m-execution-log`), never against a count this suite kept. The count is
-    # the steps' own verbs, so the WRITE calls are what it names: a read that
+    # put on the wire, never against a count this suite kept. The count is the
+    # steps' own verbs, so the WRITE statements are what it names: a read that
     # arranges a value of the stated provenance is the adapter's own affair and
     # is not the case's cost (:func:`write_value_runner.declared_round_trips`),
-    # and the Database Call's own kind is what separates the two.
-    executed_writes = sum(
-        1
-        for attempt in result.execution_log.attempts
-        for call in attempt.calls
-        if call.kind == "write"
-    )
-    assert executed_writes == write_value_runner.declared_round_trips(case)
+    # and which port method ran a statement is what separates the two.
+    assert len(observed.writes) == write_value_runner.declared_round_trips(case)
     # The durable end state beside it: a statement that ran would have left an
     # effect on one of the only two rows a keyed write here can address. The
     # fixture row stands exactly as loaded (a flushed `update` would bump
@@ -72,7 +69,7 @@ def test_write_value_case_runs_through_the_shipped_verbs(
             tx.find(Account.where(Account.id == write_value_runner.TARGET_ID)).result(),
             tx.find(Account.where(Account.id == write_value_runner.UNMANAGED_ID)).results(),
         )
-    ).value
+    )
     assert (stored.owner, stored.balance, stored.version) == ("Linus", Decimal("250.00"), 1)
     assert unmanaged == []
 

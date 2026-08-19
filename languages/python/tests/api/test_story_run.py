@@ -26,7 +26,7 @@ pin (`test_write_no_drift.py`). A graph story's grading is bespoke per case
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -44,6 +44,7 @@ from _support.corpus import (
     instance_row,
 )
 from parallax.conformance import case_format, engine
+from parallax.conformance._observed_port import StatementObservation
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_stories import (
@@ -55,12 +56,18 @@ from parallax.conformance.read_models import Animal, Cat, Dog
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order, OrderStatus
-from parallax.core import LATEST, DomainModel
+from parallax.core import LATEST, DomainModel, ObjectQuery
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import UnloadedRelationshipError, ValueObject, to_document
 from parallax.core.entity._model import model_of
+from parallax.core.unit_work import Concurrency
 from parallax.snapshot import InvalidData, connect, edge_of, is_view_loaded, pin_of, view
-from parallax.snapshot.handle import Database, TransactionTimePinReadOnlyError
+from parallax.snapshot.handle import (
+    Database,
+    Snapshot,
+    Transaction,
+    TransactionTimePinReadOnlyError,
+)
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 
@@ -153,10 +160,75 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: 
 _GRAPH_STORIES_BY_ID = {story.case_id: story for story in GRAPH_STORIES}
 
 
+class _CountingDatabase(Database):
+    """A ``Database`` that records what each of its own operations put on the wire.
+
+    A result carries no record of the execution that produced it
+    (`m-execution-lifecycle`), and a Usage Guide story's code is production's —
+    so the per-operation round-trip counts a scenario step's own oracle grades
+    are observed here, at the one boundary where "one operation" exists as a
+    thing. ``round_trips`` holds one entry per :meth:`find` and :meth:`transact`
+    call, in call order, which is the same partition the case's steps draw.
+    """
+
+    def __init__(self, port: Any, model: Any, clock: Any = None) -> None:
+        self.observation = StatementObservation()
+        super().__init__(self.observation.observing(port, POSTGRES), model, clock=clock)
+        self.round_trips: list[int] = []
+
+    def _counted[T](self, run: Callable[[], T]) -> T:
+        mark = self.observation.round_trips
+        try:
+            return run()
+        finally:
+            self.round_trips.append(self.observation.round_trips - mark)
+
+    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
+        return self._counted(lambda: super(_CountingDatabase, self).find(query))
+
+    def transact[T](
+        self,
+        fn: Callable[[Transaction], T],
+        *,
+        retries: int | None = None,
+        concurrency: Concurrency | None = None,
+        retry_optimistic_conflicts: bool | None = None,
+    ) -> T:
+        return self._counted(
+            lambda: super(_CountingDatabase, self).transact(
+                fn,
+                retries=retries,
+                concurrency=concurrency,
+                retry_optimistic_conflicts=retry_optimistic_conflicts,
+            )
+        )
+
+
+def _counting_connect(port: Any, model: Any, *, clock: Any = None) -> _CountingDatabase:
+    return _CountingDatabase(port, model, clock)
+
+
+def _kind_runs(db: _CountingDatabase) -> list[tuple[str, int]]:
+    """The statements one handle ran, run-length encoded by port method.
+
+    Inside a single transaction the operation boundary is gone, so the step
+    partition a grouped scenario grades is recovered from the wire itself: a run
+    of reads is a find, a run of writes is the flush its buffered writes reached
+    the database through.
+    """
+    runs: list[tuple[str, int]] = []
+    for call in db.observation.calls:
+        if runs and runs[-1][0] == call.kind:
+            runs[-1] = (call.kind, runs[-1][1] + 1)
+        else:
+            runs.append((call.kind, 1))
+    return runs
+
+
 def test_diamond_identity_shares_one_child_node(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-001"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     order = snapshot.result()
     # The diamond: both include paths reach OrderItem 12 then OrderItem 11 (id
@@ -166,13 +238,13 @@ def test_diamond_identity_shares_one_child_node(provisioner: Any) -> None:
     # distinguish one shared node from two equal ones.
     assert order.items[0] is order.items_by_ship_date[0]
     assert order.items[1] is order.items_by_ship_date[1]
-    assert snapshot.execution.round_trips == 3
+    assert db.round_trips == [3]
 
 
 def test_back_reference_cycle_resolves_to_the_root(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-011"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     order = snapshot.result()
     # The typed lane merges every projection of one row onto one node, so the
@@ -180,13 +252,13 @@ def test_back_reference_cycle_resolves_to_the_root(provisioner: Any) -> None:
     # in-memory cycle the wire lane unwinds finitely into a value tree.
     assert order.items[0].order is order
     assert order.items[1].order is order
-    assert snapshot.execution.round_trips == 2
+    assert db.round_trips == [2]
 
 
 def test_closed_world_unloaded_access_raises_without_sql(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-009"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     order = snapshot.result()
     assert is_view_loaded(order, Order.statuses) is False
@@ -195,32 +267,32 @@ def test_closed_world_unloaded_access_raises_without_sql(provisioner: Any) -> No
     # The access issues no SQL of its own: the materializing find is the only
     # round trip on record (m-snapshot-read-009 is this suite's official grader
     # for the closed-world absence witness, `lane: api-conformance`).
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def test_empty_root_materializes_no_children(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-004"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     assert snapshot.results() == []
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def test_empty_intermediate_level_short_circuits(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-005"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     order = snapshot.result()
     assert order.items == ()
-    assert snapshot.execution.round_trips == 2
+    assert db.round_trips == [2]
 
 
 def test_pinned_graph_at_a_past_valid_time_instant(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-navigate-013"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     policy = next(p for p in snapshot.results() if p.id == 1)
     coverage = policy.coverages[0]
@@ -236,7 +308,7 @@ def test_pinned_graph_at_a_past_valid_time_instant(provisioner: Any) -> None:
 def test_mutation_has_no_writeback(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-010"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     mutated, reread = story.run(db)
     assert mutated.name == "Mutant"  # the in-memory copy sees the edit
     assert reread.result().name == "Ada"  # the re-read never observes it
@@ -245,7 +317,7 @@ def test_mutation_has_no_writeback(provisioner: Any) -> None:
 def test_an_edited_copy_keeps_its_source_nodes_views(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-015"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot, edited = story.run(db)
     order = snapshot.result()
     assert (edited.name, order.name) == ("Mutant", "Ada")
@@ -256,13 +328,13 @@ def test_an_edited_copy_keeps_its_source_nodes_views(provisioner: Any) -> None:
         edited.statuses  # noqa: B018 - the access itself is the assertion
     # Neither the derivation nor the access issues SQL: the materializing find is
     # still the only round trip on record.
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def test_an_edit_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-016"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot, edited = story.run(db)
     order = snapshot.result()
     assert (edited.name, order.name) == ("Mutant", "Ada")
@@ -275,13 +347,13 @@ def test_an_edit_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     assert edited.items[1] is order.items[1]
     # Neither the derivation nor the access issues SQL: the materializing find's
     # own two levels are still the only round trips on record.
-    assert snapshot.execution.round_trips == 2
+    assert db.round_trips == [2]
 
 
 def test_a_write_keeps_a_loaded_to_one_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-017"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot, loaded_order, reread = story.run(db)
     item = snapshot.result()
     # What only this lane can show: the write replaced no node — the view still
@@ -291,7 +363,9 @@ def test_a_write_keeps_a_loaded_to_one_view(provisioner: Any) -> None:
     # observable, which is what the re-read is for.
     assert item.order is loaded_order
     assert (loaded_order.name, reread.name) == ("Ada", "Rewritten")
-    assert snapshot.execution.round_trips == 2
+    # The story's own first operation: the materializing read the surviving view
+    # hangs off, before the write and the re-read that follow it.
+    assert db.round_trips[0] == 2
 
 
 def _committed_item_ids(db: Database, order_id: int) -> list[int]:
@@ -309,7 +383,7 @@ def _committed_item_ids(db: Database, order_id: int) -> list[int]:
 def test_a_write_keeps_a_loaded_empty_relationship_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-018"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     order = snapshot.result()
     # Loaded and EMPTY: the view answers a value rather than raising, and the
@@ -317,7 +391,7 @@ def test_a_write_keeps_a_loaded_empty_relationship_view(provisioner: Any) -> Non
     # half of the distinction m-snapshot-read-019 holds from the other side.
     assert is_view_loaded(order, Order.items) is True
     assert order.items == ()
-    assert snapshot.execution.round_trips == 2
+    assert db.round_trips[0] == 2
     # The write is load-bearing: order 3 really owns item 31 now, so the empty
     # tuple above is a value only the surviving view can answer.
     assert _committed_item_ids(db, 3) == [31]
@@ -326,7 +400,7 @@ def test_a_write_keeps_a_loaded_empty_relationship_view(provisioner: Any) -> Non
 def test_a_write_keeps_an_unloaded_relationship_absent(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-019"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     order = snapshot.result()
     # Unloaded, not empty — the same fixture row, relationship and write as
@@ -338,7 +412,7 @@ def test_a_write_keeps_an_unloaded_relationship_absent(provisioner: Any) -> None
         order.items  # noqa: B018 - the access itself is the assertion
     # The access issues no SQL of its own, the write's own unit of work aside:
     # the materializing find is the only round trip this snapshot ever cost.
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips[0] == 1
     # This case's lane has no corpus executor at all, so the write it composes
     # across is proven here or nowhere: order 3 really owns item 31, and the
     # relationship stayed absent across a write that genuinely landed on it.
@@ -431,15 +505,15 @@ def _assert_find_step_rows(case_id: str, index: int, snapshot: Any) -> None:
     )
 
 
-def _assert_composition_units(case_id: str, *units: Any) -> None:
+def _assert_composition_units(case_id: str, db: _CountingDatabase) -> None:
     """A composition story's units of work each cost the round trips the scenario
     step they mirror authors, and together the case's own ``then.roundTrips``.
 
-    ``units`` are the story's own ``Snapshot`` and ``TransactionResult`` values
-    in AUTHORED order, one per scenario step that touches the database — every
-    find and every write, which is the same partition the case's own steps draw.
-    A zero-round-trip `access` rides on the counter of the find its `on` names,
-    so its declared cost is added there rather than counted on its own: a
+    ``db.round_trips`` holds the story's own ``find`` and ``transact`` calls in
+    AUTHORED order, one per scenario step that touches the database — every find
+    and every write, which is the same partition the case's own steps draw. A
+    zero-round-trip `access` rides on the counter of the find its `on` names, so
+    its declared cost is added there rather than counted on its own: a
     re-fetching access breaks that find's equality.
 
     Per step and in total, because the aggregate alone admits compensating
@@ -457,16 +531,15 @@ def _assert_composition_units(case_id: str, *units: Any) -> None:
         for index, step in enumerate(steps)
         if "write" in step or "objectQuery" in step
     ]
-    observed = [unit.execution.round_trips for unit in units]
-    assert observed == expected, case_id
-    assert sum(observed) == case_document(_CASES[case_id])["then"]["roundTrips"], case_id
+    assert db.round_trips == expected, case_id
+    assert sum(db.round_trips) == case_document(_CASES[case_id])["then"]["roundTrips"], case_id
 
 
 def test_a_delete_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-020"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
-    snapshot, loaded_items, committed, reread = story.run(db)
+    db = _counting_connect(provisioner.port, meta)
+    snapshot, loaded_items, _committed, reread = story.run(db)
     _assert_find_step_rows(story.case_id, 0, snapshot)
     _assert_surviving_view(story.case_id, "OrderItem", loaded_items)
     # The multiset comparison above cannot see order; the relationship declares
@@ -479,7 +552,7 @@ def test_a_delete_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     # The delete is load-bearing: item 11 is gone from the database, so the node
     # the view still answers denotes a row no read can reach.
     _assert_find_step_rows(story.case_id, 1, reread)
-    _assert_composition_units(story.case_id, snapshot, committed, reread)
+    _assert_composition_units(story.case_id, db)
 
 
 def test_a_rectangle_split_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
@@ -488,8 +561,8 @@ def test_a_rectangle_split_keeps_a_loaded_relationship_view(provisioner: Any) ->
     # The case's own `at:` instant, so the rectangles the split chains open where
     # the case says they do and its read-back rows are gradable at all.
     clock = story.clock() if story.clock is not None else None
-    db = connect(provisioner.port, meta, clock=clock)
-    snapshot, loaded_coverages, committed, reread = story.run(db)
+    db = _counting_connect(provisioner.port, meta, clock=clock)
+    snapshot, loaded_coverages, _committed, reread = story.run(db)
     _assert_find_step_rows(story.case_id, 0, snapshot)
     _assert_surviving_view(story.case_id, "Coverage", loaded_coverages)
     assert snapshot.result().coverages[0] is loaded_coverages[0]
@@ -497,13 +570,13 @@ def test_a_rectangle_split_keeps_a_loaded_relationship_view(provisioner: Any) ->
     # chained, so the two disagree by construction — which is what a bitemporal
     # store is for.
     _assert_find_step_rows(story.case_id, 1, reread)
-    _assert_composition_units(story.case_id, snapshot, committed, reread)
+    _assert_composition_units(story.case_id, db)
 
 
 def test_an_edit_chain_keeps_a_loaded_relationship_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-022"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot, renamed, restated = story.run(db)
     order = snapshot.result()
     _assert_find_step_rows(story.case_id, 0, snapshot)
@@ -518,14 +591,14 @@ def test_an_edit_chain_keeps_a_loaded_relationship_view(provisioner: Any) -> Non
     assert (order.name, renamed.name, restated.name) == ("Ada", "Mutant", "Mutant")
     assert [copy.items[0] is order.items[0] for copy in (renamed, restated)] == [True, True]
     assert [copy.items[1] is order.items[1] for copy in (renamed, restated)] == [True, True]
-    _assert_composition_units(story.case_id, snapshot)
+    _assert_composition_units(story.case_id, db)
 
 
 def test_a_write_keeps_a_loaded_value_object_document(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-023"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
-    snapshot, loaded_customer, committed, reread = story.run(db)
+    db = _counting_connect(provisioner.port, meta)
+    snapshot, loaded_customer, _committed, reread = story.run(db)
     _assert_find_step_rows(story.case_id, 0, snapshot)
     _assert_surviving_view(story.case_id, "Customer", [loaded_customer])
     # The comparator above already grades `phones` POSITIONALLY (a
@@ -543,14 +616,14 @@ def test_a_write_keeps_a_loaded_value_object_document(provisioner: Any) -> None:
     # The re-read is where the write IS observable, and it disagrees with the
     # surviving view on both the changed leaf and the element order.
     _assert_find_step_rows(story.case_id, 1, reread)
-    _assert_composition_units(story.case_id, snapshot, committed, reread)
+    _assert_composition_units(story.case_id, db)
 
 
 def test_a_write_keeps_a_view_over_freshly_inserted_rows(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-024"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
-    created, snapshot, loaded_items, committed, reread = story.run(db)
+    db = _counting_connect(provisioner.port, meta)
+    _created, snapshot, loaded_items, _committed, reread = story.run(db)
     _assert_find_step_rows(story.case_id, 0, snapshot)
     _assert_surviving_view(story.case_id, "OrderItem", loaded_items)
     # What only this lane can show: it is the SAME object, not an equal-valued
@@ -560,13 +633,13 @@ def test_a_write_keeps_a_view_over_freshly_inserted_rows(provisioner: Any) -> No
     # rewritten sku in the database, so `C-610` is a value only the surviving
     # view can produce — and the insert before it is what put the row there.
     _assert_find_step_rows(story.case_id, 1, reread)
-    _assert_composition_units(story.case_id, created, snapshot, committed, reread)
+    _assert_composition_units(story.case_id, db)
 
 
 def test_a_multi_hop_access_drops_its_null_branches(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-026"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_find_step_rows(story.case_id, 0, snapshot)
     order = snapshot.result()
@@ -587,15 +660,14 @@ def test_a_multi_hop_access_drops_its_null_branches(provisioner: Any) -> None:
         True,
         True,
     ]
-    _assert_composition_units(story.case_id, snapshot)
+    _assert_composition_units(story.case_id, db)
 
 
 def test_a_grouped_read_observes_its_own_relationship_writes(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-unit-work-029"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
-    committed = story.run(db)
-    before, after = committed.value
+    db = _counting_connect(provisioner.port, meta)
+    before, after = story.run(db)
     # Both finds, against the graph each of them authors: step 0's two fixture
     # items and step 2's three, with the group's own insert and update in them.
     _assert_read_step_graph(story.case_id, 0, "Order", "items", before)
@@ -608,18 +680,19 @@ def test_a_grouped_read_observes_its_own_relationship_writes(provisioner: Any) -
     assert [item.id for item in after.result().items] == [13, 12, 11]
     assert after.result().items[2] is not before.result().items[1]
     assert before.result().items[1].sku == "A-100"
-    # Per step and in total: two levels for each find, two statements for the
-    # write, and no resolving read for it — the group's own find already
-    # published the row its update settles against.
+    # In total, and step by step. The group's own steps run inside ONE
+    # transaction, so what separates them at the wire is which port method ran
+    # each statement: two reads for the first find, two writes for the group's
+    # own insert and update, two reads for the dependent find — no resolving
+    # read for the write, because the group's own find already published the row
+    # its update settles against.
     steps = _scenario_steps(story.case_id)
-    assert [before.execution.round_trips, after.execution.round_trips] == [
-        steps[0]["roundTrips"],
-        steps[2]["roundTrips"],
+    assert db.round_trips == [case_document(_CASES[story.case_id])["then"]["roundTrips"]]
+    assert _kind_runs(db) == [
+        ("read", steps[0]["roundTrips"]),
+        ("write", steps[1]["roundTrips"]),
+        ("read", steps[2]["roundTrips"]),
     ]
-    assert (
-        committed.execution.round_trips
-        == case_document(_CASES[story.case_id])["then"]["roundTrips"]
-    )
     # The group really committed: a fresh read outside it observes what the
     # dependent find observed inside it.
     assert _committed_item_ids(db, 1) == [13, 12, 11]
@@ -634,7 +707,7 @@ def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) ->
     # carries its source node's pin. This runs the ordinary developer sequence —
     # pinned find, edit, keyed verb — and the pin is carried on the value.
     meta = _reset_for("m-identity-map-010", provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     before = engine.read_table_state(provisioner.port, model_of(meta), POSTGRES)
     with pytest.raises(TransactionTimePinReadOnlyError) as refused:
         a_finite_transaction_time_pinned_view_is_read_only(db)
@@ -656,7 +729,7 @@ def test_history_of_a_concrete_temporal_node_distinguishes_milestones(provisione
     # `.history(...)` milestone-set read's closed historical correction and
     # current row remain distinct identities sharing one business key.
     meta = _reset_for("m-inheritance-100", provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = history_of_a_concrete_temporal_node_distinguishes_milestones(db)
     nodes = snapshot.results()
     assert len(nodes) == 2
@@ -682,7 +755,7 @@ def test_history_of_a_concrete_temporal_node_distinguishes_milestones(provisione
 def test_one_to_one_peer_attaches_as_a_single_object(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-007"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_id = {person.id: person for person in snapshot.results()}
     assert by_id[1].passport is not None
@@ -690,13 +763,13 @@ def test_one_to_one_peer_attaches_as_a_single_object(provisioner: Any) -> None:
     assert by_id[2].passport is not None
     assert by_id[2].passport.number == "P-BBB"
     assert by_id[3].passport is None  # no passport on record -> a null peer
-    assert snapshot.execution.round_trips == 2
+    assert db.round_trips == [2]
 
 
 def test_animal_owner_reaches_root_and_narrowed_subtype_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-012"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     alice = snapshot.result()
     assert isinstance(alice, AnimalOwnerPerson)
@@ -704,13 +777,13 @@ def test_animal_owner_reaches_root_and_narrowed_subtype_view(provisioner: Any) -
     assert {pet.name for pet in alice.animals} == {"Rex", "Whiskers"}
     dogs = view(alice, AnimalOwnerPerson.pets.narrow(Dog))
     assert [dog.name for dog in cast("tuple[Any, ...]", dogs)] == ["Rex"]
-    assert snapshot.execution.round_trips == 3
+    assert db.round_trips == [3]
 
 
 def test_narrowed_pets_view_populates_per_owner(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-065"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {person.name: person for person in snapshot.results()}
     alice_dogs = view(by_name["Alice"], AnimalOwnerPerson.pets.narrow(Dog))
@@ -719,37 +792,37 @@ def test_narrowed_pets_view_populates_per_owner(provisioner: Any) -> None:
     assert [dog.name for dog in cast("tuple[Any, ...]", bob_dogs)] == ["Fido"]
     carol_dogs = view(by_name["Carol"], AnimalOwnerPerson.pets.narrow(Dog))
     assert carol_dogs == ()
-    assert snapshot.execution.round_trips == 2
+    assert db.round_trips == [2]
 
 
 def test_equivalent_narrow_spellings_dedupe_to_one_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-066"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {person.name: person for person in snapshot.results()}
     alice_view = view(by_name["Alice"], AnimalOwnerPerson.pets.narrow(Cat, Dog))
     assert {pet.name for pet in cast("tuple[Any, ...]", alice_view)} == {"Rex", "Whiskers"}
-    assert snapshot.execution.round_trips == 2
+    assert db.round_trips == [2]
 
 
 def test_distinct_narrowed_views_populate_independently(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-067"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     alice = next(person for person in snapshot.results() if person.name == "Alice")
     alice_dogs = view(alice, AnimalOwnerPerson.pets.narrow(Dog))
     alice_cats = view(alice, AnimalOwnerPerson.pets.narrow(Cat))
     assert [pet.name for pet in cast("tuple[Any, ...]", alice_dogs)] == ["Rex"]
     assert [pet.name for pet in cast("tuple[Any, ...]", alice_cats)] == ["Whiskers"]
-    assert snapshot.execution.round_trips == 3
+    assert db.round_trips == [3]
 
 
 def test_a_redundant_narrow_populates_a_view_beside_the_broad_one(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-068"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     alice = next(person for person in snapshot.results() if person.name == "Alice")
     # `view` derives its key from the AUTHORED spelling, so the story's
@@ -760,13 +833,13 @@ def test_a_redundant_narrow_populates_a_view_beside_the_broad_one(provisioner: A
     # under its own derived view key rather than merging into `pets`.
     assert sorted(pet.name for pet in alice.pets) == ["Rex", "Whiskers"]
     assert sorted(pet.name for pet in cast("tuple[Any, ...]", redundant)) == ["Rex", "Whiskers"]
-    assert snapshot.execution.round_trips == 3
+    assert db.round_trips == [3]
 
 
 def test_disjoint_root_guards_fill_one_owner_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-074"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {animal.name: animal for animal in snapshot.results()}
     # Both guards fill the ORDINARY `owner` view, so the Dog and the Cat reach
@@ -779,13 +852,13 @@ def test_disjoint_root_guards_fill_one_owner_view(provisioner: Any) -> None:
     assert is_view_loaded(by_name["Tusker"], Animal.owner) is False
     with pytest.raises(UnloadedRelationshipError, match="owner"):
         _ = by_name["Tusker"].owner
-    assert snapshot.execution.round_trips == 3
+    assert db.round_trips == [3]
 
 
 def test_a_root_guard_beside_a_broad_path_stays_its_own_hop(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-075"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {animal.name: animal for animal in snapshot.results()}
     # The subsumed guard adds a statement and nothing else: the graph is exactly
@@ -796,13 +869,13 @@ def test_a_root_guard_beside_a_broad_path_stays_its_own_hop(provisioner: Any) ->
         "Whiskers": "Alice",
         "Tusker": "Carol",
     }
-    assert snapshot.execution.round_trips == 3
+    assert db.round_trips == [3]
 
 
 def test_guarded_branches_keep_their_own_parents(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-078"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {animal.name: animal for animal in snapshot.results()}
     # Both guarded owner hops fill the ordinary `owner` view; the Cat is admitted
@@ -816,13 +889,13 @@ def test_guarded_branches_keep_their_own_parents(provisioner: Any) -> None:
     assert sorted(pet.name for pet in by_name["Rex"].owner.pets) == ["Rex", "Whiskers"]
     assert [pet.name for pet in by_name["Fido"].owner.pets] == ["Fido"]
     assert is_view_loaded(by_name["Tusker"].owner, AnimalOwnerPerson.pets) is False
-    assert snapshot.execution.round_trips == 4
+    assert db.round_trips == [4]
 
 
 def test_a_guarded_root_continues_through_a_narrowed_hop(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-076"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {animal.name: animal for animal in snapshot.results()}
     alice = by_name["Rex"].owner
@@ -837,7 +910,7 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(provisioner: Any) -> No
     # the WildBoar, whose whole branch of the path is therefore absent.
     assert by_name["Whiskers"].owner is alice
     assert is_view_loaded(by_name["Tusker"], Animal.owner) is False
-    assert snapshot.execution.round_trips == 3
+    assert db.round_trips == [3]
 
 
 def _vo_owner_row(instance: Any) -> dict[str, Any]:
@@ -866,37 +939,37 @@ def _assert_vo_owner_graph(case_id: str, snapshot: Any, entity_name: str, pk_mem
 def test_transaction_time_only_vo_owner_as_of_latest(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-value-object-028"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Supplier", "id")
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def test_transaction_time_only_vo_owner_as_of_a_past_instant(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-value-object-029"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Supplier", "id")
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def test_bitemporal_vo_owner_as_of_latest(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-value-object-030"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Branch", "id")
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def test_bitemporal_vo_owner_as_of_a_past_audit_point(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-value-object-031"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Branch", "id")
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def _assert_typed_per_variant_graph(case_id: str, snapshot: Any, entity_name: str) -> None:
@@ -918,10 +991,10 @@ def _assert_typed_per_variant_graph(case_id: str, snapshot: Any, entity_name: st
 def test_tph_abstract_root_read_materializes_typed_per_variant_instances(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-106"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_typed_per_variant_graph(story.case_id, snapshot, "Payment")
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def test_tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
@@ -929,10 +1002,10 @@ def test_tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances
 ) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-107"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_typed_per_variant_graph(story.case_id, snapshot, "Animal")
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def test_tph_or_across_branches_materializes_typed_per_variant_instances(
@@ -940,10 +1013,10 @@ def test_tph_or_across_branches_materializes_typed_per_variant_instances(
 ) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-108"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_typed_per_variant_graph(story.case_id, snapshot, "Animal")
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def test_tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
@@ -951,10 +1024,10 @@ def test_tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instance
 ) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-109"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_typed_per_variant_graph(story.case_id, snapshot, "Document")
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def _hydrated(root: Any) -> Any:
@@ -1008,10 +1081,10 @@ def test_customer_nested_predicate_story_selects_the_golden_owners(
 ) -> None:
     story = _GRAPH_STORIES_BY_ID[case_id]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_customer_predicate_rows(story.case_id, snapshot)
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 @pytest.mark.parametrize(
@@ -1024,10 +1097,10 @@ def test_customer_nested_predicate_story_selects_the_golden_owners(
 def test_customer_owner_materializes_its_composite(case_id: str, provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID[case_id]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Customer", "id")
-    assert snapshot.execution.round_trips == 1
+    assert db.round_trips == [1]
 
 
 def _assert_customer_locations_graph(case_id: str, snapshot: Any) -> None:
@@ -1051,10 +1124,10 @@ def test_customer_locations_deep_fetch_materializes_the_child_document_too(
 ) -> None:
     story = _GRAPH_STORIES_BY_ID["m-deep-fetch-018"]
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    db = _counting_connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_customer_locations_graph(story.case_id, snapshot)
-    assert snapshot.execution.round_trips == 2
+    assert db.round_trips == [2]
 
 
 def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
@@ -1151,9 +1224,7 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, provision
     port = _StatementCapturePort(provisioner.port)
     db = connect(port, meta)
     if story.concurrency is not None:
-        snapshot = db.transact(
-            lambda tx: tx.find(story.build()), concurrency=story.concurrency
-        ).value
+        snapshot = db.transact(lambda tx: tx.find(story.build()), concurrency=story.concurrency)
     else:
         snapshot = db.find(story.build())
     then = cast("dict[str, Any]", case_document(_CASES[story.case_id])["then"])
@@ -1165,7 +1236,7 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, provision
     compare_rows(observed_rows, expected_rows)
     expected_round_trips = then.get("roundTrips")
     if expected_round_trips is not None:
-        assert snapshot.execution.round_trips == expected_round_trips, story.case_id
+        assert len(port.statements) == expected_round_trips, story.case_id
 
     # Grade the statements this story's find actually executed against the
     # case's authored Postgres golden

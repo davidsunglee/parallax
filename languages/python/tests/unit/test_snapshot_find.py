@@ -28,12 +28,10 @@ from parallax.core import LATEST, TX_TIME, Attr, DomainModel, Entity, ValueObjec
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution_log import DatabaseCall, ReadCompleted, ReadTrace
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
-from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin, TemporalReadError
 from parallax.snapshot import (
     DeferredFeatureError,
@@ -160,7 +158,7 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
         }
     )
     result = handle.find(query, ORDERS, POSTGRES, port)
-    assert result.execution.round_trips == 2
+    assert len(port.executed) == 2
     items = _refs(_view(result.graph, _root(result), "items"))
     assert [_value(result.graph, ref, "OrderItem", "id") for ref in items] == [11]
 
@@ -175,7 +173,7 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
         }
     )
     result = handle.find(query, ORDERS, POSTGRES, port)
-    assert result.execution.round_trips == 1
+    assert len(port.executed) == 1
     assert result.graph.roots == ()
     assert len(port.executed) == 1
 
@@ -214,7 +212,7 @@ def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement(
         }
     )
     result = handle.find(query, ORDERS, POSTGRES, port)
-    assert result.execution.round_trips == 2
+    assert len(port.executed) == 2
     assert _view(result.graph, _root(result), "items") == ()
 
 
@@ -243,7 +241,7 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
         }
     )
     result = handle.find(query, ORDERS, POSTGRES, port)
-    assert result.execution.round_trips == 2  # the back-reference costs nothing
+    assert len(port.executed) == 2  # the back-reference costs nothing
     (item,) = _refs(_view(result.graph, _root(result), "items"))
     back = _view(result.graph, result.graph.nodes[item.node_index], "order")
     assert back == result.graph.roots[0]
@@ -380,7 +378,7 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
         }
     )
     result = handle.find_history(query, INVOICE, POSTGRES, port)
-    assert result.execution.round_trips == 1
+    assert len(port.executed) == 1
     assert [g.pin.tx_time for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 4, 1, tzinfo=_UTC),
@@ -774,13 +772,8 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing() -> 
 # Snapshot[T]'s own arity accessors, over roots this executor's result surface  #
 # publishes.                                                                   #
 # --------------------------------------------------------------------------- #
-_ONE_CALL = ReadTrace(
-    (DatabaseCall(LoweredStatement("select 1", ()), "read", 1, ReadCompleted(1)),)
-)
-
-
 def _snapshot(roots: tuple[object, ...]) -> handle.Snapshot[object]:
-    return handle.Snapshot(roots, Pin(), _ONE_CALL)
+    return handle.Snapshot(roots, Pin())
 
 
 def test_result_raises_on_zero_and_on_more_than_one() -> None:
@@ -910,7 +903,6 @@ def test_the_checked_view_returns_the_union_in_band_over_the_same_storage() -> N
     assert checked.results() == [record, "valid"]
     assert checked.results() is not checked.results()
     assert checked.pin is snapshot.pin
-    assert checked.execution is snapshot.execution
     assert "CheckedSnapshot(roots=2" in repr(checked)
     # Same storage, so a second view is another window on one result rather than
     # another copy of it.
@@ -928,11 +920,10 @@ def test_the_checked_view_keeps_the_same_arity_rule_and_refuses_nothing_else() -
         _snapshot((record, "valid")).checked().result()
 
 
-def test_snapshot_pin_and_execution_and_repr() -> None:
+def test_snapshot_pin_and_repr() -> None:
     pin = Pin(tx_time=dt.datetime(2024, 1, 1, tzinfo=_UTC))
-    snapshot = handle.Snapshot((1,), pin, _ONE_CALL)
+    snapshot = handle.Snapshot((1,), pin)
     assert snapshot.pin is pin
-    assert snapshot.execution.round_trips == 1
     assert "Snapshot(roots=1" in repr(snapshot)
 
 
@@ -964,7 +955,7 @@ def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> N
         }
     )
     result = handle.find(query, ANIMAL, POSTGRES, port)
-    assert result.execution.round_trips == 1
+    assert len(port.executed) == 1
     assert _view(result.graph, _root(result), "owner") is None
 
 

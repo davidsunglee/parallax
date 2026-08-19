@@ -100,7 +100,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.unit_work import Clock
-from parallax.snapshot.handle import Database, Snapshot, Transaction, TransactionResult
+from parallax.snapshot.handle import Database, Snapshot, Transaction
 
 __all__ = ["GRAPH_STORIES", "GraphStory", "graph_story_snippet"]
 
@@ -206,7 +206,7 @@ def a_write_keeps_an_unloaded_relationship_absent(db: Database) -> Snapshot[Any]
 
 def a_delete_keeps_a_loaded_relationship_view(
     db: Database,
-) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     loaded_items = snapshot.result().items
 
@@ -230,7 +230,7 @@ def an_edit_chain_keeps_a_loaded_relationship_view(
 
 def a_write_keeps_a_loaded_value_object_document(
     db: Database,
-) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     snapshot = db.find(Location.where(Location.id == 100).include(Location.customer))
     loaded_customer = snapshot.result().customer
 
@@ -259,7 +259,7 @@ def a_write_keeps_a_loaded_value_object_document(
 
 def a_write_keeps_a_view_over_freshly_inserted_rows(
     db: Database,
-) -> tuple[TransactionResult[None], Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+) -> tuple[None, Snapshot[Any], Any, None, Snapshot[Any]]:
     def create(tx: Transaction) -> None:
         tx.insert(
             Order(
@@ -289,7 +289,7 @@ def a_write_keeps_a_view_over_freshly_inserted_rows(
 
 def a_grouped_read_observes_its_own_relationship_writes(
     db: Database,
-) -> TransactionResult[tuple[Snapshot[Any], Snapshot[Any]]]:
+) -> tuple[Snapshot[Any], Snapshot[Any]]:
     def read_your_own_writes(tx: Transaction) -> tuple[Snapshot[Any], Snapshot[Any]]:
         before = tx.find(Order.where(Order.id == 1).include(Order.items))
         loaded_item = before.result().items[1]  # item 11, by the declared `id desc`
@@ -307,7 +307,7 @@ def a_multi_hop_access_drops_its_null_branches(db: Database) -> Snapshot[Any]:
 
 def a_rectangle_split_keeps_a_loaded_relationship_view(
     db: Database,
-) -> tuple[Snapshot[Any], Any, TransactionResult[None], Snapshot[Any]]:
+) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     pin = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
     snapshot = db.find(
         Policy.where(Policy.id == 2).as_of(valid_time=pin, tx_time=LATEST).include(Policy.coverages)

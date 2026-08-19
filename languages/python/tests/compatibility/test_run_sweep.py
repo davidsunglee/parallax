@@ -24,7 +24,6 @@ from _support.corpus import (
     case_document,
     case_fixtures,
     compare_binds,
-    compare_execution,
     compare_graph,
     compare_rows,
     compare_stored_data_issues,
@@ -147,22 +146,6 @@ def _read_golden_statements(case: case_format.Case) -> list[tuple[str, list[Any]
     return out
 
 
-def _grade_execution(case: case_format.Case, then: dict[str, Any], envelope: Any) -> None:
-    """Grade the run's `execution` observation against the case's own oracle.
-
-    A case authoring `then.execution` claims what its run's Read Trace or
-    Execution Log holds (`m-execution-log`); an adapter claiming the module MUST
-    answer it with the provenance ITS OWN execution produced, so the absence of
-    the observation is a failure rather than a silent pass.
-    """
-    expected = then.get("execution")
-    if expected is None:
-        return
-    observed = envelope["observations"].get("execution")
-    assert observed is not None, (case.case_id, "the case authors then.execution")
-    compare_execution(observed, cast("dict[str, Any]", expected))
-
-
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
 def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     model = engine.load_case_metamodel(case)
@@ -201,7 +184,6 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
     observations = envelope["observations"]
     assert observations["roundTrips"] == then.get("roundTrips", 1), case.case_id
-    _grade_execution(case, cast("dict[str, Any]", then), envelope)
 
     if "rows" in then:
         compare_rows(observations["rows"], then["rows"])
@@ -567,7 +549,6 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         # only reconciles against in Decimal space, not by bare wire equality.
         compare_binds(emission["binds"], golden_binds)
     assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
-    _grade_execution(case, cast("dict[str, Any]", case_document(case)["then"]), envelope)
 
     if case.shape == "scenario":
         schedule = _scenario_read_schedule(case, model)
@@ -897,8 +878,6 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     # planned but not executed.
     if "roundTrips" in then:
         assert observations["roundTrips"] == then["roundTrips"], case.case_id
-
-    _grade_execution(case, then, envelope)
 
     if "tableState" in then:
         expected_state = cast("dict[str, list[dict[str, Any]]]", then["tableState"])

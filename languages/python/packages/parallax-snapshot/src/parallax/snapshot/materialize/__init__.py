@@ -38,7 +38,7 @@ each row's resolved concrete Entity are `m-sql`-owned, carried by the compiled
 read itself and handed here as a level's own context, so this scope only ever
 sees rows whose keys are already the projected physical ones. That is a
 structural fact rather than a habit: `m-snapshot-read`'s own edge to
-`m-execution-log` — which reaches `m-sql` — belongs to the separate
+`m-execution-lifecycle` — which reaches `m-sql` — belongs to the separate
 :mod:`~parallax.snapshot._read_result` scope, so no grant of this one reaches
 SQL generation.
 """
