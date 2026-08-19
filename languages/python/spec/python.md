@@ -2979,10 +2979,13 @@ to 8 KiB of message and 64 KiB of chained stack without locals, and carries
 qualified type, optional safely readable string code, and truncation flags.
 Database failures add the existing Category and native code without
 reclassification. `DirectFailure` and `CausedFailure` make causal attribution
-explicit and enclosing failure events share the same diagnostic object. A
+explicit, and a failure with a diagnostic already rendered for its value — its
+own attribution's, or the one its parent holds for a higher-numbered child —
+reports that same object. A
 failure is the exception value, compared by `is`, so one object raised more than
 once is one failure with one attribution; an activity holds exactly one
-attribution and reports `DirectFailure` for a value it no longer holds.
+attribution, naming one direct child, and reports `DirectFailure` for a value it
+does not hold when it fails.
 
 The database port's transaction callback returns one internal closed value:
 `Committed[T]`, `BeginFailed`, `RolledBack[CallbackRaised | CommitFailed]`, or

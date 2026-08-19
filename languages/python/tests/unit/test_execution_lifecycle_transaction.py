@@ -640,8 +640,9 @@ def test_a_join_the_failure_only_unwound_through_does_not_displace_the_read() ->
     joined = root.events[7]
     assert isinstance(joined, TransactionInvocationFinished)
     assert isinstance(joined.outcome, JoinedInvocationRaised)
-    # The join has no descendant of its own to name, so its own failure is
-    # direct — but it renders nothing, reusing the diagnostic already made.
+    # The join has no child of its own to name — the read it encloses is its
+    # sibling — so its own failure is direct, but it renders nothing, reusing
+    # the diagnostic already made.
     assert isinstance(joined.outcome.failure, DirectFailure)
     assert joined.outcome.failure.diagnostic is read_failure.diagnostic
     (rolled_back,) = _attempt_outcomes(root)
@@ -720,7 +721,7 @@ def test_a_failure_caught_and_re_raised_still_names_the_read_it_came_from() -> N
     # A failure is the exception VALUE, so catching one, doing further work, and
     # re-raising it reports the Read the value came from rather than the callback
     # that performed the raise. This is the ordinary catch / clean up / re-raise
-    # shape, and naming the descendant is what makes the chain worth walking.
+    # shape, and naming the child is what makes the chain worth walking.
     recorder = RecordingLifecycleProvider()
     port = RecordingPort(rows=[NEW_ROW])
     port.read_faults = [deadlock()]
@@ -829,6 +830,58 @@ def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:
     assert rolled_back.failure.phase == "CALLBACK"
     assert isinstance(rolled_back.failure.failure, DirectFailure)
     assert "the stashed failure" in rolled_back.failure.failure.diagnostic.message
+
+
+def test_a_join_re_raising_an_evicted_value_names_itself_rather_than_the_read() -> None:
+    # Eviction decides which child a re-raise can name AT ALL, which is what
+    # keeps the highest-ID rule from reaching back into history. The join
+    # encloses two reads: the first fails with the value the join goes on to
+    # re-raise, the second fails with a DIFFERENT one that takes the attempt's
+    # slot. The first read's higher ID therefore stops being a candidate, and
+    # the attempt names the join — the lower-numbered scope, because it is the
+    # one that reported the value after the eviction. The join renders the
+    # exception itself for the same reason: the attribution that would have lent
+    # it the read's diagnostic is gone.
+    recorder = RecordingLifecycleProvider()
+    port = RecordingPort(rows=[NEW_ROW])
+    port.read_faults = [
+        DatabaseError(category="deadlock", native_code="40P01", message="the re-raised failure"),
+        DatabaseError(category="deadlock", native_code="40P01", message="the evicting failure"),
+    ]
+    db = _db(port, recorder)
+
+    def inner(tx: Transaction) -> None:
+        with pytest.raises(DatabaseError) as first:
+            tx.find(mm.Account.where(mm.Account.id == 7)).result()
+        with suppress(DatabaseError):
+            tx.find(mm.Account.where(mm.Account.id == 8)).result()
+        raise first.value
+
+    with pytest.raises(DatabaseError, match="the re-raised failure"):
+        db.transact(lambda _outer: db.transact(inner), retries=0)
+
+    root = _only(recorder)
+    joined = next(
+        event
+        for event in root.events
+        if isinstance(event, TransactionInvocationFinished)
+        and isinstance(event.outcome, JoinedInvocationRaised)
+    )
+    assert isinstance(joined.outcome, JoinedInvocationRaised)
+    re_raised_read, _evicting_read = (
+        event for event in root.events if isinstance(event, ReadFinished)
+    )
+    assert joined.activity_id < re_raised_read.activity_id
+    assert isinstance(re_raised_read.outcome, ReadFailed)
+    assert isinstance(joined.outcome.failure, DirectFailure)
+    assert joined.outcome.failure.diagnostic is not re_raised_read.outcome.failure.diagnostic
+    assert "the re-raised failure" in joined.outcome.failure.diagnostic.message
+    (rolled_back,) = _attempt_outcomes(root)
+    assert isinstance(rolled_back, AttemptRolledBack)
+    caused = rolled_back.failure.failure
+    assert isinstance(caused, CausedFailure)
+    assert caused.cause_activity_id == joined.activity_id
+    assert caused.diagnostic is joined.outcome.failure.diagnostic
 
 
 # --------------------------------------------------------------------------- #

@@ -111,47 +111,67 @@ Truncation preserves code-point boundaries. Extracting or formatting a field
 MUST NOT replace the original execution error, even when that extraction raises
 a control-flow or fatal exception. The diagnostic retains no exception,
 traceback graph, cause object, local, transaction state, statement, or bind.
-Enclosing failures reuse the same immutable diagnostic object rather than
-copying its bounded strings.
+Because the projection is detached and immutable, a failure reports a
+diagnostic already rendered for its own value rather than copying its bounded
+strings: the one the activity's attribution carries, or — for an activity
+holding no attribution for that value — the one its parent holds for it when
+that attribution names a child with a HIGHER Activity ID, which is exactly a
+child that started inside this activity and unwound out through it. An activity
+with neither renders its own.
 
 An **Activity Failure** is exactly one of:
 
-- `DirectFailure(diagnostic)` — no already-finished descendant is attributed
-  this failure, so it is the activity's own;
-- `CausedFailure(diagnostic, causeActivityId)` — one is, and `causeActivityId`
-  names it.
+- `DirectFailure(diagnostic)` — the activity holds no attribution for this
+  failure, so it is the activity's own;
+- `CausedFailure(diagnostic, causeActivityId)` — it holds one, and
+  `causeActivityId` is the child that attribution names.
 
 The two arms are one rule over one input, because a **failure is an exception
 value**: the same value is the same failure wherever it surfaces, however many
-times it is raised. A descendant is attributed a value by reporting that value
-as its own failure, or by an explicit enforcement relation naming it for a value
-the enforcement raised — never by temporal proximity. A completed zero-row
-write call may therefore cause a Write Batch failure even though the call itself
-completed successfully.
+times it is raised. An activity holds at most one **attribution**, pairing one
+value with one of its own DIRECT children — an activity whose `parentActivityId`
+is this one's. A direct child reports a value to its parent by finishing failed
+with it, and an explicit enforcement relation reports an already-finished child
+for the value the enforcement itself raised — never temporal proximity. A
+completed zero-row write call may therefore cause a Write Batch failure even
+though the call itself completed successfully.
 
-Three rules fix the answer for every implementation:
+Three rules fix the answer for every implementation. Each speaks only of the
+attribution an activity holds at the moment it is asked; a value it does not
+hold then takes no part in any of them, however recently it was held.
 
-- An activity failing with a value attributed to one of its finished descendants
-  reports Caused, whether that value unwound out of the descendant continuously
-  or a handler in between caught it and raised it again. A caller that catches a
-  descendant's failure, does further work, and re-raises it therefore still
-  reports the descendant the value came from.
-- Where one value is attributed to several finished descendants,
-  `causeActivityId` is the HIGHEST of their Activity IDs. Among children of one
-  parent, a child reporting later but started earlier can only be a scope the
-  value unwound out through, so the higher ID is the more specific descendant.
-- An activity retains the attribution of exactly ONE value, the one most
-  recently reported to it. A report naming a different value replaces it
-  outright; a second report of the retained value replaces only the descendant
-  named, and only when the new report's Activity ID is higher. A value an
-  activity no longer retains is a Direct Failure. One slot rather than a map is
-  what keeps live memory independent of failures already completed.
+- **Holding.** A report of a value other than the one held replaces the
+  attribution outright, dropping the value and the child it paired. A report of
+  the value already held replaces only the child named, and only when the new
+  report's Activity ID is HIGHER. So where several direct children report one
+  value with no report of a different value in between, `causeActivityId` is
+  the HIGHEST of their Activity IDs: among children of one parent, a child
+  reporting later but started earlier can only be a scope the value unwound out
+  through, so the higher ID is the more specific child. A report of a different
+  value ends that run of reports — the children that reported before it stop
+  being candidates, and the next report of the dropped value starts a fresh run
+  that can only name a child reporting from then on. One slot rather than a map
+  is what keeps live memory independent of failures already completed.
+- **Answering.** An activity failing with a value reports `CausedFailure` naming
+  the child of the attribution it holds for that value, and `DirectFailure`
+  otherwise. Whether the value unwound out of that child continuously or a
+  handler in between caught it and raised it again makes no difference: a caller
+  that catches a child's failure, does further work, and re-raises it still
+  reports that child, so long as no different value was reported in between.
+- **Chaining.** An activity that finishes failed reports the value of its own
+  Activity Failure to its parent under its own Activity ID, whichever arm it
+  answered with. Each level therefore names its direct child rather than the
+  deepest activity beneath it, and a consumer walks a cause one link at a time.
 
-Identifying a failure by value gives up the OCCURRENCE: an activity that
-re-raises a value its own finished descendant produced reports Caused rather
-than Direct, naming that descendant. Telling occurrences apart would require
-observing every raise and every handler, which this module's cost bound refuses,
-and would take the cause away from the ordinary catch-and-re-raise too.
+Identifying a failure by value gives up the OCCURRENCE: while an activity holds
+a value's attribution, failing with that value reports Caused naming the child
+held, even when the raise is the activity's own and the child's occurrence was
+handled long before. Telling occurrences apart would require observing every
+raise and every handler, which this module's cost bound refuses, and would take
+the cause away from the ordinary catch-and-re-raise too. Holding one attribution
+gives up the converse case: a value stashed past a different child's failure
+reports Direct when it is finally raised, because that different value evicted
+the attribution that would have named its child.
 
 A failed Database Call carries a **Database Failure Diagnostic** containing its
 Failure Diagnostic plus the existing `m-db-error` Category or `None` and native
