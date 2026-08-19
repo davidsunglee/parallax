@@ -912,7 +912,7 @@ def execute_read(
     """
     statement = compiled.statement
     document_reads = compiled.document_reads
-    with read.database_call(statement, "READ", compiled.target.canonical) as call:
+    with read.database_call(statement, "READ", compiled.target) as call:
         driver_sql = dialect.to_driver_sql(statement.sql)
         binds = list(statement.binds)
         rows = (

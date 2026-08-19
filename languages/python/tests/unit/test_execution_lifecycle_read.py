@@ -35,8 +35,10 @@ from parallax.core.execution_lifecycle import (
     ReadFinished,
     ReadStarted,
 )
+from parallax.core.execution_lifecycle._activity import open_read_root
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, QueryTargetError, SnapshotMaterializationError
@@ -315,3 +317,27 @@ def test_the_default_path_constructs_nothing_lifecycle_shaped(
         mm.Account.where(mm.Account.id == 7)
     ).result()
     assert constructed == []
+
+
+def test_the_default_path_never_spells_the_target_it_is_handed() -> None:
+    # The counting proof above sees lifecycle CLASSES; the payload an event
+    # would have carried is a string, and a namespaced Entity's canonical
+    # spelling is built rather than stored. Passing the identity and reading it
+    # only where a Handler waits is what keeps the default path allocation-free
+    # in a way a class count cannot observe.
+    class _Probe:
+        reads = 0
+
+        @property
+        def canonical(self) -> str:
+            type(self).reads += 1
+            return "ledger.Account"
+
+    probe = _Probe()
+    statement = LoweredStatement("select 1", ())
+    with (
+        open_read_root(None, target=probe, interface="TYPED") as read,
+        read.database_call(statement, "READ", probe) as call,
+    ):
+        call.read_completed(0)
+    assert _Probe.reads == 0

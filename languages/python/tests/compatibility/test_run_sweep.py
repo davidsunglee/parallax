@@ -873,9 +873,9 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         assert observations["affectedRows"] == attempts[-1]["affectedRows"], case.case_id
 
     # `then.roundTrips` where the case authors it: the calls that actually
-    # reached the database, summed across every attempt (`m-execution-log`), which
-    # is a different number from the emission count whenever a statement is
-    # planned but not executed.
+    # reached the database, summed across every attempt, which is a different
+    # number from the emission count whenever a statement is planned but not
+    # executed.
     if "roundTrips" in then:
         assert observations["roundTrips"] == then["roundTrips"], case.case_id
 

@@ -582,10 +582,10 @@ def test_materializing_write_with_zero_resolved_rows_writes_nothing() -> None:
     assert not any(op[0] == "write" for op in port.ops)
 
 
-def test_a_failed_resolving_read_is_still_recorded_as_the_call_it_made() -> None:
+def test_a_failed_resolving_read_propagates_as_the_call_it_made() -> None:
     # A materializing predicate write reaches the database to resolve its
-    # predicate, so `m-execution-log` owes that round trip an account whether the
-    # call came back with rows or with a failure.
+    # predicate, and a resolve that comes back with a failure is still the call
+    # this write made: nothing reinterprets it on the way out.
     class _FailingReadPort(RecordingPort):
         def execute(
             self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()

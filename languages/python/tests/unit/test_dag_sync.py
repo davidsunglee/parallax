@@ -13,11 +13,15 @@ importer exemption), and the support-scope additions:
   fence — with a drift canary per representation, including the state in which
   two of the three are edited consistently and the third is left stale; and
 * child scopes are emitted as contract *sources*, and as forbidden *targets*
-  only in a sibling's zero-grant row, with a ``lint-imports``
+  only in a sibling's zero-grant row or — for a declared isolated child — in
+  every row that overlaps it nowhere, with a ``lint-imports``
   canary proving a child contract blocks an import its parent's row permits, and
   a second canary proving the one asymmetric child grant — the descriptor
   package's Hub-construction seam — is admitted for that child alone and stays
   forbidden to every other module its parent's row governs;
+* an isolated child scope, which a grant on its parent does NOT carry, with a
+  canary importing the testing-only lifecycle recorder into a production scope
+  the parent package is granted to;
 * a zero-grant child scope, whose emptiness IS its contract, with two canaries —
   one importing a scope from outside its own package, one importing a sibling
   child scope inside it, the half a package-scoped row can only reach by naming
@@ -530,27 +534,54 @@ def test_check_child_scopes_rejects_a_child_outside_its_parent(
         dag.check_child_scopes()
 
 
-def test_a_child_scope_is_a_forbidden_target_only_in_a_sibling_zero_grant_row() -> None:
+def test_a_child_scope_is_a_forbidden_target_only_where_it_overlaps_nothing() -> None:
     # import-linter >= 2.12 silently skips a forbidden module that overlaps the
     # contract's own source package, so a child inside its parent's row would be
     # a contract that looks present and enforces nothing — and naming a child in
-    # any unrelated scope's row would only restate the parent's own entry. The
-    # one row that does name children is a zero-grant scope's, and only its
-    # siblings, which overlap nothing.
+    # any unrelated scope's row would only restate the parent's own entry WHERE
+    # THAT ENTRY EXISTS. Two rows therefore name children: a zero-grant scope's,
+    # over its siblings, and every row whose scope is not the isolated child's
+    # own ancestor or descendant, over that child, because a grant on the parent
+    # would otherwise carry it.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     assert set(dag.CHILD_SCOPE_PARENT) <= set(forbidden)
     for scope, blocked in forbidden.items():
         children_named = set(blocked) & set(dag.CHILD_SCOPE_PARENT)
-        expected: frozenset[str] = (
-            dag.scope_siblings(scope) if not adjacency[scope] else frozenset()
-        )
+        overlapping = dag.scope_ancestors(scope) | dag.scope_descendants(scope) | {scope}
+        expected = dag.ISOLATED_CHILD_SCOPES - overlapping
+        if not adjacency[scope]:
+            expected = expected | dag.scope_siblings(scope)
         assert children_named == expected, scope
         # Whatever a row names, it never names something it overlaps.
-        assert not (children_named & (dag.scope_ancestors(scope) | dag.scope_descendants(scope)))
+        assert not (children_named & overlapping)
     # A parent still never forbids its own children.
     for parent in set(dag.CHILD_SCOPE_PARENT.values()):
         assert not (set(forbidden[parent]) & dag.scope_descendants(parent)), parent
+
+
+def test_an_isolated_child_is_forbidden_to_a_scope_granted_its_parent() -> None:
+    # The whole point of declaring one: `parallax.snapshot.handle` and
+    # `parallax.snapshot._read_result` are both granted
+    # `parallax.core.execution_lifecycle`, so the recorder inside it would ride
+    # in on that package grant if the row did not name it.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    recorder = "parallax.core.execution_lifecycle.testing"
+    for granted in ("parallax.snapshot.handle", "parallax.snapshot._read_result"):
+        assert "parallax.core.execution_lifecycle" in dag.transitive_closure(adjacency, granted)
+        assert recorder in forbidden[granted], granted
+    # Its own package is the one place a row cannot reach: naming the recorder
+    # in its parent's row would overlap that contract's source package.
+    assert recorder not in forbidden["parallax.core.execution_lifecycle"]
+
+
+def test_check_child_scopes_rejects_an_isolated_scope_that_is_not_a_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dag, "ISOLATED_CHILD_SCOPES", frozenset({"parallax.core.ghost"}))
+    with pytest.raises(ValueError, match="not declared child scopes"):
+        dag.check_child_scopes()
 
 
 def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
@@ -607,8 +638,8 @@ def test_handle_child_rows_are_narrower_than_the_parent_row() -> None:
     # `_materializer` may not reach SQL generation, the read lock, or the
     # write-policy modules; the lowering cluster may not reach the read side.
     # Neither restriction exists on the parent. SQL generation survives the
-    # `m-snapshot-read --> m-execution-log` edge only because that edge belongs to
-    # `parallax.snapshot._read_result` and not to the `parallax.snapshot
+    # `m-snapshot-read --> m-execution-lifecycle` edge only because that edge
+    # belongs to `parallax.snapshot._read_result` and not to the `parallax.snapshot
     # .materialize` grant this child holds: a closure complement has no way to
     # grant a scope and withhold what that scope reaches.
     assert "parallax.core.sql_gen" in forbidden["parallax.snapshot.handle._materializer"]
@@ -954,6 +985,36 @@ def test_a_sibling_import_in_the_refusal_leaf_fails_lint_imports() -> None:
     )
     assert (
         "parallax.snapshot.handle._errors -> parallax.snapshot.handle._write_types" in result.stdout
+    )
+
+
+# --------------------------------------------------------------------------
+# Canary 9: an isolated child is not carried by a grant on its parent package.
+# --------------------------------------------------------------------------
+def test_importing_the_lifecycle_recorder_from_production_fails_lint_imports() -> None:
+    lint_imports = shutil.which("lint-imports")
+    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+
+    # The Snapshot handle is granted `parallax.core.execution_lifecycle` and
+    # imports its private activity seam legally, so nothing about the package
+    # grant stops the recorder inside it — only the isolated-child entry does.
+    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_database.py"
+    original = target.read_text()
+    target.write_text(
+        f"{original}import parallax.core.execution_lifecycle.testing  # deliberate violation\n"
+    )
+    try:
+        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
+    finally:
+        target.write_text(original)
+
+    assert result.returncode != 0, result.stdout
+    # The report wraps a long edge across lines, so it is read unwrapped.
+    reported = " ".join(result.stdout.split())
+    assert "parallax.snapshot.handle may import only its permitted dependencies BROKEN" in reported
+    assert (
+        "parallax.snapshot.handle._database -> parallax.core.execution_lifecycle.testing"
+        in reported
     )
 
 

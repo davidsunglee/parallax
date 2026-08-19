@@ -8,10 +8,12 @@ retains the Lowered Statements a Database Call borrows. Both are deliberate: a
 suite grading a delivered event stream needs the whole stream, and a production
 observability path needs neither.
 
-It is its own enforcement scope precisely so that "not a production
-observability path" is a build failure rather than a sentence: no production
-scope is granted it, and this package is absent from
-:mod:`parallax.core.execution_lifecycle`'s re-exports.
+It is its own ISOLATED enforcement scope precisely so that "not a production
+observability path" is a build failure rather than a sentence: a grant on the
+parent package does not carry this child, so every production scope outside that
+package has it as a forbidden target rather than merely an unstated one. This
+package is also absent from :mod:`parallax.core.execution_lifecycle`'s
+re-exports.
 """
 
 from __future__ import annotations

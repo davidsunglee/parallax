@@ -921,9 +921,9 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> No
 
 
 # --------------------------------------------------------------------------- #
-# The `execution` observation (m-conformance-adapter, m-execution-log): the    #
-# adapter reports the provenance the run PRODUCED, for the cases that author   #
-# the oracle and no others.                                                    #
+# What a run does NOT report (m-conformance-adapter): execution observability  #
+# is delivered to a Provider while the work runs, so a legacy provenance case  #
+# is outside the active claim and no envelope carries a lifecycle observation. #
 # --------------------------------------------------------------------------- #
 class _AccountPort:
     """Returns the one `account.yaml` row `m-execution-log-001` reads."""

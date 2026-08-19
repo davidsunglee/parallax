@@ -55,9 +55,9 @@ class DbPort(Protocol):
     category, native code, and message are. Above the seam a failure is recognized
     by the object caught, and a caller may catch one failed call and keep going, so
     the raised object is the only thing that says which invocation is unwinding;
-    one instance raised twice makes the execution log name a sibling call. Nothing
-    above the port can detect a violation, so this holds at the raise site or
-    nowhere.
+    one instance raised twice makes an enclosing activity attribute its failure to
+    a sibling call. Nothing above the port can detect a violation, so this holds at
+    the raise site or nowhere.
 
     An exception raised by ``body`` is not the port's error: ``transaction`` lets
     it propagate unchanged and governs nothing about its identity.

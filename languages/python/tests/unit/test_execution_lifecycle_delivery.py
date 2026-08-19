@@ -16,25 +16,36 @@ argument, so what is graded here is what an application would actually see.
 from __future__ import annotations
 
 import io
+from collections.abc import Sequence
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from _transact_support import ACCOUNT, FIXED, NEW_ROW, RecordingPort, read_account
 
 from _support import mirrored_models as mm
+from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import Bind, Row
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
+    DatabaseFailureDiagnostic,
     DatabaseWriteCompleted,
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
     ExecutionLifecycleProviderError,
+    FailureDiagnostic,
     ReadStarted,
     RootExecution,
+    _activity,
 )
 from parallax.core.execution_lifecycle._activity import open_read_root
-from parallax.core.execution_lifecycle._diagnostics import diagnostic_for
+from parallax.core.execution_lifecycle._diagnostics import (
+    database_diagnostic_for,
+    diagnostic_for,
+)
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
@@ -90,6 +101,33 @@ class _FailingHandler:
         self.seen.append(event)
         if len(self.seen) == self._fail_at:
             raise self._failure
+
+
+class _NamelessMeta(type):
+    def __getattribute__(cls, name: str) -> Any:
+        if name == "__qualname__":
+            raise RuntimeError("this handler type refuses to name itself")
+        return super().__getattribute__(name)
+
+
+class _NamelessHandler(metaclass=_NamelessMeta):
+    """A Handler whose own type cannot be named, and which fails ordinarily."""
+
+    def handle(self, event: ExecutionEvent, /) -> None:
+        del event
+        raise RuntimeError("the exporter queue is full")
+
+
+class _FailingReadPort(RecordingPort):
+    """A port whose query call comes back with a classified failure."""
+
+    def execute(
+        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
+        del sql, binds, document_reads
+        raise DatabaseError(
+            category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
+        )
 
 
 class _Provider:
@@ -271,6 +309,84 @@ def test_a_base_exception_from_delivery_aborts_the_root_and_propagates_unchanged
     assert len(handler.seen) == 1
 
 
+def test_a_handler_type_that_refuses_to_name_itself_costs_only_its_name() -> None:
+    # The quarantine report names the Handler's qualified type, which is read off
+    # a type this module does not own: a metaclass may make either half of that
+    # name raise. Extracting it is contained like every other projected field, so
+    # an ordinary Handler failure still quarantines only that Handler.
+    handler = _NamelessHandler()
+    provider = _Provider(handler)
+    port = RecordingPort(rows=[NEW_ROW])
+    assert _db(port, provider).find(mm.Account.where(mm.Account.id == 7)).result() == read_account()
+    (reported,) = provider.reported
+    assert reported.handler_type == "<unavailable>"
+    assert reported.diagnostic.message == "the exporter queue is full"
+
+
+def test_cleanup_after_a_fatal_deactivation_renders_no_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # "Aborts and cleans up WITHOUT further events" is a claim about the work,
+    # not only about delivery: a scope that still built its Finished event would
+    # render a whole traceback per enclosing level for an event nobody will ever
+    # receive. The scopes ask the publisher whether it is still active first.
+    rendered: list[str] = []
+
+    def counting(exc: BaseException) -> FailureDiagnostic:
+        rendered.append(type(exc).__name__)
+        return diagnostic_for(exc)
+
+    monkeypatch.setattr(_activity, "diagnostic_for", counting)
+    interrupt = KeyboardInterrupt()
+    provider = _Provider(_FailingHandler(fail_at=2, failure=interrupt))
+    port = RecordingPort(rows=[NEW_ROW])
+    with pytest.raises(KeyboardInterrupt) as escaped:
+        _read(_db(port, provider))
+    assert escaped.value is interrupt
+    assert rendered == []
+
+
+def test_a_quarantined_root_renders_no_diagnostic_for_a_failed_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same guard under an ordinary quarantine: the Handler is gone for the
+    # rest of the root, so a failed Database Call after it neither classifies its
+    # own failure nor attributes it — while the failure itself is untouched.
+    rendered: list[str] = []
+
+    def counting(exc: BaseException) -> DatabaseFailureDiagnostic:
+        rendered.append(type(exc).__name__)
+        return database_diagnostic_for(exc)
+
+    monkeypatch.setattr(_activity, "database_diagnostic_for", counting)
+    provider = _Provider(_FailingHandler(fail_at=2, failure=RuntimeError("queue full")))
+    port = _FailingReadPort()
+    with pytest.raises(DatabaseError):
+        _read(_db(port, provider))
+    assert rendered == []
+    (reported,) = provider.reported
+    assert reported.diagnostic.message == "queue full"
+
+
+def test_a_deactivated_publisher_drops_an_event_it_is_still_handed() -> None:
+    # Containment lives in the publisher, and the activity guard above it only
+    # saves the work of building what would be dropped. Delivery is driven here
+    # directly so a future activity that forgets to ask cannot revive a root.
+    handler = _FailingHandler(fail_at=1, failure=KeyboardInterrupt())
+    provider = _Provider(handler)
+    execution = RootExecution(uuid4(), "READ")
+    publisher = _activity._Publisher(  # pyright: ignore[reportPrivateUsage] - the unit test drives the per-root publisher directly
+        execution.id, provider, handler
+    )
+    event = ReadStarted(execution.id, 1, 1, None, "Account", "TYPED")
+    with pytest.raises(KeyboardInterrupt):
+        publisher.deliver(event)
+    assert not publisher.active
+    publisher.deliver(event)
+    assert len(handler.seen) == 1
+    assert provider.reported == []
+
+
 def test_the_recorder_groups_its_roots_and_keeps_what_it_is_told() -> None:
     # The testing-only complete recorder: a suite grading a delivered stream
     # needs the whole stream, so it keeps every event of every root it accepted
@@ -304,9 +420,10 @@ def test_a_database_call_reports_a_write_count_the_same_way_it_reports_a_read() 
     # scope's write completion is driven here directly: a call announces only the
     # count its body knows, and which count that is decides the outcome.
     recorder = RecordingLifecycleProvider()
-    root = open_read_root(recorder, target="Account", interface="TYPED")
+    account = EntityIdentity(None, "Account")
+    root = open_read_root(recorder, target=account, interface="TYPED")
     statement = LoweredStatement("update account set balance = ?", (5,))
-    with root as read, read.database_call(statement, "WRITE", "Account") as call:
+    with root as read, read.database_call(statement, "WRITE", account) as call:
         call.write_completed(3)
 
     (recorded,) = recorder.roots
