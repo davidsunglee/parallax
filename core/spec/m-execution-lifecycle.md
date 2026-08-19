@@ -116,13 +116,42 @@ copying its bounded strings.
 
 An **Activity Failure** is exactly one of:
 
-- `DirectFailure(diagnostic)` — the activity itself produced the failure;
-- `CausedFailure(diagnostic, causeActivityId)` — the failure is explicitly
-  attributed to the most specific already-finished descendant.
+- `DirectFailure(diagnostic)` — no already-finished descendant is attributed
+  this failure, so it is the activity's own;
+- `CausedFailure(diagnostic, causeActivityId)` — one is, and `causeActivityId`
+  names it.
 
-Attribution follows exception identity or an explicit enforcement relation,
-never temporal proximity. A completed zero-row write call may therefore cause a
-Write Batch failure even though the call itself completed successfully.
+The two arms are one rule over one input, because a **failure is an exception
+value**: the same value is the same failure wherever it surfaces, however many
+times it is raised. A descendant is attributed a value by reporting that value
+as its own failure, or by an explicit enforcement relation naming it for a value
+the enforcement raised — never by temporal proximity. A completed zero-row
+write call may therefore cause a Write Batch failure even though the call itself
+completed successfully.
+
+Three rules fix the answer for every implementation:
+
+- An activity failing with a value attributed to one of its finished descendants
+  reports Caused, whether that value unwound out of the descendant continuously
+  or a handler in between caught it and raised it again. A caller that catches a
+  descendant's failure, does further work, and re-raises it therefore still
+  reports the descendant the value came from.
+- Where one value is attributed to several finished descendants,
+  `causeActivityId` is the HIGHEST of their Activity IDs. Among children of one
+  parent, a child reporting later but started earlier can only be a scope the
+  value unwound out through, so the higher ID is the more specific descendant.
+- An activity retains the attribution of exactly ONE value, the one most
+  recently reported to it. A report naming a different value replaces it
+  outright; a second report of the retained value replaces only the descendant
+  named, and only when the new report's Activity ID is higher. A value an
+  activity no longer retains is a Direct Failure. One slot rather than a map is
+  what keeps live memory independent of failures already completed.
+
+Identifying a failure by value gives up the OCCURRENCE: an activity that
+re-raises a value its own finished descendant produced reports Caused rather
+than Direct, naming that descendant. Telling occurrences apart would require
+observing every raise and every handler, which this module's cost bound refuses,
+and would take the cause away from the ordinary catch-and-re-raise too.
 
 A failed Database Call carries a **Database Failure Diagnostic** containing its
 Failure Diagnostic plus the existing `m-db-error` Category or `None` and native
