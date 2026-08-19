@@ -5,8 +5,8 @@ An activity is a SCOPE. Entering it emits Started, leaving it emits Finished
 however the body leaves — including under a control-flow or fatal exception no
 call site would have handled by hand — so balance is a property of the shape
 rather than a rule a reviewer checks. A caller supplies only an outcome that
-carries data it alone knows, such as a row count; the failure path is the
-scope's own business.
+carries data it alone holds, such as the rows a query call returned; the failure
+path is the scope's own business.
 
 Delivery is the publisher's job rather than the activity's, so quarantine and
 last-resort reporting are written once instead of once per activity kind, and an
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Sized
 from types import TracebackType
 from typing import Final, Protocol, runtime_checkable
 from uuid import UUID, uuid4
@@ -120,7 +121,7 @@ class ActivityTarget(Protocol):
 class DatabaseCallActivity(Protocol):
     """One attempted round trip's scope.
 
-    The completion methods are how the body reports a count only it knows.
+    The completion methods are how the body reports the outcome only it holds.
     Neither announces failure: leaving the scope under an exception is what
     finishes a failed call.
     """
@@ -135,8 +136,14 @@ class DatabaseCallActivity(Protocol):
         /,
     ) -> None: ...
 
-    def read_completed(self, returned_rows: int, /) -> None:
-        """The query call returned ``returned_rows`` physical rows."""
+    def read_completed(self, returned_rows: Sized, /) -> None:
+        """The query call returned ``returned_rows``.
+
+        The rows themselves rather than their count, for the same reason
+        :class:`ActivityTarget` is passed rather than its spelling: sizing them
+        is lifecycle work, and a count outside the interpreter's small-integer
+        cache is an object the default path would build for nobody.
+        """
         ...
 
     def write_completed(self, affected_rows: int, /) -> None:
@@ -202,19 +209,29 @@ class _InertActivity:
     """The shared do-nothing stand-in for every activity seam.
 
     One object satisfies every activity Protocol because each opener answers
-    itself and every outcome method is empty, which is what lets the default
-    path and a declined root run the same code as an observed one while
+    :data:`INERT` and every outcome method is empty, which is what lets the
+    default path and a declined root run the same code as an observed one while
     allocating nothing, reading no clock, constructing no event, and leaving
     even an event's payload unread in the values it is handed.
+
+    ``__enter__`` and ``__exit__`` are static because ``with`` reaches a special
+    method through the descriptor protocol rather than through the bound-call
+    optimization an ordinary ``obj.method(...)`` gets: an instance method would
+    therefore have the interpreter materialize a method object at every entry,
+    which is exactly the per-scope allocation the default path may not make. A
+    ``staticmethod`` descriptor answers the underlying function itself. Being
+    static is why they answer the singleton rather than ``self``, which is exact
+    because this class exists solely to have :data:`INERT` as its one instance.
     """
 
     __slots__ = ()
 
-    def __enter__(self) -> _InertActivity:
-        return self
+    @staticmethod
+    def __enter__() -> _InertActivity:
+        return INERT
 
+    @staticmethod
     def __exit__(
-        self,
         _exc_type: type[BaseException] | None,
         exc: BaseException | None,
         _traceback: TracebackType | None,
@@ -226,7 +243,7 @@ class _InertActivity:
     ) -> _InertActivity:
         return self
 
-    def read_completed(self, returned_rows: int, /) -> None: ...
+    def read_completed(self, returned_rows: Sized, /) -> None: ...
 
     def write_completed(self, affected_rows: int, /) -> None: ...
 
@@ -536,8 +553,8 @@ class _LiveDatabaseCall(_LiveActivity):
             )
         )
 
-    def read_completed(self, returned_rows: int, /) -> None:
-        self._outcome = DatabaseReadCompleted(returned_rows)
+    def read_completed(self, returned_rows: Sized, /) -> None:
+        self._outcome = DatabaseReadCompleted(len(returned_rows))
 
     def write_completed(self, affected_rows: int, /) -> None:
         self._outcome = DatabaseWriteCompleted(affected_rows)

@@ -361,9 +361,11 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
 # production path imports this" from a fact about the grant table — which states
 # only what a scope MAY import, never what it may not — into a rejected import.
 #
-# The one containment this cannot state is a scope importing its own descendant:
-# import-linter silently skips a forbidden module overlapping the contract's
-# source package, so the parent's row can never name its own child.
+# The one containment a contract cannot state is a scope importing its own
+# descendant: import-linter silently skips a forbidden module overlapping the
+# contract's source package, so the parent's row can never name its own child.
+# ``tools/check_scope_ownership.py`` closes that edge over the files themselves,
+# which is why the invariant holds although this table alone cannot state it.
 ISOLATED_CHILD_SCOPES: frozenset[str] = frozenset({"parallax.core.execution_lifecycle.testing"})
 
 # The conformance-family enforcement scopes that carry a module tag and thus

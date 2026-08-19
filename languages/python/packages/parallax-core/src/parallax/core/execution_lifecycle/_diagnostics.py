@@ -174,8 +174,12 @@ def _category(exc: DatabaseError) -> Category | None:
     Narrowed rather than trusted: :class:`~parallax.core.db_error.DatabaseError`
     declares the attribute, but a subclass may shadow it with anything, and a
     diagnostic states a category only where the closed set has one to state.
+    Made exact BEFORE narrowing, because membership is decided by equality: a
+    ``str`` subclass spelling a category compares equal to it and would
+    otherwise be kept by identity, holding whatever its instance references.
     """
-    return as_category(exc.category)
+    category = exc.category
+    return as_category(_exact(category)) if isinstance(category, str) else None
 
 
 def _native_code(exc: DatabaseError) -> str | None:

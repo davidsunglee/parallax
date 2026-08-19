@@ -34,8 +34,10 @@ The private modules split by change rate rather than by tidiness:
 ``testing`` is a separate enforcement scope with no production importer: the
 recorder there grows with the number of events by design, and declaring the
 scope ISOLATED — a child a grant on this package does not carry — is what turns
-"not a production observability path" from a sentence into a rejected import
-outside this package.
+"not a production observability path" from a sentence into a rejected import.
+Outside this package a generated forbidden contract rejects it; inside it, where
+no such contract can name a module of its own source package, the file-level
+check in ``tools/check_scope_ownership.py`` does.
 """
 
 from __future__ import annotations

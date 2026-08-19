@@ -12,8 +12,10 @@ read a clock, or construct anything at all.
 
 from __future__ import annotations
 
+import gc
 from decimal import Decimal
-from typing import Any
+from types import MethodType
+from typing import Any, Final
 
 import pytest
 from _transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS, RecordingPort
@@ -53,6 +55,17 @@ _ORDER_ROW: Row = {
     "ordered_on": None,
 }
 _ITEM_ROW: Row = {"id": 11, "order_id": 1, "sku": "x", "quantity": 1, "shipped_on": None}
+
+
+class _StaticTarget:
+    """An activity target whose spelling costs nothing to read."""
+
+    @property
+    def canonical(self) -> str:
+        return "ledger.Account"
+
+
+ACCOUNT_TARGET: Final = _StaticTarget()
 
 
 def _db(port: RecordingPort, provider: Any, model: Any = ACCOUNT) -> Database:
@@ -339,5 +352,46 @@ def test_the_default_path_never_spells_the_target_it_is_handed() -> None:
         open_read_root(None, target=probe, interface="TYPED") as read,
         read.database_call(statement, "READ", probe) as call,
     ):
-        call.read_completed(0)
+        call.read_completed(())
     assert _Probe.reads == 0
+
+
+def test_the_default_path_never_sizes_the_rows_it_is_handed() -> None:
+    # The same argument one field over: a physical row count is an int, and one
+    # outside the interpreter's small-integer cache is an object. Handing the
+    # rows and sizing them only where a Handler waits is what keeps a large
+    # unobserved result from costing an integer nobody reads.
+    class _Rows:
+        sizings = 0
+
+        def __len__(self) -> int:
+            type(self).sizings += 1
+            return 1_000
+
+    rows = _Rows()
+    statement = LoweredStatement("select 1", ())
+    with (
+        open_read_root(None, target=ACCOUNT_TARGET, interface="TYPED") as read,
+        read.database_call(statement, "READ", ACCOUNT_TARGET) as call,
+    ):
+        call.read_completed(rows)
+    assert _Rows.sizings == 0
+
+
+def test_the_default_path_binds_no_method_to_enter_or_leave_a_scope() -> None:
+    # `with` reaches `__enter__`/`__exit__` through the descriptor protocol, so
+    # an ordinary method pair would have the interpreter build a method object
+    # per entry — the allocation the class counting proof above cannot see,
+    # because the object it counts belongs to no lifecycle class. Static special
+    # methods answer the function itself, so no scope entry binds anything.
+    statement = LoweredStatement("select 1", ())
+    with (
+        open_read_root(None, target=ACCOUNT_TARGET, interface="TYPED") as read,
+        read.database_call(statement, "READ", ACCOUNT_TARGET) as call,
+    ):
+        bound = [
+            obj
+            for obj in gc.get_objects()
+            if isinstance(obj, MethodType) and (obj.__self__ is read or obj.__self__ is call)
+        ]
+    assert bound == []

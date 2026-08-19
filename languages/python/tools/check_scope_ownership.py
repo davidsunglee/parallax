@@ -18,7 +18,7 @@ child scope over a private implementation module, every file inside it matches
 both the child and the parent, and that is the point: the child's own grant row
 is what governs it. What fails is overlap that *nobody declared*.
 
-Four findings fail the check:
+Five findings fail the check:
 
 * **unowned** — the file matches no declared scope and is not exempt;
 * **undeclared overlapping owners** — the file matches several scopes that do
@@ -28,6 +28,7 @@ Four findings fail the check:
   parent's forbidden row, where import-linter silently skips it — a contract
   that looks present and enforces nothing;
 * **import-free module beside a zero-grant scope** — see below;
+* **an isolated scope imported from inside its own ancestors** — see below;
 * **stale exemption** — an exempt path that no longer exists, or that a scope
   now owns, so the exemption is carrying nothing.
 
@@ -57,6 +58,19 @@ nothing, and the package holding it — rather than written against a package
 name. The parent package's own interface module is outside the rule because no
 scope declaration could bring it inside a row that structurally cannot name its
 own ancestor.
+
+Isolated scopes
+---------------
+
+An **isolated** child scope (``check_dag_sync.ISOLATED_CHILD_SCOPES``) is a
+forbidden target in every production row that neither contains it nor is
+contained by it, which turns "no production path imports this" into a rejected
+import — everywhere except inside the scopes that DO contain it. A ``forbidden``
+row is sourced at a package, and import-linter silently skips a forbidden module
+overlapping that source, so an ancestor's row can never name its own descendant.
+This walks those ancestors' files and rejects the import directly, resolving
+relative imports so the spelling cannot evade it. Contracts and files are
+complementary halves of one invariant, and neither half alone states it.
 
 The scope inventory is *imported* from ``check_dag_sync`` rather than restated,
 so §7 stays declared exactly once. This check and
@@ -138,13 +152,36 @@ def is_declared_chain(owners: list[str], children: Mapping[str, str]) -> bool:
     return all(children.get(deeper) == shallower for shallower, deeper in pairwise(owners))
 
 
-def first_party_imports(source: str) -> frozenset[str]:
+def containing_package(relative_path: str) -> str:
+    """The package a relative import inside that file is spelled against.
+
+    A package interface resolves against itself; any other module resolves
+    against the package holding it.
+    """
+    module = module_path(relative_path)
+    if relative_path.endswith("__init__.py"):
+        return module
+    return module.rpartition(".")[0]
+
+
+def resolve_relative(module: str | None, level: int, package: str) -> str:
+    """A ``from ... import`` target as an absolute dotted module.
+
+    ``level`` counts leading dots, so one dot is ``package`` itself and each
+    further dot strips one component off it.
+    """
+    base = package.split(".")[: len(package.split(".")) - (level - 1)]
+    return ".".join([*base, module] if module else base)
+
+
+def first_party_imports(source: str, package: str) -> frozenset[str]:
     """Every first-party module an ``import`` statement in ``source`` names.
 
     First party is the distribution root ``check_dag_sync.ROOT_PACKAGES`` are
     spelled under, so the two tools agree on what import-linter treats as a
-    first-party edge. A relative import is first-party whatever it resolves to
-    and is recorded unresolved. Imports guarded by ``TYPE_CHECKING`` count:
+    first-party edge. A relative import is resolved against ``package`` — it is
+    first-party whatever it resolves to, and resolving it is what lets a caller
+    ask which module it reached. Imports guarded by ``TYPE_CHECKING`` count:
     import-linter's graph contains them too.
     """
     roots = frozenset(root.split(".", 1)[0] for root in dag.ROOT_PACKAGES)
@@ -158,10 +195,45 @@ def first_party_imports(source: str) -> frozenset[str]:
             found.update(alias.name for alias in node.names if first_party(alias.name))
         elif isinstance(node, ast.ImportFrom):
             if node.level:
-                found.add("." * node.level + (node.module or ""))
+                found.add(resolve_relative(node.module, node.level, package))
             elif node.module is not None and first_party(node.module):
                 found.add(node.module)
     return frozenset(found)
+
+
+def is_inside(module: str, scope: str) -> bool:
+    """Whether ``module`` is ``scope`` or something nested inside it."""
+    return module == scope or module.startswith(f"{scope}.")
+
+
+def imports_reaching_an_isolated_scope(paths: list[str]) -> list[str]:
+    """Production imports of an isolated child scope from inside its own ancestors.
+
+    An isolated scope is a forbidden target in every production row that neither
+    contains it nor is contained by it, so the ancestors holding it are the one
+    production origin no ``forbidden`` contract can govern: import-linter skips a
+    forbidden module overlapping the contract's own source package, and a row
+    sourced at an ancestor is exactly that. This walks those ancestors' files
+    instead, which makes "no production scope imports the isolated scope" whole
+    rather than nearly whole.
+
+    Relative imports are resolved, because the import this closes would be
+    spelled ``from .testing import ...`` as naturally as by its dotted path.
+    """
+    found: set[str] = set()
+    for scope in dag.ISOLATED_CHILD_SCOPES:
+        ancestors = dag.scope_ancestors(scope)
+        for relative in paths:
+            module = module_path(relative)
+            if is_inside(module, scope):
+                continue
+            if not any(is_inside(module, ancestor) for ancestor in ancestors):
+                continue
+            source = (PACKAGES / relative).read_text()
+            imports = first_party_imports(source, containing_package(relative))
+            if any(is_inside(imported, scope) for imported in imports):
+                found.add(f"{relative} (imports {scope}, which no forbidden row can reject here)")
+    return sorted(found)
 
 
 def zero_grant_scopes() -> Mapping[str, str]:
@@ -193,7 +265,8 @@ def modules_escaping_a_zero_grant_row(paths: list[str], scopes: frozenset[str]) 
                 continue
             if any(owner in nameable for owner in owning_scopes(module, scopes)):
                 continue
-            if first_party_imports((PACKAGES / relative).read_text()):
+            source = (PACKAGES / relative).read_text()
+            if first_party_imports(source, containing_package(relative)):
                 continue
             found.add(f"{relative} (imports nothing first-party, and {scope} cannot name it)")
     return sorted(found)
@@ -226,7 +299,8 @@ def audit(
 
     Ownership alone does not settle a package holding a zero-grant scope, where
     every module must also be one that row names or carry a first-party import,
-    so that arm runs here too.
+    nor a package holding an isolated scope, whose own files are the one origin
+    no forbidden row reaches, so both arms run here too.
     """
     unowned: list[str] = []
     overlapping: list[str] = []
@@ -249,6 +323,9 @@ def audit(
         "production files owned by scopes with no declared nesting": sorted(overlapping),
         "import-free modules a zero-grant scope's contract cannot name": (
             modules_escaping_a_zero_grant_row(paths, scopes)
+        ),
+        "production imports of an isolated scope from inside its own ancestors": (
+            imports_reaching_an_isolated_scope(paths)
         ),
         "exemptions that no longer describe the tree": stale,
     }
@@ -274,7 +351,8 @@ def main(argv: list[str] | None = None) -> int:
             f"most-specific enforcement scope (plus any declared ancestor scopes: "
             f"{nested} file(s) sit inside a declared child scope) or an exact "
             f"exemption ({len(EXEMPTIONS)}); beside a zero-grant scope, every module "
-            f"is one its row can name or carries a first-party import"
+            f"is one its row can name or carries a first-party import; and no file "
+            f"inside an isolated scope's ancestors imports it"
         )
         return 0
 
@@ -286,7 +364,9 @@ def main(argv: list[str] | None = None) -> int:
         "  agrees on, and a child scope missing from CHILD_SCOPE_PARENT generates a\n"
         "  contract import-linter silently skips. An import-free module beside a\n"
         "  zero-grant scope is reached by neither that scope's forbidden row nor any\n"
-        "  chain out of it, so no gate would report an import of it.",
+        "  chain out of it, so no gate would report an import of it. An isolated\n"
+        "  scope imported from inside its own ancestors is the one edge a forbidden\n"
+        "  row cannot state, because that row's source package overlaps the target.",
         file=sys.stderr,
     )
     for label in sorted(findings):

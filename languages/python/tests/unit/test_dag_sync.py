@@ -572,7 +572,8 @@ def test_an_isolated_child_is_forbidden_to_a_scope_granted_its_parent() -> None:
         assert "parallax.core.execution_lifecycle" in dag.transitive_closure(adjacency, granted)
         assert recorder in forbidden[granted], granted
     # Its own package is the one place a row cannot reach: naming the recorder
-    # in its parent's row would overlap that contract's source package.
+    # in its parent's row would overlap that contract's source package. That edge
+    # is enforced over the files instead, by `tools/check_scope_ownership.py`.
     assert recorder not in forbidden["parallax.core.execution_lifecycle"]
 
 

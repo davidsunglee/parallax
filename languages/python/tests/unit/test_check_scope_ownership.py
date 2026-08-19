@@ -1,6 +1,6 @@
 """Unit tests for the production-file enforcement-scope ownership check.
 
-Each of the tool's four findings gets a canary that drives ``main()`` to a
+Each of the tool's five findings gets a canary that drives ``main()`` to a
 non-zero exit, because a gate that runs but cannot block buys nothing:
 
 * an unowned production file (the ``parallax/snapshot/wrap.py`` shape the check
@@ -8,6 +8,8 @@ non-zero exit, because a gate that runs but cannot block buys nothing:
 * an undeclared nested scope produces overlapping owners;
 * an import-free module written beside a zero-grant scope, a shape neither half
   of that scope's forbidden row names;
+* a module inside an isolated scope's ancestors importing it, the one edge a
+  forbidden row structurally cannot state, in both import spellings;
 * an exemption that stops describing the tree — in both directions.
 
 plus the coupling that makes the overlap arm load-bearing: a nested scope
@@ -321,23 +323,96 @@ def test_first_party_imports_sees_every_import_form() -> None:
         "import parallax.core.base\n"
         "from parallax.snapshot.handle import _errors\n"
         "from . import sibling\n"
+        "from .child import leaf\n"
+        "from ..materialize import view\n"
         "from typing import TYPE_CHECKING\n"
         "if TYPE_CHECKING:\n"
         "    from parallax.core.metamodel import EntityDescriptor\n"
     )
-    assert own.first_party_imports(source) == frozenset(
+    assert own.first_party_imports(source, "parallax.snapshot.handle") == frozenset(
         {
             "parallax.core.base",
             "parallax.snapshot.handle",
-            ".",
+            "parallax.snapshot.handle.child",
+            "parallax.snapshot.materialize",
             "parallax.core.metamodel",
         }
     )
-    assert own.first_party_imports("import os\nfrom typing import Final\n") == frozenset()
+    assert own.first_party_imports("import os\nfrom typing import Final\n", "p.q") == frozenset()
+
+
+def test_containing_package_folds_only_a_package_interface() -> None:
+    # A relative import in `handle/_read.py` is spelled against `handle`, while
+    # one in `handle/__init__.py` is spelled against `handle` itself, so the two
+    # file shapes resolve the same dot to the same package.
+    interface = "parallax-snapshot/src/parallax/snapshot/handle/__init__.py"
+    module = "parallax-snapshot/src/parallax/snapshot/handle/_read.py"
+    assert own.containing_package(interface) == "parallax.snapshot.handle"
+    assert own.containing_package(module) == "parallax.snapshot.handle"
 
 
 # --------------------------------------------------------------------------
-# Canary 4: an exemption that no longer describes the tree.
+# Canary 4: an isolated scope imported from inside its own ancestors.
+# --------------------------------------------------------------------------
+_LIFECYCLE = PY_ROOT / "packages/parallax-core/src/parallax/core/execution_lifecycle"
+_INTRUDER = _LIFECYCLE / "_intruder.py"
+_ABSOLUTE = (
+    '"""Written by a test: production code reaching its own isolated child."""\n'
+    "\n"
+    "from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider\n"
+    "\n"
+    "_ = RecordingLifecycleProvider\n"
+)
+_RELATIVE = (
+    '"""Written by a test: the same import, spelled relatively."""\n'
+    "\n"
+    "from .testing import RecordingLifecycleProvider\n"
+    "\n"
+    "_ = RecordingLifecycleProvider\n"
+)
+
+
+@pytest.mark.parametrize("source", [_ABSOLUTE, _RELATIVE])
+def test_a_production_module_importing_its_own_isolated_child_fails(
+    source: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The half of "no production scope imports the recorder" that no forbidden
+    # row can carry: a row sourced at `parallax.core.execution_lifecycle` may not
+    # name a module inside its own source package, so import-linter skips the
+    # entry. Both spellings of the import are the same edge and both are caught.
+    _INTRUDER.write_text(source)
+    try:
+        assert own.main([]) == 1
+    finally:
+        _INTRUDER.unlink()
+    err = capsys.readouterr().err
+    assert "imports of an isolated scope from inside its own ancestors" in err
+    assert "_intruder.py (imports parallax.core.execution_lifecycle.testing" in err
+    assert own.main([]) == 0
+
+
+def test_the_isolated_scope_may_import_its_own_parent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Scoped to the direction that has no contract: the recorder's own row DOES
+    # state what it may reach, and it is granted the parent package, so a module
+    # written inside the isolated scope is left to `lint-imports`.
+    inside = _LIFECYCLE / "testing" / "_probe.py"
+    inside.write_text(
+        '"""Written by a test: inside the isolated scope, reaching its parent."""\n'
+        "\n"
+        "from parallax.core.execution_lifecycle import RootExecution\n"
+        "\n"
+        "_ = RootExecution\n"
+    )
+    try:
+        assert own.main([]) == 0
+    finally:
+        inside.unlink()
+
+
+# --------------------------------------------------------------------------
+# Canary 5: an exemption that no longer describes the tree.
 # --------------------------------------------------------------------------
 def test_exemption_for_a_missing_file_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
