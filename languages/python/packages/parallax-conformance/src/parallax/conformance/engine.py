@@ -217,6 +217,79 @@ def _json_bind(bind: object) -> object:
     return wire_value(bind)
 
 
+def _delivered(
+    planned: Sequence[LoweredStatement], observed: Sequence[LoweredStatement], where: str
+) -> tuple[LoweredStatement, ...]:
+    """``planned``, once the lifecycle has confirmed it is what ran.
+
+    A write lane reports the plan rather than the delivered statement, because
+    `then.statements` is graded on BOTH lanes and only one of them executes: the
+    compile lane has no delivery to read, so an emission sourced from one would
+    make the two lanes report different spellings of one oracle. The plan is a
+    SECOND derivation of the same statements, though, and a second derivation is
+    exactly what can drift — which is what this closes. Every statement the unit
+    put on the wire is reconciled with the plan it came from, so what the case
+    grades is the plan only where the plan is what the database saw.
+
+    Binds are reconciled in wire space with the exact-Decimal fallback the corpus
+    grades goldens under (:func:`_same_bind`), because the two sides differ in
+    CARRIER by design: the plan holds the case-authored wire spelling and the
+    delivery holds the native value a decode produced. What the reconciliation
+    admits is that difference and nothing else.
+    """
+    if len(planned) != len(observed):
+        raise EngineError(
+            f"{where}: the plan holds {len(planned)} statement(s) but the lifecycle delivered "
+            f"{len(observed)}; the emission a case grades is the plan, so a plan the execution "
+            f"did not follow would report DML nobody ran"
+        )
+    for index, (plan, ran) in enumerate(zip(planned, observed, strict=True)):
+        if plan.sql != ran.sql:
+            raise EngineError(
+                f"{where}: statement {index} is planned as {plan.sql!r} but the lifecycle "
+                f"delivered {ran.sql!r}"
+            )
+        if len(plan.binds) != len(ran.binds) or not all(
+            _same_bind(left, right) for left, right in zip(plan.binds, ran.binds, strict=True)
+        ):
+            raise EngineError(
+                f"{where}: statement {index} is planned with binds {plan.binds!r} but the "
+                f"lifecycle delivered {ran.binds!r}"
+            )
+    return tuple(planned)
+
+
+def _same_bind(planned: object, executed: object) -> bool:
+    """One planned bind against the one the database was handed.
+
+    Wire-form equality first, then the exact-Decimal reconciliation: an authored
+    ``250.00`` rides the plan as the literal the case wrote and reaches the
+    database as the ``Decimal`` its decode produced, and those are one value.
+    """
+    left, right = _json_bind(planned), _json_bind(executed)
+    if left == right:
+        return True
+    as_decimals = (_decimal_bind(left), _decimal_bind(right))
+    return None not in as_decimals and as_decimals[0] == as_decimals[1]
+
+
+def _decimal_bind(value: object) -> decimal.Decimal | None:
+    """``value`` as an exact finite decimal, or ``None`` for anything that is not
+    a number — a non-finite spelling included, so the ``infinity`` temporal
+    literal never reconciles against a numeric bind."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return decimal.Decimal(str(value))
+    if not isinstance(value, str):
+        return None
+    try:
+        candidate = decimal.Decimal(value)
+    except decimal.InvalidOperation:
+        return None
+    return candidate if candidate.is_finite() else None
+
+
 @dataclass(frozen=True, slots=True)
 class RunOnly:
     """A case the corpus declares compile-ineligible (`compileEligibility: run-only`)."""
@@ -3284,11 +3357,8 @@ def _framework_writes(
 
 def _execute_framework_write_unit(
     port: DbPort,
-    model: AcceptedMetamodel,
     dialect: Dialect,
-    concurrency: Concurrency,
-    write: _ResolvedWrite,
-    tx_instant: str,
+    statements: Sequence[LoweredStatement],
     *,
     rollback: bool,
 ) -> int:
@@ -3296,30 +3366,26 @@ def _execute_framework_write_unit(
     calls it cost.
 
     Composed the way :func:`_run_conflict_close` composes a standalone close —
-    plan, lower, and execute on the port's own transaction — rather than driven
-    through a write verb, because there is no verb to drive: a
+    the caller's own plan, executed on the port's own transaction — rather than
+    driven through a write verb, because there is no verb to drive: a
     ``{"increment": n}`` registry advance is the PK allocator's own statement,
     and admitting it at a public ingress would make a DB-computed write marker
-    developer surface over the framework's bookkeeping. What the corpus grades
-    for these entries is the statement the planner renders, which is exactly
-    what this executes.
+    developer surface over the framework's bookkeeping.
+
+    Executing the statements the caller reports is what keeps the two the same:
+    this unit opens no Handle, so no lifecycle observes it, and a plan of its own
+    would be a second derivation nothing could reconcile against the first. It is
+    the one write lane whose round trips are STATED — it reaches its last
+    statement only by having issued every one before it, the same reasoning
+    `run_error_case` carries for authored trigger DML.
 
     A marker entry is a choreography unit of its own and the buffer's only entry
     (`m-case-format` "Buffered keyed write instructions"), which is why this
-    takes one write rather than a buffer: the unit is the entry. It honours the
+    takes one plan rather than a buffer: the unit is the entry. It honours the
     step's own abort contract like every other write path: a ``rollback: true``
     step runs on the aborting port, its statements reach the wire and count their
     round trips, and the provider then rolls them back.
     """
-    plan = build_write_planner(model).plan(
-        PlanningRequest(
-            subject_identity=_PLANNING_SUBJECT,
-            transaction_instant=_pinned_instant(tx_instant),
-            concurrency=concurrency,
-            buffered_writes=[_buffered(write.instruction, write.oracle_observation, model)],
-        )
-    )
-    statements = [statement for _step, statement in stream_lowered(plan, model, dialect)]
 
     def run(conn: DbPort) -> None:
         for statement in statements:
@@ -3431,16 +3497,21 @@ def _execute_write_unit(
     dialect: Dialect,
     concurrency: Concurrency,
     resolved: Sequence[_ResolvedWrite],
+    statements: Sequence[LoweredStatement],
     tx_instant: str,
     lifecycle: LifecycleRun,
     *,
     rollback: bool,
-) -> int:
+) -> tuple[tuple[LoweredStatement, ...], int]:
     """Execute one choreography unit's ALREADY-RESOLVED instructions through the
     production ``db.transact`` entry point — ONE transaction,
     ``clock=FixedClock(tx_instant)``
     (ADR 0010: instants come from the Clock Strategy, never a per-operation
-    override), and report the calls it cost.
+    override), and report the DML it ran beside the calls it cost.
+
+    ``statements`` is the caller's plan for the same ``resolved`` instructions,
+    reported back once the delivered lifecycle has confirmed the unit ran exactly
+    it (:func:`_delivered`).
 
     Every write against existing state is stated through the PUBLIC ``tx.wire``
     verb its mutation names, against the value this unit's own resolving reads
@@ -3480,8 +3551,8 @@ def _execute_write_unit(
                 "bookkeeping and is a choreography unit of its own, so it is the buffer's only "
                 f"entry: this one holds {len(resolved)}"
             )
-        return _execute_framework_write_unit(
-            port, model, dialect, concurrency, resolved[0], tx_instant, rollback=rollback
+        return tuple(statements), _execute_framework_write_unit(
+            port, dialect, statements, rollback=rollback
         )
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
@@ -3502,7 +3573,7 @@ def _execute_write_unit(
 
     with contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=concurrency)
-    return observed.round_trips
+    return _delivered(statements, observed.writes, "a keyed write unit"), observed.round_trips
 
 
 def _execute_keyed_unit(
@@ -3530,7 +3601,9 @@ def _execute_keyed_unit(
     observation is consumed (and its milestone retired) a single time; the
     emission is therefore the PURE re-lowering of the very instructions the
     execution buffered, and a golden bind states what the plan holds rather than
-    what a driver happened to send.
+    what a driver happened to send. That plan is reported only where the
+    delivered lifecycle confirms the unit ran it (:func:`_delivered`), so being
+    the plan and being what the database saw are one claim rather than two.
     """
     tx_instant = _entry_instant(entries[0])
     with context.shadow.staged(doomed=rollback):
@@ -3544,17 +3617,18 @@ def _execute_keyed_unit(
             tx_instant,
             context.shadow,
         )
-        unit_trips = _execute_write_unit(
+        ran, unit_trips = _execute_write_unit(
             port,
             context.model,
             context.dialect,
             context.concurrency,
             resolved,
+            statements,
             tx_instant,
             lifecycle,
             rollback=rollback,
         )
-    return statements, unit_trips
+    return ran, unit_trips
 
 
 def _run_readless_predicate_write(
@@ -3563,11 +3637,12 @@ def _run_readless_predicate_write(
     dialect: Dialect,
     concurrency: Concurrency,
     raw_write: Mapping[str, object],
+    statement: LoweredStatement,
     tx_instant: str,
     lifecycle: LifecycleRun,
     *,
     rollback: bool,
-) -> int:
+) -> tuple[tuple[LoweredStatement, ...], int]:
     """Execute a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) through the SAME production ``db.transact`` entry point every
     other write path uses — one transaction, stated through the PUBLIC
@@ -3578,9 +3653,10 @@ def _run_readless_predicate_write(
     The verb takes the case's own authored values: a Wire predicate write is
     stated in the accepted wire spellings its serde admits, which is exactly
     what a case authors, so nothing here decodes them first. The reported
-    emission is `_lower_predicate_write_step`'s OWN independent parse of the
+    emission is ``statement`` — `_lower_predicate_write_step`'s own parse of the
     same raw document, so the golden bind stays the case-authored literal
-    whatever the verb does with its copy.
+    whatever the verb does with its copy — and it is reported only where the
+    delivered lifecycle confirms this transaction ran it (:func:`_delivered`).
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
@@ -3597,7 +3673,10 @@ def _run_readless_predicate_write(
 
     with contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=concurrency)
-    return observed.round_trips
+    return (
+        _delivered((statement,), observed.writes, "a readless predicate write"),
+        observed.round_trips,
+    )
 
 
 def _buffer_wire_predicate(tx: handle.Transaction, raw_write: Mapping[str, object]) -> None:
@@ -3698,14 +3777,14 @@ def _run_materializing_pair(
     (the corpus's own authoring convention), never double-counted against the
     write step.
 
-    Reports the ACTUAL executed SQL, observed at the Database Port, never a
+    Reports the ACTUAL executed SQL, read off the delivered lifecycle, never a
     separate pure re-lowering: a materializing write's per-row binds are
     QUERY-RESULT-DEPENDENT, so there is no pure oracle to derive them from
     independently of a real run. The resolve is the transaction's read
     (materialization always resolves before it writes) and the ``N`` per-row
-    keyed writes are its DML, in resolved-row order — recovered to the canonical
-    Lowered Statement form every other emission this engine reports carries, so
-    no driver-SQL spelling stands between what ran and what is reported.
+    keyed writes are its DML, in resolved-row order — each in the canonical
+    Lowered Statement form the Database Call borrowed, so nothing stands between
+    what ran and what is reported.
 
     What this transaction did to a TEMPORAL target's milestones is recorded on
     ``shadow`` rather than tracked into it: the rows it closed and opened were
@@ -4180,9 +4259,10 @@ def _run_group_step(
     list alike.
 
     A WRITE step resolves its entries against this group's own published values
-    (never a scenario-wide store), records the SEPARATE pure re-lowering every
+    (never a scenario-wide store), records the pure re-lowering every
     other write path uses (:func:`_lower_resolved`) BEFORE the group's flush
-    executes anything, and then buffers each resolved write through the PUBLIC
+    executes anything — the runner reconciles the group's whole plan against what
+    that flush delivered — and then buffers each resolved write through the PUBLIC
     ``tx.wire`` verb its mutation names, against the value this group published
     for its key. Every entry a group holds is therefore caller-authored: a
     DB-computed write marker is a choreography unit of its own and no group step
@@ -4304,6 +4384,15 @@ def _run_uow_group(
 
     with context.shadow.staged(doomed=doomed), contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=context.concurrency)
+    # The group's writes reach the wire in ONE flush at its boundary, so a step's
+    # own plan is reconciled against the group's whole delivery rather than
+    # against a flush of its own: what the transaction wrote is every write
+    # step's DML, in the order those steps buffered it.
+    _delivered(
+        [statement for step in lowered if step.is_write for statement in step.statements],
+        observation.writes,
+        "a held `uow` group",
+    )
     # Every statement this ONE transaction put on the wire, which is where the
     # group's round trips come from rather than from a second count this lane
     # keeps.
@@ -5072,6 +5161,23 @@ def run_interleaved_scenario_case(
     for result in (result_a, result_b):
         if result.failure is not None:
             raise result.failure
+    # Each group's writes reach the wire in its own boundary flush — a
+    # conflicting flush included, whose gated statement reached the database and
+    # reported zero rows — so a group's own steps are reconciled against its own
+    # connection's delivery. Reconciled on this thread rather than inside the
+    # worker, so a disagreement surfaces where every other failure of this lane
+    # does.
+    for result, observed in ((result_a, observed_a), (result_b, observed_b)):
+        _delivered(
+            [
+                statement
+                for step in result.lowered.values()
+                if step.is_write
+                for statement in step.statements
+            ],
+            observed.writes,
+            "an interleaved `uow` group",
+        )
 
     lowered: dict[int, _LoweredStep] = {**result_a.lowered, **result_b.lowered}
     rows_by_index: dict[int, list[Mapping[str, object]]] = {**result_a.rows, **result_b.rows}
@@ -5217,19 +5323,19 @@ def run_scenario_case(
                 statement = _lower_predicate_write_step(
                     raw_predicate_write, model, dialect, concurrency
                 )
-                round_trips += _run_readless_predicate_write(
+                ran, predicate_trips = _run_readless_predicate_write(
                     port,
                     model,
                     dialect,
                     concurrency,
                     raw_predicate_write,
+                    statement,
                     tx_instant,
                     lifecycle,
                     rollback=rollback,
                 )
-                lowered.append(
-                    _LoweredStep(f"/scenario/{index}/write", (statement,), True, rollback)
-                )
+                round_trips += predicate_trips
+                lowered.append(_LoweredStep(f"/scenario/{index}/write", ran, True, rollback))
             else:
                 statements, unit_trips = _execute_keyed_unit(
                     port, context, _write_entries(raw_write), [], lifecycle, rollback=rollback
@@ -5649,6 +5755,7 @@ def _conflict_source_nodes(
     model: AcceptedMetamodel,
     target: str,
     resolved: Sequence[_ConflictWrite],
+    lifecycle: LifecycleRun,
 ) -> dict[ObjectKey, handle.WireEntity]:
     """The published rows one NON-TEMPORAL conflict attempt's keyed writes are
     addressed and licensed by, read through a real ``db.wire.find``.
@@ -5665,9 +5772,22 @@ def _conflict_source_nodes(
     A row the read does not answer is absent from the mapping; the write that
     wanted it is refused where its diagnosis can name the key
     (:func:`_conflict_source_node`).
+
+    It observes like every other Handle this engine builds. The read is one
+    outermost public operation, so it opens a Root Execution of its own and that
+    root belongs to the run's delivered stream — even though the count this shape
+    sums is the attempts' alone, the resolving read standing outside the
+    transaction it licenses.
     """
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
-    database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
+    observed = lifecycle.observation()
+    database = handle.Database(
+        port,
+        model,
+        dialect=dialect,
+        clock=FixedClock(instant),
+        lifecycle_provider=observed.provider,
+    )
     snapshot = database.wire.find(
         {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
     )
@@ -5752,11 +5872,13 @@ def _run_conflict_write(
     the case.
 
     ``statements`` (the reported golden-comparable emission) is
-    :func:`_lower_conflict_write`'s own SEPARATE, PURE re-lowering of the
-    ORIGINAL, undecoded rows: a case-authored wire spelling (`m-opt-lock-013`'s
-    own decimal `balance`) crosses the Wire verb's serde on the way to the real
-    write without the reported emission's bind ever drifting from the
-    case-authored literal.
+    :func:`_lower_conflict_write`'s own PURE re-lowering of the ORIGINAL,
+    undecoded rows: a case-authored wire spelling (`m-opt-lock-013`'s own decimal
+    `balance`) crosses the Wire verb's serde on the way to the real write without
+    the reported emission's bind ever drifting from the case-authored literal.
+    It is reported only where the delivered lifecycle confirms the attempt ran it
+    (:func:`_delivered`), which is what keeps that undecoded spelling a spelling
+    of what ran rather than a claim beside it.
     """
     resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
     statements = _lower_conflict_write(model, dialect, concurrency, resolved)
@@ -5785,7 +5907,8 @@ def _run_conflict_write(
     observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
     implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
     affected = _conflict_attempt_affected(database, concurrency, implied, body)
-    return statements, affected, observed.round_trips
+    ran = _delivered(statements, observed.writes, "a conflict attempt")
+    return ran, affected, observed.round_trips
 
 
 def _conflict_changes(write: _ConflictWrite) -> dict[str, object]:
@@ -5878,8 +6001,10 @@ def _run_conflict_close(
 
     # A standalone close is no keyed mutation and no unit of work buffers it, so
     # it runs on the port's own transaction — public `m-db-port`, the same
-    # boundary ``db.transact`` opens. It is exactly one statement, so its round
-    # trip is stated rather than observed.
+    # boundary ``db.transact`` opens. That opens no Handle, so nothing observes
+    # this statement: it is exactly one, and its round trip is stated rather than
+    # read off a lifecycle, the same account `run_error_case` gives for authored
+    # trigger DML.
     #
     # A Bitemporal close is unreachable through a keyed verb: every
     # closure-bearing entry in `bitemp_write._TOPOLOGIES` chains at least the
@@ -6133,6 +6258,7 @@ def run_conflict_case(
                 model,
                 target,
                 _resolve_conflict_writes(model, target, mutation, _conflict_write_rows(attempt)),
+                lifecycle,
             )
 
         # Taken before the concurrent writer commits, and spent by the first

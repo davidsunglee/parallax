@@ -29,9 +29,16 @@ from parallax.conformance import case_format, engine, sweep
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, STRING, AuthoredNumber, InstantError, PresentDocument
+from parallax.core.base import (
+    INFINITY,
+    STRING,
+    AuthoredNumber,
+    InstantError,
+    PresentDocument,
+    TemporalBound,
+)
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Committed, DbPort, Row, TransactionOutcome
+from parallax.core.db_port import Committed, DbPort, JsonDocument, Row, TransactionOutcome
 from parallax.core.metamodel import (
     AbstractRoot,
     AttributeIdentity,
@@ -49,6 +56,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     Concurrency,
@@ -407,13 +415,20 @@ class FakeWritePort:
 # one of these lanes has to publish that value — the canned run stands in for the
 # one current milestone the real database holds, keyed by the projection's own
 # physical column names.
-_OPEN_MILESTONE: Final[dt.datetime] = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
+_OPEN_MILESTONE: Final[TemporalBound] = INFINITY
 
 
-def _ledger_row(row_id: int, value: str, *, in_z: str) -> Row:
+def _ledger_row(row_id: int, value: str, *, in_z: str, acct_num: str = "B") -> Row:
+    """One current Ledger milestone a fake port publishes.
+
+    ``acct_num`` is the account the row's own history left there — the fixture's
+    ``B`` for a fixture-held key, and the inserting step's own value for a key
+    this case opened, because a write settles against what its resolving read
+    published and a canned row that disagreed would license DML no state implies.
+    """
     return {
         "led_id": row_id,
-        "acct_num": "B",
+        "acct_num": acct_num,
         "val": decimal.Decimal(value),
         "in_z": dt.datetime.fromisoformat(in_z),
         "out_z": _OPEN_MILESTONE,
@@ -514,6 +529,71 @@ def _synthetic_ledger_scenario(steps: list[dict[str, object]]) -> case_format.Ca
             "when": {"uow": {"concurrency": "optimistic"}, "scenario": steps},
         },
     )
+
+
+# --- the plan a write lane reports is the DML the lifecycle delivered ----------
+
+
+def _lowered(sql: str, *binds: object) -> LoweredStatement:
+    return LoweredStatement(sql, tuple(binds))
+
+
+def test_a_plan_the_lifecycle_confirms_is_reported_unchanged() -> None:
+    """The two sides differ in CARRIER and still name one statement.
+
+    The plan holds the case-authored wire spelling and the delivery holds the
+    value a decode produced, which is why the reconciliation is wire-space with
+    the exact-Decimal fallback rather than bare equality.
+    """
+    plan = (_lowered("update account set balance = ?", 250.00, "infinity", "2024-01-01"),)
+    delivered = (
+        _lowered(
+            "update account set balance = ?",
+            decimal.Decimal("250.00"),
+            INFINITY,
+            dt.date(2024, 1, 1),
+        ),
+    )
+    assert engine._delivered(plan, delivered, "a unit") == plan  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+
+
+def test_a_plan_the_lifecycle_contradicts_is_refused() -> None:
+    plan = (_lowered("update account set balance = ?", 250.00),)
+    for delivered, expected in (
+        ((), "the plan holds 1 statement"),
+        ((_lowered("delete from account", 250.00),), "is planned as"),
+        ((_lowered("update account set balance = ?", 999.00),), "is planned with binds"),
+        ((_lowered("update account set balance = ?"),), "is planned with binds"),
+        ((_lowered("update account set balance = ?", "infinity"),), "is planned with binds"),
+        ((_lowered("update account set balance = ?", True),), "is planned with binds"),
+    ):
+        with pytest.raises(engine.EngineError, match=expected):
+            engine._delivered(plan, delivered, "a unit")  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+
+
+def test_a_bind_that_is_no_number_reconciles_only_by_equality() -> None:
+    """The Decimal fallback answers for numbers alone, so a document and a text
+    bind that differ are differences rather than spellings."""
+    for planned, delivered in (
+        (JsonDocument({"a": 1}), JsonDocument({"a": 2})),
+        ("Ling", "Ada"),
+    ):
+        with pytest.raises(engine.EngineError, match="is planned with binds"):
+            engine._delivered(  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+                (_lowered("update account set owner = ?", planned),),
+                (_lowered("update account set owner = ?", delivered),),
+                "a unit",
+            )
+
+
+def test_a_document_bind_reconciles_by_content_rather_than_key_order() -> None:
+    """A value-object document write binds the whole document, and a mapping's
+    key order is no part of the value either side names."""
+    plan = (_lowered("insert into voyage(payload) values (?)", JsonDocument({"a": 1, "b": 2})),)
+    delivered = (
+        _lowered("insert into voyage(payload) values (?)", JsonDocument({"b": 2, "a": 1})),
+    )
+    assert engine._delivered(plan, delivered, "a unit") == plan  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
 
 
 def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
@@ -845,7 +925,9 @@ def test_scenario_compile_lane_discards_an_aborted_ungrouped_writes_case_state()
     # Each update step is its own transaction, so each owes a resolving read of
     # the milestone the insert left current — the value its keyed verb is
     # addressed by.
-    port = FakeWritePort(find_rows=[_ledger_row(9, "100.00", in_z="2025-01-01T00:00:00+00:00")])
+    port = FakeWritePort(
+        find_rows=[_ledger_row(9, "100.00", in_z="2025-01-01T00:00:00+00:00", acct_num="D")]
+    )
     run = engine.run_scenario_case(case, "postgres", port)
     assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
         (e.case_pointer, e.sql, e.binds) for e in run.emissions
@@ -3361,7 +3443,9 @@ def test_run_scenario_case_chains_a_key_inserted_after_a_materializing_pair() ->
     run = engine.run_scenario_case(
         case,
         "postgres",
-        _ledger_resolve_port(_ledger_row(9, "100.00", in_z="2025-06-01T00:00:00+00:00")),
+        _ledger_resolve_port(
+            _ledger_row(9, "100.00", in_z="2025-06-01T00:00:00+00:00", acct_num="D")
+        ),
     )
     close = run.emissions[-2]
     assert close.case_pointer == "/scenario/3/write"

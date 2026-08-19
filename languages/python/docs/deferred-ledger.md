@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-78**.
+Entry numbering is continuous and never reused. The next new number is **D-79**.
 
 ## Entries
 
@@ -381,6 +381,40 @@ unit drivers, repeating the width `run_scenario_case` already retired into
 `ScenarioRun`. The moment a case authors the combination, the repair is the
 channel, a value object for the return, and its own DB-free driver; until then
 the honest state is the refusal, which names precisely what it lacks.
+
+### D-78 — Two conformance write lanes run DML no Handle opened, so their work reaches no Execution Lifecycle
+
+*Medium — it bounds which case shapes may author `then.executionLifecycle`.*
+Relates to `parallax.conformance.engine._execute_framework_write_unit`,
+`parallax.conformance.engine._run_conflict_close`.
+
+**What.** Every other write lane drives its DML through a real `db.transact`, so
+its statements and round trips are read off the delivered lifecycle. Two do not,
+because the DML they run has no public verb to be stated through: a
+`{"increment": n}` DB-computed write marker is the PK allocator's own statement,
+and a conflict case's standalone temporal close is unreachable through any keyed
+verb — every closure-bearing `bitemp_write._TOPOLOGIES` entry chains at least the
+head rectangle, and a Transaction-Time-Only `terminate` derives its address from
+the milestone its observation names while a conflict case authors both
+coordinates directly. Both therefore execute a plan of their own against
+`m-db-port` and STATE their round trips, exactly as `run_error_case` does for
+authored trigger DML. The consequence is bounded and real: a case reaching either
+shape opens no Root Execution for that work, so it can author no
+`then.executionLifecycle` — the stream would omit calls the run made, and the
+record's own count cross-check (`reference_harness.execution_validate`) would
+report the disagreement rather than the case grading a stream missing them.
+
+**Why it is deferred rather than fixed.** Closing it is a design choice with real
+costs on every branch, and no case needs it today. Routing the work through
+`parallax.snapshot.handle` means giving a DB-computed write marker a public
+ingress — developer surface over the framework's own bookkeeping — or adding a
+bare-close verb no application wants. Adding an instrumented seam for the adapter
+alone puts a test-shaped door in production. Restricting the oracle instead is
+free but states the limit nowhere the corpus can see it. What holds the gap shut
+meanwhile is that neither lane can silently grow a second: every `handle.Database`
+the engine builds installs a Provider, asserted over the source
+(`tests/unit/test_lifecycle_observation.py`), so an unobserved lane is one that
+opens no Handle at all and says so.
 
 ## Forwarding pointers
 
