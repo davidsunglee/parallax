@@ -13,6 +13,7 @@ read a clock, or construct anything at all.
 from __future__ import annotations
 
 import gc
+from collections.abc import Sequence
 from decimal import Decimal
 from types import MethodType
 from typing import Any, Final
@@ -23,7 +24,7 @@ from _transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS
 from _support import mirrored_models as mm
 from parallax.conformance import read_models
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Row
+from parallax.core.db_port import Bind, DocumentReadOrdinals, Row
 from parallax.core.execution_lifecycle import (
     CausedFailure,
     DatabaseCallFailed,
@@ -37,8 +38,10 @@ from parallax.core.execution_lifecycle import (
     ReadFinished,
     ReadStarted,
 )
-from parallax.core.execution_lifecycle._activity import open_read_root
+from parallax.core.execution_lifecycle import _activity as activity_module
+from parallax.core.execution_lifecycle._activity import ActivityTarget, open_read_root
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import FixedClock
@@ -313,8 +316,6 @@ def test_the_default_path_constructs_nothing_lifecycle_shaped(
     # With no Provider installed the Handle branches before every
     # lifecycle-specific allocation and clock read: the seam it runs against is
     # the one shared inert activity, and nothing beside it is ever built.
-    from parallax.core.execution_lifecycle import _activity as activity_module
-
     constructed: list[str] = []
     for name in ("_Publisher", "_LiveRead", "_LiveDatabaseCall"):
         original = getattr(activity_module, name)
@@ -395,3 +396,74 @@ def test_the_default_path_binds_no_method_to_enter_or_leave_a_scope() -> None:
             if isinstance(obj, MethodType) and (obj.__self__ is read or obj.__self__ is call)
         ]
     assert bound == []
+
+
+class _Borrowing:
+    """An activity that keeps what it was handed, standing in for the inert one.
+
+    Being an activity of every kind at once is what lets one object record a
+    whole read: the openers answer the shared inert activity, so a call site that
+    prepared something for the lifecycle would prepare it against this.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[LoweredStatement, str, ActivityTarget]] = []
+        self.rows: object = None
+
+    def __enter__(self) -> _Borrowing:
+        return self
+
+    def __exit__(self, *_exit: object) -> None:
+        return None
+
+    def database_call(
+        self, statement: LoweredStatement, kind: str, target: ActivityTarget, /
+    ) -> _Borrowing:
+        self.calls.append((statement, kind, target))
+        return self
+
+    def read_completed(self, returned_rows: object, /) -> None:
+        self.rows = returned_rows
+
+    def write_completed(self, affected_rows: int, /) -> None: ...
+
+
+class _ReturningPort(RecordingPort):
+    """A port that keeps the exact list object each read returned."""
+
+    def __init__(self, *, rows: list[Row]) -> None:
+        super().__init__(rows=rows)
+        self.returned: list[list[Row]] = []
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        rows = super().execute(sql, binds, document_reads)
+        self.returned.append(rows)
+        return rows
+
+
+def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The probes above drive the seam directly, which is exactly what a call site
+    # preparing an argument for the lifecycle would slip past: the preparation
+    # would live in the caller, not in the activity. So a whole find runs here
+    # against an activity that keeps its arguments, and every one of them must be
+    # an object the read already had — the port's own row list rather than a copy
+    # or a count, and the compiled Entity identity rather than a spelling of it.
+    borrowing = _Borrowing()
+    monkeypatch.setattr(activity_module, "INERT", borrowing)
+    port = _ReturningPort(rows=[NEW_ROW])
+    connect(port, ACCOUNT, clock=FixedClock(FIXED)).find(
+        mm.Account.where(mm.Account.id == 7)
+    ).result()
+    (statement, kind, target), *rest = borrowing.calls
+    assert rest == []
+    assert kind == "READ"
+    assert borrowing.rows is port.returned[0]
+    assert isinstance(target, EntityIdentity)
+    assert POSTGRES_DRIVER_SQL(statement.sql) == port.ops[0][1]

@@ -1,41 +1,51 @@
-"""What an unobserved operation costs the lifecycle, measured as one number.
+"""What an unobserved operation costs the lifecycle, measured over the whole seam.
 
 `core/spec/m-execution-lifecycle.md` states the cost of observation as a
 contract: with no installed Provider "no allocation, clock read, or I/O occurs",
 and a declining Provider "costs only the UUID, descriptor, and opening call".
 The site tests in ``test_execution_lifecycle_read.py`` each name ONE cost — a
-lifecycle class, a canonical spelling, a row count, a bound method — which is
-what makes a failure there actionable. This one names only *that* a cost exists,
-over the whole sequence a read drives the seam through, so a cost of a kind
-nobody has named yet fails here without a reviewer finding it first.
+lifecycle class, a canonical spelling, a row count, a bound method, the objects a
+real call site hands the seam — which is what makes a failure there actionable.
+These name only *that* a cost exists, over the whole sequence a read drives the
+seam through, so a cost no site test names still fails here.
 
 The seam is driven with the values a real read hands it: a namespaced
 :class:`~parallax.core.metamodel.EntityIdentity` whose canonical spelling has to
 be BUILT, a real Lowered Statement, and a row list far longer than the
-interpreter's small-integer cache. Those are the inputs whose spelling and
-sizing were themselves the last two defects, so a seam that touches either
-allocates — and allocating is the whole assertion.
+interpreter's small-integer cache. A seam that spells that target or sizes those
+rows allocates, and allocating is the whole assertion.
 
-**Observed.** Every object allocated inside the window, including one freed
-before the window closes: :func:`tracemalloc.reset_peak` is what makes a
-transient allocation visible, because the high-water mark rises when the object
-is born and does not fall when it dies. Retention is measured beside it over
-repeated runs, so a byte kept per run cannot hide in the floor. Neither number
-is compared against a byte count that would drift: the free paths are graded at
-zero, and the declined path against the cost of exactly one permitted opening.
+Two instruments, because an object can appear without any byte reaching the
+allocator:
 
-**Not observed.** The allocation of the read AROUND the seam: the driver SQL,
-the binds, the rows, the graph. That is the query's own cost, it is not zero,
-and end to end it swamps the seam's by three orders of magnitude — which is why
-the window holds the sequence a read drives the seam through rather than a whole
-``find``. An allocation served from a CPython free list would also be invisible,
-since it reaches no allocator; the bound-method shape is measurably not one of
-those, but a future one could be, which is why the site tests stay.
+**Bytes.** :func:`_allocation` grades retention over repeated runs, so a byte
+kept per run cannot hide in the floor, beside the high-water rise after
+:func:`tracemalloc.reset_peak`, which is what makes an object born and freed
+inside the window visible. Neither number is compared against a byte count that
+would drift: the free paths are graded at zero, and the declined path against the
+cost of exactly one permitted opening. :func:`_first_run` grades those two
+numbers for the first run a process makes, in a child interpreter, because a
+lazily built cache is paid once and a warmed measurement would never see it.
+
+**Survivors.** :func:`_survivors` grades objects rather than bytes: those alive at
+the innermost point of the sequence that were not alive before it began. CPython
+serves some construction from a free list, which reaches no allocator and moves
+no byte counter — a warmed ``lambda: []`` measures as zero bytes — while every
+such object is one the collector tracks and this one sees.
+
+Outside both: an object born and dropped inside a single seam call that the free
+list also serves, since no sample point holds it and no counter moves; and the
+allocation of the read AROUND the seam — the driver SQL, the binds, the rows, the
+graph — which is the query's own cost, is not zero, and end to end swamps the
+seam's by three orders of magnitude. That is why the window holds the sequence a
+read drives the seam through rather than a whole ``find``, and why what a real
+call site hands the seam is graded where that call site runs.
 """
 
 from __future__ import annotations
 
 import gc
+import subprocess
 import sys
 import tracemalloc
 from collections.abc import Callable
@@ -67,6 +77,16 @@ bytes, so anything kept per run — the smallest object is tens of bytes — cle
 it by two orders of magnitude, and "under one byte per run" needs no threshold
 anyone has to justify."""
 
+FIRST_RUN: Final = "--first-run"
+"""Argument that runs this module as the child interpreter :func:`_first_run` needs."""
+
+type _Seam = Callable[[Callable[[], None]], None]
+"""One sequence through the seam, calling its argument at its innermost point.
+
+Sampling is a parameter rather than a second copy of the sequence, so the bytes
+and the survivors are graded over the same code.
+"""
+
 
 class _DecliningProvider:
     """A Provider that refuses every root, which is the second costed path."""
@@ -81,7 +101,11 @@ class _DecliningProvider:
 DECLINING: Final = _DecliningProvider()
 
 
-def _allocation(work: Callable[[], None]) -> tuple[int, int]:
+def _unsampled() -> None:
+    """The sampler a byte measurement passes: the sequence runs unobserved."""
+
+
+def _allocation(work: _Seam) -> tuple[int, int]:
     """Bytes ``work`` keeps over :data:`REPEATS` runs, and bytes one run
     allocates and frees again.
 
@@ -98,53 +122,94 @@ def _allocation(work: Callable[[], None]) -> tuple[int, int]:
     sys.settrace(None)
     try:
         for _ in range(WARMUP):
-            work()
+            work(_unsampled)
         gc.collect()
         gc.collect()
         before, _ = tracemalloc.get_traced_memory()
         for _ in range(REPEATS):
-            work()
+            work(_unsampled)
         gc.collect()
         gc.collect()
         after, _ = tracemalloc.get_traced_memory()
 
         gc.collect()
         tracemalloc.reset_peak()
-        work()
+        work(_unsampled)
         current, peak = tracemalloc.get_traced_memory()
     finally:
         sys.settrace(tracer)
     return after - before, peak - current
 
 
-def _nothing() -> None:
+def _first_run(work: _Seam) -> tuple[int, int]:
+    """The same two numbers for ONE run, with nothing warmed but the measurement.
+
+    Retention is read before the peak is reset, so the reading's own objects land
+    in the retained figure rather than in the transient one and the caller's
+    control carries the identical harness cost. Meaningful only in a process that
+    has never run ``work``, which is why :data:`FIRST_RUN` exists.
+    """
+    gc.collect()
+    gc.collect()
+    before, _ = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    work(_unsampled)
+    current, peak = tracemalloc.get_traced_memory()
+    return current - before, peak - current
+
+
+def _survivors(seam: _Seam) -> list[object]:
+    """Tracked objects alive at ``seam``'s innermost point that were not alive
+    before it began.
+
+    Both snapshots and the sampler itself are built before the first one is
+    taken, so the only objects the comparison has to discount are the two it
+    cannot avoid: the identity set and the sampled list.
+    """
+    sampled: list[list[object]] = []
+
+    def sample() -> None:
+        sampled.append(gc.get_objects())
+
+    gc.collect()
+    before = {id(obj) for obj in gc.get_objects()}
+    seam(sample)
+    live = sampled[0]
+    return [obj for obj in live if id(obj) not in before and obj is not live and obj is not before]
+
+
+def _nothing(sample: Callable[[], None]) -> None:
     """The control for a path the specification costs at nothing."""
+    sample()
 
 
-def _unobserved_read() -> None:
+def _unobserved_read(sample: Callable[[], None]) -> None:
     with (
         open_read_root(None, target=TARGET, interface="TYPED") as read,
         read.database_call(STATEMENT, "READ", TARGET) as call,
     ):
         call.read_completed(ROWS)
+        sample()
 
 
-def _declined_read() -> None:
+def _declined_read(sample: Callable[[], None]) -> None:
     with (
         open_read_root(DECLINING, target=TARGET, interface="TYPED") as read,
         read.database_call(STATEMENT, "READ", TARGET) as call,
     ):
         call.read_completed(ROWS)
+        sample()
 
 
-def _one_declined_opening() -> None:
+def _one_declined_opening(sample: Callable[[], None]) -> None:
     """The control for the declined path: exactly the UUID, the descriptor, and
     the opening call the specification permits it, and nothing else."""
     execution = RootExecution(uuid4(), "READ")
     DECLINING.open(execution)
+    sample()
 
 
-def _flush_under(batch: WriteBatchActivity) -> Callable[[], None]:
+def _flush_under(batch: WriteBatchActivity) -> _Seam:
     """The other seam an unobserved operation drives: a flush's Database Call.
 
     The activity is closed over rather than named as a module global, which is
@@ -153,17 +218,19 @@ def _flush_under(batch: WriteBatchActivity) -> Callable[[], None]:
     object, so the global spelling would measure that instead of the seam.
     """
 
-    def run() -> None:
+    def run(sample: Callable[[], None]) -> None:
         with batch.database_call(STATEMENT, "WRITE", TARGET) as call:
             call.write_completed(AFFECTED)
+            sample()
 
     return run
 
 
-def _scopes_under(root: ReadActivity) -> Callable[[], None]:
-    def run() -> None:
+def _scopes_under(root: ReadActivity) -> _Seam:
+    def run(sample: Callable[[], None]) -> None:
         with root as read, read.database_call(STATEMENT, "READ", TARGET) as call:
             call.read_completed(ROWS)
+            sample()
 
     return run
 
@@ -181,6 +248,12 @@ def test_an_unobserved_read_allocates_nothing_at_all() -> None:
 
 
 def test_a_declined_root_costs_only_its_uuid_descriptor_and_opening_call() -> None:
+    # Equality is exact rather than an upper bound, and the declined path does
+    # everything the control does: any further object would have to be born
+    # while the descriptor holding the UUID is still alive, which raises the
+    # high-water mark the control sets. What the opening returns is costed by
+    # the scopes measurement below, so the two together leave an extra
+    # allocation nowhere to sit.
     tracemalloc.start()
     try:
         permitted_kept, permitted_transient = _allocation(_one_declined_opening)
@@ -221,3 +294,50 @@ def test_an_unobserved_write_batch_allocates_nothing_either() -> None:
         tracemalloc.stop()
     assert transient == 0
     assert kept < REPEATS
+
+
+def test_an_unobserved_read_leaves_no_object_alive_behind_it() -> None:
+    # The claim the byte count cannot make. A list, a dict, or a method object
+    # the free list serves moves no byte counter at all, and an activity that
+    # built one to hold its own state would measure as free while every scope
+    # entry created an object.
+    assert _survivors(_unobserved_read) == []
+
+
+def test_a_declined_root_keeps_nothing_of_its_opening_alive() -> None:
+    # The permitted UUID and descriptor are the opening's own transients: by the
+    # time the scopes the decline hands back are running, neither is reachable,
+    # which is what "the same path as the default one" means for a declined root.
+    assert _survivors(_declined_read) == []
+
+
+def test_an_unobserved_write_batch_leaves_no_object_alive_either() -> None:
+    assert _survivors(_flush_under(INERT)) == []
+
+
+def test_the_first_run_in_a_process_costs_what_a_warmed_one_does() -> None:
+    # A warmed measurement pays every one-time cost outside its own window, so a
+    # cache filled on first use — the shape the specification's "no allocation"
+    # covers just as much as a per-call one — would be invisible to it. A child
+    # interpreter is the only place a first run exists, so the seams are measured
+    # there against a control that has already absorbed the harness's own
+    # first-call cost.
+    report = subprocess.run(
+        [sys.executable, __file__, FIRST_RUN],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    control, read, flush = (
+        tuple(int(number) for number in line.split()) for line in report.stdout.splitlines()
+    )
+    assert read == control
+    assert flush == control
+
+
+if __name__ == "__main__":
+    tracemalloc.start()
+    _first_run(_nothing)
+    for measured in (_nothing, _unobserved_read, _flush_under(INERT)):
+        print(*_first_run(measured))
+    tracemalloc.stop()
