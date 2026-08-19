@@ -371,20 +371,33 @@ class Dialect:
 
     # -- placeholders ------------------------------------------------------ #
     def to_driver_sql(self, canonical_sql: str) -> str:
-        """Translate the canonical `?` placeholders to this driver's form (`%s`).
+        """Translate the canonical `?` placeholders to this driver's form (`%s`),
+        doubling every literal `%` the statement already carried.
 
         A `?` inside a string literal or a quoted identifier is that value's or
         that name's own text, never a bind, so it crosses unchanged.
+
+        The escape is the opposite: it reaches quoted runs too, because the `%s`
+        parameter style is applied to the statement as flat text with no SQL
+        grammar of its own. A physical name may be any non-empty string
+        (`m-descriptor`), so a column named `rate%` renders as the quoted
+        identifier `"rate%"`, and a driver handed that bare `%` reads it as a
+        malformed placeholder and refuses the statement outright — while a name
+        ending `%s` would be read as a bind and silently consume one. Doubling
+        first is what keeps the placeholders this then writes from being escaped
+        in turn.
         """
-        return _translate_placeholders(canonical_sql, self.quote_char, "?", "%s")
+        return _translate_placeholders(canonical_sql.replace("%", "%%"), self.quote_char, "?", "%s")
 
     def from_driver_sql(self, driver_sql: str) -> str:
         """The reverse of :meth:`to_driver_sql` — recover canonical `?`-placeholder
-        SQL text from this driver's own form.
+        SQL text from this driver's own form, and undouble its escaped `%`.
 
         Inverse over the whole statement, quoted runs included: a `%s` inside a
         string literal or a quoted identifier is text this driver never bound, so
-        recovering the canonical spelling leaves it standing.
+        recovering the canonical spelling leaves it standing. Undoubling runs
+        last, so the `%%` a placeholder was just recovered out of cannot be read
+        as an escape.
 
         Used only where a caller must REPORT a statement it did not itself lower:
         the conformance engine observes what reached the Database Port, where the
@@ -393,7 +406,7 @@ class Dialect:
         joining them. Production code never calls this; it always starts from
         canonical text and translates outward, never back.
         """
-        return _translate_placeholders(driver_sql, self.quote_char, "%s", "?")
+        return _translate_placeholders(driver_sql, self.quote_char, "%s", "?").replace("%%", "%")
 
     # -- inheritance (m-inheritance / m-sql) -------------------------------- #
     def null_cast(self, neutral_type: NeutralType, max_length: int | None) -> str:

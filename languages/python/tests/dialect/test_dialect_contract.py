@@ -272,6 +272,31 @@ def test_placeholder_translation(dialect: Dialect) -> None:
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_a_literal_percent_is_escaped_for_the_driver_parameter_style(dialect: Dialect) -> None:
+    # A physical name is any non-empty string, so `rate%` is an admissible column
+    # and renders as a quoted identifier. The `%s` parameter style is applied to
+    # the statement as flat text, so a bare `%` there is a malformed placeholder
+    # the driver refuses outright and a name ending `%s` is a bind that silently
+    # eats one — which is why the escape reaches inside quoted runs the
+    # placeholder translation deliberately leaves alone.
+    assert dialect.to_driver_sql('select t0."rate%" from t t0 where t0.id = ?') == (
+        'select t0."rate%%" from t t0 where t0.id = %s'
+    )
+    assert dialect.to_driver_sql('select t0."rate%s" from t t0') == (
+        'select t0."rate%%s" from t t0'
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_from_driver_sql_reverses_percent_escaping(dialect: Dialect) -> None:
+    # Undoubling is the inverse of the escape above, and runs after the
+    # placeholder recovery so the `%%` a `%s` was just recovered out of is never
+    # read as an escape of its own.
+    canonical = 'update "t%s" t0 set "rate%" = ? where t0.id = ?'
+    assert dialect.from_driver_sql(dialect.to_driver_sql(canonical)) == canonical
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_from_driver_sql_reverses_placeholder_translation(dialect: Dialect) -> None:
     # `from_driver_sql` is `to_driver_sql`'s reverse:
     # the conformance engine's materializing-predicate-write capture reports

@@ -65,13 +65,14 @@ def test_a_captured_statement_comes_back_in_canonical_form() -> None:
 
 def test_a_driver_placeholder_inside_a_quoted_identifier_stays_part_of_the_name() -> None:
     # A physical name is any non-empty string, so `rate%s` is an admissible
-    # column and renders as a quoted identifier. Only the statement's own bind is
-    # a placeholder: recovering the canonical spelling must leave the two names
-    # standing, or a run would disagree with its golden over its own schema.
+    # column and renders as a quoted identifier whose `%` crossed to the driver
+    # escaped. Only the statement's own bind is a placeholder: recovering the
+    # canonical spelling must leave the two names standing, or a run would
+    # disagree with its golden over its own schema.
     observation = StatementObservation()
     observing = observation.observing(_Port(), POSTGRES)
 
-    observing.execute('select t0."rate%s", t0."account%s" from t t0 where t0.id = %s', [7])
+    observing.execute('select t0."rate%%s", t0."account%%s" from t t0 where t0.id = %s', [7])
 
     (call,) = observation.calls
     assert call.statement.sql == 'select t0."rate%s", t0."account%s" from t t0 where t0.id = ?'
