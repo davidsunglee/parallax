@@ -27,9 +27,14 @@ The private modules split by change rate rather than by tidiness:
 * ``_diagnostics`` — the detached, byte-bounded projection of an exception and
   the causal attribution an activity failure carries.
 * ``_activity`` — the Provider and Handler Protocols, the per-root publisher,
-  the live activity scopes, and the shared inert stand-in.
-* ``_errors`` — the opening refusal, and the Handler failure a Provider is told
-  about out of band.
+  the live activity scopes, the shared inert stand-in, and the per-Handle
+  per-thread state a re-entrant call is refused by.
+* ``_errors`` — the opening and re-entry refusals, and the Handler failure a
+  Provider is told about out of band.
+* ``_fanout`` — several Providers behind one seam, and the composite Handler
+  that owns their ordering and their per-child quarantine.
+* ``_logging`` — the standard-library logging built-in, and the only place this
+  repository imports ``logging`` at all.
 
 ``testing`` is a separate enforcement scope with no production importer: the
 recorder there grows with the number of events by design, and declaring the
@@ -58,6 +63,7 @@ from parallax.core.execution_lifecycle._diagnostics import (
 from parallax.core.execution_lifecycle._errors import (
     ExecutionLifecycleHandlerError,
     ExecutionLifecycleProviderError,
+    ExecutionLifecycleReentryError,
 )
 from parallax.core.execution_lifecycle._events import (
     ActivityFinished,
@@ -90,6 +96,17 @@ from parallax.core.execution_lifecycle._events import (
     RetryPolicy,
     RootExecution,
     RootExecutionKind,
+    SnapshotStreamFinished,
+    SnapshotStreamOutcome,
+    SnapshotStreamStarted,
+    StreamBatchCompleted,
+    StreamBatchFailed,
+    StreamBatchFinished,
+    StreamBatchOutcome,
+    StreamBatchStarted,
+    StreamClosedEarly,
+    StreamExhausted,
+    StreamFailed,
     TransactionAttemptFinished,
     TransactionAttemptOutcome,
     TransactionAttemptStarted,
@@ -102,6 +119,11 @@ from parallax.core.execution_lifecycle._events import (
     WriteBatchFinished,
     WriteBatchOutcome,
     WriteBatchStarted,
+)
+from parallax.core.execution_lifecycle._fanout import FanoutLifecycleProvider
+from parallax.core.execution_lifecycle._logging import (
+    LifecycleLogDetail,
+    LoggingLifecycleProvider,
 )
 
 __all__ = [
@@ -130,10 +152,14 @@ __all__ = [
     "ExecutionLifecycleHandlerError",
     "ExecutionLifecycleProvider",
     "ExecutionLifecycleProviderError",
+    "ExecutionLifecycleReentryError",
     "FailureDiagnostic",
+    "FanoutLifecycleProvider",
     "JoinedInvocation",
     "JoinedInvocationRaised",
     "JoinedInvocationReturned",
+    "LifecycleLogDetail",
+    "LoggingLifecycleProvider",
     "OuterInvocation",
     "OuterInvocationCommitted",
     "OuterInvocationFailed",
@@ -146,6 +172,17 @@ __all__ = [
     "RetryPolicy",
     "RootExecution",
     "RootExecutionKind",
+    "SnapshotStreamFinished",
+    "SnapshotStreamOutcome",
+    "SnapshotStreamStarted",
+    "StreamBatchCompleted",
+    "StreamBatchFailed",
+    "StreamBatchFinished",
+    "StreamBatchOutcome",
+    "StreamBatchStarted",
+    "StreamClosedEarly",
+    "StreamExhausted",
+    "StreamFailed",
     "TransactionAttemptFinished",
     "TransactionAttemptOutcome",
     "TransactionAttemptStarted",

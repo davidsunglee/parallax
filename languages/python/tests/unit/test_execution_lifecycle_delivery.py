@@ -39,7 +39,11 @@ from parallax.core.execution_lifecycle import (
     RootExecution,
     _activity,
 )
-from parallax.core.execution_lifecycle._activity import open_read_root
+from parallax.core.execution_lifecycle._activity import (
+    DeliveryState,
+    InstalledLifecycle,
+    open_read_root,
+)
 from parallax.core.execution_lifecycle._diagnostics import (
     database_diagnostic_for,
     diagnostic_for,
@@ -54,6 +58,16 @@ from parallax.snapshot.handle import Database
 
 def _db(port: RecordingPort, provider: Any) -> Database:
     return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+
+
+def _installed(provider: Any) -> InstalledLifecycle:
+    """What a handle holds for ``provider`` — the seam below ``connect`` takes.
+
+    Spelled out only where a suite drives the root opener or the publisher
+    directly rather than going through a handle, which is the one place the
+    pairing is not made for it.
+    """
+    return InstalledLifecycle(provider, DeliveryState())
 
 
 def _read(db: Database) -> None:
@@ -376,7 +390,7 @@ def test_a_deactivated_publisher_drops_an_event_it_is_still_handed() -> None:
     provider = _Provider(handler)
     execution = RootExecution(uuid4(), "READ")
     publisher = _activity._Publisher(  # pyright: ignore[reportPrivateUsage] - the unit test drives the per-root publisher directly
-        execution.id, provider, handler
+        execution.id, _installed(provider), handler
     )
     event = ReadStarted(execution.id, 1, 1, None, "Account", "TYPED")
     with pytest.raises(KeyboardInterrupt):
@@ -421,7 +435,7 @@ def test_a_database_call_reports_a_write_count_the_same_way_it_reports_a_read() 
     # count its body knows, and which count that is decides the outcome.
     recorder = RecordingLifecycleProvider()
     account = EntityIdentity(None, "Account")
-    root = open_read_root(recorder, target=account, interface="TYPED")
+    root = open_read_root(_installed(recorder), target=account, interface="TYPED")
     statement = LoweredStatement("update account set balance = ?", (5,))
     with root as read, read.database_call(statement, "WRITE", account) as call:
         call.write_completed(3)
