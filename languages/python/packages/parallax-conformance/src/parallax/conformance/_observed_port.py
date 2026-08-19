@@ -1,20 +1,20 @@
 """What one run put on the wire, observed at the Database Port.
 
 `then.statements` and `then.roundTrips` are the corpus's SQL and count oracles,
-and both are facts about what reached the driver. Observing them at the port is
-therefore observing them where they happen — and it keeps them independent of
-whether an Execution Lifecycle Provider is installed at all, which is exactly
-what `m-snapshot-read` requires of the round-trip ceiling.
-
-Deliberately NOT the lifecycle seam. The lifecycle oracle names a statement by
-index into the case's flattened golden order and never by text, so a run that
-graded both from one source would make the two oracles one witness wearing two
-names. Two independent observations of two different facts is the point.
+and both are facts about what reached the driver. This observes them at the port
+because the Execution Lifecycle publishes no Database Call for a write or a
+transaction yet: until it does, the port is the only place both oracles are
+answerable for every lane. It is a stand-in for a seam still being built, not a
+second witness the corpus wants — once the lifecycle covers the write and
+transaction lanes, both oracles come off the delivered event stream, which is the
+one source they were read from before the Execution Log was retired.
 
 The canonical `?`-placeholder form is what every emission this engine reports
 carries, so a captured driver statement is round-tripped back through
 :meth:`~parallax.core.dialect.Dialect.from_driver_sql` before it joins them.
-Binds cross the port unchanged and need no such recovery.
+That recovery is a cost of observing driver SQL rather than the canonical
+statement a Database Call event already carries. Binds cross the port unchanged
+and need no such recovery.
 """
 
 from __future__ import annotations
