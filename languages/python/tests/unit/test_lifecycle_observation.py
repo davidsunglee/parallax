@@ -334,6 +334,14 @@ def test_a_call_whose_index_would_name_a_different_statement_is_an_adapter_defec
         _portable(call, statements=["select 2 from account"])
 
 
+def test_an_emission_no_call_named_is_an_adapter_defect() -> None:
+    """The half of the correspondence a per-call check cannot see: every index
+    handed out landed, and an emission was still left unnamed."""
+    call = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "READ", _STATEMENT)
+    with pytest.raises(StatementIndexError, match="named only 1"):
+        _portable(call, statements=[_STATEMENT.sql, "insert into account(id) values (?)"])
+
+
 # --- the statement and count projections of the same delivery ------------------
 
 
@@ -394,6 +402,27 @@ def test_a_failed_call_is_the_round_trip_it_was_charged_for() -> None:
     assert observation.round_trips == 1
 
 
+def test_a_resolving_read_takes_no_index_and_shifts_none() -> None:
+    """A call charged to the resolving reads consumes no emission.
+
+    The delivery holds it and the emission order does not, so it names no index
+    — and the calls after it still name the order in full, which is the whole
+    point of skipping rather than renumbering.
+    """
+    observation = LifecycleObservation()
+    handler = _Handler(observation)
+    with observation.resolving_reads():
+        handler.deliver(_call("READ", "select 1"))
+    handler.deliver(_call("WRITE", "insert 1"), _call("WRITE", "insert 2"))
+
+    assert observation.resolving_read_calls == frozenset({0})
+    portable = execution_lifecycle_observation(
+        observation.roots, ["insert 1", "insert 2"], observation.resolving_read_calls
+    )
+    events = cast("list[dict[str, Any]]", _roots(portable)[0]["events"])
+    assert [event["databaseCallStarted"].get("statement") for event in events] == [None, 0, 1]
+
+
 # --- the run collects what its several handles each observed -------------------
 
 
@@ -410,6 +439,23 @@ def test_a_run_answers_the_roots_its_handles_opened_in_order() -> None:
         "READ",
         "TRANSACTION_INVOCATION",
     ]
+
+
+def test_a_run_positions_each_observations_resolving_reads_in_its_own_order() -> None:
+    """One observation's call position is not the run's: the run's order is the
+    concatenation, so each observation's marks move by what ran before it."""
+    run = LifecycleRun()
+    first, second = run.observation(), run.observation()
+    first_handler, second_handler = _Handler(first), _Handler(second)
+    with first.resolving_reads():
+        first_handler.deliver(_call("READ", "select 1"))
+    first_handler.deliver(_call("WRITE", "insert 1"))
+    with second.resolving_reads():
+        second_handler.deliver(_call("READ", "select 2"))
+    second_handler.deliver(_call("WRITE", "insert 2"))
+
+    assert first.resolving_read_calls == second.resolving_read_calls == frozenset({0})
+    assert run.resolving_read_calls == frozenset({0, 2})
 
 
 def test_an_entry_point_grading_no_oracle_still_drives_a_run() -> None:
@@ -445,6 +491,75 @@ def test_no_conformance_module_recovers_a_statement_from_driver_text() -> None:
     assert recovering == []
 
 
+_HANDLE_MODULE = "parallax.snapshot.handle"
+
+
+def _dotted(node: ast.expr) -> str | None:
+    """``node`` as the dotted name it spells, or ``None`` if it spells none."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value)
+        return None if base is None else f"{base}.{node.attr}"
+    return None
+
+
+def _handle_constructors(tree: ast.Module) -> set[str]:
+    """Every spelling that builds a Handle in the module *tree* belongs to.
+
+    Resolved through the module's OWN imports rather than by matching the name
+    ``Database``: a lane importing the class directly writes ``Database(...)``
+    and one importing the module writes ``handle.Database(...)``, so a guard
+    that knows only one spelling is evaded by writing the other. ``connect`` is
+    the same construction under the composition-root name.
+    """
+    constructors: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == _HANDLE_MODULE:
+                    constructors.add(f"{alias.asname or alias.name}.Database")
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                qualified = f"{node.module}.{alias.name}" if node.module else alias.name
+                if qualified == _HANDLE_MODULE:
+                    constructors.add(f"{alias.asname or alias.name}.Database")
+                elif node.module == _HANDLE_MODULE and alias.name == "Database":
+                    constructors.add(alias.asname or alias.name)
+    return constructors | {f"{name}.connect" for name in constructors}
+
+
+def _installs_a_provider(call: ast.Call) -> bool:
+    """Whether ``call`` provably hands the Handle a Provider.
+
+    A ``lifecycle_provider=None`` satisfies the signature and installs nothing,
+    so the literal null is refused rather than counted; a ``**`` splat carries
+    arguments this reading cannot resolve, so it proves nothing and is refused
+    for that reason.
+    """
+    if any(keyword.arg is None for keyword in call.keywords):
+        return False
+    supplied = [keyword.value for keyword in call.keywords if keyword.arg == "lifecycle_provider"]
+    return bool(supplied) and not any(
+        isinstance(value, ast.Constant) and value.value is None for value in supplied
+    )
+
+
+def _handle_constructions(source: str) -> tuple[list[int], list[int]]:
+    """Every line of *source* that builds a Handle, and those installing no Provider."""
+    tree = ast.parse(source)
+    constructors = _handle_constructors(tree)
+    built: list[int] = []
+    unobserved: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _dotted(node.func) not in constructors:
+            continue
+        built.append(node.lineno)
+        if not _installs_a_provider(node):
+            unobserved.append(node.lineno)
+    return built, unobserved
+
+
 def test_every_handle_the_conformance_engine_builds_observes_its_own_work() -> None:
     """No lane may build a Handle the run cannot see.
 
@@ -453,16 +568,41 @@ def test_every_handle_the_conformance_engine_builds_observes_its_own_work() -> N
     vanish from the run's observation and the case grades a stream missing work
     that really happened. The absence is invisible at the call site, which is
     why it is asserted over the source rather than left to a case to discover.
+
+    The construction count is asserted too: a reading that resolved no
+    constructor at all would report the same empty list as a clean engine.
     """
     from parallax.conformance import engine
 
     source = Path(str(engine.__file__)).read_text(encoding="utf-8")
-    unobserved = [
-        node.lineno
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "Database"
-        and not any(keyword.arg == "lifecycle_provider" for keyword in node.keywords)
-    ]
+    built, unobserved = _handle_constructions(source)
+    assert built, "the reading resolved no Handle construction in the engine at all"
     assert unobserved == []
+
+
+def test_the_handle_guard_refuses_a_provider_it_cannot_read_as_installed() -> None:
+    """Each way the guard's own claim could be true in letter and false in fact.
+
+    The claim is that every Handle the engine builds installs a Provider, so a
+    construction the reading cannot see, or a keyword whose value installs
+    nothing, has to be reported rather than passed over. ``sqlite3.Database``
+    is the control: it is a construction of something else entirely, and a
+    guard matching the bare name would report it.
+    """
+    evasions = (
+        "from parallax.snapshot import handle\nhandle.Database(p, m, lifecycle_provider=None)\n",
+        "from parallax.snapshot.handle import Database\nDatabase(p, m)\n",
+        "from parallax.snapshot.handle import Database as Db\nDb(p, m, lifecycle_provider=None)\n",
+        "from parallax.snapshot import handle as h\nh.Database(p, m, **options)\n",
+        "import parallax.snapshot.handle\nparallax.snapshot.handle.Database(p, m)\n",
+        "from parallax.snapshot import handle\nhandle.Database.connect(p, m)\n",
+    )
+    for source in evasions:
+        assert _handle_constructions(source) == ([2], [2]), source
+
+    observed = (
+        "from parallax.snapshot import handle\n"
+        "handle.Database(p, m, lifecycle_provider=run.observation().provider)\n"
+    )
+    assert _handle_constructions(observed) == ([2], [])
+    assert _handle_constructions("import sqlite3\nsqlite3.Database(p)\n") == ([], [])

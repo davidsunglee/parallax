@@ -25,9 +25,11 @@
 # The new balance (275.00) differs from what either read observed, so each
 # attempt's write is an effective change rather than a restoration.
 #
-# `roundTrips: 2` is what the two authored attempts cost between them — one gated
-# UPDATE each. The first REACHED the database and reported zero rows, so it counts
-# exactly as the second does; the count spans every attempt rather than the last.
+# `roundTrips: 4` is what the two authored attempts cost between them — a
+# resolving read and the gated UPDATE it licenses, each. The first UPDATE REACHED
+# the database and reported zero rows, so it counts exactly as the second does;
+# the count spans every attempt rather than the last, and each attempt's read
+# counts beside its write because it too reached the database.
 #
 model: models/account.yaml
 tags: [m-opt-lock, m-auto-retry, m-sql, conflict, success, slice-snapshot-1, slice-managed-1]
@@ -59,7 +61,7 @@ when:
       write: { id: 2, balance: 275.00, observedVersion: 2 }
       affectedRows: 1
 then:
-  roundTrips: 2
+  roundTrips: 4
   tableState:
     account:
       - { id: 1, owner: Ada, balance: 100.00, version: 1 }

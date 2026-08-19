@@ -29,8 +29,11 @@ observation alike (`m-execution-lifecycle`):
   deeper one;
 - **statement.** A Database Call names its statement by INDEX — into the case's
   flattened authored golden order on the asserted side, into the envelope's own
-  ``emissions`` on the observed side — and every index must land on something
-  that exists, while a record whose index space is non-empty must carry one;
+  ``emissions`` on the observed side. Every index must land on something that
+  exists, and the indexes a record names are its whole space, in delivery order
+  and once each; the calls that name none are the two the space does not hold —
+  every call where nothing is authored at all, and the resolving read a keyed
+  write owes, which is a read;
 - **counts.** The record's sole count oracle — ``then.roundTrips`` on a case,
   ``observations.roundTrips`` on an envelope — counts the Database Call
   activities the stream opened, which the record restates rather than competes
@@ -42,11 +45,12 @@ observation alike (`m-execution-lifecycle`):
   does follows it;
 - **history.** A transaction root is TERMINAL, so a commit ends the invocation:
   attempts run one after another rather than overlapping, at most one commits and
-  it is the last, the invocation's own outcome agrees with that last attempt, the
-  attempts number at most one more than the invocation's own resolved retry
-  bound, the classifier's verdict and that bound agree about where the history
-  stops, and a rollback failure ends the history whatever the classifier said
-  about the failure that triggered it.
+  it is the last, the invocation's own outcome agrees with that last attempt, an
+  invocation running no attempt at all is the begin failure that is the only way
+  to run none and finishes failed, the attempts number at most one more than the
+  invocation's own resolved retry bound, the classifier's verdict and that bound
+  agree about where the history stops, and a rollback failure ends the history
+  whatever the classifier said about the failure that triggered it.
 
 Without these, a record whose events are individually well formed but describe
 no tree — every ``parent`` naming an activity that never opened, every count
@@ -124,6 +128,16 @@ class _StatementSpace:
         return f"{self.holder} {self.size} {self.noun}(s)"
 
 
+@dataclass(frozen=True)
+class _Call:
+    """One Database Call as the statement rules read it: where it is, which index
+    it named, and whether it read or wrote."""
+
+    label: str
+    statement: Any
+    kind: str
+
+
 @dataclass
 class _Activity:
     """One activity as the stream describes it, while the stream is being read.
@@ -186,7 +200,7 @@ def _check_record(lifecycle: Any, space: _StatementSpace, declared: Any) -> list
     roots = lifecycle.get("roots")
     roots = roots if isinstance(roots, list) else []
     problems: list[str] = []
-    calls = 0
+    calls: list[_Call] = []
     for index, root in enumerate(roots):
         if not isinstance(root, dict):  # pragma: no cover - the schema types the item
             continue
@@ -196,20 +210,20 @@ def _check_record(lifecycle: Any, space: _StatementSpace, declared: Any) -> list
                 f"root {index + 1} in the order this record states them; the index IS that "
                 f"order, so a record authoring the two differently names two orders"
             )
-        calls += _check_root(root, f"roots[{index}]", space, problems)
-    _check_total(calls, declared, problems)
+        calls.extend(_check_root(root, f"roots[{index}]", problems))
+    _check_statements(calls, space, problems)
+    _check_total(len(calls), declared, problems)
     return problems
 
 
-def _check_root(
-    root: dict[str, Any], label: str, space: _StatementSpace, problems: list[str]
-) -> int:
-    """Report *root*'s own problems and return how many Database Calls it opened."""
+def _check_root(root: dict[str, Any], label: str, problems: list[str]) -> list[_Call]:
+    """Report *root*'s own problems and return the Database Calls it opened, in
+    delivery order."""
     events = root.get("events")
     events = events if isinstance(events, list) else []
     activities: dict[int, _Activity] = {}
     root_activity: int | None = None
-    calls = 0
+    calls: list[_Call] = []
     for position, event in enumerate(events):
         if not isinstance(event, dict):  # pragma: no cover - the schema types the item
             continue
@@ -232,8 +246,13 @@ def _check_root(
                         event, transition, root, root_activity, where, problems
                     )
                 if transition == "databaseCallStarted":
-                    calls += 1
-                    _check_statement(payload.get("statement"), where, space, problems)
+                    calls.append(
+                        _Call(
+                            label=where,
+                            statement=payload.get("statement"),
+                            kind=str(payload.get("kind")),
+                        )
+                    )
         else:
             _check_finished(event, transition, payload, where, position, activities, problems)
     _check_balance(events, activities, root_activity, label, problems)
@@ -560,6 +579,7 @@ def _check_history(
         if activities[child].started == "transactionAttemptStarted"
     ]
     if not attempts:
+        _check_attemptless(invocation, label, problems)
         return
     for index, attempt in enumerate(attempts[:-1]):
         _check_retried(attempt, attempts[index + 1], problems)
@@ -582,6 +602,27 @@ def _check_history(
                 f"ran; a failure the classifier admitted re-executes the closure until the "
                 f"bound is spent, so a stream terminates on one only at exhaustion"
             )
+
+
+def _check_attemptless(invocation: _Activity, label: str, problems: list[str]) -> None:
+    """The one outcome an invocation running NO attempt may report.
+
+    A Transaction Attempt starts only once the boundary has begun successfully,
+    so an invocation holding none is one whose begin failed — and a begin
+    failure finishes the invocation with a direct, non-retryable failure. An
+    invocation reporting a commit without an attempt claims a physical
+    transaction that never opened, and the terminal-attempt rule cannot catch it
+    because there is no attempt to disagree with.
+    """
+    if invocation.kind != _OUTER or invocation.open:
+        return
+    outcome = invocation.finished_payload.get("outcome")
+    if outcome != "failed":
+        problems.append(
+            f"{label} opens no Transaction Attempt but its invocation reports {outcome!r}; an "
+            f"attempt starts only after the boundary has begun, so the one invocation that "
+            f"runs none is a begin failure and finishes failed"
+        )
 
 
 def _check_retried(attempt: _Activity, successor: _Activity, problems: list[str]) -> None:
@@ -641,18 +682,46 @@ def _check_terminal_attempt(
         )
 
 
-def _check_statement(
-    statement: Any, label: str, space: _StatementSpace, problems: list[str]
-) -> None:
-    if statement is None:
-        if space.size:
-            problems.append(
-                f"{label} names no statement, but {space.phrase()}; a call names the statement "
-                f"it ran, and omits the index only where there is none to name"
-            )
+def _check_statements(calls: list[_Call], space: _StatementSpace, problems: list[str]) -> None:
+    """The index space against the calls that name it.
+
+    A call names the statement it ran by index, and omits the index only where
+    the space holds none to name. There are two such places, and they are the
+    reason this is a claim about the WHOLE record rather than about one call: a
+    lane authoring no golden at all — `api-conformance` — where nothing is
+    indexed, and the resolving read a keyed write owes, which reaches the
+    database and is counted but which the case authors no statement for
+    (`m-case-format` "Resolving reads a write owes").
+
+    What keeps that second omission honest is coverage: the indexes the calls do
+    name are the whole space, in delivery order, once each. A call omitting an
+    index it should have named leaves an authored statement unnamed, and a call
+    taking an index that belongs to a later one shifts every index after it, so
+    both land here even though each index in isolation is in range. A WRITE call
+    is additionally never one of the two omissions — every statement a case
+    authors as golden DML is one some write call ran — so it must name one
+    wherever the space is non-empty.
+    """
+    named = [call for call in calls if call.statement is not None]
+    for call in named:
+        if isinstance(call.statement, int) and not 0 <= call.statement < space.size:
+            problems.append(f"{call.label} names statement {call.statement}, but {space.phrase()}")
+    if not space.size:
         return
-    if isinstance(statement, int) and not 0 <= statement < space.size:
-        problems.append(f"{label} names statement {statement}, but {space.phrase()}")
+    for call in calls:
+        if call.statement is None and call.kind != "read":
+            problems.append(
+                f"{call.label} names no statement, but {space.phrase()}; a call omits the index "
+                f"only where the space holds none to name, and every golden statement is one a "
+                f"write call ran"
+            )
+    indexes = [call.statement for call in named]
+    if indexes != list(range(space.size)):
+        problems.append(
+            f"the record's database calls name statements {indexes}, but {space.phrase()}; the "
+            f"space is named in delivery order and once each, so a call that skipped its own "
+            f"index or took another's leaves the two orders disagreeing"
+        )
 
 
 def _check_total(calls: int, declared: Any, problems: list[str]) -> None:

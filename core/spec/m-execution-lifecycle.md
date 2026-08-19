@@ -408,10 +408,13 @@ counts, retry classification, and statement indexes. It omits UUIDs, monotonic
 durations, implementation type names, messages, stack traces, and native codes.
 
 A Database Call transition names its statement by zero-based index into the
-case's flattened golden statement order. On an `api-conformance` lane with no
-golden SQL, the index is absent. The adapter observation uses the identical
-shape and indexes its own emissions. The shape is a case assertion format, not
-a public serialization contract.
+case's flattened golden statement order. Two calls name none: every call on an
+`api-conformance` lane, which authors no golden SQL, and a resolving read a
+keyed write owes, which reaches the database and is counted while the case
+authors no golden for it (`m-case-format`). The indexes the remaining calls
+name are that order exactly, in delivery order and once each. The adapter
+observation uses the identical shape and indexes its own emissions. The shape
+is a case assertion format, not a public serialization contract.
 
 This module owns six cases:
 

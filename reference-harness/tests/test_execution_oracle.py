@@ -700,6 +700,120 @@ def test_a_golden_bearing_call_omitting_its_statement_is_flagged() -> None:
     assert validate_execution(_case(_lifecycle(root)))
 
 
+def _read_then_write_root(read_statement: int | None = None) -> dict[str, Any]:
+    """One transaction whose attempt resolves a source row and then writes it.
+
+    The read is the resolving read a keyed write owes: it reaches the database
+    and the case counts it, and the case authors no golden for it.
+    """
+    started: dict[str, Any] = {"target": "Account", "kind": "read"}
+    if read_statement is not None:
+        started["statement"] = read_statement
+    return _root(
+        "transaction-invocation",
+        [
+            _event(
+                1,
+                1,
+                None,
+                transactionInvocationStarted={
+                    "invocation": "outer",
+                    "concurrency": "optimistic",
+                    "retries": 10,
+                    "retryOptimisticConflicts": False,
+                },
+            ),
+            _event(2, 2, 1, transactionAttemptStarted={}),
+            _event(3, 3, 2, readStarted={"target": "Account", "interface": "wire"}),
+            _event(4, 4, 3, databaseCallStarted=started),
+            _event(5, 4, 3, databaseCallFinished={"outcome": "readCompleted", "returnedRows": 1}),
+            _event(6, 3, 2, readFinished={"outcome": "completed"}),
+            _event(7, 5, 2, writeBatchStarted={"trigger": "pre-commit"}),
+            _event(
+                8,
+                6,
+                5,
+                databaseCallStarted={"target": "Account", "kind": "write", "statement": 0},
+            ),
+            _event(9, 6, 5, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
+            _event(10, 5, 2, writeBatchFinished={"outcome": "completed"}),
+            _event(11, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
+            _event(12, 1, None, transactionInvocationFinished={"outcome": "committed"}),
+        ],
+    )
+
+
+def test_a_resolving_read_the_case_authors_no_golden_for_names_no_statement() -> None:
+    """The one call beside `api-conformance` that omits its index.
+
+    A keyed write is licensed by a value a read published, so the unit reads
+    before it writes; `then.roundTrips` counts that read and `then.statements`
+    authors only the DML. The read therefore has no index to name, while the
+    write it licensed still names the golden it ran.
+    """
+    case = _case(_lifecycle(_read_then_write_root()))
+    case["then"]["roundTrips"] = 2
+    assert validate_execution(case) == []
+
+
+def test_a_resolving_read_taking_the_index_its_write_owes_is_flagged() -> None:
+    """The omission the read is entitled to is not one the write may borrow.
+
+    Every golden statement is DML some write call ran, so a record where the
+    read carries index 0 and the write carries none names the whole space and
+    still describes the wrong call running the authored statement.
+    """
+    root = _read_then_write_root(read_statement=0)
+    del root["events"][7]["databaseCallStarted"]["statement"]
+    case = _case(_lifecycle(root))
+    case["then"]["roundTrips"] = 2
+    problems = validate_execution(case)
+    assert any("every golden statement is one a write call ran" in problem for problem in problems)
+
+
+def _two_write_root(second_statement: int) -> dict[str, Any]:
+    """One pre-commit batch putting two ordered writes on the wire."""
+    return _root(
+        "transaction-invocation",
+        [
+            _event(
+                1,
+                1,
+                None,
+                transactionInvocationStarted={
+                    "invocation": "outer",
+                    "concurrency": "locking",
+                    "retries": 10,
+                    "retryOptimisticConflicts": False,
+                },
+            ),
+            _event(2, 2, 1, transactionAttemptStarted={}),
+            _event(3, 3, 2, writeBatchStarted={"trigger": "pre-commit"}),
+            _event(
+                4,
+                4,
+                3,
+                databaseCallStarted={"target": "Account", "kind": "write", "statement": 0},
+            ),
+            _event(5, 4, 3, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
+            _event(
+                6,
+                5,
+                3,
+                databaseCallStarted={
+                    "target": "Account",
+                    "kind": "write",
+                    "statement": second_statement,
+                },
+            ),
+            _event(7, 5, 3, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
+            _event(8, 3, 2, writeBatchFinished={"outcome": "completed"}),
+            _event(9, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
+            _event(10, 1, None, transactionInvocationFinished={"outcome": "committed"}),
+        ],
+    )
+
+
 def test_a_stepwise_case_indexes_the_goldens_its_own_steps_author() -> None:
     """Goldens authored per scenario step are one flattened order, not none."""
     when = {
@@ -714,16 +828,28 @@ def test_a_stepwise_case_indexes_the_goldens_its_own_steps_author() -> None:
             },
         ]
     }
-    case = _case(_lifecycle(_write_root()), when=when, shape="scenario")
-    del case["then"]["statements"]
-    del case["then"]["tableState"]
-    assert validate_execution(case) == []
-    root = _write_root()
-    root["events"][3]["databaseCallStarted"]["statement"] = 2
-    stale = _case(_lifecycle(root), when=when, shape="scenario")
-    del stale["then"]["statements"]
-    del stale["then"]["tableState"]
-    assert validate_execution(stale)
+
+    def stepwise(root: dict[str, Any]) -> dict[str, Any]:
+        case = _case(_lifecycle(root), when=when, shape="scenario")
+        del case["then"]["statements"]
+        del case["then"]["tableState"]
+        case["then"]["roundTrips"] = 2
+        return case
+
+    assert validate_execution(stepwise(_two_write_root(1))) == []
+    assert validate_execution(stepwise(_two_write_root(2)))
+
+
+def test_a_record_naming_one_golden_twice_is_flagged() -> None:
+    """Once each, in delivery order: two calls naming index 0 leave the second
+    step's own statement named by nothing."""
+    case = _case(_lifecycle(_two_write_root(0)))
+    case["then"]["statements"].append(
+        {"sql": {"postgres": "insert into account(id) values (?)"}, "binds": [10]}
+    )
+    case["then"]["roundTrips"] = 2
+    problems = validate_execution(case)
+    assert any("once each" in problem for problem in problems)
 
 
 # --- the sole count oracle ----------------------------------------------------
@@ -784,8 +910,11 @@ def _rolled(retry_eligible: bool) -> dict[str, Any]:
 
 
 def _retry_case(root: dict[str, Any]) -> dict[str, Any]:
+    """A case whose stream reaches the database not at all, so it authors no
+    golden statement either: what these fixtures state is attempt history."""
     case = _case(_lifecycle(root))
     case["then"]["roundTrips"] = 0
+    del case["then"]["statements"]
     return case
 
 
@@ -851,6 +980,41 @@ def test_an_attempt_that_had_not_finished_when_the_next_one_started_is_flagged()
     )
 
 
+def _beginless_root(outcome: dict[str, Any]) -> dict[str, Any]:
+    """One invocation that opened no Transaction Attempt at all."""
+    return _root(
+        "transaction-invocation",
+        [
+            _event(
+                1,
+                1,
+                None,
+                transactionInvocationStarted={
+                    "invocation": "outer",
+                    "concurrency": "locking",
+                    "retries": 10,
+                    "retryOptimisticConflicts": False,
+                },
+            ),
+            _event(2, 1, None, transactionInvocationFinished=outcome),
+        ],
+    )
+
+
+def test_an_invocation_that_ran_no_attempt_and_still_committed_is_flagged() -> None:
+    """The only invocation holding no attempt is the one whose begin failed.
+
+    Nothing else can catch this: the terminal-attempt rule compares the
+    invocation with its last attempt, and a stream holding none has nothing to
+    disagree with. A committed invocation that opened no attempt claims a
+    physical transaction that never began.
+    """
+    begin_failed = _beginless_root({"outcome": "failed", "attribution": "direct"})
+    assert validate_execution(_retry_case(begin_failed)) == []
+    problems = validate_execution(_retry_case(_beginless_root({"outcome": "committed"})))
+    assert any("begin failure" in problem for problem in problems)
+
+
 # --- the same relations over the adapter's observation ------------------------
 
 
@@ -884,13 +1048,24 @@ def test_an_envelope_reporting_no_lifecycle_has_nothing_to_walk() -> None:
 
 
 def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
-    authored = 0
+    """Every case authoring the oracle, named: the six `m-execution-lifecycle`
+    cases and the one optimistic-lock success whose resolving read makes it the
+    corpus witness for a Database Call that names no golden statement."""
+    authored = []
     for case_path in sorted(_CASES.glob("**/*.y*ml")):
         case = read_corpus_yaml(case_path)
         if not isinstance(case, dict):  # pragma: no cover - corpus is a mapping per file
             continue
         then = case.get("then")
         if isinstance(then, dict) and "executionLifecycle" in then:
-            authored += 1
+            authored.append(case_path.name)
         assert validate_execution(case) == [], case_path.name
-    assert authored == 6
+    assert authored == [
+        "m-execution-lifecycle-001-standalone-read.yaml",
+        "m-execution-lifecycle-002-pre-commit-batch.yaml",
+        "m-execution-lifecycle-003-read-dependency.yaml",
+        "m-execution-lifecycle-004-retry-then-commit.yaml",
+        "m-execution-lifecycle-005-retry-exhaustion.yaml",
+        "m-execution-lifecycle-006-joined-invocation.yaml",
+        "m-opt-lock-006-success.yaml",
+    ]

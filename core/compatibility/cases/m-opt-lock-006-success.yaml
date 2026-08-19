@@ -13,6 +13,16 @@
 # id 2's balance is now 500.00 and its version is 2; the other rows are untouched.
 # Together with m-opt-lock-005 this proves `updatedRows != 1` is the conflict signal — a
 # fresh version provably touches one row, a stale version provably touches zero.
+#
+# `roundTrips: 2` and the lifecycle oracle state the OTHER call this shape costs:
+# the resolving read whose retained observation licenses the write (`m-unit-work`
+# "Write evidence"). It is a Root Execution of its own because it stands outside
+# the transaction it licenses — that is what lets a concurrent writer commit
+# between the two in m-opt-lock-005 — and its Database Call names NO statement,
+# because `then.statements` authors the DML alone and a resolving read has no
+# golden to index (`m-case-format` "Resolving reads a write owes"). The gated
+# UPDATE names golden 0, so the authored order is named in full by the calls that
+# ran it, and the two calls are exactly what `roundTrips` counts.
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-snapshot-1, slice-managed-1]
 shape: conflict
@@ -30,6 +40,70 @@ then:
         postgres: update account set balance = ?, version = ? where id = ? and version = ?
       binds: [500.00, 2, 2, 1]
   affectedRows: 1
+  roundTrips: 2
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: read
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            readStarted: { target: parallax.compatibility.Account, interface: wire }
+          - sequence: 2
+            activity: 2
+            parent: 1
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 3
+            activity: 2
+            parent: 1
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 4
+            activity: 1
+            parent: null
+            readFinished: { outcome: completed }
+      - execution: 2
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: false
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 4
+            activity: 4
+            parent: 3
+            databaseCallStarted:
+              target: parallax.compatibility.Account
+              kind: write
+              statement: 0
+          - sequence: 5
+            activity: 4
+            parent: 3
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 6
+            activity: 3
+            parent: 2
+            writeBatchFinished: { outcome: completed }
+          - sequence: 7
+            activity: 2
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 8
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }
   tableState:
     account:
       - { id: 1, owner: Ada, balance: 100.00, version: 1 }

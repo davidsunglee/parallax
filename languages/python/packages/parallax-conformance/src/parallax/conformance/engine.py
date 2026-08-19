@@ -262,15 +262,73 @@ def _delivered(
 def _same_bind(planned: object, executed: object) -> bool:
     """One planned bind against the one the database was handed.
 
-    Wire-form equality first, then the exact-Decimal reconciliation: an authored
-    ``250.00`` rides the plan as the literal the case wrote and reaches the
-    database as the ``Decimal`` its decode produced, and those are one value.
+    Reconciled in JSON space rather than by Python equality, because the only
+    difference the two sides may carry is the CARRIER: an authored ``250.00``
+    rides the plan as the literal the case wrote and reaches the database as the
+    ``Decimal`` its decode produced, and those are one value. A difference in
+    JSON TYPE is never a carrier difference, so the reconciliation is typed
+    first and numeric second — Python's own ``True == 1`` would otherwise report
+    a numeric bind as the boolean the plan holds.
     """
-    left, right = _json_bind(planned), _json_bind(executed)
-    if left == right:
-        return True
-    as_decimals = (_decimal_bind(left), _decimal_bind(right))
-    return None not in as_decimals and as_decimals[0] == as_decimals[1]
+    return _same_json(_json_bind(planned), _json_bind(executed))
+
+
+def _json_kind(value: object) -> str:
+    """``value``'s JSON type, as :func:`_json_bind` leaves it.
+
+    ``opaque`` is a carrier :func:`wire_value` returned unchanged: it names no
+    JSON type, so two of them reconcile by their own equality alone. Nothing the
+    renderer DOES spell reaches the structural branches — a byte buffer is
+    already its hex string here, the way a ``Decimal`` is already its decimal
+    one — so an array is a document's own array and nothing else.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, Mapping):
+        return "object"
+    if isinstance(value, Sequence):
+        return "array"
+    return "opaque"
+
+
+def _same_json(planned: object, executed: object) -> bool:
+    """Two rendered binds, reconciled by JSON type.
+
+    A number and a string are the one cross-type pair a carrier difference can
+    produce — a ``Decimal`` renders as its exact decimal string while the plan
+    holds the number the case authored — and they reconcile only as exact
+    decimals. Every other pair of differing types is a difference. A document's
+    members are reconciled under this same rule, so a boolean member inside a
+    value-object document is no more interchangeable with ``1`` than a
+    top-level bind is.
+    """
+    left, right = _json_kind(planned), _json_kind(executed)
+    if left != right:
+        if {left, right} != {"number", "string"}:
+            return False
+        as_decimals = (_decimal_bind(planned), _decimal_bind(executed))
+        return None not in as_decimals and as_decimals[0] == as_decimals[1]
+    if left == "number":
+        as_decimals = (_decimal_bind(planned), _decimal_bind(executed))
+        return None not in as_decimals and as_decimals[0] == as_decimals[1]
+    if left == "object":
+        one, other = cast("Mapping[str, object]", planned), cast("Mapping[str, object]", executed)
+        return set(one) == set(other) and all(
+            _same_json(_json_bind(one[key]), _json_bind(other[key])) for key in one
+        )
+    if left == "array":
+        one, other = cast("Sequence[object]", planned), cast("Sequence[object]", executed)
+        return len(one) == len(other) and all(
+            _same_json(_json_bind(first), _json_bind(second))
+            for first, second in zip(one, other, strict=True)
+        )
+    return planned == executed
 
 
 def _decimal_bind(value: object) -> decimal.Decimal | None:
@@ -3518,7 +3576,11 @@ def _execute_write_unit(
     published (:func:`_unit_source_reads`). Those reads ALL run before any write
     is buffered, and that order is load-bearing rather than tidy: a participating
     read force-flushes, so a read interleaved between two writes would put the
-    first on the wire alone and destroy the batch collapse the goldens pin.
+    first on the wire alone and destroy the batch collapse the goldens pin. They
+    are charged to the observation's resolving reads
+    (:meth:`~parallax.conformance._lifecycle_observation.LifecycleObservation.resolving_reads`):
+    a case counts them in `then.roundTrips` and authors no golden for them, so
+    they name no statement index in the lifecycle observation.
 
     A unit whose writes are the framework's own bookkeeping takes
     :func:`_execute_framework_write_unit` instead, which opens no unit of work
@@ -3566,8 +3628,9 @@ def _execute_write_unit(
 
     def body(tx: handle.Transaction) -> None:
         state = _GroupState()
-        for query in _unit_source_reads(model, resolved):
-            state.published.extend(_published_nodes(tx.wire.find(query)))
+        with observed.resolving_reads():
+            for query in _unit_source_reads(model, resolved):
+                state.published.extend(_published_nodes(tx.wire.find(query)))
         for write in resolved:
             _buffer_wire_write(tx, model, state, write, None)
 
@@ -5756,9 +5819,10 @@ def _conflict_source_nodes(
     target: str,
     resolved: Sequence[_ConflictWrite],
     lifecycle: LifecycleRun,
-) -> dict[ObjectKey, handle.WireEntity]:
+) -> tuple[dict[ObjectKey, handle.WireEntity], int]:
     """The published rows one NON-TEMPORAL conflict attempt's keyed writes are
-    addressed and licensed by, read through a real ``db.wire.find``.
+    addressed and licensed by, read through a real ``db.wire.find``, beside the
+    round trips that read cost.
 
     STANDALONE rather than participating, because the read has to happen where
     the case says it does: a conflict case's ``given.apply`` is a concurrent
@@ -5774,10 +5838,13 @@ def _conflict_source_nodes(
     (:func:`_conflict_source_node`).
 
     It observes like every other Handle this engine builds. The read is one
-    outermost public operation, so it opens a Root Execution of its own and that
-    root belongs to the run's delivered stream — even though the count this shape
-    sums is the attempts' alone, the resolving read standing outside the
-    transaction it licenses.
+    outermost public operation, so it opens a Root Execution of its own, that
+    root belongs to the run's delivered stream, and the calls it makes are round
+    trips the case counts like any other — a keyed write's resolving read is
+    work the framework genuinely does, whether it stands inside the transaction
+    it licenses or, as here, outside it (`m-case-format` "Resolving reads a
+    write owes"). What it authors no golden for is the SQL, so the read is
+    charged to the observation's resolving reads and names no statement index.
     """
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
@@ -5788,15 +5855,16 @@ def _conflict_source_nodes(
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )
-    snapshot = database.wire.find(
-        {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
-    )
     nodes: dict[ObjectKey, handle.WireEntity] = {}
-    for root in snapshot.results():
-        hint = source_hint_of(root)
-        assert hint is not None  # a Wire read files a hint on every published Entity node
-        nodes[hint.object_key] = root
-    return nodes
+    with observed.resolving_reads():
+        snapshot = database.wire.find(
+            {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
+        )
+        for root in snapshot.results():
+            hint = source_hint_of(root)
+            assert hint is not None  # a Wire read files a hint on every published Entity node
+            nodes[hint.object_key] = root
+    return nodes, observed.round_trips
 
 
 def _conflict_source_node(
@@ -6252,7 +6320,8 @@ def run_conflict_case(
         )
 
         def sources_for(attempt: Mapping[str, object]) -> dict[ObjectKey, handle.WireEntity]:
-            return _conflict_source_nodes(
+            nonlocal round_trips
+            nodes, source_trips = _conflict_source_nodes(
                 port,
                 dialect,
                 model,
@@ -6260,6 +6329,8 @@ def run_conflict_case(
                 _resolve_conflict_writes(model, target, mutation, _conflict_write_rows(attempt)),
                 lifecycle,
             )
+            round_trips += source_trips
+            return nodes
 
         # Taken before the concurrent writer commits, and spent by the first
         # attempt; every later attempt reads again, after the one before it ran.
@@ -6302,8 +6373,12 @@ def run_conflict_case(
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )
-    # The round trips are every attempt's, summed — a retry sequence's own cost
-    # is what it did across all of them.
+    # The round trips are every call this case put on the wire: each attempt's
+    # own DML, summed across all of them rather than the last one's alone, and
+    # the resolving read each attempt's write is licensed by. The read reaches
+    # the database, so it counts exactly as the DML does (`m-case-format`
+    # `then.roundTrips`), and the lifecycle stream this count must agree with
+    # holds it too.
     return emissions, affected, table_state, round_trips
 
 

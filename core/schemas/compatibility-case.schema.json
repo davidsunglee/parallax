@@ -1277,7 +1277,7 @@
       "properties": {"trigger": {"enum": ["read-dependency", "pre-commit"]}}
     },
     "lifecycleDatabaseCallStarted": {
-      "description": "One attempted round trip is about to run. `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is OMITTED on a lane that authors no golden SQL (`api-conformance`), where `kind` and the outcome are the whole portable oracle. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
+      "description": "One attempted round trip is about to run. `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is OMITTED where the authored order holds no statement to name: on a lane that authors no golden SQL at all (`api-conformance`), where `kind` and the outcome are the whole portable oracle, and on the resolving read a keyed write owes, which the case counts in `then.roundTrips` and authors no golden for. The indexes the remaining calls name are that order exactly, in delivery order and once each. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "kind"],

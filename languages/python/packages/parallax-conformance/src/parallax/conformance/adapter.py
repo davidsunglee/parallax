@@ -281,7 +281,9 @@ def _report_execution_lifecycle(
         return
     try:
         observations["executionLifecycle"] = execution_lifecycle_observation(
-            lifecycle.roots, [emission.sql for emission in emissions]
+            lifecycle.roots,
+            [emission.sql for emission in emissions],
+            lifecycle.resolving_read_calls,
         )
     except StatementIndexError as exc:
         raise engine.EngineError(f"{case.path.name}: {exc}") from exc
