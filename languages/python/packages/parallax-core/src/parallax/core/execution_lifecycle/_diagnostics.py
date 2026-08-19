@@ -75,7 +75,9 @@ class DatabaseFailureDiagnostic:
 class DirectFailure:
     """The failure this activity has no child to name for.
 
-    Either no child of it ever reported this exception value, or one did and a
+    Either no report ever paired this exception value with a direct child of it
+    — neither a child finishing failed with the value nor an explicit
+    enforcement relation naming an already-finished one — or a report did and a
     different value has since taken the activity's one attribution: a value a
     scope does not hold when it fails is the scope's own.
     """
