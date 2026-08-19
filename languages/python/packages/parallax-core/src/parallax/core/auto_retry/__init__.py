@@ -57,7 +57,20 @@ from collections.abc import Callable
 from parallax.core.db_error import DatabaseError
 from parallax.core.unit_work import OptimisticLockConflictError, RollbackOnlyError
 
-__all__ = ["retriable_failure", "run_with_retry"]
+__all__ = ["check_retry_bound", "retriable_failure", "run_with_retry"]
+
+
+def check_retry_bound(retries: int, /) -> None:
+    """Refuse a re-execution bound this loop cannot run.
+
+    Published because the refusal must be reachable BEFORE the loop is entered:
+    a demarcation layer resolves the caller's own bound while its deterministic
+    refusals are still running, and a bound rejected only on entry would be
+    rejected from inside every scope opened around the loop. Both callers reach
+    the one verdict rather than two spellings of it.
+    """
+    if retries < 0:
+        raise ValueError(f"retries must be >= 0, got {retries}")
 
 
 def retriable_failure(exc: BaseException, /) -> bool:
@@ -107,8 +120,7 @@ def run_with_retry[T](
     database failure's retriability is decided here, unconditionally on the
     injected extension).
     """
-    if retries < 0:
-        raise ValueError(f"retries must be >= 0, got {retries}")
+    check_retry_bound(retries)
     exception_types: tuple[type[BaseException], ...] = (
         DatabaseError,
         RollbackOnlyError,

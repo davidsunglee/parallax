@@ -702,6 +702,22 @@ def test_a_refused_join_opens_no_activity_at_all() -> None:
     ]
 
 
+def test_an_invalid_retry_bound_creates_no_root_and_reaches_no_provider() -> None:
+    # `retries` is a public argument, so its bound belongs to the deterministic
+    # preflight that precedes Root Execution creation: refusing it only at the
+    # retry loop would call the Provider and publish the invocation's Started and
+    # Finished first, and a Provider that fails on `open` would replace the
+    # argument error the caller earned with one of its own.
+    recorder = RecordingLifecycleProvider()
+    port = RecordingPort()
+
+    with pytest.raises(ValueError, match="retries must be >= 0"):
+        _db(port, recorder).transact(_increase_balance, retries=-1)
+
+    assert recorder.roots == ()
+    assert port.ops == []
+
+
 def test_the_attempt_started_transition_carries_only_its_correlation() -> None:
     recorder = RecordingLifecycleProvider()
     _db(RecordingPort(), recorder).transact(lambda _tx: None)
