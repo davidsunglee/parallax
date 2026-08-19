@@ -4181,7 +4181,9 @@ import rather than an unstated grant. `parallax.core.execution_lifecycle.testing
 is the only such scope. The one import no row can reject is its own ancestors' —
 a forbidden entry there would overlap that contract's source, and import-linter
 skips it — so `tools/check_scope_ownership.py` rejects that edge over the files
-instead, resolving relative imports so neither spelling escapes. No production
+instead, resolving relative imports and reading an imported name as a possible
+submodule, so no spelling escapes — neither the dotted path nor the relative
+one, and neither naming the scope nor naming a member of it. No production
 module imports an isolated scope, and the two halves together are what enforce
 it.
 
@@ -4565,8 +4567,9 @@ parallax.postgres --> parallax.core.dialect
   bring it inside a row that cannot name its own ancestor. The same tool also
   carries the other half of the **isolated** scope rule: a forbidden row may not
   name a module inside its own source package, so the tool parses the files of an
-  isolated scope's ancestors — resolving relative imports — and refuses any
-  import reaching that scope.
+  isolated scope's ancestors — resolving relative imports, and reading an
+  imported name as a possible submodule — and refuses any import reaching that
+  scope in any spelling.
 - **Scopes sharing one artifact.** Every behavioral module in `parallax-core`
   is its own submodule; the generated forbidden contracts operate at
   submodule granularity, so co-location in one wheel cannot legalize a

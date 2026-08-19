@@ -9,7 +9,7 @@ non-zero exit, because a gate that runs but cannot block buys nothing:
 * an import-free module written beside a zero-grant scope, a shape neither half
   of that scope's forbidden row names;
 * a module inside an isolated scope's ancestors importing it, the one edge a
-  forbidden row structurally cannot state, in both import spellings;
+  forbidden row structurally cannot state, in every spelling that reaches it;
 * an exemption that stops describing the tree — in both directions.
 
 plus the coupling that makes the overlap arm load-bearing: a nested scope
@@ -329,13 +329,22 @@ def test_first_party_imports_sees_every_import_form() -> None:
         "if TYPE_CHECKING:\n"
         "    from parallax.core.metamodel import EntityDescriptor\n"
     )
+    # An imported NAME is carried as a possible submodule beside the package it
+    # came from, because `from p import q` is how a submodule is imported and
+    # nothing in the syntax says whether `q` is one. An attribute read that way
+    # contributes a dotted path no scope declares, which costs nothing.
     assert own.first_party_imports(source, "parallax.snapshot.handle") == frozenset(
         {
             "parallax.core.base",
             "parallax.snapshot.handle",
+            "parallax.snapshot.handle._errors",
+            "parallax.snapshot.handle.sibling",
             "parallax.snapshot.handle.child",
+            "parallax.snapshot.handle.child.leaf",
             "parallax.snapshot.materialize",
+            "parallax.snapshot.materialize.view",
             "parallax.core.metamodel",
+            "parallax.core.metamodel.EntityDescriptor",
         }
     )
     assert own.first_party_imports("import os\nfrom typing import Final\n", "p.q") == frozenset()
@@ -370,16 +379,33 @@ _RELATIVE = (
     "\n"
     "_ = RecordingLifecycleProvider\n"
 )
+_ABSOLUTE_PACKAGE = (
+    '"""Written by a test: the child package itself, by its dotted path."""\n'
+    "\n"
+    "from parallax.core.execution_lifecycle import testing\n"
+    "\n"
+    "_ = testing\n"
+)
+_RELATIVE_PACKAGE = (
+    '"""Written by a test: the child package itself, spelled relatively."""\n'
+    "\n"
+    "from . import testing\n"
+    "\n"
+    "_ = testing\n"
+)
 
 
-@pytest.mark.parametrize("source", [_ABSOLUTE, _RELATIVE])
+@pytest.mark.parametrize("source", [_ABSOLUTE, _RELATIVE, _ABSOLUTE_PACKAGE, _RELATIVE_PACKAGE])
 def test_a_production_module_importing_its_own_isolated_child_fails(
     source: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # The half of "no production scope imports the recorder" that no forbidden
     # row can carry: a row sourced at `parallax.core.execution_lifecycle` may not
     # name a module inside its own source package, so import-linter skips the
-    # entry. Both spellings of the import are the same edge and both are caught.
+    # entry. Every spelling of that import is the same edge: relative or dotted,
+    # naming a member of the scope or naming the scope itself — the last one
+    # binds the child package through its parent, which is the form a reader is
+    # likeliest to mistake for an import of the parent alone.
     _INTRUDER.write_text(source)
     try:
         assert own.main([]) == 1
