@@ -611,9 +611,8 @@ def _flush_executor(
     One flush is ONE Write Batch (`m-execution-lifecycle`) however many
     statements the plan lowers to — a batch is a flush, not a statement — and
     each statement is one Database Call child of it. ``batch`` is the activity
-    that batch publishes under; the Transaction Attempt that opens a live one is
-    Phase 3's, so today every flush runs against the shared inert activity and
-    emits nothing.
+    that batch publishes under; no Transaction Attempt activity opens a live one
+    yet, so every flush runs against the shared inert activity and emits nothing.
     """
 
     def execute(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
