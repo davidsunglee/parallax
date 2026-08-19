@@ -4,7 +4,7 @@ drive it.
 An activity is a SCOPE. Entering it emits Started, leaving it emits Finished
 however the body leaves — including under a control-flow or fatal exception no
 call site would have handled by hand — so balance is a property of the shape
-rather than a rule a reviewer checks. A caller supplies only an outcome that
+rather than of any call site's discipline. A caller supplies only an outcome that
 carries data it alone holds, such as the rows a query call returned; the failure
 path is the scope's own business.
 
