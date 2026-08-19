@@ -193,6 +193,20 @@ def test_every_projected_string_is_an_exact_str() -> None:
     assert type(database.native_code) is str
 
 
+def test_a_category_that_only_compares_equal_is_not_the_one_kept() -> None:
+    # The closed set decides membership by EQUALITY, so a `str` subclass
+    # spelling a category is a member — and keeping the object that passed the
+    # test would keep whatever it references. It is made exact first, so what the
+    # diagnostic carries is the spelling rather than the instance.
+    smuggling = DatabaseError(category="deadlock", native_code="40P01", message="dup")
+    carrier = _Smuggled("deadlock", smuggling)
+    smuggling.category = carrier  # pyright: ignore[reportAttributeAccessIssue]
+    diagnostic = database_diagnostic_for(smuggling)
+    assert diagnostic.category == "deadlock"
+    assert type(diagnostic.category) is str
+    assert diagnostic.category is not carrier
+
+
 def test_a_database_error_shadowing_its_own_facts_costs_those_facts_alone() -> None:
     # The port raises whatever it raises, and a subclass may shadow either
     # neutral field. Each is read behind its own guard, so the diagnostic still

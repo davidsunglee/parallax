@@ -604,11 +604,8 @@ class Transaction:
         milestone-set read retains no evidence at all: its roots stand at
         coordinates no keyed write may address.
 
-        A participating read's Read activity is a child of the current
-        Transaction Attempt, opened AFTER the dependency Write Batch the
-        force-flush produces so the two are ordered siblings
-        (`m-execution-lifecycle`). No Transaction Attempt activity exists yet, so
-        this runs against the shared inert activity and emits nothing.
+        A participating read runs against the shared inert activity, so it emits
+        no lifecycle event (`m-execution-lifecycle`).
         """
         preflight(node, model=self._meta, form="graph")
         if scans_an_axis(node):

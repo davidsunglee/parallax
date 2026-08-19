@@ -900,7 +900,7 @@ def execute_read(
     A FAILED call finishes too, and the failure then propagates untouched: a
     call that reached the port and came back is work the lifecycle owes an
     account of, whatever it came back with. The bracket owns that, so this
-    function announces only the row count it alone knows. Every read this
+    function announces only the rows it alone holds. Every read this
     package issues — a find level, and the resolving read a materializing
     predicate write runs — goes through here, so the duration and failed-call
     semantics of a `read` call have exactly one definition.
@@ -920,7 +920,7 @@ def execute_read(
             if document_reads
             else port.execute(driver_sql, binds)
         )
-        call.read_completed(len(rows))
+        call.read_completed(rows)
     return rows
 
 

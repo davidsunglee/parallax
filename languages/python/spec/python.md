@@ -4178,8 +4178,12 @@ anything nested inside it. A scope marked **isolated** below is the exception:
 it is a forbidden target in every production row that neither contains it nor is
 contained by it, whatever those rows are granted, so reaching it is a rejected
 import rather than an unstated grant. `parallax.core.execution_lifecycle.testing`
-is the only such scope, and the one import no row can reject is its own parent
-package's — a forbidden entry there would overlap that contract's source.
+is the only such scope. The one import no row can reject is its own ancestors' —
+a forbidden entry there would overlap that contract's source, and import-linter
+skips it — so `tools/check_scope_ownership.py` rejects that edge over the files
+instead, resolving relative imports so neither spelling escapes. No production
+module imports an isolated scope, and the two halves together are what enforce
+it.
 
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
@@ -4558,7 +4562,11 @@ parallax.postgres --> parallax.core.dialect
   package. A module that is neither is refused. The rule is derived
   from the declared scopes rather than written against one package; the
   package's own interface module is outside it, because no declaration could
-  bring it inside a row that cannot name its own ancestor.
+  bring it inside a row that cannot name its own ancestor. The same tool also
+  carries the other half of the **isolated** scope rule: a forbidden row may not
+  name a module inside its own source package, so the tool parses the files of an
+  isolated scope's ancestors — resolving relative imports — and refuses any
+  import reaching that scope.
 - **Scopes sharing one artifact.** Every behavioral module in `parallax-core`
   is its own submodule; the generated forbidden contracts operate at
   submodule granularity, so co-location in one wheel cannot legalize a
@@ -4671,7 +4679,7 @@ rows receive the transaction's shared lock.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, or covered by a stale exemption also fails |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, or covered by a stale exemption also fails |
 | Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest tests/unit` | `python-check-dbfree` job | the internal-behavior surface proves seams, diagnostics, and failure modes with no container or socket I/O; Storage Layout tests pin Rule Set ownership, exact immutable layouts/views, all six tiers, applicability, effective nullability, physical keys, alias de-duplication, unknown lookups, and bounded allocation; any failure blocks |
 | Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `just python-test-dbfree` then `just python-coverage-diff` | `python-check-dbfree` job with `--cov-fail-under=95` plus the same diff-cover gate | **95% branch-mode minimum** overall, re-baselined against the measured database-free selection rather than carried across from a narrower one; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable, and the measurement is the database-free class alone, so a database-backed test cannot satisfy it; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-check-dbfree` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |
