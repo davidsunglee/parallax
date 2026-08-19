@@ -531,7 +531,14 @@ class _Publisher:
 
 class _LiveActivity:
     """What every observed scope owns: its correlation, its place in the tree,
-    and the one child failure it may later be asked to name."""
+    and the one attribution it may later be asked to answer with.
+
+    An attribution pairs one exception value with one of this scope's DIRECT
+    children. Exactly two routes report that pair, and temporal proximity is
+    never one of them: the child finishes failed with the value, or an explicit
+    enforcement relation names an already-finished child for the value the
+    enforcement itself raised.
+    """
 
     __slots__ = ("_activity_id", "_attribution", "_parent", "_publisher")
 
@@ -559,8 +566,16 @@ class _LiveActivity:
     def attribute(
         self, exc: BaseException, activity_id: int, diagnostic: FailureDiagnostic
     ) -> None:
-        """Record that ``activity_id`` produced ``exc``, for a parent that may
-        later fail with it.
+        """Pair ``exc`` with the DIRECT child ``activity_id``, for a scope that
+        may later fail with that value.
+
+        A report arrives by one of exactly two routes, never by temporal
+        proximity: the child finished failed with ``exc``, which is how a failure
+        chains up one level at a time, or an explicit enforcement relation named
+        an already-finished child for the value the enforcement itself raised —
+        a write call that COMPLETED and whose shortfall was judged afterwards.
+        The child named is the one this scope answers with for as long as it
+        holds the pair, whichever route reported it.
 
         ONE slot, kept whether a caller went on to handle the failure or not, so
         what a scope keeps does not grow with the failures it has already seen or
@@ -608,10 +623,10 @@ class _LiveActivity:
 
         Matched by exception IDENTITY against the ONE attribution this scope
         holds. A conversion error that merely unwound past a successful call is
-        a direct failure however recently a child failed, and so is an exception
-        a child did report once a different failure took the slot: the failure
-        is Caused exactly while the slot still holds that value, and it names
-        whichever child the slot ended up on. Enclosing events reuse that
+        a direct failure however recently a child failed, and so is a value some
+        report did pair with a child once a different failure took the slot: the
+        failure is Caused exactly while the slot still holds that value, and it
+        names whichever child the slot ended up on. Enclosing events reuse that
         child's own diagnostic object rather than rendering the same exception
         twice.
         """
@@ -1000,12 +1015,12 @@ class _LiveTransactionAttempt(_LiveActivity):
         self._pre_commit_failure = exc
 
     def _triggered(self, trigger: RollbackTrigger) -> AttemptFailure:
-        """The attempt failure ``trigger`` describes, told to the invocation too.
+        """The attempt failure ``trigger`` describes.
 
-        Attribution names the triggering error rather than whatever composition
-        goes on to raise from it, so a rollback failure — which surfaces as an
-        error of its own — leaves the invocation reporting that error directly
-        instead of pointing at an attempt it does not describe.
+        The value carried up is the triggering error rather than whatever
+        composition goes on to raise from it, so a rollback failure — which
+        surfaces as an error of its own — leaves the invocation reporting that
+        error directly instead of pointing at an attempt it does not describe.
         """
         error = trigger.error
         phase: AttemptPhase = (
@@ -1013,19 +1028,27 @@ class _LiveTransactionAttempt(_LiveActivity):
             if isinstance(trigger, CommitFailed)
             else ("PRE_COMMIT" if error is self._pre_commit_failure else "CALLBACK")
         )
-        failure = self._attempt_failure(phase, error)
-        parent = self._parent
-        if parent is not None:
-            parent.attribute(error, self._activity_id, failure.failure.diagnostic)
-        return failure
+        return self._attempt_failure(phase, error)
 
     def _attempt_failure(self, phase: AttemptPhase, error: BaseException) -> AttemptFailure:
-        return AttemptFailure(
+        """This attempt's failure, reported to the invocation as the invocation's
+        own cause.
+
+        Every attempt that finishes failed reports its value up under its own
+        Activity ID, the fabricated failure of a port that stopped answering for
+        the boundary included: an invocation that goes on to fail with that value
+        names the attempt rather than claiming the failure as its own.
+        """
+        failure = AttemptFailure(
             phase,
             self._failure(error),
             retriable_failure(error)
             or (self._extra_retriable is not None and self._extra_retriable(error)),
         )
+        parent = self._parent
+        if parent is not None:
+            parent.attribute(error, self._activity_id, failure.failure.diagnostic)
+        return failure
 
 
 class _LiveJoinedInvocation(_LiveActivity):

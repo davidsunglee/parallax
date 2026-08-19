@@ -2984,8 +2984,10 @@ own attribution's, or the one its parent holds for a higher-numbered child —
 reports that same object. A
 failure is the exception value, compared by `is`, so one object raised more than
 once is one failure with one attribution; an activity holds exactly one
-attribution, naming one direct child, and reports `DirectFailure` for a value it
-does not hold when it fails.
+attribution, pairing that value with one direct child reported either by that
+child finishing failed with it or by an explicit `enforcing` bracket naming an
+already-finished call, and reports `DirectFailure` for a value it does not hold
+when it fails.
 
 The database port's transaction callback returns one internal closed value:
 `Committed[T]`, `BeginFailed`, `RolledBack[CallbackRaised | CommitFailed]`, or

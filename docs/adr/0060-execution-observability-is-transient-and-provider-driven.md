@@ -23,9 +23,12 @@ bounded, detached diagnostics and causal activity IDs rather than live
 exceptions. A failure is identified by its exception value rather than by the
 raise that produced it, so a value re-raised past the child that produced it
 still names that child while the attribution is held; each activity holds one
-attribution of one value to one direct child, which is what keeps the causal
-chain from growing with failures already completed and what makes a value
-displaced by a later one the raising activity's own. Exact
+attribution of one value to one direct child — reported by that child finishing
+failed with the value or by an explicit enforcement relation naming an
+already-finished child for the value the enforcement raised, never by temporal
+proximity — which is what keeps the causal chain from growing with failures
+already completed and what makes a value displaced by a later one the raising
+activity's own. Exact
 immutable Lowered Statements are borrowed during synchronous Database Call
 delivery and must not be retained by handlers.
 

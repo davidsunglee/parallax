@@ -985,6 +985,16 @@ def test_an_attempt_is_finished_even_when_the_port_reports_no_outcome() -> None:
         "CALLBACK", DirectFailure(outcome.failure.failure.diagnostic), False
     )
     assert outcome.failure.failure.diagnostic.qualified_type == "builtins.RuntimeError"
+    # An attempt that finishes failed reports its value to the invocation under
+    # its own Activity ID whatever produced that failure, so the invocation names
+    # the attempt and reuses its diagnostic rather than claiming the port's
+    # exception as its own.
+    attempt_finished = root.events[-2]
+    failed = _finished(root)
+    assert isinstance(failed, OuterInvocationFailed)
+    assert failed.failure == CausedFailure(
+        outcome.failure.failure.diagnostic, attempt_finished.activity_id
+    )
 
 
 # --------------------------------------------------------------------------- #
