@@ -61,6 +61,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.predicate import ModelRejectedError
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
@@ -1799,6 +1800,7 @@ def test_the_engines_readless_predicate_ingress_refuses_before_any_statement(
             POSTGRES,
             "optimistic",
             {"mutation": "delete", "target": {"entity": "Wallet", "predicate": predicate}},
+            LoweredStatement("delete from wallet", ()),
             _ENGINE_TX_INSTANT,
             LifecycleRun(),
             rollback=False,

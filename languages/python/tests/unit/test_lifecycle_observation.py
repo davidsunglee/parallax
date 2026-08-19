@@ -11,6 +11,7 @@ rather than the day a case first reaches it.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -423,16 +424,17 @@ def test_an_entry_point_grading_no_oracle_still_drives_a_run() -> None:
 
 
 def test_no_conformance_module_recovers_a_statement_from_driver_text() -> None:
-    """The retirement of the capturing port, stated where it can regress.
+    """The Database Port is no observation seam, stated where it can regress.
 
     A decorator that observes at the Database Port sees DRIVER SQL and has to
     recover the canonical spelling to report it (`Dialect.from_driver_sql`); a
     Database Call carries the canonical Lowered Statement it borrowed, so an
     engine reading its statements off the delivered stream never travels that
-    direction. The recovery call is therefore the signature of the seam this
-    ticket retired, and its absence is the completeness of that retirement —
-    including the defect class it takes with it, since a recovery that drifted
-    from the outward translation would silently report a statement nobody ran.
+    direction. The recovery call is therefore the signature of a port-level
+    observer, and its absence is what makes this package's reliance on the
+    delivered stream total — including the defect class a port-level observer
+    carries, since a recovery that drifted from the outward translation would
+    silently report a statement nobody ran.
     """
     package = Path(str(conformance.__file__)).parent
     recovering = sorted(
@@ -441,3 +443,26 @@ def test_no_conformance_module_recovers_a_statement_from_driver_text() -> None:
         if "from_driver_sql" in source.read_text(encoding="utf-8")
     )
     assert recovering == []
+
+
+def test_every_handle_the_conformance_engine_builds_observes_its_own_work() -> None:
+    """No lane may build a Handle the run cannot see.
+
+    A ``Database`` constructed without a Provider still reads and writes; its
+    Database Calls simply reach no Handler, so its statements and round trips
+    vanish from the run's observation and the case grades a stream missing work
+    that really happened. The absence is invisible at the call site, which is
+    why it is asserted over the source rather than left to a case to discover.
+    """
+    from parallax.conformance import engine
+
+    source = Path(str(engine.__file__)).read_text(encoding="utf-8")
+    unobserved = [
+        node.lineno
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "Database"
+        and not any(keyword.arg == "lifecycle_provider" for keyword in node.keywords)
+    ]
+    assert unobserved == []

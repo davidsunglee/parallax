@@ -1,11 +1,13 @@
 """What one run did, read off the Execution Lifecycle events it delivered.
 
 The engine installs one Provider per Handle it builds, and everything the
-corpus asks about a run is a projection of the stream that Provider received:
+corpus asks about a run is answered from the stream that Provider received:
 `then.statements` is the Lowered Statement each Database Call carried, in
-delivery order; `then.roundTrips` is how many Database Call activities the run
-opened, so transaction demarcation counts none without the counter having to
-know that; and `then.executionLifecycle` is the stream itself, normalized.
+delivery order — for a write lane, the plan that stream confirmed, because the
+compile lane grades the same oracle with no delivery to read; `then.roundTrips`
+is how many Database Call activities the run opened, so transaction demarcation
+counts none without the counter having to know that; and
+`then.executionLifecycle` is the stream itself, normalized.
 
 Reading them from the delivered stream rather than from a decorator around the
 Database Port is what keeps the adapter thin over production: a statement
@@ -282,11 +284,13 @@ class _StatementIndexer:
     the case still graded green. Comparing the SQL text closes every mechanism
     that changes it.
 
-    Binds are deliberately NOT compared. The two sides differ in representation
-    on purpose: the emission stays on the undecoded, case-authored wire spelling
-    (an authored ``250.00``) while execution binds the native carrier a decode
-    produced (``Decimal("250.00")``), which is what keeps the golden-bind
-    comparison from drifting.
+    Binds are reconciled before this, by the lane that reported the emission:
+    the two sides differ in representation on purpose — the emission stays on the
+    undecoded, case-authored wire spelling (an authored ``250.00``) while
+    execution binds the native carrier a decode produced (``Decimal("250.00")``)
+    — so they are compared where the difference is known, in wire space with the
+    exact-Decimal reconciliation goldens are graded under. What is left here is
+    the index's own question, which the SQL answers.
     """
 
     __slots__ = ("_position", "_statements")
