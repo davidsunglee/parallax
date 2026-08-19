@@ -23,13 +23,14 @@ from typing import Any, Final, cast
 import pytest
 from _metamodel_support import Declaration, attribute, key, source
 
+from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, sweep
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, STRING, AuthoredNumber, InstantError, PresentDocument
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import Committed, DbPort, Row, TransactionOutcome
 from parallax.core.metamodel import (
     AbstractRoot,
     AttributeIdentity,
@@ -107,8 +108,10 @@ class FakeDbPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
 
 def _case(case_id: str) -> case_format.Case:
@@ -388,14 +391,13 @@ class FakeWritePort:
         self.writes.append((sql, list(binds)))
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        try:
-            result = body(self)
-        except Exception:
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        outcome = body_outcome(self, body)
+        if isinstance(outcome, Committed):
+            self.commits += 1
+        else:
             self.rollbacks += 1
-            raise
-        self.commits += 1
-        return result
+        return outcome
 
 
 # The rows a fake port answers the RESOLVING READ a keyed write owes
@@ -1051,8 +1053,8 @@ class _ScriptedPort:
         self.writes.append((sql, tuple(binds)))
         return self._write_affected.pop(0) if self._write_affected else 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        return body(self)
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        return body_outcome(self, body)
 
     def close(self) -> None:
         self.closed = True
@@ -1389,8 +1391,10 @@ class _CancellableBlockingConnection:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
     def cancel(self) -> None:
         self.cancel_calls += 1
@@ -1467,8 +1471,10 @@ class _TerminableBlockingConnection:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
     def close(self) -> None:
         self.close_calls += 1
@@ -1572,8 +1578,10 @@ class _TerminableOnlyViaUnderlyingSeamConnection:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
     def close(self) -> None:
         self.close_calls += 1
@@ -1728,8 +1736,10 @@ class _CapabilityLessConnection:
         self.execute_calls += 1
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
 
 @pytest.mark.parametrize(
@@ -1831,9 +1841,11 @@ class _AllRungsRaiseConnection:
         self.calls.append("execute_write")
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
         self.calls.append("transaction")
-        return body(self)
+        return body_outcome(self, body)
 
 
 def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_all_rungs_raising() -> None:
@@ -4712,7 +4724,9 @@ class QueueDbPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -6476,8 +6490,8 @@ class _QueueWritePort(QueueDbPort):
         self.writes.append((sql, list(binds)))
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        return body(self)
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        return body_outcome(self, body)
 
 
 def _write_between_find_and_access(write: object) -> case_format.Case:

@@ -23,7 +23,15 @@ import parallax.postgres
 import parallax.postgres.adapter as adapter_module
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import (
+    BeginFailed,
+    CallbackRaised,
+    CommitFailed,
+    Committed,
+    JsonDocument,
+    RollbackFailed,
+    RolledBack,
+)
 from parallax.postgres import PostgresAdapter
 from parallax.postgres.adapter import (
     adapt_binds,
@@ -118,23 +126,22 @@ class _FakeCursor:
 
 
 class _FakeTxn:
-    """A ``connection.transaction()`` stand-in that raises at any boundary asked.
+    """A ``connection.transaction()`` stand-in, faithful about what it hides.
 
-    The adapter wraps the WHOLE boundary in its translating block, so begin,
-    commit, and rollback are three raise sites of the port, not one: a driver
-    failure at any of them reaches the caller as a port-raised error.
+    Begin and commit raise the driver failure asked of them. A ROLLBACK failure
+    does NOT raise: psycopg's own transaction context catches it, logs a warning,
+    and lets the exception that triggered the rollback carry on — which is why
+    the adapter asks the connection to roll back a second time, and why this
+    stand-in leaves that failure to :meth:`_FakeConnection.rollback` rather than
+    raising it here. A stand-in that raised it would prove a boundary the real
+    driver never presents.
     """
 
     def __init__(
-        self,
-        *,
-        begin_error: psycopg.Error | None,
-        commit_error: psycopg.Error | None,
-        rollback_error: psycopg.Error | None,
+        self, *, begin_error: psycopg.Error | None, commit_error: psycopg.Error | None
     ) -> None:
         self._begin_error = begin_error
         self._commit_error = commit_error
-        self._rollback_error = rollback_error
 
     def __enter__(self) -> _FakeTxn:
         if self._begin_error is not None:
@@ -142,9 +149,8 @@ class _FakeTxn:
         return self
 
     def __exit__(self, _exc_type: object, exc: BaseException | None, _tb: object) -> bool:
-        failure = self._rollback_error if exc is not None else self._commit_error
-        if failure is not None:
-            raise failure
+        if exc is None and self._commit_error is not None:
+            raise self._commit_error
         return False
 
 
@@ -159,12 +165,14 @@ class _FakeAdapters:
 
 
 class _FakeConnection:
-    """A minimal psycopg-connection stand-in for the boundary-wrapping tests.
+    """A minimal psycopg-connection stand-in for the boundary tests.
 
     Each injected failure is a public attribute read at call time, so one
-    connection — and therefore one adapter — can be driven through each raise
+    connection — and therefore one adapter — can be driven through each failure
     site in turn. ``begin_error`` is set for the invocation that needs it: a
     boundary that fails to begin reaches neither commit nor rollback.
+    ``rollback_error`` belongs to the connection rather than to the transaction
+    context because that is where a real rollback failure becomes visible.
     """
 
     def __init__(
@@ -180,16 +188,22 @@ class _FakeConnection:
         self.commit_error = commit_error
         self.rollback_error = rollback_error
         self.adapters = _FakeAdapters()
+        self.rollbacks = 0
+        self.closed = False
 
     def cursor(self, **_: object) -> _FakeCursor:
         return _FakeCursor(self.cursor_error)
 
     def transaction(self) -> _FakeTxn:
-        return _FakeTxn(
-            begin_error=self.begin_error,
-            commit_error=self.commit_error,
-            rollback_error=self.rollback_error,
-        )
+        return _FakeTxn(begin_error=self.begin_error, commit_error=self.commit_error)
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+        if self.rollback_error is not None:
+            raise self.rollback_error
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _adapter(connection: _FakeConnection) -> PostgresAdapter:
@@ -276,80 +290,135 @@ class _BodyFailure(Exception):
     """A transaction body's own error — what makes the boundary roll back."""
 
 
-def test_every_failed_port_invocation_raises_its_own_error_instance() -> None:
+def _translated(error: Exception) -> DatabaseError:
+    """The neutral error a boundary outcome carries, which every failure the port
+    itself makes must already be (`m-db-error` translation boundary)."""
+    assert isinstance(error, DatabaseError)
+    return error
+
+
+def test_every_failed_port_invocation_reports_its_own_error_instance() -> None:
     # m-db-port failure identity, over every error the port itself makes: a
-    # statement failure from `execute`, one from `execute_write`, and each
-    # failure of the boundary `transaction` wraps whole -- its begin, its commit,
-    # and its rollback, all three of which the adapter's translating block
-    # covers. The driver here hands back ONE reused exception object for all of
+    # statement failure raised by `execute`, one raised by `execute_write`, and
+    # each failure of the boundary `transaction` owns -- its begin, its commit,
+    # and its rollback, all three of which the adapter classifies where they
+    # occur. The driver here hands back ONE reused exception object for all of
     # them -- the input the rule exists to stop an adapter passing on -- so
-    # distinctness can only come from translating at the failing call. Driving
+    # distinctness can only come from classifying at the failing call. Driving
     # every site over one adapter also rules out reuse ACROSS paths, which a
     # per-path cache would produce while each path alone looked clean. This is
     # what lets a caller (an activity attributing its own failure) tell which
-    # invocation the error it caught came from.
+    # invocation the error it holds came from.
     driver_error = errors.UniqueViolation("dup")
-    connection = _FakeConnection(
-        cursor_error=driver_error, commit_error=driver_error, rollback_error=driver_error
-    )
+    connection = _FakeConnection(cursor_error=driver_error, commit_error=driver_error)
     adapter = _adapter(connection)
 
-    def failing_begin() -> object:
+    def raised(invoke: Callable[[], object]) -> DatabaseError:
+        with pytest.raises(DatabaseError) as exc_info:
+            invoke()
+        return exc_info.value
+
+    def failing_begin() -> DatabaseError:
         # Scoped to this invocation: a boundary that never begins reaches
         # neither the commit nor the rollback site below.
         connection.begin_error = driver_error
         try:
-            return adapter.transaction(lambda _port: None)
+            outcome = adapter.transaction(lambda _port: None)
         finally:
             connection.begin_error = None
+        assert isinstance(outcome, BeginFailed)
+        return _translated(outcome.error)
 
-    def failing_rollback() -> object:
+    def failing_commit() -> DatabaseError:
+        outcome = adapter.transaction(lambda _port: None)
+        assert isinstance(outcome, RolledBack)
+        trigger = outcome.trigger
+        assert isinstance(trigger, CommitFailed)
+        return _translated(trigger.error)
+
+    def failing_rollback() -> DatabaseError:
         def body(_port: object) -> None:
             raise _BodyFailure
 
-        return adapter.transaction(body)
+        connection.rollback_error = driver_error
+        try:
+            outcome = adapter.transaction(body)
+        finally:
+            connection.rollback_error = None
+        assert isinstance(outcome, RollbackFailed)
+        return _translated(outcome.rollback_error)
 
-    invocations: tuple[Callable[[], object], ...] = (
-        lambda: adapter.execute("select 1", []),
-        lambda: adapter.execute_write("insert into gauge (v) values (%s)", [1]),
+    invocations: tuple[Callable[[], DatabaseError], ...] = (
+        lambda: raised(lambda: adapter.execute("select 1", [])),
+        lambda: raised(lambda: adapter.execute_write("insert into gauge (v) values (%s)", [1])),
         failing_begin,
-        lambda: adapter.transaction(lambda _port: None),
+        failing_commit,
         failing_rollback,
     )
-    raised: list[DatabaseError] = []
-    for invoke in (*invocations, *invocations):
-        with pytest.raises(DatabaseError) as exc_info:
-            invoke()
-        raised.append(exc_info.value)
+    reported = [invoke() for invoke in (*invocations, *invocations)]
 
-    assert len({id(error) for error in raised}) == len(raised)
-    assert {(error.category, error.native_code, error.message) for error in raised} == {
+    assert len({id(error) for error in reported}) == len(reported)
+    assert {(error.category, error.native_code, error.message) for error in reported} == {
         ("uniqueViolation", "23505", "dup")
     }
 
 
-def test_transaction_reraises_a_commit_time_driver_error() -> None:
-    adapter = _adapter(_FakeConnection(commit_error=errors.SerializationFailure("serialize")))
-    with pytest.raises(DatabaseError) as exc_info:
-        adapter.transaction(lambda _port: None)
+def test_transaction_commits_and_reports_the_body_value() -> None:
+    assert _adapter(_FakeConnection()).transaction(lambda _port: "kept") == Committed("kept")
+
+
+def test_transaction_reports_a_boundary_that_never_began() -> None:
+    # No attempt ran, so there is nothing to undo and nothing to re-execute; the
+    # body is what proves it, by never running.
+    connection = _FakeConnection(begin_error=errors.OperationalError("the connection is closed"))
+    ran: list[str] = []
+    outcome = _adapter(connection).transaction(lambda _port: ran.append("body"))
+    assert isinstance(outcome, BeginFailed)
+    assert _translated(outcome.error).category is None
+    assert ran == []
+    assert connection.rollbacks == 0
+
+
+def test_transaction_reports_a_commit_time_driver_error_as_rolled_back() -> None:
+    outcome = _adapter(
+        _FakeConnection(commit_error=errors.SerializationFailure("serialize"))
+    ).transaction(lambda _port: None)
+    assert isinstance(outcome, RolledBack)
+    trigger = outcome.trigger
+    assert isinstance(trigger, CommitFailed)
     # A serialization failure at commit (40001) shares the retriable deadlock category.
-    assert exc_info.value.category == "deadlock"
-    assert exc_info.value.native_code == "40001"
+    assert _translated(trigger.error).category == "deadlock"
+    assert _translated(trigger.error).native_code == "40001"
 
 
-def test_transaction_passes_a_non_driver_body_error_unchanged() -> None:
+def test_a_reported_boundary_failure_keeps_the_driver_exception_as_its_cause() -> None:
+    # A statement failure is raised `from` the psycopg exception it classified,
+    # so a caller reading the traceback sees the driver's own words. A boundary
+    # failure is reported rather than raised, and chaining it here is what keeps
+    # that reading the same for both.
+    driver_error = errors.SerializationFailure("serialize")
+    outcome = _adapter(_FakeConnection(commit_error=driver_error)).transaction(lambda _port: None)
+    assert isinstance(outcome, RolledBack)
+    trigger = outcome.trigger
+    assert isinstance(trigger, CommitFailed)
+    assert trigger.error.__cause__ is driver_error
+
+
+def test_transaction_reports_a_non_driver_body_error_unchanged() -> None:
     class _Boom(Exception):
         pass
 
+    raised_by_the_body = _Boom()
+
     def body(_port: object) -> None:
-        raise _Boom
+        raise raised_by_the_body
 
-    adapter = _adapter(_FakeConnection())
-    with pytest.raises(_Boom):
-        adapter.transaction(body)
+    assert _adapter(_FakeConnection()).transaction(body) == RolledBack(
+        CallbackRaised(raised_by_the_body)
+    )
 
 
-def test_transaction_passes_a_body_raised_driver_error_unchanged() -> None:
+def test_transaction_reports_a_body_raised_driver_error_unchanged() -> None:
     # m-db-port scopes translation to the errors the PORT makes; an exception the
     # caller's own body raised is not one of them, however psycopg-shaped it is.
     # The identical object reaches the caller, so a body-authored deadlock-class
@@ -360,59 +429,83 @@ def test_transaction_passes_a_body_raised_driver_error_unchanged() -> None:
     def body(_port: object) -> None:
         raise raised_by_the_body
 
-    adapter = _adapter(_FakeConnection())
-    with pytest.raises(psycopg.Error) as exc_info:
-        adapter.transaction(body)
-    assert exc_info.value is raised_by_the_body
+    outcome = _adapter(_FakeConnection()).transaction(body)
+    assert isinstance(outcome, RolledBack)
+    trigger = outcome.trigger
+    assert isinstance(trigger, CallbackRaised)
+    assert trigger.error is raised_by_the_body
 
 
-def test_transaction_translates_a_rollback_failure_over_a_body_driver_error() -> None:
+def test_transaction_reports_a_rollback_failure_beside_the_body_error_that_triggered_it() -> None:
     # The other side of the same boundary: the rollback the body triggered is the
-    # port's own work, so ITS driver failure translates and is what escapes, even
-    # though the body's exception was also a psycopg error. Where the failure
-    # occurred is what separates the two; the classes cannot.
+    # port's own work, so ITS driver failure classifies as one -- and neither
+    # error replaces the other, because a caller needs the trigger to know what
+    # went wrong and the rollback failure to know that undoing it did not happen.
+    raised_by_the_body = errors.DeadlockDetected("the caller's own deadlock")
+
     def body(_port: object) -> None:
-        raise errors.DeadlockDetected("the caller's own deadlock")
+        raise raised_by_the_body
 
-    adapter = _adapter(_FakeConnection(rollback_error=errors.UniqueViolation("dup")))
-    with pytest.raises(DatabaseError) as exc_info:
-        adapter.transaction(body)
-    assert exc_info.value.violates_unique_index
-    assert exc_info.value.native_code == "23505"
+    connection = _FakeConnection(rollback_error=errors.UniqueViolation("dup"))
+    outcome = _adapter(connection).transaction(body)
+    assert isinstance(outcome, RollbackFailed)
+    assert outcome.trigger == CallbackRaised(raised_by_the_body)
+    assert _translated(outcome.rollback_error).violates_unique_index
+    assert _translated(outcome.rollback_error).native_code == "23505"
+    # The transaction's outcome is unknown, so the connection is not reused.
+    assert connection.closed
 
 
-def test_transaction_translates_a_rollback_failure_raised_as_the_bodys_own_object() -> None:
-    # The same two branches over a driver that caches ONE exception object for
+def test_transaction_separates_a_rollback_failure_raised_as_the_bodys_own_object() -> None:
+    # The same two failures over a driver that caches ONE exception object for
     # every failure -- the input m-db-port already requires an adapter to
     # withstand. Body and rollback then fail with the identical object, so
-    # neither its type nor its identity says which occurrence escaped: an
-    # adapter reading identity alone mistakes the rollback's failure for the
-    # body's and hands back the raw driver exception, which m-auto-retry would
-    # read as a caller error the port never reported. The failure is separated
-    # by where it occurred, so the boundary's rollback still translates.
+    # neither its type nor its identity says which occurrence is which: an
+    # adapter reading identity alone reports the rollback's failure as the
+    # body's, which m-auto-retry would read as a caller error the port never
+    # made. Where each failure occurred is what separates them, so the body's
+    # object stays the trigger and the boundary's own rollback classifies.
     reused = errors.UniqueViolation("dup")
 
     def body(_port: object) -> None:
         raise reused
 
-    adapter = _adapter(_FakeConnection(rollback_error=reused))
-    with pytest.raises(DatabaseError) as exc_info:
-        adapter.transaction(body)
-    assert exc_info.value.violates_unique_index
-    assert exc_info.value.native_code == "23505"
+    outcome = _adapter(_FakeConnection(rollback_error=reused)).transaction(body)
+    assert isinstance(outcome, RollbackFailed)
+    assert outcome.trigger == CallbackRaised(reused)
+    assert outcome.rollback_error is not reused
+    assert _translated(outcome.rollback_error).violates_unique_index
 
 
-def test_transaction_passes_a_body_raised_base_exception_unchanged() -> None:
-    # Carrying the body's failure past the boundary must not change what it IS:
-    # a base-level exception stays base-level and stays the same object, so a
-    # cancellation or interrupt is neither translated nor made catchable as an
-    # ordinary error on the way out.
+def test_transaction_reports_a_rollback_failure_after_a_failed_commit() -> None:
+    # Both halves of the boundary failed: the commit that ended the work, and the
+    # rollback that could not undo it. The commit failure stays the trigger --
+    # replacing it with the rollback's would lose why the transaction ended.
+    connection = _FakeConnection(
+        commit_error=errors.SerializationFailure("serialize"),
+        rollback_error=errors.OperationalError("the connection is lost"),
+    )
+    outcome = _adapter(connection).transaction(lambda _port: None)
+    assert isinstance(outcome, RollbackFailed)
+    trigger = outcome.trigger
+    assert isinstance(trigger, CommitFailed)
+    assert _translated(trigger.error).native_code == "40001"
+    assert _translated(outcome.rollback_error).category is None
+    assert connection.closed
+
+
+def test_transaction_reports_a_body_raised_base_exception_unchanged() -> None:
+    # Reporting the body's failure must not change what it IS: a base-level
+    # exception stays base-level and stays the same object, so a cancellation or
+    # interrupt is neither translated nor made catchable as an ordinary error on
+    # the way out.
     raised_by_the_body = KeyboardInterrupt()
 
     def body(_port: object) -> None:
         raise raised_by_the_body
 
-    adapter = _adapter(_FakeConnection())
-    with pytest.raises(KeyboardInterrupt) as exc_info:
-        adapter.transaction(body)
-    assert exc_info.value is raised_by_the_body
+    outcome = _adapter(_FakeConnection()).transaction(body)
+    assert isinstance(outcome, RolledBack)
+    trigger = outcome.trigger
+    assert isinstance(trigger, CallbackRaised)
+    assert trigger.error is raised_by_the_body

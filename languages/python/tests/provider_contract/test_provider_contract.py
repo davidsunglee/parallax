@@ -26,6 +26,14 @@ from parallax.conformance import engine, provision
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import (
+    BeginFailed,
+    CallbackRaised,
+    CommitFailed,
+    Committed,
+    RollbackFailed,
+    RolledBack,
+)
 from parallax.postgres import adapter as adapter_module
 
 
@@ -79,7 +87,7 @@ def test_live_structured_document_reads_preserve_sql_null_and_json_null(
             assert cursor.fetchone() == (adapter_module._PRESENT_JSON_NULL,)  # pyright: ignore[reportPrivateUsage]
 
 
-def test_transaction_commits_and_returns_its_value(provisioner: Any) -> None:
+def test_transaction_commits_and_reports_the_body_value(provisioner: Any) -> None:
     case = _grade_case()
     meta = engine.load_case_metamodel(case)
     provisioner.reset(meta, provision.load_fixtures(str(case.document["model"])))
@@ -88,7 +96,7 @@ def test_transaction_commits_and_returns_its_value(provisioner: Any) -> None:
         port.execute_write("update grade set label = %s where id = %s", ["committed", 1])
         return "done"
 
-    assert provisioner.port.transaction(body) == "done"
+    assert provisioner.port.transaction(body) == Committed("done")
     (row,) = provisioner.port.execute("select t0.label from grade t0 where t0.id = %s", [1])
     assert row["label"] == "committed"
 
@@ -105,10 +113,124 @@ def test_exec_rolled_back_leaves_no_effect(provisioner: Any) -> None:
         port.execute_write("update grade set label = %s where id = %s", ["ghost", 2])
         raise _Rollback
 
-    with pytest.raises(_Rollback):
-        provisioner.port.transaction(body)
+    outcome = provisioner.port.transaction(body)
+    assert isinstance(outcome, RolledBack)
+    trigger = outcome.trigger
+    assert isinstance(trigger, CallbackRaised)
+    assert isinstance(trigger.error, _Rollback)
     (row,) = provisioner.port.execute("select t0.label from grade t0 where t0.id = %s", [2])
     assert row["label"] == "mid"
+
+
+# --------------------------------------------------------------------------- #
+# The boundary outcomes the adapter smoke contract names                       #
+# (`database-provider-test-contract.md` §2): a committed value above, a        #
+# callback-triggered rollback above, and the three below — a boundary that     #
+# never began, a commit-triggered rollback, and each of the two rollbacks that #
+# could not complete. Only a real database produces them: a commit failure     #
+# needs a constraint that fires at COMMIT, and a rollback failure needs a      #
+# session that is gone by the time the undo is sent.                           #
+# --------------------------------------------------------------------------- #
+def _terminate(executioner: Any, victim: Any) -> None:
+    """End ``victim``'s own database session from a second connection.
+
+    The only way to make a genuine ROLLBACK fail: the session it would run in no
+    longer exists, so the undo cannot be sent and what the transaction left
+    behind is unknown.
+    """
+    (row,) = victim.execute("select pg_backend_pid() as pid", [])
+    executioner.execute("select pg_terminate_backend(%s) as terminated", [row["pid"]])
+
+
+@pytest.mark.adapter_smoke
+def test_transaction_reports_a_boundary_that_never_began(provisioner: Any) -> None:
+    # A closed connection is the reachable begin failure. What makes it distinct
+    # from every other unhappy outcome is that the callback never runs, so there
+    # is nothing to undo and nothing to re-execute.
+    port = provisioner.peer()
+    port.close()
+    ran: list[str] = []
+
+    def never_runs(_conn: Any) -> None:
+        ran.append("body")
+
+    outcome = port.transaction(never_runs)
+    assert isinstance(outcome, BeginFailed)
+    assert isinstance(outcome.error, DatabaseError)
+    assert ran == []
+
+
+@pytest.mark.adapter_smoke
+def test_transaction_reports_a_commit_failure_as_rolled_back(provisioner: Any) -> None:
+    # A DEFERRABLE INITIALLY DEFERRED unique constraint is checked at COMMIT, so
+    # the duplicate the body inserts succeeds as a statement and the durability
+    # call is what fails — the one failure no `execute_write` can report.
+    port = provisioner.peer()
+    for statement in provision.reset_statements():
+        port.execute_write(statement, [])
+    port.execute_write(
+        "create table deferred_tag (id integer primary key, tag integer, "
+        "constraint deferred_tag_unique unique (tag) deferrable initially deferred)",
+        [],
+    )
+    port.execute_write("insert into deferred_tag (id, tag) values (1, 1)", [])
+
+    def duplicate(conn: Any) -> int:
+        return conn.execute_write("insert into deferred_tag (id, tag) values (2, 1)", [])
+
+    outcome = port.transaction(duplicate)
+    assert isinstance(outcome, RolledBack)
+    trigger = outcome.trigger
+    assert isinstance(trigger, CommitFailed)
+    assert isinstance(trigger.error, DatabaseError)
+    assert trigger.error.violates_unique_index
+    # The rollback completed, so the connection is usable and nothing landed.
+    assert port.execute("select count(*) as n from deferred_tag", []) == [{"n": 1}]
+
+
+@pytest.mark.adapter_smoke
+def test_transaction_reports_a_rollback_that_could_not_undo_the_callbacks_failure(
+    provisioner: Any,
+) -> None:
+    class _Rollback(Exception):
+        pass
+
+    port = provisioner.peer()
+    executioner = provisioner.peer()
+
+    def body(conn: Any) -> None:
+        _terminate(executioner, conn)
+        raise _Rollback
+
+    outcome = port.transaction(body)
+    assert isinstance(outcome, RollbackFailed)
+    trigger = outcome.trigger
+    assert isinstance(trigger, CallbackRaised)
+    # Both live errors survive: the callback's failure ended the transaction, and
+    # the rollback failure is why undoing it did not happen.
+    assert isinstance(trigger.error, _Rollback)
+    assert isinstance(outcome.rollback_error, DatabaseError)
+
+
+@pytest.mark.adapter_smoke
+def test_transaction_reports_a_rollback_that_could_not_undo_a_failed_commit(
+    provisioner: Any,
+) -> None:
+    port = provisioner.peer()
+    executioner = provisioner.peer()
+
+    def body(conn: Any) -> str:
+        _terminate(executioner, conn)
+        return "unreachable"
+
+    outcome = port.transaction(body)
+    assert isinstance(outcome, RollbackFailed)
+    trigger = outcome.trigger
+    # The commit is what ended the transaction, so it stays the trigger rather
+    # than being replaced by the rollback failure that followed it.
+    assert isinstance(trigger, CommitFailed)
+    assert isinstance(trigger.error, DatabaseError)
+    assert isinstance(outcome.rollback_error, DatabaseError)
 
 
 @pytest.mark.adapter_smoke

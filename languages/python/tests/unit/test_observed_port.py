@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
+from _support.db_port import body_outcome
 from parallax.conformance._observed_port import StatementObservation
-from parallax.core.db_port import Bind, DbPort, DocumentReadOrdinals, Row
+from parallax.core.db_port import Bind, DbPort, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES
 
 
@@ -42,8 +43,8 @@ class _Port:
         self.seen.append((sql, tuple(binds)))
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        return body(self)
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        return body_outcome(self, body)
 
 
 def test_a_captured_statement_comes_back_in_canonical_form() -> None:

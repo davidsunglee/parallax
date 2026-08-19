@@ -13,12 +13,13 @@ from pathlib import Path
 import jsonschema
 import pytest
 
+from _support.db_port import body_outcome
 from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import adapter, case_format, engine
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.core.base import PresentDocument
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import DbPort, Row, TransactionOutcome
 
 _SCHEMA = adapter_schema()
 _READ_CASE = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
@@ -46,8 +47,10 @@ class _FakePort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
 
 def _case(
@@ -185,8 +188,8 @@ class _WritePort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        return body(self)
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        return body_outcome(self, body)
 
 
 class _AccountWritePort(_WritePort):
@@ -274,8 +277,10 @@ class _ManagedPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
 
 def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
@@ -349,8 +354,10 @@ class _PositionPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
 
 def test_run_case_grades_a_scenario_expect_error_through_the_errors_observation() -> None:
@@ -410,8 +417,10 @@ class _BalancePort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
 
 def test_run_case_grades_the_managed_pin_case_end_to_end_under_a_scoped_claim() -> None:
@@ -533,8 +542,10 @@ class _TriggerPort:
             raise self._failure
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
 
 def _unique_violation() -> DatabaseError:
@@ -633,7 +644,7 @@ class _NeverCalledPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         raise AssertionError("a rejected-case run must not execute SQL")
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
         raise AssertionError("a rejected-case run must not open a transaction")
 
 
@@ -701,7 +712,9 @@ class _QueuePort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -872,8 +885,10 @@ class _WriteAndReadBackPort:
         self.writes += 1
         return self._affected.pop(0) if self._affected else 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
 
 def test_run_case_runs_a_genuine_batch_collapse_write() -> None:
@@ -936,8 +951,10 @@ class _AccountPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
 
 def test_a_legacy_execution_log_case_is_outside_the_active_claim() -> None:
@@ -998,8 +1015,10 @@ class _OrderWithItemsPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
-        return body(self)
+    def transaction[T](
+        self, body: Callable[[DbPort], T]
+    ) -> TransactionOutcome[T]:  # pragma: no cover
+        return body_outcome(self, body)
 
 
 def test_run_case_scenario_reports_a_step_graph_for_an_access_step() -> None:

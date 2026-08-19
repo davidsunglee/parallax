@@ -18,12 +18,13 @@ from decimal import Decimal
 
 import pytest
 
+from _support.db_port import body_outcome
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ClockExhaustedError, ScriptedClock
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, DbPort, Row
+from parallax.core.db_port import Bind, DbPort, Row, TransactionOutcome
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot.handle import Database, Transaction
 
@@ -62,8 +63,8 @@ class _RecordingPort:
         self.write_count += 1
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        return body(self)
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        return body_outcome(self, body)
 
 
 def _deadlock() -> DatabaseError:

@@ -28,6 +28,7 @@ import pytest
 from pydantic import ValidationError
 
 from _support.corpus import case_document, compare_binds
+from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
@@ -42,7 +43,7 @@ from parallax.conformance.vo_models import (
     Shipment,
 )
 from parallax.core.base import INFINITY, TemporalBound
-from parallax.core.db_port import Bind, DbPort, Row
+from parallax.core.db_port import Bind, Committed, DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
@@ -283,15 +284,11 @@ class _RecordingPort:
         self.ops.append(("write", sql, tuple(binds)))
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
         self.ops.append(("begin",))
-        try:
-            result = body(self)
-        except BaseException:
-            self.ops.append(("rollback",))
-            raise
-        self.ops.append(("commit",))
-        return result
+        outcome = body_outcome(self, body)
+        self.ops.append(("commit",) if isinstance(outcome, Committed) else ("rollback",))
+        return outcome
 
     def statements(self) -> list[tuple[str, tuple[object, ...]]]:
         """The executed statements (reads and writes) in wire order."""

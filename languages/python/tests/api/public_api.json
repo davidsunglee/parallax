@@ -489,6 +489,7 @@
     "Transaction",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",
+    "TransactionRollbackError",
     "TransactionTimePinReadOnlyError",
     "WRITE_EVIDENCE_CODES",
     "WireChanges",

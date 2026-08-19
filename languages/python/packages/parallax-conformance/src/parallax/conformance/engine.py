@@ -49,7 +49,19 @@ from parallax.core.base import (
     normalize_instant,
 )
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort, DocumentReadOrdinals, JsonDocument, Row
+from parallax.core.db_port import (
+    BeginFailed,
+    CallbackRaised,
+    CommitFailed,
+    Committed,
+    DbPort,
+    DocumentReadOrdinals,
+    JsonDocument,
+    RollbackFailed,
+    RolledBack,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -875,7 +887,7 @@ class _AbortingPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         return self._inner.execute_write(sql, binds)
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
         def aborting(conn: DbPort) -> T:
             body(conn)
             raise _RollbackStep
@@ -886,6 +898,28 @@ class _AbortingPort:
 def _write_port(port: DbPort, *, rollback: bool) -> DbPort:
     """``port`` itself, or the aborting decorator a `rollback: true` step needs."""
     return _AbortingPort(port) if rollback else port
+
+
+def _committed[T](outcome: TransactionOutcome[T]) -> T:
+    """The value a boundary this module drove itself committed, or the failure that
+    ended it.
+
+    The engine drives a few write choreographies straight against the port
+    instead of through ``db.transact``, so it answers the outcome the same way
+    the composition root does: a committed value is the result, and any other
+    outcome raises what the case is grading — the deliberate rollback sentinel,
+    or a genuine failure. A rollback that itself failed chains the two, since no
+    case authors that outcome and a run reaching it has an unusable connection.
+    """
+    match outcome:
+        case Committed(value):
+            return value
+        case BeginFailed(error) | RolledBack(CallbackRaised(error) | CommitFailed(error)):
+            raise error
+        case RollbackFailed(  # pragma: no cover - no case can break a connection mid-rollback
+            CallbackRaised(error) | CommitFailed(error), rollback_error
+        ):
+            raise error from rollback_error
 
 
 @dataclass(frozen=True, slots=True)
@@ -3269,7 +3303,7 @@ def _execute_framework_write_unit(
             conn.execute_write(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
 
     with contextlib.suppress(_RollbackStep):
-        _write_port(port, rollback=rollback).transaction(run)
+        _committed(_write_port(port, rollback=rollback).transaction(run))
     return len(statements)
 
 
@@ -5802,7 +5836,7 @@ def _run_conflict_close(
         return affected
 
     implied = _implied_shortfall_error(True, concurrency, model, target)
-    affected = _admitted_affected(implied, lambda: port.transaction(run_close))
+    affected = _admitted_affected(implied, lambda: _committed(port.transaction(run_close)))
     return (statement,), affected, 1
 
 

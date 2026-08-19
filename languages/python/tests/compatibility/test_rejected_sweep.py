@@ -28,7 +28,7 @@ import pytest
 from _support.corpus import case_document
 from _support.repo import adapter_schema
 from parallax.conformance import adapter, case_format, sweep
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import DbPort, Row, TransactionOutcome
 
 _SCHEMA = adapter_schema()
 _REACHABLE_REJECTED = [c for c in sweep.reachable_cases() if c.shape == "rejected"]
@@ -45,7 +45,7 @@ class _RefusingPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
         raise AssertionError("a rejected-case run must not open a transaction")
 
 

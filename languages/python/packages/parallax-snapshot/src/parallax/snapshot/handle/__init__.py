@@ -21,11 +21,14 @@ package imports one except the three sanctioned test seams — so a name's
 public-surface check promises. Where the exported names live:
 
 - :mod:`~parallax.snapshot.handle._database` — :class:`Database`, :func:`connect`,
-  :class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`:
+  :class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
+  :class:`TransactionRollbackError`:
   the composition root (which connects only to a class-backed Domain Model) and
   the spec §5 callback demarcation (sentinel-backed options, join through the
   exact originating ``Database`` with the option-conflict check, the
-  ``m-auto-retry`` bounded retry loop, and the injected flush executor).
+  ``m-auto-retry`` bounded retry loop, the injected flush executor, and the one
+  refusal that substitutes an error of its own — a rollback that did not
+  complete, whose two live errors neither alone reports).
 - :mod:`~parallax.snapshot.handle._planning` — :func:`build_write_planner`, the
   one factory that wires ``m-batch-write``, ``m-opt-lock``, ``m-txtime-write``,
   and ``m-bitemp-write`` into a :class:`~parallax.core.unit_work.WritePlanner`'s
@@ -114,6 +117,7 @@ from parallax.snapshot.handle._database import (
     Database,
     TransactionOptionConflictError,
     TransactionOwnershipError,
+    TransactionRollbackError,
     connect,
 )
 from parallax.snapshot.handle._errors import (
@@ -189,6 +193,7 @@ __all__ = [
     "Transaction",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",
+    "TransactionRollbackError",
     "TransactionTimePinReadOnlyError",
     "WireChanges",
     "WireDatabaseView",

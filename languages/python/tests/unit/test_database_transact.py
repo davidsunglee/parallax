@@ -37,9 +37,11 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from _support.db_port import body_outcome
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
 from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import DbPort, RollbackFailed, RolledBack, TransactionOutcome
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
@@ -61,6 +63,7 @@ from parallax.snapshot.handle import (
     Transaction,
     TransactionOptionConflictError,
     TransactionOwnershipError,
+    TransactionRollbackError,
     build_write_planner,
 )
 
@@ -406,6 +409,86 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
 
     assert db.transact(outer) == "caught"
     assert port.begins == 2
+
+
+# --------------------------------------------------------------------------- #
+# Boundary outcomes (m-db-port / m-execution-lifecycle): which phase of the    #
+# transaction failed decides what the caller sees and whether anything is      #
+# re-executed, and only the composition root can reconcile the two.            #
+# --------------------------------------------------------------------------- #
+def _must_not_run_callback(_tx: Transaction) -> str:
+    raise AssertionError("the callback runs only inside a transaction that began")
+
+
+class _RollbackFailingPort(RecordingPort):
+    """A port whose rollback never completes, however the transaction ended.
+
+    The one boundary outcome no in-memory fake reaches by accident: the callback
+    runs and whatever ended the transaction is reported beside a rollback failure
+    of the port's own, exactly as a real adapter reports one when the connection
+    is too broken to undo the work.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rollback_error = DatabaseError(
+            category=None, native_code=None, message="the connection is lost"
+        )
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        self.ops.append(("begin",))
+        outcome = body_outcome(self, body)
+        if isinstance(outcome, RolledBack):
+            return RollbackFailed(outcome.trigger, self.rollback_error)
+        self.ops.append(("commit",))
+        return outcome
+
+
+def test_a_boundary_that_never_began_surfaces_its_error_after_one_attempt() -> None:
+    # No attempt ran, so there is nothing to re-execute — even though this error
+    # would be retried on any attempt that had (m-execution-lifecycle: a begin
+    # failure finishes the invocation with a direct, non-retryable failure).
+    never_began = deadlock()
+    port = RecordingPort()
+    port.begin_faults = [never_began]
+    with pytest.raises(DatabaseError) as excinfo:
+        account_db(port).transact(_must_not_run_callback)
+    assert excinfo.value is never_began
+    assert port.begins == 1
+    # The private carrier that made it terminal is not part of what a caller reads.
+    assert excinfo.value.__suppress_context__
+
+
+def test_a_failed_rollback_reports_both_live_errors_and_is_never_retried() -> None:
+    # Retriable on its own, and still terminal: what the transaction left behind
+    # is unknown, so re-executing it could double the work it may have committed.
+    triggering = deadlock()
+
+    def failing(_tx: Transaction) -> str:
+        raise triggering
+
+    port = _RollbackFailingPort()
+    with pytest.raises(TransactionRollbackError) as excinfo:
+        account_db(port).transact(failing)
+    assert excinfo.value.triggering_error is triggering
+    assert excinfo.value.rollback_error is port.rollback_error
+    assert excinfo.value.__cause__ is port.rollback_error
+    assert port.begins == 1
+
+
+def test_a_failed_rollback_leaves_a_control_flow_trigger_primary() -> None:
+    # An interrupt or a cancellation is not downgraded to an ordinary error: it
+    # stays what the caller receives, carrying the rollback failure as its cause.
+    interrupt = KeyboardInterrupt()
+
+    def interrupted(_tx: Transaction) -> str:
+        raise interrupt
+
+    port = _RollbackFailingPort()
+    with pytest.raises(KeyboardInterrupt) as excinfo:
+        account_db(port).transact(interrupted)
+    assert excinfo.value is interrupt
+    assert excinfo.value.__cause__ is port.rollback_error
 
 
 # --------------------------------------------------------------------------- #
