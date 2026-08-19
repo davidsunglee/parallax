@@ -48,7 +48,11 @@ from parallax.core.entity import (
     EntityRowCodec,
 )
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
+from parallax.core.execution_lifecycle._activity import (
+    InstalledLifecycle,
+    TransactionAttemptActivity,
+    refuse_reentry,
+)
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
@@ -143,6 +147,7 @@ class Transaction:
         "_construction",
         "_dialect",
         "_inserted_objects",
+        "_lifecycle",
         "_meta",
         "_uow",
     )
@@ -156,6 +161,7 @@ class Transaction:
         construction: EntityGraphConstruction | None,
         codec: EntityRowCodec,
         attempt: TransactionAttemptActivity,
+        lifecycle: InstalledLifecycle | None,
     ) -> None:
         self._uow = uow
         self._conn = conn
@@ -168,6 +174,12 @@ class Transaction:
         # resolving read a materializing predicate write runs are all its
         # children, so the tree an observer sees is the call tree that made it.
         self._attempt = attempt
+        # The opening handle's own installed lifecycle, which is what makes
+        # "the originating Handle or Transaction" one refusal rather than two: a
+        # verb called from inside that handle's provider, handler, or reporter is
+        # refused here on exactly the state the handle refuses on
+        # (`m-execution-lifecycle`).
+        self._lifecycle = lifecycle
         # What THIS transaction buffered an insert of — a same-transaction insert
         # IS the provenance a subsequent keyed write builds on, so both
         # read-your-own-writes exemptions (the value-provenance refusal and the
@@ -189,6 +201,7 @@ class Transaction:
         own Bitemporal-only-required :func:`validate_window`: a
         Transaction-Time-Only or non-temporal target takes none (no Valid-Time dimension to
         bound)."""
+        refuse_reentry(self._lifecycle)
         record, declaring, valid_from_literal, _ = self._prepare_keyed_write(
             instance, "insert", valid_from
         )
@@ -216,6 +229,7 @@ class Transaction:
         fields: an As-Of Axis endpoint is framework-owned and the temporal write
         path derives every interval bound itself (`python.md` §2), which is why
         the Entity constructor refuses an authored one outright."""
+        refuse_reentry(self._lifecycle)
         record, declaring, valid_from_literal, until_literal = self._prepare_keyed_write(
             instance, "insertUntil", valid_from, until
         )
@@ -257,6 +271,7 @@ class Transaction:
         Mirrors ``update_where``'s own bitemporal-only-required
         :func:`validate_window`: a Transaction-Time-Only or non-temporal target
         takes none (no Valid-Time dimension to bound)."""
+        refuse_reentry(self._lifecycle)
         record, declaring, valid_from_literal, _ = self._prepare_keyed_write(
             copy, "update", valid_from
         )
@@ -280,6 +295,7 @@ class Transaction:
         finite Transaction-Time instant is read-only and raises
         :class:`~parallax.snapshot.handle.TransactionTimePinReadOnlyError`
         before any buffering, exactly as every other keyed verb does."""
+        refuse_reentry(self._lifecycle)
         record = metadata_of_instance(self._meta, node_or_instance)
         validate_source_pin(record.identity, source_pin(node_or_instance))
         self._buffer(
@@ -309,6 +325,7 @@ class Transaction:
         Bitemporal requires it (the mutation's own Valid-Time
         instant, mirrors ``terminate_where``'s own
         :func:`validate_window`)."""
+        refuse_reentry(self._lifecycle)
         record, declaring, valid_from_literal, _ = self._prepare_keyed_write(
             node_or_instance, "terminate", valid_from
         )
@@ -337,6 +354,7 @@ class Transaction:
         edited copy's own Change Record nets to zero). An EMPTY effective
         change set (once the window is confirmed valid) issues no DML at all,
         exactly like keyed ``update``."""
+        refuse_reentry(self._lifecycle)
         record, declaring, valid_from_literal, until_literal = self._prepare_keyed_write(
             copy, "updateUntil", valid_from, until
         )
@@ -365,6 +383,7 @@ class Transaction:
         ``valid_from < until`` (equal or reversed bounds) raises at THIS
         call, before any buffering (:func:`validate_window`, `python.md`
         §5)."""
+        refuse_reentry(self._lifecycle)
         record, declaring, valid_from_literal, until_literal = self._prepare_keyed_write(
             node_or_instance, "terminateUntil", valid_from, until
         )
@@ -564,6 +583,7 @@ class Transaction:
         # the gate and the force-flush it stands in front of both live below
         # here, so a Transaction that cannot materialize a Snapshot refuses
         # before either runs.
+        refuse_reentry(self._lifecycle)
         construction = _materializing(self._construction)
         node = object_query_node(query)
         return self._read(node, typed_publication(self._meta, construction))
@@ -590,6 +610,7 @@ class Transaction:
                 self._dialect,
                 self._attempt,
                 self._inserted_objects,
+                self._lifecycle,
             ),
         )
 
@@ -598,8 +619,11 @@ class Transaction:
 
         What a caller may later write off it rides on the published values
         themselves — each Entity node carries its own Source Hint — so the read
-        answers the result and nothing beside it.
+        answers the result and nothing beside it. The view ``tx.wire`` answers
+        holds this method rather than the transaction, so this is where a Wire
+        read enters and where re-entry is refused.
         """
+        refuse_reentry(self._lifecycle)
         return self._read(node, wire_publication(self._meta))
 
     def _read[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
@@ -655,6 +679,7 @@ class Transaction:
         evidence reads the graph form, which is what :meth:`find` and
         ``tx.wire.find`` always run.
         """
+        refuse_reentry(self._lifecycle)
         # The gate precedes `uow.read` deliberately, exactly as `find`'s does:
         # that read force-flushes pending buffered writes, so a refused read must
         # be refused before it or a refusal turns into a write.
@@ -734,6 +759,7 @@ class Transaction:
         or temporal target MATERIALIZES (`m-opt-lock`, ADR 0014) — see
         :func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`,
         the neutral seam this and every other ``_where`` verb share."""
+        refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
             self._meta,
@@ -753,6 +779,7 @@ class Transaction:
         — in both modes, since each row's write requires that row's own prior
         observation — with no no-op elimination, because a delete changes a
         row's existence, never a value (`m-opt-lock`)."""
+        refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
             self._meta,
@@ -772,6 +799,7 @@ class Transaction:
         (`python.md` §5): Transaction-Time-Only takes no ``valid_from``;
         Bitemporal requires it. Always materializes — a temporal predicate
         write has no readless template."""
+        refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
             self._meta,
@@ -794,6 +822,7 @@ class Transaction:
         """A predicate-selected, Valid-Time-bounded ``updateUntil`` over a
         Bitemporal target (`python.md` §5; `m-bitemp-write` "The rectangle
         split"): always materializes to a close plus head/middle/tail."""
+        refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
             self._meta,
@@ -814,6 +843,7 @@ class Transaction:
         a Bitemporal target (`python.md` §5): always materializes to a close
         plus head/tail (no middle — the window becomes a hole in Valid
         time)."""
+        refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
             self._meta,

@@ -21,8 +21,10 @@ scope shape available on the default path at all.
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from collections.abc import Callable, Sized
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Final, Protocol, runtime_checkable
 from uuid import UUID, uuid4
@@ -41,6 +43,7 @@ from parallax.core.execution_lifecycle._diagnostics import (
 from parallax.core.execution_lifecycle._errors import (
     ExecutionLifecycleHandlerError,
     ExecutionLifecycleProviderError,
+    ExecutionLifecycleReentryError,
 )
 from parallax.core.execution_lifecycle._events import (
     AttemptCommitted,
@@ -125,6 +128,75 @@ class ExecutionLifecycleProvider(Protocol):
         never changes execution.
         """
         ...
+
+
+class DeliveryState(threading.local):
+    """Whether this thread is inside one Handle's lifecycle contexts right now.
+
+    "Delivery" names all three of them — Provider opening, event delivery, and
+    error reporting — because they share one answer: work reached through the
+    originating Handle while any of them is running is re-entry.
+
+    Per HANDLE and per THREAD, which is what neither half alone gets right. A
+    plain instance flag would refuse a legitimate concurrent operation, since
+    ``open`` may run for different roots of one Handle at the same time; a
+    process-wide flag would refuse an unrelated Handle.
+    """
+
+    def __init__(self) -> None:
+        """Materialize this thread's slot, which is what makes it free later.
+
+        ``threading.local`` builds a thread's storage on first use and calls
+        this again for each new thread, so writing the answer here moves the one
+        allocation a thread owes off the first observed operation and onto
+        whatever built or first touched the Handle — for the thread that called
+        ``connect``, the connection itself.
+        """
+        self.active = False
+
+
+@dataclass(frozen=True, slots=True)
+class InstalledLifecycle:
+    """One Handle's installed Provider, and the re-entry state guarding it.
+
+    The two travel together because neither is usable alone: every lifecycle
+    context is a call into ``provider``, and every such call has to be made
+    inside ``delivering`` for the Handle's own entry points to be able to refuse
+    the work that comes back out of it. Absence of this whole value — rather
+    than a ``None`` provider inside it — is the default path.
+    """
+
+    provider: ExecutionLifecycleProvider
+    delivering: DeliveryState
+
+
+def installed_lifecycle(
+    provider: ExecutionLifecycleProvider | None, /
+) -> InstalledLifecycle | None:
+    """What a Handle holds for ``provider``, or ``None`` for no Provider at all.
+
+    Called once per Handle, so the per-Handle re-entry state exists exactly when
+    there is a Provider whose contexts could produce re-entry.
+    """
+    return None if provider is None else InstalledLifecycle(provider, DeliveryState())
+
+
+def refuse_reentry(installed: InstalledLifecycle | None, /) -> None:
+    """Refuse an operation reached from inside this Handle's own lifecycle
+    contexts, before execution state, clocks, or database work.
+
+    Called at each public entry point of the Handle and of the Transaction it
+    opened, which together are what the refusal is scoped to. A Handle with no
+    Provider has no lifecycle context to be inside, so it answers from the
+    absent installation without reading any state.
+    """
+    if installed is not None and installed.delivering.active:
+        raise ExecutionLifecycleReentryError(
+            "this operation was reached from inside a lifecycle context of the same "
+            "Parallax handle — a provider opening, a handler receiving an event, or an "
+            "error reporter — and is refused before any execution work; observe from a "
+            "handler and act on it elsewhere"
+        )
 
 
 class ActivityTarget(Protocol):
@@ -415,7 +487,7 @@ INERT: Final = _InertActivity()
 """The one activity every unobserved operation runs against."""
 
 
-def _last_resort(execution_id: UUID, sequence: int, activity_id: int) -> None:
+def last_resort(execution_id: UUID, sequence: int, activity_id: int) -> None:
     """One sanitized correlation-only line, dropped silently if unavailable.
 
     The recursion-proof path: it reaches neither the Provider nor the logging
@@ -439,6 +511,21 @@ def _last_resort(execution_id: UUID, sequence: int, activity_id: int) -> None:
         return
 
 
+def report_to(provider: ExecutionLifecycleProvider, error: ExecutionLifecycleHandlerError) -> None:
+    """Hand ``error`` to ``provider``, containing an ordinary reporting failure.
+
+    Reporting is best effort by contract: the Handler it describes is already
+    quarantined and the execution it was observing has already begun, so a
+    reporter that fails ordinarily costs one line on the last-resort path and
+    nothing else. A control-flow or fatal exception is not contained — it
+    deactivates the root through the caller that raised it.
+    """
+    try:
+        provider.report_handler_error(error)
+    except Exception:
+        last_resort(error.execution_id, error.sequence, error.activity_id)
+
+
 class _Publisher:
     """One root's delivery: its sequence and activity counters, its one Handler,
     and the containment around calling it.
@@ -450,16 +537,16 @@ class _Publisher:
     concern and this class keeps exactly one Handler.
     """
 
-    __slots__ = ("_activities", "_execution_id", "_handler", "_provider", "_sequence")
+    __slots__ = ("_activities", "_execution_id", "_handler", "_installed", "_sequence")
 
     def __init__(
         self,
         execution_id: UUID,
-        provider: ExecutionLifecycleProvider,
+        installed: InstalledLifecycle,
         handler: ExecutionLifecycleHandler,
     ) -> None:
         self._execution_id = execution_id
-        self._provider = provider
+        self._installed = installed
         self._handler: ExecutionLifecycleHandler | None = handler
         self._sequence = 0
         self._activities = 0
@@ -499,10 +586,18 @@ class _Publisher:
         unchanged. A control-flow or fatal exception deactivates delivery for
         the root and propagates unchanged, producing no Handler Error, so the
         operation aborts and cleans up without further events.
+
+        Both the delivery and the reporting that may follow it happen inside
+        this Handle's lifecycle context, so an operation the Handler starts back
+        through the originating Handle is refused rather than observed. The flag
+        is cleared in a ``finally``, which is what keeps a fatal exception from
+        leaving the Handle refusing work forever.
         """
         handler = self._handler
         if handler is None:
             return
+        delivering = self._installed.delivering
+        delivering.active = True
         try:
             handler.handle(event)
         except Exception as failure:
@@ -511,22 +606,23 @@ class _Publisher:
         except BaseException:
             self._handler = None
             raise
+        finally:
+            delivering.active = False
 
     def _report(
         self, event: ExecutionEvent, handler: ExecutionLifecycleHandler, failure: Exception
     ) -> None:
-        error = ExecutionLifecycleHandlerError(
-            execution_id=self._execution_id,
-            sequence=event.sequence,
-            activity_id=event.activity_id,
-            handler_type=qualified_type(handler),
-            fanout_path=(),
-            diagnostic=diagnostic_for(failure),
+        report_to(
+            self._installed.provider,
+            ExecutionLifecycleHandlerError(
+                execution_id=self._execution_id,
+                sequence=event.sequence,
+                activity_id=event.activity_id,
+                handler_type=qualified_type(handler),
+                fanout_path=(),
+                diagnostic=diagnostic_for(failure),
+            ),
         )
-        try:
-            self._provider.report_handler_error(error)
-        except Exception:
-            _last_resort(self._execution_id, event.sequence, event.activity_id)
 
 
 class _LiveActivity:
@@ -1156,25 +1252,31 @@ class _LiveOuterInvocation(_LiveActivity):
 
 
 def _opened(
-    provider: ExecutionLifecycleProvider, execution: RootExecution
+    installed: InstalledLifecycle, execution: RootExecution
 ) -> ExecutionLifecycleHandler | None:
-    """Ask ``provider`` to open ``execution``, before any execution work.
+    """Ask the installed Provider to open ``execution``, before any execution work.
 
     An ordinary failure aborts the operation and is never reinterpreted as a
     decline; a control-flow or fatal exception propagates unchanged, because
-    nothing has begun that would need explaining.
+    nothing has begun that would need explaining. Opening is a lifecycle context
+    like delivery is, so a Provider that calls back through this Handle is
+    refused and that refusal becomes the Provider Error's own cause.
     """
+    delivering = installed.delivering
+    delivering.active = True
     try:
-        return provider.open(execution)
+        return installed.provider.open(execution)
     except Exception as failure:
         raise ExecutionLifecycleProviderError(
             "the installed execution lifecycle provider failed to open a root execution, "
             "so the operation was refused before any execution work began"
         ) from failure
+    finally:
+        delivering.active = False
 
 
 def open_read_root(
-    provider: ExecutionLifecycleProvider | None,
+    installed: InstalledLifecycle | None,
     *,
     target: ActivityTarget,
     interface: ReadInterface,
@@ -1187,19 +1289,20 @@ def open_read_root(
     Provider installed nothing at all is allocated here — no UUID, no
     descriptor, no publisher, no counter, no clock read, and not even the
     target's canonical spelling — and a declining Provider costs only the UUID,
-    the descriptor, and the opening call.
+    the descriptor, and the opening call, made inside this Handle's re-entry
+    bracket.
     """
-    if provider is None:
+    if installed is None:
         return INERT
     execution = RootExecution(uuid4(), "READ")
-    handler = _opened(provider, execution)
+    handler = _opened(installed, execution)
     if handler is None:
         return INERT
-    return _LiveRead(_Publisher(execution.id, provider, handler), None, target, interface)
+    return _LiveRead(_Publisher(execution.id, installed, handler), None, target, interface)
 
 
 def open_transaction_root(
-    provider: ExecutionLifecycleProvider | None,
+    installed: InstalledLifecycle | None,
     *,
     concurrency: Concurrency,
     retries: int,
@@ -1222,14 +1325,14 @@ def open_transaction_root(
     its outcome is built, the loop when it reaches its decision — so only an
     extension that answers differently for one exception can separate them.
     """
-    if provider is None:
+    if installed is None:
         return INERT
     execution = RootExecution(uuid4(), "TRANSACTION_INVOCATION")
-    handler = _opened(provider, execution)
+    handler = _opened(installed, execution)
     if handler is None:
         return INERT
     return _LiveOuterInvocation(
-        _Publisher(execution.id, provider, handler),
+        _Publisher(execution.id, installed, handler),
         OuterInvocation(concurrency, RetryPolicy(retries, retry_optimistic_conflicts)),
         extra_retriable,
     )

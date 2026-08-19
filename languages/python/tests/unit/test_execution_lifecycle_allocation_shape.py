@@ -60,6 +60,8 @@ from uuid import uuid4
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandler, RootExecution
 from parallax.core.execution_lifecycle._activity import (
     INERT,
+    DeliveryState,
+    InstalledLifecycle,
     ReadActivity,
     WriteBatchActivity,
     open_read_root,
@@ -102,6 +104,14 @@ class _DecliningProvider:
 
 
 DECLINING: Final = _DecliningProvider()
+DECLINED: Final = InstalledLifecycle(DECLINING, DeliveryState())
+"""What a handle holds for a Provider that refuses everything.
+
+Built at import, which is where a connected handle builds its own: the
+per-thread re-entry slot is one allocation per handle per thread rather than one
+per root, so materializing it here leaves every window below measuring what a
+ROOT costs — the claim the specification actually makes.
+"""
 
 
 def _unsampled() -> None:
@@ -201,7 +211,7 @@ def _unobserved_read(sample: Callable[[], None]) -> None:
 
 def _declined_read(sample: Callable[[], None]) -> None:
     with (
-        open_read_root(DECLINING, target=TARGET, interface="TYPED") as read,
+        open_read_root(DECLINED, target=TARGET, interface="TYPED") as read,
         read.database_call(STATEMENT, "READ", TARGET) as call,
     ):
         call.read_completed(ROWS)
@@ -331,7 +341,7 @@ def test_after_a_decline_the_scopes_cost_what_the_default_path_costs() -> None:
     # "After decline it has the same event-, counter-, diagnostic-, and
     # clock-free path": the opening is the whole difference, so what a declined
     # root opens is costed exactly as the default path's scopes are.
-    declined = open_read_root(DECLINING, target=TARGET, interface="TYPED")
+    declined = open_read_root(DECLINED, target=TARGET, interface="TYPED")
     default = open_read_root(None, target=TARGET, interface="TYPED")
     tracemalloc.start()
     try:

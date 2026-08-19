@@ -1,9 +1,9 @@
-"""The two things a Provider is told about, when telling it is all that is left.
+"""What a lifecycle context refuses, and what a Provider is told about.
 
-An opening failure is an exception because no execution effect has begun yet, so
-refusing the operation is still free. A Handler failure is a VALUE rather than an
-exception because execution has already begun: it is reported out of band and
-changes nothing about the query it was observing.
+An opening failure and a re-entrant call are exceptions because no execution
+effect has begun yet, so refusing the operation is still free. A Handler failure
+is a VALUE rather than an exception because execution has already begun: it is
+reported out of band and changes nothing about the query it was observing.
 """
 
 from __future__ import annotations
@@ -22,6 +22,25 @@ class ExecutionLifecycleProviderError(RuntimeError):
     exception is preserved as ``__cause__`` and is never reinterpreted as a
     deliberate decline; a control-flow or fatal exception from ``open``
     propagates unchanged instead.
+    """
+
+
+class ExecutionLifecycleReentryError(RuntimeError):
+    """A Handle was asked to work from inside one of its own lifecycle contexts.
+
+    Provider opening, event delivery, and error reporting are lifecycle
+    contexts, and calling an operation through the Handle or Transaction that
+    opened one of them re-enters the very execution being observed. It is
+    refused before execution state, clocks, or database work, so a Handler
+    cannot change the query it is watching.
+
+    The refusal is per Handle and per thread: an unrelated Handle stays fully
+    usable from a lifecycle context, and a Handler that hands work to another
+    thread is not re-entering. Where the refusal surfaces decides what it
+    becomes — raised during opening it is the
+    :class:`ExecutionLifecycleProviderError`'s cause, and raised inside a Handler
+    it is an ordinary delivery failure that quarantines that Handler like any
+    other.
     """
 
 

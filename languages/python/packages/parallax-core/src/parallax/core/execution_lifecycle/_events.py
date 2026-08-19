@@ -370,12 +370,103 @@ class TransactionAttemptFinished(_Event):
     outcome: TransactionAttemptOutcome
 
 
+@dataclass(frozen=True, slots=True)
+class StreamExhausted:
+    """The stream yielded its last page and finished at the moment that was
+    discovered."""
+
+
+@dataclass(frozen=True, slots=True)
+class StreamClosedEarly:
+    """The caller stopped before exhaustion — a break, an explicit close, an
+    exception of its own, or a cancellation.
+
+    It describes only that the stream ended early. The caller's control flow is
+    untouched: an exception that ended the iteration still propagates as itself,
+    and this outcome never turns into one.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class StreamFailed:
+    """Parallax's own work ended the stream: planning, a database call,
+    conversion, materialization, invalid data, or resource cleanup.
+
+    Reserved for those. Once a stream is exhausted a later caller error cannot
+    rewrite the outcome into this one.
+    """
+
+    failure: ActivityFailure
+
+
+type SnapshotStreamOutcome = StreamExhausted | StreamClosedEarly | StreamFailed
+"""How a Snapshot Stream ended, a closed union of exactly one member."""
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotStreamStarted(_Event):
+    """A stream over ``target`` opened and is about to be iterated.
+
+    Constructing a stream emits nothing: this is delivered only once context
+    entry has succeeded. ``batch_size`` is the positive page size the stream
+    requests, which is what makes its Stream Batch children countable against a
+    result the events never size.
+    """
+
+    target: str
+    interface: ReadInterface
+    batch_size: int
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotStreamFinished(_Event):
+    """The stream reached its terminal outcome."""
+
+    outcome: SnapshotStreamOutcome
+
+
+@dataclass(frozen=True, slots=True)
+class StreamBatchCompleted:
+    """The whole page is ready to yield, the empty terminal page included."""
+
+
+@dataclass(frozen=True, slots=True)
+class StreamBatchFailed:
+    """The page did not become ready."""
+
+    failure: ActivityFailure
+
+
+type StreamBatchOutcome = StreamBatchCompleted | StreamBatchFailed
+"""How a Stream Batch ended, a closed union of exactly one member."""
+
+
+@dataclass(frozen=True, slots=True)
+class StreamBatchStarted(_Event):
+    """One requested page opened.
+
+    It carries no page-specific fields: which page of the stream this is reads
+    off the correlation envelope, and the size it was requested at was stated by
+    the stream that opened it. A batch is the page-read activity in its own
+    right and never nests a Read.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class StreamBatchFinished(_Event):
+    """The page reached its terminal outcome."""
+
+    outcome: StreamBatchOutcome
+
+
 type ActivityStarted = (
     ReadStarted
     | WriteBatchStarted
     | DatabaseCallStarted
     | TransactionInvocationStarted
     | TransactionAttemptStarted
+    | SnapshotStreamStarted
+    | StreamBatchStarted
 )
 """Every transition that opens an activity and assigns its ``activity_id``."""
 
@@ -385,6 +476,8 @@ type ActivityFinished = (
     | DatabaseCallFinished
     | TransactionInvocationFinished
     | TransactionAttemptFinished
+    | SnapshotStreamFinished
+    | StreamBatchFinished
 )
 """Every transition that closes an activity with its terminal outcome."""
 

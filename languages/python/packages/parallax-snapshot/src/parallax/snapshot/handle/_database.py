@@ -69,10 +69,13 @@ from parallax.core.entity._model import class_index, model_of
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.execution_lifecycle._activity import (
     INERT,
+    InstalledLifecycle,
     TransactionAttemptActivity,
     WriteBatchActivity,
+    installed_lifecycle,
     open_read_root,
     open_transaction_root,
+    refuse_reentry,
 )
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
@@ -324,8 +327,12 @@ class Database:
         # Absent by default, and absence is the whole default path: every
         # operation below branches on it before allocating a UUID, a descriptor,
         # a publisher, a counter, an event, or a lifecycle clock read
-        # (`m-execution-lifecycle` "Cost and retention").
-        self._lifecycle = lifecycle_provider
+        # (`m-execution-lifecycle` "Cost and retention"). What is present when a
+        # Provider is installed is that Provider plus this handle's own
+        # per-thread re-entry state, because every call into the Provider has to
+        # be made inside it for an operation coming back OUT of the Provider to
+        # be refusable.
+        self._lifecycle: InstalledLifecycle | None = installed_lifecycle(lifecycle_provider)
         # One Write Planner per connected Metamodel, reused across every
         # `transact()` attempt (`m-unit-work`: the planner is constructed once
         # per accepted Metamodel with its strategy adapters already wired).
@@ -394,6 +401,11 @@ class Database:
         it to, or the queried Entity itself — so a narrowed find yields the
         narrowed rows' type without a caller-side annotation.
         """
+        # Re-entry is refused first of all: a call that arrived from inside one
+        # of this handle's own lifecycle contexts is refused before this
+        # connection's capability, this query's shape, or anything downstream of
+        # them is even consulted (`m-execution-lifecycle`).
+        refuse_reentry(self._lifecycle)
         # The connection refusal precedes preflight, exactly as it does on
         # `Transaction.find`: a Database that cannot materialize a Snapshot at
         # all answers that before it answers anything about this query, so the
@@ -414,7 +426,13 @@ class Database:
         return WireDatabaseView(self._wire_find)
 
     def _wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
-        """One Wire read: :meth:`_read` under the wire publication."""
+        """One Wire read: :meth:`_read` under the wire publication.
+
+        The view ``db.wire`` answers holds this method rather than the handle,
+        so this — not the property that built the view — is where a Wire read
+        enters and where re-entry is refused.
+        """
+        refuse_reentry(self._lifecycle)
         return self._read(node, wire_publication(self._meta))
 
     def _read[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
@@ -463,6 +481,7 @@ class Database:
         row-form read, no retained evidence at all. It opens its own Read root
         after the same gate the graph form crosses.
         """
+        refuse_reentry(self._lifecycle)
         preflight(query, model=self._meta, form="rows")
         root = open_read_root(self._lifecycle, target=query.target, interface="ROWS")
         with root as read:
@@ -511,6 +530,7 @@ class Database:
         retains no record of what it did, and what a Provider observed about it
         was delivered while it ran (`m-execution-lifecycle`).
         """
+        refuse_reentry(self._lifecycle)
         active = active_unit_of_work()
         if active is not None:
             demarcation = active.companion
@@ -603,6 +623,7 @@ class Database:
                                 construction,
                                 codec,
                                 physical,
+                                self._lifecycle,
                             )
                             # Published for joining calls; visible only while
                             # core's active-transaction binding is, so it needs

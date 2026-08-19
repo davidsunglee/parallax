@@ -75,7 +75,11 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.base import NeutralType, decode_neutral_literal
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
-from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
+from parallax.core.execution_lifecycle._activity import (
+    InstalledLifecycle,
+    TransactionAttemptActivity,
+    refuse_reentry,
+)
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
@@ -163,6 +167,7 @@ class WireWriteLane:
     dialect: Dialect
     attempt: TransactionAttemptActivity
     inserts: BufferedInserts
+    lifecycle: InstalledLifecycle | None
 
 
 def wire_insert(
@@ -204,6 +209,7 @@ def wire_insert(
     insert instead, through the ledger this call records into, and the two
     coalesce.
     """
+    refuse_reentry(lane.lifecycle)
     payload = _authored_document(data, f"a Wire `{mutation}` payload")
     entity = instructions.resolve_target(lane.meta, entity_name)
     _refuse_published_source(entity, data, mutation)
@@ -262,6 +268,7 @@ def wire_keyed_write(
     is the ordinary no-op, dropped before the evidence question is asked at all,
     exactly as an empty Typed effective change set is.
     """
+    refuse_reentry(lane.lifecycle)
     authored = _authored_changes(mutation, changes)
     source, hint = _keyed_source(mutation, observed)
     record = _concrete_entity(lane.meta, hint)
@@ -324,6 +331,7 @@ def wire_predicate_write(
     temporal bounds are rendered against the target's own declaring Entity and a
     bound has to be canonical from the moment the instruction exists.
     """
+    refuse_reentry(lane.lifecycle)
     selection = _authored_document(target, "a predicate-selected write's canonical target")
     entity_name = _selection_shape(selection)
     authored = _authored_changes(mutation, changes)

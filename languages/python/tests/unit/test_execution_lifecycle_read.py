@@ -34,7 +34,6 @@ from parallax.core.execution_lifecycle import (
     DatabaseReadCompleted,
     DirectFailure,
     ExecutionEvent,
-    ExecutionLifecycleProvider,
     ReadCompleted,
     ReadFailed,
     ReadFinished,
@@ -42,7 +41,12 @@ from parallax.core.execution_lifecycle import (
     ReadStarted,
 )
 from parallax.core.execution_lifecycle import _activity as activity_module
-from parallax.core.execution_lifecycle._activity import ActivityTarget, ReadActivity, open_read_root
+from parallax.core.execution_lifecycle._activity import (
+    ActivityTarget,
+    InstalledLifecycle,
+    ReadActivity,
+    open_read_root,
+)
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, compile_read
@@ -461,13 +465,13 @@ def _recorded_openings(
     recorded: list[tuple[ActivityTarget, ReadInterface]] = []
 
     def recording(
-        provider: ExecutionLifecycleProvider | None,
+        installed: InstalledLifecycle | None,
         *,
         target: ActivityTarget,
         interface: ReadInterface,
     ) -> ReadActivity:
         recorded.append((target, interface))
-        return open_read_root(provider, target=target, interface=interface)
+        return open_read_root(installed, target=target, interface=interface)
 
     monkeypatch.setattr(database_module, "open_read_root", recording)
     return recorded
