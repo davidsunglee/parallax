@@ -187,6 +187,37 @@ def test_a_completed_call_omitting_its_count_is_refused_by_both_schemas() -> Non
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
 
+# --- the target names an Entity, on both sides of the mirror ------------------
+
+
+def test_a_target_that_is_no_entity_name_is_refused_by_both_schemas() -> None:
+    for spelling in ("not-an-entity", "   ", "account", "Account."):
+        root = _write_root()
+        root["events"][3]["databaseCallStarted"]["target"] = spelling
+        assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root))), (
+            spelling
+        )
+        assert not _valid_against(
+            "conformance-adapter.schema.json", _run_envelope(_lifecycle(root))
+        ), spelling
+
+
+def test_both_mirrors_pin_the_canonical_entity_name_grammar() -> None:
+    """The copy the self-contained adapter envelope forces, held against its source.
+
+    `identity.schema.json` owns the serialized Entity-name grammar, and the
+    envelope cannot reach it: an external implementation reads that file alone,
+    so a cross-file `$ref` would not resolve. The grammar is therefore copied
+    into both mirrors, and this is what keeps the copies from drifting away from
+    the definition they restate.
+    """
+    canonical = json.loads((_SCHEMAS / "identity.schema.json").read_text(encoding="utf-8"))
+    grammar = canonical["$defs"]["entityName"]["pattern"]
+    for name in ("compatibility-case.schema.json", "conformance-adapter.schema.json"):
+        schema = json.loads((_SCHEMAS / name).read_text(encoding="utf-8"))
+        assert schema["$defs"]["lifecycleTarget"]["pattern"] == grammar, name
+
+
 # --- attribution belongs to a failing outcome alone --------------------------
 
 
@@ -399,6 +430,168 @@ def test_a_first_observation_index_out_of_order_is_flagged() -> None:
     lifecycle = _lifecycle(_write_root(), _write_root())
     lifecycle["roots"][1]["execution"] = 1
     assert validate_execution(_case(lifecycle))
+
+
+# --- an activity kind stands where its own kind may stand ---------------------
+
+
+def _joined_root() -> dict[str, Any]:
+    return _root(
+        "transaction-invocation",
+        [
+            _event(1, 1, None, transactionInvocationStarted={"invocation": "joined"}),
+            _event(2, 1, None, transactionInvocationFinished={"outcome": "returned"}),
+        ],
+    )
+
+
+def test_a_joined_invocation_standing_as_a_root_is_flagged() -> None:
+    case = _case(_lifecycle(_joined_root()))
+    case["then"]["roundTrips"] = 0
+    problems = validate_execution(case)
+    assert any(
+        "opens transactionInvocationStarted:joined with no parent" in problem
+        for problem in problems
+    )
+
+
+def test_an_attempt_under_a_joined_invocation_is_flagged() -> None:
+    root = _root(
+        "transaction-invocation",
+        [
+            _event(
+                1,
+                1,
+                None,
+                transactionInvocationStarted={
+                    "invocation": "outer",
+                    "concurrency": "locking",
+                    "retries": 10,
+                    "retryOptimisticConflicts": False,
+                },
+            ),
+            _event(2, 2, 1, transactionAttemptStarted={}),
+            _event(3, 3, 2, transactionInvocationStarted={"invocation": "joined"}),
+            _event(4, 4, 3, transactionAttemptStarted={}),
+            _event(5, 4, 3, transactionAttemptFinished={"outcome": "committed"}),
+            _event(6, 3, 2, transactionInvocationFinished={"outcome": "returned"}),
+            _event(7, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
+            _event(8, 1, None, transactionInvocationFinished={"outcome": "committed"}),
+        ],
+    )
+    case = _case(_lifecycle(root))
+    case["then"]["roundTrips"] = 0
+    problems = validate_execution(case)
+    assert any(
+        "transactionAttemptStarted is contained by transactionInvocationStarted:outer" in problem
+        for problem in problems
+    )
+
+
+def test_a_second_outer_invocation_nested_in_the_first_is_flagged() -> None:
+    """A nested transaction is a JOINED invocation; a second outer one is a
+    second physical transaction the root never opened."""
+    root = _write_root()
+    root["events"].insert(
+        2,
+        _event(
+            3,
+            3,
+            2,
+            transactionInvocationStarted={
+                "invocation": "outer",
+                "concurrency": "locking",
+                "retries": 10,
+                "retryOptimisticConflicts": False,
+            },
+        ),
+    )
+    root["events"].insert(
+        3, _event(4, 3, 2, transactionInvocationFinished={"outcome": "committed"})
+    )
+    problems = validate_execution(_case(_lifecycle(root)))
+    assert any("a nested invocation is a joined one" in problem for problem in problems)
+
+
+def test_a_database_call_owned_by_no_read_or_batch_is_flagged() -> None:
+    root = _write_root()
+    root["events"][3]["parent"] = 2
+    root["events"][4]["parent"] = 2
+    problems = validate_execution(_case(_lifecycle(root)))
+    assert any(
+        "databaseCallStarted is contained by readStarted or writeBatchStarted or streamBatchStarted"
+        in problem
+        for problem in problems
+    )
+
+
+def test_an_outer_invocation_finishing_in_the_joined_vocabulary_is_flagged() -> None:
+    root = _write_root()
+    root["events"][7]["transactionInvocationFinished"] = {"outcome": "returned"}
+    problems = validate_execution(_case(_lifecycle(root)))
+    assert any("finishes transactionInvocationStarted:outer" in problem for problem in problems)
+
+
+def test_a_joined_invocation_finishing_in_the_outer_vocabulary_is_flagged() -> None:
+    root = _root(
+        "transaction-invocation",
+        [
+            _event(
+                1,
+                1,
+                None,
+                transactionInvocationStarted={
+                    "invocation": "outer",
+                    "concurrency": "locking",
+                    "retries": 10,
+                    "retryOptimisticConflicts": False,
+                },
+            ),
+            _event(2, 2, 1, transactionAttemptStarted={}),
+            _event(3, 3, 2, transactionInvocationStarted={"invocation": "joined"}),
+            _event(4, 3, 2, transactionInvocationFinished={"outcome": "committed"}),
+            _event(5, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
+            _event(6, 1, None, transactionInvocationFinished={"outcome": "committed"}),
+        ],
+    )
+    case = _case(_lifecycle(root))
+    case["then"]["roundTrips"] = 0
+    problems = validate_execution(case)
+    assert any("finishes transactionInvocationStarted:joined" in problem for problem in problems)
+
+
+def test_a_committed_invocation_after_a_final_attempt_that_rolled_back_is_flagged() -> None:
+    root = _retry_root([_rolled(True)], 1)
+    root["events"][-1]["transactionInvocationFinished"] = {"outcome": "committed"}
+    problems = validate_execution(_retry_case(root))
+    assert any("it commits exactly when its last attempt did" in problem for problem in problems)
+
+
+# --- an activity spans what it contains ---------------------------------------
+
+
+def test_a_scope_finishing_while_a_child_is_still_open_is_flagged() -> None:
+    """The batch closes before the call it holds does, which no runtime can do."""
+    root = _write_root()
+    root["events"][4], root["events"][5] = root["events"][5], root["events"][4]
+    root["events"][4]["sequence"] = 5
+    root["events"][5]["sequence"] = 6
+    problems = validate_execution(_case(_lifecycle(root)))
+    assert any("it contains are still open" in problem for problem in problems)
+
+
+def test_a_read_dependency_batch_still_open_when_its_read_starts_is_flagged() -> None:
+    """Opening first is not the claim: the read WAITS on the flush it forced."""
+    root = _write_root()
+    root["events"][2]["writeBatchStarted"] = {"trigger": "read-dependency"}
+    root["events"].insert(
+        5, _event(6, 5, 2, readStarted={"target": "Account", "interface": "typed"})
+    )
+    root["events"].insert(6, _event(7, 5, 2, readFinished={"outcome": "completed"}))
+    for position, event in enumerate(root["events"]):
+        event["sequence"] = position + 1
+    problems = validate_execution(_case(_lifecycle(root)))
+    assert any("had not finished when" in problem for problem in problems)
 
 
 # --- attribution walks one link at a time ------------------------------------
@@ -621,6 +814,41 @@ def test_a_retry_eligible_final_rollback_with_budget_left_is_flagged() -> None:
     assert validate_execution(_retry_case(_retry_root([_rolled(True)], 0))) == []
     assert validate_execution(_retry_case(_retry_root([_rolled(True)], 1)))
     assert validate_execution(_retry_case(_retry_root([_rolled(False)], 10))) == []
+
+
+def _rollback_failed() -> dict[str, Any]:
+    return {
+        "outcome": "rollbackFailed",
+        "phase": "commit",
+        "retryEligible": True,
+        "attribution": "direct",
+    }
+
+
+def test_an_attempt_following_a_rollback_failure_is_flagged() -> None:
+    """The one terminal outcome a remaining retry budget may not override."""
+    problems = validate_execution(
+        _retry_case(_retry_root([_rollback_failed(), {"outcome": "committed"}], 1))
+    )
+    assert any("never retries" in problem for problem in problems)
+
+
+def test_a_final_rollback_failure_with_budget_left_is_accepted() -> None:
+    """Its failure is retry-eligible and its budget is unspent, and it still ends
+    the history: the connection it would re-execute on is the uncertain one."""
+    assert validate_execution(_retry_case(_retry_root([_rollback_failed()], 10))) == []
+
+
+def test_an_attempt_that_had_not_finished_when_the_next_one_started_is_flagged() -> None:
+    root = _retry_root([_rolled(True), {"outcome": "committed"}], 1)
+    events = root["events"]
+    events[2], events[3] = events[3], events[2]
+    for position, event in enumerate(events):
+        event["sequence"] = position + 1
+    problems = validate_execution(_retry_case(root))
+    assert any(
+        "one attempt of an invocation is running at a time" in problem for problem in problems
+    )
 
 
 # --- the same relations over the adapter's observation ------------------------

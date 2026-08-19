@@ -1196,9 +1196,10 @@
       ]
     },
     "lifecycleTarget": {
-      "description": "The Entity an activity names. Constrained here to a nonempty spelling rather than to the `identity.schema.json` Entity-name grammar: the adapter envelope this oracle mirrors is deliberately consumable as one self-contained document, and restating the grammar in both files would put a second copy of it where nothing keeps the two in step.",
+      "description": "The Entity an activity names, in the `identity.schema.json` Entity-name grammar — canonical `<namespace>.<Entity>` or bare `<Entity>`. The grammar is COPIED here rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*$"
     },
     "lifecycleRoot": {
       "description": "One normalized Root Execution (m-execution-lifecycle): one outermost Handle operation and everything it causally contains. `execution` replaces the runtime UUIDv4 with a positive FIRST-OBSERVATION index, which orders concurrent roots without stating an identity no run reproduces. `kind` names which outermost operation opened it. `events` is the delivered stream in delivery order, a failed activity's transitions included: a Started and its Finished are the same activity delivered twice, so the shortest possible root holds two.",

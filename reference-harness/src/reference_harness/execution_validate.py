@@ -14,8 +14,15 @@ observation alike (`m-execution-lifecycle`):
   activity ALONE and otherwise names an activity still OPEN at that point, which
   is what makes the authored stream a tree rather than a list that merely cites
   numbers;
-- **balance.** Every Started has exactly one Finished, and the root activity's
-  is the last event of its root;
+- **topology.** Each activity kind names the kinds that may contain it: an Outer
+  Invocation is the root and nothing else, a Joined Invocation and a Transaction
+  Attempt each belong under their own one kind, and a Database Call is the direct
+  child of the Read, Write Batch, or Stream Batch that owns it. An invocation
+  finishes in the vocabulary its own kind admits — a physical commit or failure
+  for the outer one, a nested return or raise for a joined one;
+- **balance.** Every Started has exactly one Finished, the root activity's is the
+  last event of its root, and an activity SPANS what it contains, so no scope
+  finishes while a child of its own is still open;
 - **attribution.** A ``caused`` failure names a DIRECT child of the failing
   activity that has already finished — an activity whose own ``parent`` is this
   one — because a cause is walked one link at a time and no level may skip to a
@@ -30,12 +37,16 @@ observation alike (`m-execution-lifecycle`):
   with;
 - **triggers.** A batch's trigger is a POSITIONAL claim: a ``read-dependency``
   batch is the one a dependent read forced, so the sibling after it is the Read
-  it enabled, and a ``pre-commit`` batch is the boundary's own last one, so
-  nothing its attempt does follows it;
+  it enabled and it has already FINISHED when that Read starts, and a
+  ``pre-commit`` batch is the boundary's own last one, so nothing its attempt
+  does follows it;
 - **history.** A transaction root is TERMINAL, so a commit ends the invocation:
-  at most one attempt commits and it is the last, the attempts number at most
-  one more than the invocation's own resolved retry bound, and the classifier's
-  verdict and that bound agree about where the history stops.
+  attempts run one after another rather than overlapping, at most one commits and
+  it is the last, the invocation's own outcome agrees with that last attempt, the
+  attempts number at most one more than the invocation's own resolved retry
+  bound, the classifier's verdict and that bound agree about where the history
+  stops, and a rollback failure ends the history whatever the classifier said
+  about the failure that triggered it.
 
 Without these, a record whose events are individually well formed but describe
 no tree — every ``parent`` naming an activity that never opened, every count
@@ -69,6 +80,37 @@ _ROOT_ACTIVITY: dict[str, str] = {
     "snapshot-stream": "snapshotStreamStarted",
 }
 
+_OUTER: str = "transactionInvocationStarted:outer"
+_JOINED: str = "transactionInvocationStarted:joined"
+
+_CONTAINED_BY: dict[str, tuple[str, ...]] = {
+    "readStarted": ("transactionAttemptStarted",),
+    "writeBatchStarted": ("transactionAttemptStarted",),
+    "databaseCallStarted": ("readStarted", "writeBatchStarted", "streamBatchStarted"),
+    "transactionAttemptStarted": (_OUTER,),
+    "snapshotStreamStarted": ("transactionAttemptStarted",),
+    "streamBatchStarted": ("snapshotStreamStarted",),
+    _OUTER: (),
+    _JOINED: ("transactionAttemptStarted",),
+}
+
+_ROOT_KINDS: frozenset[str] = frozenset({"readStarted", _OUTER, "snapshotStreamStarted"})
+
+_INVOCATION_OUTCOMES: dict[str, tuple[str, ...]] = {
+    _OUTER: ("committed", "failed"),
+    _JOINED: ("returned", "raised"),
+}
+
+
+def _activity_kind(started: str, payload: dict[str, Any]) -> str:
+    """``started``, refined by the one payload field that changes what may
+    contain an activity: an Outer Invocation is a root and a Joined Invocation is
+    an attempt's child, and the two share one transition name."""
+    if started != "transactionInvocationStarted":
+        return started
+    invocation = payload.get("invocation")
+    return f"{started}:{invocation}" if isinstance(invocation, str) else started
+
 
 @dataclass(frozen=True)
 class _StatementSpace:
@@ -86,16 +128,21 @@ class _StatementSpace:
 class _Activity:
     """One activity as the stream describes it, while the stream is being read.
 
-    ``children`` is in opening order, which is what makes a trigger's positional
-    claim checkable: the batch a dependent read forced is the sibling before it.
+    ``children`` is in opening order and the two positions are delivery
+    positions within the root, which is what makes a trigger's positional claim
+    checkable: the batch a dependent read forced is the sibling before it, and
+    it has already closed when that read opens.
     """
 
     activity: int
     started: str
+    kind: str
     parent: int | None
     label: str
     started_payload: dict[str, Any]
+    started_at: int
     open: bool = True
+    finished_at: int | None = None
     finished_payload: dict[str, Any] = field(default_factory=dict)
     children: list[int] = field(default_factory=list)
 
@@ -179,7 +226,7 @@ def _check_root(
         raw = event.get(transition)
         payload = raw if isinstance(raw, dict) else {}
         if transition in _STARTED_FINISHED:
-            if _check_started(event, transition, payload, where, activities, problems):
+            if _check_started(event, transition, payload, where, position, activities, problems):
                 if event.get("parent") is None:
                     root_activity = _check_root_activity(
                         event, transition, root, root_activity, where, problems
@@ -188,7 +235,7 @@ def _check_root(
                     calls += 1
                     _check_statement(payload.get("statement"), where, space, problems)
         else:
-            _check_finished(event, transition, payload, where, activities, problems)
+            _check_finished(event, transition, payload, where, position, activities, problems)
     _check_balance(events, activities, root_activity, label, problems)
     _check_triggers(activities, problems)
     _check_history(activities, root_activity, label, problems)
@@ -207,6 +254,7 @@ def _check_started(
     transition: str,
     payload: dict[str, Any],
     where: str,
+    position: int,
     activities: dict[int, _Activity],
     problems: list[str],
 ) -> bool:
@@ -221,9 +269,10 @@ def _check_started(
             f"so a Started takes the next one"
         )
         return False
+    kind = _activity_kind(transition, payload)
     parent = event.get("parent")
+    holder = activities.get(parent) if isinstance(parent, int) else None
     if parent is not None:
-        holder = activities.get(parent) if isinstance(parent, int) else None
         if holder is None:
             problems.append(
                 f"{where} names parent activity {parent}, which no earlier Started assigned; a "
@@ -236,14 +285,53 @@ def _check_started(
             )
         else:
             holder.children.append(activity)
+    _check_containment(kind, holder, parent, where, problems)
     activities[activity] = _Activity(
         activity=activity,
         started=transition,
+        kind=kind,
         parent=parent,
         label=where,
         started_payload=payload,
+        started_at=position,
     )
     return True
+
+
+def _check_containment(
+    kind: str, holder: _Activity | None, parent: int | None, where: str, problems: list[str]
+) -> None:
+    """The kinds ``kind`` may be contained by, against the one containing it here.
+
+    An activity kind does not stand anywhere in the tree: an Outer Invocation IS
+    the root, a Joined Invocation runs inside the attempt it joined, an attempt
+    runs under the outer invocation that retries it, and a Database Call is the
+    direct child of the Read, Write Batch, or Stream Batch that owns it. Without
+    this the correlation rules describe a tree of anonymous nodes, which any
+    stream can satisfy by naming numbers that happen to be open.
+    """
+    allowed = _CONTAINED_BY.get(kind)
+    if allowed is None:  # pragma: no cover - the table covers every started kind
+        return
+    if parent is None:
+        if kind not in _ROOT_KINDS:
+            problems.append(
+                f"{where} opens {kind} with no parent, but a Root Execution's own outermost "
+                f"activity is one of {', '.join(sorted(_ROOT_KINDS))}; every other kind is "
+                f"contained by {' or '.join(allowed) or 'nothing, because it is a root alone'}"
+            )
+        return
+    if not allowed:
+        problems.append(
+            f"{where} opens {kind} under activity {parent}; an Outer Invocation is the root "
+            f"activity, so a nested invocation is a joined one"
+        )
+        return
+    if holder is not None and holder.kind not in allowed:
+        problems.append(
+            f"{where} opens {kind} under activity {parent}, which started as {holder.kind}; "
+            f"{kind} is contained by {' or '.join(allowed)}"
+        )
 
 
 def _check_root_activity(
@@ -278,6 +366,7 @@ def _check_finished(
     transition: str,
     payload: dict[str, Any],
     where: str,
+    position: int,
     activities: dict[int, _Activity],
     problems: list[str],
 ) -> None:
@@ -307,9 +396,47 @@ def _check_finished(
             f"{holder.label} started it under parent {holder.parent}; one activity has one "
             f"place in the tree"
         )
+    _check_scope(holder, where, activities, problems)
+    _check_invocation_outcome(holder, payload, where, problems)
     holder.open = False
+    holder.finished_at = position
     holder.finished_payload = payload
     _check_cause(payload, holder, where, activities, problems)
+
+
+def _check_scope(
+    holder: _Activity, where: str, activities: dict[int, _Activity], problems: list[str]
+) -> None:
+    """An activity SPANS what it contains, so its children close before it does."""
+    inside = sorted(child for child in holder.children if activities[child].open)
+    if inside:
+        problems.append(
+            f"{where} finishes activity {holder.activity} while activity(s) {inside} it "
+            f"contains are still open; an activity spans everything it caused, so a scope "
+            f"cannot end before what it holds"
+        )
+
+
+def _check_invocation_outcome(
+    holder: _Activity, payload: dict[str, Any], where: str, problems: list[str]
+) -> None:
+    """A Transaction Invocation finishes in the vocabulary its own kind admits.
+
+    An Outer Invocation reports what the PHYSICAL transaction did — committed or
+    failed — while a joined one reports only how the nested callback left, so the
+    two vocabularies are the semantic distinction between them rather than
+    interchangeable spellings.
+    """
+    admitted = _INVOCATION_OUTCOMES.get(holder.kind)
+    if admitted is None:
+        return
+    outcome = payload.get("outcome")
+    if outcome not in admitted:
+        problems.append(
+            f"{where} finishes {holder.kind} as {outcome!r}; that invocation finishes as "
+            f"{' or '.join(admitted)}, because returning and raising describe the nested "
+            f"callback alone while committing and failing describe the physical transaction"
+        )
 
 
 def _check_cause(
@@ -347,12 +474,8 @@ def _check_triggers(activities: dict[int, _Activity], problems: list[str]) -> No
         siblings = _siblings(batch, activities)
         position = siblings.index(batch.activity)
         following = siblings[position + 1 :]
-        if trigger == "read-dependency" and not _enables_a_read(following, activities):
-            problems.append(
-                f"{batch.label} carries the `read-dependency` trigger but the next activity its "
-                f"attempt opened is not a Read; the batch a dependent read forced stands in "
-                f"front of the read it enabled, and that position is the whole assertion"
-            )
+        if trigger == "read-dependency":
+            _check_read_dependency(batch, following, activities, problems)
         if trigger == "pre-commit" and following:
             problems.append(
                 f"{batch.label} carries the `pre-commit` trigger but its attempt opened "
@@ -361,8 +484,33 @@ def _check_triggers(activities: dict[int, _Activity], problems: list[str]) -> No
             )
 
 
-def _enables_a_read(following: list[int], activities: dict[int, _Activity]) -> bool:
-    return bool(following) and activities[following[0]].started == "readStarted"
+def _check_read_dependency(
+    batch: _Activity,
+    following: list[int],
+    activities: dict[int, _Activity],
+    problems: list[str],
+) -> None:
+    """The dependency batch stands in front of the Read it enabled, and is DONE.
+
+    Ordering the two opening events is not the claim: a read that force-flushed
+    the buffer waits for that flush, so the batch has already finished when the
+    read starts. A stream whose batch merely opened first would describe a read
+    running against a buffer still on the wire.
+    """
+    read = activities[following[0]] if following else None
+    if read is None or read.started != "readStarted":
+        problems.append(
+            f"{batch.label} carries the `read-dependency` trigger but the next activity its "
+            f"attempt opened is not a Read; the batch a dependent read forced stands in "
+            f"front of the read it enabled, and that position is the whole assertion"
+        )
+        return
+    if batch.finished_at is None or batch.finished_at > read.started_at:
+        problems.append(
+            f"{batch.label} carries the `read-dependency` trigger but had not finished when "
+            f"{read.label} started activity {read.activity}; the read waits on the flush it "
+            f"forced, so the batch it enabled it with is over before the read begins"
+        )
 
 
 def _siblings(activity: _Activity, activities: dict[int, _Activity]) -> list[int]:
@@ -414,18 +562,8 @@ def _check_history(
     if not attempts:
         return
     for index, attempt in enumerate(attempts[:-1]):
-        if attempt.finished_payload.get("outcome") == "committed":
-            problems.append(
-                f"{attempt.label} committed but is not the last attempt of its invocation; a "
-                f"commit ends the invocation, so a terminal stream holds at most one committed "
-                f"attempt and it is the final one"
-            )
-        elif attempt.finished_payload.get("retryEligible") is not True:
-            problems.append(
-                f"{attempt.label} records a failure the classifier judged ineligible for retry, "
-                f"but attempt {attempts[index + 1].activity} follows it; a non-retriable "
-                f"failure surfaces to the caller instead of re-executing the closure"
-            )
+        _check_retried(attempt, attempts[index + 1], problems)
+    _check_terminal_attempt(invocation, attempts, label, problems)
     bound = invocation.started_payload.get("retries")
     if not isinstance(bound, int):
         return
@@ -436,7 +574,7 @@ def _check_history(
             f"attempt(s) at most"
         )
     final = attempts[-1].finished_payload
-    if final.get("outcome") != "committed" and final.get("retryEligible") is True:
+    if final.get("outcome") == "rolledBack" and final.get("retryEligible") is True:
         if len(attempts) < bound + 1:
             problems.append(
                 f"{label} ends on an attempt that rolled back with a retry-eligible failure, "
@@ -444,6 +582,63 @@ def _check_history(
                 f"ran; a failure the classifier admitted re-executes the closure until the "
                 f"bound is spent, so a stream terminates on one only at exhaustion"
             )
+
+
+def _check_retried(attempt: _Activity, successor: _Activity, problems: list[str]) -> None:
+    """What an attempt that is NOT the last one may have reported.
+
+    Three things end a history: a commit, a failure the classifier refused, and a
+    rollback that itself failed. The third is the one a retry budget cannot
+    override — the connection's state is unknown, so re-executing the closure on
+    it is exactly what must not happen, however retriable the failure that
+    triggered the rollback was.
+    """
+    finished = attempt.finished_payload
+    outcome = finished.get("outcome")
+    if attempt.finished_at is not None and attempt.finished_at > successor.started_at:
+        problems.append(
+            f"{attempt.label} had not finished when attempt {successor.activity} started; a "
+            f"retry re-executes the closure on a new physical attempt, so one attempt of an "
+            f"invocation is running at a time"
+        )
+    if outcome == "committed":
+        problems.append(
+            f"{attempt.label} committed but is not the last attempt of its invocation; a "
+            f"commit ends the invocation, so a terminal stream holds at most one committed "
+            f"attempt and it is the final one"
+        )
+    elif outcome == "rollbackFailed":
+        problems.append(
+            f"{attempt.label} failed to roll back but attempt {successor.activity} follows it; "
+            f"a rollback failure leaves the connection uncertain and never retries, even when "
+            f"the failure that triggered it was retry-eligible"
+        )
+    elif finished.get("retryEligible") is not True:
+        problems.append(
+            f"{attempt.label} records a failure the classifier judged ineligible for retry, "
+            f"but attempt {successor.activity} follows it; a non-retriable failure surfaces to "
+            f"the caller instead of re-executing the closure"
+        )
+
+
+def _check_terminal_attempt(
+    invocation: _Activity, attempts: list[_Activity], label: str, problems: list[str]
+) -> None:
+    """The invocation's own outcome against the attempt it ended on.
+
+    An Outer Invocation reports what the physical transaction did, and the last
+    attempt IS that transaction's last word on it, so the two cannot disagree.
+    """
+    committed_attempt = attempts[-1].finished_payload.get("outcome") == "committed"
+    committed_invocation = invocation.finished_payload.get("outcome") == "committed"
+    if committed_attempt != committed_invocation:
+        problems.append(
+            f"{label} ends on an attempt that "
+            f"{'committed' if committed_attempt else 'did not commit'} while its invocation "
+            f"reports {invocation.finished_payload.get('outcome')!r}; an Outer Invocation "
+            f"reports what the physical transaction did, so it commits exactly when its last "
+            f"attempt did"
+        )
 
 
 def _check_statement(
