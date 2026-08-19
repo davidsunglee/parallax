@@ -948,19 +948,13 @@ def test_a_legacy_execution_log_case_is_outside_the_active_claim() -> None:
     assert envelope["diagnostics"][0]["code"] == "unsupported-module"
 
 
-def test_a_case_not_authoring_the_oracle_reports_no_execution_observation() -> None:
+def test_no_run_reports_a_lifecycle_observation() -> None:
+    # Nothing a run answers describes the execution that produced it: the
+    # lifecycle is delivered to an installed Provider while the work runs
+    # (`m-execution-lifecycle`), and the adapter's observation envelope
+    # therefore carries only what the case's own oracles grade.
     envelope = adapter.run_case(_VO_READ_CASE, "postgres", _FakePort())
-    assert "execution" not in envelope["observations"]
-
-
-def test_a_lane_with_no_single_invocation_to_describe_is_named_loudly() -> None:
-    # A `when.attempts` retry sequence opens one transaction PER attempt, so it
-    # holds no single Execution Log; a case authoring the oracle against such a
-    # lane is mis-authored, and reporting nothing would hide that.
-    case_path = case_format.default_cases_dir() / "m-execution-log-001-standalone-read-trace.yaml"
-    case = case_format.load_case(case_path)
-    with pytest.raises(engine.EngineError, match="no single execution record"):
-        adapter._report_execution(case, {}, None, [])  # pyright: ignore[reportPrivateUsage] - unit test drives the adapter's private observation seam directly
+    assert set(envelope["observations"]) == {"rows", "roundTrips"}
 
 
 _INCLUDE_SCENARIO_CASE = (

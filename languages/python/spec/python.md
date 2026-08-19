@@ -2928,7 +2928,9 @@ class ExecutionLifecycleHandler(Protocol):
 `kind: RootExecutionKind`; kinds are `READ`, `TRANSACTION_INVOCATION`, and
 `SNAPSHOT_STREAM`. Deterministic public preflight runs first. With no installed
 Provider the Handle branches before allocating UUIDs, descriptors, events,
-publishers, counters, diagnostics, no-op handlers, or lifecycle clock reads. An
+publishers, counters, diagnostics, or lifecycle clock reads, and performs no
+allocation, clock read, or I/O; a shared immutable inert activity may stand in
+for the activity seam. An
 installed Provider receives one UUIDv4 descriptor for each accepted root;
 returning `None` declines it and performs no later lifecycle work. `open` may be
 called concurrently and every accepted root receives a distinct Handler whose
@@ -4205,6 +4207,7 @@ legalizes a forbidden edge.
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire` | generated forbidden contracts + cross-package contract |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
+| Execution lifecycle recorder (support, child of `parallax.core.execution_lifecycle`) | `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` | generated forbidden contracts |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot row-to-graph conversion and Graph Input carriers (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
@@ -4273,6 +4276,7 @@ parallax.core.object_query._fluent --> parallax.core.metamodel
 parallax.core.object_query._fluent --> parallax.core.predicate
 parallax.core.object_query._fluent --> parallax.core.entity
 parallax.core.entity._graph_input --> parallax.core.metamodel
+parallax.core.execution_lifecycle.testing --> parallax.core.execution_lifecycle
 parallax.snapshot._inspection --> parallax.core.entity
 parallax.snapshot._inspection --> parallax.core.metamodel
 parallax.snapshot._inspection --> parallax.core.inheritance
@@ -4296,7 +4300,7 @@ parallax.snapshot.handle --> parallax.core.sql_gen
 parallax.snapshot.handle --> parallax.core.unit_work
 parallax.snapshot.handle --> parallax.core.read_lock
 parallax.snapshot.handle --> parallax.core.auto_retry
-parallax.snapshot.handle --> parallax.core.execution_log
+parallax.snapshot.handle --> parallax.core.execution_lifecycle
 parallax.snapshot.handle --> parallax.core.opt_lock
 parallax.snapshot.handle --> parallax.core.batch_write
 parallax.snapshot.handle --> parallax.core.txtime_write

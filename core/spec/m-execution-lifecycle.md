@@ -335,9 +335,10 @@ while distinct Providers may deliberately share a backend.
 
 With no installed Provider, a runtime MUST branch before all lifecycle-specific
 work: no UUID, descriptor, publisher, Handler, event, outcome, diagnostic,
-counter, no-op object, or lifecycle clock is created or called. A declining
-Provider costs only the UUID, descriptor, and opening call; after decline it has
-the same event-, counter-, diagnostic-, and clock-free path.
+counter, or lifecycle clock is created, and no allocation, clock read, or I/O
+occurs. A shared immutable inert activity MAY stand in for the activity seam.
+A declining Provider costs only the UUID, descriptor, and opening call; after
+decline it has the same event-, counter-, diagnostic-, and clock-free path.
 
 With `N` concurrent accepted roots, `P` active Providers, and maximum activity
 depth `D`, core live lifecycle memory is `O(N × (P + D))` and independent of

@@ -18,12 +18,13 @@ instead stage one tuple of SQL-materialized rows and merge them once, before any
 consumer-specific derivation, so each lane classifies or refuses that one staging
 graph rather than judging rows as it walks them. The port's raw
 `list[Row]` remains one statement's own lifetime, and neither raw nor
-SQL-materialized rows survive into graph input, a Snapshot, or an observation
-record.
+SQL-materialized rows survive into graph input, a Snapshot, or a lifecycle
+event.
 
 The executor's own results (:class:`FindResult`, :class:`HistoryFindResult`) are
-`m-snapshot-read`'s own carriers — a graph input paired with the Read Trace that
-produced it — so they are defined in
+`m-snapshot-read`'s own carriers — the graph input and the private Source Hints
+a materializer needs, and nothing about the execution that produced them — so
+they are defined in
 :mod:`~parallax.snapshot._read_result` and re-exported here beside the
 executor that builds them, together with the developer-facing :class:`Snapshot`
 surface they convert into and the pin helpers that carry a query's or a
@@ -41,7 +42,7 @@ One executor, two materializers. :func:`snapshot_from_find_result` and
 after execution has already finished and neither calls the other.
 :func:`find_rows` is the values lane's own degenerate case — the transformed row
 IS the representation, so it publishes rows directly and shares with :func:`find`
-exactly the canonicalization, compilation, and call recording that decide
+exactly the canonicalization, compilation, and Database Call bracket that decide
 behavior.
 
 All three classify stored state that contradicts the model rather than refusing
@@ -53,21 +54,20 @@ the whole read at the shared publication gate: a milestone read must decode a
 temporal edge before it can partition, and a write has no in-band channel to
 publish a verdict through.
 
-What a find EXECUTED is `m-execution-log`'s vocabulary, not this module's: each
-call is bracketed into a
-:class:`~parallax.core.execution_log.TraceRecorder`, whose sealed Read Trace is
-the result's own execution record. A participating read is handed the recorder
-the active attempt already opened, so the Snapshot and the attempt reference one
-trace rather than two equal ones. :func:`execute_read` is where that bracketing
-actually happens, and it is deliberately the package's ONE of them: the
-materializing predicate write's resolving read (`_predicate_writes`) is a read
-that reaches the database too, so it records through this same function rather
-than through a second copy of the timing and failed-call rules.
+What a find EXECUTES is `m-execution-lifecycle`'s vocabulary, not this module's:
+each read runs inside a Read activity the composition root opened, and each call
+is bracketed into a Database Call child of it. Nothing is retained — a result
+carries no record of the calls that produced it — so an executor takes the
+activity it publishes through and answers the result alone. :func:`execute_read`
+is where the call bracket actually happens, and it is deliberately the package's
+ONE of them: the materializing predicate write's resolving read
+(`_predicate_writes`) is a read that reaches the database too, so it publishes
+through this same function rather than through a second copy of the timing and
+failed-call rules.
 """
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -75,11 +75,11 @@ from typing import Any, cast
 
 from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
 from parallax.core import predicate as predicate_algebra
-from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import EntityGraphConstruction
-from parallax.core.execution_log import CallRecorder, ReadCompleted, ReadTrace, TraceRecorder
+from parallax.core.execution_lifecycle import ReadInterface
+from parallax.core.execution_lifecycle._activity import INERT, ReadActivity
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -90,7 +90,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.sql_gen import CompiledRead, LoweredStatement, MaterializedReadRow, compile_read
+from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, query_pin
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot._read_result import (
@@ -101,7 +101,6 @@ from parallax.snapshot._read_result import (
 )
 from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMaterializationError
 from parallax.snapshot.handle._materializer import materialize_graph
-from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._write_inputs import (
     ObservationLedger,
     ReadObservations,
@@ -147,7 +146,6 @@ __all__ = [
     "find",
     "find_history",
     "find_rows",
-    "read_rows",
     "stage_publishable_rows",
     "typed_publication",
     "wire_from_find_result",
@@ -199,11 +197,11 @@ class Snapshot[T]:
     :meth:`result_or_none`, :meth:`results` (a FRESH ``list[T]`` per call),
     :meth:`checked`,
     :attr:`pin` (the lowered as-of coordinates — only genuinely PINNED axes; a
-    scanned axis is absent), :attr:`execution` (the read's own Read Trace), and
+    scanned axis is absent), and
     ``__repr__``. Deliberately ABSENT: iteration / ``len`` / truthiness /
-    indexing on the container, refresh or write methods, and any lazy
-    behavior — every accessor is a pure in-memory read over roots already
-    materialized in full by ``db.find`` / ``tx.find``.
+    indexing on the container, refresh or write methods, any lazy
+    behavior, and every lifecycle accessor — the read published its activity
+    while it ran and the result retains nothing of it.
 
     A root whose stored state contradicted the model is held as its
     :class:`~parallax.snapshot.materialize.InvalidData` record. The accessors
@@ -215,20 +213,16 @@ class Snapshot[T]:
     union is partitioned with ordinary collection operations.
     """
 
-    __slots__ = ("_execution", "_invalid", "_pin", "_roots")
+    __slots__ = ("_invalid", "_pin", "_roots")
 
     _roots: tuple[T | InvalidData[T], ...]
     _invalid: tuple[InvalidData[object], ...]
     _pin: Pin
-    _execution: ReadTrace
 
-    def __init__(
-        self, roots: tuple[T | InvalidData[T], ...], pin: Pin, execution: ReadTrace
-    ) -> None:
+    def __init__(self, roots: tuple[T | InvalidData[T], ...], pin: Pin) -> None:
         self._roots = roots
         self._invalid = _invalid_records(roots)
         self._pin = pin
-        self._execution = execution
 
     def result(self) -> T:
         """The single matched root; raises on zero, on more than one, and on
@@ -258,9 +252,9 @@ class Snapshot[T]:
         """This result's checked view — the same roots, delivered in band.
 
         A lightweight read-only view over the same storage: it performs no I/O,
-        copies no root, and forwards :attr:`pin` and :attr:`execution` unchanged.
+        copies no root, and forwards :attr:`pin` unchanged.
         """
-        return CheckedSnapshot(self._roots, self._pin, self._execution)
+        return CheckedSnapshot(self._roots, self._pin)
 
     @property
     def pin(self) -> Pin:
@@ -269,19 +263,8 @@ class Snapshot[T]:
         is absent, per the core rule that a scan is not a pin."""
         return self._pin
 
-    @property
-    def execution(self) -> ReadTrace:
-        """This find's own Read Trace (`m-execution-log`): every Database Call it
-        issued, each naming the `m-sql` value it ran and how it completed, plus
-        their ``round_trips``. For a PARTICIPATING read this is the same object
-        the transaction's current attempt records."""
-        return self._execution
-
     def __repr__(self) -> str:
-        return (
-            f"Snapshot(roots={len(self._roots)}, pin={self._pin!r}, "
-            f"round_trips={self._execution.round_trips})"
-        )
+        return f"Snapshot(roots={len(self._roots)}, pin={self._pin!r})"
 
     def _require_valid(self) -> None:
         """Refuse once arity is settled, carrying exactly the roots in range.
@@ -298,24 +281,20 @@ class CheckedSnapshot[T]:
     """A :class:`Snapshot`'s roots as ``T | InvalidData[T]`` (spec §4).
 
     The whole eager checked surface: the same three arity accessors, the same
-    :attr:`pin` and :attr:`execution`, and nothing else. It shares the result
+    :attr:`pin`, and nothing else. It shares the result
     storage rather than owning a second copy of it, does no I/O, and refuses
     nothing a default accessor would have accepted — an invalid root simply
     arrives as its record instead of raising.
     """
 
-    __slots__ = ("_execution", "_pin", "_roots")
+    __slots__ = ("_pin", "_roots")
 
     _roots: tuple[T | InvalidData[T], ...]
     _pin: Pin
-    _execution: ReadTrace
 
-    def __init__(
-        self, roots: tuple[T | InvalidData[T], ...], pin: Pin, execution: ReadTrace
-    ) -> None:
+    def __init__(self, roots: tuple[T | InvalidData[T], ...], pin: Pin) -> None:
         self._roots = roots
         self._pin = pin
-        self._execution = execution
 
     def result(self) -> T | InvalidData[T]:
         """The single matched root, valid or classified; raises on zero or more
@@ -337,16 +316,8 @@ class CheckedSnapshot[T]:
         """The source Snapshot's own pin, forwarded unchanged."""
         return self._pin
 
-    @property
-    def execution(self) -> ReadTrace:
-        """The source Snapshot's own Read Trace, forwarded unchanged."""
-        return self._execution
-
     def __repr__(self) -> str:
-        return (
-            f"CheckedSnapshot(roots={len(self._roots)}, pin={self._pin!r}, "
-            f"round_trips={self._execution.round_trips})"
-        )
+        return f"CheckedSnapshot(roots={len(self._roots)}, pin={self._pin!r})"
 
 
 def entity_read_lock(
@@ -396,7 +367,7 @@ def find(
     *,
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,
-    recorder: TraceRecorder | None = None,
+    read: ReadActivity = INERT,
 ) -> FindResult:
     """The one per-level deep-fetch / snapshot-materialization loop (m-deep-fetch
     "one query per non-empty relationship level"; m-snapshot-read "round trips").
@@ -427,8 +398,7 @@ def find(
 
     Returns the whole Snapshot Graph Input — every projection, the root
     references in result order, and the query's own lowered pin — plus the
-    read's own sealed Read Trace and the Source Hint each observed projection's
-    value will carry.
+    Source Hint each observed projection's value will carry.
 
     ``preference`` is the owning unit of work's Concurrency Preference, and
     EVERY level derives its own read lock from it against that level's own
@@ -444,16 +414,15 @@ def find(
     effective-Optimistic write may import that evidence while an
     effective-Locking one cannot.
 
-    ``recorder`` is the trace under construction this read's calls belong to — the
-    one an active Transaction Attempt already opened. Omitting it is how a
-    standalone read still answers its own Read Trace: the executor opens a
-    private recorder, and the trace simply belongs to nothing above it.
+    ``read`` is the Read activity this executor publishes its Database Calls
+    under, opened by whichever composition root owns the operation. Omitting it
+    runs the same code against the shared inert activity, which is what the
+    default path and a declined root do.
     """
     # ``meta`` is the accepted model the connected ``Database`` already holds, so
     # every level's own Entity resolves against it directly.
     root_entity = _metadata(meta, query.target.canonical)
     plan_ = deep_fetch.plan(root_entity, query, meta)
-    calls = recorder if recorder is not None else TraceRecorder()
     scope = MergeScope(meta)
     observations = ReadObservations()
 
@@ -464,7 +433,7 @@ def find(
         result_form="instance",
         lock=entity_read_lock(meta, root_entity.identity, preference),
     )
-    root_refs = _convert_level(scope, port, dialect, root_compiled, calls, observations)
+    root_refs = _convert_level(scope, port, dialect, root_compiled, read, observations)
 
     level_refs: list[tuple[SnapshotNodeRef, ...]] = []
     for level in plan_.levels:
@@ -486,14 +455,13 @@ def find(
             result_form="instance",
             lock=entity_read_lock(meta, child_query.target, preference),
         )
-        child_refs = _convert_level(scope, port, dialect, child_compiled, calls, observations)
+        child_refs = _convert_level(scope, port, dialect, child_compiled, read, observations)
         _attach_children(scope, meta, level, parents, child_refs)
         level_refs.append(child_refs)
 
     pin = query_pin(query, declaring_metadata(meta, root_entity.identity))
     return FindResult(
         graph=scope.build(root_refs, pin),
-        execution=calls.read_trace(),
         includes=_include_tree(plan_.levels),
         sources=retain_evidence(meta, observations, ledger=ledger, pin=pin),
     )
@@ -582,27 +550,6 @@ def stage_rows(
     )
 
 
-def read_rows(
-    query: ObjectQueryNode,
-    meta: Metamodel,
-    dialect: Dialect,
-    port: DbPort,
-    *,
-    preference: Concurrency | None = None,
-    recorder: TraceRecorder | None = None,
-) -> RowsResult:
-    """Preflight ``query`` and run it through the values lane — the STANDALONE
-    row-form read, whole.
-
-    The row-form peer of ``db.find``'s own composition: the shared read gate
-    (:func:`~parallax.snapshot.handle._preflight.preflight`), then
-    :func:`find_rows`. A participating caller composes the same two itself,
-    because it must gate BEFORE the force-flush that stands between them.
-    """
-    preflight(query, model=meta, form="rows")
-    return find_rows(query, meta, dialect, port, preference=preference, recorder=recorder)
-
-
 def find_rows(
     query: ObjectQueryNode,
     meta: Metamodel,
@@ -610,7 +557,7 @@ def find_rows(
     port: DbPort,
     *,
     preference: Concurrency | None = None,
-    recorder: TraceRecorder | None = None,
+    read: ReadActivity = INERT,
 ) -> RowsResult:
     """The row-form read: one statement, its rows transformed, no graph.
 
@@ -641,13 +588,11 @@ def find_rows(
         result_form="row",
         lock=entity_read_lock(meta, root_entity.identity, preference),
     )
-    calls = recorder if recorder is not None else TraceRecorder()
     rows = execute_read(
         port,
         dialect,
-        compiled.statement,
-        calls,
-        document_reads=compiled.document_reads,
+        compiled,
+        read,
     )
     stage = stage_rows(
         meta,
@@ -658,7 +603,7 @@ def find_rows(
     for item in stage.rows:
         if item.family_variant is not None:
             item.values["familyVariant"] = item.family_variant
-    return RowsResult(rows=_published_rows(stage, meta), execution=calls.read_trace())
+    return RowsResult(rows=_published_rows(stage, meta))
 
 
 def _published_rows(stage: StagedRows, meta: Metamodel) -> tuple[PublishedRow, ...]:
@@ -689,7 +634,7 @@ def find_history(
     dialect: Dialect,
     port: DbPort,
     *,
-    recorder: TraceRecorder | None = None,
+    read: ReadActivity = INERT,
 ) -> HistoryFindResult:
     """The milestone-set snapshot read (m-snapshot-read "The whole-graph pin";
     m-case-format "Milestone-set graphs"): `history` / `asOfRange` return the
@@ -720,17 +665,10 @@ def find_history(
     # own (possibly locally-empty) axes.
     entity = declaring_metadata(meta, metadata.identity)
     compiled = compile_read(plan_.root, meta, dialect, result_form="instance")
-    calls = recorder if recorder is not None else TraceRecorder()
     stage = stage_publishable_rows(
         meta,
         compiled,
-        execute_read(
-            port,
-            dialect,
-            compiled.statement,
-            calls,
-            document_reads=compiled.document_reads,
-        ),
+        execute_read(port, dialect, compiled, read),
         pin=Pin(),
     )
 
@@ -746,7 +684,7 @@ def find_history(
         milestone.scope.build(tuple(milestone.roots), _edge_pin(edge))
         for edge, milestone in sorted(milestones.items(), key=lambda entry: entry[1].rank)
     )
-    return HistoryFindResult(graphs=graphs, execution=calls.read_trace())
+    return HistoryFindResult(graphs=graphs)
 
 
 def _convert_level(
@@ -754,7 +692,7 @@ def _convert_level(
     port: DbPort,
     dialect: Dialect,
     compiled: CompiledRead,
-    recorder: CallRecorder,
+    read: ReadActivity,
     observations: ReadObservations,
 ) -> tuple[SnapshotNodeRef, ...]:
     """Execute one level and convert each of its rows as that row materializes.
@@ -780,7 +718,7 @@ def _convert_level(
     settles against.
     """
     refs: list[SnapshotNodeRef] = []
-    for row in _execute_compiled(port, dialect, compiled, recorder):
+    for row in _execute_compiled(port, dialect, compiled, read):
         context = LevelContext(
             row.resolved_entity,
             compiled.projected_documents,
@@ -931,7 +869,7 @@ def _correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> Attrib
 
 
 def _execute_compiled(
-    port: DbPort, dialect: Dialect, compiled: CompiledRead, recorder: CallRecorder
+    port: DbPort, dialect: Dialect, compiled: CompiledRead, read: ReadActivity
 ) -> Iterator[MaterializedReadRow]:
     """Execute one compiled read, materializing its rows through its OWN transform.
 
@@ -945,43 +883,36 @@ def _execute_compiled(
     self-containment — it makes `find`'s "compile, execute, convert"
     structural rather than a convention every level has to remember.
 
-    The statement runs and is recorded on the way in; the port's own whole-result
-    `list[Row]` is what a row-returning execute answers by contract, and only the
-    per-row materialization is lazy — so each MATERIALIZED row is reachable for
-    exactly as long as its consumer takes to convert it, and the level never
-    holds a second copy of its result set.
+    The statement runs inside its own Database Call bracket on the way in; the
+    port's own whole-result `list[Row]` is what a row-returning execute answers
+    by contract, and only the per-row materialization is lazy — so each
+    MATERIALIZED row is reachable for exactly as long as its consumer takes to
+    convert it, and the level never holds a second copy of its result set.
     """
-    return map(
-        compiled.materialize_row,
-        execute_read(
-            port,
-            dialect,
-            compiled.statement,
-            recorder,
-            document_reads=compiled.document_reads,
-        ),
-    )
+    return map(compiled.materialize_row, execute_read(port, dialect, compiled, read))
 
 
 def execute_read(
-    port: DbPort,
-    dialect: Dialect,
-    statement: LoweredStatement,
-    recorder: CallRecorder,
-    *,
-    document_reads: Sequence[tuple[int, int]] = (),
+    port: DbPort, dialect: Dialect, compiled: CompiledRead, read: ReadActivity
 ) -> list[Row]:
-    """Run one read statement, recording the Database Call either way.
+    """Run one compiled read's statement inside its own Database Call bracket.
 
-    A FAILED call is timed and recorded too, and the failure then propagates
-    untouched: a call that reached the port and came back is work the log owes an
-    account of, whatever it came back with. Every read this package issues —
-    a find level, and the resolving read a materializing predicate write runs —
-    goes through here, so the duration and failed-call semantics of a `read` call
-    have exactly one definition.
+    A FAILED call finishes too, and the failure then propagates untouched: a
+    call that reached the port and came back is work the lifecycle owes an
+    account of, whatever it came back with. The bracket owns that, so this
+    function announces only the row count it alone knows. Every read this
+    package issues — a find level, and the resolving read a materializing
+    predicate write runs — goes through here, so the duration and failed-call
+    semantics of a `read` call have exactly one definition.
+
+    Takes the whole ``CompiledRead`` rather than a statement plus its document
+    ordinals, for the same reason :func:`_execute_compiled` does: the statement,
+    the ordinals it must be executed with, and the target Entity the activity
+    reports all come from one compile or from none.
     """
-    started = time.perf_counter_ns()
-    try:
+    statement = compiled.statement
+    document_reads = compiled.document_reads
+    with read.database_call(statement, "READ", compiled.target.canonical) as call:
         driver_sql = dialect.to_driver_sql(statement.sql)
         binds = list(statement.binds)
         rows = (
@@ -989,12 +920,7 @@ def execute_read(
             if document_reads
             else port.execute(driver_sql, binds)
         )
-    except DatabaseError as exc:
-        recorder.failed(statement, "read", time.perf_counter_ns() - started, exc)
-        raise
-    recorder.completed(
-        statement, "read", time.perf_counter_ns() - started, ReadCompleted(len(rows))
-    )
+        call.read_completed(len(rows))
     return rows
 
 
@@ -1140,7 +1066,7 @@ def wire_from_find_result(result: FindResult, meta: Metamodel) -> Snapshot[WireE
     """
     merge = merge_graph_input(result.graph, meta)
     roots = wire_roots(merge, meta, result.includes, sources=merge.by_allocation(result.sources))
-    return Snapshot(roots, result.graph.pin, result.execution)
+    return Snapshot(roots, result.graph.pin)
 
 
 def wire_from_history_result(result: HistoryFindResult, meta: Metamodel) -> Snapshot[WireEntity]:
@@ -1155,7 +1081,7 @@ def wire_from_history_result(result: HistoryFindResult, meta: Metamodel) -> Snap
     roots: list[WireEntity | InvalidData[WireEntity]] = []
     for graph in result.graphs:
         roots.extend(wire_roots(merge_graph_input(graph, meta), meta, ordinal_offset=len(roots)))
-    return Snapshot(tuple(roots), Pin(), result.execution)
+    return Snapshot(tuple(roots), Pin())
 
 
 @dataclass(frozen=True, slots=True)
@@ -1164,13 +1090,19 @@ class ResultPublication[R]:
     one dispatch can reach: a find's own graph, and a milestone-set find's graphs.
 
     A handle's read orchestration is the same whichever materializer runs — the
-    shared gate, the milestone-set dispatch, the executor entry, and inside a
-    transaction the lock derivation, the trace bracket, and the observation
-    record. Passing the publication in is what lets that orchestration exist once
-    per handle instead of once per result form, so the equivalence the Typed and
-    Wire interfaces promise is structural rather than maintained by inspection.
+    shared gate, the milestone-set dispatch, the executor entry, the Read
+    activity bracket, and inside a transaction the lock derivation and the
+    observation record. Passing the publication in is what lets that
+    orchestration exist once per handle instead of once per result form, so the
+    equivalence the Typed and Wire interfaces promise is structural rather than
+    maintained by inspection.
+
+    ``interface`` is the same choice named for the Read activity that
+    orchestration opens: which materializer publishes IS which read interface
+    ran, so the two are one value rather than two that could disagree.
     """
 
+    interface: ReadInterface
     from_find: Callable[[FindResult], R]
     from_history: Callable[[HistoryFindResult], R]
 
@@ -1180,6 +1112,7 @@ def typed_publication(
 ) -> ResultPublication[Snapshot[Any]]:
     """Publish through the typed materializer: frozen Entity instances."""
     return ResultPublication(
+        "TYPED",
         lambda result: snapshot_from_find_result(result, meta, construction),
         lambda result: snapshot_from_history_result(result, meta, construction),
     )
@@ -1188,6 +1121,7 @@ def typed_publication(
 def wire_publication(meta: Metamodel) -> ResultPublication[Snapshot[WireEntity]]:
     """Publish through the wire materializer: frozen declared-name value trees."""
     return ResultPublication(
+        "WIRE",
         lambda result: wire_from_find_result(result, meta),
         lambda result: wire_from_history_result(result, meta),
     )
@@ -1197,7 +1131,7 @@ def snapshot_from_find_result(
     result: FindResult, meta: Metamodel, construction: EntityGraphConstruction
 ) -> Snapshot[Any]:
     roots = _materialize_result_graph(result.graph, meta, construction, sources=result.sources)
-    return Snapshot(roots, result.graph.pin, result.execution)
+    return Snapshot(roots, result.graph.pin)
 
 
 def snapshot_from_history_result(
@@ -1215,7 +1149,7 @@ def snapshot_from_history_result(
         roots.extend(
             _materialize_result_graph(graph, meta, construction, ordinal_offset=len(roots))
         )
-    return Snapshot(tuple(roots), Pin(), result.execution)
+    return Snapshot(tuple(roots), Pin())
 
 
 def _materialize_result_graph(

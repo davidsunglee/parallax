@@ -116,6 +116,11 @@ class _FakePort:
     def __init__(self, *, rows: list[Row]) -> None:
         self.rows = rows
         self.writes: list[tuple[str, tuple[object, ...]]] = []
+        self.ops: list[str] = []
+        # One physical transaction attempt is one demarcation (`m-unit-work`),
+        # so counting the boundary here is how a retry is observed at all: an
+        # invocation retains no record of what it did.
+        self.boundaries = 0
 
     def execute(
         self,
@@ -124,13 +129,16 @@ class _FakePort:
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         del sql, binds, document_reads
+        self.ops.append("read")
         return [dict(row) for row in self.rows]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.writes.append((sql, tuple(binds)))
+        self.ops.append("write")
         return 1
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        self.boundaries += 1
         return body(self)
 
 
@@ -144,7 +152,7 @@ def test_run_boundary_actions_read_then_update() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, ["read", "update"])
 
-    result = _db(port).transact(fn).value
+    result = _db(port).transact(fn)
     assert result is not None
     assert result.balance == Decimal("251.00")
     assert len(port.writes) == 1
@@ -153,7 +161,8 @@ def test_run_boundary_actions_read_then_update() -> None:
 def test_run_boundary_actions_join_runs_the_rest_inside_a_joined_unit_of_work() -> None:
     # A joined call shares the outer transaction (`m-unit-work`), so the write
     # after the `join` buffers onto the SAME unit of work and reaches the
-    # database under the OUTER boundary's finalization — `m-execution-log-007`.
+    # database under the OUTER boundary's pre-commit batch —
+    # `m-execution-lifecycle-006`.
     port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
     db = _db(port)
 
@@ -161,15 +170,13 @@ def test_run_boundary_actions_join_runs_the_rest_inside_a_joined_unit_of_work() 
         return boundary_runner.run_boundary_actions(tx, ["read", "join", "update"], database=db)
 
     result = db.transact(fn)
-    assert result.value is not None
-    assert result.value.balance == Decimal("251.00")
+    assert result is not None
+    assert result.balance == Decimal("251.00")
     assert len(port.writes) == 1
-    # One log, one attempt: the join opened no second boundary.
-    assert len(result.execution_log.attempts) == 1
-    assert [type(trace).__name__ for trace in result.execution.traces] == [
-        "ReadTrace",
-        "WriteBatchTrace",
-    ]
+    # One boundary: the join opened no second transaction, and its buffered
+    # write reached the database after the read, under the outer boundary.
+    assert port.boundaries == 1
+    assert port.ops == ["read", "write"]
 
 
 def test_a_join_without_the_owning_database_is_refused() -> None:
@@ -188,7 +195,7 @@ def test_run_boundary_actions_create() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, ["create"])
 
-    result = _db(port).transact(fn).value
+    result = _db(port).transact(fn)
     assert result is not None
     assert result.id == 90
     assert len(port.writes) == 1
@@ -200,7 +207,7 @@ def test_run_boundary_actions_read_then_delete() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, ["read", "delete"])
 
-    result = _db(port).transact(fn).value
+    result = _db(port).transact(fn)
     assert result is None
     assert len(port.writes) == 1
 
@@ -299,11 +306,11 @@ def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> No
         return boundary_runner.run_boundary_actions(tx, ["read", "update"])
 
     result = db.transact(fn)
-    assert result.value is not None
-    assert result.value.balance == Decimal("251.00")
-    # The faulted attempt, then the retried (successful) one — read off the
-    # invocation's own Execution Log, which is what the retry loop produced.
-    assert len(result.execution_log.attempts) == 2
+    assert result is not None
+    assert result.balance == Decimal("251.00")
+    # The faulted attempt, then the retried (successful) one — counted at the
+    # boundary each attempt opens, which is what the retry loop produced.
+    assert inner.boundaries == 2
 
 
 # --------------------------------------------------------------------------- #

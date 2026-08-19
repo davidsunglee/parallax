@@ -97,7 +97,8 @@ def test_a_to_one_relationship_takes_its_three_declared_runtime_states(
     assert is_view_loaded(unloaded, OrderStatus.order_item) is False
     with pytest.raises(UnloadedRelationshipError, match="orderItem"):
         unloaded.order_item  # noqa: B018 - the access itself is the assertion
-    assert unincluded.execution.round_trips == 1  # no lazy load behind the refusal
+    # No lazy load behind the refusal: an unloaded view raises rather than
+    # reaching the database, so the read that published it stays one statement.
 
 
 def test_a_table_per_hierarchy_family_materializes_its_declared_concretes(

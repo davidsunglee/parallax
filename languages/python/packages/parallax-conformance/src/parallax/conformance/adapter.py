@@ -229,33 +229,6 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
     return engine.compile_read_case(case, dialect)
 
 
-def _report_execution(
-    case: case_format.Case,
-    observations: dict[str, Any],
-    provenance: engine.CaseProvenance | None,
-    emissions: list[engine.Emission],
-) -> None:
-    """Attach the `execution` observation for a case that authors the oracle.
-
-    The key is optional and additive (`m-conformance-adapter`), and reported
-    exactly where a case asks for it: a lane whose run produced no single
-    invocation to describe — a `when.attempts` retry sequence, a scenario of
-    several unit-of-work groups — has no Execution Log to report, and a case
-    authoring the oracle against such a lane is mis-authored rather than
-    silently unobserved, so it is named loudly here.
-    """
-    then = case.document.get("then")
-    if not isinstance(then, Mapping) or "execution" not in then:
-        return
-    if provenance is None:
-        raise engine.EngineError(
-            f"{case.path.name}: the case authors `then.execution`, but this run produced no "
-            "single execution record to report — an Execution Log describes ONE logical "
-            "transaction invocation (m-execution-log)"
-        )
-    observations["execution"] = engine.execution_observation(provenance, emissions)
-
-
 def _read_observations(case: case_format.Case, dialect: str, port: DbPort) -> dict[str, Any]:
     """A read case's own observation shape (m-case-format "Read result form"):
     ``then.graphs`` (a milestone-set snapshot read) / ``then.graph`` (a deep
@@ -279,10 +252,8 @@ def _read_observations(case: case_format.Case, dialect: str, port: DbPort) -> di
         if stored_data_issues is not None:
             observations["storedDataIssues"] = stored_data_issues
         return {"emissions": emissions, "observations": observations}
-    emissions, rows, round_trips, trace = engine.run_read_case(case, dialect, port)
-    read_observations: dict[str, Any] = {"rows": rows, "roundTrips": round_trips}
-    _report_execution(case, read_observations, trace, emissions)
-    return {"emissions": emissions, "observations": read_observations}
+    emissions, rows, round_trips = engine.run_read_case(case, dialect, port)
+    return {"emissions": emissions, "observations": {"rows": rows, "roundTrips": round_trips}}
 
 
 def _run(
@@ -318,19 +289,17 @@ def _run(
             scenario_observations["errors"] = run.errors
         if run.step_graphs:
             scenario_observations["stepGraphs"] = run.step_graphs
-        _report_execution(case, scenario_observations, run.log, run.emissions)
         return run.emissions, scenario_observations
     if case.shape == "writeSequence":
         emissions, table_state, round_trips = engine.run_write_sequence_case(case, dialect, port)
         return emissions, {"tableState": table_state, "roundTrips": round_trips}
     if case.shape == "conflict":
-        emissions, affected_rows, table_state, log, round_trips = engine.run_conflict_case(
+        emissions, affected_rows, table_state, round_trips = engine.run_conflict_case(
             case, dialect, port
         )
         observations: dict[str, Any] = {"affectedRows": affected_rows, "roundTrips": round_trips}
         if table_state is not None:
             observations["tableState"] = table_state
-        _report_execution(case, observations, log, emissions)
         return emissions, observations
     if case.shape == "error":
         emissions, error_class, native_code, round_trips = engine.run_error_case(

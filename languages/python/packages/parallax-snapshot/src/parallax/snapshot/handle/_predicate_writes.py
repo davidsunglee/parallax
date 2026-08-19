@@ -47,7 +47,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import AttributeAssignment
-from parallax.core.execution_log import AttemptRecorder
+from parallax.core.execution_lifecycle._activity import ReadActivity
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -147,7 +147,7 @@ def buffer_predicate(
     *,
     valid_from: dt.datetime | None,
     until: dt.datetime | None = None,
-    attempt: AttemptRecorder,
+    read: ReadActivity,
 ) -> None:
     """The typed-authoring entry to the predicate-write lane: it turns a
     mutation-compatible :class:`~parallax.core.object_query.ObjectQuery` plus typed
@@ -245,7 +245,7 @@ def buffer_predicate(
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
-    buffer_predicate_instruction(uow, meta, conn, dialect, instruction, attempt)
+    buffer_predicate_instruction(uow, meta, conn, dialect, instruction, read)
 
 
 def _reject_uncomposable_assignments(
@@ -306,7 +306,7 @@ def buffer_predicate_instruction(
     conn: DbPort,
     dialect: Dialect,
     instruction: PredicateWrite,
-    attempt: AttemptRecorder,
+    read: ReadActivity,
 ) -> None:
     """The neutral seam UNDERLYING every ``_where`` verb and the
     conformance engine's own predicate-write translation (`m-case-format`
@@ -369,7 +369,7 @@ def buffer_predicate_instruction(
         uow.buffer(instruction)
         return
     _materialize_predicate_write(
-        uow, meta, conn, dialect, instruction, entity, declaring_entity, version_attr, attempt
+        uow, meta, conn, dialect, instruction, entity, declaring_entity, version_attr, read
     )
 
 
@@ -412,7 +412,7 @@ def _materialize_predicate_write(
     entity: EntityMetadata,
     declaring_entity: EntityMetadata,
     version_attr: AttributeMetadata | None,
-    attempt: AttemptRecorder,
+    read: ReadActivity,
 ) -> None:
     """Materialize a predicate write on a VERSIONED or TEMPORAL target
     (`m-opt-lock` "Predicate-selected writes materialize when observations
@@ -526,19 +526,10 @@ def _materialize_predicate_write(
         include_value_objects=needs_documents,
     )
     structured_column = compiled.structured_column
-    # The resolving read reaches the database, so it is bracketed and recorded
-    # like any other read (`m-execution-log`) — through the package's one
+    # The resolving read reaches the database, so it publishes its Database Call
+    # like any other read (`m-execution-lifecycle`) — through the package's one
     # read-call seam, never a second copy of its rules.
-    with attempt.read_trace() as recorder:
-        driver_rows = uow.read(
-            lambda: execute_read(
-                conn,
-                dialect,
-                compiled.statement,
-                recorder,
-                document_reads=compiled.document_reads,
-            )
-        )
+    driver_rows = uow.read(lambda: execute_read(conn, dialect, compiled, read))
     stage = stage_publishable_rows(meta, compiled, driver_rows, pin=Pin())
     resolved = stage.rows
     if not resolved:

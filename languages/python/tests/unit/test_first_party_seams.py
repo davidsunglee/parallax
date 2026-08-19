@@ -108,7 +108,7 @@ def _node(tx: Transaction, query: ObjectQueryNode | None = None) -> WireEntity:
 
 
 def _run[T](port: RecordingPort, fn: Callable[[Transaction], T]) -> T:
-    return account_db(port).transact(fn).value
+    return account_db(port).transact(fn)
 
 
 # --------------------------------------------------------------------------- #
@@ -133,9 +133,8 @@ def test_a_published_row_is_detached_from_the_mapping_it_was_built_from() -> Non
 
 def test_a_standalone_wire_read_takes_no_lock_and_files_no_record() -> None:
     port = RecordingPort(rows=[ACCOUNT_ROW])
-    snapshot = account_db(port).wire.find(_account_query())
+    account_db(port).wire.find(_account_query())
     assert port.ops == [("read", FIND_SQL_UNLOCKED, (3,))]
-    assert snapshot.execution.round_trips == 1
 
 
 def test_a_participating_wire_read_answers_the_state_the_unit_of_work_retained() -> None:
@@ -165,7 +164,7 @@ def test_a_wire_read_answers_the_claim_of_every_node_it_published() -> None:
     def fn(tx: Transaction) -> tuple[ObservedStateKey, ...]:
         return tuple(claim.key for claim in published_claims(tx.wire.find(query)))
 
-    keys = db_for(POLICY_MODEL, port).transact(fn).value
+    keys = db_for(POLICY_MODEL, port).transact(fn)
     assert [key.object.entity.name for key in keys] == ["Policy", "Coverage"]
     assert [key.object.primary_key for key in keys] == [(("id", 1),), (("id", 10),)]
 
@@ -191,7 +190,7 @@ def test_a_non_hydrating_root_answers_no_claim_for_the_tree_below_it() -> None:
         gc.collect()
         return claims, len(tx._uow._observations)  # pyright: ignore[reportPrivateUsage] - the index is first-party state
 
-    claims, indexed = db_for(POLICY_MODEL, port).transact(fn).value
+    claims, indexed = db_for(POLICY_MODEL, port).transact(fn)
     assert claims == ()
     assert indexed == 0
 
@@ -457,7 +456,7 @@ def test_an_unversioned_non_temporal_read_retains_no_evidence() -> None:
 
 
 def _run_on[T](db: Database, fn: Callable[[Transaction], T]) -> T:
-    return db.transact(fn).value
+    return db.transact(fn)
 
 
 def _predicate_target() -> dict[str, object]:

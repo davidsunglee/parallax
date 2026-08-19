@@ -34,13 +34,11 @@ bite on.
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Final
 
 from parallax.core.auto_retry import run_with_retry
-from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES, Dialect
 
@@ -60,14 +58,8 @@ from parallax.core.entity import (
     row_codec_of,
 )
 from parallax.core.entity._model import class_index, model_of
-from parallax.core.execution_log import (
-    AttemptRecorder,
-    ExecutionLogBuilder,
-    RetryPolicy,
-    TransactionResult,
-    WriteBatchTrigger,
-    WriteCompleted,
-)
+from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
+from parallax.core.execution_lifecycle._activity import INERT, WriteBatchActivity, open_read_root
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
@@ -83,6 +75,7 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
+    WriteBatchTrigger,
     WritePlan,
     WritePlanner,
     active_unit_of_work,
@@ -99,7 +92,7 @@ from parallax.snapshot.handle._read import (
     Snapshot,
     find,
     find_history,
-    read_rows,
+    find_rows,
     typed_publication,
     wire_publication,
 )
@@ -228,7 +221,15 @@ class _Demarcation:
 class Database:
     """A connected Parallax database handle: one adapter, one metamodel (spec §5)."""
 
-    __slots__ = ("_clock", "_connected", "_dialect", "_meta", "_planner", "_port")
+    __slots__ = (
+        "_clock",
+        "_connected",
+        "_dialect",
+        "_lifecycle",
+        "_meta",
+        "_planner",
+        "_port",
+    )
 
     def __init__(
         self,
@@ -237,6 +238,7 @@ class Database:
         *,
         dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
+        lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> None:
         """Connect to ``model``, which the developer entry point narrows further.
 
@@ -259,6 +261,11 @@ class Database:
         self._meta: Metamodel = self._connected.meta
         self._dialect = dialect
         self._clock: Clock = clock if clock is not None else SystemClock()
+        # Absent by default, and absence is the whole default path: every
+        # operation below branches on it before allocating a UUID, a descriptor,
+        # a publisher, a counter, an event, or a lifecycle clock read
+        # (`m-execution-lifecycle` "Cost and retention").
+        self._lifecycle = lifecycle_provider
         # One Write Planner per connected Metamodel, reused across every
         # `transact()` attempt (`m-unit-work`: the planner is constructed once
         # per accepted Metamodel with its strategy adapters already wired).
@@ -272,13 +279,17 @@ class Database:
         *,
         dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
+        lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> Database:
         """Wire a concrete ``m-db-port`` adapter to the Domain Model it will serve.
 
         The composition-root entry point (spec §8): only the root names a
         concrete adapter; everything above works against the port. ``dialect``
         defaults to the sole adapter's; ``clock`` defaults to the system clock
-        (inject a fixed clock in tests).
+        (inject a fixed clock in tests). ``lifecycle_provider`` is the ONE
+        execution-lifecycle seam (`m-execution-lifecycle`): the Provider owns
+        its own error reporter, so there is no second argument, and omitting it
+        is what makes this connection's operations do no lifecycle work at all.
 
         ``model`` is a Domain Model of either provenance, and WHICH provenance
         decides capability rather than which constructor ran: a class-backed
@@ -297,7 +308,9 @@ class Database:
                 "a descriptor produced (snapshot-class-backed-model-required); a bare "
                 "accepted Metamodel is a first-party form no application holds"
             )
-        return cls(adapter, model, dialect=dialect, clock=clock)
+        return cls(
+            adapter, model, dialect=dialect, clock=clock, lifecycle_provider=lifecycle_provider
+        )
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         """Execute ``query`` exactly once, materializing fully, and return
@@ -355,13 +368,23 @@ class Database:
         stamped on the values it publishes. Their evidence is their own: a
         standalone read retains the state each row observed exactly as a
         participating one does, and differs only in the license that carries.
+
+        The Root Execution opens AFTER the gate and spans through publication:
+        the gate is deterministic and reaches no port, so a refused read creates
+        no root and calls no Provider, while planning, lowering, every Database
+        Call, conversion, and materialization are all inside the Read activity.
         """
         preflight(node, model=self._meta, form="graph")
-        if scans_an_axis(node):
-            return publication.from_history(
-                find_history(node, self._meta, self._dialect, self._port)
+        with open_read_root(
+            self._lifecycle, target=node.target.canonical, interface=publication.interface
+        ) as read:
+            if scans_an_axis(node):
+                return publication.from_history(
+                    find_history(node, self._meta, self._dialect, self._port, read=read)
+                )
+            return publication.from_find(
+                find(node, self._meta, self._dialect, self._port, read=read)
             )
-        return publication.from_find(find(node, self._meta, self._dialect, self._port))
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Execute ``query`` exactly once outside any transaction and return its
@@ -377,9 +400,13 @@ class Database:
 
         Non-transactional, exactly as :meth:`find` is: no read lock, no
         Concurrency Preference, and no stamped participation — and, like every
-        row-form read, no retained evidence at all.
+        row-form read, no retained evidence at all. It opens its own Read root
+        after the same gate the graph form crosses.
         """
-        return read_rows(query, self._meta, self._dialect, self._port)
+        preflight(query, model=self._meta, form="rows")
+        root = open_read_root(self._lifecycle, target=query.target.canonical, interface="ROWS")
+        with root as read:
+            return find_rows(query, self._meta, self._dialect, self._port, read=read)
 
     def transact[T](
         self,
@@ -388,7 +415,7 @@ class Database:
         retries: int | None = None,
         concurrency: Concurrency | None = None,
         retry_optimistic_conflicts: bool | None = None,
-    ) -> TransactionResult[T]:
+    ) -> T:
         """Run ``fn(tx)`` in a transaction, returning its value only after commit.
 
         Every option is sentinel-backed (spec §5): ``None`` means *apply the
@@ -410,13 +437,9 @@ class Database:
         withholds the callback value, and an inner failure dooms the whole
         transaction (rollback-only) even if caught.
 
-        The result carries the callback value together with the invocation's
-        whole :class:`~parallax.core.execution_log.ExecutionLog`
-        (`m-execution-log`), which spans every physical attempt. A JOINING call's
-        result carries the OUTER transaction's same live log rather than a
-        fictitious nested one, so its
-        :attr:`~parallax.core.execution_log.TransactionResult.execution` view is
-        unavailable until that boundary commits.
+        The callback's value is what this answers, directly: an invocation
+        retains no record of what it did, and what a Provider observed about it
+        was delivered while it ran (`m-execution-lifecycle`).
         """
         active = active_unit_of_work()
         if active is not None:
@@ -442,7 +465,7 @@ class Database:
             # The join path returns immediately and ignores these arguments in
             # favor of the active transaction's own (m-unit-work); rollback-only
             # foreclosure happens before the closure runs.
-            joined = run_unit_of_work(
+            return run_unit_of_work(
                 lambda _: fn(demarcation.tx),
                 settings=active.settings,
                 clock=active.clock,
@@ -452,7 +475,6 @@ class Database:
                 planner=self._planner,
                 subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
             )
-            return TransactionResult(value=joined, execution_log=demarcation.tx.execution_log)
         options = _ResolvedOptions(
             retries=retries if retries is not None else 10,
             concurrency=concurrency if concurrency is not None else "optimistic",
@@ -468,23 +490,7 @@ class Database:
         construction = self._connected.construction
         codec = self._connected.codec
 
-        # Constructed BEFORE the retry loop, because one Execution Log describes
-        # one LOGICAL invocation and spans every physical attempt the loop runs
-        # (`m-execution-log`): a log owned by an attempt could not survive the
-        # attempt that failed.
-        log = ExecutionLogBuilder(
-            concurrency=options.concurrency,
-            retry_policy=RetryPolicy(
-                max_retries=options.retries,
-                retry_optimistic_conflicts=options.retry_optimistic_conflicts,
-            ),
-        )
-
         def attempt() -> T:
-            # The loop opened this attempt before calling, so the recorder writes
-            # to the attempt already visible as `active`.
-            recorder = log.current
-
             def in_txn(conn: DbPort) -> T:
                 def body(uow: UnitOfWork) -> T:
                     tx = Transaction(
@@ -494,25 +500,18 @@ class Database:
                         self._dialect,
                         construction,
                         codec,
-                        log.view(),
-                        recorder,
                     )
                     # Published for joining calls; visible only while core's
                     # active-transaction binding is, so it needs no cleanup.
                     uow.companion = _Demarcation(tx=tx, options=options, owner=self)
                     return fn(tx)
 
-                value = run_unit_of_work(
+                return run_unit_of_work(
                     body,
                     settings=TransactionSettings(concurrency=options.concurrency),
                     clock=self._clock,
                     meta=model,
-                    flush_executor=_flush_executor(conn, model, self._dialect, recorder),
-                    # The unit of work's other injection point: the executor is
-                    # handed a settled plan, so only this notification can reach
-                    # the attempt while a flush is still planning — which is
-                    # where the boundary-owned final batch most often fails.
-                    write_batch_starting=recorder.write_batch_starting,
+                    flush_executor=_flush_executor(conn, model, self._dialect, INERT),
                     # The injected Write Planner — `parallax.snapshot.handle`
                     # is the sole module cleared to import both `batch_write`
                     # and `m-unit-work`, so it alone builds the strategy
@@ -522,38 +521,16 @@ class Database:
                     planner=self._planner,
                     subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
                 )
-                # The body and its finalization batch are done; anything that
-                # fails from here is the durability boundary itself, which
-                # records no call of its own.
-                recorder.entering_commit()
-                return value
 
-            try:
-                value = self._port.transaction(in_txn)
-            except BaseException as exc:
-                # The composition root knows WHERE the attempt failed; the retry
-                # loop knows only whether the classifier licenses another one, and
-                # applies that verdict afterwards through `log.attempt_failed`.
-                recorder.failed(exc)
-                raise
-            recorder.committed()
-            return value
+            return self._port.transaction(in_txn)
 
-        try:
-            value = run_with_retry(
-                attempt,
-                retries=options.retries,
-                extra_retriable=(
-                    _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
-                ),
-                on_attempt=log,
-            )
-        finally:
-            # The invocation has terminated either way, so the graph seals either
-            # way: a caller that retained the Transaction reads a sealed log
-            # describing the attempts that failed.
-            log.seal()
-        return TransactionResult(value=value, execution_log=log.view())
+        return run_with_retry(
+            attempt,
+            retries=options.retries,
+            extra_retriable=(
+                _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
+            ),
+        )
 
 
 def _optimistic_conflict_retriable(exc: BaseException) -> bool:
@@ -612,7 +589,7 @@ def _refuse_conflict(name: str, explicit: object | None, active_value: object) -
 
 
 def _flush_executor(
-    conn: DbPort, model: Metamodel, dialect: Dialect, attempt: AttemptRecorder
+    conn: DbPort, model: Metamodel, dialect: Dialect, batch: WriteBatchActivity
 ) -> FlushExecutor:
     """The unit of work's injected flush sink: lower each planned step, execute
     every statement in order, and hand each result back to the unit of work to
@@ -631,33 +608,21 @@ def _flush_executor(
     :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns the
     authoritative reading of the step's Affected Rows Policy (ADR 0048).
 
-    One flush is ONE Write Batch Trace (`m-execution-log`) carrying the unit of
-    work's own trigger, however many statements the plan lowers to — a batch is a
-    flush, not a statement. The enforcer runs inside the recorder's own
-    ``enforcing`` bracket, which is what lets the attempt's failure name the
-    completed call the enforcement rejected: the call reached the database and
-    reported a count, so it stays a completion, and the rejection is the only
-    post-call failure entitled to claim it.
+    One flush is ONE Write Batch (`m-execution-lifecycle`) however many
+    statements the plan lowers to — a batch is a flush, not a statement — and
+    each statement is one Database Call child of it. ``batch`` is the activity
+    that batch publishes under; the Transaction Attempt that opens a live one is
+    Phase 3's, so today every flush runs against the shared inert activity and
+    emits nothing.
     """
 
     def execute(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
-        with attempt.write_batch(trigger) as recorder:
-            for step, statement in stream_lowered(plan, model, dialect):
-                started = time.perf_counter_ns()
-                try:
-                    affected = conn.execute_write(
-                        dialect.to_driver_sql(statement.sql), list(statement.binds)
-                    )
-                except DatabaseError as exc:
-                    recorder.failed(statement, "write", time.perf_counter_ns() - started, exc)
-                    raise
-                recorder.completed(
-                    statement,
-                    "write",
-                    time.perf_counter_ns() - started,
-                    WriteCompleted(affected),
+        for step, statement in stream_lowered(plan, model, dialect):
+            with batch.database_call(statement, "WRITE", step.entity.canonical) as call:
+                affected = conn.execute_write(
+                    dialect.to_driver_sql(statement.sql), list(statement.binds)
                 )
-                with recorder.enforcing():
-                    enforce_affected_rows(step, affected)
+                call.write_completed(affected)
+            enforce_affected_rows(step, affected)
 
     return execute

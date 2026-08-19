@@ -59,7 +59,7 @@ from parallax.core.base import INFINITY, DocumentValue, InstantError, PresentDoc
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution_log import DatabaseCallFailed, ExecutionLog
+from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.unit_work import (
     FixedClock,
@@ -595,18 +595,16 @@ def test_a_failed_resolving_read_is_still_recorded_as_the_call_it_made() -> None
             )
 
     port = _FailingReadPort()
-    held: list[ExecutionLog] = []
 
     def fn(tx: Transaction) -> None:
-        held.append(tx.execution_log)
         tx.delete_where(mm.Account.where(mm.Account.balance < 0))
 
-    with pytest.raises(DatabaseError):
+    with pytest.raises(DatabaseError) as refusal:
         account_db(port).transact(fn, retries=0)
-    attempt = held[0].final_attempt
-    assert attempt.round_trips == 1
-    assert isinstance(attempt.calls[0].completion, DatabaseCallFailed)
-    assert attempt.calls[0].kind == "read"
+    # The resolving read is what reached the port, so the failure that escapes
+    # is that read's own: a materializing predicate write issues its resolve
+    # before it lowers a single statement of DML.
+    assert refusal.value.category == "lockWaitTimeout"
 
 
 def _two_terminate_rows() -> list[Row]:
@@ -1952,7 +1950,7 @@ def test_the_buffering_seam_refuses_an_unvalidated_inheritance_family_instructio
                 tx._conn,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
                 tx._dialect,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
                 instruction,
-                tx._attempt,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
+                INERT,
             )
         assert port.ops == [("begin",)]
         raise _Abandon

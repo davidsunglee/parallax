@@ -138,7 +138,7 @@ def test_compile_read_case_matches_golden() -> None:
 
 def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
     port = FakeDbPort([{"id": 1, "name": "Grace"}])
-    emissions, rows, round_trips, _trace = engine.run_read_case(
+    emissions, rows, round_trips = engine.run_read_case(
         _case("m-value-object-001"), "postgres", port
     )
     assert round_trips == 1
@@ -152,7 +152,7 @@ def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
 def test_run_read_case_wire_renders_managed_row_values() -> None:
     # The port returns managed values; run_read_case records canonical wire form.
     port = FakeDbPort([{"id": 1, "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000")}])
-    _emissions, rows, _round_trips, _trace = engine.run_read_case(
+    _emissions, rows, _round_trips = engine.run_read_case(
         _case("m-value-object-001"), "postgres", port
     )
     assert rows == [{"id": 1, "external_id": "123e4567-e89b-12d3-a456-426614174000"}]
@@ -175,7 +175,7 @@ def test_run_read_case_materializes_family_variant_from_the_tph_tag_column() -> 
             }
         ]
     )
-    _emissions, rows, _round_trips, _trace = engine.run_read_case(
+    _emissions, rows, _round_trips = engine.run_read_case(
         _case("m-inheritance-003"), "postgres", port
     )
     assert rows == [
@@ -207,7 +207,7 @@ def test_run_read_case_materializes_family_variant_from_the_tpcs_literal_column(
             }
         ]
     )
-    _emissions, rows, _round_trips, _trace = engine.run_read_case(
+    _emissions, rows, _round_trips = engine.run_read_case(
         _case("m-inheritance-050"), "postgres", port
     )
     assert rows[0]["familyVariant"] == "Invoice"
@@ -218,7 +218,7 @@ def test_run_read_case_concrete_target_read_carries_no_family_variant() -> None:
     # m-inheritance-001 (CardPayment, concrete target): the compiled SELECT never
     # projects a tag/literal column, so the row passes through wire rendering alone.
     port = FakeDbPort([{"id": 1, "amount": decimal.Decimal("100.00"), "card_network": "Visa"}])
-    _emissions, rows, _round_trips, _trace = engine.run_read_case(
+    _emissions, rows, _round_trips = engine.run_read_case(
         _case("m-inheritance-001"), "postgres", port
     )
     assert rows == [{"id": 1, "amount": "100.00", "card_network": "Visa"}]
@@ -2294,7 +2294,6 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     )
     run = engine.run_scenario_case(_load_case("m-unit-work-015"), "postgres", port)
     assert run.round_trips == 5
-    assert run.log is not None and run.log.round_trips == 5
     # The close plus the two rectangles the split chains, all under the write
     # step's own pointer.
     assert [e.case_pointer for e in run.emissions] == [
@@ -3507,7 +3506,7 @@ _ACCOUNT_ROW_2: Final[Row] = {
 
 def test_run_conflict_case_single_attempt() -> None:
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
+    emissions, affected, table_state, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-006"), "postgres", port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -3521,7 +3520,7 @@ def test_run_conflict_case_reads_its_source_before_applying_given_apply() -> Non
     # invalidates: a read taken after it would observe the state it left, and
     # the stale gate the case grades would never be reachable.
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
+    emissions, affected, table_state, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-005"), "postgres", port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -3549,7 +3548,7 @@ class _ZeroAffectedPort(FakeWritePort):
 
 def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> None:
     port = _ZeroAffectedPort(find_rows=[_ACCOUNT_ROW_2])
-    _emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
+    _emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-005"), "postgres", port
     )
     assert affected == 0
@@ -3588,7 +3587,7 @@ def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> Non
         },
     )
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
+    emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
         case, "postgres", port
     )
     assert [e.sql for e in emissions] == ["delete from account where id = ? and version = ?"]
@@ -3613,7 +3612,7 @@ def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() 
     # against a coordinate the case names rather than a source a read published,
     # which is why a Locking-mode conflict is expressible here and nowhere else
     # in this lane.
-    _emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
+    _emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
         _load_case("m-temporal-read-012"), "postgres", _ZeroAffectedClosePort()
     )
     assert affected == 0
@@ -3660,7 +3659,7 @@ def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_r
 
 
 def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
-    _emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
+    _emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
         _load_case("m-temporal-read-010"), "postgres", _ZeroAffectedClosePort()
     )
     assert affected == 0
@@ -3802,7 +3801,7 @@ def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() ->
     port = _ScriptedReadPort(
         [[_ACCOUNT_ROW_2], [{**_ACCOUNT_ROW_2, "balance": decimal.Decimal("999.00"), "version": 2}]]
     )
-    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
+    emissions, affected, table_state, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-007"), "postgres", port
     )
     assert [e.case_pointer for e in emissions] == [
@@ -3844,7 +3843,7 @@ def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() ->
     # `handle.plan_temporal_close`, not the non-temporal versioned-UPDATE path.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-txtime-write-006"]
     port = FakeWritePort()
-    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
+    emissions, affected, table_state, _round_trips = engine.run_conflict_case(
         case, "postgres", port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -3926,7 +3925,7 @@ def test_an_edge_named_close_derives_its_address_from_the_named_milestone() -> N
     heads: list[list[object]] = []
     for valid_start in ("2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"):
         port = FakeWritePort()
-        emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
+        emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
             _edge_named_close(
                 {
                     "uow": {"concurrency": "optimistic"},
@@ -4142,7 +4141,7 @@ def test_a_locking_close_may_still_name_its_observed_milestones_edge() -> None:
     # own half, which SELECTS the milestone whose `thru_z` the address binds.
     # That selection happens in either mode; only the gate is optimistic-only,
     # so the locking golden carries the derived address and no `in_z` predicate.
-    emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
+    emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
         _edge_named_close(
             {
                 "uow": {"concurrency": "locking"},
@@ -4281,7 +4280,7 @@ def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None
     # convention.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-inheritance-105"]
     port = FakeWritePort()
-    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
+    emissions, affected, table_state, _round_trips = engine.run_conflict_case(
         case, "postgres", port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -4299,7 +4298,7 @@ def test_run_conflict_case_temporal_attempts_form_retries_the_gated_close() -> N
     # non-temporal versioned-UPDATE retry `m-opt-lock-007` already covers).
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-temporal-read-011"]
     port = FakeWritePort()
-    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
+    emissions, affected, table_state, _round_trips = engine.run_conflict_case(
         case, "postgres", port
     )
     assert [e.case_pointer for e in emissions] == [

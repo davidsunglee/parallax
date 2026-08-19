@@ -8,11 +8,10 @@ and calls ``parallax.snapshot.connect(adapter, model)``), :class:`Snapshot`
 checked view, the in-band invalid-result vocabulary a classified root publishes
 — :class:`InvalidData`, :class:`StoredDataIssue`, :class:`ObjectKey` (the
 identity a record locates itself by), and the :class:`InvalidDataError` a
-default accessor raises — and the execution-provenance subset a result carries —
-:class:`ReadTrace`, :class:`DatabaseCall`, :class:`ExecutionLog`,
-:class:`TransactionAttempt`, and :class:`TransactionResult`, with
-:class:`TransactionInProgressError` / :class:`TransactionNotCommittedError`
-the two refusals a joined result's execution view raises.
+default accessor raises. Execution observability is deliberately absent: a
+result carries no lifecycle record, and an application reaches that vocabulary
+through :mod:`parallax.core.execution_lifecycle` and ``connect``'s own
+``lifecycle_provider`` seam instead.
 :class:`NoResultFound` /
 :class:`TooManyResultsFound` are ``Snapshot.result()`` / ``.result_or_none()``'s
 own arity errors. The refusals are :class:`QueryTargetError`, of a query
@@ -67,26 +66,19 @@ from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
     WRITE_EVIDENCE_CODES,
     CheckedSnapshot,
-    DatabaseCall,
     DeferredFeatureError,
-    ExecutionLog,
     InvalidData,
     InvalidDataError,
     KeyedWriteValueError,
     NoResultFound,
     ObjectKey,
     QueryTargetError,
-    ReadTrace,
     Snapshot,
     SnapshotConnectionError,
     SnapshotMaterializationError,
     StoredDataIssue,
     TooManyResultsFound,
-    TransactionAttempt,
-    TransactionInProgressError,
-    TransactionNotCommittedError,
     TransactionOwnershipError,
-    TransactionResult,
     WireEntity,
     WireValue,
     WriteEvidenceError,
@@ -100,16 +92,13 @@ __all__ = [
     "KEYED_WRITE_VALUE_CODES",
     "WRITE_EVIDENCE_CODES",
     "CheckedSnapshot",
-    "DatabaseCall",
     "DeferredFeatureError",
-    "ExecutionLog",
     "InvalidData",
     "InvalidDataError",
     "KeyedWriteValueError",
     "NoResultFound",
     "ObjectKey",
     "QueryTargetError",
-    "ReadTrace",
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotDecodingError",
@@ -117,11 +106,7 @@ __all__ = [
     "SnapshotMaterializationError",
     "StoredDataIssue",
     "TooManyResultsFound",
-    "TransactionAttempt",
-    "TransactionInProgressError",
-    "TransactionNotCommittedError",
     "TransactionOwnershipError",
-    "TransactionResult",
     "UnloadedRelationshipError",
     "WireEntity",
     "WireValue",

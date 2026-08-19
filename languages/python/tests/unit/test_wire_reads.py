@@ -337,7 +337,7 @@ def test_a_back_reference_unwinds_finitely_instead_of_stubbing() -> None:
     assert _mapping(items[1])["order"] is back
     # The root is a different position: its subtree still carries `items`.
     assert back is not root
-    assert snapshot.execution.round_trips == 2
+    assert len(port.executed) == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -520,7 +520,7 @@ def test_a_wire_read_participates_in_the_transaction_that_owns_it() -> None:
             ).result()
         )
     )
-    assert result.value["id"] == 1
+    assert result["id"] == 1
     # Order is unversioned, so the default preference resolves it to the Locking
     # fallback and the participating read renders that Entity's shared-lock suffix.
     assert " for share of " in port.executed[0][0]
@@ -760,7 +760,7 @@ def test_a_participating_milestone_set_wire_read_runs_inside_the_transaction() -
     port = _history_port()
     database = handle.Database(port, INVOICE, dialect=POSTGRES)
     result = database.transact(lambda tx: tx.wire.find(_HISTORY_QUERY).results())
-    assert [_entity(root)["amount"] for root in result.value] == ["50.00", "75.00"]
+    assert [_entity(root)["amount"] for root in result] == ["50.00", "75.00"]
 
 
 # --------------------------------------------------------------------------- #

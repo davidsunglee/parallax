@@ -77,14 +77,6 @@ identity a record locates itself by — is re-exported for the same reason: a
 ``Snapshot`` element's own type must be nameable beside the accessor that answers
 it.
 
-Execution provenance is `m-execution-log`'s vocabulary, canonically defined in
-:mod:`parallax.core.execution_log`; the developer-facing subset a `db.find` or
-`db.transact` caller reads off a result — :class:`ReadTrace`,
-:class:`DatabaseCall`, :class:`ExecutionLog`, :class:`TransactionAttempt`,
-:class:`TransactionResult`, and the two refusals a joined result's execution view
-raises — is re-exported here beside :class:`Database` and :class:`Transaction`
-rather than sending a developer to a core module for the type their own result
-already carries.
 - :mod:`~parallax.snapshot.handle._write_lowering` — :func:`stream_lowered`,
   which lowers an already-settled Write Plan's steps into the one seam DML
   becomes through.
@@ -99,6 +91,13 @@ already carries.
   :data:`KEYED_WRITE_VALUE_CODES`, the provenance refusal the value-taking keyed
   verbs run before deriving a row.
 
+Execution observability is `m-execution-lifecycle`'s vocabulary, canonically
+defined in :mod:`parallax.core.execution_lifecycle`, and NOTHING of it is
+re-exported here. An application installs a Provider through :func:`connect` and
+imports the Provider, Handler, event, and diagnostic vocabulary from that module;
+no result, transaction, or stream this package answers carries a lifecycle
+accessor, so there is no type a caller reads off their own result to re-export.
+
 The modules behind no exported name (``_materializer``, ``_family``,
 ``_keyed_sql``, ``_predicate_writes``) are reached only through the modules
 above; each documents its own place in the package's acyclic internal graph.
@@ -110,15 +109,6 @@ reaches no port.
 
 from __future__ import annotations
 
-from parallax.core.execution_log import (
-    DatabaseCall,
-    ExecutionLog,
-    ReadTrace,
-    TransactionAttempt,
-    TransactionInProgressError,
-    TransactionNotCommittedError,
-    TransactionResult,
-)
 from parallax.core.unit_work import ObjectKey, WriteInstructionError
 from parallax.snapshot.handle._database import (
     Database,
@@ -180,9 +170,7 @@ __all__ = [
     "WRITE_EVIDENCE_CODES",
     "CheckedSnapshot",
     "Database",
-    "DatabaseCall",
     "DeferredFeatureError",
-    "ExecutionLog",
     "FindResult",
     "HistoryFindResult",
     "InvalidData",
@@ -192,7 +180,6 @@ __all__ = [
     "ObjectKey",
     "PublishedRow",
     "QueryTargetError",
-    "ReadTrace",
     "RowsResult",
     "Snapshot",
     "SnapshotConnectionError",
@@ -200,12 +187,8 @@ __all__ = [
     "StoredDataIssue",
     "TooManyResultsFound",
     "Transaction",
-    "TransactionAttempt",
-    "TransactionInProgressError",
-    "TransactionNotCommittedError",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",
-    "TransactionResult",
     "TransactionTimePinReadOnlyError",
     "WireChanges",
     "WireDatabaseView",

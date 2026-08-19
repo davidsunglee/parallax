@@ -55,7 +55,6 @@ from parallax.snapshot.handle import (
     Database,
     Snapshot,
     Transaction,
-    TransactionResult,
     TransactionTimePinReadOnlyError,
 )
 
@@ -516,7 +515,7 @@ def test_the_read_your_own_writes_story_addresses_the_relationships_own_row() ->
     port = _WritingCannedPort(_responses_for(story.run))
     committed = story.run(_connect(story, port))
     _assert_wire_binds(story.case_id, port)
-    before, _after = committed.value
+    before, _after = committed
     assert [item.id for item in before.result().items] == [12, 11]
 
 
@@ -583,7 +582,7 @@ class _RecordingDatabase(Database):
         retries: int | None = None,
         concurrency: Concurrency | None = None,
         retry_optimistic_conflicts: bool | None = None,
-    ) -> TransactionResult[T]:
+    ) -> T:
         def recording(tx: Transaction) -> T:
             return fn(cast("Transaction", _RecordingTransaction(tx, self.queries)))
 

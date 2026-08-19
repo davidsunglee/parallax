@@ -20,12 +20,11 @@ import decimal
 import os
 import socket
 import threading
-import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Final, Literal, Protocol, cast, runtime_checkable
+from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from parallax.conformance import (
     case_format,
@@ -33,6 +32,7 @@ from parallax.conformance import (
     provision,
     temporal_state,
 )
+from parallax.conformance._observed_port import StatementObservation
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import (
     batch_write,
@@ -51,17 +51,6 @@ from parallax.core.base import (
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, JsonDocument, Row
 from parallax.core.dialect import Dialect, dialect_for
-from parallax.core.execution_log import (
-    DatabaseCall,
-    DatabaseCallFailed,
-    ExecutionLog,
-    ReadCompleted,
-    ReadTrace,
-    TraceRecorder,
-    TransactionAttempt,
-    WriteBatchTrace,
-    WriteCompleted,
-)
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -144,7 +133,6 @@ __all__ = [
     "compile_write_sequence_case",
     "decode_write_row",
     "eligibility",
-    "execution_observation",
     "load_case_metamodel",
     "read_table_state",
     "run_conflict_case",
@@ -230,16 +218,13 @@ class ScenarioRun:
     the snapshot action-step lane alone; ``step_graphs`` one per step declaring
     `expectGraph` (`m-conformance-adapter`), in step order, from either placement
     of that observable — an `access` step's retained view on the snapshot lane, a
-    find step's own materialized graph on both. ``log`` is the scenario's
-    execution provenance (`m-execution-log`): the Execution Log of its ONE `uow`
-    group, absent when the scenario ran no group or ran more than one.
+    find step's own materialized graph on both.
     """
 
     emissions: list[Emission]
     round_trips: int
     errors: list[dict[str, object]]
     step_graphs: list[dict[str, object]]
-    log: ExecutionLog | None
 
 
 def eligibility(case: case_format.Case) -> RunOnly | None:
@@ -411,7 +396,7 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
 
 def run_read_case(
     case: case_format.Case, dialect_name: str, port: DbPort
-) -> tuple[list[Emission], list[Row], int, ReadTrace]:
+) -> tuple[list[Emission], list[Row], int]:
     """Run a row-form read case through the production values lane.
 
     The whole lane is ``db.read_rows`` / ``tx.read_rows``: canonicalization,
@@ -446,25 +431,22 @@ def run_read_case(
     """
     query = _read_query(case)
     model = load_case_metamodel(case)
-    db = handle.Database(port, model, dialect=dialect_for(dialect_name))
+    dialect = dialect_for(dialect_name)
+    observed = StatementObservation()
+    db = handle.Database(observed.observing(port, dialect), model, dialect=dialect)
     concurrency = _read_case_concurrency(case)
     try:
         result = (
             db.read_rows(query)
             if concurrency is None
-            else db.transact(lambda tx: tx.read_rows(query), concurrency=concurrency).value
+            else db.transact(lambda tx: tx.read_rows(query), concurrency=concurrency)
         )
     except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-    emissions = [
-        Emission("/objectQuery", call.statement.sql, call.statement.binds)
-        for call in result.execution.calls
-    ]
     return (
-        emissions,
+        _read_emissions(observed),
         [wire_row(_conforming_row(case, row)) for row in result.rows],
-        result.execution.round_trips,
-        result.execution,
+        observed.round_trips,
     )
 
 
@@ -502,18 +484,22 @@ def _wire_read(
     model: AcceptedMetamodel,
     port: DbPort,
     dialect_name: str,
-) -> handle.Snapshot[handle.WireEntity]:
-    """One graph-form Wire read of the case's own Object Query.
+) -> tuple[handle.Snapshot[handle.WireEntity], StatementObservation]:
+    """One graph-form Wire read of the case's own Object Query, and what it ran.
 
     The whole lane is ``db.wire.find``: target resolution, validation, deep-fetch
     planning, per-level compilation and execution, row conversion, projection
-    merging, root classification, the finite include-tree unwind, and the
-    round-trip count are production's, and a scanning read answers the
-    milestone-set form from the same call, exactly as ``db.find`` does.
+    merging, root classification, and the finite include-tree unwind are
+    production's, and a scanning read answers the milestone-set form from the
+    same call, exactly as ``db.find`` does. The statements and the round-trip
+    count come back beside the result rather than on it, because a Snapshot
+    retains nothing about the execution that produced it.
     """
-    db = handle.Database(port, model, dialect=dialect_for(dialect_name))
+    dialect = dialect_for(dialect_name)
+    observed = StatementObservation()
+    db = handle.Database(observed.observing(port, dialect), model, dialect=dialect)
     try:
-        return db.wire.find(query)
+        return db.wire.find(query), observed
     except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
@@ -528,7 +514,7 @@ def run_graph_case(
     """
     query = _read_query(case)
     model = load_case_metamodel(case)
-    snapshot = _wire_read(case, query, model, port, dialect_name)
+    snapshot, observed = _wire_read(case, query, model, port, dialect_name)
     if not _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a `then.graph` case read a milestone SET — "
@@ -536,9 +522,9 @@ def run_graph_case(
         )
     roots = snapshot.checked().results()
     return (
-        _read_emissions(snapshot.execution),
+        _read_emissions(observed),
         {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
-        snapshot.execution.round_trips,
+        observed.round_trips,
         _stored_data_records(roots),
     )
 
@@ -558,7 +544,7 @@ def run_graphs_case(
     """
     query = _read_query(case)
     model = load_case_metamodel(case)
-    snapshot = _wire_read(case, query, model, port, dialect_name)
+    snapshot, observed = _wire_read(case, query, model, port, dialect_name)
     if _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a `then.graphs` case read a single instant — "
@@ -570,7 +556,7 @@ def run_graphs_case(
         {"pin": _wire_pin(pin), "graph": {root_key: roots}}
         for pin, roots in _milestone_partition(entity, snapshot.checked().results())
     ]
-    return _read_emissions(snapshot.execution), graphs_wire, snapshot.execution.round_trips
+    return _read_emissions(observed), graphs_wire, observed.round_trips
 
 
 def _is_single_graph(query: ObjectQueryNode) -> bool:
@@ -642,11 +628,11 @@ def _graph_root(root: object) -> Row | None:
     return cast("Row", root)
 
 
-def _read_emissions(execution: ReadTrace) -> list[Emission]:
+def _read_emissions(observed: StatementObservation) -> list[Emission]:
     """The read's own emissions: the statements production actually ran, in order."""
     return [
-        Emission("/objectQuery", call.statement.sql, call.statement.binds)
-        for call in execution.calls
+        Emission("/objectQuery", statement.sql, statement.binds)
+        for statement in observed.statements
     ]
 
 
@@ -2076,7 +2062,7 @@ def _compile_find(
     (`m-value-object-047` pins its need-driven Document projection) but is compiled by
     the materializing predicate-write resolve in `parallax.snapshot.handle`
     directly, never through this function — the RUN lane reports its ACTUAL
-    executed SQL off the transaction's own Execution Log
+    executed SQL off what the transaction put on the wire
     (:func:`_run_materializing_pair`), not a separate pure re-lowering (its
     binds are query-result-dependent, so no pure oracle exists to compute them
     from).
@@ -2120,19 +2106,13 @@ def _step_query(step: Mapping[str, object]) -> ObjectQueryNode:
     return deserialize_query(query_doc)
 
 
-def _trace_statements(snapshot: handle.Snapshot[Any]) -> tuple[LoweredStatement, ...]:
-    """The statements a read actually ran, in call order — a find step's
-    emission, read off its own Read Trace rather than re-lowered beside it."""
-    return tuple(call.statement for call in snapshot.execution.calls)
-
-
 def _run_standalone_find(
     port: DbPort,
     model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
     step: Mapping[str, object],
-) -> handle.Snapshot[handle.WireEntity]:
+) -> tuple[handle.Snapshot[handle.WireEntity], StatementObservation]:
     """Run one UNGROUPED scenario find step through the production Wire read.
 
     A step carrying its scenario's Concurrency Preference runs inside a real
@@ -2143,8 +2123,9 @@ def _run_standalone_find(
     goes on to write.
     """
     query = _step_query(step)
-    db = handle.Database(port, model, dialect=dialect)
-    return db.transact(lambda tx: tx.wire.find(query), concurrency=concurrency).value
+    observed = StatementObservation()
+    db = handle.Database(observed.observing(port, dialect), model, dialect=dialect)
+    return db.transact(lambda tx: tx.wire.find(query), concurrency=concurrency), observed
 
 
 def _graph_rows(
@@ -2593,7 +2574,7 @@ def _run_snapshot_scenario(
     parked empty so a later step's `on` index still names the step it means.
 
     Reports its observations as a :class:`ScenarioRun`; this lane opens no `uow`
-    group, so it carries no Execution Log."""
+    group."""
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     context = _CaseContext(model, dialect, _concurrency(case), TemporalShadow())
@@ -2603,7 +2584,8 @@ def _run_snapshot_scenario(
     # fixtures, then `given.apply`, then the first step.
     _seed_shadow_from_fixtures(case, model, context.shadow)
     _apply_given_apply(case, dialect, port, context.shadow)
-    db = handle.Database(port, model, dialect=dialect)
+    observation = StatementObservation()
+    db = handle.Database(observation.observing(port, dialect), model, dialect=dialect)
     emissions: list[Emission] = []
     round_trips = 0
     results: list[_ScenarioStepResult] = []
@@ -2633,6 +2615,7 @@ def _run_snapshot_scenario(
                 results.append(_NO_SCENARIO_RESULT)
             case "find":
                 query = _step_query(step)
+                mark = observation.round_trips
                 try:
                     # The case document's own spelling is resolved HERE, where the
                     # document is read, so no later step carries a spelling into a
@@ -2643,19 +2626,17 @@ def _run_snapshot_scenario(
                 except _READ_ERRORS as exc:
                     raise EngineError(f"{case.path.name}: {exc}") from exc
                 emissions.extend(
-                    Emission(
-                        f"/scenario/{index}/objectQuery", call.statement.sql, call.statement.binds
-                    )
-                    for call in snapshot.execution.calls
+                    Emission(f"/scenario/{index}/objectQuery", statement.sql, statement.binds)
+                    for statement in observation.since(mark, "read")
                 )
-                round_trips += snapshot.execution.round_trips
+                round_trips += observation.round_trips - mark
                 observed = _read_step_graph(case, model, index, step, query, snapshot)
                 if observed is not None:
                     step_graphs.append(observed)
                 results.append(
                     _ScenarioStepResult(_root_members(snapshot), pin, identity, materialized=True)
                 )
-    return ScenarioRun(emissions, round_trips, errors, step_graphs, None)
+    return ScenarioRun(emissions, round_trips, errors, step_graphs)
 
 
 def _root_members(
@@ -3396,12 +3377,12 @@ def _execute_write_unit(
     tx_instant: str,
     *,
     rollback: bool,
-) -> tuple[ExecutionLog | None, int]:
+) -> int:
     """Execute one choreography unit's ALREADY-RESOLVED instructions through the
     production ``db.transact`` entry point — ONE transaction,
     ``clock=FixedClock(tx_instant)``
     (ADR 0010: instants come from the Clock Strategy, never a per-operation
-    override), and report its Execution Log beside the calls it cost.
+    override), and report the calls it cost.
 
     Every write against existing state is stated through the PUBLIC ``tx.wire``
     verb its mutation names, against the value this unit's own resolving reads
@@ -3441,17 +3422,19 @@ def _execute_write_unit(
                 "bookkeeping and is a choreography unit of its own, so it is the buffer's only "
                 f"entry: this one holds {len(resolved)}"
             )
-        return None, _execute_framework_write_unit(
+        return _execute_framework_write_unit(
             port, model, dialect, concurrency, resolved[0], tx_instant, rollback=rollback
         )
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
+    observed = StatementObservation()
     database = handle.Database(
-        _write_port(port, rollback=rollback), model, dialect=dialect, clock=FixedClock(instant)
+        observed.observing(_write_port(port, rollback=rollback), dialect),
+        model,
+        dialect=dialect,
+        clock=FixedClock(instant),
     )
-    logs: list[ExecutionLog] = []
 
     def body(tx: handle.Transaction) -> None:
-        logs.append(tx.execution_log)
         state = _GroupState()
         for query in _unit_source_reads(model, resolved):
             state.published.extend(_published_nodes(tx.wire.find(query)))
@@ -3460,8 +3443,7 @@ def _execute_write_unit(
 
     with contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=concurrency)
-    log = logs[-1] if logs else None
-    return log, log.round_trips if log is not None else 0
+    return observed.round_trips
 
 
 def _execute_keyed_unit(
@@ -3502,7 +3484,7 @@ def _execute_keyed_unit(
             tx_instant,
             context.shadow,
         )
-        _log, unit_trips = _execute_write_unit(
+        unit_trips = _execute_write_unit(
             port,
             context.model,
             context.dialect,
@@ -3523,7 +3505,7 @@ def _run_readless_predicate_write(
     tx_instant: str,
     *,
     rollback: bool,
-) -> ExecutionLog | None:
+) -> int:
     """Execute a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) through the SAME production ``db.transact`` entry point every
     other write path uses — one transaction, stated through the PUBLIC
@@ -3539,18 +3521,20 @@ def _run_readless_predicate_write(
     whatever the verb does with its copy.
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
+    observed = StatementObservation()
     database = handle.Database(
-        _write_port(port, rollback=rollback), model, dialect=dialect, clock=FixedClock(instant)
+        observed.observing(_write_port(port, rollback=rollback), dialect),
+        model,
+        dialect=dialect,
+        clock=FixedClock(instant),
     )
-    logs: list[ExecutionLog] = []
 
     def body(tx: handle.Transaction) -> None:
-        logs.append(tx.execution_log)
         _buffer_wire_predicate(tx, raw_write)
 
     with contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=concurrency)
-    return logs[-1] if logs else None
+    return observed.round_trips
 
 
 def _buffer_wire_predicate(tx: handle.Transaction, raw_write: Mapping[str, object]) -> None:
@@ -3605,7 +3589,7 @@ def _is_materializing_write_step(
     The returned instruction's own assignment values are DECODED to native
     carriers (:func:`_decoded_predicate_write`): a materializing write has no
     separate PURE re-lowering oracle (its own golden bind is graded against
-    the ACTUAL executed SQL, `_run_materializing_pair`'s own Execution Log),
+    the ACTUAL executed SQL, `_run_materializing_pair`'s own port observation),
     so there is nothing for a decoded value to drift away from here.
     """
     if step is None or "write" not in step:
@@ -3635,7 +3619,7 @@ def _run_materializing_pair(
     steps: Sequence[Mapping[str, object]],
     index: int,
     shadow: TemporalShadow,
-) -> tuple[list[_LoweredStep], ExecutionLog | None]:
+) -> tuple[list[_LoweredStep], int]:
     """Execute a MATERIALIZING predicate-write step (``index + 1``) whose
     IMMEDIATELY PRECEDING step (``index``) is the resolving find that shares
     its target entity — ONE transaction, `m-case-format` "Materializing
@@ -3650,15 +3634,14 @@ def _run_materializing_pair(
     (the corpus's own authoring convention), never double-counted against the
     write step.
 
-    Reports the ACTUAL executed SQL, read off this transaction's own Execution
-    Log (`m-execution-log`), never a separate pure re-lowering: a materializing
-    write's per-row binds are QUERY-RESULT-DEPENDENT, so there is no pure oracle
-    to derive them from independently of a real run. The resolve is the attempt's
-    own Read Trace (materialization always resolves before it writes) and the
-    ``N`` per-row keyed writes are its Write Batch Traces, in resolved-row order
-    — canonical Lowered Statements, the SAME form every other emission this
-    engine reports carries, so no driver-SQL round trip stands between what ran
-    and what is reported.
+    Reports the ACTUAL executed SQL, observed at the Database Port, never a
+    separate pure re-lowering: a materializing write's per-row binds are
+    QUERY-RESULT-DEPENDENT, so there is no pure oracle to derive them from
+    independently of a real run. The resolve is the transaction's read
+    (materialization always resolves before it writes) and the ``N`` per-row
+    keyed writes are its DML, in resolved-row order — recovered to the canonical
+    Lowered Statement form every other emission this engine reports carries, so
+    no driver-SQL spelling stands between what ran and what is reported.
 
     What this transaction did to a TEMPORAL target's milestones is recorded on
     ``shadow`` rather than tracked into it: the rows it closed and opened were
@@ -3700,24 +3683,27 @@ def _run_materializing_pair(
     tx_instant = _entry_instant(cast("Mapping[str, object]", write_step["write"]))
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     rollback = write_step.get("rollback") is True
+    observed = StatementObservation()
     database = handle.Database(
-        _write_port(port, rollback=rollback),
+        observed.observing(_write_port(port, rollback=rollback), dialect),
         model,
         dialect=dialect,
         clock=FixedClock(instant),
     )
-    logs: list[ExecutionLog] = []
 
     def body(tx: handle.Transaction) -> None:
-        logs.append(tx.execution_log)
         _buffer_wire_predicate(tx, cast("Mapping[str, object]", write_step["write"]))
 
     with shadow.staged(doomed=rollback):
         with contextlib.suppress(_RollbackStep):
             database.transact(body, concurrency=concurrency)
         shadow.note_materialized_write(case_entity(model, instruction.target.entity))
-    log = logs[-1] if logs else None
-    resolve, writes = _materialized_pair_statements(log)
+    # The split is the port method each statement ran through rather than a
+    # position in one flat list, so a resolve that issued more than one call, or
+    # a batch the planner split, still lands where the corpus authors it: the
+    # internal resolve against the FIND step's pointer, every DML statement
+    # against the write step's.
+    resolve = observed.reads
     if not resolve:  # pragma: no cover - zero resolved rows still resolves (1 statement)
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} executed no "
@@ -3725,30 +3711,8 @@ def _run_materializing_pair(
         )
     return [
         _LoweredStep(f"/scenario/{index}/objectQuery", resolve, False, False),
-        _LoweredStep(f"/scenario/{index + 1}/write", writes, True, rollback),
-    ], log
-
-
-def _materialized_pair_statements(
-    log: ExecutionLog | None,
-) -> tuple[tuple[LoweredStatement, ...], tuple[LoweredStatement, ...]]:
-    """A materializing pair's executed statements, split the way the corpus
-    charges them: the internal resolve's own Read Traces against the FIND step's
-    pointer, and every Write Batch Trace call against the write step's.
-
-    The split is the trace KIND rather than a position in one flat list, so a
-    resolve that issued more than one call, or a batch the planner split, still
-    lands where the corpus authors it.
-    """
-    if log is None:  # pragma: no cover - the body always runs and retains its log
-        return (), ()
-    reads: list[LoweredStatement] = []
-    writes: list[LoweredStatement] = []
-    for attempt in log.attempts:
-        for trace in attempt.traces:
-            target = reads if isinstance(trace, ReadTrace) else writes
-            target.extend(call.statement for call in trace.calls)
-    return tuple(reads), tuple(writes)
+        _LoweredStep(f"/scenario/{index + 1}/write", observed.writes, True, rollback),
+    ], observed.round_trips
 
 
 def _scenario_group_step_indices(steps: Sequence[Mapping[str, object]]) -> dict[str, list[int]]:
@@ -4144,6 +4108,7 @@ def _run_group_step(
     step: Mapping[str, object],
     index: int,
     tx_instant: str,
+    observation: StatementObservation,
 ) -> tuple[_LoweredStep, handle.Snapshot[handle.WireEntity] | None]:
     """One `uow` group step, inside the group's own open transaction — the ONE
     interpreter both group runners share, contiguous span and interleaved index
@@ -4160,10 +4125,11 @@ def _run_group_step(
     this refuses by name rather than leaving to the verb that would reject the
     value. A FIND step runs through ``tx.wire.find`` — the participating
     Wire read, which force-flushes any pending buffered write, takes the read
-    lock its target Entity's own Effective Concurrency Strategy calls for,
-    retains onto each published node what a later write settles against, and
-    brackets its own Read Trace — and records the nodes it published into
-    ``state``, which this function extends in place.
+    lock its target Entity's own Effective Concurrency Strategy calls for, and
+    retains onto each published node what a later write settles against — and
+    records the nodes it published into ``state``, which this function extends
+    in place. ``observation`` is the group's own port observation, read across
+    that call to recover the statements the find step emits.
 
     Returns the step's lowered emission pointer, and a find step's own read
     output beside it: what a caller does with the rows it returned — grade them,
@@ -4202,12 +4168,13 @@ def _run_group_step(
             ),
             None,
         )
+    mark = observation.round_trips
     snapshot = tx.wire.find(_step_query(step))
     nodes = _published_nodes(snapshot)
     state.finds[index] = nodes
     state.published.extend(nodes)
     return _LoweredStep(
-        f"/scenario/{index}/objectQuery", _trace_statements(snapshot), False, False
+        f"/scenario/{index}/objectQuery", observation.since(mark, "read"), False, False
     ), snapshot
 
 
@@ -4218,7 +4185,7 @@ def _run_uow_group(
     steps: Sequence[Mapping[str, object]],
     start: int,
     end: int,
-) -> tuple[list[_LoweredStep], ExecutionLog | None, list[dict[str, object]]]:
+) -> tuple[list[_LoweredStep], int, list[dict[str, object]]]:
     """Execute one CONTIGUOUS `uow` group's steps (index *start*..*end*
     inclusive) inside ONE ``db.transact``, in step order, each through the shared
     :func:`_run_group_step` interpreter.
@@ -4244,20 +4211,21 @@ def _run_uow_group(
     doomed = _group_is_doomed(steps, start, end)
     state = _GroupState()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
+    observation = StatementObservation()
     database = handle.Database(
-        _write_port(port, rollback=doomed),
+        observation.observing(_write_port(port, rollback=doomed), context.dialect),
         context.model,
         dialect=context.dialect,
         clock=FixedClock(instant),
     )
     lowered: list[_LoweredStep] = []
-    logs: list[ExecutionLog] = []
     step_graphs: list[dict[str, object]] = []
 
     def body(tx: handle.Transaction) -> None:
-        logs.append(tx.execution_log)
         for index in range(start, end + 1):
-            step, output = _run_group_step(tx, context, state, steps[index], index, tx_instant)
+            step, output = _run_group_step(
+                tx, context, state, steps[index], index, tx_instant, observation
+            )
             lowered.append(step)
             if output is None:
                 continue
@@ -4269,11 +4237,10 @@ def _run_uow_group(
 
     with context.shadow.staged(doomed=doomed), contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=context.concurrency)
-    # The group's own Execution Log — the production record of what this ONE
-    # transaction did, which is where the `execution` observation and this
+    # Every statement this ONE transaction put on the wire, which is where the
     # group's round trips come from rather than from a second count this lane
     # keeps.
-    return lowered, logs[-1] if logs else None, step_graphs
+    return lowered, observation.round_trips, step_graphs
 
 
 # --------------------------------------------------------------------------- #
@@ -4366,6 +4333,7 @@ class _InterleavedGroupResult:
 
 def _run_interleaved_group(
     database: handle.Database,
+    observation: StatementObservation,
     context: _CaseContext,
     steps: Sequence[Mapping[str, object]],
     indices: Sequence[int],
@@ -4422,15 +4390,13 @@ def _run_interleaved_group(
     """
     lowered: dict[int, _LoweredStep] = {}
     state = _GroupState()
-    logs: list[ExecutionLog] = []
 
     def body(tx: handle.Transaction) -> None:
-        logs.append(tx.execution_log)
         for position, index in enumerate(indices):
             turnstile.wait_for(index)
             is_last = position == len(indices) - 1
             lowered[index], output = _run_group_step(
-                tx, context, state, steps[index], index, _INERT_CLOCK_INSTANT
+                tx, context, state, steps[index], index, _INERT_CLOCK_INSTANT, observation
             )
             if output is not None:
                 result.rows[index] = _graph_rows(
@@ -4449,7 +4415,7 @@ def _run_interleaved_group(
         result.failure = exc
         turnstile.release_all()  # never leave a partner thread hanging on this thread's own defect
     result.lowered = lowered
-    result.round_trips = logs[-1].round_trips if logs else 0
+    result.round_trips = observation.round_trips
     if committed:
         turnstile.advance()
 
@@ -4981,7 +4947,11 @@ def run_interleaved_scenario_case(
     _seed_shadow_from_fixtures(case, model, shadow)
     _apply_given_apply(case, dialect, port, shadow)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
-    main_db = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
+    observed_a = StatementObservation()
+    observed_b = StatementObservation()
+    main_db = handle.Database(
+        observed_a.observing(port, dialect), model, dialect=dialect, clock=FixedClock(instant)
+    )
     peer_connection = peer_factory()
     try:
         _require_interleaved_termination_capability(port, peer_connection, case.path.name)
@@ -4995,19 +4965,24 @@ def run_interleaved_scenario_case(
         with contextlib.suppress(Exception):
             peer_connection.close()
         raise
-    peer_db = handle.Database(peer_connection, model, dialect=dialect, clock=FixedClock(instant))
+    peer_db = handle.Database(
+        observed_b.observing(peer_connection, dialect),
+        model,
+        dialect=dialect,
+        clock=FixedClock(instant),
+    )
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})
     context = _CaseContext(model, dialect, concurrency, shadow)
     thread_a = threading.Thread(
         target=_run_interleaved_group,
-        args=(main_db, context, steps, indices_a, turnstile, result_a),
+        args=(main_db, observed_a, context, steps, indices_a, turnstile, result_a),
         name=f"uow-{label_a}",
     )
     thread_b = threading.Thread(
         target=_run_interleaved_group,
-        args=(peer_db, context, steps, indices_b, turnstile, result_b),
+        args=(peer_db, observed_b, context, steps, indices_b, turnstile, result_b),
         name=f"uow-{label_b}",
     )
     try:
@@ -5035,11 +5010,11 @@ def run_interleaved_scenario_case(
                 "interleaved uow race is unsupported — m-opt-lock-012's own ungrouped "
                 "step is a trailing verify find only"
             )
-        read = _run_standalone_find(port, model, dialect, concurrency, step)
+        read, read_observed = _run_standalone_find(port, model, dialect, concurrency, step)
         rows_by_index[index] = _graph_rows(model, _step_query(step).target.canonical, read)
-        round_trips += read.execution.round_trips
+        round_trips += read_observed.round_trips
         lowered[index] = _LoweredStep(
-            f"/scenario/{index}/objectQuery", _trace_statements(read), False, False
+            f"/scenario/{index}/objectQuery", read_observed.reads, False, False
         )
 
     ordered = [lowered[index] for index in sorted(lowered)]
@@ -5067,7 +5042,7 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
     Reports its observations as a :class:`ScenarioRun`. The `errors` channel is
     filled by the snapshot action-step lane alone, from its `expectError`
     grading (:func:`_run_snapshot_scenario`); a keyed unit-of-work scenario
-    reports it empty and carries the Execution Log of its ONE `uow` group.
+    reports it empty.
     `stepGraphs` is filled on both lanes, from whichever placement of
     `expectGraph` the case authors: an `access` step's retained view there, and
     here a find step's own materialized graph (:func:`_read_step_graph`) —
@@ -5090,7 +5065,6 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
     context = _CaseContext(model, dialect, concurrency, shadow)
     lowered: list[_LoweredStep] = []
-    group_logs: list[ExecutionLog | None] = []
     round_trips = 0
     try:
         _seed_shadow_from_fixtures(case, model, shadow)
@@ -5108,13 +5082,12 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
             label = span_start_labels.get(index)
             if label is not None:
                 start, end = spans[label]
-                group_lowered, group_log, group_graphs = _run_uow_group(
+                group_lowered, group_trips, group_graphs = _run_uow_group(
                     case, port, context, steps, start, end
                 )
                 lowered.extend(group_lowered)
-                group_logs.append(group_log)
                 step_graphs.extend(group_graphs)
-                round_trips += group_log.round_trips if group_log is not None else 0
+                round_trips += group_trips
                 index = end + 1
                 continue
             step = steps[index]
@@ -5125,18 +5098,18 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
                     pairing is not None
                     and _step_query(step).target.canonical == pairing.target.entity
                 ):
-                    pair_lowered, pair_log = _run_materializing_pair(
+                    pair_lowered, pair_trips = _run_materializing_pair(
                         port, model, dialect, concurrency, steps, index, shadow
                     )
                     lowered.extend(pair_lowered)
-                    round_trips += pair_log.round_trips if pair_log is not None else 0
+                    round_trips += pair_trips
                     index += 2
                     continue
-                read = _run_standalone_find(port, model, dialect, concurrency, step)
-                round_trips += read.execution.round_trips
+                read, read_observed = _run_standalone_find(port, model, dialect, concurrency, step)
+                round_trips += read_observed.round_trips
                 lowered.append(
                     _LoweredStep(
-                        f"/scenario/{index}/objectQuery", _trace_statements(read), False, False
+                        f"/scenario/{index}/objectQuery", read_observed.reads, False, False
                     )
                 )
                 observed = _read_step_graph(case, model, index, step, _step_query(step), read)
@@ -5158,7 +5131,7 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
                 statement = _lower_predicate_write_step(
                     raw_predicate_write, model, dialect, concurrency
                 )
-                write_log = _run_readless_predicate_write(
+                round_trips += _run_readless_predicate_write(
                     port,
                     model,
                     dialect,
@@ -5167,7 +5140,6 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
                     tx_instant,
                     rollback=rollback,
                 )
-                round_trips += write_log.round_trips if write_log is not None else 0
                 lowered.append(
                     _LoweredStep(f"/scenario/{index}/write", (statement,), True, rollback)
                 )
@@ -5181,8 +5153,7 @@ def run_scenario_case(case: case_format.Case, dialect_name: str, port: DbPort) -
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = _emissions([(step.pointer, step.statements) for step in lowered])
-    log = group_logs[0] if len(group_logs) == 1 else None
-    return ScenarioRun(emissions, round_trips, [], step_graphs, log)
+    return ScenarioRun(emissions, round_trips, [], step_graphs)
 
 
 def run_write_sequence_case(
@@ -5513,7 +5484,7 @@ def _conflict_attempt_affected(
     concurrency: Concurrency,
     implied: type[WriteEffectError],
     body: Callable[[handle.Transaction], int],
-) -> tuple[int, ExecutionLog | None]:
+) -> int:
     """One conflict attempt's affected-row observation: what ``body`` reports when
     the write lands, or the ``actual`` count carried by the ONE Write Effect Error
     the case's own declared facts admit.
@@ -5531,32 +5502,19 @@ def _conflict_attempt_affected(
     direction the raised error itself reports — not the declared mode — selects
     that arm.
     """
-    logs: list[ExecutionLog] = []
-
-    def observed(tx: handle.Transaction) -> int:
-        # Retained before the body runs: a shortfall aborts the transaction, so
-        # the result never arrives and the live log the Transaction carries is
-        # the only way to read what the failed attempt did (`m-execution-log`).
-        logs.append(tx.execution_log)
-        return body(tx)
-
-    log = None
     try:
-        result = database.transact(observed, concurrency=concurrency)
+        return database.transact(body, concurrency=concurrency)
     except WriteEffectError as exc:
         admitted = CardinalityCorruptionError if exc.actual > exc.expected else implied
         if type(exc) is not admitted:
             raise
-        if logs:
-            log = logs[-1]
-        return exc.actual, log
-    return result.value, result.execution_log
+        return exc.actual
 
 
 def _admitted_affected(implied: type[WriteEffectError], run: Callable[[], int]) -> int:
     """``run``'s own affected-row count, or the ``actual`` the ONE admitted Write
     Effect Error carries — :func:`_conflict_attempt_affected`'s guard, for the
-    close lane, which opens no ``db.transact`` to read a log from."""
+    close lane, which opens no ``db.transact`` at all."""
     try:
         return run()
     except WriteEffectError as exc:
@@ -5685,7 +5643,7 @@ def _run_conflict_write(
     write_rows: Sequence[Mapping[str, object]],
     mutation: Literal["update", "delete"],
     nodes: Mapping[ObjectKey, handle.WireEntity],
-) -> tuple[tuple[LoweredStatement, ...], int, ExecutionLog | None, int]:
+) -> tuple[tuple[LoweredStatement, ...], int, int]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
     ``db.transact`` — ONE
     transaction, an inert Clock (never consumed by a non-temporal write).
@@ -5711,7 +5669,10 @@ def _run_conflict_write(
     resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
     statements = _lower_conflict_write(model, dialect, concurrency, resolved)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
-    database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
+    observed = StatementObservation()
+    database = handle.Database(
+        observed.observing(port, dialect), model, dialect=dialect, clock=FixedClock(instant)
+    )
     landed = _landed_conflict_rows(resolved)
     sources = [_conflict_source_node(target, write, nodes) for write in resolved]
     for write, node in zip(resolved, sources, strict=True):
@@ -5727,8 +5688,8 @@ def _run_conflict_write(
 
     observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
     implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
-    affected, log = _conflict_attempt_affected(database, concurrency, implied, body)
-    return statements, affected, log, log.round_trips if log is not None else 0
+    affected = _conflict_attempt_affected(database, concurrency, implied, body)
+    return statements, affected, observed.round_trips
 
 
 def _conflict_changes(write: _ConflictWrite) -> dict[str, object]:
@@ -5760,7 +5721,7 @@ def _run_conflict_close(
     observed_tx_start: str | None,
     observed_valid_start: str | None,
     shadow: TemporalShadow,
-) -> tuple[tuple[LoweredStatement, ...], int, ExecutionLog | None, int]:
+) -> tuple[tuple[LoweredStatement, ...], int, int]:
     """Lower and execute one TEMPORAL conflict attempt's close — ONE
     transaction opened on the port itself, ``clock=FixedClock(at)``. Composes the SAME two halves
     production does — :func:`~parallax.snapshot.handle.plan_temporal_close`
@@ -5818,11 +5779,11 @@ def _run_conflict_close(
         observed_valid_end,
     )
     statement = handle.lower_step(step, model, dialect)
+
     # A standalone close is no keyed mutation and no unit of work buffers it, so
     # it runs on the port's own transaction — public `m-db-port`, the same
-    # boundary ``db.transact`` opens — and brackets production's own Database
-    # Call recorder, which is what makes its round trip countable in the one
-    # vocabulary every other lane reports in.
+    # boundary ``db.transact`` opens. It is exactly one statement, so its round
+    # trip is stated rather than observed.
     #
     # A Bitemporal close is unreachable through a keyed verb: every
     # closure-bearing entry in `bitemp_write._TOPOLOGIES` chains at least the
@@ -5832,33 +5793,17 @@ def _run_conflict_close(
     # gate from the milestone its observation names, while a conflict case
     # authors both directly — including the deliberately stale gate whose whole
     # point is that it matches no milestone.
-    calls = TraceRecorder()
-
     def run_close(conn: DbPort) -> int:
-        started = time.perf_counter_ns()
-        try:
-            affected = conn.execute_write(
-                dialect.to_driver_sql(statement.sql), list(statement.binds)
-            )
-        except DatabaseError as exc:
-            calls.failed(statement, "write", time.perf_counter_ns() - started, exc)
-            raise
-        calls.completed(
-            statement, "write", time.perf_counter_ns() - started, WriteCompleted(affected)
-        )
+        affected = conn.execute_write(dialect.to_driver_sql(statement.sql), list(statement.binds))
         # The SAME authoritative interpreter `parallax.snapshot.handle`'s own
         # flush executor asks, so the two callers can never disagree on what a
         # count means.
-        with calls.enforcing():
-            enforce_affected_rows(step, affected)
+        enforce_affected_rows(step, affected)
         return affected
 
     implied = _implied_shortfall_error(True, concurrency, model, target)
     affected = _admitted_affected(implied, lambda: port.transaction(run_close))
-    # No Execution Log describes this lane: it opened no transaction through
-    # `db.transact`, so there is no attempt graph to report and no case authors
-    # the oracle for one.
-    return (statement,), affected, None, calls.write_batch_trace("finalization").round_trips
+    return (statement,), affected, 1
 
 
 def _observed_milestone_coordinates(
@@ -6024,7 +5969,7 @@ def _refuse_unentitled_observed_edge(
 
 def run_conflict_case(
     case: case_format.Case, dialect_name: str, port: DbPort
-) -> tuple[list[Emission], int, dict[str, list[Row]] | None, ExecutionLog | None, int]:
+) -> tuple[list[Emission], int, dict[str, list[Row]] | None, int]:
     """Run a `conflict` case (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`):
     the single-attempt form (`when.write`), or the `when.attempts` retry
     sequence — each attempt its OWN `db.transact` unit,
@@ -6070,7 +6015,6 @@ def run_conflict_case(
     emissions: list[Emission] = []
     affected = 0
     round_trips = 0
-    logs: list[ExecutionLog | None] = []
     try:
         raw_attempts = when.get("attempts")
         attempts: list[tuple[str, Mapping[str, object]]] = (
@@ -6097,7 +6041,7 @@ def run_conflict_case(
         _apply_given_apply(case, dialect, port, shadow)
         for pointer, attempt in attempts:
             if is_temporal:
-                statements, affected, log, attempt_trips = _run_conflict_close(
+                statements, affected, attempt_trips = _run_conflict_close(
                     port,
                     dialect,
                     model,
@@ -6110,7 +6054,7 @@ def run_conflict_case(
                     shadow,
                 )
             else:
-                statements, affected, log, attempt_trips = _run_conflict_write(
+                statements, affected, attempt_trips = _run_conflict_write(
                     port,
                     dialect,
                     model,
@@ -6122,7 +6066,6 @@ def run_conflict_case(
                 )
                 sources = None
             emissions.extend(Emission(pointer, s.sql, s.binds) for s in statements)
-            logs.append(log)
             round_trips += attempt_trips
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -6132,17 +6075,9 @@ def run_conflict_case(
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )
-    # A `when.attempts` sequence drives one transaction PER attempt, so the lane
-    # holds one log per attempt and no single invocation to report; only the
-    # single-attempt form has one. The round trips are every attempt's, summed —
-    # a retry sequence's own cost is what it did across all of them.
-    return (
-        emissions,
-        affected,
-        table_state,
-        logs[0] if len(logs) == 1 else None,
-        round_trips,
-    )
+    # The round trips are every attempt's, summed — a retry sequence's own cost
+    # is what it did across all of them.
+    return emissions, affected, table_state, round_trips
 
 
 # --------------------------------------------------------------------------- #
@@ -6179,10 +6114,9 @@ def run_error_case(
     golden reverse-engineering. Every statement before the last must succeed;
     the last must raise a classified :class:`DatabaseError`, whose neutral
     category and preserved native code are the observations
-    (``errorClass`` / ``nativeCode``). Each call is recorded on production's own
-    Database Call recorder — completed or failed, the failing one included — and
-    the round trips are that trace's, so this lane reports the same provenance
-    every other run lane does rather than a count of what it meant to emit. A
+    (``errorClass`` / ``nativeCode``). Every statement this lane issues counts a
+    round trip, the failing one included, so what it reports is what reached the
+    database rather than what it meant to emit. A
     ``when.concurrency`` trigger needs
     two barrier-synchronized sessions this single-connection lane cannot drive
     at all — it is refused here UNCONDITIONALLY, never dispatched to from a
@@ -6206,17 +6140,15 @@ def run_error_case(
         )
     trigger = _error_trigger(case, dialect_name)
     dialect = dialect_for(dialect_name)
+    observed = StatementObservation()
+    observing = observed.observing(port, dialect)
     emissions: list[Emission] = []
-    calls = TraceRecorder()
     final = len(trigger) - 1
     for index, (sql, binds) in enumerate(trigger):
         emissions.append(Emission(f"/then/statements/{index}", sql, binds))
-        statement = LoweredStatement(sql, binds)
-        started = time.perf_counter_ns()
         try:
-            affected = port.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
+            observing.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
         except DatabaseError as exc:
-            calls.failed(statement, "write", time.perf_counter_ns() - started, exc)
             if index != final:
                 raise EngineError(
                     f"{case.path.name}: trigger statement {index} raised before the final "
@@ -6226,15 +6158,7 @@ def run_error_case(
                 raise EngineError(
                     f"{case.path.name}: the trigger raised an unclassified database error: {exc}"
                 ) from exc
-            return (
-                emissions,
-                exc.category,
-                exc.native_code,
-                calls.write_batch_trace("finalization").round_trips,
-            )
-        calls.completed(
-            statement, "write", time.perf_counter_ns() - started, WriteCompleted(affected)
-        )
+            return emissions, exc.category, exc.native_code, observed.round_trips
     raise EngineError(f"{case.path.name}: the final trigger statement did not raise")
 
 
@@ -6557,187 +6481,6 @@ def wire_value(value: object) -> object:
     if isinstance(value, (bytes, bytearray, memoryview)):
         return value.hex()
     return value
-
-
-# --------------------------------------------------------------------------- #
-# Execution provenance (m-execution-log) — the `execution` observation.        #
-# The adapter REPORTS what production recorded; it never re-derives a trace    #
-# from the case's own golden (m-conformance-adapter "Execution provenance").   #
-# --------------------------------------------------------------------------- #
-type CaseProvenance = ReadTrace | ExecutionLog
-
-
-class _StatementIndexer:
-    """Hands each Database Call, in execution order, its index into the
-    envelope's own ``emissions``, and VALIDATES that the index names the
-    statement the call ran.
-
-    The correspondence is positional — the k-th call ran the k-th emission — but
-    it is not assumed. On the grouped-scenario and conflict lanes the two sides
-    are built independently: the emissions are a pure re-lowering of the
-    case-authored rows, per step, while execution buffers the whole group and
-    flushes it as one plan, so foreign-key reordering inside that plan or any
-    drift between the two lowerings would leave position *k* naming a different
-    statement while the case still graded green. Comparing the SQL text closes
-    every mechanism that changes it. A disagreement is an adapter defect rather
-    than a case failure, so it is raised here instead of reported, exactly as a
-    count mismatch is.
-
-    Binds are deliberately NOT compared. The two sides differ in representation
-    on purpose: the emission stays on the undecoded, case-authored wire spelling
-    (an authored ``250.00``) while execution binds the native carrier a decode
-    produced (``Decimal("250.00")``), which is what keeps the golden-bind
-    comparison from drifting. The residual is therefore two statements with
-    identical SQL and different binds, which a swap would leave undetected — one
-    known gap in one place, rather than an unchecked assumption spread across
-    three lanes.
-    """
-
-    __slots__ = ("_emissions", "_position")
-
-    def __init__(self, emissions: Sequence[Emission]) -> None:
-        self._emissions = emissions
-        self._position = 0
-
-    def take(self, call: DatabaseCall) -> int | None:
-        """``call``'s statement index, or ``None`` on a lane whose envelope
-        reports no emission at all (`api-conformance`)."""
-        if not self._emissions:
-            return None
-        index = self._position
-        self._position += 1
-        if index >= len(self._emissions):
-            raise EngineError(
-                f"execution provenance recorded {index + 1} database call(s) but the "
-                f"envelope reports only {len(self._emissions)} emission(s): the observation's "
-                "statement index would name nothing (m-conformance-adapter)"
-            )
-        emitted = self._emissions[index].sql
-        if call.statement.sql != emitted:
-            raise EngineError(
-                f"execution provenance's database call {index} ran {call.statement.sql!r}, "
-                f"but the envelope's emission {index} reports {emitted!r}: the observation's "
-                "statement index would name a different statement (m-conformance-adapter)"
-            )
-        return index
-
-
-def execution_observation(
-    provenance: CaseProvenance, emissions: Sequence[Emission]
-) -> dict[str, object]:
-    """One run's `execution` observation, in the closed union the case oracle
-    authors: a bare ``readTrace`` for a standalone read, or the whole
-    ``transactionLog`` for a transactional run."""
-    indexer = _StatementIndexer(emissions)
-    if isinstance(provenance, ReadTrace):
-        return {"readTrace": _wire_read_trace(provenance, indexer)}
-    return {"transactionLog": _wire_transaction_log(provenance, indexer)}
-
-
-def _wire_transaction_log(log: ExecutionLog, indexer: _StatementIndexer) -> dict[str, object]:
-    return {
-        "concurrency": log.concurrency,
-        "retryPolicy": {
-            "maxRetries": log.retry_policy.max_retries,
-            "retryOptimisticConflicts": log.retry_policy.retry_optimistic_conflicts,
-        },
-        "attempts": [_wire_attempt(attempt, indexer) for attempt in log.attempts],
-        "roundTrips": log.round_trips,
-    }
-
-
-_ATTEMPT_STATUS_WIRE: Final[dict[str, str]] = {
-    "committed": "committed",
-    "rolled_back": "rolled-back",
-}
-
-_TRIGGER_WIRE: Final[dict[str, str]] = {
-    "read_dependency": "read-dependency",
-    "finalization": "finalization",
-}
-
-
-def _wire_attempt(attempt: TransactionAttempt, indexer: _StatementIndexer) -> dict[str, object]:
-    status = _ATTEMPT_STATUS_WIRE.get(attempt.status)
-    if status is None:
-        raise EngineError(
-            f"execution provenance reports an {attempt.status!r} attempt after the run "
-            "finished; a terminal Execution Log has already transitioned every attempt "
-            "(m-execution-log)"
-        )
-    calls = list(attempt.calls)
-    wire: dict[str, object] = {
-        "status": status,
-        "traces": [_wire_trace(trace, indexer) for trace in attempt.traces],
-        "roundTrips": attempt.round_trips,
-    }
-    failure = attempt.failure
-    if failure is not None:
-        entry: dict[str, object] = {"phase": failure.phase, "retryEligible": failure.retry_eligible}
-        if failure.code is not None:
-            entry["code"] = failure.code
-        if failure.database_call is not None:
-            entry["databaseCall"] = _call_position(calls, failure.database_call)
-        wire["failure"] = entry
-    return wire
-
-
-def _call_position(calls: Sequence[DatabaseCall], call: DatabaseCall) -> int:
-    """Where ``call`` sits in an attempt's flattened calls, by IDENTITY.
-
-    A failure references the one call OBJECT the attempt already recorded
-    (`m-execution-log`), so the index is that object's position. Equality would
-    answer the position of the first call that merely LOOKS the same — two runs
-    of one statement whose durations happened to tie — and name the wrong
-    statement while staying in range.
-    """
-    for position, candidate in enumerate(calls):
-        if candidate is call:
-            return position
-    raise EngineError(
-        "execution provenance reports an attempt failure referencing a Database Call "
-        "the attempt does not hold, so the observation's `databaseCall` index would "
-        "name nothing (m-conformance-adapter)"
-    )
-
-
-def _wire_trace(
-    trace: ReadTrace | WriteBatchTrace, indexer: _StatementIndexer
-) -> dict[str, object]:
-    if isinstance(trace, ReadTrace):
-        return {"readTrace": _wire_read_trace(trace, indexer)}
-    return {
-        "writeBatch": {
-            "trigger": _TRIGGER_WIRE[trace.trigger],
-            "calls": [_wire_call(call, indexer) for call in trace.calls],
-            "roundTrips": trace.round_trips,
-        }
-    }
-
-
-def _wire_read_trace(trace: ReadTrace, indexer: _StatementIndexer) -> dict[str, object]:
-    return {
-        "calls": [_wire_call(call, indexer) for call in trace.calls],
-        "roundTrips": trace.round_trips,
-    }
-
-
-def _wire_call(call: DatabaseCall, indexer: _StatementIndexer) -> dict[str, object]:
-    wire: dict[str, object] = {"kind": call.kind, "completion": _wire_completion(call.completion)}
-    index = indexer.take(call)
-    if index is not None:
-        wire["statement"] = index
-    return wire
-
-
-def _wire_completion(
-    completion: ReadCompleted | WriteCompleted | DatabaseCallFailed,
-) -> dict[str, object]:
-    if isinstance(completion, ReadCompleted):
-        return {"readCompleted": {"returnedRows": completion.returned_rows}}
-    if isinstance(completion, WriteCompleted):
-        return {"writeCompleted": {"affectedRows": completion.affected_rows}}
-    return {"failed": {"category": completion.category}}
 
 
 def wire_row(row: Mapping[str, object]) -> Row:

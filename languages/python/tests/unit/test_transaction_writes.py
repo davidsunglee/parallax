@@ -89,7 +89,7 @@ def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
         tx.insert(new_account())
         return "done"
 
-    assert account_db(port).transact(fn).value == "done"
+    assert account_db(port).transact(fn) == "done"
     assert port.ops == [
         ("begin",),
         ("write", INSERT_SQL, (7, "Newton", 5.00, 1)),
@@ -302,24 +302,36 @@ def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversi
     ]
 
 
-def test_the_mixed_transactions_log_retains_one_preference_beside_both_behaviors() -> None:
-    # The Execution Log's own division of labour: it retains the ONE resolved
-    # Concurrency Preference — never a per-Entity strategy — while each Database
-    # Call carries the statement its own Entity actually produced, which is where
-    # the lock and the gate are readable.
+def test_one_preference_produces_both_behaviors_across_two_entities() -> None:
+    # One resolved Concurrency Preference, never a per-Entity strategy — and
+    # each statement carries what its own Entity's Effective Concurrency
+    # Strategy produced, which is where the lock and the gate are readable.
     port = _mixed_port()
-    log = db_for(mx.MIXED_STRATEGY_MODEL, port).transact(_mix_strategies).execution_log
-    assert log.concurrency == "optimistic"
-    (attempt,) = log.attempts
-    assert [(call.kind, call.statement.sql) for call in attempt.calls] == [
-        ("read", "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"),
+    db_for(mx.MIXED_STRATEGY_MODEL, port).transact(_mix_strategies)
+    assert [(op[0], op[1]) for op in port.ops if op[0] in {"read", "write"}] == [
         (
             "read",
-            "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-            "where t0.consignment_id in (?) for share of t0",
+            POSTGRES.to_driver_sql(
+                "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"
+            ),
         ),
-        ("write", "update consignment set total = ?, version = ? where id = ? and version = ?"),
-        ("write", "update consignment_leg set carrier = ? where id = ?"),
+        (
+            "read",
+            POSTGRES.to_driver_sql(
+                "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+                "where t0.consignment_id in (?) for share of t0"
+            ),
+        ),
+        (
+            "write",
+            POSTGRES.to_driver_sql(
+                "update consignment set total = ?, version = ? where id = ? and version = ?"
+            ),
+        ),
+        (
+            "write",
+            POSTGRES.to_driver_sql("update consignment_leg set carrier = ? where id = ?"),
+        ),
     ]
 
 
@@ -1117,7 +1129,7 @@ def test_a_reread_after_settling_a_write_against_a_classified_row_still_classifi
         assert isinstance(reread, InvalidData)
         return reread
 
-    reread = db.transact(fn).value
+    reread = db.transact(fn)
     assert {issue.code for issue in reread.issues} == {"stored-data-one-wrong-kind"}
     assert reread.data is not None
     assert reread.data.name == "Rin Nakamura"

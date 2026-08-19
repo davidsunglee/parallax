@@ -14,7 +14,7 @@ judgement and one buffer for both.
 It also owns the row-form read (:meth:`Transaction.read_rows`), which the
 conformance harness reaches and no developer surface does. It is not a second
 lifecycle: the read enters the same force-flush, lock derivation, evidence
-retention, and Read Trace bracket ``find`` does.
+retention, and Read activity bracket ``find`` does.
 
 The predicate-selected ``_where`` family is NOT owned here: those five public
 verbs are thin delegates that thread ``(uow, meta, conn, dialect)`` into
@@ -47,7 +47,7 @@ from parallax.core.entity import (
     EntityRowCodec,
 )
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.execution_log import AttemptRecorder, ExecutionLog
+from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
@@ -136,12 +136,10 @@ class Transaction:
     """
 
     __slots__ = (
-        "_attempt",
         "_codec",
         "_conn",
         "_construction",
         "_dialect",
-        "_execution_log",
         "_inserted_objects",
         "_meta",
         "_uow",
@@ -155,8 +153,6 @@ class Transaction:
         dialect: Dialect,
         construction: EntityGraphConstruction | None,
         codec: EntityRowCodec,
-        execution_log: ExecutionLog,
-        attempt: AttemptRecorder,
     ) -> None:
         self._uow = uow
         self._conn = conn
@@ -164,31 +160,12 @@ class Transaction:
         self._dialect = dialect
         self._construction = construction
         self._codec = codec
-        # The invocation's own live log (`m-execution-log`) and the writer for the
-        # attempt this Transaction belongs to. The log spans every attempt and is
-        # the SAME object a joining call's result carries; the recorder is scoped
-        # to this one attempt, and a retry receives a fresh Transaction with a
-        # fresh recorder over the SAME log.
-        self._execution_log = execution_log
-        self._attempt = attempt
         # What THIS transaction buffered an insert of — a same-transaction insert
         # IS the provenance a subsequent keyed write builds on, so both
         # read-your-own-writes exemptions (the value-provenance refusal and the
         # write-evidence resolution) read this one ledger, and so does the Wire
         # ingress, whose inserts and updates pair with the Typed ones.
         self._inserted_objects = BufferedInserts()
-
-    @property
-    def execution_log(self) -> ExecutionLog:
-        """This invocation's live Execution Log (`m-execution-log`).
-
-        The SAME stable read-only object throughout: its current attempt is
-        ``active`` while this body runs, completed traces appear on it as they
-        close, and it seals when the outermost invocation terminates. It is how a
-        caller that retained the Transaction inspects failed attempts after
-        ``db.transact`` raised and no result exists.
-        """
-        return self._execution_log
 
     def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,
@@ -588,7 +565,7 @@ class Transaction:
         """This transaction's Wire read and write interface (spec §3, §5).
 
         A lightweight view over the SAME unit of work, evidence retention,
-        locking, coalescing, and Execution Log the Typed verbs use, so Typed and
+        locking, and coalescing the Typed verbs use, so Typed and
         Wire calls mix within one transaction without any cross-interface
         bookkeeping — a Wire node and a Typed node of one row carry the identical
         claim, and a Wire write and a Typed write of one object meet in the one
@@ -603,7 +580,7 @@ class Transaction:
                 self._uow,
                 self._conn,
                 self._dialect,
-                self._attempt,
+                INERT,
                 self._inserted_objects,
             ),
         )
@@ -622,35 +599,34 @@ class Transaction:
         the whole composition both read interfaces run.
 
         The gate precedes the force-flush ``uow.read`` performs, so a refused
-        read flushes nothing; each level derives its own lock from this unit of
-        work's Concurrency Preference and that level's own Entity; and the
-        Read Trace bracket opens BEFORE that flush, so a batch the flush produces
-        is appended first and the trace this read closes lands immediately after
-        it — the read-dependency causality the Execution Log states positionally
-        (`m-execution-log`). A milestone-set read retains no evidence at all: its
-        roots stand at coordinates no keyed write may address.
+        read flushes nothing, and each level derives its own lock from this unit
+        of work's Concurrency Preference and that level's own Entity. A
+        milestone-set read retains no evidence at all: its roots stand at
+        coordinates no keyed write may address.
+
+        A participating read's Read activity is a child of the current
+        Transaction Attempt, opened AFTER the dependency Write Batch the
+        force-flush produces so the two are ordered siblings
+        (`m-execution-lifecycle`). The attempt that would open it is Phase 3's,
+        so today this runs against the shared inert activity and emits nothing.
         """
         preflight(node, model=self._meta, form="graph")
         if scans_an_axis(node):
-            with self._attempt.read_trace() as recorder:
-                history_result = self._uow.read(
-                    lambda: find_history(
-                        node, self._meta, self._dialect, self._conn, recorder=recorder
-                    )
-                )
-            return publication.from_history(history_result)
-        with self._attempt.read_trace() as recorder:
-            find_result = self._uow.read(
-                lambda: find(
-                    node,
-                    self._meta,
-                    self._dialect,
-                    self._conn,
-                    preference=self._uow.settings.concurrency,
-                    ledger=self._uow,
-                    recorder=recorder,
-                )
+            history_result = self._uow.read(
+                lambda: find_history(node, self._meta, self._dialect, self._conn, read=INERT)
             )
+            return publication.from_history(history_result)
+        find_result = self._uow.read(
+            lambda: find(
+                node,
+                self._meta,
+                self._dialect,
+                self._conn,
+                preference=self._uow.settings.concurrency,
+                ledger=self._uow,
+                read=INERT,
+            )
+        )
         return publication.from_find(find_result)
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
@@ -659,8 +635,8 @@ class Transaction:
         The values lane's peer of :meth:`find`, participating in three of the
         same four ways: it force-flushes pending writes first
         (read-your-own-writes), renders the read-lock suffix its target Entity's
-        Effective Concurrency Strategy calls for, and appends its Read Trace to
-        this attempt in the position that states the read-dependency causality.
+        Effective Concurrency Strategy calls for, and publishes its Read
+        activity under this attempt exactly as the graph form does.
 
         It records NO observation. The values lane projects scalars only, so a
         Predecessor Row read off it would be incomplete under Relational Document
@@ -672,19 +648,16 @@ class Transaction:
         # that read force-flushes pending buffered writes, so a refused read must
         # be refused before it or a refusal turns into a write.
         preflight(query, model=self._meta, form="rows")
-        # The bracket opens BEFORE the force-flush, exactly as `find`'s does, so
-        # a dependency batch lands immediately before the trace it enabled.
-        with self._attempt.read_trace() as recorder:
-            return self._uow.read(
-                lambda: find_rows(
-                    query,
-                    self._meta,
-                    self._dialect,
-                    self._conn,
-                    preference=self._uow.settings.concurrency,
-                    recorder=recorder,
-                )
+        return self._uow.read(
+            lambda: find_rows(
+                query,
+                self._meta,
+                self._dialect,
+                self._conn,
+                preference=self._uow.settings.concurrency,
+                read=INERT,
             )
+        )
 
     def _buffer(
         self,
@@ -756,7 +729,7 @@ class Transaction:
             query,
             assignments,
             valid_from=valid_from,
-            attempt=self._attempt,
+            read=INERT,
         )
 
     def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
@@ -775,7 +748,7 @@ class Transaction:
             query,
             (),
             valid_from=None,
-            attempt=self._attempt,
+            read=INERT,
         )
 
     def terminate_where(
@@ -794,7 +767,7 @@ class Transaction:
             query,
             (),
             valid_from=valid_from,
-            attempt=self._attempt,
+            read=INERT,
         )
 
     def update_until_where(
@@ -817,7 +790,7 @@ class Transaction:
             assignments,
             valid_from=valid_from,
             until=until,
-            attempt=self._attempt,
+            read=INERT,
         )
 
     def terminate_until_where(
@@ -837,7 +810,7 @@ class Transaction:
             (),
             valid_from=valid_from,
             until=until,
-            attempt=self._attempt,
+            read=INERT,
         )
 
 

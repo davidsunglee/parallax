@@ -29,7 +29,7 @@ from _corpus_model_support import model as corpus_model
 
 from _support.clock_probes import inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
-from parallax.core.auto_retry import AttemptObserver, run_with_retry
+from parallax.core.auto_retry import run_with_retry
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     MISSING_TARGET,
@@ -121,20 +121,6 @@ def test_an_unversioned_write_reaching_no_row_is_the_non_retriable_missing_targe
         enforce_affected_rows(step, 0)
 
 
-class _Verdicts(AttemptObserver):
-    """Every verdict the loop's classifier reached, in order — empty for a
-    failure outside the caught set, which the loop never classifies at all."""
-
-    def __init__(self) -> None:
-        self.eligible: list[bool] = []
-
-    def attempt_opened(self) -> None:
-        return
-
-    def attempt_failed(self, exc: BaseException, *, retry_eligible: bool) -> None:
-        self.eligible.append(retry_eligible)
-
-
 def _raising(error: WriteEffectError) -> tuple[Callable[[], int], list[int]]:
     attempts: list[int] = []
 
@@ -160,11 +146,9 @@ def test_a_non_retriable_shortfall_surfaces_after_one_attempt_with_budget_left(
     # classified non-retriable: there is no opt-in, and no `extra_retriable`
     # extension, that could turn one of these into a re-execution.
     attempt, attempts = _raising(error)
-    verdicts = _Verdicts()
     with pytest.raises(type(error)):
-        run_with_retry(attempt, retries=10, extra_retriable=lambda _exc: True, on_attempt=verdicts)
+        run_with_retry(attempt, retries=10, extra_retriable=lambda _exc: True)
     assert len(attempts) == 1
-    assert verdicts.eligible == []
 
 
 def test_the_retriable_conflict_is_the_one_shortfall_the_loop_can_re_execute() -> None:
@@ -172,17 +156,16 @@ def test_the_retriable_conflict_is_the_one_shortfall_the_loop_can_re_execute() -
     # same budget, and a gate that came up short IS re-run — but only where the
     # unit of work opted in, which is what `extra_retriable` carries.
     attempt, attempts = _raising(OptimisticLockConflictError(_ROW_2, _KEY_2, 1, 0))
-    verdicts = _Verdicts()
     with pytest.raises(OptimisticLockConflictError):
-        run_with_retry(attempt, retries=2, extra_retriable=lambda _exc: True, on_attempt=verdicts)
+        run_with_retry(attempt, retries=2, extra_retriable=lambda _exc: True)
     assert len(attempts) == 3  # the first attempt plus its two re-executions
-    assert verdicts.eligible == [True, True, True]
 
 
-def test_an_un_opted_in_conflict_is_classified_and_still_surfaces_after_one_attempt() -> None:
+def test_an_un_opted_in_conflict_still_surfaces_after_one_attempt() -> None:
+    # The same recognized conflict, the same budget, and no opt-in: the loop
+    # catches it and declines to re-execute, so the caller sees it after the
+    # first attempt exactly as an unrecognized failure would surface.
     attempt, attempts = _raising(OptimisticLockConflictError(_ROW_2, _KEY_2, 1, 0))
-    verdicts = _Verdicts()
     with pytest.raises(OptimisticLockConflictError):
-        run_with_retry(attempt, retries=10, on_attempt=verdicts)
+        run_with_retry(attempt, retries=10)
     assert len(attempts) == 1
-    assert verdicts.eligible == [False]

@@ -89,7 +89,7 @@ class ReadStory:
     a story into the TRANSACTIONAL read half instead of
     the default non-transactional one: ``None`` (every other entry, unchanged)
     runs ``db.find(build())``; a declared mode runs
-    ``db.transact(lambda tx: tx.find(build()), concurrency=...).value`` — a
+    ``db.transact(lambda tx: tx.find(build()), concurrency=...)`` — a
     participating `tx.find`, whose emitted SQL carries (or, `optimistic`,
     omits) the dialect's shared read-lock suffix per the SAME `m-read-lock`
     policy `Transaction.find` derives production-side
@@ -111,7 +111,7 @@ def read_story_snippet(story: ReadStory) -> str:
     """The story's rendered Usage Guide source: ``story.snippet``'s bare
     ``query = ...`` reading, PLUS — for a story whose own ``concurrency`` opts
     into the transactional read half — the SAME
-    ``db.transact(lambda tx: tx.find(query), concurrency=...).value`` wrapper
+    ``db.transact(lambda tx: tx.find(query), concurrency=...)`` wrapper
     `test_story_run.py`'s generic runner actually executes, rendered from
     that SAME field rather than a second, independently-typed copy of the
     mode (a `m-read-lock-002` vs. `-005`-style
@@ -121,7 +121,7 @@ def read_story_snippet(story: ReadStory) -> str:
         return story.snippet
     return (
         f"{story.snippet}\ndb.transact(lambda tx: tx.find(query), "
-        f'concurrency="{story.concurrency}").value'
+        f'concurrency="{story.concurrency}")'
     )
 
 

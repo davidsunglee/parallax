@@ -350,7 +350,7 @@ def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
 ) -> None:
     seen = _watch("conformance conflict", monkeypatch)
     case = case_format.load_case(_CASES / "m-opt-lock-006-success.yaml")
-    emissions, _affected, _state, _log, _round_trips = engine.run_conflict_case(
+    emissions, _affected, _state, _round_trips = engine.run_conflict_case(
         case,
         "postgres",
         RecordingPort(

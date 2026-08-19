@@ -85,7 +85,7 @@ def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() 
         assert isinstance(wire, WireEntity)
         return _typed_hint(typed), source_hint_of(wire)
 
-    typed_hint, wire_hint = (cast("Any", hint) for hint in account_db(port).transact(fn).value)
+    typed_hint, wire_hint = (cast("Any", hint) for hint in account_db(port).transact(fn))
     assert wire_hint is not None
     assert wire_hint.object_key == typed_hint.object_key
     assert wire_hint.observation is typed_hint.observation
@@ -210,7 +210,7 @@ def test_releasing_every_source_makes_the_transactions_index_forget_the_state() 
         gc.collect()
         return state, tx._uow.retained_for(state)  # pyright: ignore[reportPrivateUsage] - the index is first-party state
 
-    state, after_release = account_db(port).transact(fn).value
+    state, after_release = account_db(port).transact(fn)
     assert state is not None
     assert after_release is None
 
@@ -226,7 +226,7 @@ def test_a_successful_flush_consumes_the_evidence_its_write_used() -> None:
         tx.update(node.edit(balance=Decimal("125.00")))
         return _typed_hint(node)
 
-    hint = cast("Any", account_db(port).transact(fn).value)
+    hint = cast("Any", account_db(port).transact(fn))
     assert hint.observation.consumed is True
 
 
@@ -242,7 +242,7 @@ def test_reusing_a_consumed_source_after_the_flush_is_refused() -> None:
         tx.update(node.edit(balance=Decimal("125.00")))
         return node
 
-    stale = db.transact(fn).value
+    stale = db.transact(fn)
 
     def second(tx: Transaction) -> None:
         tx.update(stale.edit(balance=Decimal("150.00")))
@@ -285,7 +285,7 @@ def test_an_intent_eliminated_before_dml_consumes_nothing() -> None:
         tx.update(node.edit(balance=Decimal("100.00")))
         return node
 
-    unchanged = db.transact(fn).value
+    unchanged = db.transact(fn)
     assert cast("Any", _typed_hint(unchanged)).observation.consumed is False
     assert not any(op[0] == "write" for op in port.ops)
 
@@ -324,7 +324,7 @@ def test_two_observed_versions_of_one_object_coexist_and_resolve_independently()
         second = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         return _typed_hint(first), _typed_hint(second)
 
-    earlier, later = db.transact(fn).value
+    earlier, later = db.transact(fn)
     assert cast("Any", earlier).observation is not cast("Any", later).observation
     assert cast("Any", earlier).observation.evidence == VersionObservation(observed_version=4)
     assert cast("Any", later).observation.evidence == VersionObservation(observed_version=7)
@@ -342,7 +342,7 @@ def test_a_reread_of_one_state_answers_the_evidence_the_first_read_retained() ->
         second = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         return _typed_hint(first), _typed_hint(second)
 
-    earlier, later = account_db(port).transact(fn).value
+    earlier, later = account_db(port).transact(fn)
     assert cast("Any", earlier).observation is cast("Any", later).observation
 
 

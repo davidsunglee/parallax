@@ -47,36 +47,11 @@ serialization failure stays retriable regardless of the flag.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol
 
 from parallax.core.db_error import DatabaseError
 from parallax.core.unit_work import OptimisticLockConflictError, RollbackOnlyError
 
-__all__ = ["AttemptObserver", "run_with_retry"]
-
-
-class AttemptObserver(Protocol):
-    """Where :func:`run_with_retry` publishes the loop's own two facts.
-
-    Declared here rather than by the observer, because the retry loop is the one
-    participant that knows them: that an attempt is about to run, and — on a
-    failure — the classifier's verdict under the effective policy. That verdict
-    is a CLASSIFICATION, not a history: it is reported the same way whether or
-    not the remaining bound allows another attempt, so an exhausted retriable
-    failure stays distinguishable from one the classifier refused.
-
-    The loop never reads an observer back, so an observer that raises breaks the
-    transaction it is observing; implementations record and return.
-    """
-
-    def attempt_opened(self) -> None:
-        """One attempt is about to run."""
-        ...
-
-    def attempt_failed(self, exc: BaseException, *, retry_eligible: bool) -> None:
-        """The running attempt raised ``exc``, which the classifier admits into
-        the retriable set (``retry_eligible``) or does not."""
-        ...
+__all__ = ["run_with_retry"]
 
 
 def _retriable_failure(exc: BaseException) -> bool:
@@ -98,7 +73,6 @@ def run_with_retry[T](
     *,
     retries: int,
     extra_retriable: Callable[[BaseException], bool] | None = None,
-    on_attempt: AttemptObserver | None = None,
 ) -> T:
     """Run ``attempt`` under the m-auto-retry bounded re-execution loop.
 
@@ -117,12 +91,6 @@ def run_with_retry[T](
     predicates compose as an OR, never override one another (a transient
     database failure's retriability is decided here, unconditionally on the
     injected extension).
-
-    ``on_attempt`` observes the loop without participating in it: it is told
-    that an attempt is opening, and told the classifier's verdict on a failure
-    the loop catches. A failure OUTSIDE the caught set never reaches the
-    observer, which is the honest report — the classifier was never consulted,
-    so the verdict is the absence of one rather than a false negative.
     """
     if retries < 0:
         raise ValueError(f"retries must be >= 0, got {retries}")
@@ -134,16 +102,12 @@ def run_with_retry[T](
     attempts = 0
     while True:
         attempts += 1
-        if on_attempt is not None:
-            on_attempt.attempt_opened()
         try:
             return attempt()
         except exception_types as exc:
             retriable = _retriable_failure(exc) or (
                 extra_retriable is not None and extra_retriable(exc)
             )
-            if on_attempt is not None:
-                on_attempt.attempt_failed(exc, retry_eligible=retriable)
             if not retriable:
                 raise
             if attempts > retries:

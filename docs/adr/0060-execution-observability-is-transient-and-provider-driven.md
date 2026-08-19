@@ -38,7 +38,9 @@ stacks; a diagnostic mode adds only bounded detached failure text. The recorder
 is testing-only and deliberately retains all events.
 
 When no Provider is installed, the runtime branches before every
-lifecycle-specific allocation and clock read. With accepted concurrent roots,
+lifecycle-specific allocation and clock read; a shared immutable inert activity
+may stand in for the activity seam, so that branch is one object rather than a
+nullable at every observed site. With accepted concurrent roots,
 core live memory is bounded by active Providers and activity depth, independent
 of completed events, retries, stream length, and result cardinality. Production
 fan-out shares one event object, keeps per-handler state bounded, and requires
