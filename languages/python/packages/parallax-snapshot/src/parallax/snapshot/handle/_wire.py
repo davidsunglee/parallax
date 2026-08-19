@@ -3,7 +3,7 @@
 ``db.wire`` and ``tx.wire`` are lightweight VIEWS over the same connected model
 and adapter their Typed peers use, never separate connections or transaction
 modes. A view holds the one entry point its owner already composed — read gate,
-force-flush, locking, evidence retention, lifecycle posture, unit of work,
+force-flush, locking, evidence retention, activity bracket, unit of work,
 coalescing — so a Wire call and a Typed call differ in nothing but the
 representation their values are stated in. That is why the interfaces are two
 objects rather than one ``format=`` argument: capability is what a caller holds,
@@ -110,11 +110,10 @@ class WireTransactionView(WireDatabaseView):
 
     A view over the SAME unit of work, evidence retention, locking, and
     coalescing the Typed transaction interface uses. A Wire read
-    participates in exactly the three ways ``tx.find`` does: it force-flushes
+    participates in exactly the four ways ``tx.find`` does: it force-flushes
     pending writes first, renders the read-lock suffix each materialized level's
-    own target Entity calls for, and retains onto each published node what a
-    later write settles against. Like every participating read it runs against
-    the shared inert activity and emits no lifecycle event
+    own target Entity calls for, retains onto each published node what a later
+    write settles against, and opens its own Read under the active attempt
     (`m-execution-lifecycle`). A Wire write buffers into the same unit of work
     through the same instruction IR, so a Typed write and a Wire write of one
     object merge, deduplicate, and conflict by the one claim algebra rather than

@@ -2,12 +2,12 @@
 
 `then.statements` and `then.roundTrips` are the corpus's SQL and count oracles,
 and both are facts about what reached the driver. This observes them at the port
-because the Execution Lifecycle publishes no Database Call for a write or a
-transaction yet: until it does, the port is the only place both oracles are
-answerable for every lane. It is a stand-in for a seam still being built, not a
-second witness the corpus wants — once the lifecycle covers the write and
-transaction lanes, both oracles come off the delivered event stream, which is the
-one source they were read from before the Execution Log was retired.
+because the engine installs no Execution Lifecycle Provider: until it does, the
+port is the only place both oracles are answerable for every lane. It is a
+stand-in for a seam still being built, not a second witness the corpus wants —
+once the engine consumes the delivered event stream, both oracles come off the
+Database Call events it carries, which is the one source they were read from
+before the Execution Log was retired.
 
 The canonical `?`-placeholder form is what every emission this engine reports
 carries, so a captured driver statement is round-tripped back through
