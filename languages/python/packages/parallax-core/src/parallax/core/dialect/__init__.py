@@ -91,20 +91,48 @@ whole rather than reaching inside it.
 _SIMPLE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
-def _translate_placeholders(sql: str, quote_char: str, source: str, target: str) -> str:
-    """``sql`` with each ``source`` placeholder OUTSIDE a quoted run spelled ``target``.
+def _split_quoted_runs(sql: str, quote_char: str) -> list[str]:
+    """``sql`` split so quoted runs land at the odd indices and bare syntax at the even.
 
     A quoted run is a string literal or a quoted identifier, ending at its first
-    undoubled delimiter. Placeholder translation is a rewrite of syntax, so it
-    must not reach text a quote protects: a physical name is any non-empty string
+    undoubled delimiter. Placeholder rewriting is a rewrite of syntax, so it must
+    not reach text a quote protects: a physical name is any non-empty string
     (`m-descriptor`), so a column named ``rate%s`` or ``rate?`` renders as a
     quoted identifier whose body is a name rather than a bind.
     """
     quote = re.escape(quote_char)
     runs = rf"('(?:[^']|'')*'|{quote}(?:[^{quote}]|{quote}{quote})*{quote})"
+    return re.split(runs, sql)
+
+
+def _translate_placeholders(sql: str, quote_char: str, source: str, target: str) -> str:
+    """``sql`` with each ``source`` placeholder outside a quoted run spelled ``target``."""
     return "".join(
         run if index % 2 else run.replace(source, target)
-        for index, run in enumerate(re.split(runs, sql))
+        for index, run in enumerate(_split_quoted_runs(sql, quote_char))
+    )
+
+
+_DRIVER_ESCAPE_OR_PLACEHOLDER = re.compile(r"%%|%s")
+
+
+def _recover_placeholders(driver_sql: str, quote_char: str, placeholder: str) -> str:
+    """``driver_sql`` with each ``%s`` placeholder outside a quoted run spelled
+    ``placeholder`` and every escaped ``%%`` undoubled.
+
+    Both spellings are decoded in ONE left-to-right pass, because they overlap: a
+    canonical statement carrying a literal ``%s`` — the modulo operator applied to
+    a column named ``s`` — escapes to ``%%s``, whose tail is itself a placeholder.
+    Undoubling in a pass of its own would read that statement tail-first as a bind
+    and recover ``%?``, so neither order of two passes inverts the escape.
+    """
+    return "".join(
+        run.replace("%%", "%")
+        if index % 2
+        else _DRIVER_ESCAPE_OR_PLACEHOLDER.sub(
+            lambda match: "%" if match[0] == "%%" else placeholder, run
+        )
+        for index, run in enumerate(_split_quoted_runs(driver_sql, quote_char))
     )
 
 
@@ -395,9 +423,10 @@ class Dialect:
 
         Inverse over the whole statement, quoted runs included: a `%s` inside a
         string literal or a quoted identifier is text this driver never bound, so
-        recovering the canonical spelling leaves it standing. Undoubling runs
-        last, so the `%%` a placeholder was just recovered out of cannot be read
-        as an escape.
+        recovering the canonical spelling leaves it standing. The escape and the
+        placeholder are decoded together in one left-to-right pass, so neither an
+        escaped `%` nor the `%%` a placeholder was recovered out of can be read as
+        the other.
 
         Used only where a caller must REPORT a statement it did not itself lower:
         the conformance engine observes what reached the Database Port, where the
@@ -406,7 +435,7 @@ class Dialect:
         joining them. Production code never calls this; it always starts from
         canonical text and translates outward, never back.
         """
-        return _translate_placeholders(driver_sql, self.quote_char, "%s", "?").replace("%%", "%")
+        return _recover_placeholders(driver_sql, self.quote_char, "?")
 
     # -- inheritance (m-inheritance / m-sql) -------------------------------- #
     def null_cast(self, neutral_type: NeutralType, max_length: int | None) -> str:
