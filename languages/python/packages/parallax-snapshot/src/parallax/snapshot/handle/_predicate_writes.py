@@ -26,7 +26,7 @@ attribute, and the layout member-to-column map),
 column contributions), and :mod:`parallax.snapshot.handle._read` for both
 :func:`~parallax.snapshot.handle._read.execute_read` and
 :func:`~parallax.snapshot.handle._read.stage_publishable_rows` — the resolving
-read records its Database Call through the package's one read-call seam, then
+read brackets its Database Call through the package's one read-call seam, then
 passes its materialized rows through the shared publication gate before this
 lane derives observations or writes.
 
@@ -526,9 +526,11 @@ def _materialize_predicate_write(
         include_value_objects=needs_documents,
     )
     structured_column = compiled.structured_column
-    # The resolving read reaches the database, so it publishes its Database Call
+    # The resolving read reaches the database, so it brackets its Database Call
     # like any other read (`m-execution-lifecycle`) — through the package's one
-    # read-call seam, never a second copy of its rules.
+    # read-call seam, never a second copy of its rules. The activity it brackets
+    # against is its caller's, and a predicate write always has a transaction for
+    # a caller, so that is the shared inert activity and the bracket emits nothing.
     driver_rows = uow.read(lambda: execute_read(conn, dialect, compiled, read))
     stage = stage_publishable_rows(meta, compiled, driver_rows, pin=Pin())
     resolved = stage.rows

@@ -1,10 +1,11 @@
 """``parallax.snapshot._read_result`` enforcement scope (m-snapshot-read).
 
 What a snapshot read HANDS BACK: the Snapshot Graph Input, and nothing about the
-execution that produced it. A read publishes its transient Read activity through
-the composition-supplied lifecycle seam while it runs (`m-execution-lifecycle`),
-so a result carries no trace, no round-trip count, and no lifecycle record at
-all — which is why nothing in this module names that vocabulary.
+execution that produced it. A standalone read publishes its transient Read
+activity through the composition-supplied lifecycle seam while it runs
+(`m-execution-lifecycle`), so a result carries no trace, no round-trip count, and
+no lifecycle record at all — which is why nothing in this module names that
+vocabulary.
 
 This scope alone carries the module tag's full grant, `m-execution-lifecycle`
 included. The row-to-graph work sits in the separate, narrower

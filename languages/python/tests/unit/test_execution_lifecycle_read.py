@@ -1,9 +1,9 @@
 """The Read Root Execution end to end (m-execution-lifecycle, Docker-free).
 
-One standalone read is the whole lit path this increment carries, so this is
-where the correlation envelope, the activity tree, the Database Call payload,
-and the failure attribution are graded — against the events a Provider installed
-through ``connect`` actually receives, never against a projection of them.
+A standalone read is the one operation that opens a live root, so this is where
+the correlation envelope, the activity tree, the Database Call payload, and the
+failure attribution are graded — against the events a Provider installed through
+``connect`` actually receives, never against a projection of them.
 
 The default path is here too, because "no Provider installed" is a behavior
 rather than an absence: the same code runs, and what it must not do is allocate,

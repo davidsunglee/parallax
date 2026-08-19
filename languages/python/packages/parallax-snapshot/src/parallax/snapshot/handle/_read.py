@@ -55,13 +55,15 @@ temporal edge before it can partition, and a write has no in-band channel to
 publish a verdict through.
 
 What a find EXECUTES is `m-execution-lifecycle`'s vocabulary, not this module's:
-each read runs inside a Read activity the composition root opened, and each call
-is bracketed into a Database Call child of it. Nothing is retained — a result
-carries no record of the calls that produced it — so an executor takes the
-activity it publishes through and answers the result alone. :func:`execute_read`
+each read runs inside the activity its composition root handed down, and each
+call is bracketed into a Database Call child of it. A standalone read is handed
+the live Read activity its root opened; a participating read is handed the shared
+inert activity, and the same bracket then emits nothing. Nothing is retained — a
+result carries no record of the calls that produced it — so an executor takes the
+activity it brackets against and answers the result alone. :func:`execute_read`
 is where the call bracket actually happens, and it is deliberately the package's
 ONE of them: the materializing predicate write's resolving read
-(`_predicate_writes`) is a read that reaches the database too, so it publishes
+(`_predicate_writes`) is a read that reaches the database too, so it brackets
 through this same function rather than through a second copy of the timing and
 failed-call rules.
 """
@@ -200,8 +202,8 @@ class Snapshot[T]:
     scanned axis is absent), and
     ``__repr__``. Deliberately ABSENT: iteration / ``len`` / truthiness /
     indexing on the container, refresh or write methods, any lazy
-    behavior, and every lifecycle accessor — the read published its activity
-    while it ran and the result retains nothing of it.
+    behavior, and every lifecycle accessor — whatever the read published, it
+    published while it ran, and the result retains nothing of it.
 
     A root whose stored state contradicted the model is held as its
     :class:`~parallax.snapshot.materialize.InvalidData` record. The accessors
@@ -414,10 +416,12 @@ def find(
     effective-Optimistic write may import that evidence while an
     effective-Locking one cannot.
 
-    ``read`` is the Read activity this executor publishes its Database Calls
-    under, opened by whichever composition root owns the operation. Omitting it
-    runs the same code against the shared inert activity, which is what the
-    default path and a declined root do.
+    ``read`` is the activity this executor brackets its Database Calls against,
+    handed down by whichever composition root owns the operation. A standalone
+    read passes the live Read activity its root opened. Passing the shared inert
+    activity — which omitting the argument does — runs the same code and emits
+    nothing, and is what a participating read, the default path, and a declined
+    root all do.
     """
     # ``meta`` is the accepted model the connected ``Database`` already holds, so
     # every level's own Entity resolves against it directly.
@@ -571,7 +575,7 @@ def find_rows(
     (`deep_fetch.plan` injects the as-of predicate and canonicalizes navigation
     for both lanes), the same
     :func:`~parallax.core.sql_gen.compile_read` with the lane selected by
-    ``result_form``, and the same recorded Database Call.
+    ``result_form``, and the same Database Call bracket.
 
     A row-form read materializes no relationships, and the shared read gate
     (:func:`~parallax.snapshot.handle._preflight.preflight`) refuses a
@@ -1090,14 +1094,14 @@ class ResultPublication[R]:
     one dispatch can reach: a find's own graph, and a milestone-set find's graphs.
 
     A handle's read orchestration is the same whichever materializer runs — the
-    shared gate, the milestone-set dispatch, the executor entry, the Read
-    activity bracket, and inside a transaction the lock derivation and the
+    shared gate, the milestone-set dispatch, the executor entry, the activity the
+    handle hands down, and inside a transaction the lock derivation and the
     observation record. Passing the publication in is what lets that
     orchestration exist once per handle instead of once per result form, so the
     equivalence the Typed and Wire interfaces promise is structural rather than
     maintained by inspection.
 
-    ``interface`` is the same choice named for the Read activity that
+    ``interface`` is the same choice named for the Read activity a standalone
     orchestration opens: which materializer publishes IS which read interface
     ran, so the two are one value rather than two that could disagree.
     """
