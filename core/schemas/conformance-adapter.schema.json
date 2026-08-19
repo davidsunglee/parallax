@@ -305,9 +305,10 @@
       }
     },
     "lifecycleTarget": {
-      "description": "The Entity an observed activity names, in the same nonempty-spelling form the case oracle authors. The Entity-name grammar lives in `identity.schema.json`, which this self-contained envelope does not reach; a target an adapter reports is the canonical spelling its own metamodel resolved.",
+      "description": "The Entity an observed activity names, in the same Entity-name grammar the case oracle authors — a target an adapter reports is the canonical spelling its own metamodel resolved. The grammar is COPIED from `identity.schema.json`, which this self-contained envelope does not reach; the harness pins the copy against the canonical definition so the two cannot drift.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*$"
     },
     "lifecycleRoot": {
       "description": "One normalized Root Execution (m-execution-lifecycle): one outermost Handle operation and everything it causally contains. `execution` replaces the runtime UUIDv4 with a positive FIRST-OBSERVATION index, which orders concurrent roots without stating an identity no run reproduces. `kind` names which outermost operation opened it. `events` is the delivered stream in delivery order, a failed activity's transitions included: a Started and its Finished are the same activity delivered twice, so the shortest possible root holds two.",
