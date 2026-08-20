@@ -12,7 +12,7 @@ the number of active Providers.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -102,14 +102,17 @@ class FanoutLifecycleProvider:
     Handlers already opened for it are discarded unused, because a root no
     Provider will observe completely is worse than one none observes at all.
 
-    Construction rejects the same Provider OBJECT more than once — it would be
-    told about one root twice and its Handler would see every event twice —
-    while two distinct Providers deliberately sharing one backend are fine, and
-    are how an application fans one exporter out under different configurations.
+    Construction rejects the same Provider OBJECT more than once ANYWHERE in the
+    composition — it would be told about one root twice and its Handler would
+    see every event twice — while two distinct Providers deliberately sharing
+    one backend are fine, and are how an application fans one exporter out under
+    different configurations.
 
     Fan-outs nest: a child that is itself a fan-out contributes its own children
     to the tree, and each of them reports under the full path descended to reach
     it rather than under a position relative to the nearest enclosing fan-out.
+    Every rule above is a rule about that tree rather than about one tuple of
+    siblings, the repeat rule included.
     """
 
     __slots__ = ("_providers",)
@@ -121,15 +124,8 @@ class FanoutLifecycleProvider:
                 "a fan-out lifecycle provider composes at least one provider; installing "
                 "none is what leaving lifecycle_provider unset already means"
             )
-        for index, provider in enumerate(composed):
-            if any(earlier is provider for earlier in composed[:index]):
-                raise ValueError(
-                    "a fan-out lifecycle provider composes each provider at most once, and "
-                    f"the provider at position {index} is already composed earlier; two "
-                    "distinct providers may share a backend, but one object twice would be "
-                    "opened twice for one root"
-                )
         self._providers = composed
+        self._reject_repeats()
 
     def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None:
         return self._opened_at(execution, ())
@@ -171,3 +167,46 @@ class FanoutLifecycleProvider:
         if not children:
             return None
         return _CompositeHandler(execution.id, children)
+
+    def _leaves_at(
+        self, prefix: tuple[int, ...]
+    ) -> Iterator[tuple[tuple[int, ...], ExecutionLifecycleProvider]]:
+        """Every Provider this composition ultimately opens, under ``prefix``.
+
+        A nested fan-out is a branch and not a leaf: it opens no Handler of its
+        own, so what a root costs it is exactly what that root costs the
+        children it contributes, and the identity that decides whether one
+        Provider is composed twice is therefore the one at the bottom.
+        """
+        for index, provider in enumerate(self._providers):
+            position = (*prefix, index)
+            if isinstance(provider, FanoutLifecycleProvider):
+                yield from provider._leaves_at(position)
+            else:
+                yield position, provider
+
+    def _reject_repeats(self) -> None:
+        """Refuse a composition holding one Provider object twice.
+
+        Nesting is what makes this a claim about the flattened tree rather than
+        about one tuple of siblings: a leaf reached down two branches is opened
+        twice for one root, its Handler sees every delivered event twice, and a
+        composite failure is reported to it twice — the same three costs an
+        immediate repeat carries, so one refusal covers both.
+        """
+        seen: list[tuple[tuple[int, ...], ExecutionLifecycleProvider]] = []
+        for position, leaf in self._leaves_at(()):
+            for earlier_position, earlier in seen:
+                if earlier is leaf:
+                    raise ValueError(
+                        "a fan-out lifecycle provider composes each provider at most once "
+                        f"across the whole composition, and the provider at position "
+                        f"{_path(position)} is already composed at {_path(earlier_position)}; "
+                        "two distinct providers may share a backend, but one object twice "
+                        "would be opened twice for one root"
+                    )
+            seen.append((position, leaf))
+
+
+def _path(position: tuple[int, ...]) -> str:
+    return ".".join(str(step) for step in position)

@@ -127,7 +127,13 @@ def _run_envelope(lifecycle: dict[str, Any]) -> dict[str, Any]:
         "case": "cases/m-execution-lifecycle-001-standalone-read.yaml",
         "dialect": "postgres",
         "caseShape": "writeSequence",
-        "emissions": [{"casePointer": "/then/statements/0", "sql": "select 1", "binds": []}],
+        "emissions": [
+            {
+                "casePointer": "/then/statements/0",
+                "sql": "insert into account(id) values (?)",
+                "binds": [9],
+            }
+        ],
         "observations": {"roundTrips": 1, "executionLifecycle": lifecycle},
     }
 
@@ -759,16 +765,62 @@ def test_a_resolving_read_the_case_authors_no_golden_for_names_no_statement() ->
 def test_a_resolving_read_taking_the_index_its_write_owes_is_flagged() -> None:
     """The omission the read is entitled to is not one the write may borrow.
 
-    Every golden statement is DML some write call ran, so a record where the
-    read carries index 0 and the write carries none names the whole space and
-    still describes the wrong call running the authored statement.
+    Every golden statement here is DML some write call ran, so a record where
+    the read carries index 0 and the write carries none names the whole space
+    and still describes the wrong call running the authored statement.
     """
     root = _read_then_write_root(read_statement=0)
     del root["events"][7]["databaseCallStarted"]["statement"]
     case = _case(_lifecycle(root))
     case["then"]["roundTrips"] = 2
     problems = validate_execution(case)
-    assert any("every golden statement is one a write call ran" in problem for problem in problems)
+    assert any(
+        "every golden DML statement is one a write call ran" in problem for problem in problems
+    )
+    assert any(
+        "naming statement 0, which the case authors as DML" in problem for problem in problems
+    )
+
+
+def test_a_read_owning_a_dml_index_with_no_write_call_at_all_is_flagged() -> None:
+    """Coverage is not ownership.
+
+    The record here names the whole space in order and once each — the DML the
+    case authored is index 0 and one read call names it — while the write call
+    that ran that statement appears nowhere. Only the kind an index admits
+    separates this from the record above it, which is why the two are checked
+    apart.
+    """
+    root = _read_then_write_root(read_statement=0)
+    del root["events"][6:10]
+    for position, event in enumerate(root["events"][6:], start=7):
+        event["sequence"] = position
+    problems = validate_execution(_case(_lifecycle(root)))
+    assert problems == [
+        "roots[0].events[3] is a read call naming statement 0, which the case authors as DML; a "
+        "call names the statement IT ran, so an index belongs to a call of the kind its own "
+        "statement is"
+    ]
+
+
+def test_a_write_owning_a_query_index_is_flagged() -> None:
+    """The mirror of the read case: a golden SELECT is a statement a Read call
+    issued, so a write call naming it describes a call the case never authored."""
+    case = _case(_lifecycle(_write_root()))
+    case["then"]["statements"] = [{"sql": {"postgres": "select id from account"}, "binds": []}]
+    problems = validate_execution(case)
+    assert any(
+        "is a write call naming statement 0, which the case authors as a query" in problem
+        for problem in problems
+    )
+
+
+def test_a_statement_whose_sql_names_no_kind_narrows_nothing() -> None:
+    """A lead outside the DML/query vocabulary leaves the kind rule silent
+    rather than reporting a problem that is really the reader's."""
+    case = _case(_lifecycle(_write_root()))
+    case["then"]["statements"] = [{"sql": {"postgres": "call refresh_account()"}, "binds": []}]
+    assert validate_execution(case) == []
 
 
 def _two_write_root(second_statement: int) -> dict[str, Any]:

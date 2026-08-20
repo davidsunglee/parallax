@@ -269,8 +269,26 @@ def _same_bind(planned: object, executed: object) -> bool:
     JSON TYPE is never a carrier difference, so the reconciliation is typed
     first and numeric second — Python's own ``True == 1`` would otherwise report
     a numeric bind as the boolean the plan holds.
+
+    Both sides are reconciled from the carrier they still hold rather than from
+    the wire spelling alone, at every depth, because the spelling is where the
+    evidence is lost: :func:`wire_value` renders a byte buffer to hex and a
+    UUID to its canonical text, so a rendered string that happens to parse as a
+    number says nothing about whether a decimal produced it.
     """
-    return _same_json(_json_bind(planned), _json_bind(executed))
+    left, right = _json_bind(planned), _json_bind(executed)
+    kind = _json_kind(left)
+    if kind != _json_kind(right) or kind == "number":
+        return _same_decimal(planned, executed)
+    if kind == "object":
+        one, other = cast("Mapping[str, object]", left), cast("Mapping[str, object]", right)
+        return set(one) == set(other) and all(_same_bind(one[key], other[key]) for key in one)
+    if kind == "array":
+        first, second = cast("Sequence[object]", left), cast("Sequence[object]", right)
+        return len(first) == len(second) and all(
+            _same_bind(one, other) for one, other in zip(first, second, strict=True)
+        )
+    return left == right
 
 
 def _json_kind(value: object) -> str:
@@ -297,55 +315,31 @@ def _json_kind(value: object) -> str:
     return "opaque"
 
 
-def _same_json(planned: object, executed: object) -> bool:
-    """Two rendered binds, reconciled by JSON type.
+def _same_decimal(planned: object, executed: object) -> bool:
+    """Two binds that both carry a number, as exact decimals.
 
-    A number and a string are the one cross-type pair a carrier difference can
-    produce — a ``Decimal`` renders as its exact decimal string while the plan
-    holds the number the case authored — and they reconcile only as exact
-    decimals. Every other pair of differing types is a difference. A document's
-    members are reconciled under this same rule, so a boolean member inside a
-    value-object document is no more interchangeable with ``1`` than a
-    top-level bind is.
+    This is the whole of the one cross-type pair a carrier difference produces:
+    a ``Decimal`` renders as its exact decimal string while the plan holds the
+    number the case authored, so number-against-string reconciles HERE and
+    nowhere else, and only when the side spelled as a string is a ``Decimal``.
+    A string is otherwise a semantic value of its own — a byte buffer's hex, an
+    identifier, a date — and one that happens to parse as a number is a
+    delivered type the case never sanctioned rather than a spelling of one.
     """
-    left, right = _json_kind(planned), _json_kind(executed)
-    if left != right:
-        if {left, right} != {"number", "string"}:
-            return False
-        as_decimals = (_decimal_bind(planned), _decimal_bind(executed))
-        return None not in as_decimals and as_decimals[0] == as_decimals[1]
-    if left == "number":
-        as_decimals = (_decimal_bind(planned), _decimal_bind(executed))
-        return None not in as_decimals and as_decimals[0] == as_decimals[1]
-    if left == "object":
-        one, other = cast("Mapping[str, object]", planned), cast("Mapping[str, object]", executed)
-        return set(one) == set(other) and all(
-            _same_json(_json_bind(one[key]), _json_bind(other[key])) for key in one
-        )
-    if left == "array":
-        one, other = cast("Sequence[object]", planned), cast("Sequence[object]", executed)
-        return len(one) == len(other) and all(
-            _same_json(_json_bind(first), _json_bind(second))
-            for first, second in zip(one, other, strict=True)
-        )
-    return planned == executed
+    left, right = _decimal_carrier(planned), _decimal_carrier(executed)
+    return left is not None and right is not None and left == right
 
 
-def _decimal_bind(value: object) -> decimal.Decimal | None:
-    """``value`` as an exact finite decimal, or ``None`` for anything that is not
-    a number — a non-finite spelling included, so the ``infinity`` temporal
-    literal never reconciles against a numeric bind."""
+def _decimal_carrier(value: object) -> decimal.Decimal | None:
+    """The exact decimal ``value`` CARRIES, or ``None`` when it carries none.
+
+    A ``Decimal`` and a JSON number carry one; nothing else does, the temporal
+    ``infinity`` sentinel and every numeric-looking string included."""
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
-        return decimal.Decimal(str(value))
-    if not isinstance(value, str):
-        return None
-    try:
-        candidate = decimal.Decimal(value)
-    except decimal.InvalidOperation:
-        return None
-    return candidate if candidate.is_finite() else None
+    if isinstance(value, decimal.Decimal):
+        return value
+    return decimal.Decimal(str(value)) if isinstance(value, (int, float)) else None
 
 
 @dataclass(frozen=True, slots=True)

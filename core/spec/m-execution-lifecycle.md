@@ -377,8 +377,11 @@ opens children in declaration order, omits deliberate declines, and declines if
 all children decline. A child open failure aborts the root and discards handlers
 already opened for it. Events are delivered in declaration order. One child's
 ordinary failure quarantines only that child; later siblings receive that event
-and future events. Construction rejects the same Provider object more than once,
-while distinct Providers may deliberately share a backend.
+and future events. A child that is itself a Fan-out contributes its own children
+to one composition tree, and every rule here reads over that flattened tree
+rather than over one list of siblings: construction rejects the same Provider
+object more than once anywhere in the tree, while distinct Providers may
+deliberately share a backend.
 
 ## Cost and retention
 
@@ -412,9 +415,11 @@ case's flattened golden statement order. Two calls name none: every call on an
 `api-conformance` lane, which authors no golden SQL, and a resolving read a
 keyed write owes, which reaches the database and is counted while the case
 authors no golden for it (`m-case-format`). The indexes the remaining calls
-name are that order exactly, in delivery order and once each. The adapter
-observation uses the identical shape and indexes its own emissions. The shape
-is a case assertion format, not a public serialization contract.
+name are that order exactly, in delivery order and once each, and each index is
+named by a call of the kind its own statement is: a query by a read, DML by a
+write. The adapter observation uses the identical shape and indexes its own
+emissions. The shape is a case assertion format, not a public serialization
+contract.
 
 This module owns six cases:
 

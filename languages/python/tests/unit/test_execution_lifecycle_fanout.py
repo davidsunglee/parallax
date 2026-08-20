@@ -117,6 +117,27 @@ def test_composing_one_provider_object_twice_is_refused_at_construction() -> Non
         FanoutLifecycleProvider([child, _Child("tracing"), child])
 
 
+def test_composing_one_provider_object_inside_a_nested_fan_out_is_refused() -> None:
+    # A nested fan-out contributes its children to the SAME composition tree, so
+    # a leaf reached down two branches is opened twice for one root and its
+    # Handler sees every event twice — the cost the repeat rule refuses.
+    child = _Child("metrics")
+    with pytest.raises(ValueError, match="at most once") as refused:
+        FanoutLifecycleProvider([child, FanoutLifecycleProvider([child])])
+    assert "position 1.0 is already composed at 0" in str(refused.value)
+
+
+def test_two_nested_fan_outs_sharing_one_leaf_are_refused() -> None:
+    child = _Child("metrics")
+    with pytest.raises(ValueError, match="at most once"):
+        FanoutLifecycleProvider(
+            [
+                FanoutLifecycleProvider([_Child("tracing"), child]),
+                FanoutLifecycleProvider([child]),
+            ]
+        )
+
+
 def test_two_distinct_providers_sharing_a_backend_are_accepted() -> None:
     # Deliberate sharing is how one exporter is fed under two configurations,
     # and the rule is about the OBJECT rather than about what it writes to.

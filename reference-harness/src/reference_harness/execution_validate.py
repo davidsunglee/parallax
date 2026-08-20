@@ -30,10 +30,13 @@ observation alike (`m-execution-lifecycle`):
 - **statement.** A Database Call names its statement by INDEX — into the case's
   flattened authored golden order on the asserted side, into the envelope's own
   ``emissions`` on the observed side. Every index must land on something that
-  exists, and the indexes a record names are its whole space, in delivery order
-  and once each; the calls that name none are the two the space does not hold —
-  every call where nothing is authored at all, and the resolving read a keyed
-  write owes, which is a read;
+  exists, the indexes a record names are its whole space, in delivery order
+  and once each, and each index is owned by a call of the kind its own statement
+  is — a query by a read, DML by a write — or a resolving read taking a write's
+  index would cover the space while the write that ran it appears nowhere; the
+  calls that name none are the two the space does not hold — every call where
+  nothing is authored at all, and the resolving read a keyed write owes, which
+  is a read;
 - **counts.** The record's sole count oracle — ``then.roundTrips`` on a case,
   ``observations.roundTrips`` on an envelope — counts the Database Call
   activities the stream opened, which the record restates rather than competes
@@ -100,6 +103,13 @@ _CONTAINED_BY: dict[str, tuple[str, ...]] = {
 
 _ROOT_KINDS: frozenset[str] = frozenset({"readStarted", _OUTER, "snapshotStreamStarted"})
 
+_LEADING_KIND: dict[str, str] = {
+    "select": "read",
+    "insert": "write",
+    "update": "write",
+    "delete": "write",
+}
+
 _INVOCATION_OUTCOMES: dict[str, tuple[str, ...]] = {
     _OUTER: ("committed", "failed"),
     _JOINED: ("returned", "raised"),
@@ -118,11 +128,21 @@ def _activity_kind(started: str, payload: dict[str, Any]) -> str:
 
 @dataclass(frozen=True)
 class _StatementSpace:
-    """What a Database Call's ``statement`` indexes, and how large that order is."""
+    """What a Database Call's ``statement`` indexes.
 
-    size: int
+    ``kinds`` is one entry per statement, in the flattened order an index names,
+    holding the Database Call kind that statement's own SQL states — ``read``
+    for a query, ``write`` for DML, and ``None`` where the SQL states neither,
+    which is what keeps an unfamiliar statement from narrowing anything.
+    """
+
+    kinds: tuple[str | None, ...]
     noun: str
     holder: str
+
+    @property
+    def size(self) -> int:
+        return len(self.kinds)
 
     def phrase(self) -> str:
         return f"{self.holder} {self.size} {self.noun}(s)"
@@ -172,7 +192,7 @@ def validate_execution(case: dict[str, Any]) -> list[str]:
     then = case.get("then")
     if not isinstance(then, dict):
         return []
-    space = _StatementSpace(_authored_golden_count(case), "golden statement", "the case authors")
+    space = _StatementSpace(_authored_golden_kinds(case), "golden statement", "the case authors")
     return _check_record(then.get("executionLifecycle"), space, then.get("roundTrips", 1))
 
 
@@ -188,7 +208,7 @@ def validate_execution_observation(envelope: dict[str, Any]) -> list[str]:
     observations = envelope.get("observations")
     if not isinstance(observations, dict):
         return []
-    space = _StatementSpace(_entry_count(envelope, "emissions"), "emission", "the envelope reports")
+    space = _StatementSpace(_entry_kinds(envelope, "emissions"), "emission", "the envelope reports")
     return _check_record(
         observations.get("executionLifecycle"), space, observations.get("roundTrips")
     )
@@ -698,9 +718,15 @@ def _check_statements(calls: list[_Call], space: _StatementSpace, problems: list
     index it should have named leaves an authored statement unnamed, and a call
     taking an index that belongs to a later one shifts every index after it, so
     both land here even though each index in isolation is in range. A WRITE call
-    is additionally never one of the two omissions — every statement a case
-    authors as golden DML is one some write call ran — so it must name one
-    wherever the space is non-empty.
+    is additionally never one of the two omissions — a statement a case authors
+    as golden DML is one some write call ran — so it must name one wherever the
+    space is non-empty.
+
+    Coverage alone would still admit a record whose calls are the wrong ones:
+    one authored UPDATE and one resolving read carrying its index cover the
+    space exactly, while the write that ran the UPDATE appears nowhere. So each
+    index is additionally owned by a call of the kind its own statement is
+    (:func:`_check_statement_kinds`).
     """
     named = [call for call in calls if call.statement is not None]
     for call in named:
@@ -712,15 +738,40 @@ def _check_statements(calls: list[_Call], space: _StatementSpace, problems: list
         if call.statement is None and call.kind != "read":
             problems.append(
                 f"{call.label} names no statement, but {space.phrase()}; a call omits the index "
-                f"only where the space holds none to name, and every golden statement is one a "
-                f"write call ran"
+                f"only where the space holds none to name, and every golden DML statement is one "
+                f"a write call ran"
             )
+    _check_statement_kinds(named, space, problems)
     indexes = [call.statement for call in named]
     if indexes != list(range(space.size)):
         problems.append(
             f"the record's database calls name statements {indexes}, but {space.phrase()}; the "
             f"space is named in delivery order and once each, so a call that skipped its own "
             f"index or took another's leaves the two orders disagreeing"
+        )
+
+
+def _check_statement_kinds(named: list[_Call], space: _StatementSpace, problems: list[str]) -> None:
+    """Each named index against the kind of call its own statement admits.
+
+    A call names the statement IT ran, so a read call cannot own an authored
+    ``UPDATE`` and a write call cannot own an authored query. This is what makes
+    the resolving-read omission provable rather than merely permitted: the read
+    a keyed write owes authors no golden, so a read carrying a DML index is one
+    that took the index of the write call that ran it — and that write call is
+    then missing from a record coverage alone reports as complete.
+    """
+    for call in named:
+        index = call.statement
+        if not isinstance(index, int) or not 0 <= index < space.size:
+            continue
+        expected = space.kinds[index]
+        if expected is None or call.kind == expected:
+            continue
+        problems.append(
+            f"{call.label} is a {call.kind} call naming statement {index}, which "
+            f"{space.holder} as {'a query' if expected == 'read' else 'DML'}; a call names the "
+            f"statement IT ran, so an index belongs to a call of the kind its own statement is"
         )
 
 
@@ -734,35 +785,60 @@ def _check_total(calls: int, declared: Any, problems: list[str]) -> None:
         )
 
 
-def _authored_golden_count(case: dict[str, Any]) -> int:
-    """How many golden statements the case's FLATTENED authored order holds.
+def _authored_golden_kinds(case: dict[str, Any]) -> tuple[str | None, ...]:
+    """The case's FLATTENED authored golden order, statement by statement.
 
-    A call's ``statement`` indexes that order, so bounding an index needs its
-    size. Goldens are authored case-level (``then.statements``), per scenario or
-    coherence step, per conflict attempt, or per concurrency-round node — every
-    shape that reaches the database and may therefore carry the oracle. A lane
-    authoring none — the ``api-conformance`` lane, where a call carries no index
-    at all — yields zero, and any index is then out of range.
+    A call's ``statement`` indexes that order, so both bounding an index and
+    judging which call may own it read it here. Goldens are authored case-level
+    (``then.statements``), per scenario or coherence step, per conflict attempt,
+    or per concurrency-round node — every shape that reaches the database and
+    may therefore carry the oracle. A lane authoring none — the
+    ``api-conformance`` lane, where a call carries no index at all — yields an
+    empty order, and any index is then out of range.
     """
-    total = _entry_count(case.get("then"), "statements")
+    kinds = _entry_kinds(case.get("then"), "statements")
     when = case.get("when")
     if not isinstance(when, dict):
-        return total
+        return kinds
     for key in ("scenario", "coherence", "attempts"):
         group = when.get(key)
         if isinstance(group, list):
-            total += sum(_entry_count(entry, "statements") for entry in group)
+            for entry in group:
+                kinds += _entry_kinds(entry, "statements")
     concurrency = when.get("concurrency")
     rounds = concurrency.get("rounds") if isinstance(concurrency, dict) else None
     if isinstance(rounds, list):
         for entry in rounds:
             if isinstance(entry, dict):
-                total += sum(_entry_count(entry.get(node), "statements") for node in ("A", "B"))
-    return total
+                for node in ("A", "B"):
+                    kinds += _entry_kinds(entry.get(node), "statements")
+    return kinds
 
 
-def _entry_count(holder: Any, key: str) -> int:
+def _entry_kinds(holder: Any, key: str) -> tuple[str | None, ...]:
     if not isinstance(holder, dict):
-        return 0
+        return ()
     entries = holder.get(key)
-    return len(entries) if isinstance(entries, list) else 0
+    return tuple(_statement_kind(entry) for entry in entries) if isinstance(entries, list) else ()
+
+
+def _statement_kind(entry: Any) -> str | None:
+    """The Database Call kind *entry*'s SQL states, or ``None`` where it states
+    none.
+
+    The two sides hold the same evidence in different shapes — a case authors
+    its SQL under each dialect it states, an envelope reports one rendered
+    string — and the leading keyword is what separates a query a Read call
+    issued from the DML a Write Batch call issued. A lead outside that
+    vocabulary, or dialects disagreeing about it, yields no claim, so the
+    unfamiliar statement is left to the rules that do not need its kind.
+    """
+    sql = entry.get("sql") if isinstance(entry, dict) else None
+    texts = sql.values() if isinstance(sql, dict) else [sql]
+    stated = {_LEADING_KIND.get(_leading_keyword(text)) for text in texts if isinstance(text, str)}
+    return stated.pop() if len(stated) == 1 else None
+
+
+def _leading_keyword(sql: str) -> str:
+    lead = sql.split(maxsplit=1)
+    return lead[0].lower() if lead else ""
