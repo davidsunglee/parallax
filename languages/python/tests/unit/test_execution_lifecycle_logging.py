@@ -615,6 +615,33 @@ def test_a_transition_the_logger_would_drop_is_never_described(
         handler.handle(ReadFinished(EXECUTION.id, 4, 1, None, ReadCompleted()))
 
 
+def test_a_logger_that_emits_what_its_level_excludes_is_still_told_everything() -> None:
+    # The guard's premise is a property of `logging.Logger.log` rather than of
+    # every Logger an application may configure: a subclass whose `log` emits
+    # what it is handed receives a DEBUG record today at a level that keeps
+    # none, and describing nothing for it would DELETE that record rather than
+    # skip building one nobody would see. So the guard is not taken at all for
+    # a Logger that does not ask its own level first.
+    class _Unconditional(logging.Logger):
+        def log(self, level: int, msg: object, *args: object, **kwargs: Any) -> None:
+            extra = kwargs.get("extra")
+            self.handle(
+                self.makeRecord(self.name, level, __file__, 0, msg, args, None, extra=extra)
+            )
+
+    logger = _Unconditional(f"parallax.test.{uuid4().hex}")
+    logger.setLevel(logging.CRITICAL)
+    collected = _Collecting()
+    logger.addHandler(collected)
+    handler = LoggingLifecycleProvider(logger).open(EXECUTION)
+    assert handler is not None
+    handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
+
+    written = [_written(record) for record in collected.records]
+    assert [record.level for record in written] == [logging.DEBUG]
+    assert written[0].fields["transition"] == "readStarted"
+
+
 def test_a_globally_disabled_logging_system_describes_nothing_either(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

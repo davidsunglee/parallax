@@ -422,6 +422,30 @@ def _rendered(event: ExecutionEvent, detail: LifecycleLogDetail) -> _Rendered:
             assert_never(unreachable)
 
 
+_STANDARD_LOG: Final = logging.Logger.log
+
+
+def _skips_below_its_level(logger: logging.Logger) -> bool:
+    """Whether ``logger``'s own ``log`` drops what its level excludes.
+
+    The premise the description guard rests on: ``logging.Logger.log`` asks
+    ``isEnabledFor`` before it does anything else, so a Handler that asks first
+    and describes nothing when the answer is no changes which records exist not
+    at all. An application configures the Logger, and a subclass may override
+    ``log`` to emit whatever it is handed — straight through ``_log``, past the
+    level entirely — for which the premise is false and skipping would silence a
+    record that Logger emits today. So the optimization is taken only for the
+    implementation it reasons about.
+
+    Read off the BOUND attribute rather than the type, so a Logger carrying a
+    ``log`` of its own is treated as the override it is however it acquired one.
+    Overriding ``isEnabledFor``, ``_log``, ``handle``, or ``filter`` needs no
+    such care: the first is the very question asked here, and the rest run after
+    the level has already admitted the record.
+    """
+    return getattr(logger.log, "__func__", None) is _STANDARD_LOG
+
+
 class _LoggingHandler:
     """One root's Handler: its correlation, its counters, and one record per event.
 
@@ -431,7 +455,14 @@ class _LoggingHandler:
     module exists to replace.
     """
 
-    __slots__ = ("_counters", "_detail", "_execution_id", "_execution_kind", "_logger")
+    __slots__ = (
+        "_counters",
+        "_detail",
+        "_execution_id",
+        "_execution_kind",
+        "_logger",
+        "_skips_its_own",
+    )
 
     _detail: LifecycleLogDetail
 
@@ -443,6 +474,7 @@ class _LoggingHandler:
         self._execution_id = str(execution.id)
         self._execution_kind = execution.kind
         self._counters = _Counters()
+        self._skips_its_own = _skips_below_its_level(logger)
 
     def handle(self, event: ExecutionEvent, /) -> None:
         """Count the event, then describe it only if the Logger would keep it.
@@ -470,10 +502,13 @@ class _LoggingHandler:
     def _describable(self, event: ExecutionEvent) -> bool:
         """Whether a record for ``event`` could survive this Logger's own level.
 
-        ``Logger.log`` asks exactly this question before it does anything else,
-        so asking it first changes which records exist not at all — and skips
-        building a field mapping for every transition whose answer is no, which
-        is most of them under any production level.
+        ``logging.Logger.log`` asks exactly this question before it does
+        anything else, so asking it first changes which records exist not at all
+        — and skips building a field mapping for every transition whose answer
+        is no, which is most of them under any production level. A Logger whose
+        ``log`` is not that implementation is answered yes for every event
+        instead, because the equivalence is with what that implementation does
+        and a Logger that emits whatever it is handed would lose records here.
 
         The cheapest level any transition is worth is ``DEBUG``, so a Logger that
         would keep a ``DEBUG`` record keeps every possibility open and the answer
@@ -489,6 +524,8 @@ class _LoggingHandler:
         filters the records the Logger created, so a level set on one can only
         drop a record that was going to be built regardless.
         """
+        if not self._skips_its_own:
+            return True
         if self._logger.isEnabledFor(logging.DEBUG):
             return True
         return event.parent_activity_id is None or isinstance(event, TransactionAttemptFinished)
