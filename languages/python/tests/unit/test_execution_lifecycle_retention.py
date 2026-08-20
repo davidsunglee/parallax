@@ -13,8 +13,7 @@ the claim itself sets rather than as an equality, because a byte reading of two
 different shapes moves by tens where a free list served one construction and not
 another.
 
-The three terms are not the same kind of quantity, and the reach of what is
-graded here differs accordingly.
+All three terms are workload parameters, and none is reached the same way.
 
 **`N` and `P` are workload parameters**, so they are read as a grid of counts and
 each reading is graded twice. The line is a pin on THIS runtime: its live memory
@@ -29,20 +28,33 @@ does. Neither says anything past the largest count measured: five counts refuse
 a term that is already visible by thirty-two roots, and nothing refuses one that
 turns on later.
 
-**`D` is not a workload parameter here.** The activity algebra is not recursive —
-no kind opens beneath itself — so depth is a constant of the algebra rather than
-something a workload can grow, and the runtime admits exactly four chains whose
-longest is four levels. There is no slope in `D` to fit and none is fitted. What
-is graded instead is the structure that makes the sum over levels linear in the
-number of them: every live activity holds its own parent and nothing else of the
-tree, and the kinds that open at more than one depth hold exactly the same
-wherever they sit. Both are read as TOTALS of what one activity holds, never as
-the difference between two arms — a difference cancels whatever the two arms
-share, which is precisely the ancestor-derived state a depth claim is about. The
-chains are enumerated from the activity Protocols rather than listed by hand, so
-an algebra that grows a level — the Snapshot Stream and Stream Batch kinds the
-specification names and this runtime does not yet implement would make it five —
-fails that enumeration and forces the depth reading to be taken again.
+**`D` is a workload parameter too**, and one construction reaches it: a joining
+``db.transact`` opens its scope on the attempt already running, so a callback
+that calls ``db.transact`` again nests a second joining scope inside the first,
+and nothing bounds how often that repeats. Depth is therefore read as a grid the
+same way `N` and `P` are, over that construction driven through the public
+``Database.transact`` — the only door it has — and graded by the same two
+readings. Read across the Provider counts as well, because `P + D` is an
+addition: what one more level costs must not depend on how many Providers are
+active, nor one more Provider on how deep the root is, and a cost in `P * D`
+would agree with this at one column and disagree at the others.
+
+Two structural readings stand beside that grid, because a line fitted over
+repetitions of ONE level says nothing about the levels that occur once. Every
+live activity holds its own parent and nothing else of the tree, and the kinds
+that open at more than one depth hold exactly the same wherever they sit. Both
+are read as TOTALS of what one activity holds, never as the difference between
+two arms — a difference cancels whatever the two arms share, which is precisely
+the ancestor-derived state a depth claim is about. They are taken over the
+CORRELATION chains, enumerated from the activity Protocols rather than listed by
+hand, so an algebra that grows a level — the Snapshot Stream and Stream Batch
+kinds the specification names and this runtime does not yet implement would make
+it five — fails that enumeration and forces those readings to be taken again.
+What the enumeration cannot see is the joining recursion above, which reaches
+its parent through the active attempt rather than through the scope enclosing
+it: every one of those scopes is a child of the same attempt, so correlation
+depth stays fixed while live depth grows, and the grid rather than the
+enumeration is what answers for it.
 
 Four questions, four instruments:
 
@@ -58,9 +70,11 @@ a retained integer, an empty tuple, an all-immutable tuple — so the byte
 instrument is read beside it over two hundred observed roots, where anything kept
 per root clears the harness floor by two orders of magnitude.
 
-**What live roots hold.** Live memory is sampled at the innermost point of the
-roots open at once, which is the only point at which they exist together, and one
-sample is read four ways because each way sees what the others cannot. The
+**What live roots hold.** Live memory is sampled at the innermost point of what
+is open at once — the roots for the `N` and `P` grid, the joining scopes nested
+inside one another for the `D` one — which is the only point at which they exist
+together, and one sample is read four ways because each way sees what the others
+cannot. The
 lifecycle-typed survivor count answers what the runtime's own structure costs per
 root, per active Provider, and per level of nesting. The whole survivor count
 answers the same question about state of ANY type, so a per-root buffer belonging
@@ -119,6 +133,11 @@ from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
     FanoutLifecycleProvider,
+    JoinedInvocation,
+    JoinedInvocationRaised,
+    JoinedInvocationReturned,
+    TransactionInvocationFinished,
+    TransactionInvocationStarted,
 )
 from parallax.core.execution_lifecycle._activity import (
     DatabaseCallActivity,
@@ -160,6 +179,13 @@ _PROVIDERS: Final = (1, 2, 3)
 """Providers active on every root. Three points, so the slope taken from the
 first two has somewhere to be wrong: a per-root cost quadratic in the Providers
 agrees with a linear one at two counts and disagrees at the third."""
+
+_DEPTHS: Final = (1, 2, 4, 8, 32)
+"""Joining calls nested inside one another, for the same reason and over the same
+spread as :data:`_ROOTS`: the first two are one level apart, so their difference
+is what one more level costs rather than a ratio, and the largest is far enough
+from them that a cost quadratic in the levels already open is whole levels off
+the line instead of within one level's weight of it."""
 
 
 class _DiscardingHandler:
@@ -391,17 +417,20 @@ def _observed_read_owning(count: int) -> Seam:
     return run
 
 
-def _installed(providers: int) -> InstalledLifecycle:
-    """What a handle holds for ``providers`` Providers active on every root.
+def _fanout(providers: int) -> FanoutLifecycleProvider:
+    """``providers`` Providers active on every root.
 
     Composed for one Provider as much as for four, so the shape a count is read
     over does not change between the counts being compared: a fan-out opens a
     composite Handler of its own, and a single Provider installed directly does
     not, which would put a step in the middle of a claim about a slope.
     """
-    return InstalledLifecycle(
-        FanoutLifecycleProvider([_AcceptingProvider() for _ in range(providers)]), DeliveryState()
-    )
+    return FanoutLifecycleProvider([_AcceptingProvider() for _ in range(providers)])
+
+
+def _installed(providers: int) -> InstalledLifecycle:
+    """What a handle holds for ``providers`` Providers active on every root."""
+    return InstalledLifecycle(_fanout(providers), DeliveryState())
 
 
 type _Chain = Callable[[ExitStack, InstalledLifecycle], tuple[object, ...]]
@@ -486,9 +515,11 @@ def _participating_read_chain(
 def _joined_invocation_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
     """An invocation, its attempt, and a joining call nested inside it.
 
-    Three levels rather than four: a joined invocation opens nothing beneath
-    itself, and the reads and batches its callback drives are children of the
-    same attempt it is.
+    Three CORRELATION levels rather than four: everything a joining call's
+    callback drives — a read, a batch, another joining call — is a child of the
+    same attempt this one is a child of, so nothing it opens is named beneath it.
+    How deeply those scopes nest inside one another is a different question and
+    :func:`_joined_depth` is where it is asked.
     """
     invocation, attempt = _begun_attempt(stack, installed)
     joined = stack.enter_context(attempt.joined_invocation())
@@ -520,12 +551,15 @@ _SHAPES: Final = (
         (TransactionInvocationActivity, TransactionAttemptActivity, JoinedInvocationActivity),
     ),
 )
-"""Every chain the algebra admits, and the kinds each of its levels is.
+"""Every CORRELATION chain the algebra admits, and the kinds each level is.
 
-Checked against the Protocols rather than trusted:
-:func:`test_the_activity_algebra_nests_four_levels_and_no_more` derives the same
+A chain here is the parent relation an event's ``parent_activity_id`` follows,
+which is what the two structural readings are taken over. Checked against the
+Protocols rather than trusted:
+:func:`test_the_correlation_chains_nest_four_levels_and_no_more` derives the same
 set from the activity kinds themselves, so a shape missing here is a failure
-rather than an omission.
+rather than an omission. It is not a bound on how deep live scopes nest, which
+:func:`_joined_depth` reaches past any of these.
 """
 
 _ACTIVITY_KINDS: Final = (
@@ -540,18 +574,23 @@ _ACTIVITY_KINDS: Final = (
 
 Five of the seven kinds `m-execution-lifecycle` names, plus the joining call an
 invocation nests. Snapshot Stream and Stream Batch have events and no activity
-here yet, and their arrival is what would take the algebra's longest chain from
-four levels to five.
+here yet, and their arrival is what would take the longest correlation chain
+from four levels to five.
 """
 
 
 def _opens(kind: type) -> tuple[type, ...]:
-    """The activity kinds ``kind`` can open beneath it, read off its Protocol.
+    """The activity kinds ``kind`` names as its children, read off its Protocol.
 
     The return annotation is the whole of the evidence, which is what makes this
-    an enumeration of the algebra rather than a second copy of it: a method that
-    answers an activity nests one, and ``__enter__`` answers the kind it is
-    already.
+    an enumeration of the correlation relation rather than a second copy of it: a
+    method that answers an activity parents one, and ``__enter__`` answers the
+    kind it is already.
+
+    What it cannot see is a scope opened through something other than the
+    activity it nests inside — a joining ``transact`` reaches the ACTIVE ATTEMPT
+    for its parent, so its scope sits inside another joining scope while naming
+    none of it. That is why the depth term is measured rather than read off here.
     """
     returns = (
         get_type_hints(member).get("return")
@@ -562,11 +601,14 @@ def _opens(kind: type) -> tuple[type, ...]:
 
 
 def _chains_below(kind: type, above: tuple[type, ...] = ()) -> tuple[tuple[type, ...], ...]:
-    """Every chain of kinds from ``kind`` down to something that opens nothing.
+    """Every chain of kinds from ``kind`` down to one that parents nothing.
 
-    A kind found above itself is refused rather than followed: recursion is what
-    would make depth a workload parameter, and a runtime that admitted it would
-    need a reading of `D` this suite does not take.
+    A kind found above itself is refused rather than followed, because a cycle in
+    the correlation relation has no finite enumeration and the two structural
+    readings are taken per chain. It bounds the CORRELATION depth alone: live
+    scopes nest as deeply as a workload asks, which
+    :func:`test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once`
+    is what grades.
     """
     assert kind not in above, (kind, above)
     nested = tuple(child for child in _opens(kind) if child in _ACTIVITY_KINDS)
@@ -578,7 +620,7 @@ def _chains_below(kind: type, above: tuple[type, ...] = ()) -> tuple[tuple[type,
 
 
 def _admitted_chains() -> frozenset[tuple[type, ...]]:
-    """Every chain a root can nest, from the two functions that open a root."""
+    """Every correlation chain a root can parent, from the two root openers."""
     roots = tuple(
         opened
         for opener in (open_read_root, open_transaction_root)
@@ -663,6 +705,76 @@ def _registering_roots(count: int) -> Seam:
             sample()
 
     return run
+
+
+def _joined_depth(depth: int, providers: int) -> Seam:
+    """One transaction whose callback joins itself ``depth`` times, sampled at the
+    innermost of them.
+
+    The construction that makes activity depth a workload parameter, driven
+    through the only door that reaches it: a joining ``db.transact`` opens its
+    scope on the attempt already running, so the scope opened by a callback's own
+    ``db.transact`` sits inside the scope that callback is running in, and
+    neither has closed when the next one opens.
+
+    Driven end to end rather than at the seam, unlike every other shape here,
+    because there is no seam that reaches it — the nesting is a property of what
+    ``transact`` does when a transaction is already active on the thread. The
+    reading therefore carries the unit of work each level runs as well as the
+    activity each level opens, and every reading still has to sit on a line.
+    """
+    port = RecordingPort(rows=[NEW_ROW])
+    db = connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=_fanout(providers))
+
+    def joining(remaining: int, sample: Callable[[], None]) -> Callable[[Transaction], None]:
+        def body(_tx: Transaction) -> None:
+            if remaining == 0:
+                sample()
+                return
+            db.transact(joining(remaining - 1, sample))
+
+        return body
+
+    def run(sample: Callable[[], None]) -> None:
+        db.transact(joining(depth, sample))
+
+    return run
+
+
+class _JoiningTransitions:
+    """Every joining call's Started and Finished, as correlation and nothing else.
+
+    Keeps integers rather than events, so a Handler that would fail the retention
+    claims this suite makes elsewhere is not what any of them measure.
+    """
+
+    def __init__(self) -> None:
+        self.order: list[tuple[str, int]] = []
+        self.parents: set[int | None] = set()
+
+    def handle(self, event: ExecutionEvent, /) -> None:
+        if isinstance(event, TransactionInvocationStarted) and isinstance(
+            event.invocation, JoinedInvocation
+        ):
+            self.order.append(("started", event.activity_id))
+            self.parents.add(event.parent_activity_id)
+        elif isinstance(event, TransactionInvocationFinished) and isinstance(
+            event.outcome, JoinedInvocationReturned | JoinedInvocationRaised
+        ):
+            self.order.append(("finished", event.activity_id))
+
+
+class _RecordingJoins:
+    """A Provider handing every root the same joining-transition recorder."""
+
+    def __init__(self, transitions: _JoiningTransitions) -> None:
+        self._transitions = transitions
+
+    def open(self, execution: object, /) -> ExecutionLifecycleHandler:
+        return self._transitions
+
+    def report_handler_error(self, error: object, /) -> None:
+        return None
 
 
 def test_a_completed_read_leaves_no_lifecycle_object_alive() -> None:
@@ -806,6 +918,45 @@ def test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once() -> None:
         _at_most_proportional(per_root, _PROVIDERS)
 
 
+def test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once() -> None:
+    # The `D` of `O(N * (P + D))`, over the one construction that grows it: a
+    # callback calling `db.transact` again nests a joining scope inside the one
+    # it is running in, and nothing bounds how often that repeats. Read as a grid
+    # rather than argued from the algebra — the correlation tree makes these
+    # scopes siblings under one attempt, and being siblings does not close the
+    # ones already open.
+    #
+    # Read twice over, once down each axis, because `P + D` is an addition: a
+    # per-level cost that depended on the Providers active, or a per-Provider
+    # cost that depended on the depth, is a `P * D` term that agrees with this at
+    # one column and disagrees at the others.
+    measured = {
+        (depth, providers): _live(_joined_depth(depth, providers))
+        for providers in _PROVIDERS
+        for depth in _DEPTHS
+    }
+    per_level = {
+        providers: _affine({depth: measured[(depth, providers)] for depth in _DEPTHS}, _DEPTHS)
+        for providers in _PROVIDERS
+    }
+    per_provider = {
+        depth: _affine(
+            {providers: measured[(depth, providers)] for providers in _PROVIDERS}, _PROVIDERS
+        )
+        for depth in _DEPTHS
+    }
+    assert min(min(added) for added in per_level.values()) > 0, (
+        "a nested joining call holds nothing, or nothing is being sampled"
+    )
+    assert len(set(per_level.values())) == 1, per_level
+    assert len(set(per_provider.values())) == 1, per_provider
+    # The same readings against the bound rather than against this runtime's
+    # shape, which is the claim the specification makes and the one a differently
+    # shaped implementation would also have to pass.
+    for providers in _PROVIDERS:
+        _at_most_proportional({depth: measured[(depth, providers)] for depth in _DEPTHS}, _DEPTHS)
+
+
 def test_the_bytes_live_roots_keep_are_bounded_by_what_the_first_root_kept() -> None:
     # What none of the four counts can answer, over the deepest root shape: an
     # UNTRACKED value is no object to `gc.get_objects` and no referent to
@@ -853,13 +1004,45 @@ def test_the_concurrency_readings_refuse_a_composition_that_keeps_what_is_open()
         _at_most_proportional(measured, _ROOTS)
 
 
-def test_the_activity_algebra_nests_four_levels_and_no_more() -> None:
-    # The `D` of `O(N * (P + D))`, and the reason it is graded as a structure
-    # rather than as a slope: the algebra is not recursive, so depth is a
-    # constant of it. Enumerated from the Protocols and compared against the
-    # shapes this suite measures, so a kind that grew a level — the stream
-    # activities `m-execution-lifecycle` names and this runtime has yet to open —
-    # fails here first and forces the depth reading to be taken again.
+def test_a_joining_call_nests_a_live_scope_the_correlation_tree_does_not_show() -> None:
+    # Why `D` is measured over a workload instead of read off the Protocols. A
+    # joining `transact` takes its parent from the ACTIVE ATTEMPT, so every one
+    # of these scopes is a child of the same attempt and the correlation tree is
+    # three levels deep however many are open — while the scopes themselves nest
+    # one inside the next, which the transitions say exactly: a scope is open
+    # between its Started and its Finished, every Started here arrives before any
+    # Finished, and they close in the reverse of the order they opened.
+    transitions = _JoiningTransitions()
+    port = RecordingPort(rows=[NEW_ROW])
+    db = connect(
+        port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=_RecordingJoins(transitions)
+    )
+    depth = 5
+
+    def joining(remaining: int) -> Callable[[Transaction], None]:
+        def body(_tx: Transaction) -> None:
+            if remaining > 0:
+                db.transact(joining(remaining - 1))
+
+        return body
+
+    db.transact(joining(depth))
+
+    assert [phase for phase, _ in transitions.order] == ["started"] * depth + ["finished"] * depth
+    opened = [activity for phase, activity in transitions.order if phase == "started"]
+    closed = [activity for phase, activity in transitions.order if phase == "finished"]
+    assert closed == list(reversed(opened))
+    assert len(transitions.parents) == 1 and None not in transitions.parents, transitions.parents
+
+
+def test_the_correlation_chains_nest_four_levels_and_no_more() -> None:
+    # What an event's `parent_activity_id` can chain through, which is what the
+    # two structural readings below are taken over — deliberately not a bound on
+    # `D`, which the joining recursion grows past any of these. Enumerated from
+    # the Protocols and compared against the shapes this suite measures, so a
+    # kind that grew a parent level — the stream activities
+    # `m-execution-lifecycle` names and this runtime has yet to open — fails here
+    # first and forces those readings to be taken again.
     admitted = _admitted_chains()
     assert admitted == frozenset(kinds for _, kinds in _SHAPES)
     assert max(len(chain) for chain in admitted) == 4
@@ -910,7 +1093,10 @@ def test_an_activity_holds_the_same_at_every_depth_it_can_open_at() -> None:
 
 
 def test_nothing_of_a_closed_root_is_alive_once_the_sample_is_past() -> None:
-    # The concurrency sample is taken while every root is still open, so it says
-    # nothing about what happens when they close. Leaving them closes them all.
+    # Both grid samples are taken while every scope is still open, so neither
+    # says anything about what happens when they close. Leaving them closes them
+    # all, at sixteen roots open at once and at sixteen joining calls nested.
     deepest, _ = _SHAPES[1]
+    nested = _joined_depth(16, 3)
     assert _left_behind(lambda: _concurrent_roots(16, 3, deepest)(lambda: None)) == []
+    assert _left_behind(lambda: nested(lambda: None)) == []

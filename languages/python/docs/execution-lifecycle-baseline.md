@@ -34,20 +34,20 @@ configuration first; the first three exist to decompose the last two.
 
 | Configuration | dispatch p50 | dispatch p95 | overhead p50 | overhead p95 |
 |---|---|---|---|---|
-| One Handler that keeps nothing | 1.50 | 3.12 | 10.0% | 8.7% |
-| Safe logging alone, discarding every record | 2.28 | 4.09 | 15.2% | 18.7% |
-| Safe logging alone, at INFO | 3.37 | 5.41 | 22.3% | 24.8% |
-| Fan-out of three, tracing one root in ten | 3.84 | 6.19 | 25.3% | 34.0% |
-| Fan-out of three, tracing every root | 4.07 | 6.75 | 26.7% | 36.6% |
+| One Handler that keeps nothing | 1.55 | 3.45 | 10.3% | 9.1% |
+| Safe logging alone, discarding every record | 2.81 | 4.90 | 18.7% | 19.5% |
+| Safe logging alone, at INFO | 3.89 | 6.09 | 25.5% | 27.3% |
+| Fan-out of three, tracing one root in ten | 4.34 | 5.34 | 28.3% | 19.4% |
+| Fan-out of three, tracing every root | 4.68 | 7.53 | 30.3% | 38.6% |
 
 Against ADR 0060's provisional ceilings — 5 µs p95 dispatch, 5% p50 and 10% p95
 end-to-end:
 
-- **dispatch p50 passes in every configuration**, with 23% headroom in the
-  production shape, and **p95 misses in both production shapes** — by 24% in the
+- **dispatch p50 passes in every configuration**, with 13% headroom in the
+  production shape, and **p95 misses in both production shapes** — by 7% in the
   sampled one;
-- **end-to-end overhead misses at p50 by a factor of five** against this port,
-  and reaches the 5% ceiling once a statement costs roughly 310 µs.
+- **end-to-end overhead misses at p50 by nearly a factor of six** against this
+  port, and reaches the 5% ceiling once a statement costs roughly 360 µs.
 
 Neither reading means anything without its method, which is the next two
 sections.
@@ -63,10 +63,10 @@ case of this one. The report prints the arithmetic rather than the argument:
 
 | Per-round-trip latency | p50 overhead, production fan-out |
 |---|---|
-| 0 µs (this measurement) | 25.2% |
-| 50 µs — a fast local socket | 15.2% |
-| 250 µs — a same-host container | 5.9% |
-| 1 ms — a LAN round trip | 1.8% |
+| 0 µs (this measurement) | 28.4% |
+| 50 µs — a fast local socket | 17.2% |
+| 250 µs — a same-host container | 6.6% |
+| 1 ms — a LAN round trip | 2.0% |
 | 5 ms — a busy or remote database | 0.4% |
 
 Four round trips are charged, which is what this workload issues. A real
@@ -83,7 +83,7 @@ neither direction: a preemption landing on the unobserved arm is subtracted out
 of that pair's difference and understates it as surely as one landing on the
 observed arm overstates it. The configuration that does almost no work shows the
 scale of the disagreement: one Handler that keeps nothing measures a p95
-difference of 3.12 µs against a p50 of 1.50, and that 1.6 µs gap is the two arms
+difference of 3.45 µs against a p50 of 1.55, and that 1.9 µs gap is the two arms
 disagreeing rather than dispatch.
 
 Across repeated runs of the same code on the same machine, the p50 columns move
@@ -95,62 +95,39 @@ of the work.
 The configurations decompose the total, each line the difference from the one
 above it:
 
-- **1.50 µs/event is Parallax's own** — the descriptor, the opening call, the
+- **1.55 µs/event is Parallax's own** — the descriptor, the opening call, the
   event, its sequence and activity assignment, the publisher's delivery, and the
   containment around calling a Handler.
-- **+0.78 µs/event is the logging built-in describing what a level above DEBUG
-  could still want**, which it does whether or not that level would keep it: five
-  transitions per workload, two of them root summaries carrying ten counters
-  each — the largest field set the Handler builds.
-- **+1.09 µs/event is the standard library** doing what it was asked to: two
+- **+1.25 µs/event is the logging built-in describing every transition**, which
+  it does whatever the Logger's level would keep: twenty field mappings per
+  workload, two of them root summaries carrying ten counters each — the largest
+  field set the Handler builds.
+- **+1.08 µs/event is the standard library** doing what it was asked to: two
   records per workload survive the level filter at INFO, at roughly 11 µs each
   for `LogRecord` construction, the message rendering `QueueHandler.prepare`
   does, and the enqueue.
-- **+0.48 µs/event is the fan-out, bounded metrics, and sampled tracing
+- **+0.45 µs/event is the fan-out, bounded metrics, and sampled tracing
   together** — three composed Providers, a composite Handler, and one traced root
   in ten.
-- **+0.23 µs/event is tracing every root** instead of one in ten.
+- **+0.34 µs/event is tracing every root** instead of one in ten.
 
-The runtime's own dispatch is 39% of the production total. Every other term is
+The runtime's own dispatch is 36% of the production total. Every other term is
 work a Handler the configuration installed asked for: the built-in's field
 mapping, the standard library's record, and the composed children's own.
 
-## What changed since the first reading
+## What the built-in pays for a record nobody keeps
 
-The first measurement of this workload found the logging built-in costing
-2.29 µs/event on top of the runtime — more than the runtime it observes — with
-**1.24 µs of that paid whether or not any record survived the Logger's level**,
-because `_LoggingHandler.handle` built every event's field mapping before calling
-`Logger.log`. That is fixed rather than recorded: the Handler asks
-`Logger.isEnabledFor` first and describes nothing the Logger would drop.
+The largest term after the runtime's own is the field mapping the logging
+built-in builds for every transition, and the second configuration isolates it:
+a CRITICAL Logger keeps none of the twenty records and the built-in still costs
+1.25 µs/event, 29% of the production fan-out's dispatch. Which records survive
+is the Logger's decision, asked once, by `Logger.log`, so the mapping is built at
+every level.
 
-The realized saving is **0.58 µs/event** on the production fan-out (4.42 → 3.84
-p50), not the 1.24 the decomposition predicted, and the gap is the guard's shape
-rather than a measurement error. The guard is conservative: instead of computing
-each event's exact level, it admits the two shapes that can be worth more than
-DEBUG — a root activity's own Finished, and a Transaction Attempt's. Five of this
-workload's twenty transitions are therefore still described at any level, and
-those five include both root summaries, which are the most expensive records the
-Handler builds. Recovering the rest of that residue would take an exact level per
-event, which is a second exhaustive match over the whole algebra.
-
-Nothing else moved: the runtime's own ~1.5 µs/event is unchanged, which is the
-control the comparison needed.
-
-The change alters no record a `logging.Logger` emits. Every level, message, and
-field of every record is identical with and without the guard across 72
-configurations — six Logger levels including one below DEBUG, a Handler level
-above the Logger's, three settings of the process-wide `logging.disable`, both
-details, and a child Logger inheriting its level from a parent — because
-`logging.Logger.log` asks the same question before it does anything else, and a
-Handler's own level filters records the Logger has already created. The premise
-is checked rather than assumed, and it takes both methods and the object they
-are bound to: the guard is taken only where `log` and `isEnabledFor` are both
-the standard implementations bound to the Logger being asked. A subclass
-emitting whatever it is handed, a Logger carrying another Logger's bound `log`,
-and an `isEnabledFor` that answers statefully are each described for every event
-instead, since for those the premise is false and skipping would delete a record
-rather than skip building one.
+That is what the numbers above describe, and nothing here is written as though
+it were cheaper. `docs/deferred-ledger.md` D-79 carries the shape that recovers
+the cost — a mapping materialized only if the standard library asks for it — and
+why the short cut of asking the Logger's level first is not one.
 
 ## Rerunning it
 
