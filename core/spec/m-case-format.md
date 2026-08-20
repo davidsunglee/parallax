@@ -1665,8 +1665,11 @@ no golden SQL at all, and a **resolving read** a keyed write owes (*Resolving
 reads a write owes*), which reaches the database and is counted but which the
 case authors no golden for. The indexes the remaining calls name ARE that order
 — in delivery order, once each — so a record naming a statement twice, or
-leaving one unnamed, contradicts its own goldens. `then.statements` remains the
-sole SQL and bind oracle, and `then.roundTrips` the sole count oracle.
+leaving one unnamed, contradicts its own goldens. Each index is named by a call
+of the KIND its own statement is — a query by a read, DML by a write — so a
+resolving read carrying a golden DML index leaves the write that ran it absent
+from a record whose coverage is otherwise complete. `then.statements` remains
+the sole SQL and bind oracle, and `then.roundTrips` the sole count oracle.
 
 The shape is a case assertion format, not a public serialization contract. The
 compatibility harness validates `then.executionLifecycle` without producing

@@ -429,9 +429,10 @@ statement by index into this envelope's own `emissions` array, just as the oracl
 uses the case's flattened authored statements. A call the envelope emits no
 statement for — the resolving read a keyed write owes (`m-case-format`) — names
 no index, and the indexes the rest name are the emission order exactly, in
-delivery order and once each. Every present index must be in range; JSON Schema
-cannot express those cross-array relations, so the adapter and reference harness
-enforce them semantically.
+delivery order and once each. Every present index must be in range and be named
+by a call of the kind its own emission is — a query by a read, DML by a write;
+JSON Schema cannot express those cross-array relations, so the adapter and
+reference harness enforce them semantically.
 
 The key is optional and additive, but an adapter claiming
 `m-execution-lifecycle` MUST report it for every case authoring the oracle. It

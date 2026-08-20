@@ -3005,11 +3005,12 @@ error. A fatal trigger remains primary and attaches rollback failure through
 native chaining. Rollback failure never retries and discards the connection.
 
 `FanoutLifecycleProvider` takes an ordered nonempty sequence of Providers,
-rejects the same object twice, opens children in order, and declines when all
-children decline. A child open failure aborts the root and discards already
-opened child handlers. Delivery is ordered; an ordinary child failure
-quarantines only that child and later siblings still receive the current and
-subsequent events. Distinct Providers may share a concurrency-safe backend.
+rejects the same object twice anywhere in the tree nesting forms, opens children
+in order, and declines when all children decline. A child open failure aborts
+the root and discards already opened child handlers. Delivery is ordered; an
+ordinary child failure quarantines only that child and later siblings still
+receive the current and subsequent events. Distinct Providers may share a
+concurrency-safe backend.
 
 `LoggingLifecycleProvider` accepts an application-configured `logging.Logger`
 and a `LifecycleLogDetail` of `SAFE` (default) or `DIAGNOSTIC`. It owns no queue,

@@ -589,6 +589,31 @@ def test_a_bind_that_is_no_number_reconciles_only_by_equality() -> None:
             )
 
 
+def test_a_numeric_looking_string_is_no_decimal_spelling() -> None:
+    """The cross-type licence belongs to the DECIMAL carrier, not to the string.
+
+    A string reaching the wire is a semantic value of its own — a byte buffer's
+    hex, a UUID, a date — and one that happens to parse as a number is a
+    delivered type the case never authored. Sanctioning it by parse alone would
+    let a driver coercing an integer bind to text, or a buffer to the number its
+    hex reads as, leave the golden green.
+    """
+    for planned, delivered in (
+        (1, "1"),
+        ("1", 1),
+        (b"\x01\x02\x03\x04", 1020304),
+        (uuid.UUID(int=12), 12),
+        (JsonDocument({"total": 250.00}), JsonDocument({"total": "250.00"})),
+        (JsonDocument({"totals": [1]}), JsonDocument({"totals": ["1"]})),
+    ):
+        with pytest.raises(engine.EngineError, match="is planned with binds"):
+            engine._delivered(  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+                (_lowered("update account set balance = ?", planned),),
+                (_lowered("update account set balance = ?", delivered),),
+                "a unit",
+            )
+
+
 def test_a_document_bind_reconciles_by_content_rather_than_key_order() -> None:
     """A value-object document write binds the whole document, and a mapping's
     key order is no part of the value either side names."""
