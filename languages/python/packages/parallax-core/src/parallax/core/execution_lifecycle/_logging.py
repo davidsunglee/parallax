@@ -423,27 +423,58 @@ def _rendered(event: ExecutionEvent, detail: LifecycleLogDetail) -> _Rendered:
 
 
 _STANDARD_LOG: Final = logging.Logger.log
+_STANDARD_ENABLED_FOR: Final = logging.Logger.isEnabledFor
+
+
+def _is_standard(method: object, implementation: object, receiver: object) -> bool:
+    """Whether ``method`` is ``implementation`` bound to ``receiver`` itself.
+
+    Both halves are load-bearing. The implementation decides what the call does;
+    the receiver decides whose state it does it to, and a method taken off one
+    object and stored on another is the standard implementation answering for
+    somebody else.
+    """
+    return (
+        getattr(method, "__func__", None) is implementation
+        and getattr(method, "__self__", None) is receiver
+    )
 
 
 def _skips_below_its_level(logger: logging.Logger) -> bool:
-    """Whether ``logger``'s own ``log`` drops what its level excludes.
+    """Whether asking ``logger`` its level answers what its own ``log`` would.
 
-    The premise the description guard rests on: ``logging.Logger.log`` asks
-    ``isEnabledFor`` before it does anything else, so a Handler that asks first
-    and describes nothing when the answer is no changes which records exist not
-    at all. An application configures the Logger, and a subclass may override
-    ``log`` to emit whatever it is handed — straight through ``_log``, past the
-    level entirely — for which the premise is false and skipping would silence a
-    record that Logger emits today. So the optimization is taken only for the
-    implementation it reasons about.
+    The premise the description guard rests on, which takes both of the methods
+    involved: ``logging.Logger.log`` asks ``self.isEnabledFor`` before it does
+    anything else, so a Handler that asks the same question first and describes
+    nothing when the answer is no changes which records exist not at all. That
+    holds only while both halves are the standard ones, and an application
+    configures the Logger:
 
-    Read off the BOUND attribute rather than the type, so a Logger carrying a
-    ``log`` of its own is treated as the override it is however it acquired one.
-    Overriding ``isEnabledFor``, ``_log``, ``handle``, or ``filter`` needs no
-    such care: the first is the very question asked here, and the rest run after
-    the level has already admitted the record.
+    * a subclass may override ``log`` to emit whatever it is handed — straight
+      through ``_log``, past the level entirely — and skipping would then silence
+      a record that Logger emits today;
+    * a Logger may carry another Logger's bound ``log``, which is the standard
+      implementation asking the OTHER Logger's level, so the question answered
+      here would be about the wrong object;
+    * a subclass may override ``isEnabledFor`` to answer statefully — a rate
+      limiter, a sampler — for which asking it once here and once inside ``log``
+      is two answers where there was one, and the record is lost when they
+      disagree.
+
+    Read off the BOUND attributes rather than off the type, so a Logger carrying
+    a method of its own is treated as the override it is however it acquired one.
+    Overriding ``_log``, ``handle``, or ``filter`` needs no such care: they run
+    after the level has already admitted the record.
+
+    What remains outside the premise is what the standard library already leaves
+    outside its own: a level, a ``disabled`` flag, or the process-wide
+    ``logging.disable`` changed by another thread between the two calls decides
+    the record by which side of the change it landed on, exactly as it does for
+    two records logged either side of it.
     """
-    return getattr(logger.log, "__func__", None) is _STANDARD_LOG
+    return _is_standard(logger.log, _STANDARD_LOG, logger) and _is_standard(
+        logger.isEnabledFor, _STANDARD_ENABLED_FOR, logger
+    )
 
 
 class _LoggingHandler:
@@ -453,6 +484,13 @@ class _LoggingHandler:
     and the counters are the whole of what accumulates: a Handler that kept the
     events themselves in order to summarize them would be the retained log this
     module exists to replace.
+
+    Whether the Logger's own implementations are the ones the description guard
+    reasons about is settled once, when the root opens, and holds for that root.
+    What the Logger's level, its ``disabled`` flag, and the process-wide
+    ``logging.disable`` say is asked per event and may change under it; which
+    methods the Logger carries is a reconfiguration of the Logger itself, and one
+    made while a root is in flight lands on the roots that open after it.
     """
 
     __slots__ = (
@@ -502,13 +540,14 @@ class _LoggingHandler:
     def _describable(self, event: ExecutionEvent) -> bool:
         """Whether a record for ``event`` could survive this Logger's own level.
 
-        ``logging.Logger.log`` asks exactly this question before it does
-        anything else, so asking it first changes which records exist not at all
-        — and skips building a field mapping for every transition whose answer
-        is no, which is most of them under any production level. A Logger whose
-        ``log`` is not that implementation is answered yes for every event
-        instead, because the equivalence is with what that implementation does
-        and a Logger that emits whatever it is handed would lose records here.
+        ``logging.Logger.log`` asks exactly this question of exactly this object
+        before it does anything else, so asking it first changes which records
+        exist not at all — and skips building a field mapping for every
+        transition whose answer is no, which is most of them under any production
+        level. A Logger that :func:`_skips_below_its_level` did not vouch for is
+        answered yes for every event instead, because the equivalence is with
+        what those two standard implementations do and anything else here would
+        lose a record rather than skip building one.
 
         The cheapest level any transition is worth is ``DEBUG``, so a Logger that
         would keep a ``DEBUG`` record keeps every possibility open and the answer

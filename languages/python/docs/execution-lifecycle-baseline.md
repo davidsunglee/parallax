@@ -143,10 +143,14 @@ configurations — six Logger levels including one below DEBUG, a Handler level
 above the Logger's, three settings of the process-wide `logging.disable`, both
 details, and a child Logger inheriting its level from a parent — because
 `logging.Logger.log` asks the same question before it does anything else, and a
-Handler's own level filters records the Logger has already created. A Logger
-whose own `log` does not ask that question — a subclass emitting whatever it is
-handed — is described for every event instead, since for that one the premise is
-false and skipping would delete a record rather than skip building one.
+Handler's own level filters records the Logger has already created. The premise
+is checked rather than assumed, and it takes both methods and the object they
+are bound to: the guard is taken only where `log` and `isEnabledFor` are both
+the standard implementations bound to the Logger being asked. A subclass
+emitting whatever it is handed, a Logger carrying another Logger's bound `log`,
+and an `isEnabledFor` that answers statefully are each described for every event
+instead, since for those the premise is false and skipping would delete a record
+rather than skip building one.
 
 ## Rerunning it
 

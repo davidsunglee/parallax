@@ -642,6 +642,61 @@ def test_a_logger_that_emits_what_its_level_excludes_is_still_told_everything() 
     assert written[0].fields["transition"] == "readStarted"
 
 
+def test_a_logger_carrying_another_loggers_log_is_still_told_everything() -> None:
+    # Being the standard implementation is not enough; it has to be the standard
+    # implementation of THIS Logger. A Logger carrying another one's bound `log`
+    # runs `logging.Logger.log` against the OTHER Logger's level, so the level
+    # asked here and the level that decides the record belong to two different
+    # objects: a configured CRITICAL in front of a DEBUG target emits the record
+    # through the target today, and consulting the front object's level would
+    # delete it. Both are configuration an application can reach — a bound method
+    # assigned onto an instance is ordinary Python — so the guard reads the
+    # receiver as well as the function, and is not taken for a borrowed method.
+    target = _logger(logging.DEBUG)
+    collected = _Collecting()
+    target.addHandler(collected)
+    front = _logger(logging.CRITICAL)
+    front.log = target.log
+    handler = LoggingLifecycleProvider(front).open(EXECUTION)
+    assert handler is not None
+    handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
+
+    written = [_written(record) for record in collected.records]
+    assert [record.level for record in written] == [logging.DEBUG]
+    assert written[0].fields["transition"] == "readStarted"
+
+
+def test_a_logger_that_answers_its_level_once_is_asked_exactly_once() -> None:
+    # The guard asks the Logger a question its own `log` will ask again, which is
+    # free only while asking twice answers twice the same. A Logger whose
+    # `isEnabledFor` is stateful — a rate limiter, a sampler, a first-of-each-kind
+    # filter — answers the second call differently by design, and a guard taking
+    # the first answer for itself would leave `log` with the second and lose the
+    # record. The number of times such a Logger is consulted is therefore part of
+    # what it observes, and it is what it was before any guard existed: once per
+    # record.
+    class _AnsweredOnce(logging.Logger):
+        def __init__(self, name: str) -> None:
+            super().__init__(name)
+            self.asked = 0
+
+        def isEnabledFor(self, level: int) -> bool:
+            self.asked += 1
+            return self.asked == 1
+
+    logger = _AnsweredOnce(f"parallax.test.{uuid4().hex}")
+    collected = _Collecting()
+    logger.addHandler(collected)
+    handler = LoggingLifecycleProvider(logger).open(EXECUTION)
+    assert handler is not None
+    handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
+
+    written = [_written(record) for record in collected.records]
+    assert logger.asked == 1
+    assert [record.level for record in written] == [logging.DEBUG]
+    assert written[0].fields["transition"] == "readStarted"
+
+
 def test_a_globally_disabled_logging_system_describes_nothing_either(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
