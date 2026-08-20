@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-79**.
+Entry numbering is continuous and never reused. The next new number is **D-80**.
 
 ## Entries
 
@@ -415,6 +415,48 @@ meanwhile is that neither lane can silently grow a second: every `handle.Databas
 the engine builds installs a Provider, asserted over the source
 (`tests/unit/test_lifecycle_observation.py`), so an unobserved lane is one that
 opens no Handle at all and says so.
+
+### D-79 — The logging built-in builds a field mapping for every transition, including the ones its Logger will drop
+
+*Medium — 1.25 µs/event of the production fan-out's 4.34, paid at every level.*
+Relates to
+`parallax.core.execution_lifecycle._logging._LoggingHandler.handle`.
+
+**What.** `handle` renders each event and fills a `dict` of correlation, payload,
+and — for a root's Finished — ten counters, then hands it to `Logger.log` through
+`extra=`. Under any production level most of those records are dropped
+immediately: the level rule gives `DEBUG` to every Started and every non-root
+Finished, so an `INFO` Logger over the baseline workload keeps two of twenty
+records and the mapping is built for all twenty.
+`languages/python/docs/execution-lifecycle-baseline.md` isolates the cost — the
+configuration whose Logger keeps nothing still measures 1.25 µs/event, 29% of the
+production fan-out's dispatch.
+
+The repair that has no correctness premise is a **lazily materialized `extra`
+mapping**: pass `Logger.log` a `Mapping` that holds the event, the detail, and
+the Handler's counters and renders the fields on first access. `Logger.makeRecord`
+iterates `extra` only for a record that has already survived `isEnabledFor`, so a
+dropped record touches nothing and a kept one pays exactly what it pays today,
+with no question asked of the Logger that the Logger did not already answer.
+
+**Why it is deferred rather than fixed.** It is a redesign of what the built-in
+hands the standard library, and it deserves its own change and its own review.
+`makeRecord` copies `extra` key by key and rejects the three reserved names, so
+the lazy mapping has to satisfy the whole `Mapping` protocol against an
+implementation detail of the standard library, and every Provider composed
+downstream — a `QueueHandler`, a formatter, an exporter — reads the record's
+attributes after that copy rather than the mapping, which has to be verified
+rather than assumed.
+
+What must NOT be done instead, because it was tried and reverted: asking
+`Logger.isEnabledFor` before describing, and skipping the mapping when the answer
+is no. `Logger.log` and `Logger.handle` reach overridable Logger state, so a
+Logger an application legitimately configures can answer the guard's query and
+`log`'s own query differently and lose a record that ships today — a subclass
+whose `log` emits past the level, a Logger carrying another Logger's bound `log`,
+and a stateful `disabled` descriptor or `isEnabledFor` are three such shapes, and
+narrowing the guard to exclude each of them found a fourth each time. An
+optimization on a built-in Provider may not decide which records exist.
 
 ## Forwarding pointers
 

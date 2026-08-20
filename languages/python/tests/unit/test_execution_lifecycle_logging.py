@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Final, NoReturn, get_args
+from typing import Any, Final, get_args
 from uuid import UUID, uuid4
 
 import pytest
@@ -71,7 +71,6 @@ from parallax.core.execution_lifecycle import (
     WriteBatchFinished,
     WriteBatchStarted,
 )
-from parallax.core.execution_lifecycle import _logging as _logging_module
 from parallax.core.execution_lifecycle._diagnostics import (
     database_diagnostic_for,
     diagnostic_for,
@@ -141,18 +140,6 @@ def _records(
 _DATABASE_FAILURE: Final = database_diagnostic_for(
     DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
 )
-
-
-class _Described(Exception):
-    """Raised in place of describing an event.
-
-    A description is proven ABSENT by the delivery completing and PRESENT by this
-    escaping, so neither direction rests on a counter a reader has to trust.
-    """
-
-
-def _describes_nothing(event: ExecutionEvent, detail: LifecycleLogDetail) -> NoReturn:
-    raise _Described(type(event).__name__)
 
 
 class _Collecting(logging.Handler):
@@ -555,10 +542,11 @@ def test_a_logger_below_the_level_is_told_nothing(caplog: pytest.LogCaptureFixtu
 def test_only_a_root_activity_or_an_attempt_finishing_is_worth_more_than_debug(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # The premise the level guard rests on, graded over every shape that can be
-    # worth more than DEBUG rather than asserted in a docstring. The guard skips
-    # describing a transition when the Logger would keep no DEBUG record, so a
-    # level above DEBUG reaching any OTHER shape would be a record silently lost.
+    # The level rule graded over every shape that can be worth more than DEBUG,
+    # rather than asserted in a docstring: `python.md` reserves INFO and ERROR
+    # for a ROOT activity's own Finished and WARNING and ERROR for a Transaction
+    # Attempt's, and gives DEBUG to every Started and every other Finished. An
+    # operator filtering above DEBUG sees exactly those two shapes and no others.
     root = _failure("the root failed")
     for record in _records(
         caplog,
@@ -598,83 +586,14 @@ def test_only_a_root_activity_or_an_attempt_finishing_is_worth_more_than_debug(
         assert not above_debug or root_activity or attempt, record.fields["transition"]
 
 
-def test_a_transition_the_logger_would_drop_is_never_described(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The saving, stated as the absence of work rather than as a duration: a
-    # Logger that keeps no DEBUG record makes no field mapping for a transition
-    # that could only have been DEBUG. Remove the guard and the count is three.
-    monkeypatch.setattr(_logging_module, "_rendered", _describes_nothing)
-    handler = LoggingLifecycleProvider(_logger(logging.WARNING)).open(EXECUTION)
-    assert handler is not None
-    handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
-    handler.handle(DatabaseCallStarted(EXECUTION.id, 2, 3, 2, "Account", "READ", STATEMENT))
-    handler.handle(ReadFinished(EXECUTION.id, 3, 2, 1, ReadCompleted()))
-
-    with pytest.raises(_Described, match="ReadFinished"):
-        handler.handle(ReadFinished(EXECUTION.id, 4, 1, None, ReadCompleted()))
-
-
-def test_a_logger_that_emits_what_its_level_excludes_is_still_told_everything() -> None:
-    # The guard's premise is a property of `logging.Logger.log` rather than of
-    # every Logger an application may configure: a subclass whose `log` emits
-    # what it is handed receives a DEBUG record today at a level that keeps
-    # none, and describing nothing for it would DELETE that record rather than
-    # skip building one nobody would see. So the guard is not taken at all for
-    # a Logger that does not ask its own level first.
-    class _Unconditional(logging.Logger):
-        def log(self, level: int, msg: object, *args: object, **kwargs: Any) -> None:
-            extra = kwargs.get("extra")
-            self.handle(
-                self.makeRecord(self.name, level, __file__, 0, msg, args, None, extra=extra)
-            )
-
-    logger = _Unconditional(f"parallax.test.{uuid4().hex}")
-    logger.setLevel(logging.CRITICAL)
-    collected = _Collecting()
-    logger.addHandler(collected)
-    handler = LoggingLifecycleProvider(logger).open(EXECUTION)
-    assert handler is not None
-    handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
-
-    written = [_written(record) for record in collected.records]
-    assert [record.level for record in written] == [logging.DEBUG]
-    assert written[0].fields["transition"] == "readStarted"
-
-
-def test_a_logger_carrying_another_loggers_log_is_still_told_everything() -> None:
-    # Being the standard implementation is not enough; it has to be the standard
-    # implementation of THIS Logger. A Logger carrying another one's bound `log`
-    # runs `logging.Logger.log` against the OTHER Logger's level, so the level
-    # asked here and the level that decides the record belong to two different
-    # objects: a configured CRITICAL in front of a DEBUG target emits the record
-    # through the target today, and consulting the front object's level would
-    # delete it. Both are configuration an application can reach — a bound method
-    # assigned onto an instance is ordinary Python — so the guard reads the
-    # receiver as well as the function, and is not taken for a borrowed method.
-    target = _logger(logging.DEBUG)
-    collected = _Collecting()
-    target.addHandler(collected)
-    front = _logger(logging.CRITICAL)
-    front.log = target.log
-    handler = LoggingLifecycleProvider(front).open(EXECUTION)
-    assert handler is not None
-    handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
-
-    written = [_written(record) for record in collected.records]
-    assert [record.level for record in written] == [logging.DEBUG]
-    assert written[0].fields["transition"] == "readStarted"
-
-
 def test_a_logger_that_answers_its_level_once_is_asked_exactly_once() -> None:
-    # The guard asks the Logger a question its own `log` will ask again, which is
-    # free only while asking twice answers twice the same. A Logger whose
-    # `isEnabledFor` is stateful — a rate limiter, a sampler, a first-of-each-kind
-    # filter — answers the second call differently by design, and a guard taking
-    # the first answer for itself would leave `log` with the second and lose the
-    # record. The number of times such a Logger is consulted is therefore part of
-    # what it observes, and it is what it was before any guard existed: once per
-    # record.
+    # How many times a Logger is consulted is part of what it observes, and this
+    # Provider adds no question of its own: `Logger.log` asks `isEnabledFor` and
+    # nothing here asks it again. A Logger whose `isEnabledFor` is stateful — a
+    # rate limiter, a sampler, a first-of-each-kind filter — answers a second
+    # call differently by design, so an extra query would decide records rather
+    # than observe them, and this Logger emits its one record because it is asked
+    # exactly once.
     class _AnsweredOnce(logging.Logger):
         def __init__(self, name: str) -> None:
             super().__init__(name)
@@ -697,49 +616,11 @@ def test_a_logger_that_answers_its_level_once_is_asked_exactly_once() -> None:
     assert written[0].fields["transition"] == "readStarted"
 
 
-def test_a_globally_disabled_logging_system_describes_nothing_either(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # `logging.disable` is process-wide and `isEnabledFor` answers it, so asking
-    # the Logger rather than reading its level is what makes the guard agree with
-    # `Logger.log` under every way a record can be suppressed.
-    monkeypatch.setattr(_logging_module, "_rendered", _describes_nothing)
-    handler = LoggingLifecycleProvider(_logger()).open(EXECUTION)
-    assert handler is not None
-    logging.disable(logging.CRITICAL)
-    try:
-        handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
-    finally:
-        logging.disable(logging.NOTSET)
-
-
-def test_a_handlers_own_level_does_not_decide_whether_a_record_is_built(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    # The equivalence this rests on is with `Logger.log`, which consults the
-    # LOGGER and nothing else; a Handler filters records that already exist. So a
-    # Handler set above DEBUG must change nothing about what is built, or a
-    # second Handler under the same Logger would stop seeing records it gets
-    # today.
-    logger = _logger()
-    quiet = logging.Handler(logging.ERROR)
-    logger.addHandler(quiet)
-    try:
-        handler = LoggingLifecycleProvider(logger).open(EXECUTION)
-        assert handler is not None
-        with caplog.at_level(logging.DEBUG, logger=logger.name):
-            handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
-    finally:
-        logger.removeHandler(quiet)
-    assert [record.levelno for record in caplog.records] == [logging.DEBUG]
-
-
 def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record() -> None:
-    # Where the guard had to go, and why it is AFTER the counters rather than
-    # before them: the summary reports the work the whole operation did, so a
-    # total that counted only the transitions somebody logged would be wrong at
-    # every production level — and an ERROR Logger is one that describes three
-    # of these fourteen events and keeps one.
+    # Why the counters run for every event rather than for the described ones:
+    # the summary reports the work the whole operation did, so a total that
+    # counted only the transitions a Logger kept would be wrong at every
+    # production level — and an ERROR Logger keeps one of these fourteen.
     def totals(level: int) -> tuple[dict[str, object], int]:
         logger = _logger(level)
         collected = _Collecting()
