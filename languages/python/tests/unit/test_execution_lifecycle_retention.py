@@ -3,13 +3,17 @@
 `core/spec/m-execution-lifecycle.md` bounds live lifecycle memory at
 `O(N * (P + D))` over `N` concurrent accepted roots, `P` active Providers, and
 maximum activity depth `D`, "independent of events already completed, retry
-count, stream length, result cardinality, and materialized graph size". Every
-clause of that is a statement about REFERENCES rather than about bytes, so each
-one below is graded with a definite answer rather than against a threshold: an
-object either survives its root or it does not, and a count either equals its
-neighbour or it does not.
+count, stream length, result cardinality, and materialized graph size". Nearly
+all of that is a statement about REFERENCES rather than about bytes, and every
+reference claim below is graded with a definite answer rather than against a
+threshold: an object either survives its root or it does not, and a count either
+equals its neighbour or it does not. Bytes are read where a reference cannot be
+counted — an UNTRACKED value the collector never sees — and read against a bound
+the claim itself sets rather than as an equality, because a byte reading of two
+different shapes moves by tens where a free list served one construction and not
+another.
 
-Three questions, three instruments:
+Four questions, four instruments:
 
 **What a finished root left.** :func:`_left_behind` answers every live instance
 of a type the lifecycle package defines that was not alive before the work began.
@@ -23,9 +27,22 @@ a retained integer, an empty tuple, an all-immutable tuple — so the byte
 instrument is read beside it over two hundred observed roots, where anything kept
 per root clears the harness floor by two orders of magnitude.
 
-**What a live root holds.** Live memory is sampled at the innermost point of `N`
-simultaneously open roots, which is the only point at which `N` roots exist at
-once.
+**What a live root holds.** Live memory is sampled at the innermost point of the
+roots open at once, which is the only point at which they exist together, and one
+sample is read three ways because each way sees what the others cannot. The
+lifecycle-typed survivor count answers what the runtime's own structure costs per
+root, per active Provider, and per level of nesting. The whole survivor count
+answers the same question about state of ANY type, so a per-root buffer belonging
+to no lifecycle class lands in it. The reference count answers what neither can:
+one container is one object however many things it points at, so a scope that
+kept its ancestors, or the roots open beside it, shows up here and nowhere else.
+
+**What a live root holds of a value it was HANDED** needs the same sample and one
+arrangement. A result is one borrowed object whatever its cardinality, so the
+seam asking that question builds the rows inside the window and drops its own
+reference before sampling: what is still reachable then is reachable through the
+root, and it is read both as survivors and as bytes — the second because a hold
+the collector does not track moves no count at all.
 
 What is graded elsewhere, and deliberately not restated here. The FREE paths —
 no Provider installed, and a Provider that declined — are
@@ -41,9 +58,9 @@ from __future__ import annotations
 
 import gc
 import tracemalloc
-from collections.abc import Callable
-from contextlib import ExitStack, suppress
-from typing import Final
+from collections.abc import Callable, Generator
+from contextlib import ExitStack, contextmanager, suppress
+from typing import Final, NamedTuple
 
 from _lifecycle_cost_support import (
     REPEATS,
@@ -51,6 +68,7 @@ from _lifecycle_cost_support import (
     TARGET,
     Seam,
     allocation,
+    retained,
     rows,
     survivors,
 )
@@ -58,25 +76,46 @@ from _transact_support import ACCOUNT, FIXED, NEW_ROW, RecordingPort, deadlock, 
 
 from _support import mirrored_models as mm
 from parallax.core.db_error import DatabaseError
-from parallax.core.execution_lifecycle import ExecutionEvent, ExecutionLifecycleHandler
+from parallax.core.execution_lifecycle import (
+    ExecutionEvent,
+    ExecutionLifecycleHandler,
+    FanoutLifecycleProvider,
+)
 from parallax.core.execution_lifecycle._activity import (
     DeliveryState,
     InstalledLifecycle,
+    WriteBatchActivity,
     open_read_root,
+    open_transaction_root,
 )
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction
 
-SMALL: Final = rows(500)
-LARGE: Final = rows(5_000)
+SMALL_ROWS: Final = 500
+LARGE_ROWS: Final = 5_000
 """Two result sizes an order of magnitude apart, neither below the small-integer
 cache: ``len`` of a short list answers a cached integer while either of these
 allocates one, so the two costs have the same shape and their equality is exact
 rather than approximate."""
 
+SMALL: Final = rows(SMALL_ROWS)
+LARGE: Final = rows(LARGE_ROWS)
+
 LIFECYCLE_PACKAGE: Final = "parallax.core.execution_lifecycle"
 _TESTING: Final = f"{LIFECYCLE_PACKAGE}.testing"
+
+_ROOTS: Final = (1, 2, 4, 8, 32)
+"""The roots held open at once. The first two are one root apart, which is what
+makes the difference between them a per-root cost rather than a ratio, and the
+largest is far from them deliberately: a cost quadratic in the roots already
+open sits within one root's own weight of the line at sixteen roots and whole
+roots away from it at thirty-two."""
+
+_PROVIDERS: Final = (1, 2, 3)
+"""Providers active on every root. Three points, so the slope taken from the
+first two has somewhere to be wrong: a per-root cost quadratic in the Providers
+agrees with a linear one at two counts and disagrees at the third."""
 
 
 class _DiscardingHandler:
@@ -148,10 +187,78 @@ def _left_behind(work: Callable[[], None]) -> list[object]:
     return survived
 
 
-def _live_lifecycle_objects(seam: Seam) -> list[object]:
-    """The lifecycle objects alive at ``seam``'s innermost point that were not
-    alive before it began."""
-    return [obj for obj in survivors(seam) if _lifecycle_object(obj)]
+class _Live(NamedTuple):
+    """What a live root holds, read three ways from one sample, because each
+    answers a different half of the bound.
+
+    ``lifecycle`` is what the runtime's own structure costs, and ``tracked`` is
+    every survivor whatever defined its type, so state a root keeps in a list, a
+    dict, or an application's own class is in the second and not the first.
+    ``references`` is what neither count can see: one container is one object
+    however many things it points at, so a scope that kept a graph — its
+    ancestors, the roots open beside it — moves no count at all and moves this by
+    one for every reference it kept. All three are counts of structure rather
+    than readings of an allocator, so all three are exact.
+    """
+
+    lifecycle: int
+    tracked: int
+    references: int
+
+
+_NOTHING: Final = _Live(0, 0, 0)
+
+
+def _live(seam: Seam) -> _Live:
+    """What is alive at ``seam``'s innermost point that was not alive before it.
+
+    Run once unsampled first, so a cost paid the first time anything opens a
+    root lands outside every window rather than inside whichever measurement
+    happened to run first. That is what leaves the counts comparable with each
+    other: a one-time structure is what the bound admits and what the allocation
+    suite's first-run measurement grades, and a series that charged it to one
+    member would read it as a difference between them.
+    """
+    seam(lambda: None)
+    alive = survivors(seam)
+    return _Live(
+        sum(1 for obj in alive if _lifecycle_object(obj)),
+        len(alive),
+        sum(len(gc.get_referents(obj)) for obj in alive),
+    )
+
+
+def _difference_of(larger: _Live, smaller: _Live) -> _Live:
+    """What ``larger`` holds and ``smaller`` does not, reading by reading."""
+    return _Live(*(more - less for more, less in zip(larger, smaller, strict=True)))
+
+
+def _difference(deeper: Seam, shallower: Seam) -> _Live:
+    """What holding ``deeper`` open costs over holding ``shallower`` open."""
+    return _difference_of(_live(deeper), _live(shallower))
+
+
+def _line(base: _Live, added: _Live, steps: int) -> _Live:
+    """``base`` plus ``steps`` of ``added``, reading by reading."""
+    return _Live(*(start + steps * more for start, more in zip(base, added, strict=True)))
+
+
+def _affine(measured: dict[int, _Live], over: tuple[int, ...]) -> _Live:
+    """What one more of ``over`` costs, given readings that sit on a line.
+
+    AFFINE rather than proportional, because `O(N * (P + D))` is what the
+    specification bounds: a structure built once, when the first root opens,
+    satisfies that bound, and a test demanding a reading through the origin
+    would fail an implementation for being cheaper than this one. What the bound
+    does not admit is a cost that grows with what is already open, and a step
+    taken between the two smallest measurements and required at every larger one
+    is what refuses it.
+    """
+    fewest, next_fewest = over[0], over[1]
+    step = _difference_of(measured[next_fewest], measured[fewest])
+    base = _difference_of(measured[fewest], _line(_NOTHING, step, fewest))
+    assert measured == {key: _line(base, step, key) for key in measured}, measured
+    return step
 
 
 def _observed_db(port: RecordingPort) -> Database:
@@ -185,19 +292,58 @@ def _observed_read_over(result: list[dict[str, object]]) -> Seam:
     return run
 
 
-def _concurrent_roots(count: int) -> Seam:
+def _observed_read_owning(count: int) -> Seam:
+    """One observed Read root over a result the SEAM builds and then drops.
+
+    :func:`_observed_read_over` hands the seam a list built before the window,
+    where an activity that kept it would allocate nothing the window could see —
+    which is exactly the shape a byte reading has to be arranged to catch. Here
+    the rows are built inside the window and the caller's own reference is
+    dropped before the sample, so every byte still reachable at that point is
+    reachable through the root.
+    """
+
+    def run(sample: Callable[[], None]) -> None:
+        result = rows(count)
+        with (
+            open_read_root(INSTALLED, target=TARGET, interface="TYPED") as read,
+            read.database_call(STATEMENT, "READ", TARGET) as call,
+        ):
+            call.read_completed(result)
+            del result
+            sample()
+
+    return run
+
+
+def _installed(providers: int) -> InstalledLifecycle:
+    """What a handle holds for ``providers`` Providers active on every root.
+
+    Composed for one Provider as much as for four, so the shape a count is read
+    over does not change between the counts being compared: a fan-out opens a
+    composite Handler of its own, and a single Provider installed directly does
+    not, which would put a step in the middle of a claim about a slope.
+    """
+    return InstalledLifecycle(
+        FanoutLifecycleProvider([_AcceptingProvider() for _ in range(providers)]), DeliveryState()
+    )
+
+
+def _concurrent_roots(count: int, providers: int) -> Seam:
     """``count`` Read roots open at once, each with a Database Call in flight.
 
-    Every root is opened through the same installed Provider, which is what makes
-    the sample the shape the bound is stated over: one Provider active across `N`
-    roots, each holding its own publisher and its own chain of live activities.
+    Every root is opened through the same installed composition, which is what
+    makes the sample the shape the bound is stated over: `P` Providers active
+    across `N` roots, each root holding its own publisher, its own composite
+    Handler, and its own chain of live activities.
     """
+    installed = _installed(providers)
 
     def run(sample: Callable[[], None]) -> None:
         with ExitStack() as stack:
             for _ in range(count):
                 read = stack.enter_context(
-                    open_read_root(INSTALLED, target=TARGET, interface="TYPED")
+                    open_read_root(installed, target=TARGET, interface="TYPED")
                 )
                 call = stack.enter_context(read.database_call(STATEMENT, "READ", TARGET))
                 call.read_completed(SMALL)
@@ -206,11 +352,56 @@ def _concurrent_roots(count: int) -> Seam:
     return run
 
 
+def _read_alone(sample: Callable[[], None]) -> None:
+    """A Read root with nothing open beneath it: the shallowest observed root."""
+    with open_read_root(INSTALLED, target=TARGET, interface="TYPED"):
+        sample()
+
+
+@contextmanager
+def _write_batch() -> Generator[WriteBatchActivity]:
+    """An observed Write Batch and the two scopes above it.
+
+    The deepest place a Database Call can sit, which is what makes it the
+    comparison a claim about DEPTH needs: the same activity kind opens under
+    three ancestors here and under one in :func:`_observed_read_over`.
+    """
+    with (
+        open_transaction_root(
+            INSTALLED,
+            concurrency="optimistic",
+            retries=1,
+            retry_optimistic_conflicts=False,
+            extra_retriable=None,
+        ) as invocation,
+        invocation.attempt() as attempt,
+    ):
+        attempt.begun()
+        with attempt.write_batch("pre_commit") as batch:
+            yield batch
+        attempt.committed()
+
+
+def _batch_alone(sample: Callable[[], None]) -> None:
+    with _write_batch():
+        sample()
+
+
+def _call_under_a_batch(sample: Callable[[], None]) -> None:
+    # The count is measured off the same list the shallow call reports the
+    # length of, rather than named as a constant: an integer a module already
+    # holds is a reference and an integer a call computes is an allocation, and
+    # the two calls have to differ by their DEPTH and nothing else.
+    with _write_batch() as batch, batch.database_call(STATEMENT, "WRITE", TARGET) as call:
+        call.write_completed(len(SMALL))
+        sample()
+
+
 def test_a_completed_read_leaves_no_lifecycle_object_alive() -> None:
-    # The published result is where a retained trace would have hung: the
-    # retired accessor answered one off the Snapshot, so a result that still
-    # reached its root's events would keep every one of them alive for as long as
-    # the caller held the value.
+    # The published result is where a retained trace would hang: a caller holds
+    # that value for as long as it likes and long after the root has finished,
+    # so a result that could still reach its root's events would keep every one
+    # of them alive for exactly that long.
     port = RecordingPort(rows=[NEW_ROW])
     db = _observed_db(port)
     assert _left_behind(_one_read(db)) == []
@@ -287,31 +478,71 @@ def test_an_observed_root_costs_the_same_over_ten_times_the_result() -> None:
     try:
         small_kept, small_transient = allocation(_observed_read_over(SMALL))
         large_kept, large_transient = allocation(_observed_read_over(LARGE))
+        # What a borrowed result weighs, which is the reading an allocation
+        # count cannot make: rows the window never allocated cost it nothing to
+        # keep. These are built inside the window and let go of before the
+        # sample, so what is still reachable is what the ROOT is holding — and
+        # an untracked hold, which no count of objects can see, is bytes here.
+        small_bytes = retained(_observed_read_owning(SMALL_ROWS))
+        large_bytes = retained(_observed_read_owning(LARGE_ROWS))
     finally:
         tracemalloc.stop()
     assert small_transient == large_transient
     assert small_kept < REPEATS
     assert large_kept < REPEATS
-    assert len(_live_lifecycle_objects(_observed_read_over(SMALL))) == len(
-        _live_lifecycle_objects(_observed_read_over(LARGE))
-    )
+    # Fewer bytes between the two than there are extra rows, so anything kept
+    # per row is out: the cheapest way to keep one is a reference, and one
+    # reference apiece for 4,500 more rows is thirty-six thousand bytes. The
+    # bound is read rather than an equality because the two seams allocate
+    # different amounts on their way to the sample, and a free list serving one
+    # construction and not another moves a byte reading by tens.
+    assert abs(small_bytes - large_bytes) < LARGE_ROWS - SMALL_ROWS
+    # The same claim about what is REACHABLE, which is exact where the weight is
+    # not: a kept result is 4,500 more tracked survivors and 4,500 more
+    # references, whatever the allocator did on the way.
+    assert _live(_observed_read_owning(SMALL_ROWS)) == _live(_observed_read_owning(LARGE_ROWS))
 
 
 def test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once() -> None:
-    # `O(N * (P + D))` over one Provider and a fixed depth is `N` times what one
-    # root holds — linear through the origin rather than merely affine, because
-    # nothing in the runtime is shared between two roots of one Provider. A
-    # per-root cost that grew with the roots already open, or a registry the
-    # publisher joined, would break the equality at the first count that is not
-    # one.
-    per_root = len(_live_lifecycle_objects(_concurrent_roots(1)))
-    assert per_root > 0, "a live root holds nothing, or nothing is being sampled"
-    counts = (1, 2, 4, 8, 16)
-    measured = {count: len(_live_lifecycle_objects(_concurrent_roots(count))) for count in counts}
-    assert measured == {count: count * per_root for count in counts}
+    # The `N` and `P` of `O(N * (P + D))`, over the roots open at once and the
+    # Providers active on each of them. A per-root cost that grew with the roots
+    # already open, a registry each publisher joined, or a per-Provider
+    # structure quadratic in the composition would all break a slope that has to
+    # hold at every count — in objects if it allocated one per root, and in
+    # references if it only pointed at the roots that were already there.
+    measured = {
+        (roots, providers): _live(_concurrent_roots(roots, providers))
+        for providers in _PROVIDERS
+        for roots in _ROOTS
+    }
+    per_root = {
+        providers: _affine({roots: measured[(roots, providers)] for roots in _ROOTS}, _ROOTS)
+        for providers in _PROVIDERS
+    }
+    assert min(min(added) for added in per_root.values()) > 0, (
+        "a live root holds nothing, or nothing is being sampled"
+    )
+    assert min(_affine(per_root, _PROVIDERS)) > 0, (
+        "a Provider active on a root costs it nothing, or all three are one Provider"
+    )
+
+
+def test_a_nested_activity_costs_the_same_however_deep_it_is_nested() -> None:
+    # The `D` of `O(N * (P + D))`, which the runtime's own depth is too shallow
+    # to answer as a slope: the algebra nests four levels at the most, so what
+    # is gradeable is that a level costs what it costs wherever it sits. A
+    # Database Call is the one activity kind that opens at two depths — directly
+    # under a Read root, and three levels down under an attempt's Write Batch —
+    # so an activity that held its ancestors, which is what makes live memory
+    # quadratic in depth, would cost more in the second place than in the first:
+    # the same one object, holding two more references.
+    under_a_read = _difference(_observed_read_over(SMALL), _read_alone)
+    under_a_batch = _difference(_call_under_a_batch, _batch_alone)
+    assert under_a_read == under_a_batch
+    assert min(under_a_read) > 0, "opening a Database Call costs nothing, or nothing is sampled"
 
 
 def test_nothing_of_a_closed_root_is_alive_once_the_sample_is_past() -> None:
     # The concurrency sample is taken while every root is still open, so it says
     # nothing about what happens when they close. Leaving them closes them all.
-    assert _left_behind(lambda: _concurrent_roots(16)(lambda: None)) == []
+    assert _left_behind(lambda: _concurrent_roots(16, 3)(lambda: None)) == []

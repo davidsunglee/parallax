@@ -10,7 +10,7 @@ time, every CI job runs the floating `ubuntu-latest` label, and a wall clock tha
 gates turns an unrelated slow machine into a failed merge.
 
 **Two arms, interleaved.** The same workload runs with no Provider installed and
-against the production shape the acceptance criteria name — one
+against a production shape — one
 :class:`~parallax.core.execution_lifecycle.FanoutLifecycleProvider` over Safe
 logging at INFO into an application-owned bounded queue, bounded metrics, and
 sampled tracing into a bounded exporter. The arms alternate rather than running
@@ -21,17 +21,22 @@ pair's own difference rather than from two independently ranked distributions.
 
 **What is inside the measurement.** Everything Parallax owns: the descriptor and
 the opening call, event creation and correlation, the fan-out, every Handler
-call, and the enqueue into the application's queue. Outside it: the queue's
-drain, the exporter, and the formatter, none of which this runs at all — the
-queue is emptied between timed windows and no listener is attached.
+call, and the enqueue into the application's queue — including the message
+rendering :class:`logging.handlers.QueueHandler` does on its way in, because its
+``prepare`` merges each record's arguments before enqueueing so that what it
+hands on is picklable. Outside it: the queue's drain and the exporter, neither of
+which this runs at all — the queue is emptied between timed windows, no listener
+is attached, and no Formatter of an application's own is configured anywhere.
 
 **What the ratio is sensitive to, stated rather than assumed.** The port here is
 in memory, so the denominator carries no database latency and almost no
 materialization — one row back from each read, one affected row from each write.
 That is the most adversarial denominator a real deployment could have, so the
-recorded ratio is an upper bound and any real round trip only lowers it. The
-report says so in arithmetic rather than in prose, by projecting the measured
-absolute overhead across a range of plausible per-round-trip latencies.
+recorded ratio is the largest THIS configuration's own cost can produce and any
+real round trip only lowers it; a deployment composing more Handlers than these
+is a different numerator rather than a case of this one. The report says so in
+arithmetic rather than in prose, by projecting the measured absolute overhead
+across a range of plausible per-round-trip latencies.
 
 **Two readings of the overhead, because they answer differently.** The ratio of
 the two arms' own percentiles is the reading the initial targets are worded in,
@@ -44,10 +49,13 @@ printed.
 **What a p95 of a DIFFERENCE can and cannot say.** Every tail this measurement
 has belongs to both arms — a scheduler preemption, a collection, a frequency
 step — and subtracting one arm from the other does not remove either one's
-tail, it combines them. The p95 of a paired difference is therefore an upper
-bound on the dispatch tail rather than an estimate of it, and only the p50 is
-a measurement of the work itself. The cheapest configuration is what shows the
-scale of that: its own p95 difference is twice its p50 while it does barely any
+tail, it combines them. The p95 of a paired difference is therefore a percentile
+of the dispatch cost PLUS whatever the two arms disagreed about, which bounds
+the dispatch tail in neither direction: a preemption landing on the unobserved
+arm is subtracted out of that pair's difference and understates it as surely as
+one landing on the observed arm overstates it. Only the p50 is a measurement of
+the work itself. The cheapest configuration is what shows the scale of the
+disagreement: its own p95 difference is twice its p50 while it does barely any
 work at all.
 
 Run it through `just python-report-lifecycle-overhead`.
@@ -210,16 +218,23 @@ class _TracingProvider:
     child at all. A sample of one traces everything, which is the configuration
     that puts three Handlers on every root rather than an average of two and a
     tenth.
+
+    The decision reads the root's OWN identity rather than its position in the
+    arrival order, because this workload is periodic — a Read root, then a
+    Transaction root, forever — and a sampler counting arrivals would take every
+    tenth of them, which is every fifth transaction and no read at all. That
+    aliasing would report the cost of tracing one root kind as the cost of
+    sampling the mix. A random identifier decides independently of the order
+    roots arrive in, which is what a deployment's own trace-identifier sampling
+    does for the same reason.
     """
 
     def __init__(self, sample: int) -> None:
         self.spans: deque[tuple[str, str, int, int]] = deque(maxlen=TRACE_CAPACITY)
         self._sample = sample
-        self._seen = 0
 
     def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None:
-        self._seen += 1
-        if self._seen % self._sample:
+        if execution.id.int % self._sample:
             return None
         return _TracingHandler(execution, self.spans)
 
@@ -275,10 +290,13 @@ def _bounded_logger(
 ) -> logging.Logger:
     """A Logger writing into an application-owned bounded queue and nowhere else.
 
-    No listener drains it and no formatter runs, which is the separation the
-    measurement needs: enqueueing is Parallax's caller's cost and belongs inside
-    the window, while everything the queue feeds is the application's and does
-    not.
+    No listener drains it, which is the separation the measurement needs:
+    enqueueing is Parallax's caller's cost and belongs inside the window, while
+    everything the queue feeds is the application's and does not. The rendering
+    the queue handler does on the way in is inside the window with the enqueue —
+    ``QueueHandler.prepare`` merges each record's message with its arguments so
+    that what it enqueues is picklable — and no Formatter is configured on it,
+    so what runs is the library's own default and nothing an application chose.
     """
     logger = logging.getLogger(name)
     logger.handlers.clear()
@@ -453,11 +471,11 @@ def _configurations(
     discards every record, which separates what the built-in renders for every
     event from what the standard library then does with the few that survive.
 
-    The last two are the production shape, twice, because the two documents this
-    answers to name different ones: the acceptance criteria say sampled tracing,
-    which leaves two Handlers active on most roots, and the initial dispatch
-    target is stated for three lightweight Handlers, which is what tracing every
-    root gives.
+    The last two are the production shape, twice, because the shape a deployment
+    runs and the shape the dispatch target is stated for are not the same one:
+    sampled tracing leaves two Handlers active on nine roots in ten, while ADR
+    0060's target is stated for three lightweight Handlers, which is what
+    tracing every root gives.
     """
     emitting = _bounded_logger(records, "parallax.lifecycle.overhead", logging.INFO)
     silent = _bounded_logger(records, "parallax.lifecycle.overhead.silent", logging.CRITICAL)
