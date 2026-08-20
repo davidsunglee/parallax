@@ -37,7 +37,58 @@ same way `N` and `P` are, over that construction driven through the public
 readings. Read across the Provider counts as well, because `P + D` is an
 addition: what one more level costs must not depend on how many Providers are
 active, nor one more Provider on how deep the root is, and a cost in `P * D`
-would agree with this at one column and disagree at the others.
+would agree with this at one column and disagree at the others. Crossing depth
+with `N` is the one thing that door cannot be asked for — a joining call joins
+the transaction active on the THREAD, so no second root is ever open beside the
+one it joined — and the same scopes held open on a live attempt at the seam are
+what the crossing below reads instead.
+
+**The crossing, and which reading covers which part of it.** The bound is one
+expression over all three parameters, so a grid that varies one of them while
+pinning the others settles only that no parameter is wrong ALONE: a per-root
+state sized per Provider and per level is affine down every axis at every column
+of it and quadratic in the plane the two make. What is graded beside those grids
+is therefore the whole crossing — every combination of the three counts — against
+the shape the expression itself names, which is a base plus a per-root cost
+affine in `P` and in `D` with no term in their product.
+
+Two instruments read that, at two grains. The four counts come off ONE sample, so
+no workload is covered in one of them and not in another: wherever a reading is
+taken, all four are taken. Bytes are the second instrument and are read at the
+crossing's corners rather than at every point of it, because a byte reading costs
+a warmed repetition of the whole workload where a count costs a single sample of
+it.
+
+| Workload varied | The four counts | Bytes |
+| --- | --- | --- |
+| `N` | crossing, roots grid | crossing, roots grid |
+| `P` | crossing, roots grid, depth grid | crossing, depth grid |
+| `D` | crossing, depth grid | crossing, depth grid |
+| `N` and `P` | crossing, roots grid | crossing |
+| `N` and `D` | crossing | crossing |
+| `P` and `D` | crossing, depth grid | crossing, depth grid |
+| all three | crossing | crossing |
+
+The **crossing** is
+:func:`test_live_lifecycle_memory_is_affine_in_the_roots_providers_and_levels_at_once`
+for the counts and
+:func:`test_the_bytes_live_roots_keep_stay_within_the_bound_at_every_crossing_of_it`
+for the bytes, over :data:`_GRID` and its corners. The **roots grid** is
+:func:`test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once`, which
+crosses `N` and `P` over two different root SHAPES rather than one. The **depth
+grid** is
+:func:`test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once`,
+which crosses `D` and `P` at the public door.
+
+Three things no cell of that table claims. Nothing past the largest count in each
+tuple: thirty-two refuses a term already visible by thirty-two, and nothing here
+refuses one that turns on later. Nothing about bytes as a LINE — every byte cell
+is the bound and only the bound, so a hold small against what the smallest
+workload already weighs passes all of them, and what refuses a TRACKED hold of
+any size is the reference count beside it. And the crossings with `N` are read at
+the seam rather than at the public door, for the reason above;
+:func:`test_the_scopes_a_seam_nests_are_what_the_joining_recursion_opens` is what
+holds those two constructions to the same per-level cost.
 
 Two structural readings stand beside that grid, because a line fitted over
 repetitions of ONE level says nothing about the levels that occur once. Every
@@ -72,7 +123,8 @@ per root clears the harness floor by two orders of magnitude.
 
 **What live roots hold.** Live memory is sampled at the innermost point of what
 is open at once — the roots for the `N` and `P` grid, the joining scopes nested
-inside one another for the `D` one — which is the only point at which they exist
+inside one another for the `D` one, and both at once for the crossing of all
+three — which is the only point at which they exist
 together, and one sample is read four ways because each way sees what the others
 cannot. The
 lifecycle-typed survivor count answers what the runtime's own structure costs per
@@ -84,8 +136,10 @@ kept its ancestors, or the roots open beside it, shows up there and nowhere else
 The inbound count answers what all three miss — a registry the installed
 composition owned before the roots opened is no survivor however many of them it
 accumulates, and every reference it took into the window is counted from the
-holder's side. Bytes are read beside them over the same grid, because a holder
-that grew by untracked values moves no count at all.
+holder's side. A fifth reading stands beside those four at the points the table
+above names: the bytes still reachable at the same sample point, which is the
+only one of the five that moves at all when a holder grew by values the collector
+never tracked.
 
 **What a live root holds of a value it was HANDED** needs the same sample and one
 arrangement. A result is one borrowed object whatever its cardinality, so the
@@ -108,8 +162,9 @@ from __future__ import annotations
 
 import gc
 import tracemalloc
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import ExitStack, suppress
+from itertools import product
 from typing import Final, NamedTuple, get_type_hints
 
 import pytest
@@ -132,6 +187,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
+    ExecutionLifecycleProvider,
     FanoutLifecycleProvider,
     JoinedInvocation,
     JoinedInvocationRaised,
@@ -186,6 +242,69 @@ spread as :data:`_ROOTS`: the first two are one level apart, so their difference
 is what one more level costs rather than a ratio, and the largest is far enough
 from them that a cost quadratic in the levels already open is whole levels off
 the line instead of within one level's weight of it."""
+
+
+class _Point(NamedTuple):
+    """One workload the bound is stated over: ``roots`` accepted roots open at
+    once, ``providers`` Providers active on each of them, and ``depth`` joining
+    calls nested inside each.
+
+    ``depth`` counts the levels a workload VARIES rather than the whole activity
+    depth. Every root has the levels its own shape gives it whichever workload
+    opens it, so those are part of what one root costs rather than part of this
+    term, and the bound is asymptotic in `D` either way.
+    """
+
+    roots: int
+    providers: int
+    depth: int
+
+
+_LEAST: Final = _Point(min(_ROOTS), min(_PROVIDERS), min(_DEPTHS))
+_MOST: Final = _Point(max(_ROOTS), max(_PROVIDERS), max(_DEPTHS))
+
+_GRID: Final = tuple(
+    _Point(roots, providers, depth)
+    for roots in _ROOTS
+    for providers in _PROVIDERS
+    for depth in _DEPTHS
+)
+"""Every combination of the three counts.
+
+What one axis at a time cannot reach: a per-root state sized per Provider AND
+per level is affine down each axis on its own and quadratic in the plane the two
+make, so a grid that varies one parameter while pinning the others admits it at
+every column it reads.
+"""
+
+_CROSSINGS: Final = tuple(
+    _Point(
+        *(
+            most if varies else least
+            for varies, most, least in zip(raised, _MOST, _LEAST, strict=True)
+        )
+    )
+    for raised in product((False, True), repeat=3)
+)
+"""The smallest workload, and the one that raises each nonempty set of the three
+parameters to its largest count.
+
+The crossing at the grain a byte reading can afford: eight workloads rather than
+:data:`_GRID`'s seventy-five, because a byte reading costs a warmed repetition of
+the whole workload where a count costs one sample of it. Every set of parameters
+appears exactly once, so a term in any of them — one, two, or all three — is at
+its largest against the bound somewhere in here.
+"""
+
+
+def _bound(point: _Point) -> int:
+    """`N * (P + D)` at ``point``.
+
+    The specification's own expression, and the size every average is taken
+    over: a reading divided by this is what the bound holds constant, so one
+    number grades a workload however many parameters it varied at once.
+    """
+    return point.roots * (point.providers + point.depth)
 
 
 class _DiscardingHandler:
@@ -259,7 +378,7 @@ def _left_behind(work: Callable[[], None]) -> list[object]:
 
 class _Live(NamedTuple):
     """What live roots hold, read four ways from one sample, because each answers
-    a different quarter of the bound.
+    what the other three cannot.
 
     ``lifecycle`` is what the runtime's own structure costs, and ``tracked`` is
     every survivor whatever defined its type, so state a root keeps in a list, a
@@ -272,7 +391,8 @@ class _Live(NamedTuple):
     registry an installed composition already owned is no survivor, so what it
     took is counted where it points rather than where it is held. All four are
     counts of structure rather than readings of an allocator, so all four are
-    exact.
+    exact, and none of them sees a value the collector never tracked — which is
+    what :func:`retained` is read beside them for.
     """
 
     lifecycle: int
@@ -360,6 +480,90 @@ def _at_most_proportional(measured: dict[int, _Live], over: tuple[int, ...]) -> 
         largest * fewest <= smallest * most
         for largest, smallest in zip(measured[most], measured[fewest], strict=True)
     ), (measured[fewest], measured[most])
+
+
+class _Fit(NamedTuple):
+    """Live memory as one function of the whole workload: ``origin``, plus each
+    of `N` roots costing ``root`` plus ``provider`` for every active Provider
+    plus ``level`` for every joining call nested inside it.
+
+    The shape `N * (P + D)` names, written as arithmetic the readings are checked
+    against. Its per-root cost is affine in `P` and affine in `D` and has no term
+    in their PRODUCT, which is the whole of what a crossed grid adds to axes read
+    one at a time: a state sized per Provider per level satisfies every
+    single-axis line and has nowhere to sit in this.
+    """
+
+    origin: _Live
+    root: _Live
+    provider: _Live
+    level: _Live
+
+
+def _fitted(measured: Mapping[_Point, _Live]) -> _Fit:
+    """The one function of that shape the four smallest workloads determine.
+
+    Read off unit steps rather than solved for: the two smallest counts on every
+    axis are one apart, so each difference is what one more of that parameter
+    costs. Nothing here grades anything — :func:`_predicts` against the whole
+    grid is what does, and a cost of any other shape disagrees with the fit
+    somewhere in it.
+    """
+    least = measured[_LEAST]
+    provider = _difference_of(measured[_LEAST._replace(providers=_PROVIDERS[1])], least)
+    level = _difference_of(measured[_LEAST._replace(depth=_DEPTHS[1])], least)
+    per_root = _difference_of(measured[_LEAST._replace(roots=_ROOTS[1])], least)
+    return _Fit(
+        _difference_of(least, per_root),
+        _difference_of(_difference_of(per_root, provider), level),
+        provider,
+        level,
+    )
+
+
+def _predicts(fit: _Fit, point: _Point) -> _Live:
+    """What ``fit`` says the workload at ``point`` costs, reading by reading."""
+    return _Live(
+        *(
+            start + point.roots * (each + point.providers * per_provider + point.depth * per_level)
+            for start, each, per_provider, per_level in zip(*fit, strict=True)
+        )
+    )
+
+
+def _within_the_bound(measured: Mapping[_Point, _Live]) -> None:
+    """That no workload's cost per unit of `N * (P + D)` exceeds the smallest
+    workload's.
+
+    :func:`_at_most_proportional` read over a whole crossing rather than down one
+    axis, and against the expression the specification states rather than against
+    one count. The argument for it is the same — an affine cost with a
+    non-negative base has an average that falls — while the size divided by is
+    the one the bound names, so a per-root term in `P * D` raises this average
+    where each axis read alone leaves it flat.
+    """
+    smallest = min(measured, key=_bound)
+    least, unit = measured[smallest], _bound(smallest)
+    for point, reading in measured.items():
+        assert all(
+            more * unit <= less * _bound(point) for more, less in zip(reading, least, strict=True)
+        ), (smallest, least, point, reading)
+
+
+def _bytes_within_the_bound(measured: Mapping[_Point, int]) -> None:
+    """The same reading in bytes, which is the only one an UNTRACKED hold moves.
+
+    Bytes are graded against the bound and never against a line: two workloads of
+    the same shape do not allocate proportionally, so what this refuses is an
+    average per unit of `N * (P + D)` that rises rather than any particular
+    arithmetic. Coarse by design, then — a hold small against whatever the
+    smallest workload already weighs passes — and the only reading of any of them
+    that sees a value the collector never tracked.
+    """
+    smallest = min(measured, key=_bound)
+    least, unit = measured[smallest], _bound(smallest)
+    for point, kept in measured.items():
+        assert kept * unit <= least * _bound(point), (smallest, least, point, kept)
 
 
 def _observed_db(port: RecordingPort) -> Database:
@@ -512,18 +716,38 @@ def _participating_read_chain(
     return (invocation, attempt, read, call)
 
 
+def _nested_chain(depth: int) -> _Chain:
+    """An invocation, its attempt, and ``depth`` joining scopes nested inside one
+    another, every one of them held open.
+
+    The live structure :func:`_joined_depth` reaches through ``Database.transact``,
+    built instead on the attempt each of those scopes opens against — which is
+    what makes depth a parameter of a shape `N` of can be held open at once. The
+    public door cannot be asked for that: a joining call joins the transaction
+    active on the THREAD, so no second root is open beside the one it joined, and
+    the crossing of `D` with `N` exists only here.
+    :func:`test_the_scopes_a_seam_nests_are_what_the_joining_recursion_opens` is
+    what ties the two constructions together.
+    """
+
+    def chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
+        invocation, attempt = _begun_attempt(stack, installed)
+        nested = tuple(stack.enter_context(attempt.joined_invocation()) for _ in range(depth))
+        return (invocation, attempt, *nested)
+
+    return chain
+
+
 def _joined_invocation_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
     """An invocation, its attempt, and a joining call nested inside it.
 
     Three CORRELATION levels rather than four: everything a joining call's
     callback drives — a read, a batch, another joining call — is a child of the
     same attempt this one is a child of, so nothing it opens is named beneath it.
-    How deeply those scopes nest inside one another is a different question and
-    :func:`_joined_depth` is where it is asked.
+    How deeply those scopes nest inside one another is a different question, and
+    :func:`_nested_chain` is the shape that varies it.
     """
-    invocation, attempt = _begun_attempt(stack, installed)
-    joined = stack.enter_context(attempt.joined_invocation())
-    return (invocation, attempt, joined)
+    return _nested_chain(1)(stack, installed)
 
 
 _SHAPES: Final = (
@@ -649,6 +873,12 @@ def _concurrent_roots(count: int, providers: int, shape: _Chain) -> Seam:
     return run
 
 
+def _workload(point: _Point) -> Seam:
+    """The workload ``point`` describes: its roots open at once, each nested to
+    its depth, through one composition of its Providers."""
+    return _concurrent_roots(point.roots, point.providers, _nested_chain(point.depth))
+
+
 def _held_by_each_level(shape: _Chain) -> tuple[Closure, ...]:
     """What every activity of one live chain of ``shape`` holds of its own.
 
@@ -707,7 +937,63 @@ def _registering_roots(count: int) -> Seam:
     return run
 
 
-def _joined_depth(depth: int, providers: int) -> Seam:
+_HOARD: Final = 512
+"""Bytes a hoarding Handler keeps for each level it is already inside.
+
+Untracked, so no count of objects or references can see it, and large enough that
+the quadratic total thirty-two levels of it make clears what a level of the
+workload itself legitimately weighs.
+"""
+
+
+class _HoardingHandler:
+    """A Handler that keeps an untracked value sized by the nesting it is inside.
+
+    A cost quadratic in `D`, in the shape that hides from every reading but one:
+    a ``bytes`` object is untracked, so it is neither a survivor nor a referent
+    of one nor a reference into one, and the list holding them belongs to a
+    Handler built before any root opened, so that is no survivor either. All four
+    counts stay exactly on the line a linear cost sets while live bytes grow as
+    the square of the depth.
+
+    The hoard is dropped when the root Invocation FINISHES rather than when the
+    next one starts: a byte reading is the difference between what is reachable
+    at the innermost point of one root and what was reachable once the root
+    before it had left, and a hoard still held at the second of those cancels out
+    of the first.
+    """
+
+    def __init__(self) -> None:
+        self._kept: list[bytes] = []
+        self._nested = 0
+
+    def handle(self, event: ExecutionEvent, /) -> None:
+        if isinstance(event, TransactionInvocationStarted) and isinstance(
+            event.invocation, JoinedInvocation
+        ):
+            self._nested += 1
+            self._kept.append(bytes(_HOARD * self._nested))
+        elif isinstance(event, TransactionInvocationFinished) and not isinstance(
+            event.outcome, JoinedInvocationReturned | JoinedInvocationRaised
+        ):
+            self._kept.clear()
+            self._nested = 0
+
+
+class _HoardingProvider:
+    """A Provider handing every root the same hoarding Handler."""
+
+    def __init__(self) -> None:
+        self._handler = _HoardingHandler()
+
+    def open(self, execution: object, /) -> ExecutionLifecycleHandler:
+        return self._handler
+
+    def report_handler_error(self, error: object, /) -> None:
+        return None
+
+
+def _joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> Seam:
     """One transaction whose callback joins itself ``depth`` times, sampled at the
     innermost of them.
 
@@ -718,13 +1004,16 @@ def _joined_depth(depth: int, providers: int) -> Seam:
     neither has closed when the next one opens.
 
     Driven end to end rather than at the seam, unlike every other shape here,
-    because there is no seam that reaches it — the nesting is a property of what
-    ``transact`` does when a transaction is already active on the thread. The
-    reading therefore carries the unit of work each level runs as well as the
-    activity each level opens, and every reading still has to sit on a line.
+    because the nesting is a property of what ``transact`` does when a
+    transaction is already active on the thread. The reading therefore carries
+    the unit of work each level runs as well as the activity each level opens,
+    and every reading still has to sit on a line. What it cannot be asked for is
+    a second root open beside this one — the thread has exactly one active
+    transaction — which is why :func:`_nested_chain` holds the same scopes open
+    at the seam for the crossings with `N`.
     """
     port = RecordingPort(rows=[NEW_ROW])
-    db = connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=_fanout(providers))
+    db = connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
     def joining(remaining: int, sample: Callable[[], None]) -> Callable[[Transaction], None]:
         def body(_tx: Transaction) -> None:
@@ -916,6 +1205,25 @@ def test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once() -> None:
         for providers in _PROVIDERS:
             _at_most_proportional({roots: measured[(roots, providers)] for roots in _ROOTS}, _ROOTS)
         _at_most_proportional(per_root, _PROVIDERS)
+    # Bytes down the same grid's `N` axis, on the deeper of the two shapes: what
+    # none of the four counts can answer is an UNTRACKED value — no object to
+    # `gc.get_objects` and no referent of one — so a holder accumulating strings
+    # or integers per root, the roots' own correlation text say, moves every
+    # count not at all and moves this.
+    tracemalloc.start()
+    try:
+        kept = {
+            _Point(roots, max(_PROVIDERS), 0): retained(
+                _concurrent_roots(roots, max(_PROVIDERS), _write_batch_chain)
+            )
+            for roots in (min(_ROOTS), max(_ROOTS))
+        }
+    finally:
+        tracemalloc.stop()
+    assert kept[_Point(min(_ROOTS), max(_PROVIDERS), 0)] > 0, (
+        "a live root weighs nothing, or nothing is being sampled"
+    )
+    _bytes_within_the_bound(kept)
 
 
 def test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once() -> None:
@@ -931,7 +1239,7 @@ def test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once() -
     # cost that depended on the depth, is a `P * D` term that agrees with this at
     # one column and disagrees at the others.
     measured = {
-        (depth, providers): _live(_joined_depth(depth, providers))
+        (depth, providers): _live(_joined_depth(depth, _fanout(providers)))
         for providers in _PROVIDERS
         for depth in _DEPTHS
     }
@@ -955,29 +1263,102 @@ def test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once() -
     # shaped implementation would also have to pass.
     for providers in _PROVIDERS:
         _at_most_proportional({depth: measured[(depth, providers)] for depth in _DEPTHS}, _DEPTHS)
-
-
-def test_the_bytes_live_roots_keep_are_bounded_by_what_the_first_root_kept() -> None:
-    # What none of the four counts can answer, over the deepest root shape: an
-    # UNTRACKED value is no object to `gc.get_objects` and no referent to
-    # anything the collector reports, so a holder accumulating strings or
-    # integers per root — the roots' own correlation text, say — moves every
-    # count not at all and moves this. Read as a bound rather than as a line
-    # because two counts of the same shape do not allocate proportionally: a
-    # deque block and a list's over-allocation move a byte reading by hundreds
-    # where the counts do not move at all. Coarse by design, then: a hold that
-    # grows with `N` is refused once the average root costs more than the first
-    # root did, and a small enough one passes. What refuses a tracked hold of any
-    # size is the reference reading above; what this catches and nothing else
-    # does is the untracked one.
+    # Bytes over the same grid, every point of it, because a level that grew by
+    # untracked values moves none of the four counts: a retained integer or
+    # `bytes` value is no survivor, no referent of one, and no reference into
+    # one. This is what refuses a per-level hold sized by the level's own
+    # depth — one lifecycle object and one referent per level however large the
+    # value it points at, and a total quadratic in `D`.
     tracemalloc.start()
     try:
-        one = retained(_concurrent_roots(1, len(_PROVIDERS), _write_batch_chain))
-        many = retained(_concurrent_roots(max(_ROOTS), len(_PROVIDERS), _write_batch_chain))
+        kept = {
+            _Point(1, providers, depth): retained(_joined_depth(depth, _fanout(providers)))
+            for providers in _PROVIDERS
+            for depth in _DEPTHS
+        }
     finally:
         tracemalloc.stop()
-    assert one > 0, "a live root weighs nothing, or nothing is being sampled"
-    assert many <= max(_ROOTS) * one
+    assert kept[_Point(1, min(_PROVIDERS), min(_DEPTHS))] > 0, (
+        "a live joining scope weighs nothing, or nothing is being sampled"
+    )
+    _bytes_within_the_bound(kept)
+
+
+def test_live_lifecycle_memory_is_affine_in_the_roots_providers_and_levels_at_once() -> None:
+    # `N * (P + D)` as one claim rather than three, over every combination of the
+    # three counts. A grid that varies one parameter while pinning the others
+    # settles only that no parameter is wrong ALONE: a per-root state sized per
+    # Provider and per level is affine down each axis at every column and
+    # violates the bound in the plane, and no reading down an axis sees it. The
+    # fit is the shape the specification's expression names — a base, plus a
+    # per-root cost affine in `P` and in `D` with no term in their product — and
+    # it is taken from four workloads and answered for at all seventy-five.
+    measured = {point: _live(_workload(point)) for point in _GRID}
+    fit = _fitted(measured)
+    assert measured == {point: _predicts(fit, point) for point in _GRID}, (fit, measured)
+    assert min(fit.root) > 0 and min(fit.provider) > 0 and min(fit.level) > 0, fit
+    assert min(fit.origin) >= 0, fit
+    # The same readings against the bound rather than against this runtime's
+    # shape, and against the specification's own expression rather than one
+    # count at a time.
+    _within_the_bound(measured)
+
+
+def test_the_bytes_live_roots_keep_stay_within_the_bound_at_every_crossing_of_it() -> None:
+    # The fifth reading over the same crossing, at its corners. What none of the
+    # four counts can answer is an UNTRACKED value — no object to
+    # `gc.get_objects`, no referent of one, and no reference into one — so a hold
+    # sized per root, per Provider, per level, or per any product of them moves
+    # every count not at all and moves this. Read as a bound rather than as a
+    # line because two workloads of the same shape do not allocate
+    # proportionally: a deque block and a list's over-allocation move a byte
+    # reading by hundreds where the counts do not move at all. Coarse by design,
+    # then, and the only reading that sees the untracked hold at all.
+    tracemalloc.start()
+    try:
+        kept = {point: retained(_workload(point)) for point in _CROSSINGS}
+    finally:
+        tracemalloc.stop()
+    assert kept[_LEAST] > 0, "a live root weighs nothing, or nothing is being sampled"
+    _bytes_within_the_bound(kept)
+
+
+def test_the_scopes_a_seam_nests_are_what_the_joining_recursion_opens() -> None:
+    # What licenses reading the crossings with `N` at the seam. One more joining
+    # scope held open on a live attempt costs the same lifecycle structure as one
+    # more level of the recursion a real `db.transact` drives, which is the only
+    # construction that reaches depth through the public door and the one that
+    # cannot be asked for a second root beside it. The two differ in everything
+    # around that structure — a real level runs a unit of work of its own and the
+    # seam runs none — so what is compared is the lifecycle objects a level adds
+    # rather than the whole reading, and the rest is asserted to be the door's
+    # surplus rather than a disagreement.
+    seam = {depth: _live(_workload(_Point(1, 1, depth))) for depth in _DEPTHS}
+    door = {depth: _live(_joined_depth(depth, _fanout(1))) for depth in _DEPTHS}
+    at_the_seam, at_the_door = _affine(seam, _DEPTHS), _affine(door, _DEPTHS)
+    assert at_the_door.lifecycle == at_the_seam.lifecycle > 0, (at_the_seam, at_the_door)
+    assert at_the_door.tracked > at_the_seam.tracked, (at_the_seam, at_the_door)
+
+
+def test_the_byte_reading_refuses_an_untracked_hold_sized_by_the_nesting() -> None:
+    # What the byte reading is worth, demonstrated rather than asserted, and the
+    # shape the four counts are blind to: a composition that keeps one untracked
+    # value for every level it is already inside holds bytes quadratic in `D`
+    # while each level still contributes exactly one lifecycle object and one
+    # referent. The counts are read first to establish that they stay on their
+    # line under it, and the bytes second to establish that this is what refuses
+    # it — which is the whole reason both are read over every grid.
+    provider = _HoardingProvider()
+    measured = {depth: _live(_joined_depth(depth, provider)) for depth in _DEPTHS}
+    _affine(measured, _DEPTHS)
+    _at_most_proportional(measured, _DEPTHS)
+    tracemalloc.start()
+    try:
+        kept = {_Point(1, 1, depth): retained(_joined_depth(depth, provider)) for depth in _DEPTHS}
+    finally:
+        tracemalloc.stop()
+    with pytest.raises(AssertionError):
+        _bytes_within_the_bound(kept)
 
 
 def test_the_concurrency_readings_refuse_a_composition_that_keeps_what_is_open() -> None:
@@ -1097,6 +1478,6 @@ def test_nothing_of_a_closed_root_is_alive_once_the_sample_is_past() -> None:
     # says anything about what happens when they close. Leaving them closes them
     # all, at sixteen roots open at once and at sixteen joining calls nested.
     deepest, _ = _SHAPES[1]
-    nested = _joined_depth(16, 3)
+    nested = _joined_depth(16, _fanout(3))
     assert _left_behind(lambda: _concurrent_roots(16, 3, deepest)(lambda: None)) == []
     assert _left_behind(lambda: nested(lambda: None)) == []
