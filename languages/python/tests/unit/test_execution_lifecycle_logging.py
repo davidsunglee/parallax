@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Final, get_args
+from typing import Any, Final, NoReturn, get_args
 from uuid import UUID, uuid4
 
 import pytest
@@ -71,6 +71,7 @@ from parallax.core.execution_lifecycle import (
     WriteBatchFinished,
     WriteBatchStarted,
 )
+from parallax.core.execution_lifecycle import _logging as _logging_module
 from parallax.core.execution_lifecycle._diagnostics import (
     database_diagnostic_for,
     diagnostic_for,
@@ -135,6 +136,38 @@ def _records(
         for event in events:
             handler.handle(event)
     return [_written(record) for record in caplog.records]
+
+
+_DATABASE_FAILURE: Final = database_diagnostic_for(
+    DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
+)
+
+
+class _Described(Exception):
+    """Raised in place of describing an event.
+
+    A description is proven ABSENT by the delivery completing and PRESENT by this
+    escaping, so neither direction rests on a counter a reader has to trust.
+    """
+
+
+def _describes_nothing(event: ExecutionEvent, detail: LifecycleLogDetail) -> NoReturn:
+    raise _Described(type(event).__name__)
+
+
+class _Collecting(logging.Handler):
+    """A Handler keeping whatever its Logger gave it, at that Logger's own level.
+
+    ``caplog`` captures by SETTING the Logger's level, which is the state a test
+    about levels has to vary rather than fix, so capture is a Handler here.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(logging.NOTSET)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
 
 
 def _failure(message: str = "the row vanished") -> DirectFailure:
@@ -517,6 +550,143 @@ def test_a_logger_below_the_level_is_told_nothing(caplog: pytest.LogCaptureFixtu
         handler.handle(ReadStarted(EXECUTION.id, 1, 1, None, "Account", "TYPED"))
         handler.handle(ReadFinished(EXECUTION.id, 2, 1, None, ReadCompleted()))
     assert caplog.records == []
+
+
+def test_only_a_root_activity_or_an_attempt_finishing_is_worth_more_than_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The premise the level guard rests on, graded over every shape that can be
+    # worth more than DEBUG rather than asserted in a docstring. The guard skips
+    # describing a transition when the Logger would keep no DEBUG record, so a
+    # level above DEBUG reaching any OTHER shape would be a record silently lost.
+    root = _failure("the root failed")
+    for record in _records(
+        caplog,
+        [
+            ReadStarted(EXECUTION.id, 1, 1, None, "Account", "TYPED"),
+            ReadFinished(EXECUTION.id, 2, 1, None, ReadFailed(root)),
+            ReadFinished(EXECUTION.id, 3, 2, 1, ReadFailed(root)),
+            WriteBatchFinished(EXECUTION.id, 4, 3, 1, WriteBatchFailed(root)),
+            DatabaseCallFinished(
+                EXECUTION.id, 5, 4, 3, STATEMENT, 9, DatabaseCallFailed(_DATABASE_FAILURE)
+            ),
+            TransactionInvocationFinished(EXECUTION.id, 6, 1, None, OuterInvocationFailed(root)),
+            TransactionInvocationFinished(EXECUTION.id, 7, 5, 1, JoinedInvocationRaised(root)),
+            TransactionAttemptStarted(EXECUTION.id, 8, 6, 1),
+            TransactionAttemptFinished(
+                EXECUTION.id, 9, 6, 1, AttemptRolledBack(_attempt_failure(retry_eligible=True))
+            ),
+            TransactionAttemptFinished(
+                EXECUTION.id, 10, 7, 1, AttemptRolledBack(_attempt_failure(retry_eligible=False))
+            ),
+            TransactionAttemptFinished(
+                EXECUTION.id,
+                11,
+                8,
+                1,
+                AttemptRollbackFailed(
+                    _attempt_failure(retry_eligible=True), diagnostic_for(RuntimeError("stuck"))
+                ),
+            ),
+            SnapshotStreamFinished(EXECUTION.id, 12, 9, 1, StreamFailed(root)),
+            StreamBatchFinished(EXECUTION.id, 13, 10, 9, StreamBatchFailed(root)),
+        ],
+    ):
+        above_debug = record.level > logging.DEBUG
+        root_activity = record.fields["parent_activity"] is None
+        attempt = record.fields["transition"] == "transactionAttemptFinished"
+        assert not above_debug or root_activity or attempt, record.fields["transition"]
+
+
+def test_a_transition_the_logger_would_drop_is_never_described(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The saving, stated as the absence of work rather than as a duration: a
+    # Logger that keeps no DEBUG record makes no field mapping for a transition
+    # that could only have been DEBUG. Remove the guard and the count is three.
+    monkeypatch.setattr(_logging_module, "_rendered", _describes_nothing)
+    handler = LoggingLifecycleProvider(_logger(logging.WARNING)).open(EXECUTION)
+    assert handler is not None
+    handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
+    handler.handle(DatabaseCallStarted(EXECUTION.id, 2, 3, 2, "Account", "READ", STATEMENT))
+    handler.handle(ReadFinished(EXECUTION.id, 3, 2, 1, ReadCompleted()))
+
+    with pytest.raises(_Described, match="ReadFinished"):
+        handler.handle(ReadFinished(EXECUTION.id, 4, 1, None, ReadCompleted()))
+
+
+def test_a_globally_disabled_logging_system_describes_nothing_either(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `logging.disable` is process-wide and `isEnabledFor` answers it, so asking
+    # the Logger rather than reading its level is what makes the guard agree with
+    # `Logger.log` under every way a record can be suppressed.
+    monkeypatch.setattr(_logging_module, "_rendered", _describes_nothing)
+    handler = LoggingLifecycleProvider(_logger()).open(EXECUTION)
+    assert handler is not None
+    logging.disable(logging.CRITICAL)
+    try:
+        handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
+    finally:
+        logging.disable(logging.NOTSET)
+
+
+def test_a_handlers_own_level_does_not_decide_whether_a_record_is_built(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The equivalence this rests on is with `Logger.log`, which consults the
+    # LOGGER and nothing else; a Handler filters records that already exist. So a
+    # Handler set above DEBUG must change nothing about what is built, or a
+    # second Handler under the same Logger would stop seeing records it gets
+    # today.
+    logger = _logger()
+    quiet = logging.Handler(logging.ERROR)
+    logger.addHandler(quiet)
+    try:
+        handler = LoggingLifecycleProvider(logger).open(EXECUTION)
+        assert handler is not None
+        with caplog.at_level(logging.DEBUG, logger=logger.name):
+            handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
+    finally:
+        logger.removeHandler(quiet)
+    assert [record.levelno for record in caplog.records] == [logging.DEBUG]
+
+
+def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record() -> None:
+    # Where the guard had to go, and why it is AFTER the counters rather than
+    # before them: the summary reports the work the whole operation did, so a
+    # total that counted only the transitions somebody logged would be wrong at
+    # every production level — and an ERROR Logger is one that describes three
+    # of these fourteen events and keeps one.
+    def totals(level: int) -> tuple[dict[str, object], int]:
+        logger = _logger(level)
+        collected = _Collecting()
+        logger.addHandler(collected)
+        port = RecordingPort(rows=[NEW_ROW])
+        port.txn_faults = [deadlock(), deadlock()]
+        db = _db(port, LoggingLifecycleProvider(logger))
+        try:
+            with pytest.raises(DatabaseError):
+                db.transact(lambda tx: tx.insert(new_account()), retries=1)
+        finally:
+            logger.removeHandler(collected)
+        written = [_written(record) for record in collected.records]
+        summary = written[-1]
+        assert summary.level == logging.ERROR
+        assert summary.fields["transition"] == "transactionInvocationFinished"
+        totalled = {key: value for key, value in summary.fields.items() if key.startswith("total_")}
+        assert isinstance(totalled.pop("total_database_duration_ns"), int), (
+            "a measured duration accumulates from the same events but is not a count of them"
+        )
+        return totalled, len(written)
+
+    described, every_record = totals(logging.DEBUG)
+    assert described["total_events"] == 14
+    assert every_record == 14
+
+    quiet, one_record = totals(logging.ERROR)
+    assert one_record == 1, "the failed root is the only record an ERROR Logger keeps"
+    assert quiet == described
 
 
 def test_a_whole_transaction_through_connect_reads_as_one_operation(

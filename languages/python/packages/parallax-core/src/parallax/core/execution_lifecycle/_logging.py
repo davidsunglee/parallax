@@ -445,7 +445,16 @@ class _LoggingHandler:
         self._counters = _Counters()
 
     def handle(self, event: ExecutionEvent, /) -> None:
+        """Count the event, then describe it only if the Logger would keep it.
+
+        The counters move for EVERY event whatever the level, because the root
+        summary reports what the whole operation did and a total that skipped
+        the transitions nobody logged would be wrong rather than cheaper. Only
+        the description is conditional.
+        """
         self._count(event)
+        if not self._describable(event):
+            return
         rendered = _rendered(event, self._detail)
         fields = rendered.fields
         fields["execution_id"] = self._execution_id
@@ -457,6 +466,32 @@ class _LoggingHandler:
         if rendered.finished and event.parent_activity_id is None:
             self._summarize(fields)
         self._logger.log(rendered.level, _MESSAGE, rendered.transition, extra=fields)
+
+    def _describable(self, event: ExecutionEvent) -> bool:
+        """Whether a record for ``event`` could survive this Logger's own level.
+
+        ``Logger.log`` asks exactly this question before it does anything else,
+        so asking it first changes which records exist not at all — and skips
+        building a field mapping for every transition whose answer is no, which
+        is most of them under any production level.
+
+        The cheapest level any transition is worth is ``DEBUG``, so a Logger that
+        would keep a ``DEBUG`` record keeps every possibility open and the answer
+        is yes. Otherwise only the two shapes that can be worth more than
+        ``DEBUG`` remain: the level rule reserves ``INFO`` and ``ERROR`` for a
+        ROOT activity's own Finished and ``WARNING`` and ``ERROR`` for a
+        Transaction Attempt's, and gives ``DEBUG`` to every Started and every
+        other Finished. Those two admit a few transitions the Logger will drop
+        anyway — a root's Started, a committed attempt — which costs a record
+        nobody sees rather than losing one somebody needed.
+
+        A Handler's own level is deliberately not part of this: a Handler
+        filters the records the Logger created, so a level set on one can only
+        drop a record that was going to be built regardless.
+        """
+        if self._logger.isEnabledFor(logging.DEBUG):
+            return True
+        return event.parent_activity_id is None or isinstance(event, TransactionAttemptFinished)
 
     def _count(self, event: ExecutionEvent) -> None:
         """Which totals this event moves.

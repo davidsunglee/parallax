@@ -268,6 +268,17 @@ python-test-provider-contract:
 python-test-distribution:
     cd {{python}} && uv run pytest tests/distribution
 
+# Like the focused selectors above it this belongs to no aggregate, and for a
+# different reason: a `report` passes no judgement, so no number it prints can
+# fail a merge. That is deliberate — nothing in this repository is enforced
+# against elapsed time, and every CI job runs the floating `ubuntu-latest` label.
+# What has been read off it, and under what conditions, is
+# `languages/python/docs/execution-lifecycle-baseline.md`.
+[metadata("runtime:medium")]
+[doc("Execution lifecycle dispatch and overhead against the same workload unobserved.")]
+python-report-lifecycle-overhead:
+    cd {{python}} && uv run python tools/lifecycle_overhead.py
+
 # Both prerequisites are soundness conditions, not merely file dependencies.
 # diff-cover derives its line inventory from git, so an untracked production
 # module scores zero changed lines and `--fail-under 100` passes vacuously over
