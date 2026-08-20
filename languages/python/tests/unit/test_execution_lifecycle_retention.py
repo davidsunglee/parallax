@@ -37,11 +37,20 @@ same way `N` and `P` are, over that construction driven through the public
 readings. Read across the Provider counts as well, because `P + D` is an
 addition: what one more level costs must not depend on how many Providers are
 active, nor one more Provider on how deep the root is, and a cost in `P * D`
-would agree with this at one column and disagree at the others. Crossing depth
-with `N` is the one thing that door cannot be asked for — a joining call joins
-the transaction active on the THREAD, so no second root is ever open beside the
-one it joined — and the same scopes held open on a live attempt at the seam are
-what the crossing below reads instead.
+would agree with this at one column and disagree at the others.
+
+**Crossing `D` with `N` is the same door asked for one more thing.** The
+transaction a joining call joins is the one active on the CALLING thread, so a
+second thread's ``db.transact`` opens an accepted root of its own beside the
+first rather than joining it. `N` workers over one shared ``Database``, each
+recursing to its own depth and stopping at its deepest callback until all of
+them have arrived, therefore hold `N` roots and `N * D` joined scopes open at
+once — which is the crossing, driven entirely through the public surface. What
+that arrangement has to earn is its sample POINT: a workload of `N` threads is a
+reading of the scheduler unless every worker is provably at its full depth when
+the sample is taken, which
+:func:`test_every_root_is_open_at_its_full_depth_when_the_workload_is_sampled`
+is what settles.
 
 **The crossing, and which reading covers which part of it.** The bound is one
 expression over all three parameters, so a grid that varies one of them while
@@ -73,22 +82,22 @@ The **crossing** is
 :func:`test_live_lifecycle_memory_is_affine_in_the_roots_providers_and_levels_at_once`
 for the counts and
 :func:`test_the_bytes_live_roots_keep_stay_within_the_bound_at_every_crossing_of_it`
-for the bytes, over :data:`_GRID` and its corners. The **roots grid** is
-:func:`test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once`, which
-crosses `N` and `P` over two different root SHAPES rather than one. The **depth
-grid** is
+for the bytes, over :data:`_GRID` and its corners, every workload of it driven
+through ``Database.transact`` on one worker thread per root. The **roots grid**
+is :func:`test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once`, which
+crosses `N` and `P` at the seam over two different root SHAPES rather than one —
+what the crossing cannot ask for, because one workload drives one shape. The
+**depth grid** is
 :func:`test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once`,
-which crosses `D` and `P` at the public door.
+which crosses `D` and `P` on the calling thread, with no worker in the reading
+and the bytes read at every point rather than at corners.
 
-Three things no cell of that table claims. Nothing past the largest count in each
+Two things no cell of that table claims. Nothing past the largest count in each
 tuple: thirty-two refuses a term already visible by thirty-two, and nothing here
-refuses one that turns on later. Nothing about bytes as a LINE — every byte cell
-is the bound and only the bound, so a hold small against what the smallest
+refuses one that turns on later. And nothing about bytes as a LINE — every byte
+cell is the bound and only the bound, so a hold small against what the smallest
 workload already weighs passes all of them, and what refuses a TRACKED hold of
-any size is the reference count beside it. And the crossings with `N` are read at
-the seam rather than at the public door, for the reason above;
-:func:`test_the_scopes_a_seam_nests_are_what_the_joining_recursion_opens` is what
-holds those two constructions to the same per-level cost.
+any size is the reference count beside it.
 
 Two structural readings stand beside that grid, because a line fitted over
 repetitions of ONE level says nothing about the levels that occur once. Every
@@ -123,8 +132,8 @@ per root clears the harness floor by two orders of magnitude.
 
 **What live roots hold.** Live memory is sampled at the innermost point of what
 is open at once — the roots for the `N` and `P` grid, the joining scopes nested
-inside one another for the `D` one, and both at once for the crossing of all
-three — which is the only point at which they exist
+inside one another for the `D` one, and every worker's deepest callback at once
+for the crossing of all three — which is the only point at which they exist
 together, and one sample is read four ways because each way sees what the others
 cannot. The
 lifecycle-typed survivor count answers what the runtime's own structure costs per
@@ -161,6 +170,7 @@ they are stated where the attribution rule they follow from is stated.
 from __future__ import annotations
 
 import gc
+import threading
 import tracemalloc
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack, suppress
@@ -180,10 +190,19 @@ from _lifecycle_cost_support import (
     retained,
     rows,
 )
-from _transact_support import ACCOUNT, FIXED, NEW_ROW, RecordingPort, deadlock, new_account
+from _transact_support import (
+    ACCOUNT,
+    FIXED,
+    NEW_ROW,
+    NoIoPort,
+    RecordingPort,
+    deadlock,
+    new_account,
+)
 
 from _support import mirrored_models as mm
 from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import DbPort, TransactionOutcome
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -566,8 +585,14 @@ def _bytes_within_the_bound(measured: Mapping[_Point, int]) -> None:
         assert kept * unit <= least * _bound(point), (smallest, least, point, kept)
 
 
+def _public_db(port: DbPort, provider: ExecutionLifecycleProvider) -> Database:
+    """A handle over ``port`` whose roots are opened by ``Database.transact``
+    itself rather than at the seam, observed by ``provider``."""
+    return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+
+
 def _observed_db(port: RecordingPort) -> Database:
-    return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=PROVIDER)
+    return _public_db(port, PROVIDER)
 
 
 def _one_read(db: Database) -> Callable[[], None]:
@@ -716,28 +741,6 @@ def _participating_read_chain(
     return (invocation, attempt, read, call)
 
 
-def _nested_chain(depth: int) -> _Chain:
-    """An invocation, its attempt, and ``depth`` joining scopes nested inside one
-    another, every one of them held open.
-
-    The live structure :func:`_joined_depth` reaches through ``Database.transact``,
-    built instead on the attempt each of those scopes opens against — which is
-    what makes depth a parameter of a shape `N` of can be held open at once. The
-    public door cannot be asked for that: a joining call joins the transaction
-    active on the THREAD, so no second root is open beside the one it joined, and
-    the crossing of `D` with `N` exists only here.
-    :func:`test_the_scopes_a_seam_nests_are_what_the_joining_recursion_opens` is
-    what ties the two constructions together.
-    """
-
-    def chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
-        invocation, attempt = _begun_attempt(stack, installed)
-        nested = tuple(stack.enter_context(attempt.joined_invocation()) for _ in range(depth))
-        return (invocation, attempt, *nested)
-
-    return chain
-
-
 def _joined_invocation_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
     """An invocation, its attempt, and a joining call nested inside it.
 
@@ -745,9 +748,11 @@ def _joined_invocation_chain(stack: ExitStack, installed: InstalledLifecycle) ->
     callback drives — a read, a batch, another joining call — is a child of the
     same attempt this one is a child of, so nothing it opens is named beneath it.
     How deeply those scopes nest inside one another is a different question, and
-    :func:`_nested_chain` is the shape that varies it.
+    :func:`_threaded_roots` is the workload that varies it.
     """
-    return _nested_chain(1)(stack, installed)
+    invocation, attempt = _begun_attempt(stack, installed)
+    joined = stack.enter_context(attempt.joined_invocation())
+    return (invocation, attempt, joined)
 
 
 _SHAPES: Final = (
@@ -873,10 +878,92 @@ def _concurrent_roots(count: int, providers: int, shape: _Chain) -> Seam:
     return run
 
 
+def _threaded_roots(point: _Point, db: Database) -> Seam:
+    """``point.roots`` transactions open on ``db`` at once, each joined
+    ``point.depth`` times, sampled with every one of them inside its deepest
+    callback.
+
+    One worker thread per root, because the transaction a joining ``transact``
+    joins is the one active on the CALLING thread: a second thread's
+    ``db.transact`` opens a root of its own beside the first, and the recursion
+    that thread then drives nests inside that root. `N` roots and `N * D` joined
+    scopes are live at once, which is the whole crossing at the public door.
+
+    The rendezvous is what makes the sample a reading of the WORKLOAD rather
+    than of whatever the scheduler arranged. Every worker owns two locks, both
+    held by this thread before it starts: it releases its ``arrived`` lock from
+    its deepest callback and then blocks on its ``parked`` one, and the sample
+    is taken only once every ``arrived`` lock has been handed over. A worker
+    that has released and not yet blocked is inside the same callback holding
+    the same scopes, and neither the release nor the acquire allocates, so the
+    sample point does not depend on which of the two it is executing.
+    :func:`test_every_root_is_open_at_its_full_depth_when_the_workload_is_sampled`
+    reads the transitions at that point and counts them.
+
+    A worker that fails before reaching its callback hands its lock over anyway,
+    so a broken workload fails the reading rather than hanging it.
+    """
+
+    def run(sample: Callable[[], None]) -> None:
+        arrived = [threading.Lock() for _ in range(point.roots)]
+        parked = [threading.Lock() for _ in range(point.roots)]
+        for lock in (*arrived, *parked):
+            lock.acquire()
+        failures: list[BaseException] = []
+
+        def worker(index: int) -> None:
+            signal, wait = arrived[index].release, parked[index].acquire
+            deepest = False
+
+            def joining(remaining: int) -> Callable[[Transaction], None]:
+                def body(_tx: Transaction) -> None:
+                    nonlocal deepest
+                    if remaining > 0:
+                        db.transact(joining(remaining - 1))
+                        return
+                    deepest = True
+                    signal()
+                    wait()
+
+                return body
+
+            try:
+                db.transact(joining(point.depth))
+            except BaseException as error:
+                failures.append(error)
+                if not deepest:
+                    signal()
+
+        threads = [
+            threading.Thread(target=worker, args=(index,), name=f"lifecycle-root-{index}")
+            for index in range(point.roots)
+        ]
+        for thread in threads:
+            thread.start()
+        for lock in arrived:
+            lock.acquire()
+        sample()
+        for lock in parked:
+            lock.release()
+        for thread in threads:
+            thread.join()
+        if failures:
+            raise failures[0]
+
+    return run
+
+
 def _workload(point: _Point) -> Seam:
-    """The workload ``point`` describes: its roots open at once, each nested to
-    its depth, through one composition of its Providers."""
-    return _concurrent_roots(point.roots, point.providers, _nested_chain(point.depth))
+    """The workload ``point`` describes, at the public door: its roots open at
+    once on their own threads, each joined to its depth, through one composition
+    of its Providers.
+
+    The port refuses every read and write, which is what a root's body here
+    does: what is being measured is the scopes a transaction holds open, and a
+    port that recorded its calls would accumulate them across the repetitions a
+    byte reading takes.
+    """
+    return _threaded_roots(point, _public_db(NoIoPort(), _fanout(point.providers)))
 
 
 def _held_by_each_level(shape: _Chain) -> tuple[Closure, ...]:
@@ -980,19 +1067,6 @@ class _HoardingHandler:
             self._nested = 0
 
 
-class _HoardingProvider:
-    """A Provider handing every root the same hoarding Handler."""
-
-    def __init__(self) -> None:
-        self._handler = _HoardingHandler()
-
-    def open(self, execution: object, /) -> ExecutionLifecycleHandler:
-        return self._handler
-
-    def report_handler_error(self, error: object, /) -> None:
-        return None
-
-
 def _joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> Seam:
     """One transaction whose callback joins itself ``depth`` times, sampled at the
     innermost of them.
@@ -1007,13 +1081,14 @@ def _joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> Seam:
     because the nesting is a property of what ``transact`` does when a
     transaction is already active on the thread. The reading therefore carries
     the unit of work each level runs as well as the activity each level opens,
-    and every reading still has to sit on a line. What it cannot be asked for is
-    a second root open beside this one — the thread has exactly one active
-    transaction — which is why :func:`_nested_chain` holds the same scopes open
-    at the seam for the crossings with `N`.
+    and every reading still has to sit on a line.
+
+    One root on the calling thread, where :func:`_threaded_roots` puts one on
+    each of `N` threads: this is the finer of the two instruments for the depth
+    axis alone, because a reading with no worker thread in it carries nothing a
+    thread costs and no scheduling to arrange.
     """
-    port = RecordingPort(rows=[NEW_ROW])
-    db = connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+    db = _public_db(RecordingPort(rows=[NEW_ROW]), provider)
 
     def joining(remaining: int, sample: Callable[[], None]) -> Callable[[Transaction], None]:
         def body(_tx: Transaction) -> None:
@@ -1053,17 +1128,69 @@ class _JoiningTransitions:
             self.order.append(("finished", event.activity_id))
 
 
-class _RecordingJoins:
-    """A Provider handing every root the same joining-transition recorder."""
+class _SharedProvider:
+    """A Provider handing every root the same Handler, so one recorder sees the
+    whole workload rather than one root of it."""
 
-    def __init__(self, transitions: _JoiningTransitions) -> None:
-        self._transitions = transitions
+    def __init__(self, handler: ExecutionLifecycleHandler) -> None:
+        self._handler = handler
 
     def open(self, execution: object, /) -> ExecutionLifecycleHandler:
-        return self._transitions
+        return self._handler
 
     def report_handler_error(self, error: object, /) -> None:
         return None
+
+
+class _OpenScopes:
+    """How many invocations of each kind have started, and how many have
+    finished, at the moment the count is read.
+
+    A scope is open between its Started and its Finished, so the three counts
+    together say exactly which scopes are live: with nothing finished, every
+    root and every joined scope that ever started still is. Counted under a lock
+    because `N` workers deliver concurrently, and counted rather than kept so
+    that a recorder failing the retention claims this suite makes elsewhere is
+    not what it measures with.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.roots = 0
+        self.joined = 0
+        self.finished = 0
+
+    def handle(self, event: ExecutionEvent, /) -> None:
+        with self._lock:
+            if isinstance(event, TransactionInvocationStarted):
+                if isinstance(event.invocation, JoinedInvocation):
+                    self.joined += 1
+                else:
+                    self.roots += 1
+            elif isinstance(event, TransactionInvocationFinished):
+                self.finished += 1
+
+    def reading(self) -> tuple[int, int, int]:
+        with self._lock:
+            return (self.roots, self.joined, self.finished)
+
+
+class _CountingPort(NoIoPort):
+    """A port counting the physical transactions it was asked to begin.
+
+    The refusals it inherits stand: a root of the threaded workload reads and
+    writes nothing, so a port touched for anything but a begin would mean the
+    workload is not the one being counted.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.begins = 0
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+        with self._lock:
+            self.begins += 1
+        return super().transaction(body)
 
 
 def test_a_completed_read_leaves_no_lifecycle_object_alive() -> None:
@@ -1293,6 +1420,13 @@ def test_live_lifecycle_memory_is_affine_in_the_roots_providers_and_levels_at_on
     # fit is the shape the specification's expression names — a base, plus a
     # per-root cost affine in `P` and in `D` with no term in their product — and
     # it is taken from four workloads and answered for at all seventy-five.
+    #
+    # Every workload is driven through `Database.transact` on one worker thread
+    # per root, so what is graded is `N` accepted roots each nested `D` levels
+    # deep at the public door. A join registry that turned on only while several
+    # roots were open, retaining each of them at every joined level, would grow
+    # as `N * N * D` — nothing wherever `N` is one, nothing wherever the joined
+    # depth is not varied, and nowhere in this fit to sit.
     measured = {point: _live(_workload(point)) for point in _GRID}
     fit = _fitted(measured)
     assert measured == {point: _predicts(fit, point) for point in _GRID}, (fit, measured)
@@ -1313,7 +1447,9 @@ def test_the_bytes_live_roots_keep_stay_within_the_bound_at_every_crossing_of_it
     # line because two workloads of the same shape do not allocate
     # proportionally: a deque block and a list's over-allocation move a byte
     # reading by hundreds where the counts do not move at all. Coarse by design,
-    # then, and the only reading that sees the untracked hold at all.
+    # then, and the only reading that sees the untracked hold at all. Read over
+    # the same threaded public workload as the counts, so an untracked hold that
+    # needed a second root open beside the first is inside it.
     tracemalloc.start()
     try:
         kept = {point: retained(_workload(point)) for point in _CROSSINGS}
@@ -1323,21 +1459,27 @@ def test_the_bytes_live_roots_keep_stay_within_the_bound_at_every_crossing_of_it
     _bytes_within_the_bound(kept)
 
 
-def test_the_scopes_a_seam_nests_are_what_the_joining_recursion_opens() -> None:
-    # What licenses reading the crossings with `N` at the seam. One more joining
-    # scope held open on a live attempt costs the same lifecycle structure as one
-    # more level of the recursion a real `db.transact` drives, which is the only
-    # construction that reaches depth through the public door and the one that
-    # cannot be asked for a second root beside it. The two differ in everything
-    # around that structure — a real level runs a unit of work of its own and the
-    # seam runs none — so what is compared is the lifecycle objects a level adds
-    # rather than the whole reading, and the rest is asserted to be the door's
-    # surplus rather than a disagreement.
-    seam = {depth: _live(_workload(_Point(1, 1, depth))) for depth in _DEPTHS}
-    door = {depth: _live(_joined_depth(depth, _fanout(1))) for depth in _DEPTHS}
-    at_the_seam, at_the_door = _affine(seam, _DEPTHS), _affine(door, _DEPTHS)
-    assert at_the_door.lifecycle == at_the_seam.lifecycle > 0, (at_the_seam, at_the_door)
-    assert at_the_door.tracked > at_the_seam.tracked, (at_the_seam, at_the_door)
+def test_every_root_is_open_at_its_full_depth_when_the_workload_is_sampled() -> None:
+    # What the grids above are sampling, counted rather than assumed: with four
+    # workers each joining eight times, the rendezvous is reached with four
+    # roots started, thirty-two joined scopes started, nothing finished, and one
+    # physical transaction begun per worker. Nothing finished is what makes the
+    # other three a statement about what is OPEN — every scope that ever started
+    # still is — so the sample really is `N` roots at depth `D` rather than
+    # whatever order the scheduler happened to run them in. The same counts read
+    # once the workload is past say the sample was taken before any unwinding.
+    point = _Point(4, 1, 8)
+    scopes = _OpenScopes()
+    port = _CountingPort()
+    db = _public_db(port, _SharedProvider(scopes))
+    at_the_rendezvous: list[tuple[int, int, int, int]] = []
+    _threaded_roots(point, db)(lambda: at_the_rendezvous.append((*scopes.reading(), port.begins)))
+    assert at_the_rendezvous == [(point.roots, point.roots * point.depth, 0, point.roots)]
+    assert scopes.reading() == (
+        point.roots,
+        point.roots * point.depth,
+        point.roots * (point.depth + 1),
+    )
 
 
 def test_the_byte_reading_refuses_an_untracked_hold_sized_by_the_nesting() -> None:
@@ -1348,7 +1490,7 @@ def test_the_byte_reading_refuses_an_untracked_hold_sized_by_the_nesting() -> No
     # referent. The counts are read first to establish that they stay on their
     # line under it, and the bytes second to establish that this is what refuses
     # it — which is the whole reason both are read over every grid.
-    provider = _HoardingProvider()
+    provider = _SharedProvider(_HoardingHandler())
     measured = {depth: _live(_joined_depth(depth, provider)) for depth in _DEPTHS}
     _affine(measured, _DEPTHS)
     _at_most_proportional(measured, _DEPTHS)
@@ -1395,9 +1537,7 @@ def test_a_joining_call_nests_a_live_scope_the_correlation_tree_does_not_show() 
     # Finished, and they close in the reverse of the order they opened.
     transitions = _JoiningTransitions()
     port = RecordingPort(rows=[NEW_ROW])
-    db = connect(
-        port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=_RecordingJoins(transitions)
-    )
+    db = _public_db(port, _SharedProvider(transitions))
     depth = 5
 
     def joining(remaining: int) -> Callable[[Transaction], None]:
@@ -1474,10 +1614,13 @@ def test_an_activity_holds_the_same_at_every_depth_it_can_open_at() -> None:
 
 
 def test_nothing_of_a_closed_root_is_alive_once_the_sample_is_past() -> None:
-    # Both grid samples are taken while every scope is still open, so neither
+    # Every grid sample is taken while every scope is still open, so none of them
     # says anything about what happens when they close. Leaving them closes them
-    # all, at sixteen roots open at once and at sixteen joining calls nested.
+    # all, at sixteen roots open at once, at sixteen joining calls nested, and at
+    # the threaded crossing of the two once its workers have been joined.
     deepest, _ = _SHAPES[1]
     nested = _joined_depth(16, _fanout(3))
+    crossed = _workload(_Point(8, 3, 8))
     assert _left_behind(lambda: _concurrent_roots(16, 3, deepest)(lambda: None)) == []
     assert _left_behind(lambda: nested(lambda: None)) == []
+    assert _left_behind(lambda: crossed(lambda: None)) == []
