@@ -75,6 +75,7 @@ run contains.
 | One canonical slice's capabilities and cases | `just core-show-slice slice-snapshot-1` |
 | One language spec, drafted or complete | `just core-show-language-spec languages/python/spec/python.md` |
 | The compatibility-matrix report | `just report-matrix` |
+| The execution lifecycle's dispatch and overhead baseline | `just python-report-lifecycle-overhead` |
 | Formatting, applied in place | `just harness-format`, `just python-format` |
 
 No focused selector is part of `just check`, so a green focused run is never
