@@ -26,6 +26,7 @@ built cache paid once is inside the window rather than before it.
 
 from __future__ import annotations
 
+import gc
 import subprocess
 import sys
 import tracemalloc
@@ -192,6 +193,30 @@ def _first_run_in_a_child(seam: str) -> tuple[int, int]:
     return int(kept), int(transient)
 
 
+def _survivors_without_coverage_state(seam: Seam) -> list[object]:
+    """The seam survivors after removing coverage's own tracing graph.
+
+    C coverage tracing on CPython 3.14 creates ``coverage.*`` state while the
+    heap instrument runs. That state, and only its references among the sampled
+    survivors, is not retained by the lifecycle seam this suite measures.
+    """
+    observed = survivors(seam)
+    by_identity = {id(item): item for item in observed}
+    ignored = {
+        identity
+        for identity, item in by_identity.items()
+        if type(item).__module__.startswith("coverage.")
+    }
+    pending = list(ignored)
+    while pending:
+        for referent in gc.get_referents(by_identity[pending.pop()]):
+            identity = id(referent)
+            if identity in by_identity and identity not in ignored:
+                ignored.add(identity)
+                pending.append(identity)
+    return [item for item in observed if id(item) not in ignored]
+
+
 def test_an_unobserved_read_allocates_nothing_at_all() -> None:
     tracemalloc.start()
     try:
@@ -271,22 +296,22 @@ def test_an_unobserved_read_leaves_no_tracked_object_alive_behind_it() -> None:
     # the free list serves moves no byte counter at all, and an activity that
     # built one to hold its own state would measure as free while every scope
     # entry created an object.
-    assert survivors(_unobserved_read) == []
+    assert _survivors_without_coverage_state(_unobserved_read) == []
 
 
 def test_a_declined_root_keeps_no_tracked_object_of_its_opening_alive() -> None:
     # The permitted UUID and descriptor are the opening's own transients: by the
     # time the scopes the decline hands back are running, neither is reachable,
     # which is what "the same path as the default one" means for a declined root.
-    assert survivors(_declined_read) == []
+    assert _survivors_without_coverage_state(_declined_read) == []
 
 
 def test_an_unobserved_write_batch_leaves_no_tracked_object_alive_either() -> None:
-    assert survivors(_flush_under(INERT)) == []
+    assert _survivors_without_coverage_state(_flush_under(INERT)) == []
 
 
 def test_an_unobserved_transaction_leaves_no_tracked_object_alive_either() -> None:
-    assert survivors(_unobserved_transaction) == []
+    assert _survivors_without_coverage_state(_unobserved_transaction) == []
 
 
 def test_the_first_run_in_a_process_costs_what_a_warmed_one_does() -> None:
