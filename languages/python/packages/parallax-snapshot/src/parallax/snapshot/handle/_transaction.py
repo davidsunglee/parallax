@@ -863,9 +863,9 @@ def _materializing(
 ) -> EntityGraphConstruction:
     """The graph construction a modeled read needs, or refuse before ``uow.read``.
 
-    Absent only for the first-party construction that connects a Database to a
-    bare accepted Metamodel for neutral write work; ``Database.connect`` admits
-    no such model, so an application never reaches this.
+    Absent exactly for a descriptor-backed Domain Model, which composes no Entity
+    Class and therefore serves the Wire and write lanes while materializing
+    nothing.
     """
     if construction is None:
         raise SnapshotConnectionError(

@@ -222,9 +222,9 @@ class _ConnectedModel:
 
     The two capabilities are held as two references rather than as one composite
     value, and only one of them can be absent: a row is derived from accepted
-    metadata alone, so the bare-Metamodel connection the conformance adapter
-    constructs for the write lanes reaches a fully functional codec while
-    reaching no materializer at all.
+    metadata alone, so a descriptor-backed model — which composes no Entity
+    Class — reaches a fully functional codec while reaching no materializer at
+    all.
     """
 
     meta: Metamodel
@@ -297,28 +297,31 @@ class Database:
     def __init__(
         self,
         port: DbPort,
-        model: DomainModel | Metamodel,
+        model: DomainModel,
         *,
         dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> None:
-        """Connect to ``model``, which the developer entry point narrows further.
+        """Connect to ``model``, a Domain Model of either provenance.
 
-        A bare accepted Metamodel is the first-party neutral-write form the
-        conformance adapter constructs: it serves the write lanes, which name
-        Entities rather than classes, and refuses every modeled read.
-        :meth:`connect` admits only a class-backed Domain Model, so an
-        application never reaches that state.
+        Every connection reaches its accepted Metamodel through a Domain Model,
+        so per-model derived state has one owner to hang on and one door to be
+        reached through. Provenance decides capability rather than which
+        constructor ran: a descriptor-backed model composes no Entity Class, so
+        it serves Wire and the write lanes — which name Entities rather than
+        classes — and refuses every modeled read at the read call.
         """
-        self._connected = (
-            _ConnectedModel(
-                meta=model_of(model),
-                codec=row_codec_of(model),
-                construction=(None if class_index(model) is None else graph_construction_of(model)),
+        if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing, so an untyped caller is named rather than failing on a missing attribute
+            raise SnapshotConnectionError(
+                "a Database connects to a Domain Model — one composed from Entity Classes, or "
+                "one a descriptor produced; a bare accepted Metamodel names no model a "
+                "connection can serve (snapshot-class-backed-model-required)"
             )
-            if isinstance(model, DomainModel)
-            else _ConnectedModel(meta=model, codec=EntityRowCodec(model), construction=None)
+        self._connected = _ConnectedModel(
+            meta=model_of(model),
+            codec=row_codec_of(model),
+            construction=(None if class_index(model) is None else graph_construction_of(model)),
         )
         self._port = port
         self._meta: Metamodel = self._connected.meta
@@ -362,18 +365,17 @@ class Database:
         decides capability rather than which constructor ran: a class-backed
         model supports both public read interfaces, and a descriptor-backed one
         supports Wire and refuses Typed materialization at the read call, before
-        any I/O. Only a bare accepted Metamodel — the first-party form
-        :meth:`__init__` still admits — is refused here with
+        any I/O. A value that is no Domain Model at all is refused here with
         :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError`,
-        before the adapter is inspected: it is a model no descriptor produced and
-        no application holds. One model connects to any number of Databases, and
+        before the adapter is inspected, and :meth:`__init__` refuses the same
+        shape one level down. One model connects to any number of Databases, and
         one Entity Class participates in any number of models.
         """
-        if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing: an untyped caller reaches this with the bare Metamodel `__init__` admits
+        if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing, kept here so the developer entry point diagnoses in its own words
             raise SnapshotConnectionError(
                 "connect() takes a Domain Model — one composed from Entity Classes, or one "
                 "a descriptor produced (snapshot-class-backed-model-required); a bare "
-                "accepted Metamodel is a first-party form no application holds"
+                "accepted Metamodel is a form no application holds"
             )
         return cls(
             adapter, model, dialect=dialect, clock=clock, lifecycle_provider=lifecycle_provider

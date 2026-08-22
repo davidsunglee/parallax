@@ -37,6 +37,7 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, STRING, PresentDocument
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AbstractRoot,
     Column,
@@ -54,7 +55,6 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.predicate import All
 from parallax.core.temporal_read import Pin
-from parallax.descriptor import domain_model_from_document
 from parallax.snapshot import InvalidData, WireEntity, connect, handle
 from parallax.snapshot.handle._wire import WireDatabaseView, wire_query_node
 from parallax.snapshot.materialize import (
@@ -66,9 +66,13 @@ from parallax.snapshot.materialize import (
     wire_roots,
 )
 
-_MODELS = models.load_models()
+# Descriptor-backed Domain Models, because a connection takes the Domain Model
+# itself; the accepted Metamodel underneath one is what the materialize-level
+# seams below are stated over.
+_MODELS = models.load_domain_models()
 ORDERS = _MODELS["orders"]
 CUSTOMER = _MODELS["customer"]
+CUSTOMER_META = model_of(CUSTOMER)
 
 
 class QueuePort:
@@ -257,14 +261,16 @@ def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() ->
     # the arm `convert_row` takes for a caller that supplies no classified set. Its
     # occurrence reduction has to answer exactly as the row transform's does, or
     # one stored state publishes two nodes depending on which door it came in by.
-    identity = identity_of(CUSTOMER, "Customer")
-    scope = MergeScope(CUSTOMER)
+    identity = identity_of(CUSTOMER_META, "Customer")
+    scope = MergeScope(CUSTOMER_META)
     ref = convert_row(
         {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
-        LevelContext(identity, documents_of(CUSTOMER, identity)),
+        LevelContext(identity, documents_of(CUSTOMER_META, identity)),
         scope,
     )
-    (published,) = wire_roots(merge_graph_input(scope.build((ref,), Pin()), CUSTOMER), CUSTOMER)
+    (published,) = wire_roots(
+        merge_graph_input(scope.build((ref,), Pin()), CUSTOMER_META), CUSTOMER_META
+    )
     assert _mapping(_entity(published)["address"]) == {"street": "9 Beacon St", "phones": []}
 
 
@@ -533,9 +539,7 @@ def test_a_wire_read_participates_in_the_transaction_that_owns_it() -> None:
 # Wire read can publish is proven through BOTH.
 _CUSTOMER_MODELS: Mapping[str, DomainModel] = {
     "class-backed": class_models.MODELS["customer"],
-    "descriptor-backed": domain_model_from_document(
-        models.read_document(models.default_models_dir() / "customer.yaml")
-    ),
+    "descriptor-backed": CUSTOMER,
 }
 
 _VALID_CUSTOMER: Row = {
@@ -590,9 +594,9 @@ def test_either_model_provenance_publishes_a_non_hydrating_record(provenance: st
     assert record.data is None
 
 
-def test_a_first_party_metamodel_connection_classifies_the_same_way() -> None:
-    # The bare accepted Metamodel `connect` refuses and the conformance adapter
-    # holds: it reaches the same materializer, so its verdicts are the same ones.
+def test_the_constructor_door_classifies_the_same_way_connect_does() -> None:
+    # The first-party constructor the conformance adapter uses reaches the same
+    # materializer `connect` does, so its verdicts are the same ones.
     port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": "Oslo"}}]])
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
