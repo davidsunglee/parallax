@@ -1521,18 +1521,23 @@ absent for a descriptor-backed one; it is a bidirectional Entity
 Identity/Entity Class map and carries no per-model identity of its own.
 `Database.connect(adapter, model)` has a static `model: DomainModel` input and
 accepts no bare-Metamodel overload. At runtime it narrows the same way: a value
-that is not a Domain Model at all, and a Domain Model composing no Entity
-Class, are both rejected before `adapter` is inspected, with the same exported
-`SnapshotConnectionError(ValueError)` under the sole stable code
-`snapshot-class-backed-model-required`. The error exposes neither an Entity
-Runtime nor a class index. It is not
+that is not a Domain Model at all is rejected before `adapter` is inspected,
+with the exported `SnapshotConnectionError(ValueError)` under the sole stable
+code `snapshot-class-backed-model-required`. A Domain Model composing no Entity
+Class connects, because provenance decides capability rather than connectability;
+it is refused under that same code at every modeled read instead. The error
+exposes neither an Entity Runtime nor a class index. It is not
 `DeferredFeatureError(execution-feature-deferred)`, which is reserved for a
 valid query whose execution feature is explicitly deferred.
 
-After class-backed validation, Snapshot constructs one private `_ConnectedModel`
-owned by the Database. It contains the accepted Metamodel and the class index
-Snapshot materialization requires, and no identity. It is handle state rather
-than a Core runtime value and is neither exported nor shared through the model.
+After that narrowing, Snapshot constructs one private `_ConnectedModel` owned by
+the Database. It contains the accepted Metamodel, the exact-model layout catalog
+every read converts its rows against, the Entity Row Codec every write derives
+its rows through, the Entity Graph Construction Snapshot materialization
+requires — absent exactly for a descriptor-backed model, which is what makes a
+modeled read refusable before any I/O — and no identity. It is handle state
+rather than a Core runtime value and is neither exported nor shared through the
+model.
 
 `Database(port, model)` takes the same `model: DomainModel` input and admits no
 bare accepted Metamodel. It refuses a value that is not a Domain Model with the
@@ -1623,8 +1628,8 @@ nothing and refuses each allocation as
 reaches is fully functional — the codec resolves an Entity Identity against
 declared metadata and never consults the Entity Identity/Entity Class index
 (§5). Refusing a descriptor-backed model is therefore the job of the caller that
-needs classes — `Database.connect`, by name and before adapter work — and never
-of a seam answering absence.
+needs classes — `Database.find` and `Transaction.find`, by name and before any
+I/O — and never of a seam answering absence.
 
 Each seam is retained by the model on first reach, so repeat calls for one model
 return the same value. Both are reached from
@@ -2156,12 +2161,14 @@ or descriptor authoring form and performs no audit stamping.
 
   A layout is owned by the exact model it was derived from, reached through one
   door, and derived on first reach of the Entity it describes. Concurrent first
-  reach may publish more than one layout for a key, and every layout for one key
-  is interchangeable, so no layout's identity is load-bearing. Retained layout
+  reach may publish more than one catalog for a model and more than one layout
+  for a key; every catalog over one model and every layout for one key is
+  interchangeable, so no layout's identity is load-bearing. Retained layout
   count and size are a function of the models a process connects to and the
-  Entities its reads address, and are independent of the number of graphs
-  materialized. No process-global cache, weak cache, data-keyed cache, or
-  query-result cache participates.
+  Entities its reads address, plus at most one further catalog for each
+  connection that raced another's first reach, and are independent of the number
+  of graphs materialized. No process-global cache, weak cache, data-keyed cache,
+  or query-result cache participates.
 - **Deterministic graph order.** Merged logical nodes receive their zero-based
   allocation index by deterministic first-encounter preorder: roots in result
   order; relationships on each node in accepted metadata declaration order;

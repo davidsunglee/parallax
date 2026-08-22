@@ -225,14 +225,16 @@ def layout_catalog_of(model: DomainModel) -> LayoutCatalog:
     and the retained catalog count is a function of the models a process
     connects to rather than of the graphs it materializes.
 
-    Unsynchronized check-then-set, like its two capability siblings: a
-    concurrent first reach may build two catalogs and let one overwrite the
-    other, and the loser stays reachable only from the rows already built
-    against it. That is safe because a catalog is a pure function of the
-    accepted immutable Metamodel — two catalogs for one model are structurally
-    identical — and because layout identity is never load-bearing: nothing
-    compares layouts by identity, and every consumer keys by Entity Identity or
-    Value Object Identity, both value types.
+    Unsynchronized check-then-set, like its two capability siblings: concurrent
+    first reaches each build a catalog and each are answered their own, and
+    whichever landed last is what every later reach is answered. A caller
+    holding one of the others keeps it — and keeps deriving into it — for as
+    long as that caller lives, so a race between two connections to one model
+    retains two catalogs rather than one. That is safe because a catalog is a
+    pure function of the accepted immutable Metamodel — two catalogs for one
+    model are structurally identical — and because layout identity is never
+    load-bearing: nothing compares layouts by identity, and every consumer keys
+    by Entity Identity or Value Object Identity, both value types.
     """
     catalog = model._layout_catalog  # pyright: ignore[reportPrivateUsage] - first-party seam
     if catalog is None:
