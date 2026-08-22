@@ -2166,16 +2166,22 @@ or descriptor authoring form and performs no audit stamping.
   than a stored-data classification.
 
   A layout is owned by the exact model it was derived from, reached through one
-  door, and derived on first reach of the Entity it describes. Concurrent first
-  reach may publish more than one catalog for a model and more than one layout
-  for a key; every catalog over one model and every layout for one key is
-  interchangeable, so no layout's identity is load-bearing. Retained layout
-  count and size are a function of the models a process connects to and the
-  Entities its reads address, plus at most one further catalog for each caller
-  that raced another's first reach and retained what it was answered — a
-  connection, or any other source that holds a model's layouts — and are
-  independent of the number of graphs materialized. No process-global cache,
-  weak cache, data-keyed cache, or query-result cache participates.
+  door, and derived on first reach of the Entity it describes. The collaboration
+  has exactly two unsynchronized first reaches — a model's catalog slot, and a
+  catalog's entry for one key — so concurrent first reach may publish more than
+  one catalog for a model and more than one layout for a key; every catalog over
+  one model and every layout for one key is interchangeable, so no layout's
+  identity is load-bearing. Retained layout count and size are a function of the
+  models a process connects to and the Entities its reads address, and are
+  independent of the number of graphs materialized. Concurrency adds only what a
+  losing racer was answered and kept, at most one object per lost race and only
+  while that caller holds it: losing a model's catalog race retains a second
+  catalog, counted over that model exactly like the first because its holder
+  keeps deriving into it, and losing one Entity's entry race within a catalog
+  retains a second layout for that key. A racer is a connection, any other
+  source that holds a model's layouts, or any caller holding one layout for the
+  work it reached that layout for. No process-global cache, weak cache,
+  data-keyed cache, or query-result cache participates.
 - **Deterministic graph order.** Merged logical nodes receive their zero-based
   allocation index by deterministic first-encounter preorder: roots in result
   order; relationships on each node in accepted metadata declaration order;
