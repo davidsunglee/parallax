@@ -125,8 +125,9 @@ class LevelContext:
 
     ``layout`` is the model-owned member layout of the exact Entity that row's
     own compiled read resolved it to, and is where the applicable member set and
-    its order come from: it is fixed by the model, so it is derived once per
-    Entity and shared by every row rather than re-resolved per conversion.
+    its order come from: it is fixed by the model, so a catalog derives it per
+    Entity and every row of this level shares the one it was answered rather
+    than re-resolving one per conversion.
     ``concrete_entity`` is read off that layout rather than supplied beside it —
     the exact Entity is a per-row fact under table-per-hierarchy, which is why it
     travels here rather than being re-derived from a synthetic tag, and taking it
