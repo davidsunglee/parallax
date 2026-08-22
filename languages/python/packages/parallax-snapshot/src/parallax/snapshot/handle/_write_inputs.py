@@ -342,7 +342,7 @@ def written_object_of_row(
 class _ObservedRow:
     """One materialized row's observable state, keyed by PHYSICAL column.
 
-    ``node`` is the graph-input projection this row converted into, which is how
+    ``node`` is the graph projection this row converted into, which is how
     the evidence built from it reaches the value that projection becomes.
     ``entity`` is the row's own resolved concrete Entity. ``columns`` is every
     value the row materialized — the primary key, the version column, the axis

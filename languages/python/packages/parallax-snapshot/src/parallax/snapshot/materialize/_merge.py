@@ -5,7 +5,10 @@ directly. Nothing is composed per node: :meth:`GraphMerge.layout`,
 :meth:`GraphMerge.member_values`, :meth:`GraphMerge.issues`, and
 :meth:`GraphMerge.view_layout` each hand back a reference to something the merge
 or its sealed graph already holds, and :meth:`GraphMerge.view` reads one slot of
-a row built once. That is deliberate rather than incidental: the three consumers
+a row built once. The whole-graph answers are frozen where the walk ends for the
+same reason: :attr:`GraphMerge.order`, :attr:`GraphMerge.roots`, and
+:attr:`GraphMerge.invalid_roots` are tuples the merge retains rather than tuples
+it builds per read. That is deliberate rather than incidental: the three consumers
 read genuinely different subsets — the typed materializer never reads issues,
 wire never reads issues, classification never reads member values — so any
 composed per-node record would over-produce for every one of them.
@@ -88,7 +91,6 @@ class GraphMerge:
     def __init__(self, graph: SnapshotGraph) -> None:
         rows = graph_rows(graph)
         self._rows = rows
-        self._order: list[EntityIdentity] = []
         self._winner: list[int] = []
         self._logical: dict[int, int] = {}
         self._resolved = [_UNREACHED] * len(rows.layouts)
@@ -96,17 +98,19 @@ class GraphMerge:
         self._merged: dict[
             tuple[EntityIdentity, tuple[RelationshipViewKey, ...]], MergedViewLayout
         ] = {}
-        self._invalid_roots: list[InvalidRootInput] = []
+        invalid_roots: list[InvalidRootInput] = []
         winners: list[dict[RelationshipViewKey, object]] = []
         root_indices: list[int | None] = []
         for root in rows.roots:
             if isinstance(root, InvalidRootInput):
-                self._invalid_roots.append(root)
+                invalid_roots.append(root)
                 root_indices.append(None)
             else:
                 self._walk(root, winners)
                 root_indices.append(self._resolved[root])
+        self._invalid_roots = tuple(invalid_roots)
         self._roots = tuple(root_indices)
+        self._order = tuple(rows.layouts[winner].concrete for winner in self._winner)
         self._view_layouts: list[MergedViewLayout] = []
         self._view_rows: list[tuple[object, ...]] = []
         for index, carried in enumerate(winners):
@@ -121,7 +125,7 @@ class GraphMerge:
     @property
     def order(self) -> tuple[EntityIdentity, ...]:
         """Each allocation index's own concrete Entity, in allocation order."""
-        return tuple(self._order)
+        return self._order
 
     @property
     def roots(self) -> tuple[int | None, ...]:
@@ -131,7 +135,7 @@ class GraphMerge:
     @property
     def invalid_roots(self) -> tuple[InvalidRootInput, ...]:
         """Non-hydrating roots in result order."""
-        return tuple(self._invalid_roots)
+        return self._invalid_roots
 
     @property
     def has_issues(self) -> bool:
@@ -204,10 +208,9 @@ class GraphMerge:
         logical = rows.logical_ids[projection]
         index = self._logical.get(logical)
         if index is None:
-            index = len(self._order)
+            index = len(self._winner)
             self._logical[logical] = index
             self._winner.append(projection)
-            self._order.append(rows.layouts[projection].concrete)
             self._issues.append(rows.issues[projection])
             winners.append({})
         else:

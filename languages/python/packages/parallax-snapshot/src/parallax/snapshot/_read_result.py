@@ -53,7 +53,7 @@ class FindResult:
 
     ``sources`` is the private Source Hint each observed projection's value will
     carry, keyed by that projection's own index in the graph. It travels
-    with the graph input because only the executor holds the row and the
+    with the graph because only the executor holds the row and the
     projection at once: a materializer builds the value, but the row it came from
     is gone by then.
     """

@@ -732,7 +732,7 @@ def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None
 
 
 def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization() -> None:
-    # Conversion carries the stored-data issue into graph input, and
+    # Conversion carries the stored-data issue into the graph, and
     # classification answers it in band. A default accessor still refuses — with
     # the invalid-data report, never with a materialization failure.
     port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": 7}}]])

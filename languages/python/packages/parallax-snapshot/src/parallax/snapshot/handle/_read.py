@@ -1084,7 +1084,7 @@ def wire_from_find_result(result: FindResult, meta: Metamodel) -> Snapshot[WireE
     :func:`snapshot_from_find_result`, not a wrapper of it.
 
     Both run the same :func:`~parallax.snapshot.materialize.merge_graph_input`
-    over the same executor's own graph input and the same root classification
+    over the same executor's own sealed graph and the same root classification
     over that merge, and neither calls the other: which materializer runs is
     decided after execution has already finished, so a typed read builds no
     frozen mapping and a wire read constructs no Entity. Both also attach the
