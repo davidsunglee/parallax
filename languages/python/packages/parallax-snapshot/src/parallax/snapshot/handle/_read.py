@@ -544,7 +544,6 @@ def stage_rows(
     materialized = tuple(compiled.materialize_row(row) for row in rows)
     contexts = tuple(
         LevelContext(
-            row.resolved_entity,
             layouts.entity(row.resolved_entity),
             compiled.projected_documents,
             compiled.attribute_reads(row.resolved_entity),
@@ -741,7 +740,6 @@ def _convert_level(
     refs: list[SnapshotNodeRef] = []
     for row in _execute_compiled(port, dialect, compiled, read):
         context = LevelContext(
-            row.resolved_entity,
             layouts.entity(row.resolved_entity),
             compiled.projected_documents,
             compiled.attribute_reads(row.resolved_entity),

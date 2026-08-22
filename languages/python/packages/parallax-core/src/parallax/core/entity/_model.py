@@ -34,7 +34,7 @@ from parallax.core.entity._errors import (
     MetamodelDefinitionError,
     MetamodelLookupError,
 )
-from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -50,7 +50,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.relationship import view as relationship_view
 
-__all__ = ["ClassIndex", "DomainModel", "class_index", "layout_catalog_of", "model_of"]
+__all__ = ["ClassIndex", "DomainModel", "cataloged_model", "class_index", "model_of"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,16 +94,17 @@ class DomainModel:
     the identical compiler-owned accepted metadata.
     """
 
-    __slots__ = ("_classes", "_graph_construction", "_layout_catalog", "_model", "_row_codec")
+    __slots__ = ("_cataloged", "_classes", "_graph_construction", "_model", "_row_codec")
 
     _model: Metamodel
     _classes: ClassIndex | None
-    _layout_catalog: LayoutCatalog | None
-    """The exact-model member layouts this model reached, created on first reach.
+    _cataloged: CatalogedModel | None
+    """This model's accepted metadata paired with the exact-model member layouts
+    derived from it, created on first reach.
 
-    Typed concretely rather than opaquely, unlike its two siblings: the layouts
-    are stated over the accepted Metamodel alone and their module sits BELOW this
-    one, so naming the type here inverts no edge."""
+    Typed concretely rather than opaquely, unlike its two siblings: the record is
+    stated over the accepted Metamodel alone and its module sits BELOW this one,
+    so naming the type here inverts no edge."""
     _graph_construction: object | None
     """The Entity Graph Construction collaboration this model reached, created on
     first reach. It is typed as opaque here because the construction seam depends
@@ -159,7 +160,7 @@ class DomainModel:
         self._model = model
         self._classes = classes
         self._graph_construction = None
-        self._layout_catalog = None
+        self._cataloged = None
         self._row_codec = None
 
     @property
@@ -217,46 +218,34 @@ def model_of(model: DomainModel) -> Metamodel:
     return model._model  # pyright: ignore[reportPrivateUsage] - first-party seam reads the model's own sealed metamodel
 
 
-def layout_catalog_of(model: DomainModel) -> LayoutCatalog:
-    """``model``'s exact-model layout catalog — the one door to it.
+def cataloged_model(model: DomainModel) -> CatalogedModel:
+    """``model``'s accepted Metamodel paired with the layouts derived from it —
+    the one door to either half.
 
-    One per Domain Model, created on first reach and retained by the model, so
-    every read against one model shares the per-Entity layouts derived from it
-    and the retained catalog count is a function of the models a process
-    connects to rather than of the graphs it materializes.
+    The record derives its own catalog, so pairing and derivation are one act and
+    the two halves a runtime carries can never name two models. It is created on
+    the first reach and retained by the model itself, so every later reach is
+    answered the record already in the slot, every read served by one record
+    shares the per-Entity layouts derived into it, and the retained catalog count
+    is a function of the models a process connects to rather than of the graphs
+    it materializes — one apiece, plus whatever the race below adds.
 
     Unsynchronized check-then-set, like its two capability siblings: concurrent
-    first reaches each build a catalog and each are answered their own, and
-    whichever landed last is what every later reach is answered. A caller
-    holding one of the others keeps it — and keeps deriving into it — for as
-    long as that caller lives, so a race between two connections to one model
-    retains two catalogs rather than one. That is safe because a catalog is a
-    pure function of the accepted immutable Metamodel — two catalogs for one
-    model are structurally identical — and because layout identity is never
-    load-bearing: nothing compares layouts by identity, and every consumer keys
-    by Entity Identity or Value Object Identity, both value types.
+    first reaches each build a record and each are answered their own, and
+    whichever landed last is what every later reach is answered. A caller holding
+    one of the others keeps it — and keeps deriving into its catalog — for as
+    long as that caller lives, so a race between two callers that each retain a
+    model's record retains two catalogs rather than one. That is safe because a
+    catalog is a pure function of the accepted immutable Metamodel — two catalogs
+    for one model are structurally identical — and because layout identity is
+    never load-bearing: nothing compares layouts by identity, and every consumer
+    keys by Entity Identity or Value Object Identity, both value types.
     """
-    catalog = model._layout_catalog  # pyright: ignore[reportPrivateUsage] - first-party seam
-    if catalog is None:
-        catalog = LayoutCatalog(model_of(model))
-        model._layout_catalog = catalog  # pyright: ignore[reportPrivateUsage] - first-party seam
-    return catalog
-
-
-def cataloged_model(model: DomainModel) -> CatalogedModel:
-    """``model``'s accepted Metamodel paired with the layouts derived from it.
-
-    The one door a runtime takes both halves through, so a value carrying
-    layouts and a value carrying accepted metadata are the same value and
-    cannot name two different models. The catalog half is
-    :func:`layout_catalog_of`'s, so the model's own slot stays the single owner
-    of the layouts and no second catalog is derived beside it.
-
-    A fresh record per call, deliberately: it holds two references and costs
-    nothing to form, and what it points at is the model's own retained catalog
-    rather than a second derivation of it.
-    """
-    return CatalogedModel(meta=model_of(model), layouts=layout_catalog_of(model))
+    cataloged = model._cataloged  # pyright: ignore[reportPrivateUsage] - first-party seam
+    if cataloged is None:
+        cataloged = CatalogedModel(model_of(model))
+        model._cataloged = cataloged  # pyright: ignore[reportPrivateUsage] - first-party seam
+    return cataloged
 
 
 def class_index(model: DomainModel) -> ClassIndex | None:

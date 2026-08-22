@@ -265,9 +265,7 @@ def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() ->
     scope = MergeScope(CUSTOMER_META)
     ref = convert_row(
         {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
-        LevelContext(
-            identity, layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)
-        ),
+        LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
         scope,
     )
     (published,) = wire_roots(
@@ -830,7 +828,6 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
     ref = convert_row(
         materialized.values,
         LevelContext(
-            materialized.resolved_entity,
             layout_of(_VARIANT_MODEL, materialized.resolved_entity),
             compiled.documents,
         ),

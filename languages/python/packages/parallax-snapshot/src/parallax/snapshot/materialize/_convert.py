@@ -123,30 +123,35 @@ class _AttributeReadContract(Protocol):
 class LevelContext:
     """What one row of one level converts under.
 
-    ``concrete_entity`` is the exact Entity that row's own compiled read resolved
-    it to — a per-row fact under table-per-hierarchy, which is why it travels
-    here rather than being re-derived from a synthetic tag. ``layout`` is that
-    exact Entity's model-owned member layout, which is where the applicable
-    member set and its order come from: it is fixed by the model, so it is
-    derived once per Entity and shared by every row rather than re-resolved per
-    conversion. ``documents`` is the resolved position's own `Document` tier
+    ``layout`` is the model-owned member layout of the exact Entity that row's
+    own compiled read resolved it to, and is where the applicable member set and
+    its order come from: it is fixed by the model, so it is derived once per
+    Entity and shared by every row rather than re-resolved per conversion.
+    ``concrete_entity`` is read off that layout rather than supplied beside it —
+    the exact Entity is a per-row fact under table-per-hierarchy, which is why it
+    travels here rather than being re-derived from a synthetic tag, and taking it
+    from the layout is what keeps a context from naming one Entity while laying
+    out another. ``documents`` is the resolved position's own `Document` tier
     contributors, decided once where the projection was, so no level re-projects
     a family superset of its own. ``attribute_reads`` carries each compiled
     projection's logical identity, physical column, actual driver key, and decode
     contract intact. This keeps an encoded result such as ``payload_hex``
     attached to physical ``payload``.
 
-    ``layout`` stays out of equality and hashing: it is derived from the model
-    and ``concrete_entity``, so it distinguishes no two contexts that field does
-    not already distinguish, while comparing it would walk a whole shared layout
-    tree and holding it in the hash would cost this context the hashability its
-    scalar fields give it.
+    ``layout`` stays out of equality and hashing: ``concrete_entity`` already
+    distinguishes every context it distinguishes — two layouts for one exact
+    Entity are interchangeable — while comparing it would walk a whole shared
+    layout tree and holding it in the hash would cost this context the
+    hashability its scalar fields give it.
     """
 
-    concrete_entity: EntityIdentity
     layout: EntityLayout = field(compare=False)
+    concrete_entity: EntityIdentity = field(init=False)
     documents: tuple[ValueObjectMetadata, ...] = ()
     attribute_reads: tuple[_AttributeReadContract, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "concrete_entity", self.layout.concrete)
 
 
 def _new_nodes() -> list[SnapshotNodeInput]:

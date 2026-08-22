@@ -30,8 +30,13 @@ from _corpus_model_support import model as corpus_model
 
 from parallax.conformance import models
 from parallax.core.entity import EntityAttributeInput
-from parallax.core.entity._layout import EntityLayout, LayoutCatalog, ValueObjectLayout
-from parallax.core.entity._model import cataloged_model, layout_catalog_of, model_of
+from parallax.core.entity._layout import (
+    CatalogedModel,
+    EntityLayout,
+    LayoutCatalog,
+    ValueObjectLayout,
+)
+from parallax.core.entity._model import cataloged_model, model_of
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.inheritance import view as inheritance_view
@@ -462,24 +467,25 @@ def _domain_models() -> dict[str, Any]:
 def test_one_domain_model_reaches_one_catalog_and_two_reach_two() -> None:
     loaded = _domain_models()
     orders, animal = loaded["orders"], loaded["animal"]
-    assert layout_catalog_of(orders) is layout_catalog_of(orders)
-    assert layout_catalog_of(orders) is not layout_catalog_of(animal)
+    assert cataloged_model(orders) is cataloged_model(orders)
+    assert cataloged_model(orders).layouts is not cataloged_model(animal).layouts
 
 
-def test_the_cataloged_model_pairs_one_models_metadata_with_that_models_own_catalog() -> None:
-    # The pairing door hands out the model's OWN catalog rather than deriving a
-    # second one beside it, so the per-model slot stays the single owner and the
-    # two halves a read carries can never name two models.
+def test_the_cataloged_model_pairs_one_models_metadata_with_the_catalog_it_derived() -> None:
+    # A record derives its own catalog from the metadata it carries, so the two
+    # halves a read carries can never name two models — and so the model's own
+    # retained record, not a second record over the same metadata, is what a
+    # runtime holds to share one model's layouts.
     orders = _domain_models()["orders"]
     cataloged = cataloged_model(orders)
-    assert cataloged.layouts is layout_catalog_of(orders)
     assert cataloged.meta is model_of(orders)
+    assert CatalogedModel(cataloged.meta).layouts is not cataloged.layouts
 
 
 def test_a_descriptor_backed_domain_model_reaches_a_working_catalog() -> None:
     # The class-less path `graph_construction_of` refuses: a layout depends on
     # the accepted metadata alone, so this one must not.
-    catalog = layout_catalog_of(_domain_models()["orders"])
+    catalog = cataloged_model(_domain_models()["orders"]).layouts
     assert catalog.entity(_identity("Order")).concrete == _identity("Order")
 
 

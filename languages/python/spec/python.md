@@ -1515,10 +1515,14 @@ property. Ordinary application code uses `models.meta(...)`, `models.entities`,
 or the public Descriptor Frontend export functions.
 
 Snapshot connection instead reads the model through the private first-party
-`model_of(model) -> Metamodel` and `class_index(model) -> ClassIndex | None`
-pair. The class index is present exactly for a class-backed Domain Model and
-absent for a descriptor-backed one; it is a bidirectional Entity
-Identity/Entity Class map and carries no per-model identity of its own.
+`cataloged_model(model) -> CatalogedModel` and
+`class_index(model) -> ClassIndex | None` pair. The cataloged model is the
+accepted Metamodel paired with the layout catalog derived from it, answered by
+the one door that derives and retains that pair, so a connection reaches both
+halves at once and neither separately. The class index is present exactly for a
+class-backed Domain Model and absent for a descriptor-backed one; it is a
+bidirectional Entity Identity/Entity Class map and carries no per-model identity
+of its own.
 `Database.connect(adapter, model)` has a static `model: DomainModel` input and
 accepts no bare-Metamodel overload. At runtime it narrows the same way: a value
 that is not a Domain Model at all is rejected before `adapter` is inspected,
@@ -2167,10 +2171,11 @@ or descriptor authoring form and performs no audit stamping.
   for a key; every catalog over one model and every layout for one key is
   interchangeable, so no layout's identity is load-bearing. Retained layout
   count and size are a function of the models a process connects to and the
-  Entities its reads address, plus at most one further catalog for each
-  connection that raced another's first reach, and are independent of the number
-  of graphs materialized. No process-global cache, weak cache, data-keyed cache,
-  or query-result cache participates.
+  Entities its reads address, plus at most one further catalog for each caller
+  that raced another's first reach and retained what it was answered — a
+  connection, or any other source that holds a model's layouts — and are
+  independent of the number of graphs materialized. No process-global cache,
+  weak cache, data-keyed cache, or query-result cache participates.
 - **Deterministic graph order.** Merged logical nodes receive their zero-based
   allocation index by deterministic first-encounter preorder: roots in result
   order; relationships on each node in accepted metadata declaration order;
