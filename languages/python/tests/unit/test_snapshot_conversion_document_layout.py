@@ -50,7 +50,6 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> Sna
     materialized = compiled.materialize_row(stored)
     scope = MergeScope(model)
     context = LevelContext(
-        materialized.resolved_entity,
         layout_of(model, materialized.resolved_entity),
         compiled.projected_documents,
         compiled.attribute_reads(materialized.resolved_entity),

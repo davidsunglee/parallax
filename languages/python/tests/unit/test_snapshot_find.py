@@ -28,7 +28,7 @@ from parallax.core import LATEST, TX_TIME, Attr, DomainModel, Entity, ValueObjec
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
@@ -112,7 +112,7 @@ def _refs(value: object) -> tuple[SnapshotNodeRef, ...]:
 def _cataloged(model: Metamodel) -> CatalogedModel:
     """``model`` paired with its member layouts, as a connected ``Database``
     resolves the pair once and hands the executor for every read it serves."""
-    return CatalogedModel(model, LayoutCatalog(model))
+    return CatalogedModel(model)
 
 
 class QueuePort:

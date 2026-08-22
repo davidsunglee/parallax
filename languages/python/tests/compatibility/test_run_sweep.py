@@ -491,7 +491,6 @@ def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], R
         ref = convert_row(
             materialized.values,
             LevelContext(
-                materialized.resolved_entity,
                 layouts.entity(materialized.resolved_entity),
                 compiled.projected_documents,
                 compiled.attribute_reads(materialized.resolved_entity),

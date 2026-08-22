@@ -34,7 +34,7 @@ model itself failed to fix.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
@@ -250,16 +250,24 @@ class LayoutCatalog:
 class CatalogedModel:
     """One accepted Metamodel and the layouts derived from it, as one value.
 
-    A layout is a function of the model it came from, so a catalog and a
-    Metamodel that did not produce it name a state nothing downstream could
-    detect. Carrying both halves as one value makes that state unrepresentable
-    rather than merely checked: a consumer reads its member layouts from the
-    same value it reads its accepted metadata from, and no seam can thread the
-    two apart and rejoin them wrongly.
+    A layout is a function of the model it came from, so a catalog beside a
+    Metamodel that did not produce it names a state nothing downstream could
+    detect. The record derives its own catalog from the one Metamodel it is
+    constructed over, so that state is unrepresentable rather than merely
+    checked: there is no second half for a caller to supply, no seam can thread
+    the two apart and rejoin them wrongly, and a consumer reads its member
+    layouts from the same value it reads its accepted metadata from.
+
+    Constructing one therefore derives a catalog. A runtime that must share one
+    model's layouts holds the record that model retains rather than forming a
+    second beside it.
     """
 
     meta: Metamodel
-    layouts: LayoutCatalog
+    layouts: LayoutCatalog = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "layouts", LayoutCatalog(self.meta))
 
 
 def _occurrence_layout(

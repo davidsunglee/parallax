@@ -86,7 +86,7 @@ _NAMESPACE = "parallax.compatibility"
 
 def _context(model: Metamodel, entity: str) -> LevelContext:
     identity = identity_of(model, entity)
-    return LevelContext(identity, layout_of(model, identity), documents_of(model, identity))
+    return LevelContext(layout_of(model, identity), documents_of(model, identity))
 
 
 def _converted(model: Metamodel, entity: str, row: dict[str, object]) -> SnapshotNodeInput:
@@ -147,7 +147,6 @@ def test_an_encoded_projection_key_decodes_into_its_logical_attribute() -> None:
     payload = entity.attribute("payload")
     assert payload is not None
     context = LevelContext(
-        identity,
         layout_of(SCALARS, identity),
         (),
         (
@@ -680,7 +679,6 @@ def test_observable_columns_rekeys_and_decodes_an_encoded_scalar_projection() ->
     payload = entity.attribute("payload")
     assert payload is not None
     context = LevelContext(
-        identity,
         layout_of(SCALARS, identity),
         (),
         (

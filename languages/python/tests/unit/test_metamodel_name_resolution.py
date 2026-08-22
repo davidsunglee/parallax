@@ -25,7 +25,7 @@ from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.object_query import (
     IncludePath,
@@ -146,7 +146,7 @@ def test_the_read_executor_classifies_an_ambiguous_bare_name_by_the_same_rule() 
         model = _model()
         handle.find(
             _query("Person"),
-            CatalogedModel(model, LayoutCatalog(model)),
+            CatalogedModel(model),
             POSTGRES,
             cast("DbPort", _RefusingPort()),
         )
@@ -162,7 +162,7 @@ def test_the_read_executor_refuses_a_target_the_model_does_not_declare() -> None
         model = _model()
         handle.find(
             _query("Nope"),
-            CatalogedModel(model, LayoutCatalog(model)),
+            CatalogedModel(model),
             POSTGRES,
             cast("DbPort", _RefusingPort()),
         )

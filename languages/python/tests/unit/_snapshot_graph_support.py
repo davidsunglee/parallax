@@ -104,9 +104,7 @@ class GraphBuilder:
     def node(self, entity: str, columns: Mapping[str, object]) -> SnapshotNodeRef:
         """Convert one row of ``entity`` exactly as a level of a read would."""
         identity = identity_of(self._model, entity)
-        context = LevelContext(
-            identity, self._layouts.entity(identity), documents_of(self._model, identity)
-        )
+        context = LevelContext(self._layouts.entity(identity), documents_of(self._model, identity))
         return convert_row(dict(columns), context, self._scope)
 
     def input_of(self, ref: SnapshotNodeRef) -> SnapshotNodeInput:
