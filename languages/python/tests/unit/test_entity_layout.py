@@ -5,10 +5,10 @@ of the accepted Metamodel alone, so the whole corpus is graded against the
 family-effective member set every other read path already agrees on.
 **Agreement** holds the layout's family, logical key, and view order against the
 merge-side rules they restate, so neither statement of either rule can move
-without the other. **Ownership** is one catalog per Domain Model, reached through
-one door, with entries derived on first reach. **Refusals** are raised errors
-rather than stored-data classifications, because a row cannot contradict a
-position the model itself failed to fix.
+without the other. **Ownership** is the catalog a Domain Model retains, reached
+through one door, with entries derived on first reach. **Refusals** are raised
+errors rather than stored-data classifications, because a row cannot contradict
+a position the model itself failed to fix.
 
 The defect witnesses are doctored models rather than authored ones: an accepted
 Metamodel is exactly what cannot carry these shapes — formation refuses a
@@ -456,7 +456,7 @@ def test_the_layouts_view_order_is_the_order_the_merge_walks_and_publishes() -> 
 
 
 # --------------------------------------------------------------------------- #
-# Ownership: one catalog per Domain Model, entries on first reach.             #
+# Ownership: the catalog a Domain Model retains, entries on first reach.       #
 # --------------------------------------------------------------------------- #
 
 

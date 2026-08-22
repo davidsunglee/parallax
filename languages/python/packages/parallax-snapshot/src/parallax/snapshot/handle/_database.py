@@ -314,11 +314,11 @@ class Database:
         """Connect to ``model``, a Domain Model of either provenance.
 
         Every connection reaches its accepted Metamodel through a Domain Model,
-        so per-model derived state has one owner to hang on and one door to be
-        reached through. Provenance decides capability rather than which
-        constructor ran: a descriptor-backed model composes no Entity Class, so
-        it serves Wire and the write lanes — which name Entities rather than
-        classes — and refuses every modeled read at the read call.
+        so per-model derived state hangs on that model behind one lookup door.
+        Provenance decides capability rather than which constructor ran: a
+        descriptor-backed model composes no Entity Class, so it serves Wire and
+        the write lanes — which name Entities rather than classes — and refuses
+        every modeled read at the read call.
         """
         if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing, so an untyped caller is named rather than failing on a missing attribute
             raise SnapshotConnectionError(
