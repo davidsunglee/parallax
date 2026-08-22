@@ -96,7 +96,7 @@ def test_snapshot_wheel_ships_the_materialize_package(wheelhouse: Wheelhouse) ->
     names = _names(wheelhouse, "parallax-snapshot")
     assert "parallax/snapshot/materialize/__init__.py" in names
     assert "parallax/snapshot/materialize/_convert.py" in names
-    assert "parallax/snapshot/materialize/_input.py" in names
+    assert "parallax/snapshot/materialize/_graph.py" in names
     assert "parallax/snapshot/materialize/_merge.py" in names
     assert "parallax/snapshot/materialize.py" not in names
 

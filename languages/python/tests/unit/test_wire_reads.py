@@ -58,13 +58,12 @@ from parallax.core.temporal_read import Pin
 from parallax.snapshot import InvalidData, WireEntity, connect, handle
 from parallax.snapshot.handle._wire import WireDatabaseView, wire_query_node
 from parallax.snapshot.materialize import (
-    LevelContext,
-    MergeScope,
-    convert_row,
     merge_graph_input,
     source_hint_of,
     wire_roots,
 )
+from parallax.snapshot.materialize._convert import LevelContext, convert_row
+from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
 
 # Descriptor-backed Domain Models, because a connection takes the Domain Model
 # itself; the accepted Metamodel underneath one is what the materialize-level
@@ -262,16 +261,44 @@ def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() ->
     # occurrence reduction has to answer exactly as the row transform's does, or
     # one stored state publishes two nodes depending on which door it came in by.
     identity = identity_of(CUSTOMER_META, "Customer")
-    scope = MergeScope(CUSTOMER_META)
+    builder = GraphBuilder()
     ref = convert_row(
         {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
         LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
-        scope,
+        builder,
     )
-    (published,) = wire_roots(
-        merge_graph_input(scope.build((ref,), Pin()), CUSTOMER_META), CUSTOMER_META
-    )
+    (published,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), CUSTOMER_META)
     assert _mapping(_entity(published)["address"]) == {"street": "9 Beacon St", "phones": []}
+
+
+def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> None:
+    # A row that carried neither a scalar nor a nested member holds this
+    # runtime's own absence marker at each of those positions. Publication skips
+    # such a position rather than rendering it, so what a caller reads is a
+    # member the value does not have — the marker itself is unreachable, at every
+    # depth a document can nest to.
+    identity = identity_of(CUSTOMER_META, "Customer")
+    builder = GraphBuilder()
+    ref = convert_row(
+        {"id": 3, "address": {"street": "9 Beacon St", "geo": {"country": "NO"}}},
+        LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
+        builder,
+    )
+    (published,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), CUSTOMER_META)
+    node = _entity(published)
+    assert "name" not in node
+    assert "city" not in _mapping(node["address"])
+    assert "elevation" not in _mapping(_mapping(node["address"])["geo"])
+    assert _absent_free(node) == 0
+
+
+def _absent_free(value: object) -> int:
+    """The number of published positions holding the absence marker, at any depth."""
+    if isinstance(value, Mapping):
+        return sum(_absent_free(item) for item in cast("Mapping[str, object]", value).values())
+    if isinstance(value, list):
+        return sum(_absent_free(item) for item in cast("list[object]", value))
+    return 1 if value is ABSENT else 0
 
 
 # --------------------------------------------------------------------------- #
@@ -824,18 +851,16 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
             "archive_profile": PresentDocument({"label": "archive"}),
         }
     )
-    scope = MergeScope(_VARIANT_MODEL)
+    builder = GraphBuilder()
     ref = convert_row(
         materialized.values,
         LevelContext(
             layout_of(_VARIANT_MODEL, materialized.resolved_entity),
             compiled.documents,
         ),
-        scope,
+        builder,
     )
-    (root,) = wire_roots(
-        merge_graph_input(scope.build((ref,), Pin()), _VARIANT_MODEL), _VARIANT_MODEL
-    )
+    (root,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), _VARIANT_MODEL)
     assert root == {
         "id": 1,
         "familyVariant": "SharedVariant",

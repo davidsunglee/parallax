@@ -48,11 +48,9 @@ from parallax.snapshot.handle import _database
 from parallax.snapshot.materialize import (
     InvalidRootInput,
     SnapshotDecodingError,
-    SnapshotGraphInput,
-    SnapshotNodeInput,
-    SnapshotNodeRef,
-    attribute_value,
+    SnapshotGraph,
 )
+from parallax.snapshot.materialize._graph import ABSENT, GraphRows, graph_rows
 
 _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]
@@ -76,37 +74,48 @@ class ProfileOwner(Entity, table="profile_owner", namespace="parallax.compatibil
 _PROFILE_OWNER_MODEL = DomainModel(ProfileOwner)
 
 
-def _root(result: handle.FindResult) -> SnapshotNodeInput:
-    graph = result.graph
-    return graph.nodes[_valid_root(graph).node_index]
+def _rows(graph: SnapshotGraph) -> GraphRows:
+    """The sealed arrays behind ``graph``.
+
+    This suite grades what the EXECUTOR built — fan-back, guards, and milestone
+    partitioning — so it reads the graph's own rows rather than a merge's view
+    of them, which would fold exactly the duplicates a fan-back has to keep
+    apart.
+    """
+    return graph_rows(graph)
 
 
-def _valid_root(graph: SnapshotGraphInput, index: int = 0) -> SnapshotNodeRef:
-    root = graph.roots[index]
+def _root(result: handle.FindResult) -> int:
+    return _valid_root(_rows(result.graph))
+
+
+def _valid_root(rows: GraphRows, index: int = 0) -> int:
+    root = rows.roots[index]
     assert not isinstance(root, InvalidRootInput)
     return root
 
 
-def _value(graph: SnapshotGraphInput, ref: SnapshotNodeRef, entity: str, member: str) -> object:
+def _value(rows: GraphRows, projection: int, entity: str, member: str) -> object:
     """One converted projection's value for a member, named structurally."""
-    node = graph.nodes[ref.node_index]
-    return attribute_value(
-        node, AttributeIdentity(EntityIdentity("parallax.compatibility", entity), member)
-    )
+    identity = AttributeIdentity(EntityIdentity("parallax.compatibility", entity), member)
+    return rows.member_rows[projection][rows.layouts[projection].index_of[identity]]
 
 
-def _view(graph: SnapshotGraphInput, node: SnapshotNodeInput, attach_key: str) -> object:
-    """The value a node's view carries, found by the attach key a plan derived."""
-    del graph
+def _view(rows: GraphRows, projection: int, attach_key: str) -> object:
+    """The value a projection's view carries, found by the attach key a plan
+    derived — and ``ABSENT`` where the projection carries no such view at all."""
     return next(
-        entry.value
-        for entry in node.relationship_views
-        if (entry.view.narrowed_view or entry.view.relationship.name) == attach_key
+        (
+            rows.view_values[projection][slot]
+            for slot, key in enumerate(rows.view_keys[projection])
+            if (key.narrowed_view or key.relationship.name) == attach_key
+        ),
+        ABSENT,
     )
 
 
-def _refs(value: object) -> tuple[SnapshotNodeRef, ...]:
-    return cast("tuple[SnapshotNodeRef, ...]", value)
+def _refs(value: object) -> tuple[int, ...]:
+    return cast("tuple[int, ...]", value)
 
 
 def _cataloged(model: Metamodel) -> CatalogedModel:
@@ -168,8 +177,9 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
     )
     result = handle.find(query, _cataloged(ORDERS), POSTGRES, port)
     assert len(port.executed) == 2
-    items = _refs(_view(result.graph, _root(result), "items"))
-    assert [_value(result.graph, ref, "OrderItem", "id") for ref in items] == [11]
+    rows = _rows(result.graph)
+    items = _refs(_view(rows, _root(result), "items"))
+    assert [_value(rows, ref, "OrderItem", "id") for ref in items] == [11]
 
 
 def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
@@ -183,7 +193,7 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
     )
     result = handle.find(query, _cataloged(ORDERS), POSTGRES, port)
     assert len(port.executed) == 1
-    assert result.graph.roots == ()
+    assert _rows(result.graph).roots == ()
     assert len(port.executed) == 1
 
 
@@ -222,7 +232,7 @@ def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement(
     )
     result = handle.find(query, _cataloged(ORDERS), POSTGRES, port)
     assert len(port.executed) == 2
-    assert _view(result.graph, _root(result), "items") == ()
+    assert _view(_rows(result.graph), _root(result), "items") == ()
 
 
 def test_find_back_reference_level_issues_no_additional_statement() -> None:
@@ -251,9 +261,9 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
     )
     result = handle.find(query, _cataloged(ORDERS), POSTGRES, port)
     assert len(port.executed) == 2  # the back-reference costs nothing
-    (item,) = _refs(_view(result.graph, _root(result), "items"))
-    back = _view(result.graph, result.graph.nodes[item.node_index], "order")
-    assert back == result.graph.roots[0]
+    rows = _rows(result.graph)
+    (item,) = _refs(_view(rows, _root(result), "items"))
+    assert _view(rows, item, "order") == rows.roots[0]
 
 
 @pytest.mark.parametrize(
@@ -324,11 +334,11 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
         }
     )
     result = handle.find(query, _cataloged(ANIMAL), POSTGRES, port)
-    (animal,) = _refs(_view(result.graph, _root(result), "animals"))
-    node = result.graph.nodes[animal.node_index]
-    assert node.concrete_entity == EntityIdentity("parallax.compatibility", "Dog")
-    # The synthetic tag is nobody's member, so no converted entry carries it.
-    assert all(entry.identity.name != "kind" for entry in node.attributes)
+    rows = _rows(result.graph)
+    (animal,) = _refs(_view(rows, _root(result), "animals"))
+    assert rows.layouts[animal].concrete == EntityIdentity("parallax.compatibility", "Dog")
+    # The synthetic tag is nobody's member, so no row position stands for it.
+    assert all(attribute.identity.name != "kind" for attribute in rows.layouts[animal].attributes)
 
 
 def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
@@ -355,7 +365,10 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
         {"target": "Document", "predicate": {"all": {}}, "narrowTo": ["Invoice"]}
     )
     result = handle.find(query, _cataloged(DOCUMENT), POSTGRES, port)
-    assert _root(result).concrete_entity == EntityIdentity("parallax.compatibility", "Invoice")
+    rows = _rows(result.graph)
+    assert rows.layouts[_root(result)].concrete == EntityIdentity(
+        "parallax.compatibility", "Invoice"
+    )
 
 
 def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graphs() -> None:
@@ -392,7 +405,10 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 4, 1, tzinfo=_UTC),
     ]
-    assert [_value(g, _valid_root(g), "InvoiceLine", "amount") for g in result.graphs] == [
+    assert [
+        _value(rows, _valid_root(rows), "InvoiceLine", "amount")
+        for rows in map(_rows, result.graphs)
+    ] == [
         Decimal("50.00"),
         Decimal("75.00"),
     ]
@@ -432,10 +448,8 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
     )
     result = handle.find_history(query, _cataloged(INVOICE), POSTGRES, port)
     assert len(result.graphs) == 1
-    graph = result.graphs[0]
-    assert [
-        _value(graph, _valid_root(graph, index), "InvoiceLine", "id") for index in range(2)
-    ] == [
+    rows = _rows(result.graphs[0])
+    assert [_value(rows, _valid_root(rows, index), "InvoiceLine", "id") for index in range(2)] == [
         1000,
         2000,
     ]
@@ -539,7 +553,9 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 2, 1, tzinfo=_UTC),
     ]
-    assert [_value(g, _valid_root(g), "Rate", "amount") for g in result.graphs] == [
+    assert [
+        _value(rows, _valid_root(rows), "Rate", "amount") for rows in map(_rows, result.graphs)
+    ] == [
         Decimal("2.25"),
         Decimal("2.50"),
     ]
@@ -965,7 +981,7 @@ def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> N
     )
     result = handle.find(query, _cataloged(ANIMAL), POSTGRES, port)
     assert len(port.executed) == 1
-    assert _view(result.graph, _root(result), "owner") is None
+    assert _view(_rows(result.graph), _root(result), "owner") is None
 
 
 def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
@@ -995,9 +1011,10 @@ def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
         }
     )
     result = handle.find(query, _cataloged(ORDERS), POSTGRES, port)
+    rows = _rows(result.graph)
     item = next(
-        node
-        for node in result.graph.nodes
-        if node.concrete_entity == EntityIdentity("parallax.compatibility", "OrderItem")
+        projection
+        for projection, layout in enumerate(rows.layouts)
+        if layout.concrete == EntityIdentity("parallax.compatibility", "OrderItem")
     )
-    assert _view(result.graph, item, "order") is None
+    assert _view(rows, item, "order") is None

@@ -1,12 +1,16 @@
-"""Per-row conversion into Snapshot Graph Input (m-snapshot-read).
+"""Per-row conversion into one compact projection row (m-snapshot-read).
 
 Exercises `parallax.snapshot.materialize`'s conversion seam independently of the
 Docker-gated compile/run sweeps: value-object document decoding (declared-shape
 projection, the absence-collapse vocabulary, the refusal shape for stored data
 that contradicts its declared type), scalar provenance, graph-local identity
 (family normalization, projection independence, the table-per-concrete-subtype
-exception, the scope's first-writer registration), and the deliberately physical
-observation extraction the write side reads.
+exception, the builder's first-writer registration), and the deliberately
+physical observation extraction the write side reads.
+
+A row is POSITIONAL: every applicable member occupies its declared position and
+``ABSENT`` stands where the read carried nothing, so what the suite asserts of a
+member is what the row holds at that member's own position.
 
 Conversion needs no Entity Class, so the suite drives accepted models straight
 from the corpus descriptors; the merge and construction halves live in
@@ -18,12 +22,20 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
 from _corpus_model_support import formed
 from _corpus_model_support import model as corpus_model
-from _snapshot_graph_support import documents_of, identity_of, invalid_record, layout_of
+from _snapshot_graph_support import (
+    documents_of,
+    identity_of,
+    invalid_record,
+    layout_of,
+    rendered_occurrence,
+)
 
 from parallax.conformance import vo_models
 from parallax.core.base import (
@@ -43,7 +55,8 @@ from parallax.core.base import (
     PresentDocument,
 )
 from parallax.core.document_codec import DocumentFinding, encode_leaf
-from parallax.core.entity import ValueObjectRecord, graph_construction_of
+from parallax.core.entity import graph_construction_of
+from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -65,14 +78,11 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.materialize import (
     InvalidRootInput,
-    LevelContext,
-    MergeScope,
-    SnapshotNodeInput,
-    attribute_value,
-    convert_row,
-    logical_key,
+    StoredDataIssueInput,
     observable_columns,
 )
+from parallax.snapshot.materialize._convert import LevelContext, convert_row
+from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
 
 ORDERS = corpus_model("orders")
 ANIMAL = corpus_model("animal")
@@ -84,33 +94,103 @@ SCALARS = corpus_model("scalars")
 _NAMESPACE = "parallax.compatibility"
 
 
+type _Record = Mapping[str, object]
+"""One occurrence's member row, rendered by declared name for an assertion."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Projection:
+    """One converted projection: its layout, its member row, and its issues.
+
+    Every read below goes through the layout, because that is the whole of how a
+    row is read — a position means what the layout says it means and nothing on
+    the row itself says so.
+    """
+
+    layout: EntityLayout
+    values: tuple[object, ...]
+    issues: tuple[StoredDataIssueInput, ...]
+
+    @property
+    def concrete_entity(self) -> EntityIdentity:
+        return self.layout.concrete
+
+    @property
+    def carried(self) -> set[str]:
+        """The Attribute positions this row holds a value at, by declared name."""
+        return {
+            attribute.identity.name
+            for position, attribute in enumerate(self.layout.attributes)
+            if self.values[position] is not ABSENT
+        }
+
+    def declaring(self, name: str) -> EntityIdentity:
+        """Which position declares the Attribute this row carries under ``name``."""
+        return next(
+            attribute.identity.entity
+            for attribute in self.layout.attributes
+            if attribute.identity.name == name
+        )
+
+    def member(self, identity: AttributeIdentity) -> object:
+        """``identity``'s value by position, or ``ABSENT`` where the row holds none."""
+        position = self.layout.index_of.get(identity)
+        return ABSENT if position is None else self.values[position]
+
+    def logical_key(self) -> tuple[EntityIdentity, object]:
+        """This row's graph-local identity, exactly as the builder derives one."""
+        return self.layout.family, self.layout.key_of(self.values)
+
+
 def _context(model: Metamodel, entity: str) -> LevelContext:
     identity = identity_of(model, entity)
     return LevelContext(layout_of(model, identity), documents_of(model, identity))
 
 
-def _converted(model: Metamodel, entity: str, row: dict[str, object]) -> SnapshotNodeInput:
-    scope = MergeScope(model)
-    return scope.node(convert_row(row, _context(model, entity), scope))
+def _converted(
+    model: Metamodel, entity: str, row: dict[str, object], **provenance: Any
+) -> _Projection:
+    builder = GraphBuilder()
+    index = convert_row(row, _context(model, entity), builder, **provenance)
+    rows = graph_rows(builder.seal((index,), Pin()))
+    return _Projection(rows.layouts[index], rows.member_rows[index], rows.issues[index])
 
 
-def _occurrence(node: SnapshotNodeInput, name: str) -> Any:
-    """One converted occurrence's value, typed loosely for record assertions."""
-    return next(entry.value for entry in node.value_objects if entry.identity.path[-1] == name)
+def _projection(context: LevelContext, row: dict[str, object]) -> _Projection:
+    """One row converted under a caller-built level context."""
+    builder = GraphBuilder()
+    index = convert_row(row, context, builder)
+    rows = graph_rows(builder.seal((index,), Pin()))
+    return _Projection(rows.layouts[index], rows.member_rows[index], rows.issues[index])
 
 
-def _leaf(record: ValueObjectRecord, name: str) -> object:
-    return next(entry.value for entry in record.attributes if entry.identity.name == name)
+def _occurrence(node: _Projection, name: str) -> Any:
+    """One converted occurrence's value, rendered by declared name.
+
+    The rendering IS the positional walk the materializer and the wire lane each
+    make over a member row, so a name absent from it is a position the row holds
+    ``ABSENT`` at.
+    """
+    position, declared = next(
+        (position, occurrence)
+        for position, occurrence in enumerate(
+            node.layout.occurrences, start=node.layout.attribute_count
+        )
+        if occurrence.identity.path[-1] == name
+    )
+    return rendered_occurrence(node.values[position], declared)
 
 
-def _nested(record: ValueObjectRecord, name: str) -> Any:
-    return next(entry.value for entry in record.value_objects if entry.identity.path[-1] == name)
+def _leaf(record: _Record, name: str) -> object:
+    return record[name]
 
 
-def _names(record: ValueObjectRecord) -> set[str]:
-    return {entry.identity.name for entry in record.attributes} | {
-        entry.identity.path[-1] for entry in record.value_objects
-    }
+def _nested(record: _Record, name: str) -> Any:
+    return record[name]
+
+
+def _names(record: _Record) -> set[str]:
+    return set(record)
 
 
 # --------------------------------------------------------------------------- #
@@ -136,8 +216,8 @@ def test_a_level_context_is_hashable_and_keyed_by_the_level_it_converts() -> Non
 # --------------------------------------------------------------------------- #
 def test_a_scalar_column_becomes_its_own_attribute_identity() -> None:
     node = _converted(ORDERS, "Order", {"id": 1, "name": "Ada"})
-    assert {entry.identity.name for entry in node.attributes} == {"id", "name"}
-    assert attribute_value(node, AttributeIdentity(EntityIdentity(_NAMESPACE, "Order"), "id")) == 1
+    assert node.carried == {"id", "name"}
+    assert node.member(AttributeIdentity(EntityIdentity(_NAMESPACE, "Order"), "id")) == 1
 
 
 def test_an_encoded_projection_key_decodes_into_its_logical_attribute() -> None:
@@ -161,13 +241,14 @@ def test_an_encoded_projection_key_decodes_into_its_logical_attribute() -> None:
             ),
         ),
     )
-    scope = MergeScope(SCALARS)
-    node = scope.node(convert_row({"payload_hex": "0a1b"}, context, scope))
-    assert attribute_value(node, payload.identity) == b"\x0a\x1b"
+    node = _projection(context, {"payload_hex": "0a1b"})
+    assert node.member(payload.identity) == b"\x0a\x1b"
 
-    invalid_scope = MergeScope(SCALARS)
-    invalid = invalid_scope.node(convert_row({"payload_hex": "not-hex"}, context, invalid_scope))
+    # An undecodable scalar records its issue AND leaves its own position absent,
+    # so nothing downstream reads the raw stored spelling in its place.
+    invalid = _projection(context, {"payload_hex": "not-hex"})
     assert [issue.code for issue in invalid.issues] == ["stored-data-leaf-undecodable"]
+    assert invalid.member(payload.identity) is ABSENT
 
 
 def test_a_sibling_column_and_the_synthetic_family_tag_contribute_nothing() -> None:
@@ -188,21 +269,12 @@ def test_a_sibling_column_and_the_synthetic_family_tag_contribute_nothing() -> N
             "familyVariant": "Dog",
         },
     )
-    assert {entry.identity.name for entry in node.attributes} == {
-        "id",
-        "name",
-        "ownerId",
-        "licenseId",
-        "barkVolume",
-    }
+    assert node.carried == {"id", "name", "ownerId", "licenseId", "barkVolume"}
 
 
 def test_an_inherited_attribute_reaches_a_concrete_under_its_declaring_identity() -> None:
     node = _converted(ANIMAL, "Dog", {"id": 1, "name": "Rex", "owner_id": 10, "bark_volume": 7})
-    owners = [
-        entry.identity.entity.name for entry in node.attributes if entry.identity.name == "name"
-    ]
-    assert owners == ["Animal"]
+    assert node.declaring("name") == EntityIdentity(_NAMESPACE, "Animal")
 
 
 # --------------------------------------------------------------------------- #
@@ -224,13 +296,13 @@ def test_a_recursive_value_object_converts_to_records_at_every_depth() -> None:
             },
         },
     )
-    address = cast("ValueObjectRecord", _occurrence(node, "address"))
+    address = cast("_Record", _occurrence(node, "address"))
     assert _leaf(address, "street") == "1 Park Ave"
-    geo = cast("ValueObjectRecord", _nested(address, "geo"))
+    geo = cast("_Record", _nested(address, "geo"))
     assert _leaf(geo, "country") == "NO"
-    point = cast("ValueObjectRecord", _nested(geo, "point"))
+    point = cast("_Record", _nested(geo, "point"))
     assert (_leaf(point, "lat"), _leaf(point, "lon")) == (1.0, 2.0)
-    phones = cast("tuple[ValueObjectRecord, ...]", _nested(address, "phones"))
+    phones = cast("tuple[_Record, ...]", _nested(address, "phones"))
     assert [_leaf(phone, "number") for phone in phones] == ["555"]
 
 
@@ -257,14 +329,14 @@ def test_every_nested_leaf_decodes_by_its_declared_neutral_type() -> None:
             },
         },
     )
-    profile = cast("ValueObjectRecord", _occurrence(node, "profile"))
+    profile = cast("_Record", _occurrence(node, "profile"))
     assert _leaf(profile, "amount") == decimal.Decimal("10.25")
     assert _leaf(profile, "blob") == b"\x0a\x1b"
     assert _leaf(profile, "day") == dt.date(2026, 1, 15)
     assert _leaf(profile, "clock") == dt.time(9, 30)
     assert _leaf(profile, "instant") == dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)
     assert _leaf(profile, "token") == uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
-    entries = cast("tuple[ValueObjectRecord, ...]", _nested(profile, "entries"))
+    entries = cast("tuple[_Record, ...]", _nested(profile, "entries"))
     assert _leaf(entries[0], "price") == decimal.Decimal("19.99")
     assert _leaf(entries[0], "issued") == dt.date(2026, 2, 1)
 
@@ -287,7 +359,7 @@ def test_a_present_leaf_outside_its_declared_type_is_classified_where_absence_co
             "profile": {"small": None, "origin": "unknown", "entries": "not-an-array"},
         },
     )
-    profile = cast("ValueObjectRecord", _occurrence(node, "profile"))
+    profile = cast("_Record", _occurrence(node, "profile"))
     assert _leaf(profile, "small") is None
     assert "amount" not in _names(profile)
     assert _nested(profile, "origin") is None
@@ -444,7 +516,7 @@ def test_an_integral_float_leaf_answers_the_same_whichever_rendering_carries_it(
         assert invalid.issues[0].member.name == "ratio"
     for rendering in (20, 20.0):
         node = _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"ratio": rendering}})
-        assert _leaf(cast("ValueObjectRecord", _occurrence(node, "profile")), "ratio") == 20.0
+        assert _leaf(cast("_Record", _occurrence(node, "profile")), "ratio") == 20.0
 
 
 # One value per declarable Neutral Type, under the `document-codec` model's own
@@ -475,7 +547,7 @@ def test_every_document_the_codec_encodes_is_one_conversion_reads_back() -> None
     # spellings that could drift with it.
     profile = {name: encode_leaf(neutral, value) for name, neutral, value in _SAMPLE_LEAVES}
     node = _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "label": "Ada", "profile": profile})
-    record = cast("ValueObjectRecord", _occurrence(node, "profile"))
+    record = cast("_Record", _occurrence(node, "profile"))
     for name, _neutral, value in _SAMPLE_LEAVES:
         assert _leaf(record, name) == value
 
@@ -486,7 +558,7 @@ def test_an_undeclared_stored_key_never_contributes() -> None:
         "Customer",
         {"id": 1, "name": "Ada", "address": {"street": "x", "city": "y", "zip": "0"}},
     )
-    assert "zip" not in _names(cast("ValueObjectRecord", _occurrence(node, "address")))
+    assert "zip" not in _names(cast("_Record", _occurrence(node, "address")))
 
 
 def test_a_null_top_level_document_collapses_to_an_absent_occurrence() -> None:
@@ -511,7 +583,7 @@ def test_an_omitted_nested_one_contributes_nothing_while_an_omitted_many_is_carr
     node = _converted(
         CUSTOMER, "Customer", {"id": 5, "name": "Kavi", "address": {"street": "x", "city": "y"}}
     )
-    address = cast("ValueObjectRecord", _occurrence(node, "address"))
+    address = cast("_Record", _occurrence(node, "address"))
     assert _names(address) == {"street", "city", "phones"}
     assert _nested(address, "phones") == ()
 
@@ -530,7 +602,7 @@ def test_a_nested_occurrence_stored_in_a_kind_it_forbids_collapses_while_present
             "address": {"street": "x", "city": "y", "geo": "unknown", "phones": "not-an-array"},
         },
     )
-    address = cast("ValueObjectRecord", _occurrence(node, "address"))
+    address = cast("_Record", _occurrence(node, "address"))
     assert _nested(address, "geo") is None
     assert _nested(address, "phones") == ()
 
@@ -555,7 +627,7 @@ def test_a_top_level_many_cardinality_value_object_converts_to_a_record_tuple() 
     )
     meta = formed(DescriptorMetamodel(entities=(entity,)))
     node = _converted(meta, "Fleet", {"id": 1, "stops": [{"label": "a"}, {"label": "b"}]})
-    stops = cast("tuple[ValueObjectRecord, ...]", _occurrence(node, "stops"))
+    stops = cast("tuple[_Record, ...]", _occurrence(node, "stops"))
     assert [_leaf(stop, "label") for stop in stops] == ["a", "b"]
 
 
@@ -565,18 +637,18 @@ def test_a_top_level_many_cardinality_value_object_converts_to_a_record_tuple() 
 # --------------------------------------------------------------------------- #
 def test_a_logical_key_is_family_normalized_for_a_concrete_subtype() -> None:
     node = _converted(ANIMAL, "Dog", {"id": 1, "name": "Rex", "owner_id": 10, "bark_volume": 7})
-    assert logical_key(ANIMAL, node) == (EntityIdentity(_NAMESPACE, "Animal"), (1,))
+    assert node.logical_key() == (EntityIdentity(_NAMESPACE, "Animal"), 1)
 
 
 def test_two_projections_of_one_row_key_alike_whichever_position_reached_it() -> None:
     broad = _converted(ANIMAL, "Animal", {"id": 1, "name": "Rex", "owner_id": 10})
     narrowed = _converted(ANIMAL, "Dog", {"id": 1, "name": "Rex", "owner_id": 10})
-    assert logical_key(ANIMAL, broad) == logical_key(ANIMAL, narrowed)
+    assert broad.logical_key() == narrowed.logical_key()
 
 
 def test_a_non_participant_keys_by_its_own_identity() -> None:
     node = _converted(ORDERS, "Order", {"id": 1, "name": "Ada"})
-    assert logical_key(ORDERS, node) == (EntityIdentity(_NAMESPACE, "Order"), (1,))
+    assert node.logical_key() == (EntityIdentity(_NAMESPACE, "Order"), 1)
 
 
 _INVOICE_ROW: dict[str, object] = {
@@ -594,7 +666,7 @@ def test_table_per_concrete_subtype_keys_by_the_rows_own_concrete() -> None:
     # id 1 recurs across Invoice/Receipt/Memo"), so normalizing to the family root
     # would conflate two DIFFERENT rows that merely share a key value.
     invoice = _converted(DOCUMENT, "Invoice", _INVOICE_ROW)
-    assert logical_key(DOCUMENT, invoice) == (EntityIdentity(_NAMESPACE, "Invoice"), (1,))
+    assert invoice.logical_key() == (EntityIdentity(_NAMESPACE, "Invoice"), 1)
 
 
 def test_a_narrowed_abstract_read_and_a_direct_concrete_read_key_alike() -> None:
@@ -604,14 +676,14 @@ def test_a_narrowed_abstract_read_and_a_direct_concrete_read_key_alike() -> None
     # the two routes' keys identical.
     narrowed = _converted(DOCUMENT, "Invoice", _INVOICE_ROW)
     direct = _converted(DOCUMENT, "Invoice", dict(_INVOICE_ROW))
-    assert logical_key(DOCUMENT, narrowed) == logical_key(DOCUMENT, direct)
+    assert narrowed.logical_key() == direct.logical_key()
 
 
 def test_a_key_less_entity_never_forms() -> None:
     # The accepted Metamodel requires a standalone Entity to declare exactly one
     # primary-key Attribute (m-metamodel `metamodel-primary-key-missing`), so a
-    # key-less entity never reaches conversion at all — `logical_key`'s `None`
-    # return for one is defensive.
+    # key-less entity never reaches conversion at all — the layout's own refusal
+    # for one guards a model no formation accepts.
     entity = Entity(
         name="NoPk", table="no_pk", attributes=(Attribute(name="x", type="int64", column="x"),)
     )
@@ -619,20 +691,20 @@ def test_a_key_less_entity_never_forms() -> None:
         formed(DescriptorMetamodel(entities=(entity,)))
 
 
-def test_the_scope_registers_the_first_projection_of_a_logical_key() -> None:
+def test_the_builder_registers_the_first_projection_of_a_logical_key() -> None:
     # Graph-local identity resolution names the FIRST projection registered for a
-    # key, which is what a back-reference level resolves against.
-    scope = MergeScope(ORDERS)
+    # key, which is what a back-reference level resolves against. A single-column
+    # key resolves by its raw scalar, the spelling the layout's own rule gives it.
+    builder = GraphBuilder()
     context = _context(ORDERS, "Order")
-    first = convert_row({"id": 1, "name": "Ada"}, context, scope)
-    second = convert_row({"id": 1, "name": "Ada"}, context, scope)
+    first = convert_row({"id": 1, "name": "Ada"}, context, builder)
+    second = convert_row({"id": 1, "name": "Ada"}, context, builder)
     assert first != second
-    assert scope.resolve(EntityIdentity(_NAMESPACE, "Order"), (1,)) == first
+    assert builder.resolve(EntityIdentity(_NAMESPACE, "Order"), 1) == first
 
 
-def test_the_scope_answers_nothing_for_a_key_it_never_registered() -> None:
-    scope = MergeScope(ORDERS)
-    assert scope.resolve(EntityIdentity(_NAMESPACE, "Order"), (999,)) is None
+def test_the_builder_answers_nothing_for_a_key_it_never_registered() -> None:
+    assert GraphBuilder().resolve(EntityIdentity(_NAMESPACE, "Order"), 999) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -723,14 +795,18 @@ def test_a_whole_document_stored_in_a_kind_it_cannot_be_read_as_names_the_occurr
     )
 
 
-def test_a_member_a_node_carries_no_entry_for_answers_none() -> None:
-    # Absent and loaded-null answer alike here, which is what every caller needs:
-    # a gathered correlation key skips both.
-    node = _converted(ORDERS, "Order", {"id": 1})
-    assert (
-        attribute_value(node, AttributeIdentity(EntityIdentity(_NAMESPACE, "Order"), "name"))
-        is None
-    )
+def test_a_member_the_read_did_not_carry_is_absent_rather_than_null() -> None:
+    # A positional row cannot omit, so the distinction omission used to carry is
+    # spelled: the member the read never projected reads ABSENT, and a nullable
+    # member the row stored NULL at reads None. Both name no child row, which is
+    # why a gathered correlation key still skips each.
+    unread = _converted(ORDERS, "OrderItem", {"id": 11})
+    stored_null = _converted(ORDERS, "OrderItem", {"id": 11, "shipped_on": None})
+    shipped = AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "shippedOn")
+    assert unread.member(shipped) is ABSENT
+    assert stored_null.member(shipped) is None
+    assert "shippedOn" not in unread.carried
+    assert "shippedOn" in stored_null.carried
 
 
 @pytest.mark.parametrize(
@@ -741,12 +817,12 @@ def test_a_member_a_node_carries_no_entry_for_answers_none() -> None:
     ],
 )
 def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], code: str) -> None:
-    scope = MergeScope(CUSTOMER)
-    ref = convert_row(row, _context(CUSTOMER, "Customer"), scope)
-    graph = scope.build((ref,), Pin())
-    assert graph.has_issues
-    assert isinstance(graph.roots[0], InvalidRootInput)
-    assert graph.roots[0].issues[0].code == code
+    builder = GraphBuilder()
+    ref = convert_row(row, _context(CUSTOMER, "Customer"), builder)
+    graph = builder.seal((ref,), Pin())
+    root = graph_rows(graph).roots[0]
+    assert isinstance(root, InvalidRootInput)
+    assert root.issues[0].code == code
     (root,) = materialize_graph(
         graph,
         CUSTOMER,
@@ -758,15 +834,9 @@ def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], 
     assert {issue.code for issue in published.issues} == {code}
 
 
-def test_direct_attribute_null_and_unknown_family_tag_become_node_issues() -> None:
-    scope = MergeScope(CUSTOMER)
-    ref = convert_row(
-        {"id": 1, "name": None},
-        _context(CUSTOMER, "Customer"),
-        scope,
-        family_tag_unknown=True,
-    )
-    assert [issue.code for issue in scope.node(ref).issues] == [
+def test_direct_attribute_null_and_unknown_family_tag_become_projection_issues() -> None:
+    node = _converted(CUSTOMER, "Customer", {"id": 1, "name": None}, family_tag_unknown=True)
+    assert [issue.code for issue in node.issues] == [
         "stored-data-family-tag-unknown",
         "stored-data-attribute-null",
     ]
@@ -785,11 +855,5 @@ def test_direct_attribute_null_and_unknown_family_tag_become_node_issues() -> No
 def test_entity_document_findings_use_attribute_specific_issue_codes(
     finding: DocumentFinding, code: str
 ) -> None:
-    scope = MergeScope(CUSTOMER)
-    ref = convert_row(
-        {"id": 1, "name": "Ada"},
-        _context(CUSTOMER, "Customer"),
-        scope,
-        findings=(finding,),
-    )
-    assert scope.node(ref).issues[0].code == code
+    node = _converted(CUSTOMER, "Customer", {"id": 1, "name": "Ada"}, findings=(finding,))
+    assert node.issues[0].code == code

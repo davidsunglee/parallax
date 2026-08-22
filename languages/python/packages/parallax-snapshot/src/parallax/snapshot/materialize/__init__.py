@@ -1,21 +1,24 @@
 """``parallax.snapshot.materialize`` enforcement scope (the row-to-graph half of
 m-snapshot-read).
 
-The two-layer read seam below the developer surface: an immutable **Snapshot
-Graph Input** carrier layer, and the per-row conversion and projection merge that
-produce and consume it.
+The two-layer read seam below the developer surface: a sealed, index-addressed
+**Snapshot Graph** of compact positional rows, and the per-row conversion and
+projection merge that produce and consume it.
 
-- :mod:`~parallax.snapshot.materialize._input` fixes the carriers and their order
-  semantics, plus graph-local identity and the validation a merge may assume.
+- :mod:`~parallax.snapshot.materialize._graph` fixes the compact positional row,
+  the absent/null/empty spellings, graph-local identity, the index-addressed
+  edges a graph boundary refuses anything else at, and the sealing that turns a
+  builder's arrays into one opaque graph.
 - :mod:`~parallax.snapshot.materialize._convert` turns one SQL-materialized
   row's transformed values plus its level context and classified provenance into
-  one node input. SQL row transforms classify and decode projected Entity-document
+  one projection. SQL row transforms classify and decode projected Entity-document
   members first; conversion owns the remaining member-identity translation and
   Value Object occurrence reduction. It is the ONLY place a physical column, a
   storage key, or a Document Path becomes a member identity.
 - :mod:`~parallax.snapshot.materialize._merge` collapses duplicate projections
-  into one deterministic allocation order, holding integers and references only;
-  classified issues ride each winning logical node without deduplication.
+  into one deterministic allocation order and answers each consumer by index,
+  holding integers and references only; classified issues ride each winning
+  logical node without deduplication.
 - :mod:`~parallax.snapshot.materialize._classify` attributes those issues to the
   result roots whose requested include trees reach them, and settles the
   construction scope that attribution implies.
@@ -55,26 +58,15 @@ from parallax.snapshot.materialize._classify import (
 )
 from parallax.snapshot.materialize._convert import (
     SNAPSHOT_DECODING_FAILED,
-    LevelContext,
-    MergeScope,
     SnapshotDecodingError,
-    convert_row,
     observable_columns,
 )
-from parallax.snapshot.materialize._input import (
+from parallax.snapshot.materialize._graph import (
     InvalidRootInput,
-    LogicalKey,
     RelationshipViewKey,
-    SnapshotGraphInput,
-    SnapshotNodeInput,
-    SnapshotNodeRef,
-    SnapshotRelationshipViewInput,
+    SnapshotGraph,
     StoredDataIssueCode,
     StoredDataIssueInput,
-    attribute_value,
-    has_invalid_key,
-    logical_key,
-    validate_graph_input,
 )
 from parallax.snapshot.materialize._invalid import (
     InvalidData,
@@ -83,8 +75,6 @@ from parallax.snapshot.materialize._invalid import (
 )
 from parallax.snapshot.materialize._merge import (
     GraphMerge,
-    MergedNode,
-    MergedRelationshipView,
     merge_graph_input,
 )
 from parallax.snapshot.materialize._publication import (
@@ -113,36 +103,23 @@ __all__ = [
     "InvalidData",
     "InvalidDataError",
     "InvalidRootInput",
-    "LevelContext",
-    "LogicalKey",
-    "MergeScope",
-    "MergedNode",
-    "MergedRelationshipView",
     "RelationshipViewKey",
     "RootClassification",
     "SnapshotDecodingError",
-    "SnapshotGraphInput",
-    "SnapshotNodeInput",
-    "SnapshotNodeRef",
-    "SnapshotRelationshipViewInput",
+    "SnapshotGraph",
     "StoredDataIssue",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
     "UnwindTree",
     "WireEntity",
     "WireValue",
-    "attribute_value",
     "classify_roots",
-    "convert_row",
-    "has_invalid_key",
     "hydrates",
-    "logical_key",
     "merge_graph_input",
     "observable_columns",
     "opened_wire_entity",
     "require_publishable",
     "source_hint_of",
     "unwind_tree",
-    "validate_graph_input",
     "wire_roots",
 ]

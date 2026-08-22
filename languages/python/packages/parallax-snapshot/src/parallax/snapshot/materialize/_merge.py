@@ -1,135 +1,122 @@
 """Projection merging: many per-row projections into one deterministic allocation order.
 
-The merge retains a transient logical-identity index, the allocation index each
-input projection resolved to, and **slot-level winner references** — a
-``(node index, entry index)`` pair naming where in the input a member's winning
-entry lives. It clones no payload: :meth:`GraphMerge.node` composes one node's
-populate inputs on demand, out of the input's own frozen carrier records, and the
-caller drops the result as soon as that node is populated. No merged second graph
-is retained.
+The merge is the internal read-only INDEXED interface all three consumers read
+directly. Nothing is composed per node: :meth:`GraphMerge.layout`,
+:meth:`GraphMerge.member_values`, :meth:`GraphMerge.issues`, and
+:meth:`GraphMerge.view_layout` each hand back a reference to something the merge
+or its sealed graph already holds, and :meth:`GraphMerge.view` reads one slot of
+a row built once. That is deliberate rather than incidental: the three consumers
+read genuinely different subsets — the typed materializer never reads issues,
+wire never reads issues, classification never reads member values — so any
+composed per-node record would over-produce for every one of them.
+
+What it retains is the logical-node-to-allocation mapping, the projection-to-
+allocation mapping, the allocation order, the winning projection per logical
+node, one fixed view row per logical node aligned to that node's merged view
+layout, and the accumulated issues. It clones no member payload: a merged node's
+member row IS the winning projection's row.
 
 Two passes over one order. Pass 1 walks roots in first-encounter preorder,
 assigning each logical node its zero-based allocation index and recording the
-first projection to carry each member and view. Pass 2 is the caller's own
+first projection to carry each view. Pass 2 is the caller's own
 allocate/populate loop over the same order.
 
-The preorder is fixed: roots in result order; each projection's relationship views
-in accepted metadata declaration order; the broad view before that relationship's
-narrowed views; narrowed views by their canonical derived key; children in
-to-many result order. A repeated logical node reuses its first index, and every
-projection is walked exactly once, so a projection reached late still contributes
-its own children at its own position.
+The preorder is fixed: roots in result order; each projection's relationship
+views in accepted metadata declaration order; the broad view before that
+relationship's narrowed views; narrowed views by their canonical derived key;
+children in to-many result order. Nothing here sorts to achieve it — the sealed
+graph ordered each projection's views by its member layout's own rule, and this
+orders each merged node's union once through the same rule.
 
-Scalars, Value Objects, and the resolved concrete Entity are first-projection-wins
+A repeated logical node reuses its first index, and every projection is walked
+exactly once, so a projection reached late still contributes its own children at
+its own position.
+
+The whole member row and the resolved concrete Entity are first-projection-wins
 with **no value comparison**: duplicate projections of one logical node are
 value-identical by construction, because they resolve the same row at the same
 pin. Relationship views are unioned — a view any projection loaded is loaded on
 the merged node — with the first projection to carry a given view key deciding
-that view's value.
+that view's value. Issues are the one exception: every walked projection's are
+accumulated, undeduplicated.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from types import MappingProxyType
+from typing import cast
 
-from parallax.core.entity._graph_input import (
-    EntityAttributeInput,
-    ValueObjectOccurrenceInput,
-)
-from parallax.core.inheritance import view as inheritance_view
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.relationship import view as relationship_view
+from parallax.core.entity._layout import EntityLayout
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize._input import (
+from parallax.snapshot.materialize._graph import (
     InvalidRootInput,
-    LogicalKey,
+    MergedViewLayout,
     RelationshipViewKey,
-    SnapshotGraphInput,
-    SnapshotNodeInput,
-    SnapshotNodeRef,
-    SnapshotRelationshipViewInput,
+    SnapshotGraph,
     StoredDataIssueInput,
-    has_invalid_key,
-    logical_key,
-    validate_graph_input,
-    view_refs,
+    graph_rows,
 )
 
-__all__ = ["GraphMerge", "MergedNode", "MergedRelationshipView", "merge_graph_input"]
+__all__ = ["GraphMerge", "merge_graph_input"]
 
 _UNREACHED = -1
 
 
-@dataclass(frozen=True, slots=True)
-class MergedRelationshipView:
-    """One merged relationship view: ``None`` is loaded-null, an allocation index
-    is a loaded to-one, and a tuple of them is a loaded to-many. A view no
-    projection carried is absent, which is what unloaded means."""
-
-    view: RelationshipViewKey
-    value: int | tuple[int, ...] | None
-
-
-@dataclass(frozen=True, slots=True)
-class MergedNode:
-    """One logical node's populate inputs, composed on demand and owned by the
-    caller for exactly as long as it takes to populate that node."""
-
-    concrete_entity: EntityIdentity
-    attributes: tuple[EntityAttributeInput, ...]
-    value_objects: tuple[ValueObjectOccurrenceInput, ...]
-    views: tuple[MergedRelationshipView, ...]
-    issues: tuple[StoredDataIssueInput, ...]
-
-
-type _Winner = tuple[int, int]
-
-
 class GraphMerge:
-    """One graph input's merge state: allocation order, roots, and winners.
+    """One sealed graph's merge state: allocation order, roots, and winners.
 
     ``order`` position *is* the allocation index the caller allocates in, so
     nothing recomputes an index the writer already owns.
     """
 
     __slots__ = (
-        "_attributes",
-        "_graph",
         "_invalid_roots",
         "_issues",
         "_logical",
-        "_model",
+        "_merged",
         "_order",
-        "_ranks",
         "_resolved",
         "_roots",
-        "_value_objects",
-        "_views",
+        "_rows",
+        "_view_layouts",
+        "_view_rows",
+        "_winner",
     )
 
-    def __init__(self, graph: SnapshotGraphInput, model: Metamodel) -> None:
-        validate_graph_input(graph)
-        self._graph = graph
-        self._model = model
+    def __init__(self, graph: SnapshotGraph) -> None:
+        rows = graph_rows(graph)
+        self._rows = rows
         self._order: list[EntityIdentity] = []
-        self._logical: dict[LogicalKey | int, int] = {}
-        self._ranks: dict[EntityIdentity, Mapping[str, int]] = {}
-        self._resolved = [_UNREACHED] * len(graph.nodes)
-        self._attributes: list[dict[object, _Winner]] = []
-        self._value_objects: list[dict[object, _Winner]] = []
+        self._winner: list[int] = []
+        self._logical: dict[int, int] = {}
+        self._resolved = [_UNREACHED] * len(rows.layouts)
         self._issues: list[tuple[StoredDataIssueInput, ...]] = []
-        self._views: list[dict[RelationshipViewKey, _Winner]] = []
+        self._merged: dict[
+            tuple[EntityIdentity, tuple[RelationshipViewKey, ...]], MergedViewLayout
+        ] = {}
         self._invalid_roots: list[InvalidRootInput] = []
+        winners: list[dict[RelationshipViewKey, object]] = []
         root_indices: list[int | None] = []
-        for root in graph.roots:
+        for root in rows.roots:
             if isinstance(root, InvalidRootInput):
                 self._invalid_roots.append(root)
                 root_indices.append(None)
             else:
-                self._walk(root)
-                root_indices.append(self._resolved[root.node_index])
+                self._walk(root, winners)
+                root_indices.append(self._resolved[root])
         self._roots = tuple(root_indices)
+        self._view_layouts: list[MergedViewLayout] = []
+        self._view_rows: list[tuple[object, ...]] = []
+        for index, carried in enumerate(winners):
+            layout = self._merged_layout(rows.layouts[self._winner[index]], carried)
+            self._view_layouts.append(layout)
+            self._view_rows.append(tuple(self._allocation(carried[key]) for key in layout.slots))
+
+    # ----------------------------------------------------------------------- #
+    # The whole-graph surface.                                                  #
+    # ----------------------------------------------------------------------- #
 
     @property
     def order(self) -> tuple[EntityIdentity, ...]:
@@ -153,14 +140,14 @@ class GraphMerge:
 
     @property
     def pin(self) -> Pin:
-        """The whole-graph pin every node of this graph was read at."""
-        return self._graph.pin
+        """The whole-graph pin every projection of this graph was read at."""
+        return self._rows.pin
 
     def by_allocation[T](self, by_projection: Mapping[int, T]) -> Mapping[int, T]:
         """``by_projection`` re-keyed from projection index to allocation index.
 
         Several projections may resolve to one logical node, so the first one
-        walked wins — the same first-projection-wins rule every merged member
+        walked wins — the same first-projection-wins rule the merged member row
         already follows, and sound for the same reason: duplicate projections of
         one logical node resolve the same row at the same pin. A projection no
         root reached contributes nothing, because nothing allocates it.
@@ -172,115 +159,126 @@ class GraphMerge:
                 resolved.setdefault(index, value)
         return resolved
 
-    def node(self, index: int) -> MergedNode:
-        """One allocation index's merged populate inputs.
+    # ----------------------------------------------------------------------- #
+    # The per-node indexed reads.                                               #
+    # ----------------------------------------------------------------------- #
 
-        Freshly composed per call out of the winning entries' own records, so the
-        merge itself holds integers and nothing else.
+    def layout(self, node: int) -> EntityLayout:
+        """The member layout ``node``'s row is read against — the winning
+        projection's own, and therefore its resolved concrete Entity's."""
+        return self._rows.layouts[self._winner[node]]
+
+    def member_values(self, node: int) -> tuple[object, ...]:
+        """``node``'s merged member row, BY REFERENCE: the winning projection's
+        own row, positional against :meth:`layout`."""
+        return self._rows.member_rows[self._winner[node]]
+
+    def issues(self, node: int) -> tuple[StoredDataIssueInput, ...]:
+        """Every issue every projection of ``node`` carried, in walk order and
+        without deduplication."""
+        return self._issues[node]
+
+    def view_layout(self, node: int) -> MergedViewLayout:
+        """``node``'s relationship view slots, in canonical order."""
+        return self._view_layouts[node]
+
+    def view(self, node: int, slot: int) -> object:
+        """``node``'s value at ``slot``: ``ABSENT`` for a view no projection
+        loaded, ``None`` for loaded-null, an allocation index for a loaded
+        to-one, and a tuple of them for a loaded to-many.
+
+        Resolved into allocation indices once, when the row was built, so every
+        consumer reading one slot twice is answered the identical value rather
+        than two equal translations of it.
         """
-        nodes = self._graph.nodes
-        return MergedNode(
-            concrete_entity=self._order[index],
-            attributes=tuple(
-                nodes[node].attributes[entry] for node, entry in self._attributes[index].values()
-            ),
-            value_objects=tuple(
-                nodes[node].value_objects[entry]
-                for node, entry in self._value_objects[index].values()
-            ),
-            views=tuple(
-                MergedRelationshipView(view, self._allocation(nodes[node], entry))
-                for view, (node, entry) in self._ordered_winners(index)
-            ),
-            issues=self._issues[index],
-        )
+        return self._view_rows[node][slot]
 
     # ----------------------------------------------------------------------- #
-    # Pass 1                                                                    #
+    # Pass 1.                                                                   #
     # ----------------------------------------------------------------------- #
 
-    def _walk(self, ref: SnapshotNodeRef) -> None:
-        if self._resolved[ref.node_index] != _UNREACHED:
+    def _walk(self, projection: int, winners: list[dict[RelationshipViewKey, object]]) -> None:
+        if self._resolved[projection] != _UNREACHED:
             return
-        node = self._graph.nodes[ref.node_index]
-        key = None if has_invalid_key(node) else logical_key(self._model, node)
-        index = self._logical.get(ref.node_index if key is None else key)
+        rows = self._rows
+        logical = rows.logical_ids[projection]
+        index = self._logical.get(logical)
         if index is None:
             index = len(self._order)
-            self._logical[ref.node_index if key is None else key] = index
-            self._order.append(node.concrete_entity)
-            self._attributes.append({})
-            self._value_objects.append({})
-            self._views.append({})
-            self._issues.append(node.issues)
-        elif node.issues:
-            self._issues[index] = (*self._issues[index], *node.issues)
-        self._resolved[ref.node_index] = index
-        for position, entry in enumerate(node.attributes):
-            self._attributes[index].setdefault(entry.identity, (ref.node_index, position))
-        for position, entry in enumerate(node.value_objects):
-            self._value_objects[index].setdefault(entry.identity, (ref.node_index, position))
-        for position, entry in enumerate(node.relationship_views):
-            self._views[index].setdefault(entry.view, (ref.node_index, position))
-        for entry in self._ordered_views(node):
-            for child in view_refs(entry.value):
-                self._walk(child)
+            self._logical[logical] = index
+            self._winner.append(projection)
+            self._order.append(rows.layouts[projection].concrete)
+            self._issues.append(rows.issues[projection])
+            winners.append({})
+        else:
+            carried = rows.issues[projection]
+            if carried:
+                self._issues[index] = (*self._issues[index], *carried)
+        self._resolved[projection] = index
+        values = rows.view_values[projection]
+        carried_views = winners[index]
+        for slot, key in enumerate(rows.view_keys[projection]):
+            carried_views.setdefault(key, values[slot])
+        for value in values:
+            for child in _edges(value):
+                self._walk(child, winners)
 
     # ----------------------------------------------------------------------- #
-    # Deterministic view order                                                  #
+    # Pass 1's epilogue: the merged view rows.                                  #
     # ----------------------------------------------------------------------- #
 
-    def _ordered_views(self, node: SnapshotNodeInput) -> list[SnapshotRelationshipViewInput]:
-        declared = self._declared(node.concrete_entity)
-        return sorted(node.relationship_views, key=lambda entry: _rank(declared, entry.view))
+    def _merged_layout(
+        self, layout: EntityLayout, carried: Mapping[RelationshipViewKey, object]
+    ) -> MergedViewLayout:
+        """The canonical slot order for one merged node's union of views.
 
-    def _ordered_winners(self, index: int) -> list[tuple[RelationshipViewKey, _Winner]]:
-        declared = self._declared(self._order[index])
-        return sorted(self._views[index].items(), key=lambda item: _rank(declared, item[0]))
+        Memoized on the concrete Entity and the union as encountered, because a
+        graph's nodes of one concrete overwhelmingly carry one view set reached
+        one way — so the ordering rule runs once per shape rather than once per
+        node, and every node of that shape shares the one layout it produced.
+        """
+        keys = tuple(carried)
+        memo = self._merged.get((layout.concrete, keys))
+        if memo is not None:
+            return memo
+        slots = layout.ordered(keys)
+        built = MergedViewLayout(
+            slots, MappingProxyType({key: slot for slot, key in enumerate(slots)})
+        )
+        self._merged[layout.concrete, keys] = built
+        return built
 
-    def _declared(self, entity: EntityIdentity) -> Mapping[str, int]:
-        cached = self._ranks.get(entity)
-        if cached is None:
-            cached = _navigable_relationships(self._model, entity)
-            self._ranks[entity] = cached
-        return cached
-
-    def _allocation(self, node: SnapshotNodeInput, entry: int) -> int | tuple[int, ...] | None:
-        value = node.relationship_views[entry].value
+    def _allocation(self, value: object) -> object:
+        """One view value's projection references as allocation indices."""
         if value is None:
             return None
         if isinstance(value, tuple):
-            return tuple(self._resolved[ref.node_index] for ref in value)
-        return self._resolved[value.node_index]
+            return tuple(self._resolved[child] for child in cast("tuple[int, ...]", value))
+        return self._resolved[cast("int", value)]
 
 
-def merge_graph_input(graph: SnapshotGraphInput, model: Metamodel) -> GraphMerge:
-    """``graph``'s merge state — validated, walked, and ready to allocate from."""
-    return GraphMerge(graph, model)
+def merge_graph_input(graph: SnapshotGraph) -> GraphMerge:
+    """``graph``'s merge state — walked, and ready to allocate from.
 
-
-def _rank(declared: Mapping[str, int], view: RelationshipViewKey) -> tuple[int, int, str]:
-    """One view's position in the deterministic preorder: its relationship's own
-    declaration position, the broad view before that relationship's narrowed ones,
-    and narrowed views by their canonical derived key."""
-    position = declared.get(view.relationship.name, len(declared))
-    return position, int(view.narrowed_view is not None), view.narrowed_view or ""
-
-
-def _navigable_relationships(model: Metamodel, entity: EntityIdentity) -> Mapping[str, int]:
-    """Each navigable relationship name's position in accepted declaration order,
-    ancestry first.
-
-    A relationship declared on an inheritance ancestor is reached by every
-    concrete descendant under the ancestor's own identity and is never
-    redeclared, so the navigable set is the ancestry chain's directions with each
-    name taken from the nearest declaration.
+    A SEALED graph only: a builder still accumulating has published no arrays to
+    read, and merging one would answer questions about a graph that does not yet
+    exist.
     """
-    facet = relationship_view(model)
-    position = inheritance_view(model).entity(entity)
-    chain = tuple(position.ancestry) if position is not None else (entity,)
-    order: dict[str, int] = {}
-    for ancestor in chain:
-        for direction in facet.relationships(ancestor) or ():
-            order.setdefault(direction.identity.name, len(order))
-    return order
+    if type(graph) is not SnapshotGraph:
+        raise TypeError(
+            "a merge reads a sealed SnapshotGraph; an unsealed builder publishes no graph to read"
+        )
+    return GraphMerge(graph)
+
+
+def _edges(value: object) -> tuple[int, ...]:
+    """The projection indexes one relationship view value reaches, in order.
+
+    The graph boundary already settled that every one is an exact in-range
+    ``int``, so the shape is read rather than re-judged.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, tuple):
+        return cast("tuple[int, ...]", value)
+    return (cast("int", value),)

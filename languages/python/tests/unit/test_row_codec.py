@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from _snapshot_graph_support import GraphBuilder
+from _snapshot_graph_support import GraphFixture
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
@@ -466,8 +466,8 @@ def test_edited_row_writes_an_authored_null_a_materialized_read_never_set() -> N
     # Authoring `geo=None` on the edit is then a REAL difference from what was
     # read, not a repeat of a fabricated original, and `edited_row` must carry
     # it through as an explicit null rather than let it cancel out.
-    builder = GraphBuilder(vm.CUSTOMER_MODEL)
-    node = builder.node(
+    fixture = GraphFixture(vm.CUSTOMER_MODEL)
+    node = fixture.node(
         "Customer",
         {
             "id": 1,
@@ -475,7 +475,7 @@ def test_edited_row_writes_an_authored_null_a_materialized_read_never_set() -> N
             "address": {"street": "Main St", "city": "Oslo", "phones": [{"number": "555-0100"}]},
         },
     )
-    (root,) = builder.materialize(node)
+    (root,) = fixture.materialize(node)
     customer = cast("vm.Customer", root)
     address = customer.address
     assert address is not None

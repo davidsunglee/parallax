@@ -172,11 +172,11 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.object_query",
         }
     ),
-    # Snapshot Graph Input and Entity Graph Construction share one exact recursive
-    # immutable algebra, so the carriers are scoped apart from the collaboration
-    # that consumes them. Granting the carriers alone is what keeps a graph-input
-    # producer structurally unable to reach the writer, `construct`, or model
-    # formation — the layering rule stays enforced rather than merely asserted.
+    # A materializing runtime and Entity Graph Construction share one exact
+    # recursive immutable algebra, so the carriers are scoped apart from the
+    # collaboration that consumes them. Granting the carriers alone is what keeps a
+    # carrier producer structurally unable to reach the writer, `construct`, or
+    # model formation — the layering rule stays enforced rather than merely asserted.
     "parallax.core.entity._graph_input": frozenset({"parallax.core.metamodel"}),
     # The exact-model member layouts are a pure function of the accepted
     # Metamodel, so they are scoped apart from the frontend that owns them and

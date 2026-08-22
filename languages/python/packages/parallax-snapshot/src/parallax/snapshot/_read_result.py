@@ -1,6 +1,6 @@
 """``parallax.snapshot._read_result`` enforcement scope (m-snapshot-read).
 
-What a snapshot read HANDS BACK: the Snapshot Graph Input, and nothing about the
+What a snapshot read HANDS BACK: the sealed Snapshot graph, and nothing about the
 execution that produced it. A read publishes its transient Read activity through
 the composition-supplied lifecycle seam while it runs (`m-execution-lifecycle`),
 so a result carries no trace, no round-trip count, and no lifecycle record at
@@ -30,7 +30,7 @@ from parallax.core.unit_work import SourceHint
 from parallax.snapshot.materialize import (
     EMPTY_UNWIND,
     InvalidData,
-    SnapshotGraphInput,
+    SnapshotGraph,
     UnwindTree,
 )
 
@@ -44,7 +44,7 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class FindResult:
-    """A single-graph find's Snapshot Graph Input.
+    """A single-graph find's sealed Snapshot graph.
 
     ``includes`` is the query's own Include Paths as the relationship views a
     wire unwind follows. The merged graph alone cannot supply them: it keeps
@@ -52,27 +52,27 @@ class FindResult:
     its target forever. The executor knows the plan, so it hands the tree on.
 
     ``sources`` is the private Source Hint each observed projection's value will
-    carry, keyed by that projection's own index in ``graph.nodes``. It travels
+    carry, keyed by that projection's own index in the graph. It travels
     with the graph input because only the executor holds the row and the
     projection at once: a materializer builds the value, but the row it came from
     is gone by then.
     """
 
-    graph: SnapshotGraphInput
+    graph: SnapshotGraph
     includes: UnwindTree = EMPTY_UNWIND
     sources: Mapping[int, SourceHint] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
 class HistoryFindResult:
-    """A milestone-set find's ordered per-milestone graph inputs.
+    """A milestone-set find's ordered per-milestone graphs.
 
     Each entry is a root-only graph pinned at its own milestone's from-instant
     (m-snapshot-read "The whole-graph pin"); a v1 milestone-set graph carries no
     includes (m-case-format).
     """
 
-    graphs: tuple[SnapshotGraphInput, ...]
+    graphs: tuple[SnapshotGraph, ...]
 
 
 type PublishedRow = Mapping[str, object] | InvalidData[Mapping[str, object]]

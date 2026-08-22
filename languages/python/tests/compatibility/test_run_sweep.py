@@ -48,14 +48,13 @@ from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import (
-    LevelContext,
-    MergeScope,
     WireEntity,
-    convert_row,
     merge_graph_input,
     require_publishable,
     wire_roots,
 )
+from parallax.snapshot.materialize._convert import LevelContext, convert_row
+from parallax.snapshot.materialize._graph import GraphBuilder
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
 # level's nodes PER PROJECTION — the unnarrowed concrete superset with a sibling
@@ -487,7 +486,7 @@ def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], R
 
     def transform(row: Row) -> Row:
         materialized = compiled.materialize_row(row)
-        scope = MergeScope(model)
+        builder = GraphBuilder()
         ref = convert_row(
             materialized.values,
             LevelContext(
@@ -495,12 +494,12 @@ def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], R
                 compiled.projected_documents,
                 compiled.attribute_reads(materialized.resolved_entity),
             ),
-            scope,
+            builder,
             findings=materialized.findings,
             family_tag_unknown=materialized.family_tag_unknown,
             classified_members=materialized.classified_members,
         )
-        merge = merge_graph_input(scope.build((ref,), Pin()), model)
+        merge = merge_graph_input(builder.seal((ref,), Pin()))
         require_publishable(merge)
         (published,) = wire_roots(merge, model)
         # `require_publishable` has already refused an issue-bearing read, so the

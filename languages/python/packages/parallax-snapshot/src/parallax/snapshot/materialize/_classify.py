@@ -28,8 +28,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, cast
 
+from parallax.core.entity._layout import EntityLayout
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -40,13 +41,14 @@ from parallax.core.metamodel import (
 )
 from parallax.core.temporal_read import Edge, TemporalReadError, milestone_edge_of
 from parallax.core.unit_work import ObjectKey
-from parallax.snapshot.materialize._input import (
+from parallax.snapshot.materialize._graph import (
+    ABSENT,
     InvalidRootInput,
     StoredDataIssueCode,
     StoredDataIssueInput,
 )
 from parallax.snapshot.materialize._invalid import InvalidData, StoredDataIssue
-from parallax.snapshot.materialize._merge import GraphMerge, MergedNode
+from parallax.snapshot.materialize._merge import GraphMerge
 
 __all__ = [
     "ClassifiedRoot",
@@ -162,16 +164,15 @@ def classify_roots(
             roots=tuple(ConformingRoot(index) for index in merge.roots if index is not None),
             conforming=True,
         )
-    nodes = tuple(merge.node(index) for index in range(len(merge.order)))
-    children = tuple(_children(node) for node in nodes)
-    keys = tuple(_object_key(model, node) for node in nodes)
+    count = len(merge.order)
+    carried = tuple(merge.issues(index) for index in range(count))
+    children = tuple(_children(merge, index) for index in range(count))
+    keys = tuple(_object_key(model, merge, index) for index in range(count))
     diagnoses = tuple(
-        frozenset(
-            StoredDataIssue(issue.code, issue.entity, issue.member, key) for issue in node.issues
-        )
-        for node, key in zip(nodes, keys, strict=True)
+        frozenset(StoredDataIssue(issue.code, issue.entity, issue.member, key) for issue in issues)
+        for issues, key in zip(carried, keys, strict=True)
     )
-    blocking = tuple(not hydrates(node.issues) for node in nodes)
+    blocking = tuple(not hydrates(issues) for issues in carried)
 
     roots: list[RootClassification] = []
     reached_by_published: set[int] = set()
@@ -188,14 +189,14 @@ def classify_roots(
             reached_by_published |= reachable
             continue
         hydrating = not any(blocking[node] for node in reachable)
-        declaring = _declaring(model, nodes[index].concrete_entity)
+        declaring = _declaring(model, merge.layout(index).concrete)
         roots.append(
             ClassifiedRoot(
                 ordinal=ordinal,
                 issues=issues,
                 object_key=keys[index],
-                version=_version(declaring, nodes[index]),
-                edge=_edge(declaring, nodes[index]),
+                version=_version(declaring, merge, index),
+                edge=_edge(declaring, merge, index),
                 node=index if hydrating else None,
             )
         )
@@ -203,7 +204,7 @@ def classify_roots(
             reached_by_published |= reachable
     return GraphClassification(
         roots=tuple(roots),
-        excluded=frozenset(range(len(nodes))) - reached_by_published,
+        excluded=frozenset(range(count)) - reached_by_published,
     )
 
 
@@ -226,15 +227,20 @@ def _keyless_root(record: InvalidRootInput, ordinal: int) -> ClassifiedRoot:
     )
 
 
-def _children(node: MergedNode) -> tuple[int, ...]:
-    """The allocation indices ``node``'s loaded relationship views reach."""
+def _children(merge: GraphMerge, node: int) -> tuple[int, ...]:
+    """The allocation indices ``node``'s loaded relationship views reach.
+
+    Every populated slot, broad and narrowed alike: the include tree a root
+    requested is exactly what the merged view layout enumerates, so a slot's
+    position is all this walk needs of it.
+    """
     reached: dict[int, None] = {}
-    for view in node.views:
-        value = view.value
+    for slot in range(len(merge.view_layout(node).slots)):
+        value = merge.view(node, slot)
         if isinstance(value, tuple):
-            reached.update(dict.fromkeys(value))
-        elif value is not None:
-            reached[value] = None
+            reached.update(dict.fromkeys(cast("tuple[int, ...]", value)))
+        elif value is not None and value is not ABSENT:
+            reached[cast("int", value)] = None
     return tuple(reached)
 
 
@@ -255,19 +261,19 @@ def _reachable(children: tuple[tuple[int, ...], ...], root: int) -> frozenset[in
     return frozenset(seen)
 
 
-def _object_key(model: Metamodel, node: MergedNode) -> ObjectKey | None:
+def _object_key(model: Metamodel, merge: GraphMerge, node: int) -> ObjectKey | None:
     """``node``'s object identity, or absence where nothing trustworthy decoded.
 
     Derived exactly as a keyed write derives its own: the row's OWN resolved
     concrete Entity, never family-normalized, paired with the family-declared
     primary key's ``(name, value)`` pairs in declaration order (`m-unit-work`).
     """
-    if any(issue.code in _UNIDENTIFIED_CODES for issue in node.issues):
+    layout = merge.layout(node)
+    if any(issue.code in _UNIDENTIFIED_CODES for issue in merge.issues(node)):
         return None
-    declaring = _declaring(model, node.concrete_entity)
+    declaring = _declaring(model, layout.concrete)
     if declaring is None:  # pragma: no cover - a family root is always accepted
         return None
-    values = _values(node)
     primary_key = tuple(
         attribute
         for attribute in declaring.declared_attributes
@@ -275,15 +281,17 @@ def _object_key(model: Metamodel, node: MergedNode) -> ObjectKey | None:
     )
     if not primary_key:  # pragma: no cover - formation refuses a primary-key-less Entity
         return None
+    values = merge.member_values(node)
     return ObjectKey(
-        node.concrete_entity,
+        layout.concrete,
         tuple(
-            (attribute.identity.name, values.get(attribute.identity)) for attribute in primary_key
+            (attribute.identity.name, _member(layout, values, attribute.identity))
+            for attribute in primary_key
         ),
     )
 
 
-def _version(declaring: EntityMetadata | None, node: MergedNode) -> int | None:
+def _version(declaring: EntityMetadata | None, merge: GraphMerge, node: int) -> int | None:
     """``node``'s observed explicit version, or absence for every other shape.
 
     A temporal family derives its concurrency coordinate from its own axis rather
@@ -298,22 +306,44 @@ def _version(declaring: EntityMetadata | None, node: MergedNode) -> int | None:
     )
     if version is None:
         return None
-    value = _values(node).get(version.identity)
+    value = _member(merge.layout(node), merge.member_values(node), version.identity)
     return value if isinstance(value, int) else None
 
 
-def _edge(declaring: EntityMetadata | None, node: MergedNode) -> Edge | None:
+def _edge(declaring: EntityMetadata | None, merge: GraphMerge, node: int) -> Edge | None:
     """``node``'s observed milestone, or absence where no temporal edge decoded."""
     if declaring is None or not declaring.declared_as_of_axes:
         return None
     try:
-        return milestone_edge_of(declaring, _values(node))
+        return milestone_edge_of(declaring, _values(merge, node))
     except TemporalReadError:
         return None
 
 
-def _values(node: MergedNode) -> dict[AttributeIdentity, object]:
-    return {entry.identity: entry.value for entry in node.attributes}
+def _member(layout: EntityLayout, values: tuple[object, ...], member: AttributeIdentity) -> object:
+    """One member's value by position, with an absent one answering ``None``.
+
+    A locator reads what the row carries, and a position this read did not carry
+    is a position it observed nothing at — the same answer a stored null gives,
+    which is all a key or a version can say about a member that is not there.
+    """
+    position = layout.index_of.get(member)
+    if position is None:  # pragma: no cover - a family locator is family-effective
+        return None
+    value = values[position]
+    return None if value is ABSENT else value
+
+
+def _values(merge: GraphMerge, node: int) -> dict[AttributeIdentity, object]:
+    """``node``'s carried Attribute values by identity, for the temporal
+    primitives that read a whole row rather than a named position."""
+    layout = merge.layout(node)
+    values = merge.member_values(node)
+    return {
+        attribute.identity: values[position]
+        for position, attribute in enumerate(layout.attributes)
+        if values[position] is not ABSENT
+    }
 
 
 def _declaring(model: Metamodel, entity: EntityIdentity) -> EntityMetadata | None:

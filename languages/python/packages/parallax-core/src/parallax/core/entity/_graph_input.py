@@ -1,11 +1,11 @@
 """The immutable carrier algebra Entity Graph Construction is stated in.
 
 Scoped apart from the collaboration that consumes it so a lifecycle package
-building **Snapshot Graph Input** can be granted the carriers alone: Snapshot
-Graph Input and Entity Graph Construction share one exact recursive immutable
-algebra, and defining it twice would let the two drift. Granting only this scope
-is what keeps a graph-input producer structurally unable to reach model
-formation, the writer, or ``construct`` itself.
+materializing Entities can be granted the carriers alone: every producer of
+them and Entity Graph Construction share one exact recursive immutable algebra,
+and defining it twice would let the two drift. Granting only this scope is what
+keeps a carrier producer structurally unable to reach model formation, the
+writer, or ``construct`` itself.
 
 Frozen slotted records and exact built-in tuples only: no mapping, abstract
 sequence, mutable collection, raw document dictionary, or caller-defined

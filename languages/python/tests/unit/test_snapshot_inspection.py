@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _snapshot_graph_support import GraphBuilder
+from _snapshot_graph_support import GraphFixture
 
 from _support import snapshot_models as sm
 from parallax.conformance import animal_owner, read_models
@@ -70,12 +70,12 @@ def _status_row(status_id: int) -> dict[str, object]:
 
 def _order_graph(*, items: tuple[dict[str, object], ...] | None = None) -> Any:
     """One `SnapOrder` root, optionally with a loaded `items` view."""
-    builder = GraphBuilder(_ORDERS)
-    order = builder.node("SnapOrder", _ORDER_ROW)
+    fixture = GraphFixture(_ORDERS)
+    order = fixture.node("SnapOrder", _ORDER_ROW)
     if items is not None:
-        refs = tuple(builder.node("SnapOrderItem", row) for row in items)
-        builder.attach(order, "parallax.compatibility.SnapOrder.items", refs)
-    (root,) = builder.materialize(order)
+        refs = tuple(fixture.node("SnapOrderItem", row) for row in items)
+        fixture.attach(order, "parallax.compatibility.SnapOrder.items", refs)
+    (root,) = fixture.materialize(order)
     return root
 
 
@@ -148,8 +148,8 @@ def test_a_bare_relationship_name_is_not_an_accepted_argument() -> None:
 def test_a_relationship_an_ancestor_declares_applies_to_its_concrete_subtype() -> None:
     # `owner` is declared on the family root `Animal`; the node is a `Dog`, and
     # a subtype never redeclares an inherited relationship.
-    builder = GraphBuilder(animal_owner.ANIMAL_MODEL)
-    (root,) = builder.materialize(builder.node("Dog", _DOG_ROW))
+    fixture = GraphFixture(animal_owner.ANIMAL_MODEL)
+    (root,) = fixture.materialize(fixture.node("Dog", _DOG_ROW))
     assert type(root) is read_models.Dog
     assert is_view_loaded(root, read_models.Animal.owner) is False
 
@@ -174,22 +174,22 @@ def test_view_answers_the_loaded_value_and_raises_for_an_unloaded_one() -> None:
 
 
 def test_a_to_many_path_fans_out_into_one_flat_tuple_in_traversal_order() -> None:
-    builder = GraphBuilder(_ORDERS)
-    order = builder.node("SnapOrder", _ORDER_ROW)
-    first = builder.node("SnapOrderItem", _item_row(11))
-    second = builder.node("SnapOrderItem", _item_row(12))
-    builder.attach(order, "parallax.compatibility.SnapOrder.items", (first, second))
-    builder.attach(
+    fixture = GraphFixture(_ORDERS)
+    order = fixture.node("SnapOrder", _ORDER_ROW)
+    first = fixture.node("SnapOrderItem", _item_row(11))
+    second = fixture.node("SnapOrderItem", _item_row(12))
+    fixture.attach(order, "parallax.compatibility.SnapOrder.items", (first, second))
+    fixture.attach(
         first,
         "parallax.compatibility.SnapOrderItem.statuses",
-        tuple(builder.node("SnapOrderStatus", _status_row(status)) for status in (21, 22)),
+        tuple(fixture.node("SnapOrderStatus", _status_row(status)) for status in (21, 22)),
     )
-    builder.attach(
+    fixture.attach(
         second,
         "parallax.compatibility.SnapOrderItem.statuses",
-        (builder.node("SnapOrderStatus", _status_row(23)),),
+        (fixture.node("SnapOrderStatus", _status_row(23)),),
     )
-    (root,) = builder.materialize(order)
+    (root,) = fixture.materialize(order)
     reached = cast("tuple[Any, ...]", view(root, sm.SnapOrder.items.statuses))
     assert [status.id for status in reached] == [21, 22, 23]
 
@@ -202,14 +202,14 @@ def test_an_empty_to_many_branch_contributes_no_terminal_and_stays_a_tuple() -> 
 
 
 def test_an_all_to_one_path_answers_its_terminal_or_none() -> None:
-    builder = GraphBuilder(_ORDERS)
-    order = builder.node("SnapOrder", _ORDER_ROW)
-    item = builder.node("SnapOrderItem", _item_row(11))
-    orphan = builder.node("SnapOrderItem", _item_row(50))
-    builder.attach(order, "parallax.compatibility.SnapOrder.items", (item,))
-    builder.attach(item, "parallax.compatibility.SnapOrderItem.order", order)
-    builder.attach(orphan, "parallax.compatibility.SnapOrderItem.order", None)
-    root, lone = builder.materialize(order, orphan)
+    fixture = GraphFixture(_ORDERS)
+    order = fixture.node("SnapOrder", _ORDER_ROW)
+    item = fixture.node("SnapOrderItem", _item_row(11))
+    orphan = fixture.node("SnapOrderItem", _item_row(50))
+    fixture.attach(order, "parallax.compatibility.SnapOrder.items", (item,))
+    fixture.attach(item, "parallax.compatibility.SnapOrderItem.order", order)
+    fixture.attach(orphan, "parallax.compatibility.SnapOrderItem.order", None)
+    root, lone = fixture.materialize(order, orphan)
     assert view(cast("Any", root).items[0], sm.SnapOrderItem.order) is root
     assert view(lone, sm.SnapOrderItem.order) is None
 
@@ -227,11 +227,11 @@ def test_an_unloaded_view_on_a_deeper_segment_is_the_one_reported() -> None:
 
 
 def _narrowed_owner(view_key: str, columns: dict[str, object] | None = None) -> Any:
-    builder = GraphBuilder(_ANIMAL)
-    owner = builder.node("AnimalOwner", columns if columns is not None else _OWNER_ROW)
-    dog = builder.node("Dog", _DOG_ROW)
-    builder.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed=view_key)
-    (root,) = builder.materialize(owner)
+    fixture = GraphFixture(_ANIMAL)
+    owner = fixture.node("AnimalOwner", columns if columns is not None else _OWNER_ROW)
+    dog = fixture.node("Dog", _DOG_ROW)
+    fixture.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed=view_key)
+    (root,) = fixture.materialize(owner)
     return root
 
 
@@ -265,31 +265,31 @@ def test_an_unrequested_narrowed_view_answers_false_rather_than_raising() -> Non
 def test_a_narrowed_to_one_view_answers_the_node_itself_or_loaded_null() -> None:
     # A to-one hop narrows exactly as a to-many one does, and its view value is
     # then a single node — or loaded-null — rather than a tuple.
-    builder = GraphBuilder(_ANIMAL)
-    alice = builder.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": 1})
-    bob = builder.node("AnimalOwner", {"id": 11, "name": "Bob", "favorite_id": None})
-    builder.attach(
+    fixture = GraphFixture(_ANIMAL)
+    alice = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": 1})
+    bob = fixture.node("AnimalOwner", {"id": 11, "name": "Bob", "favorite_id": None})
+    fixture.attach(
         alice,
         "parallax.compatibility.AnimalOwner.favorite",
-        builder.node("Dog", _DOG_ROW),
+        fixture.node("Dog", _DOG_ROW),
         narrowed="favorite[Dog]",
     )
-    builder.attach(
+    fixture.attach(
         bob, "parallax.compatibility.AnimalOwner.favorite", None, narrowed="favorite[Dog]"
     )
-    first, second = builder.materialize(alice, bob)
+    first, second = fixture.materialize(alice, bob)
     assert type(view(first, sm.AnimalOwner.favorite.narrow(sm.Dog))) is sm.Dog
     assert is_view_loaded(second, sm.AnimalOwner.favorite.narrow(sm.Dog)) is True
     assert view(second, sm.AnimalOwner.favorite.narrow(sm.Dog)) is None
 
 
 def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() -> None:
-    builder = GraphBuilder(_ANIMAL)
-    owner = builder.node("AnimalOwner", _OWNER_ROW)
-    builder.attach(
-        owner, "parallax.compatibility.AnimalOwner.animals", (builder.node("Dog", _DOG_ROW),)
+    fixture = GraphFixture(_ANIMAL)
+    owner = fixture.node("AnimalOwner", _OWNER_ROW)
+    fixture.attach(
+        owner, "parallax.compatibility.AnimalOwner.animals", (fixture.node("Dog", _DOG_ROW),)
     )
-    (root,) = builder.materialize(owner)
+    (root,) = fixture.materialize(owner)
     # `AnimalOwner.animals` reaches an `Animal`; continuing with a segment
     # spelled from an unrelated owner reaches nothing that declares it.
     path = RelationshipPath[Any, Any](
@@ -315,8 +315,8 @@ _MILESTONE_PIN = Pin(tx_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
 def _balance_graph() -> Any:
     """One temporal `Balance` root materialized under a finite Transaction-Time
     pin, whose own milestone started earlier than the pin selects it at."""
-    builder = GraphBuilder(_BALANCE)
-    balance = builder.node(
+    fixture = GraphFixture(_BALANCE)
+    balance = fixture.node(
         "Balance",
         {
             "bal_id": 1,
@@ -326,7 +326,7 @@ def _balance_graph() -> Any:
             "out_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
         },
     )
-    (root,) = builder.materialize(balance, pin=_MILESTONE_PIN)
+    (root,) = fixture.materialize(balance, pin=_MILESTONE_PIN)
     return root
 
 

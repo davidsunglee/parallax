@@ -8,7 +8,7 @@ composed HERE, exactly like `_write_lowering` composes
 the write-side `m-unit-work` x `m-sql` edge — one executor, production-owned:
 `db.find` and `tx.find` both call the SAME :func:`find` / :func:`find_history`
 and build the SAME
-:class:`~parallax.snapshot.materialize.SnapshotGraphInput`, so the per-level
+:class:`~parallax.snapshot.materialize.SnapshotGraph`, so the per-level
 loop exists exactly once on the developer-facing path.
 
 Graph levels materialize and convert rows one at a time: a converted node names
@@ -18,11 +18,11 @@ instead stage one tuple of SQL-materialized rows and merge them once, before any
 consumer-specific derivation, so each lane classifies or refuses that one staging
 graph rather than judging rows as it walks them. The port's raw
 `list[Row]` remains one statement's own lifetime, and neither raw nor
-SQL-materialized rows survive into graph input, a Snapshot, or a lifecycle
+SQL-materialized rows survive into a sealed graph, a Snapshot, or a lifecycle
 event.
 
 The executor's own results (:class:`FindResult`, :class:`HistoryFindResult`) are
-`m-snapshot-read`'s own carriers — the graph input and the private Source Hints
+`m-snapshot-read`'s own carriers — the sealed graph and the private Source Hints
 a materializer needs, and nothing about the execution that produced them — so
 they are defined in
 :mod:`~parallax.snapshot._read_result` and re-exported here beside the
@@ -81,7 +81,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import EntityGraphConstruction
-from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import INERT, ReadActivity
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
@@ -117,16 +117,11 @@ from parallax.snapshot.materialize import (
     GraphMerge,
     InvalidData,
     InvalidDataError,
-    LevelContext,
-    MergeScope,
     RelationshipViewKey,
-    SnapshotGraphInput,
-    SnapshotNodeRef,
+    SnapshotGraph,
     UnwindTree,
     WireEntity,
-    attribute_value,
     classify_roots,
-    convert_row,
     hydrates,
     merge_graph_input,
     observable_columns,
@@ -134,6 +129,8 @@ from parallax.snapshot.materialize import (
     unwind_tree,
     wire_roots,
 )
+from parallax.snapshot.materialize._convert import LevelContext, convert_row
+from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
 
 __all__ = [
     "CheckedSnapshot",
@@ -349,18 +346,18 @@ def entity_read_lock(
     )
 
 
-def _new_roots() -> list[SnapshotNodeRef]:
+def _new_roots() -> list[int]:
     return []
 
 
 @dataclass(slots=True)
 class _Milestone:
-    """One milestone-set partition under construction: its own merge scope, the
-    chronological rank of the row that opened it, and its converted roots."""
+    """One milestone-set partition under construction: its own graph builder, the
+    chronological rank of the row that opened it, and its imported roots."""
 
-    scope: MergeScope
+    builder: GraphBuilder
     rank: tuple[object, ...]
-    roots: list[SnapshotNodeRef] = field(default_factory=_new_roots)
+    roots: list[int] = field(default_factory=_new_roots)
 
 
 def find(
@@ -400,8 +397,8 @@ def find(
     level's rows be converted one at a time: no column-to-member
     inversion happens here, and no row outlives its own level.
 
-    Returns the whole Snapshot Graph Input — every projection, the root
-    references in result order, and the query's own lowered pin — plus the
+    Returns the whole sealed Snapshot graph — every projection, the root
+    indexes in result order, and the query's own lowered pin — plus the
     Source Hint each observed projection's value will carry.
 
     ``model`` is the connected model as one value: the accepted Metamodel every
@@ -409,7 +406,9 @@ def find(
     every level's conversion reads its applicable member set from. The two
     travel together rather than as two arguments, so no read can be handed
     layouts derived from a model other than the one it resolves against, and one
-    connection's reads share one catalog whatever they address.
+    connection's reads share one catalog whatever they address. The graph
+    builder holds neither: a row arrives at it already laid out, so a builder
+    names no model to disagree with the one its rows were converted under.
 
     ``preference`` is the owning unit of work's Concurrency Preference, and
     EVERY level derives its own read lock from it against that level's own
@@ -433,10 +432,9 @@ def find(
     what the default path and a declined root do.
     """
     meta = model.meta
-    layouts = model.layouts
     root_entity = _metadata(meta, query.target.canonical)
     plan_ = deep_fetch.plan(root_entity, query, meta)
-    scope = MergeScope(meta)
+    builder = GraphBuilder()
     observations = ReadObservations()
 
     root_compiled = compile_read(
@@ -446,18 +444,20 @@ def find(
         result_form="instance",
         lock=entity_read_lock(meta, root_entity.identity, preference),
     )
-    root_refs = _convert_level(scope, layouts, port, dialect, root_compiled, read, observations)
+    root_refs = _convert_level(builder, model, port, dialect, root_compiled, read, observations)
 
-    level_refs: list[tuple[SnapshotNodeRef, ...]] = []
+    level_refs: list[tuple[int, ...]] = []
     for level in plan_.levels:
-        parents = _guarded_parents(scope, level, _parent_refs(level.parent, root_refs, level_refs))
+        parents = _guarded_parents(
+            builder, level, _parent_refs(level.parent, root_refs, level_refs)
+        )
         if level.is_back_reference:
-            _attach_back_reference(scope, meta, level, parents)
+            _attach_back_reference(builder, meta, level, parents)
             level_refs.append(())
             continue
-        keys = _distinct_keys(scope, parents, _correlation_member(meta, level.owner.identity))
+        keys = _distinct_keys(builder, parents, _correlation_member(meta, level.owner.identity))
         if not keys:
-            _attach_empty(scope, level, parents)
+            _attach_empty(builder, level, parents)
             level_refs.append(())
             continue
         child_query = level.query_for(keys)
@@ -469,14 +469,14 @@ def find(
             lock=entity_read_lock(meta, child_query.target, preference),
         )
         child_refs = _convert_level(
-            scope, layouts, port, dialect, child_compiled, read, observations
+            builder, model, port, dialect, child_compiled, read, observations
         )
-        _attach_children(scope, meta, level, parents, child_refs)
+        _attach_children(builder, meta, level, parents, child_refs)
         level_refs.append(child_refs)
 
     pin = query_pin(query, declaring_metadata(meta, root_entity.identity))
     return FindResult(
-        graph=scope.build(root_refs, pin),
+        graph=builder.seal(root_refs, pin),
         includes=_include_tree(plan_.levels),
         sources=retain_evidence(meta, observations, ledger=ledger, pin=pin),
     )
@@ -491,17 +491,17 @@ class StagedRows:
     gate and one reaching it through :func:`stage_publishable_rows` has.
 
     ``rows`` and their aligned ``contexts`` remain available for the lane-specific
-    work that follows. ``scope`` and ``roots`` retain the converted projections
-    for the history lane, which repartitions clean nodes by milestone without
-    converting them a second time. ``merge`` is the staging graph the lane either
-    classifies or refuses; each row occupies the root position of the same
-    ordinal, so a verdict lands on the row it judged.
+    work that follows. ``graph`` and ``roots`` retain the converted projections
+    for the history lane, which repartitions clean rows by milestone without
+    converting them a second time. ``merge`` is the merge over that same staging
+    graph, which the lane either classifies or refuses; each row occupies the
+    root position of the same ordinal, so a verdict lands on the row it judged.
     """
 
     rows: tuple[MaterializedReadRow, ...]
     contexts: tuple[LevelContext, ...]
-    scope: MergeScope
-    roots: tuple[SnapshotNodeRef, ...]
+    graph: SnapshotGraph
+    roots: tuple[int, ...]
     merge: GraphMerge
 
 
@@ -539,7 +539,6 @@ def stage_rows(
     graph carries whatever contradicted the model and each lane decides what to
     do with it.
     """
-    meta = model.meta
     layouts = model.layouts
     materialized = tuple(compiled.materialize_row(row) for row in rows)
     contexts = tuple(
@@ -550,21 +549,20 @@ def stage_rows(
         )
         for row in materialized
     )
-    scope = MergeScope(meta)
+    builder = GraphBuilder()
     roots = tuple(
         convert_row(
             row.values,
             context,
-            scope,
+            builder,
             findings=row.findings,
             family_tag_unknown=row.family_tag_unknown,
             classified_members=row.classified_members,
         )
         for row, context in zip(materialized, contexts, strict=True)
     )
-    return StagedRows(
-        materialized, contexts, scope, roots, merge_graph_input(scope.build(roots, pin), meta)
-    )
+    graph = builder.seal(roots, pin)
+    return StagedRows(materialized, contexts, graph, roots, merge_graph_input(graph))
 
 
 def find_rows(
@@ -663,8 +661,9 @@ def find_history(
 
     The flat batch first passes the same staged publication gate a predicate
     write's resolving read does — the row-form lane classifies in band instead.
-    Clean converted projections are then repartitioned into milestone-local
-    scopes without converting their retained member carriers a second time. The
+    Clean projections are then imported out of the SEALED staging graph into
+    milestone-local builders, keeping each row's layout, member row, and issues
+    by reference rather than decoding any of them a second time. The
     graphs come out in chronological edge order (Valid Time
     first, matching the corpus's own authored `then.graphs` order) rather than in
     the database's unspecified natural row order, and rows within one milestone
@@ -696,25 +695,25 @@ def find_history(
         edge = milestone_edge(entity, row.values)
         milestone = milestones.get(edge)
         if milestone is None:
-            milestone = _Milestone(MergeScope(meta), _edge_sort_key(entity, row.values))
+            milestone = _Milestone(GraphBuilder(), _edge_sort_key(entity, row.values))
             milestones[edge] = milestone
-        milestone.roots.append(milestone.scope.add(stage.scope.node(staged_ref)))
+        milestone.roots.append(milestone.builder.import_projection(stage.graph, staged_ref))
     graphs = tuple(
-        milestone.scope.build(tuple(milestone.roots), _edge_pin(edge))
+        milestone.builder.seal(tuple(milestone.roots), _edge_pin(edge))
         for edge, milestone in sorted(milestones.items(), key=lambda entry: entry[1].rank)
     )
     return HistoryFindResult(graphs=graphs)
 
 
 def _convert_level(
-    scope: MergeScope,
-    layouts: LayoutCatalog,
+    builder: GraphBuilder,
+    model: CatalogedModel,
     port: DbPort,
     dialect: Dialect,
     compiled: CompiledRead,
     read: ReadActivity,
     observations: ReadObservations,
-) -> tuple[SnapshotNodeRef, ...]:
+) -> tuple[int, ...]:
     """Execute one level and convert each of its rows as that row materializes.
 
     The observation is taken from the SAME row the conversion reads, while that
@@ -737,26 +736,26 @@ def _convert_level(
     member values, and the row behind it is the ordinary stored row a later write
     settles against.
     """
-    refs: list[SnapshotNodeRef] = []
+    refs: list[int] = []
     for row in _execute_compiled(port, dialect, compiled, read):
         context = LevelContext(
-            layouts.entity(row.resolved_entity),
+            model.layouts.entity(row.resolved_entity),
             compiled.projected_documents,
             compiled.attribute_reads(row.resolved_entity),
         )
         ref = convert_row(
             row.values,
             context,
-            scope,
+            builder,
             findings=row.findings,
             family_tag_unknown=row.family_tag_unknown,
             classified_members=row.classified_members,
         )
         refs.append(ref)
-        if not hydrates(scope.node(ref).issues):
+        if not hydrates(builder.issues_of(ref)):
             continue
         observations.observe_row(
-            ref.node_index,
+            ref,
             row.resolved_entity,
             observable_columns(row.values, context, classified_members=row.classified_members),
             row.document,
@@ -793,25 +792,24 @@ def _view_key(level: deep_fetch.FetchLevel) -> RelationshipViewKey:
 
 
 def _attach_children(
-    scope: MergeScope,
+    builder: GraphBuilder,
     meta: Metamodel,
     level: deep_fetch.FetchLevel,
-    parents: tuple[SnapshotNodeRef, ...],
-    children: tuple[SnapshotNodeRef, ...],
+    parents: tuple[int, ...],
+    children: tuple[int, ...],
 ) -> None:
     """Fan one level's converted children back to their parents in memory,
     preserving fetched order within each to-many bucket."""
     assert level.related is not None
     related = _correlation_member(meta, level.related.identity)
     owner = _correlation_member(meta, level.owner.identity)
-    buckets: dict[object, list[SnapshotNodeRef]] = {}
+    buckets: dict[object, list[int]] = {}
     for child in children:
-        key = attribute_value(scope.node(child), related)
-        buckets.setdefault(key, []).append(child)
+        buckets.setdefault(builder.member_value(child, related), []).append(child)
     view = _view_key(level)
     for parent in parents:
-        matched = buckets.get(attribute_value(scope.node(parent), owner), [])
-        scope.attach(
+        matched = buckets.get(builder.member_value(parent, owner), [])
+        builder.write_view(
             parent,
             view,
             tuple(matched) if level.to_many else (matched[0] if matched else None),
@@ -819,7 +817,7 @@ def _attach_children(
 
 
 def _attach_empty(
-    scope: MergeScope, level: deep_fetch.FetchLevel, parents: tuple[SnapshotNodeRef, ...]
+    builder: GraphBuilder, level: deep_fetch.FetchLevel, parents: tuple[int, ...]
 ) -> None:
     """Attach the empty/null relationship result to every admitted parent.
 
@@ -828,39 +826,43 @@ def _attach_empty(
     unset one.
     """
     view = _view_key(level)
-    empty: tuple[SnapshotNodeRef, ...] | None = () if level.to_many else None
+    empty: tuple[int, ...] | None = () if level.to_many else None
     for parent in parents:
-        scope.attach(parent, view, empty)
+        builder.write_view(parent, view, empty)
 
 
 def _attach_back_reference(
-    scope: MergeScope,
+    builder: GraphBuilder,
     meta: Metamodel,
     level: deep_fetch.FetchLevel,
-    parents: tuple[SnapshotNodeRef, ...],
+    parents: tuple[int, ...],
 ) -> None:
     """Resolve an ancestor-revisit level against the scope's own identity map.
 
     A back-reference issues no SQL: m-case-format's "Back-reference cycles"
     guarantees the ancestor is already converted, so the parent's own correlation
-    member names a node this scope has already registered.
+    member names a projection this builder has already registered.
+
+    An absent correlation member and a stored null both resolve nothing, and both
+    leave the loaded-empty or loaded-null result behind: a parent that names no
+    ancestor reaches none whichever of the two its row holds.
     """
     assert level.back_reference_family is not None
     view = _view_key(level)
     owner = _correlation_member(meta, level.owner.identity)
     for parent in parents:
-        key = attribute_value(scope.node(parent), owner)
-        if key is None:
-            scope.attach(parent, view, () if level.to_many else None)
+        key = builder.member_value(parent, owner)
+        if key is None or key is ABSENT:
+            builder.write_view(parent, view, () if level.to_many else None)
             continue
-        referenced = scope.resolve(level.back_reference_family, (key,))
+        referenced = builder.resolve(level.back_reference_family, key)
         if referenced is None:  # pragma: no cover - guards a malformed plan
             raise ValueError(
                 f"back-reference {level.attach_key!r}: no already-converted "
                 f"{level.back_reference_family.canonical} node for key {key!r} (m-case-format "
                 "'Back-reference cycles' guarantees the ancestor is already known)"
             )
-        scope.attach(parent, view, (referenced,) if level.to_many else referenced)
+        builder.write_view(parent, view, (referenced,) if level.to_many else referenced)
 
 
 def _correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> AttributeIdentity:
@@ -946,17 +948,17 @@ def execute_read(
 
 def _parent_refs(
     parent: deep_fetch.ParentRef,
-    root_refs: tuple[SnapshotNodeRef, ...],
-    level_refs: Sequence[tuple[SnapshotNodeRef, ...]],
-) -> tuple[SnapshotNodeRef, ...]:
+    root_refs: tuple[int, ...],
+    level_refs: Sequence[tuple[int, ...]],
+) -> tuple[int, ...]:
     if isinstance(parent, deep_fetch.RootRef):
         return root_refs
     return level_refs[parent.index]
 
 
 def _guarded_parents(
-    scope: MergeScope, level: deep_fetch.FetchLevel, parents: tuple[SnapshotNodeRef, ...]
-) -> tuple[SnapshotNodeRef, ...]:
+    builder: GraphBuilder, level: deep_fetch.FetchLevel, parents: tuple[int, ...]
+) -> tuple[int, ...]:
     """The parent nodes a path-root guard admits into ``level``
     (m-deep-fetch "Path-root guards").
 
@@ -971,25 +973,30 @@ def _guarded_parents(
     if level.source_position is None:
         return parents
     admitted = frozenset(level.source_position)
-    return tuple(parent for parent in parents if scope.node(parent).concrete_entity in admitted)
+    return tuple(parent for parent in parents if builder.concrete_of(parent) in admitted)
 
 
 def _distinct_keys(
-    scope: MergeScope, parents: tuple[SnapshotNodeRef, ...], member: AttributeIdentity
+    builder: GraphBuilder, parents: tuple[int, ...], member: AttributeIdentity
 ) -> list[predicate_algebra.Scalar]:
-    """The distinct NON-NULL values of ``member`` across ``parents``, in first-
-    encountered order (m-deep-fetch: the gathered set is unordered for grading
-    purposes — an implementation MUST NOT sort at runtime to match a fixture —
-    so encounter order is as good as any, and deterministic run to run).
+    """The distinct values of ``member`` across ``parents`` that name something,
+    in first-encountered order (m-deep-fetch: the gathered set is unordered for
+    grading purposes — an implementation MUST NOT sort at runtime to match a
+    fixture — so encounter order is as good as any, and deterministic run to
+    run).
+
+    A member this level's parents did not carry and one stored null are distinct
+    answers now and both drop out here: neither names a child row, so gathering
+    either would widen the child query by a key nothing joins on.
 
     A gathered key is always a declared PRIMARY-KEY (or unique FK) attribute's
     own value — one of `m-predicate`'s neutral scalar types — even though a
-    converted node's values are typed as plain ``object``; the cast reflects that
+    projection's values are typed as plain ``object``; the cast reflects that
     runtime invariant, not a widening of the membership node's own typed-literal
     contract.
     """
-    gathered = (attribute_value(scope.node(parent), member) for parent in parents)
-    values = dict.fromkeys(value for value in gathered if value is not None)
+    gathered = (builder.member_value(parent, member) for parent in parents)
+    values = dict.fromkeys(value for value in gathered if value is not None and value is not ABSENT)
     return cast("list[predicate_algebra.Scalar]", list(values))
 
 
@@ -1084,7 +1091,7 @@ def wire_from_find_result(result: FindResult, meta: Metamodel) -> Snapshot[WireE
     same Source Hints the executor retained, so a Wire node and a Typed node of
     one row carry the identical evidence.
     """
-    merge = merge_graph_input(result.graph, meta)
+    merge = merge_graph_input(result.graph)
     roots = wire_roots(merge, meta, result.includes, sources=merge.by_allocation(result.sources))
     return Snapshot(roots, result.graph.pin)
 
@@ -1100,7 +1107,7 @@ def wire_from_history_result(result: HistoryFindResult, meta: Metamodel) -> Snap
     """
     roots: list[WireEntity | InvalidData[WireEntity]] = []
     for graph in result.graphs:
-        roots.extend(wire_roots(merge_graph_input(graph, meta), meta, ordinal_offset=len(roots)))
+        roots.extend(wire_roots(merge_graph_input(graph), meta, ordinal_offset=len(roots)))
     return Snapshot(tuple(roots), Pin())
 
 
@@ -1173,7 +1180,7 @@ def snapshot_from_history_result(
 
 
 def _materialize_result_graph(
-    graph: SnapshotGraphInput,
+    graph: SnapshotGraph,
     meta: Metamodel,
     construction: EntityGraphConstruction,
     *,

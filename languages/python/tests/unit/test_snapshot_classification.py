@@ -26,7 +26,7 @@ from _layout_twin_columns import COLUMNS_TWIN
 from _layout_twin_columns import LayoutTwinItem as ColumnsItem
 from _layout_twin_document import DOCUMENT_TWIN
 from _layout_twin_document import LayoutTwinItem as DocumentItem
-from _snapshot_graph_support import GraphBuilder, invalid_record
+from _snapshot_graph_support import GraphFixture, invalid_record
 from _transact_support import ACCOUNT, RecordingPort
 
 from _support import mirrored_models as mm
@@ -84,10 +84,10 @@ def _classified(root: RootClassification) -> ClassifiedRoot:
     return root
 
 
-def _classify(builder: GraphBuilder, *roots: object, offset: int = 0) -> GraphClassification:
-    graph = builder.graph(*cast("Any", roots))
+def _classify(fixture: GraphFixture, *roots: object, offset: int = 0) -> GraphClassification:
+    graph = fixture.graph(*cast("Any", roots))
     return classify_roots(
-        merge_graph_input(graph, model_of(ORDERS_MODEL)),
+        merge_graph_input(graph),
         model_of(ORDERS_MODEL),
         ordinal_offset=offset,
     )
@@ -99,13 +99,13 @@ def _classify(builder: GraphBuilder, *roots: object, offset: int = 0) -> GraphCl
 def test_a_conforming_graph_is_answered_without_walking_or_wrapping() -> None:
     # The common case pays nothing: no issue anywhere means no reachability walk,
     # no excluded node, and no record to unwrap at publication.
-    builder = GraphBuilder(ORDERS_MODEL)
-    order = builder.node("Order", _ORDER_ROW)
-    builder.attach(
-        order, "parallax.compatibility.Order.items", (builder.node("OrderItem", _ITEM_ROW),)
+    fixture = GraphFixture(ORDERS_MODEL)
+    order = fixture.node("Order", _ORDER_ROW)
+    fixture.attach(
+        order, "parallax.compatibility.Order.items", (fixture.node("OrderItem", _ITEM_ROW),)
     )
 
-    classification = _classify(builder, order)
+    classification = _classify(fixture, order)
     assert classification.conforming
     assert classification.excluded == frozenset()
     assert classification.roots == (ConformingRoot(0),)
@@ -115,12 +115,12 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
     # Reaching one affected object through several roots repeats its diagnosis in
     # each affected root's record, because classification is root-granular and no
     # root may deliver a pruned or partly published tree.
-    builder = GraphBuilder(ORDERS_MODEL)
-    first = builder.node("Order", _ORDER_ROW)
-    second = builder.node("Order", {**_ORDER_ROW, "id": 2})
-    shared = builder.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
-    builder.attach(first, "parallax.compatibility.Order.items", (shared,))
-    builder.attach(second, "parallax.compatibility.Order.items", (shared,))
+    fixture = GraphFixture(ORDERS_MODEL)
+    first = fixture.node("Order", _ORDER_ROW)
+    second = fixture.node("Order", {**_ORDER_ROW, "id": 2})
+    shared = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
+    fixture.attach(first, "parallax.compatibility.Order.items", (shared,))
+    fixture.attach(second, "parallax.compatibility.Order.items", (shared,))
 
     diagnosis = StoredDataIssue(
         "stored-data-leaf-undecodable",
@@ -128,23 +128,23 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
         AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "shippedOn"),
         ObjectKey(EntityIdentity(_NAMESPACE, "OrderItem"), (("id", 11),)),
     )
-    affected = [_classified(root) for root in _classify(builder, first, second).roots]
+    affected = [_classified(root) for root in _classify(fixture, first, second).roots]
     assert [root.issues for root in affected] == [frozenset({diagnosis}), frozenset({diagnosis})]
     assert [root.ordinal for root in affected] == [0, 1]
 
 
 def test_a_root_reaching_no_issue_stays_conforming_beside_an_invalid_sibling() -> None:
-    builder = GraphBuilder(ORDERS_MODEL)
-    clean = builder.node("Order", _ORDER_ROW)
-    affected = builder.node("Order", {**_ORDER_ROW, "id": 2})
-    builder.attach(clean, "parallax.compatibility.Order.items", ())
-    builder.attach(
+    fixture = GraphFixture(ORDERS_MODEL)
+    clean = fixture.node("Order", _ORDER_ROW)
+    affected = fixture.node("Order", {**_ORDER_ROW, "id": 2})
+    fixture.attach(clean, "parallax.compatibility.Order.items", ())
+    fixture.attach(
         affected,
         "parallax.compatibility.Order.items",
-        (builder.node("OrderItem", {**_ITEM_ROW, "id": 12, "order_id": 2, "shipped_on": "nope"}),),
+        (fixture.node("OrderItem", {**_ITEM_ROW, "id": 12, "order_id": 2, "shipped_on": "nope"}),),
     )
 
-    conforming, classified = _classify(builder, clean, affected).roots
+    conforming, classified = _classify(fixture, clean, affected).roots
     assert isinstance(conforming, ConformingRoot)
     assert _classified(classified).ordinal == 1
 
@@ -153,23 +153,23 @@ def test_one_invalid_node_reached_twice_from_one_root_carries_one_diagnosis() ->
     # A broad view and its narrowed sibling reach the same node, and an object
     # diagnosed once is diagnosed once: the record is a set of facts, not a walk
     # log, so the second path adds nothing.
-    builder = GraphBuilder(ORDERS_MODEL)
-    order = builder.node("Order", _ORDER_ROW)
-    item = builder.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
-    builder.attach(order, "parallax.compatibility.Order.items", (item,))
-    builder.attach(
+    fixture = GraphFixture(ORDERS_MODEL)
+    order = fixture.node("Order", _ORDER_ROW)
+    item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
+    fixture.attach(order, "parallax.compatibility.Order.items", (item,))
+    fixture.attach(
         order, "parallax.compatibility.Order.items", (item,), narrowed="items[OrderItem]"
     )
 
-    (classified,) = _classify(builder, order).roots
+    (classified,) = _classify(fixture, order).roots
     assert len(_classified(classified).issues) == 1
 
 
 def test_the_ordinal_offset_positions_a_record_in_the_published_result() -> None:
-    builder = GraphBuilder(ORDERS_MODEL)
-    order = builder.node("Order", {**_ORDER_ROW, "ordered_on": "not-a-date"})
+    fixture = GraphFixture(ORDERS_MODEL)
+    order = fixture.node("Order", {**_ORDER_ROW, "ordered_on": "not-a-date"})
 
-    (classified,) = _classify(builder, order, offset=4).roots
+    (classified,) = _classify(fixture, order, offset=4).roots
     assert _classified(classified).ordinal == 4
 
 
@@ -177,15 +177,15 @@ def test_the_ordinal_offset_positions_a_record_in_the_published_result() -> None
 # The construction scope narrows with the classification.                      #
 # --------------------------------------------------------------------------- #
 def test_a_non_hydrating_root_leaves_its_own_subtree_out_of_construction() -> None:
-    builder = GraphBuilder(ORDERS_MODEL)
-    order = builder.node("Order", _ORDER_ROW)
-    item = builder.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
+    fixture = GraphFixture(ORDERS_MODEL)
+    order = fixture.node("Order", _ORDER_ROW)
+    item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
     # A loaded-null view reaches nothing and so attributes nothing, which is the
     # arm distinct from an empty to-many and from an unloaded relationship.
-    builder.attach(item, "parallax.compatibility.OrderItem.order", None)
-    builder.attach(order, "parallax.compatibility.Order.items", (item,))
+    fixture.attach(item, "parallax.compatibility.OrderItem.order", None)
+    fixture.attach(order, "parallax.compatibility.Order.items", (item,))
 
-    classification = _classify(builder, order)
+    classification = _classify(fixture, order)
     assert classification.excluded == frozenset({0, 1})
     assert _classified(classification.roots[0]).node is None
 
@@ -194,17 +194,17 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
     # Exclusion follows publication, not blame: the shared item is constructible
     # and the conforming root needs it, so only the nodes no publishable root
     # reaches are left out.
-    builder = GraphBuilder(ORDERS_MODEL)
-    clean = builder.node("Order", _ORDER_ROW)
-    affected = builder.node("Order", {**_ORDER_ROW, "id": 2})
-    shared = builder.node("OrderItem", _ITEM_ROW)
-    broken = builder.node("OrderItem", {**_ITEM_ROW, "id": 12, "shipped_on": "not-a-date"})
-    builder.attach(clean, "parallax.compatibility.Order.items", (shared,))
-    builder.attach(affected, "parallax.compatibility.Order.items", (shared, broken))
+    fixture = GraphFixture(ORDERS_MODEL)
+    clean = fixture.node("Order", _ORDER_ROW)
+    affected = fixture.node("Order", {**_ORDER_ROW, "id": 2})
+    shared = fixture.node("OrderItem", _ITEM_ROW)
+    broken = fixture.node("OrderItem", {**_ITEM_ROW, "id": 12, "shipped_on": "not-a-date"})
+    fixture.attach(clean, "parallax.compatibility.Order.items", (shared,))
+    fixture.attach(affected, "parallax.compatibility.Order.items", (shared, broken))
 
-    classification = _classify(builder, clean, affected)
+    classification = _classify(fixture, clean, affected)
     assert classification.excluded == frozenset({2, 3})
-    published, invalid = builder.materialize(clean, affected)
+    published, invalid = fixture.materialize(clean, affected)
     order = cast("Order", published)
     assert order.id == 1
     assert len(order.items) == 1
@@ -300,13 +300,13 @@ def test_a_versioned_root_whose_version_did_not_decode_locates_no_version() -> N
 def test_a_loaded_to_one_view_carries_attribution_to_its_parent() -> None:
     # A to-one arm is a lone allocation index rather than a tuple, and reaching an
     # invalid node through one invalidates its holder exactly as a to-many does.
-    builder = GraphBuilder(ORDERS_MODEL)
-    order = builder.node("Order", _ORDER_ROW)
-    item = builder.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
-    builder.attach(item, "parallax.compatibility.OrderItem.order", order)
-    builder.attach(order, "parallax.compatibility.Order.items", (item,))
+    fixture = GraphFixture(ORDERS_MODEL)
+    order = fixture.node("Order", _ORDER_ROW)
+    item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
+    fixture.attach(item, "parallax.compatibility.OrderItem.order", order)
+    fixture.attach(order, "parallax.compatibility.Order.items", (item,))
 
-    published = invalid_record(builder.materialize(item)[0])
+    published = invalid_record(fixture.materialize(item)[0])
     assert published.data is None
     assert published.object_key == ObjectKey(EntityIdentity(_NAMESPACE, "OrderItem"), (("id", 11),))
 

@@ -20,7 +20,7 @@ from typing import Final
 from parallax.core.metamodel import EntityIdentity, MemberIdentity
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import ObjectKey
-from parallax.snapshot.materialize._input import StoredDataIssueCode
+from parallax.snapshot.materialize._graph import StoredDataIssueCode
 
 __all__ = ["InvalidData", "InvalidDataError", "StoredDataIssue"]
 

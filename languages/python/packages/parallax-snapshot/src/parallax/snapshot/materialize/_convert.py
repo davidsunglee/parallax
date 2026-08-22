@@ -1,7 +1,7 @@
 """Per-row conversion: the one place a physical column becomes a member identity.
 
 One SQL-materialized row's transformed values plus its level context and
-classified provenance yield one :class:`SnapshotNodeInput`. Nothing below this
+classified provenance yield one compact projection row. Nothing below this
 seam sees a physical column, a storage key, or a Document Path again. Any bulk
 path is a thin loop over :func:`convert_row`, and the graph-local identity scope
 it registers into is an explicit argument rather than a whole-result index — a
@@ -51,19 +51,11 @@ from parallax.core.document_codec import (
     occurrence_shape,
     reduce_declared_members_classified,
 )
-from parallax.core.entity._graph_input import (
-    EntityAttributeInput,
-    ValueObjectAttributeInput,
-    ValueObjectOccurrenceInput,
-    ValueObjectRecord,
-)
 from parallax.core.entity._layout import EntityLayout
-from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
-    Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
     PrimaryKey,
@@ -71,19 +63,11 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize._input import (
-    InvalidRootInput,
-    LogicalKey,
-    RelationshipViewKey,
-    SnapshotGraphInput,
-    SnapshotNodeInput,
-    SnapshotNodeRef,
-    SnapshotRelationshipViewInput,
+from parallax.snapshot.materialize._graph import (
+    ABSENT,
+    GraphBuilder,
     StoredDataIssueCode,
     StoredDataIssueInput,
-    has_invalid_key,
-    logical_key,
 )
 from parallax.snapshot.materialize._publication import (
     SNAPSHOT_DECODING_FAILED,
@@ -93,7 +77,6 @@ from parallax.snapshot.materialize._publication import (
 __all__ = [
     "SNAPSHOT_DECODING_FAILED",
     "LevelContext",
-    "MergeScope",
     "SnapshotDecodingError",
     "convert_row",
     "observable_columns",
@@ -155,119 +138,28 @@ class LevelContext:
         object.__setattr__(self, "concrete_entity", self.layout.concrete)
 
 
-def _new_nodes() -> list[SnapshotNodeInput]:
-    return []
-
-
-def _new_views() -> list[dict[RelationshipViewKey, SnapshotRelationshipViewInput]]:
-    return []
-
-
-def _new_identity() -> dict[LogicalKey, SnapshotNodeRef]:
-    return {}
-
-
-@dataclass(slots=True)
-class MergeScope:
-    """One materialization's graph-local identity scope and node accumulator.
-
-    Graph-local identity resolution promises node reuse within one scope and never
-    beyond it, so the scope is the unit a caller chooses: a `find` gives its whole
-    result one, and a milestone-set read gives each milestone its own. The FIRST
-    projection registered for a logical key is the one a later back-reference
-    resolves to.
-
-    Relationship views accumulate separately from the node records because a
-    parent's views are only known once its child level lands, and the raw parent
-    row is long gone by then. :meth:`build` composes the immutable graph input
-    once, reusing every member tuple by reference rather than copying one.
-    """
-
-    model: Metamodel
-    _nodes: list[SnapshotNodeInput] = field(default_factory=_new_nodes)
-    _views: list[dict[RelationshipViewKey, SnapshotRelationshipViewInput]] = field(
-        default_factory=_new_views
-    )
-    _identity: dict[LogicalKey, SnapshotNodeRef] = field(default_factory=_new_identity)
-
-    def add(self, node: SnapshotNodeInput) -> SnapshotNodeRef:
-        """Register one converted projection and answer the reference naming it."""
-        ref = SnapshotNodeRef(len(self._nodes))
-        self._nodes.append(node)
-        self._views.append({})
-        key = None if has_invalid_key(node) else logical_key(self.model, node)
-        if key is not None:  # pragma: no branch - every accepted Entity keys
-            self._identity.setdefault(key, ref)
-        return ref
-
-    def node(self, ref: SnapshotNodeRef) -> SnapshotNodeInput:
-        """The projection ``ref`` names."""
-        return self._nodes[ref.node_index]
-
-    def resolve(self, family: EntityIdentity, key: tuple[object, ...]) -> SnapshotNodeRef | None:
-        """The first projection registered under ``(family, key)``, if any — how a
-        back-reference level reaches an ancestor it issues no query for."""
-        return self._identity.get((family, key))
-
-    def attach(
-        self,
-        ref: SnapshotNodeRef,
-        view: RelationshipViewKey,
-        value: SnapshotNodeRef | tuple[SnapshotNodeRef, ...] | None,
-    ) -> None:
-        """Record one relationship view on an already-converted projection.
-
-        Keyed rather than appended, because two levels may legitimately attach one
-        view: a guarded path and its broad sibling are distinct hops with the same
-        view key, and a parent both admit is attached twice. A guard filters
-        parents rather than children, so the two attachments carry the same value,
-        and one entry per view is what the graph input is stated to hold.
-        """
-        self._views[ref.node_index][view] = SnapshotRelationshipViewInput(view, value)
-
-    def build(self, roots: tuple[SnapshotNodeRef, ...], pin: Pin) -> SnapshotGraphInput:
-        """This scope's whole graph input, roots in result order."""
-        nodes = tuple(
-            node
-            if not views
-            else SnapshotNodeInput(
-                concrete_entity=node.concrete_entity,
-                attributes=node.attributes,
-                value_objects=node.value_objects,
-                relationship_views=tuple(views.values()),
-                issues=node.issues,
-            )
-            for node, views in zip(self._nodes, self._views, strict=True)
-        )
-        result_roots = tuple(
-            InvalidRootInput(ordinal, nodes[ref.node_index].issues)
-            if has_invalid_key(nodes[ref.node_index])
-            else ref
-            for ordinal, ref in enumerate(roots)
-        )
-        return SnapshotGraphInput(
-            nodes=nodes,
-            roots=result_roots,
-            pin=pin,
-            has_issues=any(node.issues for node in nodes),
-        )
-
-
 def convert_row(
     row: Row,
     level: LevelContext,
-    scope: MergeScope,
+    builder: GraphBuilder,
     *,
     findings: tuple[DocumentFinding, ...] = (),
     family_tag_unknown: bool = False,
     classified_members: frozenset[str] = frozenset(),
-) -> SnapshotNodeRef:
-    """Convert one SQL-materialized row into ``scope``'s next
-    :class:`SnapshotNodeInput`.
+) -> int:
+    """Convert one SQL-materialized row into ``builder``'s next projection.
 
-    Answers the reference the scope assigned rather than the record itself: the
-    scope retains the record, and a caller that held its own copy would be the
-    second place a projection lives.
+    Answers the projection index the builder assigned rather than the row
+    itself: the builder retains the row, and a caller that held its own copy
+    would be the second place a projection lives.
+
+    The row is POSITIONAL, laid out by ``level.layout``: every applicable
+    Attribute occupies its declared position and every applicable top-level
+    Value Object occurrence occupies its own after them, whether or not this
+    read projected it. A position the read did not carry, and one whose stored
+    value no conforming member could hold, both read ``ABSENT`` — beside the
+    issue the latter records — which is what keeps a member the read omitted
+    distinguishable from one stored null.
 
     ``findings``, ``family_tag_unknown``, and ``classified_members`` are the
     compiled row transform's provenance. Conversion translates those findings
@@ -277,18 +169,20 @@ def convert_row(
     null-padded result — and the synthetic family tag — therefore contributes
     nothing rather than landing on a member that never declared it.
     """
+    layout = level.layout
     projected = _document_columns(level)
     issues: list[StoredDataIssueInput] = [
         _translate_finding(finding, level) for finding in findings
     ]
     if family_tag_unknown:
         issues.append(StoredDataIssueInput("stored-data-family-tag-unknown", level.concrete_entity))
-    attributes: list[EntityAttributeInput] = []
+    members: list[object] = []
     result_keys = {contract.identity: contract for contract in level.attribute_reads}
-    for attribute in level.layout.attributes:
+    for attribute in layout.attributes:
         contract = result_keys.get(attribute.identity)
         result_key = attribute.storage.name if contract is None else contract.result_key
         if result_key not in row:
+            members.append(ABSENT)
             continue
         raw = row[result_key]
         value = (
@@ -296,60 +190,39 @@ def convert_row(
             if contract is not None and contract.encoded
             else raw
         )
-        issue = (
-            None
-            if result_key in classified_members
-            else _attribute_issue(attribute, value, level.concrete_entity, scope.model)
-        )
-        if issue is not None:
-            issues.append(issue)
-        if admits_stored_scalar(
+        admitted = admits_stored_scalar(
             value,
             attribute.type,
             nullable=attribute.nullable,
-            temporal_end=_is_temporal_end(attribute, level.concrete_entity, scope.model),
-        ):
-            attributes.append(EntityAttributeInput(attribute.identity, value))
-    value_objects: list[ValueObjectOccurrenceInput] = []
-    for occurrence in level.layout.occurrences:
+            temporal_end=attribute.identity in layout.temporal_ends,
+        )
+        if not admitted and result_key not in classified_members:
+            issues.append(_attribute_issue(attribute, value, level.concrete_entity))
+        members.append(value if admitted else ABSENT)
+    for occurrence in layout.occurrences:
         if occurrence.storage.name not in projected:
+            members.append(ABSENT)
             continue
         raw = row.get(occurrence.storage.name)
         value, occurrence_findings = _occurrence(
             raw,
             occurrence,
-            level.concrete_entity,
             outer_classified=occurrence.storage.name in classified_members,
         )
         issues.extend(
             _occurrence_issue(finding, occurrence, level.concrete_entity)
             for finding in occurrence_findings
         )
-        value_objects.append(ValueObjectOccurrenceInput(occurrence.identity, value))
-    return scope.add(
-        SnapshotNodeInput(
-            concrete_entity=level.concrete_entity,
-            attributes=tuple(attributes),
-            value_objects=tuple(value_objects),
-            issues=tuple(issues),
-        )
-    )
+        members.append(value)
+    return builder.add(layout, tuple(members), tuple(issues))
 
 
 def _attribute_issue(
     attribute: AttributeMetadata,
     value: object,
     entity: EntityIdentity,
-    model: Metamodel,
-) -> StoredDataIssueInput | None:
-    temporal_end = _is_temporal_end(attribute, entity, model)
-    if admits_stored_scalar(
-        value,
-        attribute.type,
-        nullable=attribute.nullable,
-        temporal_end=temporal_end,
-    ):
-        return None
+) -> StoredDataIssueInput:
+    """The classification one inadmissible stored scalar carries."""
     if value is None:
         code: StoredDataIssueCode = (
             "stored-data-primary-key-null"
@@ -363,18 +236,6 @@ def _attribute_issue(
         else "stored-data-leaf-undecodable"
     )
     return StoredDataIssueInput(code, entity, attribute.identity)
-
-
-def _is_temporal_end(
-    attribute: AttributeMetadata, entity: EntityIdentity, model: Metamodel
-) -> bool:
-    position = inheritance_view(model).entity(entity)
-    if position is None:  # pragma: no cover - accepted entities have a view
-        return False
-    root = model.entity(position.root)
-    return root is not None and any(
-        axis.end_attribute == attribute.identity for axis in root.declared_as_of_axes
-    )
 
 
 def observable_columns(
@@ -412,7 +273,6 @@ def observable_columns(
         columns[occurrence.storage.name] = _decode_document(
             raw,
             occurrence,
-            level.concrete_entity,
             outer_classified=occurrence.storage.name in classified_members,
         )[0]
     return columns
@@ -430,11 +290,10 @@ def _document_columns(level: LevelContext) -> frozenset[str]:
 def _occurrence(
     raw: object,
     declared: _VoContainer,
-    entity: EntityIdentity,
     *,
     outer_classified: bool = False,
-) -> tuple[ValueObjectRecord | tuple[ValueObjectRecord, ...] | None, tuple[DocumentFinding, ...]]:
-    """One TOP-LEVEL occurrence as the immutable record algebra.
+) -> tuple[object, tuple[DocumentFinding, ...]]:
+    """One TOP-LEVEL occurrence as the positional member rows a slot holds.
 
     Decoding and structuring are two passes on purpose: the codec's reduction is
     already recursive, so it runs exactly once per stored occurrence and
@@ -442,14 +301,12 @@ def _occurrence(
     second time would ask the codec to read a managed value as a document
     spelling, which is a different thing entirely.
     """
-    decoded, findings = _decode_document(raw, declared, entity, outer_classified=outer_classified)
+    decoded, findings = _decode_document(raw, declared, outer_classified=outer_classified)
     return _structure_occurrence(decoded, declared), findings
 
 
-def _structure_occurrence(
-    decoded: object, declared: _VoContainer
-) -> ValueObjectRecord | tuple[ValueObjectRecord, ...] | None:
-    """One already-reduced occurrence as records.
+def _structure_occurrence(decoded: object, declared: _VoContainer) -> tuple[object, ...] | None:
+    """One already-reduced occurrence as member rows.
 
     A Many occurrence has no absent state: its zero-element value is the empty
     tuple, and an element the reduction collapsed contributes none. A One
@@ -471,7 +328,6 @@ def _structure_occurrence(
 def _decode_document(
     raw: object,
     declared: _VoContainer,
-    entity: EntityIdentity,
     *,
     outer_classified: bool = False,
 ) -> tuple[object, tuple[DocumentFinding, ...]]:
@@ -500,19 +356,19 @@ def _decode_document(
         decoded: list[object] = []
         findings: list[DocumentFinding] = list(outer_findings)
         for index, item in enumerate(items):
-            element, element_findings = _decode_element(item, declared, entity)
+            element, element_findings = _decode_element(item, declared)
             decoded.append(element)
             findings.extend(
                 DocumentFinding(finding.code, (index, *finding.path))
                 for finding in element_findings
             )
         return decoded, tuple(findings)
-    one_decoded, one_findings = _decode_element(raw, declared, entity)
+    one_decoded, one_findings = _decode_element(raw, declared)
     return one_decoded, (*outer_findings, *one_findings)
 
 
 def _decode_element(
-    raw: object, declared: _VoContainer, entity: EntityIdentity
+    raw: object, declared: _VoContainer
 ) -> tuple[dict[str, object] | None, tuple[DocumentFinding, ...]]:
     """One ``one``-shaped document (or array element) reduced to the members the
     read contract carries: a non-mapping collapses to ``None`` — the whole
@@ -528,22 +384,27 @@ def _decode_element(
     return cast("dict[str, object] | None", reduced), findings
 
 
-def _structure(document: Mapping[str, object], declared: _VoContainer) -> ValueObjectRecord:
-    """One reduced document as the immutable record algebra, keyed by structured
-    identity at every depth. No raw document mapping continues past here."""
-    return ValueObjectRecord(
-        attributes=tuple(
-            ValueObjectAttributeInput(leaf.identity, document[leaf.identity.name])
-            for leaf in declared.attributes
+def _structure(document: Mapping[str, object], declared: _VoContainer) -> tuple[object, ...]:
+    """One reduced document as its declaration-order member row: this
+    occurrence's own leaves, then its nested occurrences, each at the position
+    its declaration fixes.
+
+    A member the document does not hold — and a leaf the reduction could not make
+    available — reads ``ABSENT`` at its own position, which is how presence
+    survives a row that cannot omit. No raw document mapping continues past here.
+    """
+    return (
+        *(
+            document[leaf.identity.name]
             if leaf.identity.name in document and document[leaf.identity.name] is not UNAVAILABLE
+            else ABSENT
+            for leaf in declared.attributes
         ),
-        value_objects=tuple(
-            ValueObjectOccurrenceInput(
-                nested.identity,
-                _structure_occurrence(document[nested.identity.path[-1]], nested),
-            )
-            for nested in declared.value_objects
+        *(
+            _structure_occurrence(document[nested.identity.path[-1]], nested)
             if nested.identity.path[-1] in document
+            else ABSENT
+            for nested in declared.value_objects
         ),
     )
 
