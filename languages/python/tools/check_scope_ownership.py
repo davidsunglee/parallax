@@ -88,7 +88,9 @@ escapes the row is reported at whatever it escapes to — but a neighbour reachi
 nothing the row does not already permit leaves no chain, and nothing rejects it.
 That residue is what makes a narrow grant's completeness depend on the modules
 beside it. This walks the sealed scope's files and refuses every import into the
-parent package that no granted scope covers.
+parent package that no granted scope covers, reading ``from <parent> import
+<sibling>`` as one reach at the sibling rather than at the parent alone, so a
+grant holds in every spelling of the import it permits as a refusal does.
 
 The scope inventory is *imported* from ``check_dag_sync`` rather than restated,
 so §7 stays declared exactly once. This check and
@@ -194,8 +196,18 @@ def resolve_relative(module: str | None, level: int, package: str) -> str:
     return ".".join([*base, module] if module else base)
 
 
-def first_party_imports(source: str, package: str) -> frozenset[str]:
-    """Every first-party module an ``import`` statement in ``source`` names.
+def first_party_reaches(source: str, package: str) -> frozenset[tuple[str, ...]]:
+    """Every first-party import in ``source``, as one reach per imported name.
+
+    A **reach** is what a single import could have landed on, most specific
+    first. ``from <package> import <name>`` is how Python imports a SUBMODULE as
+    well as how it reads an attribute, and nothing in the syntax says which, so
+    that form reaches ``<package>.<name>`` or ``<package>`` and carries both:
+    ``from parallax.core.execution_lifecycle import testing`` binds the child
+    package as surely as spelling its dotted path does, and import-linter's own
+    graph records that edge. Keeping the two candidates together as one reach is
+    what lets a caller judge the import at whichever candidate it meant, instead
+    of judging a package-form spelling as though it had named the package alone.
 
     First party is the distribution root ``check_dag_sync.ROOT_PACKAGES`` are
     spelled under, so the two tools agree on what import-linter treats as a
@@ -203,24 +215,16 @@ def first_party_imports(source: str, package: str) -> frozenset[str]:
     first-party whatever it resolves to, and resolving it is what lets a caller
     ask which module it reached. Imports guarded by ``TYPE_CHECKING`` count:
     import-linter's graph contains them too.
-
-    ``from <package> import <name>`` names ``<package>.<name>`` as well as
-    ``<package>``, because that is the form Python imports a SUBMODULE through:
-    ``from parallax.core.execution_lifecycle import testing`` reaches the child
-    package as surely as spelling its dotted path does, and import-linter's own
-    graph records that edge. Where the name is an attribute rather than a
-    submodule the extra entry is a module path nothing declares, which no caller
-    can confuse with a scope.
     """
     roots = frozenset(root.split(".", 1)[0] for root in dag.ROOT_PACKAGES)
 
     def first_party(name: str) -> bool:
         return any(name == root or name.startswith(f"{root}.") for root in roots)
 
-    found: set[str] = set()
+    found: set[tuple[str, ...]] = set()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
-            found.update(alias.name for alias in node.names if first_party(alias.name))
+            found.update((alias.name,) for alias in node.names if first_party(alias.name))
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 base = resolve_relative(node.module, node.level, package)
@@ -228,9 +232,22 @@ def first_party_imports(source: str, package: str) -> frozenset[str]:
                 base = node.module
             else:
                 continue
-            found.add(base)
-            found.update(f"{base}.{alias.name}" for alias in node.names if alias.name != "*")
+            names = [alias.name for alias in node.names if alias.name != "*"]
+            found.update((f"{base}.{name}", base) for name in names)
+            if not names:
+                found.add((base,))
     return frozenset(found)
+
+
+def first_party_imports(source: str, package: str) -> frozenset[str]:
+    """Every first-party module :func:`first_party_reaches` could have landed on.
+
+    The flattened view, for a caller asking only whether some import touched a
+    module. Where an imported name is an attribute rather than a submodule its
+    candidate is a module path nothing declares, which no caller can confuse
+    with a scope.
+    """
+    return frozenset(module for reach in first_party_reaches(source, package) for module in reach)
 
 
 def is_inside(module: str, scope: str) -> bool:
@@ -291,29 +308,33 @@ def imports_escaping_a_sealed_child_row(paths: list[str]) -> list[str]:
     because a grant is what the row would have permitted had it been able to
     speak; everything else in the package is what the row gave up naming.
 
-    One import is one finding: an imported name is carried beside the module it
-    came from, so where both escape only the module is reported — the name may be
-    an attribute rather than a submodule, and it is the same import either way.
+    One import is one finding, judged over the whole reach rather than over each
+    candidate separately. ``from <parent> import <sibling>`` names the sibling
+    and the parent alike, so a granted sibling passes in that form exactly as it
+    does spelled as a module, and an ungranted one is refused in both. Where the
+    reach touches no grant, the least specific candidate inside the parent
+    package is reported: the more specific one may be an attribute rather than a
+    submodule, and it is the same import either way.
     """
     found: set[str] = set()
     for scope in dag.SEALED_CHILD_SCOPES:
         parent = dag.CHILD_SCOPE_PARENT[scope]
-        granted = dag.SUPPORT_SCOPE_DEPS[scope]
+        permitted = (scope, *dag.SUPPORT_SCOPE_DEPS[scope])
         for relative in paths:
             if not is_inside(module_path(relative), scope):
                 continue
             source = (PACKAGES / relative).read_text()
-            escaping = {
-                imported
-                for imported in first_party_imports(source, containing_package(relative))
-                if is_inside(imported, parent)
-                and not is_inside(imported, scope)
-                and not any(is_inside(imported, grant) for grant in granted)
-            }
-            for imported in escaping:
-                if imported.rpartition(".")[0] in escaping:
+            for reach in first_party_reaches(source, containing_package(relative)):
+                landing = [candidate for candidate in reach if is_inside(candidate, parent)]
+                if not landing:
                     continue
-                found.add(f"{relative} (imports {imported}, which {scope}'s own row cannot reject)")
+                covered = any(
+                    is_inside(candidate, allowed) for candidate in reach for allowed in permitted
+                )
+                if covered:
+                    continue
+                escaped = landing[-1]
+                found.add(f"{relative} (imports {escaped}, which {scope}'s own row cannot reject)")
     return sorted(found)
 
 

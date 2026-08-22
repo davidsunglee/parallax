@@ -4298,7 +4298,8 @@ row does not already permit leaves no chain to report, so nothing rejects that
 import, and a narrow grant's completeness would rest on what the modules beside
 it happen to import. The same `tools/check_scope_ownership.py` walk closes that
 residue over the sealed scope's own files, in every spelling, so what a sealed
-scope reaches inside its parent package is what its row grants and nothing more.
+scope reaches inside its parent package is what its row grants and nothing more,
+and a granted sibling stays legal however the import that reaches it is written.
 `parallax.core.entity._graph_input`, `._layout`, and `._row` are the sealed
 scopes; a scope not marked so is judged by its contract alone, and reaching a
 private module of its parent is what child scopes ordinarily do.
@@ -4719,7 +4720,9 @@ parallax.postgres --> parallax.core.dialect
   other way, and is carried the same way: the tool parses a sealed scope's own
   files and refuses every import landing inside its parent package that no
   granted scope covers, so the grants stated for it are complete rather than
-  complete only outside that package.
+  complete only outside that package. `from <parent> import <sibling>` is read
+  as one reach at the sibling rather than at the parent alone, so a grant holds
+  in every spelling of the import it permits, exactly as a refusal does.
 - **Scopes sharing one artifact.** Every behavioral module in `parallax-core`
   is its own submodule; the generated forbidden contracts operate at
   submodule granularity, so co-location in one wheel cannot legalize a
