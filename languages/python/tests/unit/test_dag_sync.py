@@ -699,6 +699,22 @@ def test_a_child_granted_its_own_sibling_needs_no_exception() -> None:
     assert not siblings & adjacency["parallax.core.entity"]
     assert all(dag.scope_ancestors(one) == frozenset({"parallax.core.entity"}) for one in siblings)
     assert dag.child_grant_exceptions(adjacency, "parallax.core.entity") == []
+    # What the generator gives up here it does not merely lose: emitting nothing
+    # means the row permits every module of that package, so the scope is
+    # declared SEALED and `tools/check_scope_ownership.py` refuses the imports
+    # this contract cannot — the two halves are what make the grant complete.
+    assert "parallax.core.entity._row" in dag.SEALED_CHILD_SCOPES
+
+
+def test_check_child_scopes_rejects_a_sealed_scope_that_is_not_a_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Sealing is a property of a child relationship — the grants are complete
+    # inside the package the child sits in — so it cannot describe a scope whose
+    # parent nothing declares.
+    monkeypatch.setattr(dag, "SEALED_CHILD_SCOPES", frozenset({"parallax.core.ghost"}))
+    with pytest.raises(ValueError, match="sealed scopes are not declared child scopes"):
+        dag.check_child_scopes()
 
 
 # --------------------------------------------------------------------------

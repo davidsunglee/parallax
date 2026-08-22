@@ -136,10 +136,9 @@ class AnotherSource:
         def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
             handles = [writer.allocate(identity) for identity in merge.order]
             for index, handle in enumerate(handles):
-                attributes, occurrences = member_carriers(
-                    merge.layout(index), merge.member_values(index)
+                writer.populate(
+                    handle, *member_carriers(merge.layout(index), merge.member_values(index)), ()
                 )
-                writer.populate(handle, attributes, occurrences, ())
             return tuple(handles[index] for index in merge.roots if index is not None)
 
         return graph_construction_of(self._domain).construct(

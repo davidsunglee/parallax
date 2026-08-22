@@ -182,7 +182,10 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # so the walk between the two is scoped where both are and belongs to no
     # materializing runtime. Its grants are the two ends and nothing else: a
     # carrier producer that reached the writer, `construct`, or model formation
-    # would make the layering a convention again, and this row is what refuses it.
+    # would make the layering a convention again. Outside the frontend's package
+    # this row refuses that outright; inside it, where all three of those live, a
+    # row can only refuse what leaves its own closure again, so the scope is
+    # declared in `SEALED_CHILD_SCOPES` as well.
     "parallax.core.entity._row": frozenset(
         {
             "parallax.core.metamodel",
@@ -397,6 +400,31 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
 # ``tools/check_scope_ownership.py`` closes that edge over the files themselves,
 # which is why the invariant holds although this table alone cannot state it.
 ISOLATED_CHILD_SCOPES: frozenset[str] = frozenset({"parallax.core.execution_lifecycle.testing"})
+
+# Child scopes whose grant row is the whole of what they may import INSIDE their
+# own parent package as well as outside it. A row can neither forbid nor except
+# what sits inside its own source package, so it refuses a neighbour only through
+# the chain that leaves it: reaching one whose own closure escapes the row is
+# reported at whatever it escapes to. A neighbour reaching nothing the row does
+# not already permit leaves no chain to report, and nothing rejects it — so
+# without this mark, whether a narrow grant is the whole story depends on what
+# the modules beside it happen to import. A scope named here declares that its
+# grants ARE the whole story, and `tools/check_scope_ownership.py` refuses the
+# rest over the files: the same division of labour `ISOLATED_CHILD_SCOPES` runs
+# the other way round.
+#
+# The three carrier-side children of the Entity frontend are sealed because their
+# whole reason to exist is what they cannot reach: a layout is a pure function of
+# accepted metadata, the carriers are an algebra over it, and the row walk
+# between them must reach neither the writer, `construct`, nor model formation —
+# all three of which sit in the parent package beside them.
+SEALED_CHILD_SCOPES: frozenset[str] = frozenset(
+    {
+        "parallax.core.entity._graph_input",
+        "parallax.core.entity._layout",
+        "parallax.core.entity._row",
+    }
+)
 
 # The conformance-family enforcement scopes that carry a module tag and thus
 # appear as nodes in the DAG (m-case-format, m-conformance-adapter). They are
@@ -662,7 +690,13 @@ def check_support_scope_parity(
 
 def check_child_scopes() -> None:
     """Fail when a declared child scope is not nested under its declared parent,
-    or when an isolated child is not a declared child at all."""
+    or when a scope marked isolated or sealed is not a declared child at all.
+
+    Both marks are properties OF a child relationship — one says a grant on the
+    parent does not carry the child, the other says the child's grants are
+    complete inside the parent's package — so neither can describe a scope whose
+    parent nothing declares.
+    """
     for child, parent in CHILD_SCOPE_PARENT.items():
         if parent not in SUPPORT_SCOPE_DEPS and parent not in MODULE_SCOPE.values():
             raise ValueError(f"child scope {child!r} names an undeclared parent scope {parent!r}")
@@ -671,6 +705,9 @@ def check_child_scopes() -> None:
     undeclared = ISOLATED_CHILD_SCOPES - set(CHILD_SCOPE_PARENT)
     if undeclared:
         raise ValueError(f"isolated scopes are not declared child scopes: {sorted(undeclared)}")
+    unsealed = SEALED_CHILD_SCOPES - set(CHILD_SCOPE_PARENT)
+    if unsealed:
+        raise ValueError(f"sealed scopes are not declared child scopes: {sorted(unsealed)}")
 
 
 def scope_ancestors(scope: str) -> frozenset[str]:

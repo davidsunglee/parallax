@@ -18,7 +18,7 @@ child scope over a private implementation module, every file inside it matches
 both the child and the parent, and that is the point: the child's own grant row
 is what governs it. What fails is overlap that *nobody declared*.
 
-Five findings fail the check:
+Six findings fail the check:
 
 * **unowned** — the file matches no declared scope and is not exempt;
 * **undeclared overlapping owners** — the file matches several scopes that do
@@ -29,6 +29,8 @@ Five findings fail the check:
   that looks present and enforces nothing;
 * **import-free module beside a zero-grant scope** — see below;
 * **an isolated scope imported from inside its own ancestors** — see below;
+* **a sealed scope importing its own parent package beyond its grants** — see
+  below;
 * **stale exemption** — an exempt path that no longer exists, or that a scope
   now owns, so the exemption is carrying nothing.
 
@@ -72,6 +74,21 @@ This walks those ancestors' files and rejects the import directly, resolving
 relative imports and reading an imported name as a possible submodule, so no
 spelling of that import evades it. Contracts and files are
 complementary halves of one invariant, and neither half alone states it.
+
+Sealed scopes
+-------------
+
+A **sealed** child scope (``check_dag_sync.SEALED_CHILD_SCOPES``) declares that
+its grant row is complete inside the package holding it as well as outside it.
+The generated contract cannot state that half, for the mirror image of the
+isolated scope's reason: a row sourced at the child overlaps its own parent
+package, so it can neither forbid a module of that package nor except one. It
+still refuses most of them indirectly — importing a neighbour whose own closure
+escapes the row is reported at whatever it escapes to — but a neighbour reaching
+nothing the row does not already permit leaves no chain, and nothing rejects it.
+That residue is what makes a narrow grant's completeness depend on the modules
+beside it. This walks the sealed scope's files and refuses every import into the
+parent package that no granted scope covers.
 
 The scope inventory is *imported* from ``check_dag_sync`` rather than restated,
 so §7 stays declared exactly once. This check and
@@ -253,6 +270,53 @@ def imports_reaching_an_isolated_scope(paths: list[str]) -> list[str]:
     return sorted(found)
 
 
+def imports_escaping_a_sealed_child_row(paths: list[str]) -> list[str]:
+    """A sealed child scope's imports of its own parent package beyond its grants.
+
+    A sealed scope (``check_dag_sync.SEALED_CHILD_SCOPES``) declares that its
+    grant row is the whole of what it imports, inside the package holding it as
+    well as outside it. A ``forbidden`` row sourced at the child overlaps that
+    package, so import-linter can neither reject a module of it nor except one —
+    which is why the generator emits no ``ignore_imports`` entry for a grant
+    naming a sibling either. What the row still refuses it refuses indirectly:
+    importing a neighbour whose own closure escapes the row is reported at
+    whatever it escapes to. A neighbour reaching nothing the row does not already
+    permit leaves no chain to report, so nothing rejects that import — and which
+    neighbours those are is a fact about what the package's other modules happen
+    to import today, not about the grant.
+
+    This walks the sealed scope's own files and refuses any import landing inside
+    the parent package that is neither the scope itself nor something a granted
+    scope covers, in whatever spelling reaches it. Granted siblings stay legal
+    because a grant is what the row would have permitted had it been able to
+    speak; everything else in the package is what the row gave up naming.
+
+    One import is one finding: an imported name is carried beside the module it
+    came from, so where both escape only the module is reported — the name may be
+    an attribute rather than a submodule, and it is the same import either way.
+    """
+    found: set[str] = set()
+    for scope in dag.SEALED_CHILD_SCOPES:
+        parent = dag.CHILD_SCOPE_PARENT[scope]
+        granted = dag.SUPPORT_SCOPE_DEPS[scope]
+        for relative in paths:
+            if not is_inside(module_path(relative), scope):
+                continue
+            source = (PACKAGES / relative).read_text()
+            escaping = {
+                imported
+                for imported in first_party_imports(source, containing_package(relative))
+                if is_inside(imported, parent)
+                and not is_inside(imported, scope)
+                and not any(is_inside(imported, grant) for grant in granted)
+            }
+            for imported in escaping:
+                if imported.rpartition(".")[0] in escaping:
+                    continue
+                found.add(f"{relative} (imports {imported}, which {scope}'s own row cannot reject)")
+    return sorted(found)
+
+
 def zero_grant_scopes() -> Mapping[str, str]:
     """Declared child scopes §7 grants nothing, mapped to the package holding them."""
     return {
@@ -317,7 +381,8 @@ def audit(
     Ownership alone does not settle a package holding a zero-grant scope, where
     every module must also be one that row names or carry a first-party import,
     nor a package holding an isolated scope, whose own files are the one origin
-    no forbidden row reaches, so both arms run here too.
+    no forbidden row reaches, nor a sealed scope, whose imports of that same
+    package its own row cannot reject, so all three arms run here too.
     """
     unowned: list[str] = []
     overlapping: list[str] = []
@@ -344,6 +409,9 @@ def audit(
         "production imports of an isolated scope from inside its own ancestors": (
             imports_reaching_an_isolated_scope(paths)
         ),
+        "imports of its own parent package a sealed scope's contract cannot reject": (
+            imports_escaping_a_sealed_child_row(paths)
+        ),
         "exemptions that no longer describe the tree": stale,
     }
     return {label: found for label, found in findings.items() if found}
@@ -368,8 +436,9 @@ def main(argv: list[str] | None = None) -> int:
             f"most-specific enforcement scope (plus any declared ancestor scopes: "
             f"{nested} file(s) sit inside a declared child scope) or an exact "
             f"exemption ({len(EXEMPTIONS)}); beside a zero-grant scope, every module "
-            f"is one its row can name or carries a first-party import; and no file "
-            f"inside an isolated scope's ancestors imports it"
+            f"is one its row can name or carries a first-party import; no file "
+            f"inside an isolated scope's ancestors imports it; and no sealed scope "
+            f"reaches its own parent package beyond its grants"
         )
         return 0
 
@@ -383,7 +452,9 @@ def main(argv: list[str] | None = None) -> int:
         "  zero-grant scope is reached by neither that scope's forbidden row nor any\n"
         "  chain out of it, so no gate would report an import of it. An isolated\n"
         "  scope imported from inside its own ancestors is the one edge a forbidden\n"
-        "  row cannot state, because that row's source package overlaps the target.",
+        "  row cannot state, because that row's source package overlaps the target,\n"
+        "  and a sealed scope's import of its own parent package is that same\n"
+        "  overlap seen from the other side.",
         file=sys.stderr,
     )
     for label in sorted(findings):

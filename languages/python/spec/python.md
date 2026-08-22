@@ -4244,7 +4244,9 @@ than reaching a private module through the parent's edge. `._row` is granted its
 two sibling scopes and nothing else, which is what keeps a carrier producer
 structurally unable to reach the writer, `construct`, or model formation — the
 reason `._graph_input` is scoped apart, carried one step further to the walk that
-fills those carriers.
+fills those carriers. All three are marked **sealed** below, because "nothing
+else" is a claim about the package they sit in as much as about the ones they do
+not.
 
 `parallax.core.object_query._fluent` is the one child scope declared for the
 opposite reason: it needs a WIDER grant than its parent. The typed Object Query is
@@ -4284,6 +4286,22 @@ submodule, so no spelling escapes — neither the dotted path nor the relative
 one, and neither naming the scope nor naming a member of it. No production
 module imports an isolated scope, and the two halves together are what enforce
 it.
+
+A scope marked **sealed** below is that same overlap seen from the other side: a
+child whose row is the whole of what it imports, inside the package holding it as
+well as outside it. A row can neither forbid what sits inside its own source
+package nor except it, so it refuses a neighbour only through the chain that
+leaves it — reaching one whose own closure escapes the row is reported at
+whatever it escapes to, which is what keeps the writer, `construct`, and model
+formation out of reach of the scopes below. A neighbour that reaches nothing the
+row does not already permit leaves no chain to report, so nothing rejects that
+import, and a narrow grant's completeness would rest on what the modules beside
+it happen to import. The same `tools/check_scope_ownership.py` walk closes that
+residue over the sealed scope's own files, in every spelling, so what a sealed
+scope reaches inside its parent package is what its row grants and nothing more.
+`parallax.core.entity._graph_input`, `._layout`, and `._row` are the sealed
+scopes; a scope not marked so is judged by its contract alone, and reaching a
+private module of its parent is what child scopes ordinarily do.
 
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
@@ -4333,9 +4351,9 @@ it.
 | Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
 | Entity and Object Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` | generated forbidden contracts |
 | Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
-| Entity graph-input carriers (support, child of `parallax.core.entity`) | `parallax.core.entity._graph_input` | `parallax.core.entity._graph_input` | `m-metamodel` | generated forbidden contracts |
-| Exact-model member layouts (support, child of `parallax.core.entity`) | `parallax.core.entity._layout` | `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
-| Positional member rows and their carrier translation (support, child of `parallax.core.entity`) | `parallax.core.entity._row` | `parallax.core.entity._row` | `m-metamodel`, `parallax.core.entity._layout`, `parallax.core.entity._graph_input` | generated forbidden contracts |
+| Entity graph-input carriers (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._graph_input` | `parallax.core.entity._graph_input` | `m-metamodel` | generated forbidden contracts |
+| Exact-model member layouts (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._layout` | `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
+| Positional member rows and their carrier translation (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._row` | `parallax.core.entity._row` | `m-metamodel`, `parallax.core.entity._layout`, `parallax.core.entity._graph_input` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
@@ -4557,19 +4575,22 @@ parallax.postgres --> parallax.core.dialect
   **reaches no shipped distribution but the common runtime**:
   `parallax.core.entity._model.model_of` in its corpus-model loader, and — in its
   second-frontend fixture — `parallax.core.entity._model.cataloged_model`,
-  `parallax.core.entity._row.member_carriers`, and
-  `parallax.core.object_query._fluent.object_query_node`. All four are
-  **rebutted rather than exempted**: `model_of` and `object_query_node`
-  are already accepted private seams of production's own composition root and
-  read preflight, and `model_of` exists precisely so a separately distributed
-  frontend can read the accepted model out of a Domain Model (*Canonical
-  descriptor input*), which is what the adapter is doing. `cataloged_model` is
-  accepted for the same composition root and for the same reason the second
-  frontend needs it: a source that drives the production find executor takes the
-  accepted model and the layout catalog paired with it through the one door,
-  rather than reading either half separately or building a second catalog beside
-  it. `member_carriers` belongs to the scope declared so that a runtime
-  materializing values from stored rows turns one into the writer's carriers
+  `parallax.core.entity._row.member_carriers`, and both names its one import of
+  `parallax.core.object_query._fluent` binds, `ObjectQuery` and
+  `object_query_node`. All five are **rebutted rather than exempted**: `model_of`
+  and the two typed-query names are already accepted private seams of
+  production's own composition root and read preflight, and the typed surface is
+  reached by naming the module that owns it — which is what a consumer wanting it
+  does above, the Snapshot handle included, and why `ObjectQuery` appears here
+  although §8 re-exports it. `model_of` exists precisely so a separately
+  distributed frontend can read the accepted model out of a Domain Model
+  (*Canonical descriptor input*), which is what the adapter is doing.
+  `cataloged_model` is accepted for the same composition root and for the same
+  reason the second frontend needs it: a source that drives the production find
+  executor takes the accepted model and the layout catalog paired with it through
+  the one door, rather than reading either half separately or building a second
+  catalog beside it. `member_carriers` belongs to the scope declared so that a
+  runtime materializing values from stored rows turns one into the writer's carriers
   without reaching the writer, and production's own typed materializer reaches
   it for exactly that. A second managed value lifecycle merges and constructs
   for itself — that is what makes it second — but the walk from a row to the
@@ -4694,7 +4715,11 @@ parallax.postgres --> parallax.core.dialect
   name a module inside its own source package, so the tool parses the files of an
   isolated scope's ancestors — resolving relative imports, and reading an
   imported name as a possible submodule — and refuses any import reaching that
-  scope in any spelling.
+  scope in any spelling. The **sealed** scope rule is the same overlap read the
+  other way, and is carried the same way: the tool parses a sealed scope's own
+  files and refuses every import landing inside its parent package that no
+  granted scope covers, so the grants stated for it are complete rather than
+  complete only outside that package.
 - **Scopes sharing one artifact.** Every behavioral module in `parallax-core`
   is its own submodule; the generated forbidden contracts operate at
   submodule granularity, so co-location in one wheel cannot legalize a
@@ -4807,7 +4832,7 @@ rows receive the transaction's shared lock.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, or covered by a stale exemption also fails |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, reaching — from inside a sealed scope — a module of its own parent package no granted scope covers, or covered by a stale exemption also fails |
 | Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest tests/unit` | `python-check-dbfree` job | the internal-behavior surface proves seams, diagnostics, and failure modes with no container or socket I/O; Storage Layout tests pin Rule Set ownership, exact immutable layouts/views, all six tiers, applicability, effective nullability, physical keys, alias de-duplication, unknown lookups, and bounded allocation; any failure blocks |
 | Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `just python-test-dbfree` then `just python-coverage-diff` | `python-check-dbfree` job with `--cov-fail-under=95` plus the same diff-cover gate | **95% branch-mode minimum** overall, re-baselined against the measured database-free selection rather than carried across from a narrower one; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable, and the measurement is the database-free class alone, so a database-backed test cannot satisfy it; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-check-dbfree` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |

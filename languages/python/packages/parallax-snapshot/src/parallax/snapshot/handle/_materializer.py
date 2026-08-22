@@ -161,13 +161,9 @@ class _Materialization:
         order = self._merge.order
         self._handles = {index: writer.allocate(order[index]) for index in self._scope}
         for index in self._scope:
-            attributes, value_objects = member_carriers(
-                self._merge.layout(index), self._merge.member_values(index)
-            )
             writer.populate(
                 self._handles[index],
-                attributes,
-                value_objects,
+                *member_carriers(self._merge.layout(index), self._merge.member_values(index)),
                 self._broad_arms(index),
             )
         return tuple(
