@@ -25,7 +25,7 @@ from _metamodel_support import Declaration, attribute, key, source
 
 from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
-from parallax.conformance import case_format, engine, sweep
+from parallax.conformance import case_format, engine, models, sweep
 from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     execution_lifecycle_observation,
@@ -3630,7 +3630,8 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
     # calling the function directly with a manufactured mismatch.
     from parallax.core.dialect import POSTGRES
 
-    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    domain = engine.load_case_domain_model(_case("m-unit-work-001"))
+    meta = models.accepted_model_of(domain)
     steps: list[Mapping[str, object]] = [
         {
             "objectQuery": {
@@ -3650,7 +3651,15 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
     ]
     with pytest.raises(engine.EngineError, match="not preceded by"):
         engine._run_materializing_pair(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            FakeWritePort(), meta, POSTGRES, "locking", steps, 0, TemporalShadow(), LifecycleRun()
+            FakeWritePort(),
+            domain,
+            meta,
+            POSTGRES,
+            "locking",
+            steps,
+            0,
+            TemporalShadow(),
+            LifecycleRun(),
         )
 
 

@@ -1534,13 +1534,17 @@ owned by the Database. It contains the accepted Metamodel and the class index
 Snapshot materialization requires, and no identity. It is handle state rather
 than a Core runtime value and is neither exported nor shared through the model.
 
-`Database(port, model)` itself admits a bare accepted Metamodel, the neutral
-form the conformance adapter constructs for the write lanes, which name
-Entities rather than classes. Such a connection composes no class and can never
-materialize a Snapshot, so `Database.find` and `Transaction.find` refuse it with
-the same `SnapshotConnectionError(snapshot-class-backed-model-required)` — on
-both entry points before target resolution, and on the participating one before
-the unit of work's force-flush, so a refused read flushes no pending write.
+`Database(port, model)` takes the same `model: DomainModel` input and admits no
+bare accepted Metamodel. It refuses a value that is not a Domain Model with the
+same `SnapshotConnectionError(snapshot-class-backed-model-required)`, so every
+connection reaches its accepted Metamodel through a Domain Model and per-model
+derived state has exactly one owner and one lookup door. A descriptor-backed
+model composes no Entity Class and can never materialize a Snapshot, so
+`Database.find` and `Transaction.find` refuse it with that same error — on both
+entry points before target resolution, and on the participating one before the
+unit of work's force-flush, so a refused read flushes no pending write. The
+write lanes and the Wire read that connection does serve are unaffected: they
+name Entities rather than classes.
 
 Snapshot owns `_DEFERRED_EXECUTION_FEATURES: frozenset[str]`, the private
 immutable set of canonical Feature tags whose query shapes are valid but
@@ -2828,8 +2832,8 @@ or descriptor authoring form and performs no audit stamping.
   model)` accepts a Domain Model of either provenance. A class-backed model
   serves both interfaces; a descriptor-backed model serves Wire and refuses
   Typed materialization with `SnapshotConnectionError(snapshot-class-backed-model-required)`
-  at the read call, before any I/O. The bare-Metamodel constructor path remains
-  private and first-party, and `connect` still refuses it.
+  at the read call, before any I/O. Both connection doors take a Domain Model,
+  so provenance is the only thing capability follows.
 - **Accepted query spellings.** `find` on either Wire view takes the canonical
   Object Query mapping, the canonical `ObjectQueryNode`, or — on a class-backed
   model — the Typed `ObjectQuery` authoring value directly. All three lower to
@@ -3075,9 +3079,10 @@ These feature tests do not claim the deferred `benchmark` command or general
   by a selection plus its assignments. There is no ingress taking an
   already-decoded write instruction, and therefore no way to name an observed
   state as an address: evidence is what a value carries, never an argument.
-  `Database(port, accepted_metamodel)` is the advanced connection the values lane
-  is reachable through; `Database.connect(...)` additionally admits every Domain
-  Model. There is no `read_neutral`, `connect_neutral`, `plan_neutral`,
+  `Database(port, model)` is the advanced connection the values lane is reachable
+  through, and takes the same Domain Model of either provenance
+  `Database.connect(...)` does; a caller holding no Entity Class connects a
+  descriptor-backed one. There is no `read_neutral`, `connect_neutral`, `plan_neutral`,
   `compile_neutral`, neutral write on `Database`, or public flush: runtime returns
   and retains no `WritePlan`, and a buffered write executes only when a dependency
   batch or the outer boundary's pre-commit batch requires it.

@@ -1756,7 +1756,7 @@ def _bounded_write(
 # clause now, so a write target carrying one is a malformed document rather     #
 # than a rule a validator applies.                                              #
 # --------------------------------------------------------------------------- #
-_READLESS_ENGINE_META = engine.load_case_metamodel(
+_READLESS_ENGINE_MODEL = engine.load_case_domain_model(
     next(case for case in case_format.load_cases() if case.case_id == "m-batch-write-005")
 )
 _MATERIALIZING_ENGINE_META = engine.load_case_metamodel(
@@ -1796,7 +1796,7 @@ def test_the_engines_readless_predicate_ingress_refuses_before_any_statement(
     with pytest.raises(ValueError, match=re.escape(message)):
         engine._run_readless_predicate_write(  # pyright: ignore[reportPrivateUsage] - the conformance engine's own readless predicate-write ingress
             port,
-            _READLESS_ENGINE_META,
+            _READLESS_ENGINE_MODEL,
             POSTGRES,
             "optimistic",
             {"mutation": "delete", "target": {"entity": "Wallet", "predicate": predicate}},

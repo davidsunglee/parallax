@@ -67,6 +67,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import Dialect, dialect_for
+from parallax.core.entity import DomainModel
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -149,6 +150,7 @@ __all__ = [
     "compile_write_sequence_case",
     "decode_write_row",
     "eligibility",
+    "load_case_domain_model",
     "load_case_metamodel",
     "read_table_state",
     "run_conflict_case",
@@ -392,6 +394,18 @@ def load_case_metamodel(case: case_format.Case) -> AcceptedMetamodel:
     return models.load_model(_case_model_path(case))
 
 
+def load_case_domain_model(case: case_format.Case) -> DomainModel:
+    """The Domain Model the case's model descriptor forms into.
+
+    A Snapshot connection takes the Domain Model rather than the accepted
+    Metamodel underneath it, so a lane that connects loads this and reads the
+    accepted model back out through
+    :func:`~parallax.conformance.models.accepted_model_of` — one formation
+    serving the connection and every neutral surface beside it.
+    """
+    return models.load_domain_model(_case_model_path(case))
+
+
 def case_entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     """The accepted Metadata ``name`` denotes in ``model``.
 
@@ -574,10 +588,11 @@ def run_read_case(
     logical value observably different under the two layouts.
     """
     query = _read_query(case)
-    model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     observed = lifecycle_run(lifecycle).observation()
-    db = handle.Database(port, model, dialect=dialect, lifecycle_provider=observed.provider)
+    db = handle.Database(
+        port, load_case_domain_model(case), dialect=dialect, lifecycle_provider=observed.provider
+    )
     concurrency = _read_case_concurrency(case)
     try:
         result = (
@@ -625,7 +640,7 @@ def _driver_binds(binds: Sequence[object]) -> list[object]:
 def _wire_read(
     case: case_format.Case,
     query: ObjectQueryNode,
-    model: AcceptedMetamodel,
+    domain: DomainModel,
     port: DbPort,
     dialect_name: str,
     lifecycle: LifecycleRun,
@@ -642,7 +657,7 @@ def _wire_read(
     """
     dialect = dialect_for(dialect_name)
     observed = lifecycle.observation()
-    db = handle.Database(port, model, dialect=dialect, lifecycle_provider=observed.provider)
+    db = handle.Database(port, domain, dialect=dialect, lifecycle_provider=observed.provider)
     try:
         return db.wire.find(query), observed
     except _READ_ERRORS as exc:
@@ -661,9 +676,10 @@ def run_graph_case(
     in place of itself.
     """
     query = _read_query(case)
-    model = load_case_metamodel(case)
+    domain = load_case_domain_model(case)
+    model = models.accepted_model_of(domain)
     snapshot, observed = _wire_read(
-        case, query, model, port, dialect_name, lifecycle_run(lifecycle)
+        case, query, domain, port, dialect_name, lifecycle_run(lifecycle)
     )
     if not _is_single_graph(query):
         raise EngineError(
@@ -696,9 +712,10 @@ def run_graphs_case(
     than from a second read per milestone.
     """
     query = _read_query(case)
-    model = load_case_metamodel(case)
+    domain = load_case_domain_model(case)
+    model = models.accepted_model_of(domain)
     snapshot, observed = _wire_read(
-        case, query, model, port, dialect_name, lifecycle_run(lifecycle)
+        case, query, domain, port, dialect_name, lifecycle_run(lifecycle)
     )
     if _is_single_graph(query):
         raise EngineError(
@@ -2285,7 +2302,7 @@ def _step_query(step: Mapping[str, object]) -> ObjectQueryNode:
 
 def _run_standalone_find(
     port: DbPort,
-    model: AcceptedMetamodel,
+    domain: DomainModel,
     dialect: Dialect,
     concurrency: Concurrency,
     step: Mapping[str, object],
@@ -2302,7 +2319,7 @@ def _run_standalone_find(
     """
     query = _step_query(step)
     observed = lifecycle.observation()
-    db = handle.Database(port, model, dialect=dialect, lifecycle_provider=observed.provider)
+    db = handle.Database(port, domain, dialect=dialect, lifecycle_provider=observed.provider)
     return db.transact(lambda tx: tx.wire.find(query), concurrency=concurrency), observed
 
 
@@ -2439,9 +2456,10 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     after itself. Both lanes must reach the same DML for the same case, and a
     step after an abort takes its milestone from the write the database kept.
     """
-    model = load_case_metamodel(case)
+    domain = load_case_domain_model(case)
+    model = models.accepted_model_of(domain)
     concurrency = _concurrency(case)
-    context = _CaseContext(model, dialect_for(dialect_name), concurrency, TemporalShadow())
+    context = _CaseContext(domain, model, dialect_for(dialect_name), concurrency, TemporalShadow())
     _seed_shadow_from_fixtures(case, model, context.shadow)
     group_observations: GroupObservations = []
     lowered: list[_LoweredStep] = []
@@ -2754,9 +2772,10 @@ def _run_snapshot_scenario(
 
     Reports its observations as a :class:`ScenarioRun`; this lane opens no `uow`
     group."""
-    model = load_case_metamodel(case)
+    domain = load_case_domain_model(case)
+    model = models.accepted_model_of(domain)
     dialect = dialect_for(dialect_name)
-    context = _CaseContext(model, dialect, _concurrency(case), TemporalShadow())
+    context = _CaseContext(domain, model, dialect, _concurrency(case), TemporalShadow())
     # Seeded from the case's own fixtures and then advanced by each write step's
     # plan, so a temporal close observes the milestone the persisted history (or
     # an earlier step) actually holds — the SAME order every other lane applies:
@@ -2764,7 +2783,7 @@ def _run_snapshot_scenario(
     _seed_shadow_from_fixtures(case, model, context.shadow)
     _apply_given_apply(case, dialect, port, context.shadow)
     observation = lifecycle.observation()
-    db = handle.Database(port, model, dialect=dialect, lifecycle_provider=observation.provider)
+    db = handle.Database(port, domain, dialect=dialect, lifecycle_provider=observation.provider)
     emissions: list[Emission] = []
     round_trips = 0
     results: list[_ScenarioStepResult] = []
@@ -3545,6 +3564,7 @@ def _unit_source_reads(
 
 def _execute_write_unit(
     port: DbPort,
+    domain: DomainModel,
     model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
@@ -3614,7 +3634,7 @@ def _execute_write_unit(
     observed = lifecycle.observation()
     database = handle.Database(
         _write_port(port, rollback=rollback),
-        model,
+        domain,
         dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
@@ -3676,6 +3696,7 @@ def _execute_keyed_unit(
         )
         ran, unit_trips = _execute_write_unit(
             port,
+            context.domain,
             context.model,
             context.dialect,
             context.concurrency,
@@ -3690,7 +3711,7 @@ def _execute_keyed_unit(
 
 def _run_readless_predicate_write(
     port: DbPort,
-    model: AcceptedMetamodel,
+    domain: DomainModel,
     dialect: Dialect,
     concurrency: Concurrency,
     raw_write: Mapping[str, object],
@@ -3719,7 +3740,7 @@ def _run_readless_predicate_write(
     observed = lifecycle.observation()
     database = handle.Database(
         _write_port(port, rollback=rollback),
-        model,
+        domain,
         dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
@@ -3812,6 +3833,7 @@ def _is_materializing_write_step(
 
 def _run_materializing_pair(
     port: DbPort,
+    domain: DomainModel,
     model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
@@ -3886,7 +3908,7 @@ def _run_materializing_pair(
     observed = lifecycle.observation()
     database = handle.Database(
         _write_port(port, rollback=rollback),
-        model,
+        domain,
         dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
@@ -4003,15 +4025,17 @@ class _CaseContext:
     write step on either scenario lane (:func:`_execute_keyed_unit`), and the
     compile lane's pure lowering (:func:`_lower_scenario_step`) alike.
 
-    The model is the case's own accepted Metamodel
-    (:func:`load_case_metamodel`), and the tracker is the ONE case-spanning
+    The model is the case's own, in both forms one formation answers: the Domain
+    Model a Snapshot connection takes, and the accepted Metamodel every neutral
+    lowering surface is stated over. The tracker is the ONE case-spanning
     :class:`TemporalShadow` every unit shares rather than a per-unit copy — a
     later unit's temporal close observes the milestone an earlier one's write
-    opened. The record is frozen because none of the four is ever REBOUND inside
+    opened. The record is frozen because none of the five is ever REBOUND inside
     a case; the tracker's own contents advance, which is exactly the state a
     shared tracker exists to carry.
     """
 
+    domain: DomainModel
     model: AcceptedMetamodel
     dialect: Dialect
     concurrency: Concurrency
@@ -4417,7 +4441,7 @@ def _run_uow_group(
     observation = lifecycle.observation()
     database = handle.Database(
         _write_port(port, rollback=doomed),
-        context.model,
+        context.domain,
         dialect=context.dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observation.provider,
@@ -5137,7 +5161,8 @@ def run_interleaved_scenario_case(
     post-ladder join.
     """
     steps = _scenario_steps(case)
-    model = load_case_metamodel(case)
+    domain = load_case_domain_model(case)
+    model = models.accepted_model_of(domain)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     if any("expectGraph" in step for step in steps):
@@ -5168,7 +5193,7 @@ def run_interleaved_scenario_case(
     observed_b = lifecycle.observation()
     main_db = handle.Database(
         port,
-        model,
+        domain,
         dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed_a.provider,
@@ -5188,7 +5213,7 @@ def run_interleaved_scenario_case(
         raise
     peer_db = handle.Database(
         peer_connection,
-        model,
+        domain,
         dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed_b.provider,
@@ -5196,7 +5221,7 @@ def run_interleaved_scenario_case(
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})
-    context = _CaseContext(model, dialect, concurrency, shadow)
+    context = _CaseContext(domain, model, dialect, concurrency, shadow)
     thread_a = threading.Thread(
         target=_run_interleaved_group,
         args=(main_db, observed_a, context, steps, indices_a, turnstile, result_a),
@@ -5250,7 +5275,7 @@ def run_interleaved_scenario_case(
                 "step is a trailing verify find only"
             )
         read, read_observed = _run_standalone_find(
-            port, model, dialect, concurrency, step, lifecycle
+            port, domain, dialect, concurrency, step, lifecycle
         )
         rows_by_index[index] = _graph_rows(model, _step_query(step).target.canonical, read)
         round_trips += read_observed.round_trips
@@ -5297,7 +5322,8 @@ def run_scenario_case(
     lifecycle = lifecycle_run(lifecycle)
     if _has_action_step(steps):
         return _run_snapshot_scenario(case, dialect_name, port, steps, lifecycle)
-    model = load_case_metamodel(case)
+    domain = load_case_domain_model(case)
+    model = models.accepted_model_of(domain)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
@@ -5310,7 +5336,7 @@ def run_scenario_case(
             "function does not construct — call run_interleaved_scenario_case instead"
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
-    context = _CaseContext(model, dialect, concurrency, shadow)
+    context = _CaseContext(domain, model, dialect, concurrency, shadow)
     lowered: list[_LoweredStep] = []
     round_trips = 0
     try:
@@ -5346,14 +5372,14 @@ def run_scenario_case(
                     and _step_query(step).target.canonical == pairing.target.entity
                 ):
                     pair_lowered, pair_trips = _run_materializing_pair(
-                        port, model, dialect, concurrency, steps, index, shadow, lifecycle
+                        port, domain, model, dialect, concurrency, steps, index, shadow, lifecycle
                     )
                     lowered.extend(pair_lowered)
                     round_trips += pair_trips
                     index += 2
                     continue
                 read, read_observed = _run_standalone_find(
-                    port, model, dialect, concurrency, step, lifecycle
+                    port, domain, dialect, concurrency, step, lifecycle
                 )
                 round_trips += read_observed.round_trips
                 lowered.append(
@@ -5382,7 +5408,7 @@ def run_scenario_case(
                 )
                 ran, predicate_trips = _run_readless_predicate_write(
                     port,
-                    model,
+                    domain,
                     dialect,
                     concurrency,
                     raw_predicate_write,
@@ -5428,10 +5454,11 @@ def run_write_sequence_case(
     already writes against, so applying it later than that would grade the
     sequence against a table the case never described.
     """
-    model = load_case_metamodel(case)
+    domain = load_case_domain_model(case)
+    model = models.accepted_model_of(domain)
     dialect = dialect_for(dialect_name)
     lifecycle = lifecycle_run(lifecycle)
-    context = _CaseContext(model, dialect, _concurrency(case), TemporalShadow())
+    context = _CaseContext(domain, model, dialect, _concurrency(case), TemporalShadow())
     group_observations: GroupObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
     round_trips = 0
@@ -5809,6 +5836,7 @@ def _conflict_key_predicate(
 def _conflict_source_nodes(
     port: DbPort,
     dialect: Dialect,
+    domain: DomainModel,
     model: AcceptedMetamodel,
     target: str,
     resolved: Sequence[_ConflictWrite],
@@ -5844,7 +5872,7 @@ def _conflict_source_nodes(
     observed = lifecycle.observation()
     database = handle.Database(
         port,
-        model,
+        domain,
         dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
@@ -5910,6 +5938,7 @@ def _refuse_unobserved_conflict_version(
 def _run_conflict_write(
     port: DbPort,
     dialect: Dialect,
+    domain: DomainModel,
     model: AcceptedMetamodel,
     target: str,
     concurrency: Concurrency,
@@ -5948,7 +5977,7 @@ def _run_conflict_write(
     observed = lifecycle.observation()
     database = handle.Database(
         port,
-        model,
+        domain,
         dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
@@ -6283,7 +6312,8 @@ def run_conflict_case(
     `m-conformance-adapter` — and the resulting table state when the case
     authors `then.tableState`.
     """
-    model = load_case_metamodel(case)
+    domain = load_case_domain_model(case)
+    model = models.accepted_model_of(domain)
     dialect = dialect_for(dialect_name)
     lifecycle = lifecycle_run(lifecycle)
     when = _when(case)
@@ -6318,6 +6348,7 @@ def run_conflict_case(
             nodes, source_trips = _conflict_source_nodes(
                 port,
                 dialect,
+                domain,
                 model,
                 target,
                 _resolve_conflict_writes(model, target, mutation, _conflict_write_rows(attempt)),
@@ -6348,6 +6379,7 @@ def run_conflict_case(
                 statements, affected, attempt_trips = _run_conflict_write(
                     port,
                     dialect,
+                    domain,
                     model,
                     target,
                     concurrency,

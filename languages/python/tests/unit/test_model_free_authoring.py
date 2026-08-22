@@ -71,6 +71,11 @@ class _Source:
         return (Gizmo,)
 
 
+# The one Domain Model provenance that composes no Entity Class, and therefore
+# the only connection left that cannot materialize a Snapshot.
+CLASSLESS = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
+
+
 def _db(model: DomainModel, port: RecordingPort) -> Database:
     return Database.connect(port, model, clock=FixedClock(FIXED))
 
@@ -143,52 +148,50 @@ def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> 
     assert published == {"id": 1}
 
 
-def test_connect_refuses_a_bare_accepted_metamodel() -> None:
-    # The other way the runtime narrowing can fail. `__init__` still admits a
-    # bare accepted Metamodel for the neutral write lanes, so `connect` — the
-    # developer entry point — must answer it with the same connection refusal
-    # rather than by reaching for a class index it does not have.
+def test_both_connection_doors_refuse_a_bare_accepted_metamodel() -> None:
+    # A connection reaches its accepted model through a Domain Model and no
+    # other way, so a bare accepted Metamodel names no model either door can
+    # serve. `connect` — the developer entry point — answers in its own words,
+    # and the constructor beneath it refuses the same shape rather than failing
+    # on an attribute a Metamodel does not carry.
     with pytest.raises(SnapshotConnectionError) as caught:
         Database.connect(NoIoPort(), model_of(WIDGETS), clock=FixedClock(FIXED))  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
     assert caught.value.code == "snapshot-class-backed-model-required"
 
+    with pytest.raises(SnapshotConnectionError) as constructed:
+        Database(NoIoPort(), model_of(WIDGETS), clock=FixedClock(FIXED))  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
+    assert constructed.value.code == "snapshot-class-backed-model-required"
 
-def test_a_bare_metamodel_database_refuses_a_read_before_it_resolves_the_target() -> None:
+
+def test_a_classless_database_refuses_a_read_before_it_resolves_the_target() -> None:
     # The connection refusal precedes preflight on BOTH entry points. A Database
     # that cannot materialize a Snapshot answers that first, so a query this
     # model also does not declare still reports the connection rather than the
     # target.
     port = RecordingPort()
-    database = Database(port, model_of(WIDGETS), clock=FixedClock(FIXED))
-    with pytest.raises(SnapshotConnectionError) as caught:
-        database.find(Gizmo.where(Gizmo.id == 1))
-    assert caught.value.code == "snapshot-class-backed-model-required"
-    assert port.ops == []
-
-
-def test_a_bare_metamodel_database_serves_writes_and_refuses_a_modeled_read() -> None:
-    # The first-party neutral form the conformance adapter constructs: the write
-    # lanes name Entities rather than classes, so they run, while a read that
-    # would have to instantiate one is refused before any SQL.
-    port = RecordingPort()
-    database = Database(port, model_of(WIDGETS), clock=FixedClock(FIXED))
+    database = Database(port, CLASSLESS, clock=FixedClock(FIXED))
     with pytest.raises(SnapshotConnectionError) as caught:
         database.find(Widget.where(Widget.id == 1))
     assert caught.value.code == "snapshot-class-backed-model-required"
     assert port.ops == []
 
 
-def test_a_bare_metamodel_transaction_refuses_a_read_before_it_can_force_flush() -> None:
+def test_a_classless_transaction_writes_and_refuses_a_read_before_it_can_force_flush() -> None:
+    # The write lanes name Entities rather than classes, so they run against a
+    # model that composed none; the read that would have to instantiate one is
+    # refused before the force-flush its gate stands in front of, so the write
+    # buffered beside it is still only buffered when the refusal lands.
     port = RecordingPort()
-    database = Database(port, model_of(WIDGETS), clock=FixedClock(FIXED))
+    database = Database(port, CLASSLESS, clock=FixedClock(FIXED))
 
     def body(tx: Transaction) -> None:
-        tx.insert(Widget(id=1, label="x"))
+        tx.insert(Gizmo(id=1))
         with pytest.raises(SnapshotConnectionError):
-            tx.find(Widget.where(Widget.id == 1))
+            tx.find(Gizmo.where(Gizmo.id == 1))
         assert [op[0] for op in port.ops] == ["begin"]
 
     database.transact(body)
+    assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
 
 
 # --------------------------------------------------------------------------- #
