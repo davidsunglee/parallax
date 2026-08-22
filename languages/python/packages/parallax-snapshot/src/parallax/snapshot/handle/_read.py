@@ -81,7 +81,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import EntityGraphConstruction
-from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import INERT, ReadActivity
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
@@ -365,11 +365,10 @@ class _Milestone:
 
 def find(
     query: ObjectQueryNode,
-    meta: Metamodel,
+    model: CatalogedModel,
     dialect: Dialect,
     port: DbPort,
     *,
-    layouts: LayoutCatalog,
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,
     read: ReadActivity = INERT,
@@ -405,10 +404,12 @@ def find(
     references in result order, and the query's own lowered pin — plus the
     Source Hint each observed projection's value will carry.
 
-    ``layouts`` is the connected model's own exact-model layout catalog, which
-    every level's conversion reads its applicable member set from. It travels
-    beside ``meta`` rather than being derived here, so one connection's reads
-    share one catalog whatever they address.
+    ``model`` is the connected model as one value: the accepted Metamodel every
+    level's own Entity resolves against, and the exact-model layout catalog
+    every level's conversion reads its applicable member set from. The two
+    travel together rather than as two arguments, so no read can be handed
+    layouts derived from a model other than the one it resolves against, and one
+    connection's reads share one catalog whatever they address.
 
     ``preference`` is the owning unit of work's Concurrency Preference, and
     EVERY level derives its own read lock from it against that level's own
@@ -431,8 +432,8 @@ def find(
     omitting the argument does — runs the same code and emits nothing, and is
     what the default path and a declined root do.
     """
-    # ``meta`` is the accepted model the connected ``Database`` already holds, so
-    # every level's own Entity resolves against it directly.
+    meta = model.meta
+    layouts = model.layouts
     root_entity = _metadata(meta, query.target.canonical)
     plan_ = deep_fetch.plan(root_entity, query, meta)
     scope = MergeScope(meta)
@@ -505,11 +506,10 @@ class StagedRows:
 
 
 def stage_publishable_rows(
-    meta: Metamodel,
+    model: CatalogedModel,
     compiled: CompiledRead,
     rows: Sequence[Mapping[str, object]],
     *,
-    layouts: LayoutCatalog,
     pin: Pin,
 ) -> StagedRows:
     """Materialize and validate one flat row batch before lane-specific use.
@@ -520,17 +520,16 @@ def stage_publishable_rows(
     for one. Both apply the publication gate to the staging graph before deriving
     milestones, observations, or writes.
     """
-    staged = stage_rows(meta, compiled, rows, layouts=layouts, pin=pin)
+    staged = stage_rows(model, compiled, rows, pin=pin)
     require_publishable(staged.merge)
     return staged
 
 
 def stage_rows(
-    meta: Metamodel,
+    model: CatalogedModel,
     compiled: CompiledRead,
     rows: Sequence[Mapping[str, object]],
     *,
-    layouts: LayoutCatalog,
     pin: Pin,
 ) -> StagedRows:
     """Materialize and merge one flat row batch before lane-specific use.
@@ -540,6 +539,8 @@ def stage_rows(
     graph carries whatever contradicted the model and each lane decides what to
     do with it.
     """
+    meta = model.meta
+    layouts = model.layouts
     materialized = tuple(compiled.materialize_row(row) for row in rows)
     contexts = tuple(
         LevelContext(
@@ -569,11 +570,10 @@ def stage_rows(
 
 def find_rows(
     query: ObjectQueryNode,
-    meta: Metamodel,
+    model: CatalogedModel,
     dialect: Dialect,
     port: DbPort,
     *,
-    layouts: LayoutCatalog,
     preference: Concurrency | None = None,
     read: ReadActivity = INERT,
 ) -> RowsResult:
@@ -597,6 +597,7 @@ def find_rows(
     participating read's force-flush — so the plan reaching here carries no
     level to drop.
     """
+    meta = model.meta
     root_entity = _metadata(meta, query.target.canonical)
     plan_ = deep_fetch.plan(root_entity, query, meta)
     compiled = compile_read(
@@ -613,10 +614,9 @@ def find_rows(
         read,
     )
     stage = stage_rows(
-        meta,
+        model,
         compiled,
         rows,
-        layouts=layouts,
         pin=query_pin(query, declaring_metadata(meta, root_entity.identity)),
     )
     for item in stage.rows:
@@ -649,11 +649,10 @@ def _published_rows(stage: StagedRows, meta: Metamodel) -> tuple[PublishedRow, .
 
 def find_history(
     query: ObjectQueryNode,
-    meta: Metamodel,
+    model: CatalogedModel,
     dialect: Dialect,
     port: DbPort,
     *,
-    layouts: LayoutCatalog,
     read: ReadActivity = INERT,
 ) -> HistoryFindResult:
     """The milestone-set snapshot read (m-snapshot-read "The whole-graph pin";
@@ -672,6 +671,7 @@ def find_history(
     the database's unspecified natural row order, and rows within one milestone
     keep that natural order.
     """
+    meta = model.meta
     metadata = _metadata(meta, query.target.canonical)
     plan_ = deep_fetch.plan(metadata, query, meta)
     if plan_.levels:
@@ -686,10 +686,9 @@ def find_history(
     entity = declaring_metadata(meta, metadata.identity)
     compiled = compile_read(plan_.root, meta, dialect, result_form="instance")
     stage = stage_publishable_rows(
-        meta,
+        model,
         compiled,
         execute_read(port, dialect, compiled, read),
-        layouts=layouts,
         pin=Pin(),
     )
 

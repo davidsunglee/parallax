@@ -34,7 +34,7 @@ from parallax.core.entity._errors import (
     MetamodelDefinitionError,
     MetamodelLookupError,
 )
-from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -241,6 +241,22 @@ def layout_catalog_of(model: DomainModel) -> LayoutCatalog:
         catalog = LayoutCatalog(model_of(model))
         model._layout_catalog = catalog  # pyright: ignore[reportPrivateUsage] - first-party seam
     return catalog
+
+
+def cataloged_model(model: DomainModel) -> CatalogedModel:
+    """``model``'s accepted Metamodel paired with the layouts derived from it.
+
+    The one door a runtime takes both halves through, so a value carrying
+    layouts and a value carrying accepted metadata are the same value and
+    cannot name two different models. The catalog half is
+    :func:`layout_catalog_of`'s, so the model's own slot stays the single owner
+    of the layouts and no second catalog is derived beside it.
+
+    A fresh record per call, deliberately: it holds two references and costs
+    nothing to form, and what it points at is the model's own retained catalog
+    rather than a second derivation of it.
+    """
+    return CatalogedModel(meta=model_of(model), layouts=layout_catalog_of(model))
 
 
 def class_index(model: DomainModel) -> ClassIndex | None:

@@ -78,16 +78,14 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot._inspection", "_declaration"): frozenset(
         {"declaration_of", "is_entity_class", "members_of"}
     ),
-    ("parallax.snapshot.handle._database", "_layout"): frozenset({"LayoutCatalog"}),
-    ("parallax.snapshot.handle._database", "_model"): frozenset(
-        {"class_index", "layout_catalog_of", "model_of"}
-    ),
-    ("parallax.snapshot.handle._predicate_writes", "_layout"): frozenset({"LayoutCatalog"}),
-    ("parallax.snapshot.handle._read", "_layout"): frozenset({"LayoutCatalog"}),
-    ("parallax.snapshot.handle._transaction", "_layout"): frozenset({"LayoutCatalog"}),
+    ("parallax.snapshot.handle._database", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.snapshot.handle._database", "_model"): frozenset({"cataloged_model", "class_index"}),
+    ("parallax.snapshot.handle._predicate_writes", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel", "LayoutCatalog"}),
+    ("parallax.snapshot.handle._transaction", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._write_inputs", "_declaration"): frozenset({"declaration_of"}),
     ("parallax.snapshot.handle._write_inputs", "_entity"): frozenset({"wire_names_of"}),
-    ("parallax.snapshot.handle._wire_writes", "_layout"): frozenset({"LayoutCatalog"}),
+    ("parallax.snapshot.handle._wire_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.materialize._convert", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._convert", "_graph_input"): frozenset(
         {
@@ -185,16 +183,16 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
 # through the public `domain_model_from_*` doors and reads the accepted model's
 # own vocabulary, so no `parallax.descriptor` private module is reached at all.
 #
-# `layout_catalog_of` is the second-frontend fixture's only addition: it drives
-# the production find executor, which converts every row against the connected
-# model's own layouts, so it reaches that model's one catalog through the one
-# door rather than building a second beside it.
+# `cataloged_model` is the second-frontend fixture's only addition, and it
+# subsumes `model_of` there: it drives the production find executor, which
+# converts every row against the connected model's own layouts, so it takes the
+# accepted model and that model's one catalog through the one door rather than
+# reading either half separately or building a second catalog beside it.
 #
-# Keyed by REACHING module for the same reason the snapshot inventory is, which
-# is why `model_of` appears twice rather than once.
+# Keyed by REACHING module for the same reason the snapshot inventory is.
 ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.another_source", "parallax.core.entity._model"): frozenset(
-        {"layout_catalog_of", "model_of"}
+        {"cataloged_model"}
     ),
     ("parallax.conformance.another_source", "parallax.core.object_query._fluent"): frozenset(
         {"ObjectQuery", "object_query_node"}

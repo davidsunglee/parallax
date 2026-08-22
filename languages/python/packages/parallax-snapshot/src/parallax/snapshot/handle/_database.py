@@ -65,8 +65,8 @@ from parallax.core.entity import (
     graph_construction_of,
     row_codec_of,
 )
-from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.entity._model import class_index, layout_catalog_of, model_of
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import cataloged_model, class_index
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -208,11 +208,11 @@ class _UnattemptedBoundary(Exception):
 
 @dataclass(frozen=True, slots=True)
 class _ConnectedModel:
-    """The model one ``Database`` serves: its accepted metadata, the exact-model
-    layout catalog every read converts its rows against, the Entity Row Codec
-    every write derives its rows through, and — for a class-backed model — the
-    Entity Graph Construction collaboration that materializes rows into
-    instances of the classes it composed.
+    """The model one ``Database`` serves: the cataloged model every read
+    resolves and converts against, the Entity Row Codec every write derives its
+    rows through, and — for a class-backed model — the Entity Graph Construction
+    collaboration that materializes rows into instances of the classes it
+    composed.
 
     Owned by the Database rather than by any query value, and carrying no
     identity of its own — two Databases over one Domain Model hold equal state
@@ -222,15 +222,18 @@ class _ConnectedModel:
     capability behind ONE seam: there is no second capability bag to widen when a
     new entry point (a Session) reaches the same materializer.
 
-    The capabilities are held as separate references rather than as one
-    composite value, and only one of them can be absent: a row and a member
-    layout are both derived from accepted metadata alone, so a
-    descriptor-backed model — which composes no Entity Class — reaches a fully
-    functional codec and catalog while reaching no materializer at all.
+    The accepted metadata and the member layouts derived from it are composed
+    rather than held apart, because a layout that came from another model would
+    be a state nothing downstream could detect; the read lanes take that one
+    value and never its halves. The codec and the construction stay separate
+    references: neither is a function of the other, a second source over one
+    model reads neither, and only the construction can be absent at all — a row
+    and a member layout are both derived from accepted metadata alone, so a
+    descriptor-backed model reaches a fully functional codec and catalog while
+    reaching no materializer.
     """
 
-    meta: Metamodel
-    layouts: LayoutCatalog
+    model: CatalogedModel
     codec: EntityRowCodec
     construction: EntityGraphConstruction | None
 
@@ -292,7 +295,6 @@ class Database:
         "_connected",
         "_dialect",
         "_lifecycle",
-        "_meta",
         "_planner",
         "_port",
     )
@@ -322,13 +324,11 @@ class Database:
                 "connection can serve (snapshot-class-backed-model-required)"
             )
         self._connected = _ConnectedModel(
-            meta=model_of(model),
-            layouts=layout_catalog_of(model),
+            model=cataloged_model(model),
             codec=row_codec_of(model),
             construction=(None if class_index(model) is None else graph_construction_of(model)),
         )
         self._port = port
-        self._meta: Metamodel = self._connected.meta
         self._dialect = dialect
         self._clock: Clock = clock if clock is not None else SystemClock()
         # Absent by default, and absence is the whole default path: every
@@ -343,7 +343,7 @@ class Database:
         # One Write Planner per connected Metamodel, reused across every
         # `transact()` attempt (`m-unit-work`: the planner is constructed once
         # per accepted Metamodel with its strategy adapters already wired).
-        self._planner: WritePlanner = build_write_planner(self._meta)
+        self._planner: WritePlanner = build_write_planner(self._connected.model.meta)
 
     @classmethod
     def connect(
@@ -418,7 +418,7 @@ class Database:
         # two entry points refuse a classless connection in the same order.
         construction = self._connected.materializing()
         node = object_query_node(query)
-        return self._read(node, typed_publication(self._meta, construction))
+        return self._read(node, typed_publication(self._connected.model.meta, construction))
 
     @property
     def wire(self) -> WireDatabaseView:
@@ -439,7 +439,7 @@ class Database:
         enters and where re-entry is refused.
         """
         refuse_reentry(self._lifecycle)
-        return self._read(node, wire_publication(self._meta))
+        return self._read(node, wire_publication(self._connected.model.meta))
 
     def _read[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
         """One non-transactional read of ``node``, published through
@@ -458,7 +458,7 @@ class Database:
         no root and calls no Provider, while planning, lowering, every Database
         Call, conversion, and materialization are all inside the Read activity.
         """
-        preflight(node, model=self._meta, form="graph")
+        preflight(node, model=self._connected.model.meta, form="graph")
         with open_read_root(
             self._lifecycle, target=node.target, interface=publication.interface
         ) as read:
@@ -466,20 +466,18 @@ class Database:
                 return publication.from_history(
                     find_history(
                         node,
-                        self._meta,
+                        self._connected.model,
                         self._dialect,
                         self._port,
-                        layouts=self._connected.layouts,
                         read=read,
                     )
                 )
             return publication.from_find(
                 find(
                     node,
-                    self._meta,
+                    self._connected.model,
                     self._dialect,
                     self._port,
-                    layouts=self._connected.layouts,
                     read=read,
                 )
             )
@@ -502,15 +500,14 @@ class Database:
         after the same gate the graph form crosses.
         """
         refuse_reentry(self._lifecycle)
-        preflight(query, model=self._meta, form="rows")
+        preflight(query, model=self._connected.model.meta, form="rows")
         root = open_read_root(self._lifecycle, target=query.target, interface="ROWS")
         with root as read:
             return find_rows(
                 query,
-                self._meta,
+                self._connected.model,
                 self._dialect,
                 self._port,
-                layouts=self._connected.layouts,
                 read=read,
             )
 
@@ -611,7 +608,7 @@ class Database:
 
         # The unit of work plans against the accepted model the ``Database`` already
         # holds; a joining call inherits the active unit of work's own.
-        model = self._meta
+        meta = self._connected.model.meta
 
         construction = self._connected.construction
         codec = self._connected.codec
@@ -639,14 +636,13 @@ class Database:
 
                     def in_txn(conn: DbPort) -> T:
                         physical.begun()
-                        edge = _FlushEdge(conn, model, self._dialect, physical)
+                        edge = _FlushEdge(conn, meta, self._dialect, physical)
 
                         def body(uow: UnitOfWork) -> T:
                             tx = Transaction(
                                 uow,
                                 conn,
-                                self._meta,
-                                self._connected.layouts,
+                                self._connected.model,
                                 self._dialect,
                                 construction,
                                 codec,
@@ -665,7 +661,7 @@ class Database:
                             body,
                             settings=TransactionSettings(concurrency=options.concurrency),
                             clock=self._clock,
-                            meta=model,
+                            meta=meta,
                             flush_executor=edge.execute,
                             write_batch_opening=edge.opening,
                             # The injected Write Planner — `parallax.snapshot.handle`

@@ -48,13 +48,13 @@ from parallax.core.entity import (
     EntityRowCodec,
 )
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     TransactionAttemptActivity,
     refuse_reentry,
 )
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.temporal_read import scans_an_axis
@@ -148,9 +148,8 @@ class Transaction:
         "_construction",
         "_dialect",
         "_inserted_objects",
-        "_layouts",
         "_lifecycle",
-        "_meta",
+        "_model",
         "_uow",
     )
 
@@ -158,8 +157,7 @@ class Transaction:
         self,
         uow: UnitOfWork,
         conn: DbPort,
-        meta: Metamodel,
-        layouts: LayoutCatalog,
+        model: CatalogedModel,
         dialect: Dialect,
         construction: EntityGraphConstruction | None,
         codec: EntityRowCodec,
@@ -168,8 +166,7 @@ class Transaction:
     ) -> None:
         self._uow = uow
         self._conn = conn
-        self._meta = meta
-        self._layouts = layouts
+        self._model = model
         self._dialect = dialect
         self._construction = construction
         self._codec = codec
@@ -300,14 +297,14 @@ class Transaction:
         :class:`~parallax.snapshot.handle.TransactionTimePinReadOnlyError`
         before any buffering, exactly as every other keyed verb does."""
         refuse_reentry(self._lifecycle)
-        record = metadata_of_instance(self._meta, node_or_instance)
+        record = metadata_of_instance(self._model.meta, node_or_instance)
         validate_source_pin(record.identity, source_pin(node_or_instance))
         self._buffer(
             "delete",
             record.identity,
             self._codec.identity_row(node_or_instance),
             claim=self._resolve_evidence(
-                record, declaring_of(self._meta, record), node_or_instance, "delete"
+                record, declaring_of(self._model.meta, record), node_or_instance, "delete"
             ),
         )
 
@@ -430,8 +427,8 @@ class Transaction:
         argument), the declaring entity (the evidence resolution below needs
         it), and the two rendered instant literals (``None`` where the target
         or the verb states no such bound)."""
-        record = metadata_of_instance(self._meta, node_or_instance)
-        declaring = declaring_of(self._meta, record)
+        record = metadata_of_instance(self._model.meta, node_or_instance)
+        declaring = declaring_of(self._model.meta, record)
         validate_source_pin(record.identity, source_pin(node_or_instance))
         validate_write_value(
             record.identity,
@@ -464,7 +461,7 @@ class Transaction:
         if row is not None:
             return row, restorations
         if not restorations or not cancels_a_pending_assignment(
-            self._uow, self._meta, record, source_hint_of(copy), mutation
+            self._uow, self._model.meta, record, source_hint_of(copy), mutation
         ):
             return None
         return self._codec.identity_row(copy), restorations
@@ -541,7 +538,7 @@ class Transaction:
             return None
         hint = source_hint_of(instance)
         return resolve_write_evidence(
-            self._meta,
+            self._model.meta,
             record,
             hint,
             mutation=mutation,
@@ -590,7 +587,7 @@ class Transaction:
         refuse_reentry(self._lifecycle)
         construction = _materializing(self._construction)
         node = object_query_node(query)
-        return self._read(node, typed_publication(self._meta, construction))
+        return self._read(node, typed_publication(self._model.meta, construction))
 
     @property
     def wire(self) -> WireTransactionView:
@@ -608,8 +605,7 @@ class Transaction:
         return WireTransactionView(
             self._wire_find,
             WireWriteLane(
-                self._meta,
-                self._layouts,
+                self._model,
                 self._uow,
                 self._conn,
                 self._dialect,
@@ -629,7 +625,7 @@ class Transaction:
         read enters and where re-entry is refused.
         """
         refuse_reentry(self._lifecycle)
-        return self._read(node, wire_publication(self._meta))
+        return self._read(node, wire_publication(self._model.meta))
 
     def _read[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
         """One participating read of ``node``, published through ``publication`` —
@@ -646,7 +642,7 @@ class Transaction:
         than a scope containing it (`m-execution-lifecycle`), and it spans
         through publication exactly as a standalone read's does.
         """
-        preflight(node, model=self._meta, form="graph")
+        preflight(node, model=self._model.meta, form="graph")
         return self._uow.read(lambda: self._published(node, publication))
 
     def _published[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
@@ -656,20 +652,18 @@ class Transaction:
                 return publication.from_history(
                     find_history(
                         node,
-                        self._meta,
+                        self._model,
                         self._dialect,
                         self._conn,
-                        layouts=self._layouts,
                         read=read,
                     )
                 )
             return publication.from_find(
                 find(
                     node,
-                    self._meta,
+                    self._model,
                     self._dialect,
                     self._conn,
-                    layouts=self._layouts,
                     preference=self._uow.settings.concurrency,
                     ledger=self._uow,
                     read=read,
@@ -696,7 +690,7 @@ class Transaction:
         # The gate precedes `uow.read` deliberately, exactly as `find`'s does:
         # that read force-flushes pending buffered writes, so a refused read must
         # be refused before it or a refusal turns into a write.
-        preflight(query, model=self._meta, form="rows")
+        preflight(query, model=self._model.meta, form="rows")
         return self._uow.read(lambda: self._published_rows(query))
 
     def _published_rows(self, query: ObjectQueryNode) -> RowsResult:
@@ -704,10 +698,9 @@ class Transaction:
         with self._attempt.read(query.target, "ROWS") as read:
             return find_rows(
                 query,
-                self._meta,
+                self._model,
                 self._dialect,
                 self._conn,
-                layouts=self._layouts,
                 preference=self._uow.settings.concurrency,
                 read=read,
             )
@@ -755,8 +748,8 @@ class Transaction:
         # / `m-bitemp-write` — the dimension-explicit `validFrom` / `until`
         # instruction fields, never smuggled onto `row`, ADR 0010/0013).
         instruction = keyed_instruction(mutation, entity, row, valid_from=valid_from, until=until)
-        validate_keyed_instruction(self._meta, instruction)
-        admit_and_buffer(self._uow, self._meta, instruction, claim, restorations=restorations)
+        validate_keyed_instruction(self._model.meta, instruction)
+        admit_and_buffer(self._uow, self._model.meta, instruction, claim, restorations=restorations)
 
     # --- set-based write verbs (python.md §5) ----------------------------- #
     def update_where(
@@ -776,8 +769,7 @@ class Transaction:
         refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
-            self._meta,
-            self._layouts,
+            self._model,
             self._conn,
             self._dialect,
             "update",
@@ -797,8 +789,7 @@ class Transaction:
         refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
-            self._meta,
-            self._layouts,
+            self._model,
             self._conn,
             self._dialect,
             "delete",
@@ -818,8 +809,7 @@ class Transaction:
         refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
-            self._meta,
-            self._layouts,
+            self._model,
             self._conn,
             self._dialect,
             "terminate",
@@ -842,8 +832,7 @@ class Transaction:
         refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
-            self._meta,
-            self._layouts,
+            self._model,
             self._conn,
             self._dialect,
             "updateUntil",
@@ -864,8 +853,7 @@ class Transaction:
         refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
-            self._meta,
-            self._layouts,
+            self._model,
             self._conn,
             self._dialect,
             "terminateUntil",

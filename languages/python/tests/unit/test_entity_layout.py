@@ -31,7 +31,7 @@ from _corpus_model_support import model as corpus_model
 from parallax.conformance import models
 from parallax.core.entity import EntityAttributeInput
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog, ValueObjectLayout
-from parallax.core.entity._model import layout_catalog_of
+from parallax.core.entity._model import cataloged_model, layout_catalog_of, model_of
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.inheritance import view as inheritance_view
@@ -464,6 +464,16 @@ def test_one_domain_model_reaches_one_catalog_and_two_reach_two() -> None:
     orders, animal = loaded["orders"], loaded["animal"]
     assert layout_catalog_of(orders) is layout_catalog_of(orders)
     assert layout_catalog_of(orders) is not layout_catalog_of(animal)
+
+
+def test_the_cataloged_model_pairs_one_models_metadata_with_that_models_own_catalog() -> None:
+    # The pairing door hands out the model's OWN catalog rather than deriving a
+    # second one beside it, so the per-model slot stays the single owner and the
+    # two halves a read carries can never name two models.
+    orders = _domain_models()["orders"]
+    cataloged = cataloged_model(orders)
+    assert cataloged.layouts is layout_catalog_of(orders)
+    assert cataloged.meta is model_of(orders)
 
 
 def test_a_descriptor_backed_domain_model_reaches_a_working_catalog() -> None:

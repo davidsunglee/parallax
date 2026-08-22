@@ -75,7 +75,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.base import NeutralType, decode_neutral_literal
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
-from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     TransactionAttemptActivity,
@@ -160,10 +160,14 @@ class WireWriteLane:
     makes a Typed insert followed by a Wire update of one object — and the
     reverse — one read-your-own-writes pair rather than two ingresses each with
     their own idea of what this transaction stores.
+
+    ``model`` carries the accepted metadata every verb here resolves against and
+    the layouts a materializing predicate write converts its resolved rows
+    through as one value, so this lane names one model rather than two halves
+    that could disagree.
     """
 
-    meta: Metamodel
-    layouts: LayoutCatalog
+    model: CatalogedModel
     uow: UnitOfWork
     conn: DbPort
     dialect: Dialect
@@ -213,24 +217,24 @@ def wire_insert(
     """
     refuse_reentry(lane.lifecycle)
     payload = _authored_document(data, f"a Wire `{mutation}` payload")
-    entity = instructions.resolve_target(lane.meta, entity_name)
+    entity = instructions.resolve_target(lane.model.meta, entity_name)
     _refuse_published_source(entity, data, mutation)
-    declaring = declaring_of(lane.meta, entity)
+    declaring = declaring_of(lane.model.meta, entity)
     valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
-    row = _decoded_row(lane.meta, entity, payload)
-    _refuse_framework_owned(lane.meta, entity, row)
+    row = _decoded_row(lane.model.meta, entity, payload)
+    _refuse_framework_owned(lane.model.meta, entity, row)
     instruction = keyed_instruction(
         mutation, entity.identity, row, valid_from=valid_from_literal, until=until_literal
     )
-    validate_keyed_instruction(lane.meta, instruction)
-    admit_and_buffer(lane.uow, lane.meta, instruction, None)
+    validate_keyed_instruction(lane.model.meta, instruction)
+    admit_and_buffer(lane.uow, lane.model.meta, instruction, None)
     lane.inserts.record(written_object_of_row(entity, declaring, row))
-    opened = object_key(instruction, lane.meta)
+    opened = object_key(instruction, lane.model.meta)
     # A Create Payload is a complete document, so the row it buffers always
     # names its own object by the time validation has admitted it.
     assert opened is not None
     return opened_wire_entity(
-        lane.meta,
+        lane.model.meta,
         entity.identity,
         row,
         SourceHint(
@@ -273,13 +277,13 @@ def wire_keyed_write(
     refuse_reentry(lane.lifecycle)
     authored = _authored_changes(mutation, changes)
     source, hint = _keyed_source(mutation, observed)
-    record = _concrete_entity(lane.meta, hint)
-    declaring = declaring_of(lane.meta, record)
+    record = _concrete_entity(lane.model.meta, hint)
+    declaring = declaring_of(lane.model.meta, record)
     validate_source_pin(record.identity, hint.pin)
     valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
     identity_row = dict(hint.object_key.primary_key)
-    members = _row_members(lane.meta, record)
-    assignments = _judged_changes(lane.meta, record, members, authored)
+    members = _row_members(lane.model.meta, record)
+    assignments = _judged_changes(lane.model.meta, record, members, authored)
     row, restorations = _authored_row(
         lane, record, hint, mutation, identity_row, members, assignments, source
     )
@@ -288,13 +292,13 @@ def wire_keyed_write(
     instruction = keyed_instruction(
         mutation, record.identity, row, valid_from=valid_from_literal, until=until_literal
     )
-    validate_keyed_instruction(lane.meta, instruction)
+    validate_keyed_instruction(lane.model.meta, instruction)
     written = written_object_of_row(record, declaring, identity_row)
     evidence: SettledEvidence | None = (
         None
         if lane.inserts.holds(written)
         else resolve_write_evidence(
-            lane.meta,
+            lane.model.meta,
             record,
             hint,
             mutation=mutation,
@@ -303,7 +307,7 @@ def wire_keyed_write(
             participation=lane.uow.participation,
         )
     )
-    admit_and_buffer(lane.uow, lane.meta, instruction, evidence, restorations=restorations)
+    admit_and_buffer(lane.uow, lane.model.meta, instruction, evidence, restorations=restorations)
 
 
 def wire_predicate_write(
@@ -337,10 +341,12 @@ def wire_predicate_write(
     selection = _authored_document(target, "a predicate-selected write's canonical target")
     entity_name = _selection_shape(selection)
     authored = _authored_changes(mutation, changes)
-    entity = instructions.resolve_target(lane.meta, entity_name)
-    declaring = declaring_of(lane.meta, entity)
+    entity = instructions.resolve_target(lane.model.meta, entity_name)
+    declaring = declaring_of(lane.model.meta, entity)
     valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
-    assignments = _judged_changes(lane.meta, entity, _row_members(lane.meta, entity), authored)
+    assignments = _judged_changes(
+        lane.model.meta, entity, _row_members(lane.model.meta, entity), authored
+    )
     doc: dict[str, object] = {
         "mutation": mutation,
         "target": selection,
@@ -356,9 +362,9 @@ def wire_predicate_write(
         doc["until"] = until_literal
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # a `target` document always builds this shape
-    instructions.validate_instruction(instruction, lane.meta)
+    instructions.validate_instruction(instruction, lane.model.meta)
     buffer_predicate_instruction(
-        lane.uow, lane.meta, lane.layouts, lane.conn, lane.dialect, instruction, lane.attempt
+        lane.uow, lane.model, lane.conn, lane.dialect, instruction, lane.attempt
     )
 
 
@@ -404,7 +410,7 @@ def _authored_row(
     if effective:
         return {**identity_row, **effective}, restorations
     if not restorations or not cancels_a_pending_assignment(
-        lane.uow, lane.meta, record, hint, mutation
+        lane.uow, lane.model.meta, record, hint, mutation
     ):
         return None, restorations
     return dict(identity_row), restorations
