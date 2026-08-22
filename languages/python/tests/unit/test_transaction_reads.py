@@ -47,9 +47,8 @@ from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, ReadActivity
-from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.unit_work import (
     Concurrency,
@@ -95,21 +94,19 @@ def _recording_find(calls: list[_RecordedFind]) -> Callable[..., FindResult]:
 
     def recording(
         query: ObjectQueryNode,
-        meta: Metamodel,
+        model: CatalogedModel,
         dialect: Dialect,
         port: DbPort,
         *,
-        layouts: LayoutCatalog,
         preference: Concurrency | None = None,
         ledger: ObservationLedger | None = None,
         read: ReadActivity = INERT,
     ) -> FindResult:
         result = real(
             query,
-            meta,
+            model,
             dialect,
             port,
-            layouts=layouts,
             preference=preference,
             ledger=ledger,
             read=read,

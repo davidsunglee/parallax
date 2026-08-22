@@ -55,7 +55,13 @@ from parallax.core.metamodel import (
 )
 from parallax.core.relationship import view as relationship_view
 
-__all__ = ["EntityLayout", "LayoutCatalog", "NarrowableView", "ValueObjectLayout"]
+__all__ = [
+    "CatalogedModel",
+    "EntityLayout",
+    "LayoutCatalog",
+    "NarrowableView",
+    "ValueObjectLayout",
+]
 
 
 class NarrowableView(Protocol):
@@ -238,6 +244,22 @@ class LayoutCatalog:
                 f"{root.canonical} declares, so no row of it names a logical node"
             )
         return positions
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogedModel:
+    """One accepted Metamodel and the layouts derived from it, as one value.
+
+    A layout is a function of the model it came from, so a catalog and a
+    Metamodel that did not produce it name a state nothing downstream could
+    detect. Carrying both halves as one value makes that state unrepresentable
+    rather than merely checked: a consumer reads its member layouts from the
+    same value it reads its accepted metadata from, and no seam can thread the
+    two apart and rejoin them wrongly.
+    """
+
+    meta: Metamodel
+    layouts: LayoutCatalog
 
 
 def _occurrence_layout(

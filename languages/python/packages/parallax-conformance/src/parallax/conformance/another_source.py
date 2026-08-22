@@ -43,7 +43,7 @@ from parallax.core.entity import (
     graph_construction_of,
     lifecycle_state_of,
 )
-from parallax.core.entity._model import layout_catalog_of, model_of
+from parallax.core.entity._model import cataloged_model
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle import find as execute_read
 from parallax.snapshot.materialize import (
@@ -78,12 +78,11 @@ class AnotherSource:
     own.
     """
 
-    __slots__ = ("_dialect", "_layouts", "_meta", "_model", "_port")
+    __slots__ = ("_dialect", "_domain", "_model", "_port")
 
     def __init__(self, model: DomainModel, port: DbPort, *, dialect: Dialect = POSTGRES) -> None:
-        self._model = model
-        self._meta = model_of(model)
-        self._layouts = layout_catalog_of(model)
+        self._domain = model
+        self._model = cataloged_model(model)
         self._port = port
         self._dialect = dialect
 
@@ -104,7 +103,7 @@ class AnotherSource:
                 "this source materializes flat graphs only, and the query includes "
                 "a relationship level"
             )
-        result = execute_read(node, self._meta, self._dialect, self._port, layouts=self._layouts)
+        result = execute_read(node, self._model, self._dialect, self._port)
         return cast("tuple[S, ...]", self._materialize(result.graph))
 
     def produced(self, value: object) -> bool:
@@ -124,7 +123,7 @@ class AnotherSource:
         level-free read carries no merged view to install, which :meth:`find`
         guarantees by refusing a deep fetch.
         """
-        merge = merge_graph_input(graph, self._meta)
+        merge = merge_graph_input(graph, self._model.meta)
         require_publishable(merge)
 
         def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
@@ -134,6 +133,6 @@ class AnotherSource:
                 writer.populate(handle, node.attributes, node.value_objects, ())
             return tuple(handles[index] for index in merge.roots if index is not None)
 
-        return graph_construction_of(self._model).construct(
+        return graph_construction_of(self._domain).construct(
             build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
         )

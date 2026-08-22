@@ -8,11 +8,14 @@ validation into a canonical
 dispatch, the minimal resolving read, per-row no-op elimination, and
 Materialized Write Group buffering.
 
-Every entry point threads ``(uow, meta, conn, dialect)`` — the four pieces of
+Every entry point threads ``(uow, model, conn, dialect)`` — the four pieces of
 transaction state this lane actually reads — mirroring
 :func:`~parallax.snapshot.handle._write_inputs.retain_evidence`'s own shape.
-``meta`` is the accepted Metamodel; family shape comes from the Inheritance,
-Temporal, and Optimistic Lock facets through :mod:`parallax.snapshot.handle._family`,
+``model`` is the connected model as one value: the accepted Metamodel every
+target resolves against, paired with the exact-model layouts a materializing
+write's resolving read converts its rows through. Family shape comes from the
+Inheritance, Temporal, and Optimistic Lock facets through
+:mod:`parallax.snapshot.handle._family`,
 and every physical column comes from the target's Storage Layout view, resolved
 once here and carried into the per-row column builders
 :func:`_materialize_predicate_write` streams into.
@@ -47,7 +50,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import AttributeAssignment
-from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -140,8 +143,7 @@ def _current_selection(
 
 def buffer_predicate(
     uow: UnitOfWork,
-    meta: Metamodel,
-    layouts: LayoutCatalog,
+    model: CatalogedModel,
     conn: DbPort,
     dialect: Dialect,
     mutation: PredicateMutation,
@@ -225,6 +227,7 @@ def buffer_predicate(
     only which one surfaces first is fixed here, and it is fixed in favour of
     never constructing a non-canonical instruction.
     """
+    meta = model.meta
     selection = mutation_selection(query)
     entity = entity_of(meta, selection.target.canonical)
     _reject_uncomposable_assignments(meta, selection.target, mutation, assignments)
@@ -248,7 +251,7 @@ def buffer_predicate(
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
-    buffer_predicate_instruction(uow, meta, layouts, conn, dialect, instruction, attempt)
+    buffer_predicate_instruction(uow, model, conn, dialect, instruction, attempt)
 
 
 def _reject_uncomposable_assignments(
@@ -305,8 +308,7 @@ def _reject_uncomposable_assignments(
 
 def buffer_predicate_instruction(
     uow: UnitOfWork,
-    meta: Metamodel,
-    layouts: LayoutCatalog,
+    model: CatalogedModel,
     conn: DbPort,
     dialect: Dialect,
     instruction: PredicateWrite,
@@ -355,6 +357,7 @@ def buffer_predicate_instruction(
     The Wire ``_where`` verbs route their instruction here too, so a caller
     holding no Entity Class reaches this seam exactly as a typed caller does.
     """
+    meta = model.meta
     entity = entity_of(meta, instruction.target.entity)
     inheritance.reject_predicate_write(entity)
     declaring_entity = declaring(meta, entity)
@@ -374,8 +377,7 @@ def buffer_predicate_instruction(
         return
     _materialize_predicate_write(
         uow,
-        meta,
-        layouts,
+        model,
         conn,
         dialect,
         instruction,
@@ -418,8 +420,7 @@ def _reject_readless_document_many(
 
 def _materialize_predicate_write(
     uow: UnitOfWork,
-    meta: Metamodel,
-    layouts: LayoutCatalog,
+    model: CatalogedModel,
     conn: DbPort,
     dialect: Dialect,
     instruction: PredicateWrite,
@@ -458,6 +459,7 @@ def _materialize_predicate_write(
     resolve would match every historical milestone too, not just the open
     one(s).
     """
+    meta = model.meta
     layout = entity_layout(meta, entity)
     if layout is None:  # pragma: no cover - a predicate-write target always owns rows
         raise ValueError(f"{entity.identity.canonical}: predicate-write target has no Table")
@@ -553,9 +555,7 @@ def _materialize_predicate_write(
                 include_value_objects=needs_documents,
             )
             driver_rows = execute_read(conn, dialect, compiled, read)
-            return compiled, stage_publishable_rows(
-                meta, compiled, driver_rows, layouts=layouts, pin=Pin()
-            )
+            return compiled, stage_publishable_rows(model, compiled, driver_rows, pin=Pin())
 
     compiled, stage = uow.read(resolve)
     structured_column = compiled.structured_column

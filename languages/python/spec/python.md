@@ -1531,13 +1531,15 @@ exposes neither an Entity Runtime nor a class index. It is not
 valid query whose execution feature is explicitly deferred.
 
 After that narrowing, Snapshot constructs one private `_ConnectedModel` owned by
-the Database. It contains the accepted Metamodel, the exact-model layout catalog
-every read converts its rows against, the Entity Row Codec every write derives
-its rows through, the Entity Graph Construction Snapshot materialization
-requires — absent exactly for a descriptor-backed model, which is what makes a
-modeled read refusable before any I/O — and no identity. It is handle state
-rather than a Core runtime value and is neither exported nor shared through the
-model.
+the Database. It contains the accepted Metamodel and the exact-model layout
+catalog every read converts its rows against as ONE composed value, so a read
+lane resolves and converts against one model rather than against two references
+that could name two; the Entity Row Codec every write derives its rows through;
+the Entity Graph Construction Snapshot materialization requires — absent exactly
+for a descriptor-backed model, which is what makes a modeled read refusable
+before any I/O; and no identity. The codec and the construction stay separate
+references, because neither is derived from the other. It is handle state rather
+than a Core runtime value and is neither exported nor shared through the model.
 
 `Database(port, model)` takes the same `model: DomainModel` input and admits no
 bare accepted Metamodel. It refuses a value that is not a Domain Model with the
@@ -4177,15 +4179,16 @@ common-runtime, Snapshot, or Postgres scope imports the descriptor package.
 
 The enforcement unit is the **scope**, not a package's `__all__`: an importer
 granted `parallax.core.entity` reaches every module that scope owns, private
-ones included. Three Snapshot modules use that grant for seven names the Entity
+ones included. Three Snapshot modules use that grant for six names the Entity
 frontend deliberately does not export — `parallax.snapshot._inspection` and
 `parallax.snapshot.handle._write_inputs` read declarations from
 `parallax.core.entity._declaration` (`declaration_of`, `is_entity_class`,
 `members_of`), `parallax.snapshot.handle._write_inputs` reads the merged
 member-name correspondences from `parallax.core.entity._entity`
-(`wire_names_of`), and `parallax.snapshot.handle._database` reads the accepted
-Metamodel, the class index, and the exact-model layout catalog from
-`parallax.core.entity._model` (`model_of`, `class_index`, `layout_catalog_of`).
+(`wire_names_of`), and `parallax.snapshot.handle._database` reads the cataloged
+model — the accepted Metamodel and the exact-model layout catalog derived from it
+as one value — and the class index from `parallax.core.entity._model`
+(`cataloged_model`, `class_index`).
 Each is a seam between two first-party packages that a developer
 never needs, so exporting the names to spell the reach publicly would widen the
 developer surface to serve one lifecycle package. None of the three modules
@@ -4198,8 +4201,8 @@ reach.
 `parallax.core.entity._layout` is reached the other way round. It carries a row
 of its own because row-to-graph materialization needs the member layouts without
 the frontend's own closure, so every Snapshot module that carries one
-connection's layout catalog names that declared scope directly rather than
-reaching a private module through the parent's edge.
+connection's cataloged model, or the layouts inside it, names that declared scope
+directly rather than reaching a private module through the parent's edge.
 
 `parallax.core.object_query._fluent` is the one child scope declared for the
 opposite reason: it needs a WIDER grant than its parent. The typed Object Query is
@@ -4506,18 +4509,18 @@ parallax.postgres --> parallax.core.dialect
   the adapter may read. The adapter drives production through supported entry
   points, and the residue is an enumerated set rather than a habit: the
   `parallax.core.entity` seams the adapter composes descriptor-backed models
-  through — `_model.model_of` in both its corpus-model loader and its
-  second-frontend fixture, `_model.layout_catalog_of` in the latter, and
+  through — `_model.model_of` in its corpus-model loader,
+  `_model.cataloged_model` in its second-frontend fixture, and
   `parallax.core.object_query._fluent.object_query_node` in the latter. All
-  four are **rebutted rather than exempted**: `model_of` and `object_query_node`
+  three are **rebutted rather than exempted**: `model_of` and `object_query_node`
   are already accepted private seams of production's own composition root and
   read preflight, and `model_of` exists precisely so a separately distributed
   frontend can read the accepted model out of a Domain Model (*Canonical
-  descriptor input*), which is what the adapter is doing. `layout_catalog_of` is
+  descriptor input*), which is what the adapter is doing. `cataloged_model` is
   accepted for the same composition root and for the same reason the second
-  frontend needs it: a source that drives the production find executor reaches
-  its model's one layout catalog through the one door, rather than building a
-  second catalog beside it. Widening
+  frontend needs it: a source that drives the production find executor takes the
+  accepted model and its one layout catalog through the one door, rather than
+  reading either half separately or building a second catalog beside it. Widening
   `parallax.core.entity`'s shipped surface to serve a development-only consumer
   of a documented first-party seam would be the wrong repair. The `m-descriptor`
   record graph is **not** in the set: corpus models reach the adapter through the
