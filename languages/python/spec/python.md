@@ -1549,7 +1549,7 @@ than a Core runtime value and is neither exported nor shared through the model.
 bare accepted Metamodel. It refuses a value that is not a Domain Model with the
 same `SnapshotConnectionError(snapshot-class-backed-model-required)`, so every
 connection reaches its accepted Metamodel through a Domain Model and per-model
-derived state has exactly one owner and one lookup door. A descriptor-backed
+derived state hangs on that model behind one lookup door. A descriptor-backed
 model composes no Entity Class and can never materialize a Snapshot, so
 `Database.find` and `Transaction.find` refuse it with that same error — on both
 entry points before target resolution, and on the participating one before the
@@ -4524,15 +4524,15 @@ parallax.postgres --> parallax.core.dialect
   descriptor input*), which is what the adapter is doing. `cataloged_model` is
   accepted for the same composition root and for the same reason the second
   frontend needs it: a source that drives the production find executor takes the
-  accepted model and its one layout catalog through the one door, rather than
-  reading either half separately or building a second catalog beside it. Widening
-  `parallax.core.entity`'s shipped surface to serve a development-only consumer
-  of a documented first-party seam would be the wrong repair. The `m-descriptor`
-  record graph is **not** in the set: corpus models reach the adapter through the
-  public `domain_model_from_*` doors and are read through the accepted model's
-  own vocabulary, so no `parallax.descriptor` private module is imported at all.
-  Each reach is keyed by the module that makes it, so a
-  second importer of an accepted name is a new decision here.
+  accepted model and the layout catalog paired with it through the one door,
+  rather than reading either half separately or building a second catalog beside
+  it. Widening `parallax.core.entity`'s shipped surface to serve a
+  development-only consumer of a documented first-party seam would be the wrong
+  repair. The `m-descriptor` record graph is **not** in the set: corpus models
+  reach the adapter through the public `domain_model_from_*` doors and are read
+  through the accepted model's own vocabulary, so no `parallax.descriptor`
+  private module is imported at all. Each reach is keyed by the module that
+  makes it, so a second importer of an accepted name is a new decision here.
   `tests/unit/test_frontend_contraction_guards.py` holds the exact set for both
   this family and Snapshot's, as an inventory that fails when it drifts.
 - **Child enforcement scopes.** A support scope MAY declare child scopes over

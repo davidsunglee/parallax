@@ -186,8 +186,9 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
 # `cataloged_model` is the second-frontend fixture's only addition, and it
 # subsumes `model_of` there: it drives the production find executor, which
 # converts every row against the connected model's own layouts, so it takes the
-# accepted model and that model's one catalog through the one door rather than
-# reading either half separately or building a second catalog beside it.
+# accepted model and the layout catalog paired with it through the one door
+# rather than reading either half separately or building a second catalog beside
+# it.
 #
 # Keyed by REACHING module for the same reason the snapshot inventory is.
 ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {

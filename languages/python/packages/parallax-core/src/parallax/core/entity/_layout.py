@@ -17,8 +17,8 @@ Two things are deliberately absent. **Storage and result-key names stay out** �
 those come from a compiled read's own projection contracts, so a layout stays
 query-independent and shareable across every execution. And **row width is
 model-fixed, not query-fixed**: a member a read did not project still occupies
-its declared position, which is what keeps one layout per exact Entity rather
-than one per query shape.
+its declared position, which is what keys a layout to an exact Entity rather
+than to a query shape.
 
 Two rules live here rather than at the callers that would otherwise restate
 them: :meth:`EntityLayout.key_of` owns the single-versus-composite spelling of a
@@ -162,10 +162,11 @@ class LayoutCatalog:
     derive a layout and each are answered their own, and whichever landed last
     is what every later reach is answered. That is why the entry count is a
     bound on what a catalog retains rather than a count of the derivations it
-    ran. It costs nothing, because every entry is a pure function of the
-    accepted immutable metadata, so two catalogs over one model — or two layouts
-    for one Entity — are interchangeable, and nothing compares a layout by
-    identity.
+    ran. The duplicate is safe rather than free: it builds a second layout that
+    stays live with the reach it answered, but every entry is a pure function of
+    the accepted immutable metadata, so two catalogs over one model — or two
+    layouts for one Entity — are interchangeable, and nothing compares a layout
+    by identity.
     """
 
     __slots__ = ("_cache", "_model")
