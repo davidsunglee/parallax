@@ -69,10 +69,11 @@ from parallax.core.unit_work import WritePlanner
 # so a fourth module importing an already-accepted name is a new reach and a new
 # §7 decision, not a use of an existing one.
 #
-# `_layout` is the one entry here that is a DECLARED scope rather than a private
-# module of the frontend: §7 gives it a row of its own so row-to-graph
-# materialization can take the member layouts without the frontend's closure. It
-# still appears below because the inventory reads source text, and every reach
+# `_layout` and `_row` are the entries here that are DECLARED scopes rather than
+# private modules of the frontend: §7 gives each a row of its own so a runtime
+# materializing values from stored rows can take the member layouts, the absence
+# sentinel, and the row-to-carrier walk without the frontend's closure. They
+# still appear below because the inventory reads source text, and every reach
 # into an underscored module of this package is a decision worth spelling.
 ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot._inspection", "_declaration"): frozenset(
@@ -81,7 +82,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.handle._database", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._database", "_model"): frozenset({"cataloged_model", "class_index"}),
     ("parallax.snapshot.handle._predicate_writes", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.snapshot.handle._materializer", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.snapshot.handle._materializer", "_row"): frozenset({"member_carriers"}),
     ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._transaction", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._write_inputs", "_declaration"): frozenset({"declaration_of"}),
@@ -90,6 +91,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.materialize._classify", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._convert", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._graph", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.snapshot.materialize._graph", "_row"): frozenset({"ABSENT"}),
     ("parallax.snapshot.materialize._merge", "_layout"): frozenset({"EntityLayout"}),
 }
 
@@ -179,22 +181,23 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
 # rather than reading either half separately or building a second catalog beside
 # it.
 #
-# `ABSENT` is the other. That fixture is a SECOND managed value lifecycle, so it
-# merges and constructs for itself rather than driving the Snapshot
-# materializer's own private drive; reading a compact member row is what its
-# construction does, and the one sentinel that row spells absence with is the
-# whole of what it needs to read one. The alternative is a second sentinel, which
-# would be a value equal to nothing the rows actually hold.
+# `member_carriers` is the other. That fixture is a SECOND managed value
+# lifecycle, so it merges and constructs for itself rather than driving the
+# Snapshot materializer's own private drive — but the walk from a compact member
+# row to the writer's carriers is neither of those: it is a function of the
+# model-owned layout and the carrier algebra, so §7 scopes it where both are and
+# production's own typed materializer reaches it there too. The alternatives are
+# a second copy of one rule, or a lifecycle-private name in a second lifecycle's
+# hands.
 #
 # Keyed by REACHING module for the same reason the snapshot inventory is.
 ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.another_source", "parallax.core.entity._model"): frozenset(
         {"cataloged_model"}
     ),
-    (
-        "parallax.conformance.another_source",
-        "parallax.snapshot.materialize._graph",
-    ): frozenset({"ABSENT"}),
+    ("parallax.conformance.another_source", "parallax.core.entity._row"): frozenset(
+        {"member_carriers"}
+    ),
     ("parallax.conformance.another_source", "parallax.core.object_query._fluent"): frozenset(
         {"ObjectQuery", "object_query_node"}
     ),

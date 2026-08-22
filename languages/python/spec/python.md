@@ -2010,8 +2010,9 @@ or descriptor authoring form and performs no audit stamping.
   issues where it has any. Nothing wraps a cell: a position holds the decoded
   value itself, and no per-cell record, member dictionary, or member-keyed entry
   stands between the row and the value. Absence is spelled rather than omitted,
-  because a positional row cannot omit, by ONE private sentinel this
-  implementation owns:
+  because a positional row cannot omit, by ONE private sentinel — the one owned
+  beside the member layouts a row is read against (*Exact-model member layouts*),
+  rather than by this or any other materializing runtime:
 
   | spelling | meaning |
   | --- | --- |
@@ -2177,6 +2178,14 @@ or descriptor authoring form and performs no audit stamping.
   IDs without re-extracting or re-hashing a key. Duplicate valid keys within one
   Entity family share an ID; a projection whose key did not decode takes an ID of
   its own and merges with nothing.
+
+  Two things a row is read *with* are owned beside those layouts rather than by
+  any one materializing runtime: the single private sentinel a position the read
+  did not carry holds, and the translation of a row into Entity Graph
+  Construction's own carriers. Both are functions of the layout and the carrier
+  algebra alone, so two managed value lifecycles materializing from one row read
+  it the one way, and neither declares an absence marker the other's rows do not
+  hold.
 
   A layout is owned by the exact model it was derived from, reached through one
   door, and derived on first reach of the Entity it describes. The collaboration
@@ -4220,15 +4229,22 @@ never needs, so exporting the names to spell the reach publicly would widen the
 developer surface to serve one lifecycle package. None of the three modules
 takes a scope row of its own: they belong to `parallax.core.entity`, whose edge
 every importer above already declares, and `parallax.core.entity._expressions`,
-`._graph_input`, and `._layout` carry rows below because each needs a NARROWER
-grant than its parent — not because they are the only children an importer may
-reach.
+`._graph_input`, `._layout`, and `._row` carry rows below because each needs a
+NARROWER grant than its parent — not because they are the only children an
+importer may reach.
 
-`parallax.core.entity._layout` is reached the other way round. It carries a row
-of its own because row-to-graph materialization needs the member layouts without
-the frontend's own closure, so every Snapshot module that carries one
-connection's cataloged model, or the layouts inside it, names that declared scope
-directly rather than reaching a private module through the parent's edge.
+`parallax.core.entity._layout` and `parallax.core.entity._row` are reached the
+other way round. Each carries a row of its own because a runtime that
+materializes values from stored rows needs the member layouts, the sole absence
+sentinel a positional row spells, and that row's translation into the writer's
+carriers without the frontend's own closure. So every Snapshot module that
+carries one connection's cataloged model, or the layouts inside it, and every
+one that reads a row, names the declared scope that owns what it reads rather
+than reaching a private module through the parent's edge. `._row` is granted its
+two sibling scopes and nothing else, which is what keeps a carrier producer
+structurally unable to reach the writer, `construct`, or model formation — the
+reason `._graph_input` is scoped apart, carried one step further to the walk that
+fills those carriers.
 
 `parallax.core.object_query._fluent` is the one child scope declared for the
 opposite reason: it needs a WIDER grant than its parent. The typed Object Query is
@@ -4306,7 +4322,7 @@ it.
 | Execution lifecycle recorder (support, isolated child of `parallax.core.execution_lifecycle`) | `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` | generated forbidden contracts |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot row-to-graph conversion and the sealed graph (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `parallax.core.entity._layout`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
+| Snapshot row-to-graph conversion and the sealed graph (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._row`, `parallax.core.entity._layout`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
@@ -4319,6 +4335,7 @@ it.
 | Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Entity graph-input carriers (support, child of `parallax.core.entity`) | `parallax.core.entity._graph_input` | `parallax.core.entity._graph_input` | `m-metamodel` | generated forbidden contracts |
 | Exact-model member layouts (support, child of `parallax.core.entity`) | `parallax.core.entity._layout` | `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
+| Positional member rows and their carrier translation (support, child of `parallax.core.entity`) | `parallax.core.entity._row` | `parallax.core.entity._row` | `m-metamodel`, `parallax.core.entity._layout`, `parallax.core.entity._graph_input` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
@@ -4376,6 +4393,9 @@ parallax.core.entity._graph_input --> parallax.core.metamodel
 parallax.core.entity._layout --> parallax.core.metamodel
 parallax.core.entity._layout --> parallax.core.inheritance
 parallax.core.entity._layout --> parallax.core.relationship
+parallax.core.entity._row --> parallax.core.metamodel
+parallax.core.entity._row --> parallax.core.entity._layout
+parallax.core.entity._row --> parallax.core.entity._graph_input
 parallax.core.execution_lifecycle.testing --> parallax.core.execution_lifecycle
 parallax.snapshot._inspection --> parallax.core.entity
 parallax.snapshot._inspection --> parallax.core.metamodel
@@ -4406,7 +4426,7 @@ parallax.snapshot.handle --> parallax.core.batch_write
 parallax.snapshot.handle --> parallax.core.txtime_write
 parallax.snapshot.handle --> parallax.core.bitemp_write
 parallax.snapshot._read_result --> parallax.snapshot.materialize
-parallax.snapshot.materialize --> parallax.core.entity._graph_input
+parallax.snapshot.materialize --> parallax.core.entity._row
 parallax.snapshot.materialize --> parallax.core.entity._layout
 parallax.snapshot.materialize --> parallax.core.deep_fetch
 parallax.snapshot.materialize --> parallax.core.document_codec
@@ -4533,12 +4553,13 @@ parallax.postgres --> parallax.core.dialect
   the scope, so the importing-side exemption above already reaches a granted
   scope's private modules; what the exemption does not decide is *which* of them
   the adapter may read. The adapter drives production through supported entry
-  points, and the residue is an enumerated set rather than a habit: the
-  `parallax.core.entity` seams the adapter composes descriptor-backed models
-  through — `_model.model_of` in its corpus-model loader,
-  `_model.cataloged_model` in its second-frontend fixture, and
-  `parallax.core.object_query._fluent.object_query_node` in the latter. All
-  three are **rebutted rather than exempted**: `model_of` and `object_query_node`
+  points, and the residue is an enumerated set rather than a habit, one that
+  **reaches no shipped distribution but the common runtime**:
+  `parallax.core.entity._model.model_of` in its corpus-model loader, and — in its
+  second-frontend fixture — `parallax.core.entity._model.cataloged_model`,
+  `parallax.core.entity._row.member_carriers`, and
+  `parallax.core.object_query._fluent.object_query_node`. All four are
+  **rebutted rather than exempted**: `model_of` and `object_query_node`
   are already accepted private seams of production's own composition root and
   read preflight, and `model_of` exists precisely so a separately distributed
   frontend can read the accepted model out of a Domain Model (*Canonical
@@ -4547,24 +4568,24 @@ parallax.postgres --> parallax.core.dialect
   frontend needs it: a source that drives the production find executor takes the
   accepted model and the layout catalog paired with it through the one door,
   rather than reading either half separately or building a second catalog beside
-  it. Widening `parallax.core.entity`'s shipped surface to serve a
-  development-only consumer of a documented first-party seam would be the wrong
-  repair.
+  it. `member_carriers` belongs to the scope declared so that a runtime
+  materializing values from stored rows turns one into the writer's carriers
+  without reaching the writer, and production's own typed materializer reaches
+  it for exactly that. A second managed value lifecycle merges and constructs
+  for itself — that is what makes it second — but the walk from a row to the
+  carriers is neither: it is a function of the model-owned layout and the
+  carrier algebra, both of which the common runtime owns, so the fixture stands
+  where production already stands rather than restating one rule in a second
+  place or reaching into a lifecycle for one. Widening
+  `parallax.core.entity`'s shipped surface to serve a development-only consumer
+  of a documented first-party seam would be the wrong repair.
 
-  One further reach leaves that package: the second-frontend fixture reads
-  `parallax.snapshot.materialize._graph.ABSENT`. It is a second managed value
-  lifecycle, so it merges the graph a read answered and constructs from it
-  **itself** rather than driving the Snapshot materializer's own private drive,
-  and reading a compact member row is what constructing from one is. The sole
-  sentinel a row spells absence with is therefore the whole of what it needs, and
-  a second sentinel of its own would be a value equal to nothing the rows hold.
-  Publishing the sentinel instead would make an implementation-private absence
-  marker developer surface, which *The sealed Snapshot graph* forbids. The `m-descriptor` record graph is **not** in the set: corpus models
+  The `m-descriptor` record graph is **not** in the set: corpus models
   reach the adapter through the public `domain_model_from_*` doors and are read
   through the accepted model's own vocabulary, so no `parallax.descriptor`
   private module is imported at all. Each reach is keyed by the module that
   makes it, so a second importer of an accepted name is a new decision here.
-  `tests/unit/test_frontend_contraction_guards.py` holds the exact set for both
+  `tests/unit/test_source_enforcement_topology.py` holds the exact set for both
   this family and Snapshot's, as an inventory that fails when it drifts.
 - **Child enforcement scopes.** A support scope MAY declare child scopes over
   its own private implementation modules when the child's declared grants are
@@ -4611,7 +4632,10 @@ parallax.postgres --> parallax.core.dialect
   already forbids for every descendant. When a child has an additive grant,
   the generator keeps the
   parent's forbidden row unchanged and emits one wildcarded `ignore_imports`
-  entry for each exact child-to-direct-grant edge. Ignoring that first hop also
+  entry for each exact child-to-direct-grant edge. A grant naming a scope inside
+  the parent's own package is not one: a row can neither forbid nor except what
+  sits inside its source, and whatever that sibling reaches further is already
+  reported from the sibling itself. Ignoring that first hop also
   withdraws import-linter's indirect chains through it; no transitive grant
   receives a second exception. `unmatched_ignore_imports_alerting="error"`
   ensures an exception cannot outlive the import it describes. The handle
@@ -4643,7 +4667,7 @@ parallax.postgres --> parallax.core.dialect
   granted child inside it. Only the ancestor's **name** is given up: what the
   rest of that package reaches stays forbidden and is reported as an indirect
   chain, which is why `parallax.snapshot.materialize`, granted
-  `parallax.core.entity._graph_input`, still has `parallax.core._formation_profile`
+  `parallax.core.entity._layout`, still has `parallax.core._formation_profile`
   in its own row.
 - **Filesystem ownership.** `languages/python/tools/check_scope_ownership.py`
   walks every `packages/*/src/**/*.py` file in the production distributions and

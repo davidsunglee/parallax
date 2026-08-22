@@ -646,6 +646,44 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "parallax.core.entity._row may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core.entity._row"]
+forbidden_modules = [
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.bitemp_write",
+    "parallax.core.db_error",
+    "parallax.core.db_port",
+    "parallax.core.deep_fetch",
+    "parallax.core.dialect",
+    "parallax.core.document_codec",
+    "parallax.core.execution_lifecycle",
+    "parallax.core.execution_lifecycle.testing",
+    "parallax.core.navigate",
+    "parallax.core.object_query",
+    "parallax.core.opt_lock",
+    "parallax.core.pk_gen",
+    "parallax.core.predicate",
+    "parallax.core.read_lock",
+    "parallax.core.sql_gen",
+    "parallax.core.storage_layout",
+    "parallax.core.temporal_read",
+    "parallax.core.txtime_write",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.core.wire",
+    "parallax.descriptor",
+    "parallax.postgres",
+    "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
+    "parallax.snapshot.handle",
+    "parallax.snapshot.materialize",
+]
+
+[[tool.importlinter.contracts]]
 name = "parallax.core.execution_lifecycle may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.execution_lifecycle"]

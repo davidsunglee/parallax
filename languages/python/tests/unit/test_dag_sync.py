@@ -687,6 +687,20 @@ def test_an_asymmetric_child_grant_becomes_one_named_exception() -> None:
     assert dag.child_grant_exceptions(adjacency, "parallax.snapshot.handle") == []
 
 
+def test_a_child_granted_its_own_sibling_needs_no_exception() -> None:
+    # `parallax.core.entity._row` is granted two scopes its parent's row does not
+    # name — but both sit inside that parent's own package, which a row can
+    # neither forbid nor except. An entry for either would be an ignored import
+    # matching nothing, which `unmatched_ignore_imports_alerting` rejects, so the
+    # asymmetry test has to read containment rather than the grant table alone.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    siblings = frozenset({"parallax.core.entity._layout", "parallax.core.entity._graph_input"})
+    assert siblings <= dag.SUPPORT_SCOPE_DEPS["parallax.core.entity._row"]
+    assert not siblings & adjacency["parallax.core.entity"]
+    assert all(dag.scope_ancestors(one) == frozenset({"parallax.core.entity"}) for one in siblings)
+    assert dag.child_grant_exceptions(adjacency, "parallax.core.entity") == []
+
+
 # --------------------------------------------------------------------------
 # The zero-grant child scope: emptiness as a contract.
 # --------------------------------------------------------------------------

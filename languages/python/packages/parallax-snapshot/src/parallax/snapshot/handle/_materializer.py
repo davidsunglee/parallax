@@ -28,14 +28,16 @@ A merged view's shape carries its own arm: a tuple is loaded-many (empty include
 which is what makes the closed world structural rather than a convention this
 module has to restate.
 
-It also owns the translation into Entity Graph Construction's own carriers. The
-writer takes an entry per member, so a node's Attributes, Value Object
-occurrences, and broad relationship arms are synthesized from its compact row
+The writer takes an entry per member, so each node's carriers are synthesized
 immediately before its ``populate`` call and are dead as soon as it returns:
 ``populate`` folds them into local dicts and writes their values into the
 instance, retaining none of them. Peak carrier cost is therefore one node's
 worth whatever the graph's size, and nothing here is retained by Snapshot or the
-merge.
+merge. Only the relationship arms are synthesized here — a compact row's
+Attributes and Value Object occurrences become carriers through
+:func:`~parallax.core.entity._row.member_carriers`, which is a function of the
+model-owned layout and the carrier algebra and so belongs to neither this
+lifecycle nor any other.
 
 Hashability is conditional, exactly per spec §3: nothing here makes a node hashable
 or guards against one — a back-reference closing a cycle makes the derived hash
@@ -50,7 +52,6 @@ from typing import cast
 
 from parallax.core.entity import LOADED_NULL as _LOADED_NULL
 from parallax.core.entity import (
-    EntityAttributeInput,
     EntityGraphConstruction,
     EntityGraphWriter,
     EntityRelationshipInput,
@@ -59,19 +60,13 @@ from parallax.core.entity import (
     NodeHandle,
     RelationshipInput,
     ResolutionView,
-    ValueObjectAttributeInput,
-    ValueObjectOccurrenceInput,
-    ValueObjectRecord,
 )
-from parallax.core.entity._layout import EntityLayout
+from parallax.core.entity._row import member_carriers
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    Multiplicity,
-    NestedValueObjectMetadata,
-    ValueObjectMetadata,
 )
 from parallax.core.temporal_read import Edge, milestone_edge_of
 from parallax.core.unit_work import SourceHint
@@ -89,8 +84,6 @@ from parallax.snapshot.materialize import (
 from parallax.snapshot.materialize._graph import ABSENT
 
 __all__ = ["materialize_graph"]
-
-_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 def materialize_graph(
@@ -168,12 +161,13 @@ class _Materialization:
         order = self._merge.order
         self._handles = {index: writer.allocate(order[index]) for index in self._scope}
         for index in self._scope:
-            layout = self._merge.layout(index)
-            values = self._merge.member_values(index)
+            attributes, value_objects = member_carriers(
+                self._merge.layout(index), self._merge.member_values(index)
+            )
             writer.populate(
                 self._handles[index],
-                _attributes(layout, values),
-                _value_objects(layout, values),
+                attributes,
+                value_objects,
                 self._broad_arms(index),
             )
         return tuple(
@@ -308,74 +302,3 @@ def _declaring(model: Metamodel, identity: EntityIdentity) -> EntityMetadata | N
     root, which for a standalone Entity is itself."""
     position = inheritance_view(model).entity(identity)
     return model.entity(identity if position is None else position.root)
-
-
-# --------------------------------------------------------------------------- #
-# One node's compact row as Entity Graph Construction's own carriers.          #
-# --------------------------------------------------------------------------- #
-
-
-def _attributes(
-    layout: EntityLayout, values: tuple[object, ...]
-) -> tuple[EntityAttributeInput, ...]:
-    """One node's carried Attributes as writer carriers.
-
-    An absent position contributes no entry, which is what the writer's own
-    algebra means by absence — the carriers admit no sentinel value.
-    """
-    return tuple(
-        EntityAttributeInput(attribute.identity, values[position])
-        for position, attribute in enumerate(layout.attributes)
-        if values[position] is not ABSENT
-    )
-
-
-def _value_objects(
-    layout: EntityLayout, values: tuple[object, ...]
-) -> tuple[ValueObjectOccurrenceInput, ...]:
-    """One node's carried Value Object occurrences as writer carriers."""
-    return tuple(
-        ValueObjectOccurrenceInput(occurrence.identity, _occurrence(values[position], occurrence))
-        for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count)
-        if values[position] is not ABSENT
-    )
-
-
-def _occurrence(
-    value: object, declared: _VoContainer
-) -> ValueObjectRecord | tuple[ValueObjectRecord, ...] | None:
-    """One occurrence slot as the writer's record algebra.
-
-    The declared multiplicity decides the shape rather than the value does: a One
-    slot's member row and a Many slot's tuple of them are both tuples, and only
-    the declaration distinguishes them.
-    """
-    if declared.multiplicity is Multiplicity.MANY:
-        return tuple(
-            _value_object(cast("tuple[object, ...]", row), declared) for row in _rows(value)
-        )
-    if value is None:
-        return None
-    return _value_object(cast("tuple[object, ...]", value), declared)
-
-
-def _rows(value: object) -> tuple[object, ...]:
-    return cast("tuple[object, ...]", value) if isinstance(value, tuple) else ()
-
-
-def _value_object(row: tuple[object, ...], declared: _VoContainer) -> ValueObjectRecord:
-    """One positional member row as one writer record, at every depth."""
-    return ValueObjectRecord(
-        attributes=tuple(
-            ValueObjectAttributeInput(leaf.identity, row[position])
-            for position, leaf in enumerate(declared.attributes)
-            if row[position] is not ABSENT
-        ),
-        value_objects=tuple(
-            ValueObjectOccurrenceInput(nested.identity, _occurrence(row[position], nested))
-            for position, nested in enumerate(
-                declared.value_objects, start=len(declared.attributes)
-            )
-            if row[position] is not ABSENT
-        ),
-    )
