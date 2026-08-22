@@ -23,7 +23,7 @@ from typing import Any, cast
 import pytest
 from _corpus_model_support import formed
 from _corpus_model_support import model as corpus_model
-from _snapshot_graph_support import documents_of, identity_of, invalid_record
+from _snapshot_graph_support import documents_of, identity_of, invalid_record, layout_of
 
 from parallax.conformance import vo_models
 from parallax.core.base import (
@@ -86,7 +86,7 @@ _NAMESPACE = "parallax.compatibility"
 
 def _context(model: Metamodel, entity: str) -> LevelContext:
     identity = identity_of(model, entity)
-    return LevelContext(identity, documents_of(model, identity))
+    return LevelContext(identity, layout_of(model, identity), documents_of(model, identity))
 
 
 def _converted(model: Metamodel, entity: str, row: dict[str, object]) -> SnapshotNodeInput:
@@ -131,6 +131,7 @@ def test_an_encoded_projection_key_decodes_into_its_logical_attribute() -> None:
     assert payload is not None
     context = LevelContext(
         identity,
+        layout_of(SCALARS, identity),
         (),
         (
             AttributeReadContract(
@@ -663,6 +664,7 @@ def test_observable_columns_rekeys_and_decodes_an_encoded_scalar_projection() ->
     assert payload is not None
     context = LevelContext(
         identity,
+        layout_of(SCALARS, identity),
         (),
         (
             AttributeReadContract(

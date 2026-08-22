@@ -1950,6 +1950,7 @@ def test_the_buffering_seam_refuses_an_unvalidated_inheritance_family_instructio
             buffer_predicate_instruction(
                 tx._uow,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
                 tx._meta,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
+                tx._layouts,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
                 tx._conn,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
                 tx._dialect,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
                 instruction,

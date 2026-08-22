@@ -43,7 +43,7 @@ from parallax.core.entity import (
     graph_construction_of,
     lifecycle_state_of,
 )
-from parallax.core.entity._model import model_of
+from parallax.core.entity._model import layout_catalog_of, model_of
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle import find as execute_read
 from parallax.snapshot.materialize import (
@@ -78,11 +78,12 @@ class AnotherSource:
     own.
     """
 
-    __slots__ = ("_dialect", "_meta", "_model", "_port")
+    __slots__ = ("_dialect", "_layouts", "_meta", "_model", "_port")
 
     def __init__(self, model: DomainModel, port: DbPort, *, dialect: Dialect = POSTGRES) -> None:
         self._model = model
         self._meta = model_of(model)
+        self._layouts = layout_catalog_of(model)
         self._port = port
         self._dialect = dialect
 
@@ -103,7 +104,7 @@ class AnotherSource:
                 "this source materializes flat graphs only, and the query includes "
                 "a relationship level"
             )
-        result = execute_read(node, self._meta, self._dialect, self._port)
+        result = execute_read(node, self._meta, self._dialect, self._port, layouts=self._layouts)
         return cast("tuple[S, ...]", self._materialize(result.graph))
 
     def produced(self, value: object) -> bool:

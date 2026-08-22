@@ -22,6 +22,7 @@ from typing import cast
 
 from parallax.core import DomainModel
 from parallax.core.entity import graph_construction_of
+from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -44,7 +45,7 @@ from parallax.snapshot.materialize import (
     convert_row,
 )
 
-__all__ = ["GraphBuilder", "documents_of", "identity_of", "invalid_record"]
+__all__ = ["GraphBuilder", "documents_of", "identity_of", "invalid_record", "layout_of"]
 
 _NO_PIN = Pin()
 
@@ -75,6 +76,12 @@ def documents_of(model: Metamodel, identity: EntityIdentity) -> tuple[ValueObjec
     return tuple(position.applicable_value_objects)
 
 
+def layout_of(model: Metamodel, identity: EntityIdentity) -> EntityLayout:
+    """``identity``'s member layout under ``model``, for a suite converting rows
+    without a connection to reach that model's own catalog through."""
+    return LayoutCatalog(model).entity(identity)
+
+
 class GraphBuilder:
     """One graph input under construction, plus the materialization over it.
 
@@ -85,18 +92,21 @@ class GraphBuilder:
     state: the composition root always takes both facts off one Domain Model.
     """
 
-    __slots__ = ("_domain", "_model", "_scope")
+    __slots__ = ("_domain", "_layouts", "_model", "_scope")
 
     def __init__(self, domain: DomainModel, model: Metamodel | None = None) -> None:
         assert class_index(domain) is not None, "the graph suites compose class-backed models"
         self._domain = domain
         self._model = model if model is not None else model_of(domain)
+        self._layouts = LayoutCatalog(self._model)
         self._scope = MergeScope(self._model)
 
     def node(self, entity: str, columns: Mapping[str, object]) -> SnapshotNodeRef:
         """Convert one row of ``entity`` exactly as a level of a read would."""
         identity = identity_of(self._model, entity)
-        context = LevelContext(identity, documents_of(self._model, identity))
+        context = LevelContext(
+            identity, self._layouts.entity(identity), documents_of(self._model, identity)
+        )
         return convert_row(dict(columns), context, self._scope)
 
     def input_of(self, ref: SnapshotNodeRef) -> SnapshotNodeInput:

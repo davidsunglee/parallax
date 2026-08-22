@@ -47,6 +47,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import AttributeAssignment
+from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -140,6 +141,7 @@ def _current_selection(
 def buffer_predicate(
     uow: UnitOfWork,
     meta: Metamodel,
+    layouts: LayoutCatalog,
     conn: DbPort,
     dialect: Dialect,
     mutation: PredicateMutation,
@@ -246,7 +248,7 @@ def buffer_predicate(
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
-    buffer_predicate_instruction(uow, meta, conn, dialect, instruction, attempt)
+    buffer_predicate_instruction(uow, meta, layouts, conn, dialect, instruction, attempt)
 
 
 def _reject_uncomposable_assignments(
@@ -304,6 +306,7 @@ def _reject_uncomposable_assignments(
 def buffer_predicate_instruction(
     uow: UnitOfWork,
     meta: Metamodel,
+    layouts: LayoutCatalog,
     conn: DbPort,
     dialect: Dialect,
     instruction: PredicateWrite,
@@ -370,7 +373,16 @@ def buffer_predicate_instruction(
         uow.buffer(instruction)
         return
     _materialize_predicate_write(
-        uow, meta, conn, dialect, instruction, entity, declaring_entity, version_attr, attempt
+        uow,
+        meta,
+        layouts,
+        conn,
+        dialect,
+        instruction,
+        entity,
+        declaring_entity,
+        version_attr,
+        attempt,
     )
 
 
@@ -407,6 +419,7 @@ def _reject_readless_document_many(
 def _materialize_predicate_write(
     uow: UnitOfWork,
     meta: Metamodel,
+    layouts: LayoutCatalog,
     conn: DbPort,
     dialect: Dialect,
     instruction: PredicateWrite,
@@ -540,7 +553,9 @@ def _materialize_predicate_write(
                 include_value_objects=needs_documents,
             )
             driver_rows = execute_read(conn, dialect, compiled, read)
-            return compiled, stage_publishable_rows(meta, compiled, driver_rows, pin=Pin())
+            return compiled, stage_publishable_rows(
+                meta, compiled, driver_rows, layouts=layouts, pin=Pin()
+            )
 
     compiled, stage = uow.read(resolve)
     structured_column = compiled.structured_column

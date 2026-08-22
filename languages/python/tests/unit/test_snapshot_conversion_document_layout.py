@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 from _document_layout_support import columns_model, document_model, entity
-from _snapshot_graph_support import documents_of
+from _snapshot_graph_support import documents_of, layout_of
 
 from _support.sql import compile_read
 from parallax.conformance import models
@@ -51,6 +51,7 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> Sna
     scope = MergeScope(model)
     context = LevelContext(
         materialized.resolved_entity,
+        layout_of(model, materialized.resolved_entity),
         compiled.projected_documents,
         compiled.attribute_reads(materialized.resolved_entity),
     )

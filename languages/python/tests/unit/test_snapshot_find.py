@@ -28,7 +28,8 @@ from parallax.core import LATEST, TX_TIME, Attr, DomainModel, Entity, ValueObjec
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
@@ -108,6 +109,12 @@ def _refs(value: object) -> tuple[SnapshotNodeRef, ...]:
     return cast("tuple[SnapshotNodeRef, ...]", value)
 
 
+def _layouts(model: Metamodel) -> LayoutCatalog:
+    """``model``'s member layouts, as a connected ``Database`` resolves them once
+    and hands the executor for every read it serves."""
+    return LayoutCatalog(model)
+
+
 class QueuePort:
     """A fake `m-db-port` returning one canned response per `execute()` call,
     in call order — enough to drive the executor's own per-level loop without
@@ -159,7 +166,7 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
             "includes": [{"segments": [{"rel": "Order.items"}]}],
         }
     )
-    result = handle.find(query, ORDERS, POSTGRES, port)
+    result = handle.find(query, ORDERS, POSTGRES, port, layouts=_layouts(ORDERS))
     assert len(port.executed) == 2
     items = _refs(_view(result.graph, _root(result), "items"))
     assert [_value(result.graph, ref, "OrderItem", "id") for ref in items] == [11]
@@ -174,7 +181,7 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
         }
     )
-    result = handle.find(query, ORDERS, POSTGRES, port)
+    result = handle.find(query, ORDERS, POSTGRES, port, layouts=_layouts(ORDERS))
     assert len(port.executed) == 1
     assert result.graph.roots == ()
     assert len(port.executed) == 1
@@ -213,7 +220,7 @@ def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement(
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
         }
     )
-    result = handle.find(query, ORDERS, POSTGRES, port)
+    result = handle.find(query, ORDERS, POSTGRES, port, layouts=_layouts(ORDERS))
     assert len(port.executed) == 2
     assert _view(result.graph, _root(result), "items") == ()
 
@@ -242,7 +249,7 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
         }
     )
-    result = handle.find(query, ORDERS, POSTGRES, port)
+    result = handle.find(query, ORDERS, POSTGRES, port, layouts=_layouts(ORDERS))
     assert len(port.executed) == 2  # the back-reference costs nothing
     (item,) = _refs(_view(result.graph, _root(result), "items"))
     back = _view(result.graph, result.graph.nodes[item.node_index], "order")
@@ -286,7 +293,7 @@ def test_find_carries_a_declared_null_placement_into_child_level_sql(
             "includes": [{"segments": [{"rel": f"Order.{relationship}"}]}],
         }
     )
-    handle.find(query, ORDERS, POSTGRES, port)
+    handle.find(query, ORDERS, POSTGRES, port, layouts=_layouts(ORDERS))
     child_sql, _binds = port.executed[1]
     assert child_sql.endswith(f" order by {term}")
 
@@ -316,7 +323,7 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
             "includes": [{"segments": [{"rel": "Person.animals"}]}],
         }
     )
-    result = handle.find(query, ANIMAL, POSTGRES, port)
+    result = handle.find(query, ANIMAL, POSTGRES, port, layouts=_layouts(ANIMAL))
     (animal,) = _refs(_view(result.graph, _root(result), "animals"))
     node = result.graph.nodes[animal.node_index]
     assert node.concrete_entity == EntityIdentity("parallax.compatibility", "Dog")
@@ -347,7 +354,7 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     query = deserialize_query(
         {"target": "Document", "predicate": {"all": {}}, "narrowTo": ["Invoice"]}
     )
-    result = handle.find(query, DOCUMENT, POSTGRES, port)
+    result = handle.find(query, DOCUMENT, POSTGRES, port, layouts=_layouts(DOCUMENT))
     assert _root(result).concrete_entity == EntityIdentity("parallax.compatibility", "Invoice")
 
 
@@ -379,7 +386,7 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
-    result = handle.find_history(query, INVOICE, POSTGRES, port)
+    result = handle.find_history(query, INVOICE, POSTGRES, port, layouts=_layouts(INVOICE))
     assert len(port.executed) == 1
     assert [g.pin.tx_time for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
@@ -423,7 +430,7 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
-    result = handle.find_history(query, INVOICE, POSTGRES, port)
+    result = handle.find_history(query, INVOICE, POSTGRES, port, layouts=_layouts(INVOICE))
     assert len(result.graphs) == 1
     graph = result.graphs[0]
     assert [
@@ -456,7 +463,7 @@ def test_find_history_classifies_an_invalid_milestone_before_partitioning() -> N
         }
     )
     with pytest.raises(SnapshotDecodingError) as refusal:
-        handle.find_history(query, INVOICE, POSTGRES, port)
+        handle.find_history(query, INVOICE, POSTGRES, port, layouts=_layouts(INVOICE))
     assert refusal.value.member == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "InvoiceLine"), "txStart"
     )
@@ -487,7 +494,7 @@ def test_find_history_refuses_a_root_whose_own_key_never_decoded() -> None:
         }
     )
     with pytest.raises(SnapshotDecodingError) as refusal:
-        handle.find_history(query, INVOICE, POSTGRES, port)
+        handle.find_history(query, INVOICE, POSTGRES, port, layouts=_layouts(INVOICE))
     assert refusal.value.code == "snapshot-decoding-failed"
 
 
@@ -527,7 +534,7 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
             "temporal": {"transaction-time": {"history": {}}, "valid-time": {"asOf": "latest"}},
         }
     )
-    result = handle.find_history(query, RATE, POSTGRES, port)
+    result = handle.find_history(query, RATE, POSTGRES, port, layouts=_layouts(RATE))
     assert [g.pin.tx_time for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 2, 1, tzinfo=_UTC),
@@ -552,7 +559,7 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
         }
     )
     with pytest.raises(ValueError, match="no deep-fetch levels"):
-        handle.find_history(query, policy, POSTGRES, port)
+        handle.find_history(query, policy, POSTGRES, port, layouts=_layouts(policy))
 
 
 # --------------------------------------------------------------------------- #
@@ -956,7 +963,7 @@ def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> N
             "includes": [{"segments": [{"rel": "Animal.owner"}]}],
         }
     )
-    result = handle.find(query, ANIMAL, POSTGRES, port)
+    result = handle.find(query, ANIMAL, POSTGRES, port, layouts=_layouts(ANIMAL))
     assert len(port.executed) == 1
     assert _view(result.graph, _root(result), "owner") is None
 
@@ -987,7 +994,7 @@ def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
         }
     )
-    result = handle.find(query, ORDERS, POSTGRES, port)
+    result = handle.find(query, ORDERS, POSTGRES, port, layouts=_layouts(ORDERS))
     item = next(
         node
         for node in result.graph.nodes

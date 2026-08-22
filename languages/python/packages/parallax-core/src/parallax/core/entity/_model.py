@@ -34,6 +34,7 @@ from parallax.core.entity._errors import (
     MetamodelDefinitionError,
     MetamodelLookupError,
 )
+from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -49,7 +50,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.relationship import view as relationship_view
 
-__all__ = ["ClassIndex", "DomainModel", "class_index", "model_of"]
+__all__ = ["ClassIndex", "DomainModel", "class_index", "layout_catalog_of", "model_of"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,10 +94,16 @@ class DomainModel:
     the identical compiler-owned accepted metadata.
     """
 
-    __slots__ = ("_classes", "_graph_construction", "_model", "_row_codec")
+    __slots__ = ("_classes", "_graph_construction", "_layout_catalog", "_model", "_row_codec")
 
     _model: Metamodel
     _classes: ClassIndex | None
+    _layout_catalog: LayoutCatalog | None
+    """The exact-model member layouts this model reached, created on first reach.
+
+    Typed concretely rather than opaquely, unlike its two siblings: the layouts
+    are stated over the accepted Metamodel alone and their module sits BELOW this
+    one, so naming the type here inverts no edge."""
     _graph_construction: object | None
     """The Entity Graph Construction collaboration this model reached, created on
     first reach. It is typed as opaque here because the construction seam depends
@@ -152,6 +159,7 @@ class DomainModel:
         self._model = model
         self._classes = classes
         self._graph_construction = None
+        self._layout_catalog = None
         self._row_codec = None
 
     @property
@@ -207,6 +215,30 @@ def model_of(model: DomainModel) -> Metamodel:
     surface, which is ``meta(...)`` and ``entities`` alone.
     """
     return model._model  # pyright: ignore[reportPrivateUsage] - first-party seam reads the model's own sealed metamodel
+
+
+def layout_catalog_of(model: DomainModel) -> LayoutCatalog:
+    """``model``'s exact-model layout catalog — the one door to it.
+
+    One per Domain Model, created on first reach and retained by the model, so
+    every read against one model shares the per-Entity layouts derived from it
+    and the retained catalog count is a function of the models a process
+    connects to rather than of the graphs it materializes.
+
+    Unsynchronized check-then-set, like its two capability siblings: a
+    concurrent first reach may build two catalogs and let one overwrite the
+    other, and the loser stays reachable only from the rows already built
+    against it. That is safe because a catalog is a pure function of the
+    accepted immutable Metamodel — two catalogs for one model are structurally
+    identical — and because layout identity is never load-bearing: nothing
+    compares layouts by identity, and every consumer keys by Entity Identity or
+    Value Object Identity, both value types.
+    """
+    catalog = model._layout_catalog  # pyright: ignore[reportPrivateUsage] - first-party seam
+    if catalog is None:
+        catalog = LayoutCatalog(model_of(model))
+        model._layout_catalog = catalog  # pyright: ignore[reportPrivateUsage] - first-party seam
+    return catalog
 
 
 def class_index(model: DomainModel) -> ClassIndex | None:

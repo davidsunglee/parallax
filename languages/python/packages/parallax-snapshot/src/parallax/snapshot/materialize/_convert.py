@@ -57,6 +57,7 @@ from parallax.core.entity._graph_input import (
     ValueObjectOccurrenceInput,
     ValueObjectRecord,
 )
+from parallax.core.entity._layout import EntityLayout
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -124,15 +125,20 @@ class LevelContext:
 
     ``concrete_entity`` is the exact Entity that row's own compiled read resolved
     it to — a per-row fact under table-per-hierarchy, which is why it travels
-    here rather than being re-derived from a synthetic tag. ``documents`` is the
-    resolved position's own `Document` tier contributors, decided once where the
-    projection was, so no level re-projects a family superset of its own.
-    ``attribute_reads`` carries each compiled projection's logical identity,
-    physical column, actual driver key, and decode contract intact. This keeps an
-    encoded result such as ``payload_hex`` attached to physical ``payload``.
+    here rather than being re-derived from a synthetic tag. ``layout`` is that
+    exact Entity's model-owned member layout, which is where the applicable
+    member set and its order come from: it is fixed by the model, so it is
+    derived once per Entity and shared by every row rather than re-resolved per
+    conversion. ``documents`` is the resolved position's own `Document` tier
+    contributors, decided once where the projection was, so no level re-projects
+    a family superset of its own. ``attribute_reads`` carries each compiled
+    projection's logical identity, physical column, actual driver key, and decode
+    contract intact. This keeps an encoded result such as ``payload_hex``
+    attached to physical ``payload``.
     """
 
     concrete_entity: EntityIdentity
+    layout: EntityLayout
     documents: tuple[ValueObjectMetadata, ...] = ()
     attribute_reads: tuple[_AttributeReadContract, ...] = ()
 
@@ -261,13 +267,13 @@ def convert_row(
     """
     projected = _document_columns(level)
     issues: list[StoredDataIssueInput] = [
-        _translate_finding(finding, level, scope.model) for finding in findings
+        _translate_finding(finding, level) for finding in findings
     ]
     if family_tag_unknown:
         issues.append(StoredDataIssueInput("stored-data-family-tag-unknown", level.concrete_entity))
     attributes: list[EntityAttributeInput] = []
     result_keys = {contract.identity: contract for contract in level.attribute_reads}
-    for attribute in _applicable_attributes(scope.model, level.concrete_entity):
+    for attribute in level.layout.attributes:
         contract = result_keys.get(attribute.identity)
         result_key = attribute.storage.name if contract is None else contract.result_key
         if result_key not in row:
@@ -293,7 +299,7 @@ def convert_row(
         ):
             attributes.append(EntityAttributeInput(attribute.identity, value))
     value_objects: list[ValueObjectOccurrenceInput] = []
-    for occurrence in _applicable_value_objects(scope.model, level.concrete_entity):
+    for occurrence in level.layout.occurrences:
         if occurrence.storage.name not in projected:
             continue
         raw = row.get(occurrence.storage.name)
@@ -402,26 +408,6 @@ def observable_columns(
 
 def _document_columns(level: LevelContext) -> frozenset[str]:
     return frozenset(member.storage.name for member in level.documents)
-
-
-def _applicable_attributes(
-    model: Metamodel, identity: EntityIdentity
-) -> tuple[AttributeMetadata, ...]:
-    """``identity``'s family-effective Attributes — inherited ones under their own
-    declaring identity, which is how an ancestor's member reaches a concrete."""
-    position = inheritance_view(model).entity(identity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        return ()
-    return tuple(position.applicable_attributes)
-
-
-def _applicable_value_objects(
-    model: Metamodel, identity: EntityIdentity
-) -> tuple[ValueObjectMetadata, ...]:
-    position = inheritance_view(model).entity(identity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        return ()
-    return tuple(position.applicable_value_objects)
 
 
 # --------------------------------------------------------------------------- #
@@ -550,14 +536,12 @@ def _structure(document: Mapping[str, object], declared: _VoContainer) -> ValueO
     )
 
 
-def _translate_finding(
-    finding: DocumentFinding, level: LevelContext, model: Metamodel
-) -> StoredDataIssueInput:
+def _translate_finding(finding: DocumentFinding, level: LevelContext) -> StoredDataIssueInput:
     path = _logical_path(finding.path)
     occurrence = next(
         (
             declared
-            for declared in _applicable_value_objects(model, level.concrete_entity)
+            for declared in level.layout.occurrences
             if path and declared.identity.path[-1] == path[0]
         ),
         None,
@@ -565,7 +549,7 @@ def _translate_finding(
     attribute = next(
         (
             declared
-            for declared in _applicable_attributes(model, level.concrete_entity)
+            for declared in level.layout.attributes
             if path and declared.identity.name == path[0]
         ),
         None,

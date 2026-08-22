@@ -65,7 +65,8 @@ from parallax.core.entity import (
     graph_construction_of,
     row_codec_of,
 )
-from parallax.core.entity._model import class_index, model_of
+from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.entity._model import class_index, layout_catalog_of, model_of
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -207,9 +208,10 @@ class _UnattemptedBoundary(Exception):
 
 @dataclass(frozen=True, slots=True)
 class _ConnectedModel:
-    """The model one ``Database`` serves: its accepted metadata, the Entity Row
-    Codec every write derives its rows through, and — for a class-backed model —
-    the Entity Graph Construction collaboration that materializes rows into
+    """The model one ``Database`` serves: its accepted metadata, the exact-model
+    layout catalog every read converts its rows against, the Entity Row Codec
+    every write derives its rows through, and — for a class-backed model — the
+    Entity Graph Construction collaboration that materializes rows into
     instances of the classes it composed.
 
     Owned by the Database rather than by any query value, and carrying no
@@ -220,14 +222,15 @@ class _ConnectedModel:
     capability behind ONE seam: there is no second capability bag to widen when a
     new entry point (a Session) reaches the same materializer.
 
-    The two capabilities are held as two references rather than as one composite
-    value, and only one of them can be absent: a row is derived from accepted
-    metadata alone, so a descriptor-backed model — which composes no Entity
-    Class — reaches a fully functional codec while reaching no materializer at
-    all.
+    The capabilities are held as separate references rather than as one
+    composite value, and only one of them can be absent: a row and a member
+    layout are both derived from accepted metadata alone, so a
+    descriptor-backed model — which composes no Entity Class — reaches a fully
+    functional codec and catalog while reaching no materializer at all.
     """
 
     meta: Metamodel
+    layouts: LayoutCatalog
     codec: EntityRowCodec
     construction: EntityGraphConstruction | None
 
@@ -320,6 +323,7 @@ class Database:
             )
         self._connected = _ConnectedModel(
             meta=model_of(model),
+            layouts=layout_catalog_of(model),
             codec=row_codec_of(model),
             construction=(None if class_index(model) is None else graph_construction_of(model)),
         )
@@ -460,10 +464,24 @@ class Database:
         ) as read:
             if scans_an_axis(node):
                 return publication.from_history(
-                    find_history(node, self._meta, self._dialect, self._port, read=read)
+                    find_history(
+                        node,
+                        self._meta,
+                        self._dialect,
+                        self._port,
+                        layouts=self._connected.layouts,
+                        read=read,
+                    )
                 )
             return publication.from_find(
-                find(node, self._meta, self._dialect, self._port, read=read)
+                find(
+                    node,
+                    self._meta,
+                    self._dialect,
+                    self._port,
+                    layouts=self._connected.layouts,
+                    read=read,
+                )
             )
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
@@ -487,7 +505,14 @@ class Database:
         preflight(query, model=self._meta, form="rows")
         root = open_read_root(self._lifecycle, target=query.target, interface="ROWS")
         with root as read:
-            return find_rows(query, self._meta, self._dialect, self._port, read=read)
+            return find_rows(
+                query,
+                self._meta,
+                self._dialect,
+                self._port,
+                layouts=self._connected.layouts,
+                read=read,
+            )
 
     def transact[T](
         self,
@@ -621,6 +646,7 @@ class Database:
                                 uow,
                                 conn,
                                 self._meta,
+                                self._connected.layouts,
                                 self._dialect,
                                 construction,
                                 codec,

@@ -25,7 +25,7 @@ from typing import Any, cast
 
 import pytest
 from _metamodel_support import Declaration, key, source
-from _snapshot_graph_support import documents_of, identity_of
+from _snapshot_graph_support import documents_of, identity_of, layout_of
 from _transact_support import NoIoPort
 
 from _support.db_port import body_outcome
@@ -265,7 +265,9 @@ def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() ->
     scope = MergeScope(CUSTOMER_META)
     ref = convert_row(
         {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
-        LevelContext(identity, documents_of(CUSTOMER_META, identity)),
+        LevelContext(
+            identity, layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)
+        ),
         scope,
     )
     (published,) = wire_roots(
@@ -827,7 +829,11 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
     scope = MergeScope(_VARIANT_MODEL)
     ref = convert_row(
         materialized.values,
-        LevelContext(materialized.resolved_entity, compiled.documents),
+        LevelContext(
+            materialized.resolved_entity,
+            layout_of(_VARIANT_MODEL, materialized.resolved_entity),
+            compiled.documents,
+        ),
         scope,
     )
     (root,) = wire_roots(

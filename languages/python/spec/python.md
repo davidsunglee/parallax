@@ -2144,6 +2144,24 @@ or descriptor authoring form and performs no audit stamping.
   Construction operations are emitted directly from that transient merge
   state into Entity Graph Construction; no `_MergedNode`-equivalent graph plan
   is permitted.
+- **Exact-model member layouts.** Which members a resolved concrete Entity
+  carries, in what order, where its Attribute / Value Object boundary falls,
+  which positions its family's primary key occupies, and what canonical order
+  its relationship views take are fixed by the accepted Metamodel alone. They
+  MUST be derived per exact Entity and shared, never rebuilt per row, per graph,
+  or per execution. A model whose accepted metadata fixes no such row — two
+  members claiming one position, or a family primary key the row does not
+  express — is refused where the layout is derived, as a raised error rather
+  than a stored-data classification.
+
+  A layout is owned by the exact model it was derived from, reached through one
+  door, and derived on first reach of the Entity it describes. Concurrent first
+  reach may publish more than one layout for a key, and every layout for one key
+  is interchangeable, so no layout's identity is load-bearing. Retained layout
+  count and size are a function of the models a process connects to and the
+  Entities its reads address, and are independent of the number of graphs
+  materialized. No process-global cache, weak cache, data-keyed cache, or
+  query-result cache participates.
 - **Deterministic graph order.** Merged logical nodes receive their zero-based
   allocation index by deterministic first-encounter preorder: roots in result
   order; relationships on each node in accepted metadata declaration order;
@@ -4152,21 +4170,29 @@ common-runtime, Snapshot, or Postgres scope imports the descriptor package.
 
 The enforcement unit is the **scope**, not a package's `__all__`: an importer
 granted `parallax.core.entity` reaches every module that scope owns, private
-ones included. Three Snapshot modules use that grant for six names the Entity
+ones included. Three Snapshot modules use that grant for seven names the Entity
 frontend deliberately does not export — `parallax.snapshot._inspection` and
 `parallax.snapshot.handle._write_inputs` read declarations from
 `parallax.core.entity._declaration` (`declaration_of`, `is_entity_class`,
 `members_of`), `parallax.snapshot.handle._write_inputs` reads the merged
 member-name correspondences from `parallax.core.entity._entity`
 (`wire_names_of`), and `parallax.snapshot.handle._database` reads the accepted
-Metamodel and the class index from `parallax.core.entity._model` (`model_of`,
-`class_index`). Each is a seam between two first-party packages that a developer
+Metamodel, the class index, and the exact-model layout catalog from
+`parallax.core.entity._model` (`model_of`, `class_index`, `layout_catalog_of`).
+Each is a seam between two first-party packages that a developer
 never needs, so exporting the names to spell the reach publicly would widen the
 developer surface to serve one lifecycle package. None of the three modules
 takes a scope row of its own: they belong to `parallax.core.entity`, whose edge
-every importer above already declares, and `parallax.core.entity._expressions`
-and `._graph_input` carry rows below because each needs a NARROWER grant than its
-parent — not because they are the only children an importer may reach.
+every importer above already declares, and `parallax.core.entity._expressions`,
+`._graph_input`, and `._layout` carry rows below because each needs a NARROWER
+grant than its parent — not because they are the only children an importer may
+reach.
+
+`parallax.core.entity._layout` is reached the other way round. It carries a row
+of its own because row-to-graph materialization needs the member layouts without
+the frontend's own closure, so every Snapshot module that carries one
+connection's layout catalog names that declared scope directly rather than
+reaching a private module through the parent's edge.
 
 `parallax.core.object_query._fluent` is the one child scope declared for the
 opposite reason: it needs a WIDER grant than its parent. The typed Object Query is
@@ -4244,7 +4270,7 @@ it.
 | Execution lifecycle recorder (support, isolated child of `parallax.core.execution_lifecycle`) | `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` | generated forbidden contracts |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot row-to-graph conversion and Graph Input carriers (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
+| Snapshot row-to-graph conversion and Graph Input carriers (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `parallax.core.entity._layout`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
@@ -4256,6 +4282,7 @@ it.
 | Entity and Object Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` | generated forbidden contracts |
 | Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Entity graph-input carriers (support, child of `parallax.core.entity`) | `parallax.core.entity._graph_input` | `parallax.core.entity._graph_input` | `m-metamodel` | generated forbidden contracts |
+| Exact-model member layouts (support, child of `parallax.core.entity`) | `parallax.core.entity._layout` | `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
@@ -4310,6 +4337,9 @@ parallax.core.object_query._fluent --> parallax.core.metamodel
 parallax.core.object_query._fluent --> parallax.core.predicate
 parallax.core.object_query._fluent --> parallax.core.entity
 parallax.core.entity._graph_input --> parallax.core.metamodel
+parallax.core.entity._layout --> parallax.core.metamodel
+parallax.core.entity._layout --> parallax.core.inheritance
+parallax.core.entity._layout --> parallax.core.relationship
 parallax.core.execution_lifecycle.testing --> parallax.core.execution_lifecycle
 parallax.snapshot._inspection --> parallax.core.entity
 parallax.snapshot._inspection --> parallax.core.metamodel
@@ -4341,6 +4371,7 @@ parallax.snapshot.handle --> parallax.core.txtime_write
 parallax.snapshot.handle --> parallax.core.bitemp_write
 parallax.snapshot._read_result --> parallax.snapshot.materialize
 parallax.snapshot.materialize --> parallax.core.entity._graph_input
+parallax.snapshot.materialize --> parallax.core.entity._layout
 parallax.snapshot.materialize --> parallax.core.deep_fetch
 parallax.snapshot.materialize --> parallax.core.document_codec
 parallax.snapshot.materialize --> parallax.core.metamodel
@@ -4469,13 +4500,17 @@ parallax.postgres --> parallax.core.dialect
   points, and the residue is an enumerated set rather than a habit: the
   `parallax.core.entity` seams the adapter composes descriptor-backed models
   through — `_model.model_of` in both its corpus-model loader and its
-  second-frontend fixture, and
+  second-frontend fixture, `_model.layout_catalog_of` in the latter, and
   `parallax.core.object_query._fluent.object_query_node` in the latter. All
-  three are **rebutted rather than exempted**: `model_of` and `object_query_node`
+  four are **rebutted rather than exempted**: `model_of` and `object_query_node`
   are already accepted private seams of production's own composition root and
   read preflight, and `model_of` exists precisely so a separately distributed
   frontend can read the accepted model out of a Domain Model (*Canonical
-  descriptor input*), which is what the adapter is doing. Widening
+  descriptor input*), which is what the adapter is doing. `layout_catalog_of` is
+  accepted for the same composition root and for the same reason the second
+  frontend needs it: a source that drives the production find executor reaches
+  its model's one layout catalog through the one door, rather than building a
+  second catalog beside it. Widening
   `parallax.core.entity`'s shipped surface to serve a development-only consumer
   of a documented first-party seam would be the wrong repair. The `m-descriptor`
   record graph is **not** in the set: corpus models reach the adapter through the

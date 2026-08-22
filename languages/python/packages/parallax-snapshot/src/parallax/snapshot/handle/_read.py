@@ -81,6 +81,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import EntityGraphConstruction
+from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import INERT, ReadActivity
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
@@ -368,6 +369,7 @@ def find(
     dialect: Dialect,
     port: DbPort,
     *,
+    layouts: LayoutCatalog,
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,
     read: ReadActivity = INERT,
@@ -402,6 +404,11 @@ def find(
     Returns the whole Snapshot Graph Input — every projection, the root
     references in result order, and the query's own lowered pin — plus the
     Source Hint each observed projection's value will carry.
+
+    ``layouts`` is the connected model's own exact-model layout catalog, which
+    every level's conversion reads its applicable member set from. It travels
+    beside ``meta`` rather than being derived here, so one connection's reads
+    share one catalog whatever they address.
 
     ``preference`` is the owning unit of work's Concurrency Preference, and
     EVERY level derives its own read lock from it against that level's own
@@ -438,7 +445,7 @@ def find(
         result_form="instance",
         lock=entity_read_lock(meta, root_entity.identity, preference),
     )
-    root_refs = _convert_level(scope, port, dialect, root_compiled, read, observations)
+    root_refs = _convert_level(scope, layouts, port, dialect, root_compiled, read, observations)
 
     level_refs: list[tuple[SnapshotNodeRef, ...]] = []
     for level in plan_.levels:
@@ -460,7 +467,9 @@ def find(
             result_form="instance",
             lock=entity_read_lock(meta, child_query.target, preference),
         )
-        child_refs = _convert_level(scope, port, dialect, child_compiled, read, observations)
+        child_refs = _convert_level(
+            scope, layouts, port, dialect, child_compiled, read, observations
+        )
         _attach_children(scope, meta, level, parents, child_refs)
         level_refs.append(child_refs)
 
@@ -500,6 +509,7 @@ def stage_publishable_rows(
     compiled: CompiledRead,
     rows: Sequence[Mapping[str, object]],
     *,
+    layouts: LayoutCatalog,
     pin: Pin,
 ) -> StagedRows:
     """Materialize and validate one flat row batch before lane-specific use.
@@ -510,7 +520,7 @@ def stage_publishable_rows(
     for one. Both apply the publication gate to the staging graph before deriving
     milestones, observations, or writes.
     """
-    staged = stage_rows(meta, compiled, rows, pin=pin)
+    staged = stage_rows(meta, compiled, rows, layouts=layouts, pin=pin)
     require_publishable(staged.merge)
     return staged
 
@@ -520,6 +530,7 @@ def stage_rows(
     compiled: CompiledRead,
     rows: Sequence[Mapping[str, object]],
     *,
+    layouts: LayoutCatalog,
     pin: Pin,
 ) -> StagedRows:
     """Materialize and merge one flat row batch before lane-specific use.
@@ -533,6 +544,7 @@ def stage_rows(
     contexts = tuple(
         LevelContext(
             row.resolved_entity,
+            layouts.entity(row.resolved_entity),
             compiled.projected_documents,
             compiled.attribute_reads(row.resolved_entity),
         )
@@ -561,6 +573,7 @@ def find_rows(
     dialect: Dialect,
     port: DbPort,
     *,
+    layouts: LayoutCatalog,
     preference: Concurrency | None = None,
     read: ReadActivity = INERT,
 ) -> RowsResult:
@@ -603,6 +616,7 @@ def find_rows(
         meta,
         compiled,
         rows,
+        layouts=layouts,
         pin=query_pin(query, declaring_metadata(meta, root_entity.identity)),
     )
     for item in stage.rows:
@@ -639,6 +653,7 @@ def find_history(
     dialect: Dialect,
     port: DbPort,
     *,
+    layouts: LayoutCatalog,
     read: ReadActivity = INERT,
 ) -> HistoryFindResult:
     """The milestone-set snapshot read (m-snapshot-read "The whole-graph pin";
@@ -674,6 +689,7 @@ def find_history(
         meta,
         compiled,
         execute_read(port, dialect, compiled, read),
+        layouts=layouts,
         pin=Pin(),
     )
 
@@ -694,6 +710,7 @@ def find_history(
 
 def _convert_level(
     scope: MergeScope,
+    layouts: LayoutCatalog,
     port: DbPort,
     dialect: Dialect,
     compiled: CompiledRead,
@@ -726,6 +743,7 @@ def _convert_level(
     for row in _execute_compiled(port, dialect, compiled, read):
         context = LevelContext(
             row.resolved_entity,
+            layouts.entity(row.resolved_entity),
             compiled.projected_documents,
             compiled.attribute_reads(row.resolved_entity),
         )
