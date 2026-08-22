@@ -42,7 +42,6 @@ from types import MappingProxyType
 from typing import Any, Final, Self, SupportsIndex, cast
 
 from parallax.core.base import INFINITY_LITERAL, TemporalBound
-from parallax.core.entity._graph_input import ValueObjectRecord
 from parallax.core.inheritance import family_variant_name
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -58,9 +57,9 @@ from parallax.core.metamodel import (
 from parallax.core.unit_work import SourceHint
 from parallax.core.wire import encode_wire
 from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
-from parallax.snapshot.materialize._input import RelationshipViewKey
+from parallax.snapshot.materialize._graph import ABSENT, RelationshipViewKey
 from parallax.snapshot.materialize._invalid import InvalidData
-from parallax.snapshot.materialize._merge import GraphMerge, MergedNode
+from parallax.snapshot.materialize._merge import GraphMerge
 
 __all__ = [
     "EMPTY_UNWIND",
@@ -395,7 +394,7 @@ class _Unwind:
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        entity = self._build(self._merge.node(index), subtree)
+        entity = self._build(index, subtree)
         # Two positions reaching one merged node under one subtree answer the
         # identical object and therefore the identical claim, exactly as two
         # positions reaching one Entity instance do in the typed lane.
@@ -403,32 +402,37 @@ class _Unwind:
         self._cache[key] = entity
         return entity
 
-    def _build(self, merged: MergedNode, subtree: UnwindTree) -> _WireEntityNode:
-        entity = merged.concrete_entity
+    def _build(self, node: int, subtree: UnwindTree) -> _WireEntityNode:
+        layout = self._merge.layout(node)
+        values = self._merge.member_values(node)
         rendered: dict[str, WireValue] = {}
-        declared_attributes = _declared_attributes(self._model, entity)
-        for entry in merged.attributes:
-            attribute = declared_attributes.get(entry.identity)
-            if attribute is None:  # pragma: no cover - a projection names a declared member
-                continue
-            _put(rendered, entry.identity.name, _leaf(attribute, entry.value))
-        variant = _family_variant(self._model, entity)
+        for position, attribute in enumerate(layout.attributes):
+            value = values[position]
+            if value is not ABSENT:
+                _put(rendered, attribute.identity.name, _leaf(attribute, value))
+        variant = _family_variant(self._model, layout.concrete)
         if variant is not None:
             _put(rendered, FAMILY_VARIANT_KEY, variant)
-        declared_occurrences = _declared_value_objects(self._model, entity)
-        for entry in merged.value_objects:
-            occurrence = declared_occurrences.get(entry.identity)
-            if occurrence is None:  # pragma: no cover - conversion walks the same declaration
-                continue
-            _put(rendered, entry.identity.path[-1], _occurrence(entry.value, occurrence, _STORED))
-        loaded = {entry.view: entry.value for entry in merged.views}
+        for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count):
+            value = values[position]
+            if value is not ABSENT:
+                _put(
+                    rendered,
+                    occurrence.identity.path[-1],
+                    _occurrence(value, occurrence, _STORED),
+                )
+        view_layout = self._merge.view_layout(node)
         for view, child in subtree.children.items():
             # A view the node never received is a level a path-root guard excluded
-            # this parent from: its key is absent, which is what unloaded means.
-            if view not in loaded:
+            # this parent from: it holds no slot, which is what unloaded means.
+            slot = view_layout.index_of.get(view)
+            if slot is None:
+                continue
+            value = self._merge.view(node, slot)
+            if value is ABSENT:  # pragma: no cover - a carried slot is a loaded one
                 continue
             key = view.narrowed_view or view.relationship.name
-            _put(rendered, key, self._related(loaded[view], child))
+            _put(rendered, key, self._related(value, child))
         return _frozen_mapping(_WireEntityNode, rendered)
 
     def _related(self, value: object, subtree: UnwindTree) -> WireValue:
@@ -477,39 +481,48 @@ class _Carrier:
     asks of it: what a ``many`` value's elements are, and which members one record
     holds, under their declared names.
 
-    A stored :class:`ValueObjectRecord` and an authored write document hold the
-    same value differently — identity-keyed entries against a plain mapping — and
-    nothing else about publication differs, so the walk is shared and only the
-    lookup varies. That is what keeps the node a Wire insert answers and the node
-    a read publishes describing one row the same way.
+    A stored member row and an authored write document hold the same value
+    differently — a positional row against a plain mapping — and nothing else
+    about publication differs, so the walk is shared and only the lookup varies.
+    That is what keeps the node a Wire insert answers and the node a read
+    publishes describing one row the same way.
     """
 
     elements: Callable[[object], Sequence[object]]
-    entries: Callable[[object], Mapping[str, object]]
+    entries: Callable[[object, _VoContainer], Mapping[str, object]]
 
 
 def _stored_elements(value: object) -> Sequence[object]:
     return cast("Sequence[object]", value) if isinstance(value, tuple) else ()
 
 
-def _stored_entries(record: object) -> Mapping[str, object]:
-    """One stored record's members by declared name — empty for anything that is
-    not a record, which holds no member of any name."""
-    return (
-        {
-            **{entry.identity.name: entry.value for entry in record.attributes},
-            **{entry.identity.path[-1]: entry.value for entry in record.value_objects},
-        }
-        if isinstance(record, ValueObjectRecord)
-        else {}
-    )
+def _stored_entries(record: object, declared: _VoContainer) -> Mapping[str, object]:
+    """One stored member row's members by declared name.
+
+    The row is positional against ``declared``'s own leaves and then its nested
+    occurrences, so a name is read off the declaration at the position it sits
+    at. An absent position contributes no name, which is what makes a member the
+    stored document did not carry absent from the published mapping too.
+    """
+    if not isinstance(record, tuple):  # pragma: no cover - a One slot is a row or null
+        return {}
+    row = cast("tuple[object, ...]", record)
+    held: dict[str, object] = {}
+    for position, leaf in enumerate(declared.attributes):
+        if row[position] is not ABSENT:
+            held[leaf.identity.name] = row[position]
+    for position, nested in enumerate(declared.value_objects, start=len(declared.attributes)):
+        if row[position] is not ABSENT:
+            held[nested.identity.path[-1]] = row[position]
+    return held
 
 
 def _authored_elements(value: object) -> Sequence[object]:
     return cast("Sequence[object]", value) if isinstance(value, list | tuple) else ()
 
 
-def _authored_entries(document: object) -> Mapping[str, object]:
+def _authored_entries(document: object, declared: _VoContainer) -> Mapping[str, object]:
+    del declared
     return cast("Mapping[str, object]", document) if isinstance(document, Mapping) else {}
 
 
@@ -542,7 +555,7 @@ def _held_members(record: object, declared: _VoContainer, carrier: _Carrier) -> 
     renders. An insert's carrier is its own opening row, complete by the rule
     :func:`opened_wire_entity` states.
     """
-    held = carrier.entries(record)
+    held = carrier.entries(record, declared)
     published: dict[str, WireValue] = {}
     for leaf in declared.attributes:
         name = leaf.identity.name

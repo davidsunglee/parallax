@@ -40,6 +40,7 @@ from typing import Protocol
 
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
+    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     MemberIdentity,
@@ -111,6 +112,11 @@ class EntityLayout:
     except under ``TablePerConcreteSubtype``, where each concrete owns an
     independent primary-key namespace and normalizing would conflate two
     different rows that merely share a key value.
+
+    ``temporal_ends`` names the Attributes whose stored value may be the open
+    temporal bound. The declaring family owns its as-of axes, so which of a
+    concrete's Attributes close an interval is family-wide and fixed here rather
+    than re-resolved through the inheritance facet once per stored value.
     """
 
     concrete: EntityIdentity
@@ -121,6 +127,7 @@ class EntityLayout:
     attributes: tuple[AttributeMetadata, ...]
     occurrences: tuple[ValueObjectMetadata, ...]
     value_objects: tuple[ValueObjectLayout, ...]
+    temporal_ends: frozenset[AttributeIdentity]
     _primary_key: tuple[int, ...]
     _relationship_order: Mapping[str, int]
 
@@ -217,9 +224,18 @@ class LayoutCatalog:
             attributes=attributes,
             occurrences=occurrences,
             value_objects=tuple(_occurrence_layout(occurrence) for occurrence in occurrences),
+            temporal_ends=self._temporal_ends(position.root),
             _primary_key=self._key_positions(identity, position.root, index_of),
             _relationship_order=_relationship_order(self._model, position.ancestry),
         )
+
+    def _temporal_ends(self, root: EntityIdentity) -> frozenset[AttributeIdentity]:
+        """The family's interval-closing Attributes, under the identities a
+        concrete descendant reaches them by."""
+        declaring = self._model.entity(root)
+        if declaring is None:  # pragma: no cover - an accepted model declares every family root
+            return frozenset()
+        return frozenset(axis.end_attribute for axis in declaring.declared_as_of_axes)
 
     def _key_positions(
         self,

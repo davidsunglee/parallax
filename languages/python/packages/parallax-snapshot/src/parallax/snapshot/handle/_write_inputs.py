@@ -395,7 +395,7 @@ class ReadObservations:
 
 type ReadSources = Mapping[int, SourceHint]
 """The Source Hint each observed projection's value carries, keyed by that
-projection's own index in the read's Snapshot Graph Input.
+projection's own index in the read's sealed graph.
 
 Only the executor can build this pairing: it alone holds the row and the
 projection it converted into at the same time, and by the time a materializer

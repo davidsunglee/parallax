@@ -81,27 +81,16 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.handle._database", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._database", "_model"): frozenset({"cataloged_model", "class_index"}),
     ("parallax.snapshot.handle._predicate_writes", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel", "LayoutCatalog"}),
+    ("parallax.snapshot.handle._materializer", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._transaction", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._write_inputs", "_declaration"): frozenset({"declaration_of"}),
     ("parallax.snapshot.handle._write_inputs", "_entity"): frozenset({"wire_names_of"}),
     ("parallax.snapshot.handle._wire_writes", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.snapshot.materialize._classify", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._convert", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.snapshot.materialize._convert", "_graph_input"): frozenset(
-        {
-            "EntityAttributeInput",
-            "ValueObjectAttributeInput",
-            "ValueObjectOccurrenceInput",
-            "ValueObjectRecord",
-        }
-    ),
-    ("parallax.snapshot.materialize._input", "_graph_input"): frozenset(
-        {"EntityAttributeInput", "ValueObjectOccurrenceInput"}
-    ),
-    ("parallax.snapshot.materialize._merge", "_graph_input"): frozenset(
-        {"EntityAttributeInput", "ValueObjectOccurrenceInput"}
-    ),
-    ("parallax.snapshot.materialize._wire", "_graph_input"): frozenset({"ValueObjectRecord"}),
+    ("parallax.snapshot.materialize._graph", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.snapshot.materialize._merge", "_layout"): frozenset({"EntityLayout"}),
 }
 
 
@@ -183,18 +172,29 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
 # through the public `domain_model_from_*` doors and reads the accepted model's
 # own vocabulary, so no `parallax.descriptor` private module is reached at all.
 #
-# `cataloged_model` is the second-frontend fixture's only addition, and it
+# `cataloged_model` is one of the second-frontend fixture's two additions, and it
 # subsumes `model_of` there: it drives the production find executor, which
 # converts every row against the connected model's own layouts, so it takes the
 # accepted model and the layout catalog paired with it through the one door
 # rather than reading either half separately or building a second catalog beside
 # it.
 #
+# `ABSENT` is the other. That fixture is a SECOND managed value lifecycle, so it
+# merges and constructs for itself rather than driving the Snapshot
+# materializer's own private drive; reading a compact member row is what its
+# construction does, and the one sentinel that row spells absence with is the
+# whole of what it needs to read one. The alternative is a second sentinel, which
+# would be a value equal to nothing the rows actually hold.
+#
 # Keyed by REACHING module for the same reason the snapshot inventory is.
 ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.another_source", "parallax.core.entity._model"): frozenset(
         {"cataloged_model"}
     ),
+    (
+        "parallax.conformance.another_source",
+        "parallax.snapshot.materialize._graph",
+    ): frozenset({"ABSENT"}),
     ("parallax.conformance.another_source", "parallax.core.object_query._fluent"): frozenset(
         {"ObjectQuery", "object_query_node"}
     ),

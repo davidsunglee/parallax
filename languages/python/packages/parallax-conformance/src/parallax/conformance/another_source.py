@@ -10,7 +10,7 @@ a value some OTHER source produced — which is the provenance a case states as
 This module is the second source, supplied by the adapter rather than shipped:
 :class:`AnotherSource` runs its own query through the shared find executor and
 then materializes what that read returned ITSELF — its own merge over the
-Snapshot Graph Input, its own Entity Graph Construction drive, and its own
+the sealed graph a read answered, its own Entity Graph Construction drive, and
 per-node state, which the Snapshot never attached and therefore never claims.
 :meth:`AnotherSource.produced` is the definition's other half: a source
 recognizes its own. So a value arranged here is a value a managed read of a
@@ -38,21 +38,34 @@ from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import (
     DomainModel,
+    EntityAttributeInput,
     EntityGraphWriter,
     NodeHandle,
+    ValueObjectAttributeInput,
+    ValueObjectOccurrenceInput,
+    ValueObjectRecord,
     graph_construction_of,
     lifecycle_state_of,
 )
 from parallax.core.entity._model import cataloged_model
+from parallax.core.metamodel import (
+    Multiplicity,
+    NestedValueObjectMetadata,
+    ValueObjectMetadata,
+)
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle import find as execute_read
 from parallax.snapshot.materialize import (
-    SnapshotGraphInput,
+    GraphMerge,
+    SnapshotGraph,
     merge_graph_input,
     require_publishable,
 )
+from parallax.snapshot.materialize._graph import ABSENT
 
 __all__ = ["AnotherSource"]
+
+_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,23 +129,77 @@ class AnotherSource:
         state = lifecycle_state_of(value)
         return isinstance(state, _AnotherSourceState) and state.source is self
 
-    def _materialize(self, graph: SnapshotGraphInput) -> tuple[object, ...]:
+    def _materialize(self, graph: SnapshotGraph) -> tuple[object, ...]:
         """``graph``'s roots as instances carrying this source's own state.
 
         Every relationship slot is left to the writer's unloaded sentinel: a
         level-free read carries no merged view to install, which :meth:`find`
         guarantees by refusing a deep fetch.
+
+        The translation from the merge's compact rows into the writer's carriers
+        is this source's OWN, deliberately: what makes a second source second is
+        that it merges, translates, and constructs for itself rather than
+        borrowing the Snapshot materializer's private drive. Both translations
+        die together when the writer takes compact rows directly.
         """
-        merge = merge_graph_input(graph, self._model.meta)
+        merge = merge_graph_input(graph)
         require_publishable(merge)
 
         def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
             handles = [writer.allocate(identity) for identity in merge.order]
             for index, handle in enumerate(handles):
-                node = merge.node(index)
-                writer.populate(handle, node.attributes, node.value_objects, ())
+                writer.populate(handle, *_carriers(merge, index), ())
             return tuple(handles[index] for index in merge.roots if index is not None)
 
         return graph_construction_of(self._domain).construct(
             build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
         )
+
+
+def _carriers(
+    merge: GraphMerge, node: int
+) -> tuple[tuple[EntityAttributeInput, ...], tuple[ValueObjectOccurrenceInput, ...]]:
+    """One merged node's member row as the writer's Attribute and Value Object
+    carriers. A position no read carried contributes no entry, which is what the
+    carrier algebra means by absence."""
+    layout = merge.layout(node)
+    values = merge.member_values(node)
+    attributes = tuple(
+        EntityAttributeInput(attribute.identity, values[position])
+        for position, attribute in enumerate(layout.attributes)
+        if values[position] is not ABSENT
+    )
+    occurrences = tuple(
+        ValueObjectOccurrenceInput(occurrence.identity, _occurrence(values[position], occurrence))
+        for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count)
+        if values[position] is not ABSENT
+    )
+    return attributes, occurrences
+
+
+def _occurrence(
+    value: object, declared: _VoContainer
+) -> ValueObjectRecord | tuple[ValueObjectRecord, ...] | None:
+    if declared.multiplicity is Multiplicity.MANY:
+        rows = cast("tuple[object, ...]", value) if isinstance(value, tuple) else ()
+        return tuple(_record(cast("tuple[object, ...]", row), declared) for row in rows)
+    if value is None:
+        return None
+    return _record(cast("tuple[object, ...]", value), declared)
+
+
+def _record(row: tuple[object, ...], declared: _VoContainer) -> ValueObjectRecord:
+    return ValueObjectRecord(
+        attributes=tuple(
+            ValueObjectAttributeInput(leaf.identity, row[position])
+            for position, leaf in enumerate(declared.attributes)
+            if row[position] is not ABSENT
+        ),
+        value_objects=tuple(
+            ValueObjectOccurrenceInput(nested.identity, _occurrence(row[position], nested))
+            for position, nested in enumerate(
+                declared.value_objects, start=len(declared.attributes)
+            )
+            if row[position] is not ABSENT
+        ),
+    )

@@ -10,7 +10,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.snapshot.materialize._input import StoredDataIssueInput
+from parallax.snapshot.materialize._graph import StoredDataIssueInput
 from parallax.snapshot.materialize._merge import GraphMerge
 
 SNAPSHOT_DECODING_FAILED: Final[str] = "snapshot-decoding-failed"
@@ -42,9 +42,9 @@ def publication_issue(merge: GraphMerge) -> StoredDataIssueInput | None:
     if not merge.has_issues:
         return None
     for index in range(len(merge.order)):
-        node = merge.node(index)
-        if node.issues:
-            return node.issues[0]
+        issues = merge.issues(index)
+        if issues:
+            return issues[0]
     raise AssertionError("an issue-bearing graph merge has no reachable issue")  # pragma: no cover
 
 

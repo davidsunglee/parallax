@@ -29,7 +29,6 @@ from _corpus_model_support import corpus, target
 from _corpus_model_support import model as corpus_model
 
 from parallax.conformance import models
-from parallax.core.entity import EntityAttributeInput
 from parallax.core.entity._layout import (
     CatalogedModel,
     EntityLayout,
@@ -52,15 +51,8 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import (
-    RelationshipViewKey,
-    SnapshotGraphInput,
-    SnapshotNodeInput,
-    SnapshotNodeRef,
-    SnapshotRelationshipViewInput,
-    logical_key,
-    merge_graph_input,
-)
+from parallax.snapshot.materialize import RelationshipViewKey, merge_graph_input
+from parallax.snapshot.materialize._graph import GraphBuilder
 
 _NAMESPACE = "parallax.compatibility"
 _COMPOSITE_KEY = frozenset({"id", "sku"})
@@ -392,40 +384,45 @@ def test_ordered_answers_an_empty_selection_and_a_single_view_unchanged() -> Non
 # --------------------------------------------------------------------------- #
 
 
-def _projection(layout: EntityLayout, row: tuple[object, ...]) -> SnapshotNodeInput:
-    """One projection of ``layout``'s Entity carrying ``row``'s value at each of
-    its Attribute positions, which is what makes a positional row and a
-    member-keyed projection two spellings of one thing."""
-    return SnapshotNodeInput(
-        concrete_entity=layout.concrete,
-        attributes=tuple(
-            EntityAttributeInput(attribute.identity, row[position])
-            for position, attribute in enumerate(layout.attributes)
-        ),
-    )
+def _merged(layout: EntityLayout, row: tuple[object, ...], views: tuple[RelationshipViewKey, ...]):
+    """One projection of ``layout``'s Entity carrying ``row`` and ``views``,
+    merged — the state every consumer of these two rules reads them through."""
+    builder = GraphBuilder()
+    projection = builder.add(layout, row)
+    for view in views:
+        builder.write_view(projection, view, None)
+    return merge_graph_input(builder.seal((projection,), Pin()))
 
 
 def _merged_view_order(
-    model: Metamodel, layout: EntityLayout, views: tuple[RelationshipViewKey, ...]
+    layout: EntityLayout, views: tuple[RelationshipViewKey, ...]
 ) -> tuple[RelationshipViewKey, ...]:
     """The order projection merging walks and publishes ``views`` in."""
-    node = dataclasses.replace(
-        _projection(layout, tuple(range(len(layout.members)))),
-        relationship_views=tuple(SnapshotRelationshipViewInput(view, None) for view in views),
-    )
-    graph = SnapshotGraphInput(nodes=(node,), roots=(SnapshotNodeRef(0),), pin=Pin())
-    return tuple(entry.view for entry in merge_graph_input(graph, model).node(0).views)
+    row = tuple(range(len(layout.members)))
+    return _merged(layout, row, views).view_layout(0).slots
 
 
 def test_every_corpus_entitys_family_and_key_agree_with_the_merge_identity_rule() -> None:
+    # Two projections of one row share a logical node exactly where the layout
+    # says their keys agree, which is the merge-side statement of `family` and
+    # `key_of` together — the builder derives identity through no other rule.
     for stem, model, identity, layout in _corpus_layouts():
+        del model
         where = (stem, identity.canonical)
         row = tuple(range(100, 100 + len(layout.members)))
-        key = logical_key(model, _projection(layout, row))
-        assert key is not None, where
-        family, columns = key
-        assert family == layout.family, where
-        assert layout.key_of(row) == (columns[0] if len(columns) == 1 else columns), where
+        other = tuple(value + 1 for value in row)
+        builder = GraphBuilder()
+        first = builder.add(layout, row)
+        again = builder.add(layout, row)
+        apart = builder.add(layout, other)
+        merge = merge_graph_input(builder.seal((first, again, apart), Pin()))
+        assert merge.roots == (0, 0, 1), where
+        assert builder_key_of(layout, row) != builder_key_of(layout, other), where
+
+
+def builder_key_of(layout: EntityLayout, row: tuple[object, ...]) -> tuple[EntityIdentity, object]:
+    """The graph-local identity the builder assigns ``row``, spelled as one value."""
+    return layout.family, layout.key_of(row)
 
 
 def test_a_composite_key_agrees_with_the_merge_identity_rule_as_a_whole_tuple() -> None:
@@ -433,12 +430,24 @@ def test_a_composite_key_agrees_with_the_merge_identity_rule_as_a_whole_tuple() 
     doctored = _with_composite_key(corpus_model("orders"), identity)
     layout = LayoutCatalog(doctored).entity(identity)
     row = tuple(range(200, 200 + len(layout.members)))
-    key = logical_key(doctored, _projection(layout, row))
-    assert key is not None
-    family, columns = key
-    assert family == layout.family
-    assert len(columns) == len(_COMPOSITE_KEY)
-    assert layout.key_of(row) == columns
+    key = layout.key_of(row)
+    assert isinstance(key, tuple)
+    assert len(cast("tuple[object, ...]", key)) == len(_COMPOSITE_KEY)
+    # One column of the composite differing is a different logical node, which a
+    # single-column key spelling could not distinguish.
+    first_column = min(
+        layout.index_of[attribute.identity]
+        for attribute in layout.attributes
+        if attribute.identity.name in _COMPOSITE_KEY
+    )
+    varied = tuple(
+        value + 1 if position == first_column else value for position, value in enumerate(row)
+    )
+    builder = GraphBuilder()
+    first = builder.add(layout, row)
+    apart = builder.add(layout, varied)
+    merge = merge_graph_input(builder.seal((first, apart), Pin()))
+    assert merge.roots == (0, 1)
 
 
 def test_the_layouts_view_order_is_the_order_the_merge_walks_and_publishes() -> None:
@@ -452,7 +461,7 @@ def test_the_layouts_view_order_is_the_order_the_merge_walks_and_publishes() -> 
         _key("Person", "animals"),
         _key("Person", "animals", "animals[Cat]"),
     )
-    assert layout.ordered(scrambled) == _merged_view_order(model, layout, scrambled)
+    assert layout.ordered(scrambled) == _merged_view_order(layout, scrambled)
 
 
 # --------------------------------------------------------------------------- #

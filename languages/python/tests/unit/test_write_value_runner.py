@@ -18,9 +18,10 @@ from typing import Any
 import pytest
 from _transact_support import FIXED, NoIoPort, RecordingPort
 
-from parallax.conformance import case_format, write_value_runner
+from parallax.conformance import case_format, vo_models, write_value_runner
 from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
+from parallax.core.base import PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
@@ -201,3 +202,52 @@ def test_a_graded_mismatch_is_loud_in_either_direction(
 
     with pytest.raises(AssertionError, match=message):
         _db(port).transact(fn)
+
+
+def test_the_second_source_builds_its_own_value_objects_at_every_depth() -> None:
+    # A source that recognizes its own has to BUILD its own, and building one is
+    # reading a compact member row: what a merged node holds at a Value Object
+    # position is a positional row per occurrence, and this source turns those
+    # into the writer's own records itself rather than borrowing the Snapshot
+    # materializer's private drive. The recursive composite is what states it —
+    # a top-level One, a nested One, and a nested Many, each at a depth the walk
+    # has to reach on its own.
+    port = RecordingPort(
+        rows=[
+            {
+                "id": 7,
+                "name": "Ada",
+                "address": PresentDocument(
+                    {
+                        "street": "1 Park Ave",
+                        "city": "Oslo",
+                        "geo": {"country": "NO", "elevation": 10.5, "point": None},
+                        "phones": [{"type": "home", "number": "555"}],
+                    }
+                ),
+            }
+        ]
+    )
+    another = AnotherSource(vo_models.CUSTOMER_MODEL, port)
+
+    (value,) = another.find(vo_models.Customer.where(vo_models.Customer.id == 7))
+
+    assert another.produced(value)
+    address = value.address
+    assert address is not None
+    assert (address.street, address.city) == ("1 Park Ave", "Oslo")
+    assert address.geo is not None
+    assert (address.geo.country, address.geo.elevation, address.geo.point) == ("NO", 10.5, None)
+    assert [(phone.type, phone.number) for phone in address.phones] == [("home", "555")]
+
+
+def test_the_second_source_leaves_an_unstored_occurrence_out_of_what_it_builds() -> None:
+    # The complement, and the one the positional row makes worth stating: a
+    # column the row holds no document in reads as absence, and absence is an
+    # entry the writer never receives rather than a record holding nothing.
+    port = RecordingPort(rows=[{"id": 8, "name": "Bo", "address": None}])
+    another = AnotherSource(vo_models.CUSTOMER_MODEL, port)
+
+    (value,) = another.find(vo_models.Customer.where(vo_models.Customer.id == 8))
+
+    assert value.address is None

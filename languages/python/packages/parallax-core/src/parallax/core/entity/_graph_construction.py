@@ -5,8 +5,8 @@ Exposed from ``parallax.core.entity`` and deliberately **not** from top-level
 Entity instances through, not developer surface.
 
 The immutable carriers it is stated in live in the sibling
-:mod:`parallax.core.entity._graph_input` scope, so a lifecycle package building
-Snapshot Graph Input can be granted that algebra without being granted this
+:mod:`parallax.core.entity._graph_input` scope, so a lifecycle package
+materializing Entities can be granted that algebra without being granted this
 collaboration.
 
 The collaboration owns everything about turning those carriers into Entity

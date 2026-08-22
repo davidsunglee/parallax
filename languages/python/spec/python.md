@@ -1995,101 +1995,97 @@ or descriptor authoring form and performs no audit stamping.
   document omitting one is not invalid, and materialization populates the field
   as `()` for it under the read contract above. The same rules apply recursively
   at every nesting depth.
-- **Exact immutable Graph Input carriers.** Snapshot Graph Input is a private
-  first-party graph of frozen slotted records and exact built-in tuples:
+- **The sealed Snapshot graph.** A materializing read builds its whole graph
+  through one private first-party builder and publishes it by sealing: the
+  builder's accumulation arrays transfer into an opaque `SnapshotGraph` and the
+  builder is invalidated in the same step, so nothing observes a half-published
+  graph and nothing writes to a published one. Projection merging accepts a
+  sealed graph only. A result holder carrying one reads no row, layout, edge,
+  identity, or issue off it and holds nothing to read one with; the whole-graph
+  pin is the one fact it publishes, because a Snapshot publishes that pin.
 
-  ```text
-  SnapshotGraphInput
-    nodes: tuple[SnapshotNodeInput, ...]
-    roots: tuple[SnapshotNodeRef | InvalidRootInput, ...]
-    pin: Pin
-    has_issues: bool
+  A graph carries, per projection: a reference to the exact-model member layout
+  its row is read against, one positional `member_values` tuple, one relationship
+  view row, one dense graph-local logical-node ID, and its classified stored-data
+  issues where it has any. Nothing wraps a cell: a position holds the decoded
+  value itself, and no per-cell record, member dictionary, or member-keyed entry
+  stands between the row and the value. Absence is spelled rather than omitted,
+  because a positional row cannot omit, by ONE private sentinel this
+  implementation owns:
 
-  SnapshotNodeRef
-    node_index: int
+  | spelling | meaning |
+  | --- | --- |
+  | `ABSENT` | absent or unloaded, and what an undecodable cell becomes beside its issue |
+  | `None` | an explicit null |
+  | `()` | loaded empty, a Many with zero occurrences included |
+  | a member row | one Value Object occurrence, in its declaration order |
+  | a tuple of member rows | a Many occurrence, order preserved |
+  | `int` / `tuple[int, ...]` | a to-one / to-many relationship edge, by projection index |
 
-  InvalidRootInput
-    ordinal: int
-    issues: tuple[StoredDataIssueInput, ...]
+  The sentinel is not the document codec's own `MISSING` or `UNAVAILABLE`, which
+  are consumed and discarded inside decoding, and it never escapes as a final
+  public value: a consumer of a row either skips an absent position or is refused
+  before publication.
 
-  SnapshotNodeInput
-    concrete_entity: EntityIdentity
-    attributes: tuple[EntityAttributeInput, ...]
-    value_objects: tuple[ValueObjectOccurrenceInput, ...]
-    relationship_views: tuple[SnapshotRelationshipViewInput, ...]
-    issues: tuple[StoredDataIssueInput, ...]
+  Edges and roots are exact nonnegative built-in `int` projection indexes. A
+  `bool`, a non-`int`, a negative index, and an index past the graph's own
+  projections are each refused where the edge or root is recorded, so a graph
+  that exists is a graph whose references resolve and no whole-graph validation
+  pass stands between building one and merging it. Two entries for one member or
+  one view within a projection are unrepresentable rather than rejected: a member
+  has one position and a view is written by key. `roots` order and the tuple
+  inside a loaded-many relationship view are semantic and preserved; projection
+  order is not. Separate projections may resolve to one logical node; those are
+  the duplicate projections the materializer merges. A view never written is
+  unloaded, while a written `None` or empty tuple is loaded-null or loaded-empty.
+  A root whose primary key is null or undecodable is represented by
+  `InvalidRootInput`, whose ordinal IS its result position: its result ordinal and
+  classified issues survive, but it contributes no logical identity and is never
+  hydrated.
 
-  EntityAttributeInput
-    identity: AttributeIdentity
-    value: NeutralValue | None
+  Milestone processing imports immutable projection rows out of a sealed staging
+  graph into a new builder, keeping each row's layout, member row, and issues by
+  reference. It reconstructs no second graph and decodes nothing twice.
 
-  SnapshotRelationshipViewInput
-    view: RelationshipViewKey
-    value:
-        None
-      | SnapshotNodeRef
-      | tuple[SnapshotNodeRef, ...]
-  ```
-
-  A `SnapshotNodeRef` is an immutable reference to an entry in `nodes`; its
-  node index is an exact nonnegative built-in `int`, is not the later
-  deterministic allocation index, and has no public meaning. References rather
-  than recursively embedded records make shared and cyclic inputs constructible
-  without a mutable carrier. `roots` order and the tuple inside a loaded-many
-  relationship are semantic and preserved. The `nodes` tuple order is
-  non-semantic. Within one `SnapshotNodeInput`, Attribute-entry, Value
-  Object-entry, and relationship-view-entry tuple order is also non-semantic;
-  Graph Input validation indexes those member/view entries by structured
-  identity and rejects a duplicate within that node. Separate node records may
-  resolve to the same logical graph identity; those are the duplicate
-  projections that the materializer merges. Out-of-range node references are
-  rejected before merging. Omission of a Relationship View entry means
-  unloaded, while a present `None` or empty tuple means loaded-null or
-  loaded-empty. A root whose primary key is null or undecodable is represented
-  by `InvalidRootInput`: its result ordinal and classified issues survive, but it
-  contributes no logical identity and is never hydrated. `has_issues` is set by
-  the builder whenever any node carries an issue; publication still limits its
-  verdict to nodes reachable from the requested roots.
-
-  Entity Graph Construction accepts the same immutable scalar and Value Object
-  carriers. Its build callback returns exactly
-  `tuple[NodeHandle, ...]`; `EntityGraphWriter.populate(...)` accepts
-  `tuple[EntityAttributeInput, ...]`,
+  Entity Graph Construction keeps its own carrier algebra. Its build callback
+  returns exactly `tuple[NodeHandle, ...]`; `EntityGraphWriter.populate(...)`
+  accepts `tuple[EntityAttributeInput, ...]`,
   `tuple[ValueObjectOccurrenceInput, ...]`, and
   `tuple[EntityRelationshipInput, ...]`, where
   `EntityRelationshipInput` is a frozen slotted pair of
   `RelationshipIdentity` and
   `Unloaded | LoadedNull | LoadedOne(NodeHandle) |
   LoadedMany(tuple[NodeHandle, ...])`. No mapping, abstract sequence, mutable
-  collection, or caller-defined collection subtype crosses either seam.
-- **Value Object graph-input carriers.** Snapshot Graph Input and Entity Graph
-  Construction share one exact recursive immutable algebra:
-  `ValueObjectRecord` is a frozen slotted record containing
-  `tuple[ValueObjectAttributeInput, ...]` and
-  `tuple[ValueObjectOccurrenceInput, ...]`;
-  `ValueObjectAttributeInput` is a frozen slotted pair of exact
-  `ValueObjectAttributeIdentity` and `NeutralValue | None`; and
-  `ValueObjectOccurrenceInput` is a frozen slotted pair of exact
-  `ValueObjectIdentity` and
-  `None | ValueObjectRecord | tuple[ValueObjectRecord, ...]`. Absence is
-  represented only by omission of the corresponding entry. Mutable mappings
-  or sequences, raw document dictionaries, Pydantic Value Objects, and a
-  separate frozen-map abstraction do not cross this seam. Attribute-entry and
-  nested-occurrence-entry tuple order is non-semantic: Entity Graph
-  Construction indexes entries by structured identity, rejects duplicates,
-  and validates and constructs them in accepted metadata declaration order.
-  Only a Many occurrence's record tuple has semantic order, preserved exactly.
-  Conversion from physical structured-document values into this algebra owns
+  collection, or caller-defined collection subtype crosses that seam. A node's
+  carriers are synthesized from its compact row immediately before its own
+  `populate` call and are unreachable once it returns, so peak carrier cost is
+  one node's worth whatever the graph's size and neither the graph nor the merge
+  retains one.
+- **Value Object member rows.** A Value Object occurrence slot holds `ABSENT`,
+  `None`, one member row, or a tuple of member rows, decided by the occurrence's
+  declared multiplicity rather than by the value's shape: a One admits
+  `ABSENT | None | row` and a Many admits `ABSENT | tuple[row, ...]`. A member row
+  is an exact built-in tuple laid out by the model-owned Value Object layout for
+  that exact, path-specific `ValueObjectIdentity` — the occurrence's own leaves in
+  declaration order, then its nested occurrences in theirs — and the same rule
+  applies recursively at every depth. A member the stored document did not carry
+  holds `ABSENT` at its own position, which is how presence survives a row that
+  cannot omit. Mutable mappings or sequences, raw document dictionaries, Pydantic
+  Value Objects, and a separate frozen-map abstraction do not cross this seam.
+  Only a Many occurrence's tuple has semantic order, preserved exactly; a member
+  row's order is the declaration's.
+
+  Conversion from physical structured-document values into these rows owns
   stored-document presence, container-shape, and Neutral Value validation. It
-  records the closed `StoredDataIssueInput` vocabulary on the node rather than
-  raising: required-member absent/null, one/many wrong-kind, undecodable leaf,
-  non-nullable Entity Attribute null, unknown family tag, and null/undecodable
-  primary key. A `StoredDataIssueInput` carries the concrete Entity, applicable
-  member identity when one exists, and a path whose member-name strings remain
-  distinct from integer array positions. Entity Graph Construction nevertheless
-  revalidates every identity, duplicate, occurrence shape, and Neutral Value;
-  invalid direct first-party input raises `GraphConstructionError` with
-  `entity-graph-invalid-member` or
+  records the closed `StoredDataIssueInput` vocabulary on the projection rather
+  than raising: required-member absent/null, one/many wrong-kind, undecodable
+  leaf, non-nullable Entity Attribute null, unknown family tag, and
+  null/undecodable primary key. A `StoredDataIssueInput` carries the concrete
+  Entity, applicable member identity when one exists, and a path whose
+  member-name strings remain distinct from integer array positions. Entity Graph
+  Construction nevertheless revalidates every identity, duplicate, occurrence
+  shape, and Neutral Value; invalid direct first-party input raises
+  `GraphConstructionError` with `entity-graph-invalid-member` or
   `entity-graph-invalid-value`. A public Snapshot read reaches that path only
   through an implementation defect.
 - **Document-resident nullability and classification.** A **document-resident** position — a Value
@@ -2148,22 +2144,39 @@ or descriptor authoring form and performs no audit stamping.
   atomic publication means everything constructible publishes together. A graph
   carrying no issue is answered without a reachability walk and constructs
   unfiltered and unwrapped.
-- **Single graph input.** Projection merging may retain a transient logical
-  identity index, references to input projections, and slot-level winner
-  references. It MUST NOT clone each node's scalar, Value Object, and
-  relationship payloads into a second graph-sized merged representation.
-  Construction operations are emitted directly from that transient merge
-  state into Entity Graph Construction; no `_MergedNode`-equivalent graph plan
-  is permitted.
+- **Single graph.** Projection merging is a read-only INDEXED interface over one
+  sealed graph, and every consumer — classification, the typed materializer, and
+  the wire materializer — reads it directly. It answers by reference into
+  something it or its graph already holds: a logical node's member row IS the
+  winning projection's row, and a second call for one node answers the identical
+  object rather than an equal composition of it.
+
+  It MAY retain the logical-node-to-allocation mapping, the projection-to-
+  allocation mapping, the allocation order, the winning projection per logical
+  node, its accumulated issues, and one fixed relationship view row per logical
+  node aligned to that node's merged view layout. It MUST NOT retain per-cell
+  Snapshot carriers, member dictionaries, or any merged object graph — it does
+  not clone a node's scalar and Value Object payloads into a second graph-sized
+  merged representation, and no per-node record composed out of them is
+  permitted, whether retained or composed per call. Construction operations are
+  emitted directly out of that indexed state into Entity Graph Construction.
 - **Exact-model member layouts.** Which members a resolved concrete Entity
   carries, in what order, where its Attribute / Value Object boundary falls,
-  which positions its family's primary key occupies, and what canonical order
-  its relationship views take are fixed by the accepted Metamodel alone. They
+  which positions its family's primary key occupies, which of its Attributes may
+  hold the open temporal bound, and what canonical order its relationship views
+  take are fixed by the accepted Metamodel alone. They
   MUST be derived per exact Entity and shared, never rebuilt per row, per graph,
   or per execution. A model whose accepted metadata fixes no such row — two
   members claiming one position, or a family primary key the row does not
   express — is refused where the layout is derived, as a raised error rather
   than a stored-data classification.
+
+  A row is read against its layout and against nothing else: a graph-local
+  logical identity is computed once, while the graph is built, through the
+  layout's own primary-key positions, and merging consumes the resulting dense
+  IDs without re-extracting or re-hashing a key. Duplicate valid keys within one
+  Entity family share an ID; a projection whose key did not decode takes an ID of
+  its own and merges with nothing.
 
   A layout is owned by the exact model it was derived from, reached through one
   door, and derived on first reach of the Entity it describes. The collaboration
@@ -2187,10 +2200,12 @@ or descriptor authoring form and performs no audit stamping.
   order; relationships on each node in accepted metadata declaration order;
   the broad view before that relationship's narrowed views; narrowed views by
   canonical effective concrete-identity set; and children in to-many result
-  order. A repeated logical node reuses its first index. Population and
-  lifecycle-state factory invocation both follow allocation order. Every
-  node-indexed error uses that index, and the first missing population is the
-  lowest unpopulated index.
+  order. That order is a relationship view SLOT order, established by the
+  exact-model member layout's own rule and read by index: a walk visits a node's
+  views in declaration order without sorting one. A repeated logical node reuses
+  its first index. Population and lifecycle-state factory invocation both follow
+  allocation order. Every node-indexed error uses that index, and the first
+  missing population is the lowest unpopulated index.
 - **Entity Graph Construction surface.** The collaboration is reached from
   `parallax.core.entity` and is deliberately absent from top-level
   `parallax.core`:
@@ -2333,7 +2348,7 @@ or descriptor authoring form and performs no audit stamping.
   other dimension can
   hide the deferred Feature from this seam or divert a scan away from the
   milestone-set executor. The milestone-set executor converts every returned row
-  into graph input and applies the shared publication gate before reading a
+  into one staging graph and applies the shared publication gate before reading a
   milestone edge or sort key. An unavailable temporal start is therefore a
   `StoredDataIssueInput` and then a `SnapshotDecodingError`, never a temporal
   partitioning or sorting error; only clean rows are grouped by edge.
@@ -3351,11 +3366,11 @@ These feature tests do not claim the deferred `benchmark` command or general
   which planning resolves to an identity before keying.
 - **A read observation's carrier stays physical.** The carrier an observation
   records is keyed by **physical column**, and that is settled rather than
-  interim. Snapshot Graph Input structurally cannot carry the raw Structured
+  interim. A projection row structurally cannot carry the raw Structured
   Column, which a temporal observation retains so a successor is patched from
   what the row held rather than rebuilt from the members the model declares
   (ADR 0042). Collection happens at the read executor while the row is live,
-  deliberately upstream of Graph Input, which is the only point at which the row
+  deliberately upstream of the graph, which is the only point at which the row
   and the projection it converts into are both in hand. And physical keying is the
   carrier's purpose rather than its convenience: it is a faithful record of a
   persisted row for a later SQL comparison, not a projection of the model.
@@ -4291,7 +4306,7 @@ it.
 | Execution lifecycle recorder (support, isolated child of `parallax.core.execution_lifecycle`) | `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` | generated forbidden contracts |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot row-to-graph conversion and Graph Input carriers (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `parallax.core.entity._layout`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
+| Snapshot row-to-graph conversion and the sealed graph (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `parallax.core.entity._layout`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
@@ -4534,7 +4549,17 @@ parallax.postgres --> parallax.core.dialect
   rather than reading either half separately or building a second catalog beside
   it. Widening `parallax.core.entity`'s shipped surface to serve a
   development-only consumer of a documented first-party seam would be the wrong
-  repair. The `m-descriptor` record graph is **not** in the set: corpus models
+  repair.
+
+  One further reach leaves that package: the second-frontend fixture reads
+  `parallax.snapshot.materialize._graph.ABSENT`. It is a second managed value
+  lifecycle, so it merges the graph a read answered and constructs from it
+  **itself** rather than driving the Snapshot materializer's own private drive,
+  and reading a compact member row is what constructing from one is. The sole
+  sentinel a row spells absence with is therefore the whole of what it needs, and
+  a second sentinel of its own would be a value equal to nothing the rows hold.
+  Publishing the sentinel instead would make an implementation-private absence
+  marker developer surface, which *The sealed Snapshot graph* forbids. The `m-descriptor` record graph is **not** in the set: corpus models
   reach the adapter through the public `domain_model_from_*` doors and are read
   through the accepted model's own vocabulary, so no `parallax.descriptor`
   private module is imported at all. Each reach is keyed by the module that
