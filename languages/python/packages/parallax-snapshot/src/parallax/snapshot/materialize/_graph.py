@@ -8,8 +8,10 @@ model, its issues. Nothing wraps a cell: what a row holds at a position is the
 decoded value itself.
 
 Absence stops being spelled by omission, because a positional row has no way to
-omit. :data:`ABSENT` carries it, and the four spellings stay mutually distinct at
-every depth:
+omit. :data:`~parallax.core.entity._row.ABSENT` carries it — the one sentinel the
+common runtime owns beside the member layouts a row is read against, re-exported
+here because this is where the Snapshot's absence algebra is stated — and the
+four spellings stay mutually distinct at every depth:
 
 ===============================  =========================================
 ``ABSENT``                       absent or unloaded, and what an
@@ -45,6 +47,7 @@ from typing import Final, Literal, cast
 
 from parallax.core.document_codec import DocumentPathSegment
 from parallax.core.entity._layout import EntityLayout
+from parallax.core.entity._row import ABSENT
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -57,7 +60,6 @@ from parallax.core.temporal_read import Pin
 
 __all__ = [
     "ABSENT",
-    "Absent",
     "GraphBuilder",
     "GraphRows",
     "InvalidRootInput",
@@ -68,26 +70,6 @@ __all__ = [
     "StoredDataIssueInput",
     "graph_rows",
 ]
-
-
-class Absent:
-    """The type of :data:`ABSENT`, named so a reader can spell the test."""
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:
-        return "ABSENT"
-
-
-ABSENT: Final[Absent] = Absent()
-"""Snapshot's one absent-or-unloaded sentinel, private to this runtime.
-
-Deliberately not the document codec's ``MISSING`` or ``UNAVAILABLE``, which are
-consumed and discarded inside decoding and describe a stored document rather
-than a materialized row. It never escapes as a final public value: every
-consumer of a row either skips an absent position or is refused before
-publication.
-"""
 
 
 type StoredDataIssueCode = Literal[

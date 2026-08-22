@@ -38,34 +38,22 @@ from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import (
     DomainModel,
-    EntityAttributeInput,
     EntityGraphWriter,
     NodeHandle,
-    ValueObjectAttributeInput,
-    ValueObjectOccurrenceInput,
-    ValueObjectRecord,
     graph_construction_of,
     lifecycle_state_of,
 )
 from parallax.core.entity._model import cataloged_model
-from parallax.core.metamodel import (
-    Multiplicity,
-    NestedValueObjectMetadata,
-    ValueObjectMetadata,
-)
+from parallax.core.entity._row import member_carriers
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle import find as execute_read
 from parallax.snapshot.materialize import (
-    GraphMerge,
     SnapshotGraph,
     merge_graph_input,
     require_publishable,
 )
-from parallax.snapshot.materialize._graph import ABSENT
 
 __all__ = ["AnotherSource"]
-
-_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,10 +124,11 @@ class AnotherSource:
         level-free read carries no merged view to install, which :meth:`find`
         guarantees by refusing a deep fetch.
 
-        The translation from the merge's compact rows into the writer's carriers
-        is this source's OWN, deliberately: what makes a second source second is
-        that it merges, translates, and constructs for itself rather than
-        borrowing the Snapshot materializer's private drive.
+        What makes a second source second is that it merges and constructs for
+        itself rather than driving the Snapshot materializer's own. The
+        row-to-carrier translation is neither: it is a function of the
+        model-owned layout and the carrier algebra, so this source reads a row
+        the one way the common runtime reads one.
         """
         merge = merge_graph_input(graph)
         require_publishable(merge)
@@ -147,58 +136,12 @@ class AnotherSource:
         def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
             handles = [writer.allocate(identity) for identity in merge.order]
             for index, handle in enumerate(handles):
-                writer.populate(handle, *_carriers(merge, index), ())
+                attributes, occurrences = member_carriers(
+                    merge.layout(index), merge.member_values(index)
+                )
+                writer.populate(handle, attributes, occurrences, ())
             return tuple(handles[index] for index in merge.roots if index is not None)
 
         return graph_construction_of(self._domain).construct(
             build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
         )
-
-
-def _carriers(
-    merge: GraphMerge, node: int
-) -> tuple[tuple[EntityAttributeInput, ...], tuple[ValueObjectOccurrenceInput, ...]]:
-    """One merged node's member row as the writer's Attribute and Value Object
-    carriers. A position no read carried contributes no entry, which is what the
-    carrier algebra means by absence."""
-    layout = merge.layout(node)
-    values = merge.member_values(node)
-    attributes = tuple(
-        EntityAttributeInput(attribute.identity, values[position])
-        for position, attribute in enumerate(layout.attributes)
-        if values[position] is not ABSENT
-    )
-    occurrences = tuple(
-        ValueObjectOccurrenceInput(occurrence.identity, _occurrence(values[position], occurrence))
-        for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count)
-        if values[position] is not ABSENT
-    )
-    return attributes, occurrences
-
-
-def _occurrence(
-    value: object, declared: _VoContainer
-) -> ValueObjectRecord | tuple[ValueObjectRecord, ...] | None:
-    if declared.multiplicity is Multiplicity.MANY:
-        rows = cast("tuple[object, ...]", value) if isinstance(value, tuple) else ()
-        return tuple(_record(cast("tuple[object, ...]", row), declared) for row in rows)
-    if value is None:
-        return None
-    return _record(cast("tuple[object, ...]", value), declared)
-
-
-def _record(row: tuple[object, ...], declared: _VoContainer) -> ValueObjectRecord:
-    return ValueObjectRecord(
-        attributes=tuple(
-            ValueObjectAttributeInput(leaf.identity, row[position])
-            for position, leaf in enumerate(declared.attributes)
-            if row[position] is not ABSENT
-        ),
-        value_objects=tuple(
-            ValueObjectOccurrenceInput(nested.identity, _occurrence(row[position], nested))
-            for position, nested in enumerate(
-                declared.value_objects, start=len(declared.attributes)
-            )
-            if row[position] is not ABSENT
-        ),
-    )

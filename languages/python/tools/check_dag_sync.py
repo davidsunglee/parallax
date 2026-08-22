@@ -178,6 +178,18 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # carrier producer structurally unable to reach the writer, `construct`, or
     # model formation — the layering rule stays enforced rather than merely asserted.
     "parallax.core.entity._graph_input": frozenset({"parallax.core.metamodel"}),
+    # A positional member row is read against a layout and handed on as carriers,
+    # so the walk between the two is scoped where both are and belongs to no
+    # materializing runtime. Its grants are the two ends and nothing else: a
+    # carrier producer that reached the writer, `construct`, or model formation
+    # would make the layering a convention again, and this row is what refuses it.
+    "parallax.core.entity._row": frozenset(
+        {
+            "parallax.core.metamodel",
+            "parallax.core.entity._layout",
+            "parallax.core.entity._graph_input",
+        }
+    ),
     # The exact-model member layouts are a pure function of the accepted
     # Metamodel, so they are scoped apart from the frontend that owns them and
     # granted only the facets a layout is derived from. Granting them narrowly is
@@ -268,15 +280,16 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot._read_result": frozenset({"parallax.snapshot.materialize"}),
     # The row-to-graph half of `m-snapshot-read`, scoped apart from the read
     # result `parallax.snapshot._read_result` publishes. It holds every
-    # `m-snapshot-read` edge EXCEPT `m-execution-lifecycle`, plus the shared carrier
-    # algebra, which has no language-neutral module tag either. Withholding the
-    # provenance edge here is what keeps `m-sql`, `m-db-error`, `m-auto-retry`
-    # and `m-dialect` outside this scope's closure — and therefore outside the
-    # closure of `parallax.snapshot.handle._materializer`, whose whole reason to
-    # exist is to be forbidden them.
+    # `m-snapshot-read` edge EXCEPT `m-execution-lifecycle`, plus the layout and
+    # row scopes a projection is laid out and read against, neither of which has a
+    # language-neutral module tag either. Withholding the provenance edge here is
+    # what keeps `m-sql`, `m-db-error`, `m-auto-retry` and `m-dialect` outside this
+    # scope's closure — and therefore outside the closure of
+    # `parallax.snapshot.handle._materializer`, whose whole reason to exist is to
+    # be forbidden them.
     "parallax.snapshot.materialize": frozenset(
         {
-            "parallax.core.entity._graph_input",
+            "parallax.core.entity._row",
             "parallax.core.entity._layout",
             "parallax.core.deep_fetch",
             "parallax.core.document_codec",
@@ -358,6 +371,7 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.core.object_query._fluent": "parallax.core.object_query",
     "parallax.core.entity._graph_input": "parallax.core.entity",
     "parallax.core.entity._layout": "parallax.core.entity",
+    "parallax.core.entity._row": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._materializer": "parallax.snapshot.handle",
     "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
@@ -704,8 +718,11 @@ def child_grant_exceptions(adjacency: Mapping[str, frozenset[str]], scope: str) 
     need naming.
 
     A grant naming a CHILD scope is covered when the ancestor containing it is
-    reachable: the ancestor's package covers the child, so that grant adds
-    nothing the subtree could not already import and needs no exception.
+    reachable, or IS ``scope`` itself: the ancestor's package covers the child,
+    so that grant adds nothing the subtree could not already import and needs no
+    exception. The second case is a child granted one of its own siblings — a row
+    can neither forbid nor except what sits inside its own source package, and
+    whatever the sibling reaches further is already reported from the sibling.
 
     Entries are wildcarded over the granted scope's modules because the grant is
     scope-wide while the concrete importee is not derivable here.
@@ -717,7 +734,7 @@ def child_grant_exceptions(adjacency: Mapping[str, frozenset[str]], scope: str) 
         f"{child} -> {grant}.**"
         for child in scope_descendants(scope)
         for grant in adjacency.get(child, frozenset())
-        if grant not in reachable and not (scope_ancestors(grant) & reachable)
+        if grant not in reachable and not (scope_ancestors(grant) & (reachable | {scope}))
     )
 
 
