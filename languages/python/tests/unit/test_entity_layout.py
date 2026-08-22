@@ -1,12 +1,14 @@
 """The exact-model layout catalog: positions, keys, order, and refusals.
 
-Three claims, in the order the catalog fixes them. **Positions** are a function
+Four claims, in the order the catalog fixes them. **Positions** are a function
 of the accepted Metamodel alone, so the whole corpus is graded against the
 family-effective member set every other read path already agrees on.
-**Ownership** is one catalog per Domain Model, reached through one door, with
-entries derived on first reach. **Refusals** are raised errors rather than
-stored-data classifications, because a row cannot contradict a position the
-model itself failed to fix.
+**Agreement** holds the layout's family, logical key, and view order against the
+merge-side rules they restate, so neither statement of either rule can move
+without the other. **Ownership** is one catalog per Domain Model, reached through
+one door, with entries derived on first reach. **Refusals** are raised errors
+rather than stored-data classifications, because a row cannot contradict a
+position the model itself failed to fix.
 
 The defect witnesses are doctored models rather than authored ones: an accepted
 Metamodel is exactly what cannot carry these shapes — formation refuses a
@@ -27,6 +29,7 @@ from _corpus_model_support import corpus, target
 from _corpus_model_support import model as corpus_model
 
 from parallax.conformance import models
+from parallax.core.entity import EntityAttributeInput
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog, ValueObjectLayout
 from parallax.core.entity._model import layout_catalog_of
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
@@ -43,9 +46,19 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     ValueObjectMetadata,
 )
-from parallax.snapshot.materialize import RelationshipViewKey
+from parallax.core.temporal_read import Pin
+from parallax.snapshot.materialize import (
+    RelationshipViewKey,
+    SnapshotGraphInput,
+    SnapshotNodeInput,
+    SnapshotNodeRef,
+    SnapshotRelationshipViewInput,
+    logical_key,
+    merge_graph_input,
+)
 
 _NAMESPACE = "parallax.compatibility"
+_COMPOSITE_KEY = frozenset({"id", "sku"})
 
 
 def _identity(name: str, *, namespace: str | None = _NAMESPACE) -> EntityIdentity:
@@ -274,30 +287,36 @@ def test_an_inherited_key_reads_the_position_the_family_root_declared() -> None:
     assert cat.key_of(row) == row[cat.index_of[key]]
 
 
-def test_a_composite_key_reads_a_tuple_in_the_order_the_family_declared_it() -> None:
-    # No accepted Metamodel carries a composite key — formation admits one
-    # primary-key Attribute per Entity (`metamodel-primary-key-multiple`) — so
-    # the second key column is doctored on after formation accepted the model.
-    model = corpus_model("orders")
-    identity = _identity("Order")
-    declared = corpus_model("orders").entity(identity)
+def _with_composite_key(model: Metamodel, identity: EntityIdentity) -> Metamodel:
+    """``model`` with every ``_COMPOSITE_KEY`` Attribute of ``identity`` declared
+    a primary key.
+
+    No accepted Metamodel carries a composite key — formation admits one
+    primary-key Attribute per Entity (`metamodel-primary-key-multiple`) — so the
+    second key column is doctored on after formation accepted the model.
+    """
+    declared = model.entity(identity)
     assert declared is not None
     composite = _DoctoredEntity(
         declared,
         tuple(
             attribute
-            if attribute.identity.name not in {"id", "sku"}
+            if attribute.identity.name not in _COMPOSITE_KEY
             else dataclasses.replace(attribute, primary_key=PrimaryKey())
             for attribute in declared.declared_attributes
         ),
     )
-    doctored = cast("Metamodel", _DoctoredModel(model, entities={identity: composite}))
-    layout = LayoutCatalog(doctored).entity(identity)
+    return cast("Metamodel", _DoctoredModel(model, entities={identity: composite}))
+
+
+def test_a_composite_key_reads_a_tuple_in_the_order_the_family_declared_it() -> None:
+    identity = _identity("Order")
+    layout = LayoutCatalog(_with_composite_key(corpus_model("orders"), identity)).entity(identity)
     row = tuple(range(200, 200 + len(layout.members)))
     positions = [
         layout.index_of[attribute.identity]
         for attribute in layout.attributes
-        if attribute.identity.name in {"id", "sku"}
+        if attribute.identity.name in _COMPOSITE_KEY
     ]
     assert layout.key_of(row) == tuple(row[position] for position in positions)
 
@@ -361,6 +380,74 @@ def test_ordered_answers_an_empty_selection_and_a_single_view_unchanged() -> Non
     items = _key("Order", "items")
     assert layout.ordered(()) == ()
     assert layout.ordered((items,)) == (items,)
+
+
+# --------------------------------------------------------------------------- #
+# Agreement with the merge-side statements of these same two rules.            #
+# --------------------------------------------------------------------------- #
+
+
+def _projection(layout: EntityLayout, row: tuple[object, ...]) -> SnapshotNodeInput:
+    """One projection of ``layout``'s Entity carrying ``row``'s value at each of
+    its Attribute positions, which is what makes a positional row and a
+    member-keyed projection two spellings of one thing."""
+    return SnapshotNodeInput(
+        concrete_entity=layout.concrete,
+        attributes=tuple(
+            EntityAttributeInput(attribute.identity, row[position])
+            for position, attribute in enumerate(layout.attributes)
+        ),
+    )
+
+
+def _merged_view_order(
+    model: Metamodel, layout: EntityLayout, views: tuple[RelationshipViewKey, ...]
+) -> tuple[RelationshipViewKey, ...]:
+    """The order projection merging walks and publishes ``views`` in."""
+    node = dataclasses.replace(
+        _projection(layout, tuple(range(len(layout.members)))),
+        relationship_views=tuple(SnapshotRelationshipViewInput(view, None) for view in views),
+    )
+    graph = SnapshotGraphInput(nodes=(node,), roots=(SnapshotNodeRef(0),), pin=Pin())
+    return tuple(entry.view for entry in merge_graph_input(graph, model).node(0).views)
+
+
+def test_every_corpus_entitys_family_and_key_agree_with_the_merge_identity_rule() -> None:
+    for stem, model, identity, layout in _corpus_layouts():
+        where = (stem, identity.canonical)
+        row = tuple(range(100, 100 + len(layout.members)))
+        key = logical_key(model, _projection(layout, row))
+        assert key is not None, where
+        family, columns = key
+        assert family == layout.family, where
+        assert layout.key_of(row) == (columns[0] if len(columns) == 1 else columns), where
+
+
+def test_a_composite_key_agrees_with_the_merge_identity_rule_as_a_whole_tuple() -> None:
+    identity = _identity("Order")
+    doctored = _with_composite_key(corpus_model("orders"), identity)
+    layout = LayoutCatalog(doctored).entity(identity)
+    row = tuple(range(200, 200 + len(layout.members)))
+    key = logical_key(doctored, _projection(layout, row))
+    assert key is not None
+    family, columns = key
+    assert family == layout.family
+    assert len(columns) == len(_COMPOSITE_KEY)
+    assert layout.key_of(row) == columns
+
+
+def test_the_layouts_view_order_is_the_order_the_merge_walks_and_publishes() -> None:
+    model = corpus_model("animal")
+    identity = _identity("Person")
+    layout = LayoutCatalog(model).entity(identity)
+    scrambled = (
+        _key("Person", "pets"),
+        _key("Person", "zzz"),
+        _key("Person", "animals", "animals[Dog]"),
+        _key("Person", "animals"),
+        _key("Person", "animals", "animals[Cat]"),
+    )
+    assert layout.ordered(scrambled) == _merged_view_order(model, layout, scrambled)
 
 
 # --------------------------------------------------------------------------- #
