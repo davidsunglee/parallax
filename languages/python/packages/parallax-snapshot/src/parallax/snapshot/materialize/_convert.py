@@ -135,10 +135,16 @@ class LevelContext:
     projection's logical identity, physical column, actual driver key, and decode
     contract intact. This keeps an encoded result such as ``payload_hex``
     attached to physical ``payload``.
+
+    ``layout`` stays out of equality and hashing: it is derived from the model
+    and ``concrete_entity``, so it distinguishes no two contexts that field does
+    not already distinguish, while comparing it would walk a whole shared layout
+    tree and holding it in the hash would cost this context the hashability its
+    scalar fields give it.
     """
 
     concrete_entity: EntityIdentity
-    layout: EntityLayout
+    layout: EntityLayout = field(compare=False)
     documents: tuple[ValueObjectMetadata, ...] = ()
     attribute_reads: tuple[_AttributeReadContract, ...] = ()
 
