@@ -150,7 +150,7 @@ def test_unavailable_entity_document_members_are_not_hydrated_while_retaining_fi
 
 def test_the_layout_is_unobservable_across_a_member_for_member_twin() -> None:
     # The two models declare the same members with the same names, types, and
-    # Columns and differ only in the root's `layout`, so equal converted carriers
+    # Columns and differ only in the root's `layout`, so equal converted rows
     # are the whole claim: nothing below conversion can tell which shape the row
     # was stored in.
     stored_document_value: DocumentValue = {

@@ -345,8 +345,8 @@ def test_a_present_leaf_outside_its_declared_type_is_classified_where_absence_co
     # The two halves of one boundary. A member the document DOES supply in a state
     # the model has — a JSON null, an occurrence of the wrong kind — collapses to
     # null / () as the read predicates do (m-predicate), and a member it supplies
-    # not at all contributes no input, which is how the carrier keeps the document's
-    # own presence. A leaf that IS supplied and decodes into no member of its
+    # not at all reads `ABSENT` at its own position, which is how the row keeps the
+    # document's own presence. A leaf that IS supplied and decodes into no member of its
     # declared value space is a state the model does not have: it is invalid stored
     # data (m-document-codec), so conversion records an issue instead of retaining
     # the raw stored value.
@@ -568,9 +568,10 @@ def test_a_null_top_level_document_collapses_to_an_absent_occurrence() -> None:
 
 def test_an_omitted_nested_one_contributes_nothing_while_an_omitted_many_is_carried_empty() -> None:
     # Presence is the stored document's own fact, so a key it never held reaches
-    # the graph input as nothing rather than as an entry holding the collapse.
-    # That is what keeps the member outside the frozen carrier's
-    # `model_fields_set`, so re-serializing the occurrence cannot spell an
+    # the row as `ABSENT` at its own position rather than as a value holding the
+    # collapse. The writer's carriers are synthesized from the row by skipping
+    # exactly those positions, which is what keeps the member outside the frozen
+    # value's `model_fields_set`, so re-serializing the occurrence cannot spell an
     # omission as an explicit null. What a caller READS for such a member is
     # still `None`; that collapse belongs to construction and is pinned where the
     # frozen value is built.

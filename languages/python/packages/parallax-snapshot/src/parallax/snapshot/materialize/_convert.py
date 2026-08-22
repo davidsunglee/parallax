@@ -12,13 +12,14 @@ SQL row transforms classify and decode projected Entity-document members first,
 then pass their findings, classified-member set, and transformed values here.
 Conversion owns Value Object occurrence reduction after that boundary:
 stored-document presence, container shape, and leaf decoding resolve into
-:class:`~parallax.core.entity._graph_input.ValueObjectOccurrenceInput` /
-:class:`~parallax.core.entity._graph_input.ValueObjectAttributeInput` keyed by
-structured identity. An undeclared stored key never contributes, and every declared
-one contributes an input exactly where the read contract says the value carries it
-(`m-snapshot-read` *What a materialized value carries*) — this is the seam that
-realizes that contract, so a member present here is the same member a getter and a
-published node agree the value has. No raw document mapping continues past here.
+positional member rows laid out by the exact, path-specific Value Object layout,
+recursively at every depth. An undeclared stored key never contributes, and every
+declared one occupies its own position — holding the value exactly where the read
+contract says the value carries it, and ``ABSENT`` where the stored document held
+nothing (`m-snapshot-read` *What a materialized value carries*). This is the seam
+that realizes that contract, so a member present here is the same member a getter
+and a published node agree the value has. No raw document mapping continues past
+here.
 
 :func:`observable_columns` is the deliberate exception, and it is not below the
 seam: an observation is a physical record by contract (`m-unit-work`'s Predecessor
@@ -252,7 +253,7 @@ def observable_columns(
     successor's carried-versus-changed comparison reads one spelling of a member
     rather than two.
 
-    Deliberately outside the graph-input algebra. An observation is physical by
+    Deliberately outside the projection-row algebra. An observation is physical by
     contract, and keeping it a separate function is what stops a column-keyed
     mapping riding along inside a converted node.
     """

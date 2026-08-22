@@ -469,7 +469,7 @@ def _require_edge(value: object, count: int) -> None:
 
 
 def _require_index(value: object, count: int, holder: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError(
             f"{holder} names a projection by an exact built-in int, and {value!r} is not one"
         )

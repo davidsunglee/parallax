@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-80**.
+Entry numbering is continuous and never reused. The next new number is **D-81**.
 
 ## Entries
 
@@ -457,6 +457,44 @@ whose `log` emits past the level, a Logger carrying another Logger's bound `log`
 and a stateful `disabled` descriptor or `isEnabledFor` are three such shapes, and
 narrowing the guard to exclude each of them found a fourth each time. An
 optimization on a built-in Provider may not decide which records exist.
+
+### D-80 — A logical node's whole member row is first-projection-wins, and nothing states the equal-positions premise that makes it sound
+
+*Low today, latent — sound for every read shape this target compiles now, and
+silently lossy for the first one that projects a proper subset of a concrete's
+members.* Relates to
+`parallax.snapshot.materialize._merge.GraphMerge.member_values`,
+`parallax.snapshot.materialize._merge.GraphMerge._walk`.
+
+**What.** Merging duplicate projections of one logical node used to union member
+*sets* across those projections, first-wins per member. The indexed merge picks
+ONE winning projection for the node's whole member row and answers
+`member_values(node)` as that projection's own row by reference, comparing
+nothing. The two rules agree only while every projection of one concrete Entity
+carries the same positions: row width is fixed by the exact-model member layout,
+and a concrete's compiled attribute reads and projected documents are a function
+of the concrete rather than of which read reached it, so a member a read did not
+project occupies its declared position and reads `ABSENT` rather than being
+absent from the row. Where that premise fails — one projection holding `ABSENT`
+at a position another projection holds a value at, with the first walked winning
+— the merged node silently drops what the other carried, with no issue recorded
+and no refusal.
+
+No unit test states the premise. The corpus compile and run sweeps, the graph
+stories against real Postgres, and the database suites all grade its consequence
+over the shapes production compiles today, which is what makes the representation
+cutover safe; none of them would name the rule if a future read shape broke it.
+
+**Why it is deferred rather than fixed.** A witness needs a graph whose two
+projections of one logical row genuinely disagree by position, and no read this
+target compiles is known to produce one. Manufacturing one means either doctoring
+a member layout after the catalog answered it, which grades the merge against a
+row shape no accepted model can hold, or widening a compiled read to project a
+proper subset of its concrete — which is exactly the change
+[COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory)
+makes when it streams a deep fetch at fixed memory. The witness belongs with that
+change, where the disagreeing shape is a real read rather than a fixture, and it
+is owed before that change lands rather than after.
 
 ## Forwarding pointers
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
+from enum import IntEnum
 from typing import Any, cast
 
 import pytest
@@ -650,6 +651,10 @@ _ORDER_IDENTITY = EntityIdentity(_NAMESPACE, "SnapOrder")
 _ITEMS = RelationshipViewKey(RelationshipIdentity(_ORDER_IDENTITY, "items"))
 
 
+class _Ordinal(IntEnum):
+    FIRST = 0
+
+
 def _one_projection() -> tuple[GraphBuilder, int]:
     """One builder holding exactly one projection, so ``1`` is out of range."""
     fixture = GraphFixture(_ORDERS)
@@ -661,6 +666,7 @@ def _one_projection() -> tuple[GraphBuilder, int]:
     [
         pytest.param(True, id="a-bool-is-not-an-exact-int"),
         pytest.param("0", id="a-string-is-not-an-int"),
+        pytest.param(_Ordinal.FIRST, id="an-int-subclass-is-not-an-exact-int"),
     ],
 )
 def test_an_edge_that_is_not_an_exact_int_is_refused_where_it_is_written(value: object) -> None:
@@ -717,12 +723,17 @@ def test_a_merge_refuses_a_builder_that_has_published_no_graph() -> None:
 def test_every_merge_accessor_answers_the_identical_object_on_a_second_call() -> None:
     # The interface exists to remove per-node composition, so equality would
     # pass over exactly the defect it forbids: two equal answers built twice.
+    # The whole-graph properties are held to the same rule as the per-node
+    # reads, over a graph whose every one of them is nonempty — a merged node
+    # with duplicate projections, a loaded to-many, and a keyless root.
     fixture = GraphFixture(_ORDERS)
     order = fixture.node("SnapOrder", _ORDER_ROW)
     first = fixture.node("SnapOrderItem", _ITEM_ROW)
     second = fixture.node("SnapOrderItem", {**_ITEM_ROW, "id": 12})
+    duplicate = fixture.node("SnapOrder", _ORDER_ROW)
+    keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
     fixture.attach(order, "parallax.compatibility.SnapOrder.items", (first, second))
-    merge = merge_graph_input(fixture.graph(order))
+    merge = merge_graph_input(fixture.graph(order, keyless, duplicate))
 
     assert merge.layout(0) is merge.layout(0)
     assert merge.member_values(0) is merge.member_values(0)
@@ -730,6 +741,13 @@ def test_every_merge_accessor_answers_the_identical_object_on_a_second_call() ->
     assert merge.view_layout(0) is merge.view_layout(0)
     assert merge.view(0, 0) is merge.view(0, 0)
     assert merge.view(0, 0) == (1, 2)
+
+    assert merge.order is merge.order
+    assert merge.roots is merge.roots
+    assert merge.invalid_roots is merge.invalid_roots
+    assert merge.roots == (0, None, 0)
+    assert len(merge.order) == 3
+    assert [record.ordinal for record in merge.invalid_roots] == [1]
 
 
 def test_one_view_shape_is_shared_by_every_node_that_carries_it() -> None:

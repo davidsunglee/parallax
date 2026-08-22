@@ -29,10 +29,13 @@ projection merge that produce and consume it.
   materializer, a peer of the typed one rather than a wrapper of it. It consumes
   the same root classification, so both publish the same verdicts.
 
-Nothing here constructs an Entity: this scope is granted the shared carrier
-algebra (``parallax.core.entity._graph_input``) and nothing else of the Entity
-frontend, so the layering between graph input and graph construction is
-structurally enforced rather than asserted. Its consumers —
+Nothing here constructs an Entity: this scope is granted the exact-model member
+layouts (``parallax.core.entity._layout``) and the shared carrier algebra
+(``parallax.core.entity._graph_input``) and nothing else of the Entity frontend,
+so the layering between a materialized row and graph construction is structurally
+enforced rather than asserted. A row reaches this scope already laid out and
+leaves it as one; the writer's own carriers are synthesized above it, one node at
+a time, and no module here builds one. Its consumers —
 ``parallax.snapshot.handle._materializer`` and the wire materializer above —
 each compose it with what their own result form needs.
 

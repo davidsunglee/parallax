@@ -139,8 +139,7 @@ class AnotherSource:
         The translation from the merge's compact rows into the writer's carriers
         is this source's OWN, deliberately: what makes a second source second is
         that it merges, translates, and constructs for itself rather than
-        borrowing the Snapshot materializer's private drive. Both translations
-        die together when the writer takes compact rows directly.
+        borrowing the Snapshot materializer's private drive.
         """
         merge = merge_graph_input(graph)
         require_publishable(merge)
