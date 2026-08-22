@@ -114,6 +114,23 @@ def _names(record: ValueObjectRecord) -> set[str]:
 
 
 # --------------------------------------------------------------------------- #
+# The level context is a value keyed by the level it converts.                 #
+# --------------------------------------------------------------------------- #
+def test_a_level_context_is_hashable_and_keyed_by_the_level_it_converts() -> None:
+    # The layout is a function of the model and the concrete Entity, so it
+    # distinguishes no two contexts and stays out of equality: two contexts over
+    # one level are one value however each reached its layout, and the context
+    # keeps the hashability its remaining fields give it.
+    order = _context(ORDERS, "Order")
+    again = _context(ORDERS, "Order")
+    assert order.layout is not again.layout
+    assert order == again
+    assert hash(order) == hash(again)
+    assert {order, again} == {order}
+    assert order != _context(ORDERS, "OrderItem")
+
+
+# --------------------------------------------------------------------------- #
 # Scalar provenance: physical columns become Attribute Identities, and only    #
 # columns this concrete actually declares contribute.                          #
 # --------------------------------------------------------------------------- #
