@@ -11,7 +11,8 @@ non-zero exit, because a gate that runs but cannot block buys nothing:
 * a module inside an isolated scope's ancestors importing it, the one edge a
   forbidden row structurally cannot state, in every spelling that reaches it;
 * a sealed scope importing its own parent package beyond its grants, which is
-  that same overlap seen from the other side;
+  that same overlap seen from the other side, in every spelling that reaches it
+  — and, in every one of those spellings, a granted sibling staying legal;
 * an exemption that stops describing the tree — in both directions.
 
 plus the coupling that makes the overlap arm load-bearing: a nested scope
@@ -327,6 +328,7 @@ def test_first_party_imports_sees_every_import_form() -> None:
         "from . import sibling\n"
         "from .child import leaf\n"
         "from ..materialize import view\n"
+        "from .star import *\n"
         "from typing import TYPE_CHECKING\n"
         "if TYPE_CHECKING:\n"
         "    from parallax.core.metamodel import EntityDescriptor\n"
@@ -343,6 +345,7 @@ def test_first_party_imports_sees_every_import_form() -> None:
             "parallax.snapshot.handle.sibling",
             "parallax.snapshot.handle.child",
             "parallax.snapshot.handle.child.leaf",
+            "parallax.snapshot.handle.star",
             "parallax.snapshot.materialize",
             "parallax.snapshot.materialize.view",
             "parallax.core.metamodel",
@@ -350,6 +353,31 @@ def test_first_party_imports_sees_every_import_form() -> None:
         }
     )
     assert own.first_party_imports("import os\nfrom typing import Final\n", "p.q") == frozenset()
+
+
+def test_first_party_reaches_keep_a_package_form_import_whole() -> None:
+    source = (
+        "import parallax.core.base\n"
+        "from parallax.core.entity import _layout\n"
+        "from parallax.core.entity._layout import EntityLayout\n"
+        "from . import sibling\n"
+        "from .star import *\n"
+    )
+    # The flattened view answers "was this module touched"; a reach answers "what
+    # did one import mean". `from p import q` could have landed on `p.q` or on
+    # `p`, so both candidates travel together, most specific first, and a caller
+    # weighing the import against a rule reads it at whichever candidate the rule
+    # covers. A star import binds no name that could be a submodule, so it
+    # reaches its own module alone.
+    assert own.first_party_reaches(source, "parallax.core.entity._row") == frozenset(
+        {
+            ("parallax.core.base",),
+            ("parallax.core.entity._layout", "parallax.core.entity"),
+            ("parallax.core.entity._layout.EntityLayout", "parallax.core.entity._layout"),
+            ("parallax.core.entity._row.sibling", "parallax.core.entity._row"),
+            ("parallax.core.entity._row.star",),
+        }
+    )
 
 
 def test_containing_package_folds_only_a_package_interface() -> None:
@@ -474,41 +502,100 @@ def test_a_sealed_scope_reaching_its_parent_package_fails(
 
 
 _PROBE = PY_ROOT / "packages/parallax-core/src/parallax/core/entity/_probe.py"
+_PROBE_SCOPE = "parallax.core.entity._probe"
 
 
+def _sealed_probe_scope(monkeypatch: pytest.MonkeyPatch, granted: str) -> None:
+    """Declare `_probe` a sealed child of the Entity frontend granted `granted`."""
+    monkeypatch.setattr(
+        dag,
+        "SUPPORT_SCOPE_DEPS",
+        {**dag.SUPPORT_SCOPE_DEPS, _PROBE_SCOPE: frozenset({granted})},
+    )
+    monkeypatch.setattr(
+        dag,
+        "CHILD_SCOPE_PARENT",
+        {**dag.CHILD_SCOPE_PARENT, _PROBE_SCOPE: "parallax.core.entity"},
+    )
+    monkeypatch.setattr(dag, "SEALED_CHILD_SCOPES", dag.SEALED_CHILD_SCOPES | {_PROBE_SCOPE})
+
+
+def _spellings(module: str, name: str) -> list[tuple[str, str, str]]:
+    """Every way one file reaches `parallax.core.entity.<module>`, with what escapes.
+
+    The third element is the module a reach touching no grant is reported at:
+    the package-form spellings bind the sibling through its parent, and the
+    parent is the candidate that certainly is a module.
+    """
+    dotted = f"parallax.core.entity.{module}"
+    return [
+        (f"from {dotted} import {name}", name, dotted),
+        (f"from .{module} import {name}", name, dotted),
+        (f"from parallax.core.entity import {module}", module, "parallax.core.entity"),
+        (f"from . import {module}", module, "parallax.core.entity"),
+        (f"import {dotted}", dotted, dotted),
+    ]
+
+
+def _write_probe(statement: str, bound: str) -> None:
+    _PROBE.write_text(
+        '"""Written by a test: one spelling of a sealed scope\'s intra-package reach."""\n'
+        "\n"
+        f"{statement}\n"
+        "\n"
+        f"_ = {bound}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("statement", "bound", "escaped"), _spellings("_errors", "EntityDefinitionError")
+)
 def test_a_sealed_scope_reaching_what_its_row_already_permits_fails(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    statement: str,
+    bound: str,
+    escaped: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     # The reach no contract could report, which is the whole reason to seal a
     # scope: `parallax.core.entity._errors` imports the accepted Metamodel and
     # nothing else, so a neighbour granted the Metamodel reaches it without any
     # chain leaving the row for import-linter to name. Declared here as a scope
     # of its own so the shape is stated over a file written for it, rather than
-    # over the committed source of a scope that does not make this reach.
-    scope = "parallax.core.entity._probe"
-    monkeypatch.setattr(
-        dag,
-        "SUPPORT_SCOPE_DEPS",
-        {**dag.SUPPORT_SCOPE_DEPS, scope: frozenset({"parallax.core.metamodel"})},
-    )
-    monkeypatch.setattr(
-        dag, "CHILD_SCOPE_PARENT", {**dag.CHILD_SCOPE_PARENT, scope: "parallax.core.entity"}
-    )
-    monkeypatch.setattr(dag, "SEALED_CHILD_SCOPES", dag.SEALED_CHILD_SCOPES | {scope})
-    _PROBE.write_text(
-        '"""Written by a test: a sealed scope reaching a neighbour of its own."""\n'
-        "\n"
-        "from parallax.core.entity._errors import EntityDefinitionError\n"
-        "\n"
-        "_ = EntityDefinitionError\n"
-    )
+    # over the committed source of a scope that does not make this reach. Every
+    # spelling is the same reach, including the two that bind the neighbour
+    # through the parent package and are reported there.
+    _sealed_probe_scope(monkeypatch, "parallax.core.metamodel")
+    _write_probe(statement, bound)
     try:
         assert own.main([]) == 1
     finally:
         _PROBE.unlink()
     err = capsys.readouterr().err
-    assert f"_probe.py (imports parallax.core.entity._errors, which {scope}" in err
+    assert f"_probe.py (imports {escaped}, which {_PROBE_SCOPE}" in err
     assert own.main([]) == 0
+
+
+@pytest.mark.parametrize(
+    ("statement", "bound"),
+    [(statement, bound) for statement, bound, _ in _spellings("_layout", "EntityLayout")],
+)
+def test_a_sealed_scope_reaching_a_granted_sibling_passes_in_every_spelling(
+    statement: str, bound: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The other edge of the same rule, and the one a seal must not cost: a grant
+    # is what the row would have permitted had it been able to speak, so the
+    # sibling it names stays legal however the import is written. `from parent
+    # import sibling` binds the sibling exactly as its dotted path does, so
+    # reading that form as a reach at the parent alone would reject a dependency
+    # §7 grants — and would make the seal a rule about spelling, not about reach.
+    _sealed_probe_scope(monkeypatch, "parallax.core.entity._layout")
+    _write_probe(statement, bound)
+    try:
+        assert own.imports_escaping_a_sealed_child_row(own.production_files()) == []
+        assert own.main([]) == 0
+    finally:
+        _PROBE.unlink()
 
 
 def test_the_sealed_rule_applies_only_to_a_scope_declared_sealed(
