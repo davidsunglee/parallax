@@ -1,6 +1,6 @@
 """Unit tests for the production-file enforcement-scope ownership check.
 
-Each of the tool's five findings gets a canary that drives ``main()`` to a
+Each of the tool's six findings gets a canary that drives ``main()`` to a
 non-zero exit, because a gate that runs but cannot block buys nothing:
 
 * an unowned production file (the ``parallax/snapshot/wrap.py`` shape the check
@@ -10,6 +10,8 @@ non-zero exit, because a gate that runs but cannot block buys nothing:
   of that scope's forbidden row names;
 * a module inside an isolated scope's ancestors importing it, the one edge a
   forbidden row structurally cannot state, in every spelling that reaches it;
+* a sealed scope importing its own parent package beyond its grants, which is
+  that same overlap seen from the other side;
 * an exemption that stops describing the tree — in both directions.
 
 plus the coupling that makes the overlap arm load-bearing: a nested scope
@@ -438,7 +440,109 @@ def test_the_isolated_scope_may_import_its_own_parent(
 
 
 # --------------------------------------------------------------------------
-# Canary 5: an exemption that no longer describes the tree.
+# Canary 5: a sealed scope reaching its own parent package.
+# --------------------------------------------------------------------------
+_ROW = "parallax.core.entity._row"
+_ROW_FILE = "parallax-core/src/parallax/core/entity/_row.py"
+
+
+def _without_sibling_grants(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Withdraw the two sibling grants the row scope's imports stand on."""
+    monkeypatch.setattr(
+        dag,
+        "SUPPORT_SCOPE_DEPS",
+        {**dag.SUPPORT_SCOPE_DEPS, _ROW: frozenset({"parallax.core.metamodel"})},
+    )
+
+
+def test_a_sealed_scope_reaching_its_parent_package_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The mirror image of canary 4: a row sourced at the child overlaps its own
+    # parent package, so import-linter can neither forbid a module of that
+    # package nor except one. Withdrawing the two grants the row scope's imports
+    # stand on states an undeclared intra-package reach without editing
+    # production source, and both are refused — one finding per import, not one
+    # per file.
+    assert own.imports_escaping_a_sealed_child_row(own.production_files()) == []
+    _without_sibling_grants(monkeypatch)
+    assert own.main([]) == 1
+    err = capsys.readouterr().err
+    assert "imports of its own parent package a sealed scope's contract cannot reject" in err
+    assert f"{_ROW_FILE} (imports parallax.core.entity._graph_input, which {_ROW}" in err
+    assert f"{_ROW_FILE} (imports parallax.core.entity._layout, which {_ROW}" in err
+
+
+_PROBE = PY_ROOT / "packages/parallax-core/src/parallax/core/entity/_probe.py"
+
+
+def test_a_sealed_scope_reaching_what_its_row_already_permits_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The reach no contract could report, which is the whole reason to seal a
+    # scope: `parallax.core.entity._errors` imports the accepted Metamodel and
+    # nothing else, so a neighbour granted the Metamodel reaches it without any
+    # chain leaving the row for import-linter to name. Declared here as a scope
+    # of its own so the shape is stated over a file written for it, rather than
+    # over the committed source of a scope that does not make this reach.
+    scope = "parallax.core.entity._probe"
+    monkeypatch.setattr(
+        dag,
+        "SUPPORT_SCOPE_DEPS",
+        {**dag.SUPPORT_SCOPE_DEPS, scope: frozenset({"parallax.core.metamodel"})},
+    )
+    monkeypatch.setattr(
+        dag, "CHILD_SCOPE_PARENT", {**dag.CHILD_SCOPE_PARENT, scope: "parallax.core.entity"}
+    )
+    monkeypatch.setattr(dag, "SEALED_CHILD_SCOPES", dag.SEALED_CHILD_SCOPES | {scope})
+    _PROBE.write_text(
+        '"""Written by a test: a sealed scope reaching a neighbour of its own."""\n'
+        "\n"
+        "from parallax.core.entity._errors import EntityDefinitionError\n"
+        "\n"
+        "_ = EntityDefinitionError\n"
+    )
+    try:
+        assert own.main([]) == 1
+    finally:
+        _PROBE.unlink()
+    err = capsys.readouterr().err
+    assert f"_probe.py (imports parallax.core.entity._errors, which {scope}" in err
+    assert own.main([]) == 0
+
+
+def test_the_sealed_rule_applies_only_to_a_scope_declared_sealed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Scoped to the declaration rather than to the package: an intra-package
+    # import is what child scopes ordinarily do — `_expressions` reaches the
+    # frontend's shared error module, and every write-lowering scope reaches its
+    # siblings — so nothing here judges a scope §7 has not sealed.
+    assert set(dag.CHILD_SCOPE_PARENT) >= dag.SEALED_CHILD_SCOPES
+    _without_sibling_grants(monkeypatch)
+    monkeypatch.setattr(dag, "SEALED_CHILD_SCOPES", frozenset[str]())
+    assert own.main([]) == 0
+
+
+def test_sealing_a_scope_that_reaches_its_parent_today_would_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The other half of the same boundary, over untampered grants: `_expressions`
+    # is narrower than its parent for the same reason the sealed three are, but
+    # it does reach a module of that parent its row does not name — so sealing it
+    # would be a claim about the tree that is not true, and the gate says so.
+    monkeypatch.setattr(
+        dag, "SEALED_CHILD_SCOPES", frozenset({"parallax.core.entity._expressions"})
+    )
+    assert own.imports_escaping_a_sealed_child_row(own.production_files()) == [
+        "parallax-core/src/parallax/core/entity/_expressions.py "
+        "(imports parallax.core.entity._errors, which "
+        "parallax.core.entity._expressions's own row cannot reject)"
+    ]
+
+
+# --------------------------------------------------------------------------
+# Canary 6: an exemption that no longer describes the tree.
 # --------------------------------------------------------------------------
 def test_exemption_for_a_missing_file_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

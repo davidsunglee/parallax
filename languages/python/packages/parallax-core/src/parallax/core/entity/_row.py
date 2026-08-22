@@ -70,8 +70,12 @@ def member_carriers(
     ``values`` is read against ``layout``: its Attributes in the layout's own
     order, then its top-level Value Object occurrences in theirs. An absent
     position contributes no entry, which is what the carrier algebra means by
-    absence, and the pair is dead as soon as the ``populate`` call it feeds
-    returns.
+    absence.
+
+    The pair is one node's worth, answered in ``populate``'s own argument order
+    so a caller hands it straight over rather than binding it: ``populate``
+    retains none of it, and a name outliving that call is the only thing that
+    makes carrier cost more than one node's.
     """
     return _attributes(layout, values), _value_objects(layout, values)
 
