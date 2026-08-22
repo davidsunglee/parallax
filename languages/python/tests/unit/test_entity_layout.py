@@ -482,6 +482,18 @@ def test_the_cataloged_model_pairs_one_models_metadata_with_the_catalog_it_deriv
     assert CatalogedModel(cataloged.meta).layouts is not cataloged.layouts
 
 
+def test_a_cataloged_model_is_the_model_it_carries_and_not_the_catalog_it_derived() -> None:
+    # The catalog is a function of the metadata, so it distinguishes no two
+    # records the metadata does not, and comparing it by identity would make two
+    # records a first-reach race published over one model unequal — the identity
+    # no consumer is allowed to depend on.
+    meta = model_of(_domain_models()["orders"])
+    one, other = CatalogedModel(meta), CatalogedModel(meta)
+    assert one.layouts is not other.layouts
+    assert one == other
+    assert one != CatalogedModel(model_of(_domain_models()["animal"]))
+
+
 def test_a_descriptor_backed_domain_model_reaches_a_working_catalog() -> None:
     # The class-less path `graph_construction_of` refuses: a layout depends on
     # the accepted metadata alone, so this one must not.

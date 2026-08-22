@@ -215,12 +215,15 @@ class _ConnectedModel:
     composed.
 
     Owned by the Database rather than by any query value, and carrying no
-    identity of its own — two Databases over one Domain Model hold equal state
-    and neither is preferred, while a query built from classes this model never
-    composed is refused by target resolution rather than by ownership. Holding
-    the construction rather than the raw class index keeps materialization
-    capability behind ONE seam: there is no second capability bag to widen when a
-    new entry point (a Session) reaches the same materializer.
+    identity of its own — two Databases over one Domain Model serve the same
+    model and neither is preferred, because each is answered that model's own
+    retained record and capabilities, and a cataloged record a race published
+    beside it compares equal to the first — while a query built from classes
+    this model never composed is refused by target resolution rather than by
+    ownership. Holding the construction rather than the raw class index keeps
+    materialization capability behind ONE seam: there is no second capability
+    bag to widen when a new entry point (a Session) reaches the same
+    materializer.
 
     The accepted metadata and the member layouts derived from it are composed
     rather than held apart, because a layout that came from another model would

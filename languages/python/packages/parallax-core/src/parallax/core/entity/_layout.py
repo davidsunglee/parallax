@@ -4,9 +4,9 @@ A layout is the flyweight a materializing runtime reads instead of rebuilding a
 wrapper skeleton per row. Which members a resolved concrete Entity carries, in
 what order, where its category boundary falls, which positions its family's
 primary key occupies, and what canonical order its relationship views take are
-all functions of the accepted Metamodel alone — so they are derived once per
-exact Entity and shared by every row, every graph, and every execution over that
-model.
+all functions of the accepted Metamodel alone — so a catalog derives them per
+exact Entity, and every row, every graph, and every execution it serves shares
+what it derived rather than rebuilding one.
 
 Stated over the accepted :class:`~parallax.core.metamodel.Metamodel` rather than
 over the :class:`~parallax.core.entity.DomainModel` that carries one, because
@@ -155,9 +155,17 @@ class LayoutCatalog:
     Entries are derived on first reach rather than eagerly over the whole model,
     so a short-lived process pays only for the Entities it addresses; the shape
     matches the per-Entity caches the graph-construction and row-derivation
-    collaborations already keep. Every entry is a pure function of the accepted
-    immutable metadata, so two catalogs over one model — or two layouts for one
-    Entity — are interchangeable, and nothing compares a layout by identity.
+    collaborations already keep.
+
+    Reaching an entry is an unsynchronized check-then-set, like the door that
+    hands out the catalog itself: concurrent first reaches of one Entity each
+    derive a layout and each are answered their own, and whichever landed last
+    is what every later reach is answered. That is why the entry count is a
+    bound on what a catalog retains rather than a count of the derivations it
+    ran. It costs nothing, because every entry is a pure function of the
+    accepted immutable metadata, so two catalogs over one model — or two layouts
+    for one Entity — are interchangeable, and nothing compares a layout by
+    identity.
     """
 
     __slots__ = ("_cache", "_model")
@@ -167,7 +175,8 @@ class LayoutCatalog:
         self._cache: dict[EntityIdentity, EntityLayout] = {}
 
     def entity(self, identity: EntityIdentity) -> EntityLayout:
-        """``identity``'s layout, derived once per exact Entity.
+        """``identity``'s layout, derived on its first reach here and answered
+        from the entry that reach retained thereafter.
 
         Raises :class:`ValueError` when this model declares no such Entity, or
         when its accepted metadata cannot fix one row for it — two members
@@ -261,10 +270,18 @@ class CatalogedModel:
     Constructing one therefore derives a catalog. A runtime that must share one
     model's layouts holds the record that model retains rather than forming a
     second beside it.
+
+    ``layouts`` stays out of comparison: it is a function of ``meta``, so it
+    distinguishes no two records that ``meta`` does not, while comparing it
+    would compare a catalog by identity — which nothing may do — and so make
+    two records over one model unequal for having each derived an
+    interchangeable catalog. A record is therefore the model it carries, which
+    is what lets a holder of one compare equal to a holder of the other after a
+    race published both.
     """
 
     meta: Metamodel
-    layouts: LayoutCatalog = field(init=False)
+    layouts: LayoutCatalog = field(init=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "layouts", LayoutCatalog(self.meta))
