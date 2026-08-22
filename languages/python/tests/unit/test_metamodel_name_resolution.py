@@ -25,6 +25,7 @@ from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.object_query import (
     IncludePath,
@@ -142,7 +143,14 @@ def test_the_read_executor_classifies_an_ambiguous_bare_name_by_the_same_rule() 
     # carrier — so one rule and one class answer an ambiguous spelling whether
     # preflight or lowering resolves it.
     with pytest.raises(ModelRejectedError) as excinfo:
-        handle.find(_query("Person"), _model(), POSTGRES, cast("DbPort", _RefusingPort()))
+        model = _model()
+        handle.find(
+            _query("Person"),
+            model,
+            POSTGRES,
+            cast("DbPort", _RefusingPort()),
+            layouts=LayoutCatalog(model),
+        )
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
 
@@ -152,7 +160,14 @@ def test_the_read_executor_refuses_a_target_the_model_does_not_declare() -> None
     # this seam and earns the same `query-target-not-in-model` refusal the read
     # preflight answers with — never a bare `KeyError` from a lookup miss.
     with pytest.raises(QueryTargetError) as excinfo:
-        handle.find(_query("Nope"), _model(), POSTGRES, cast("DbPort", _RefusingPort()))
+        model = _model()
+        handle.find(
+            _query("Nope"),
+            model,
+            POSTGRES,
+            cast("DbPort", _RefusingPort()),
+            layouts=LayoutCatalog(model),
+        )
     assert excinfo.value.code == "query-target-not-in-model"
 
 

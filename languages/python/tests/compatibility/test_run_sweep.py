@@ -43,6 +43,7 @@ from parallax.core import storage_layout
 from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.dialect import dialect_for
+from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import Pin
@@ -482,6 +483,8 @@ def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], R
     something.
     """
 
+    layouts = LayoutCatalog(model)
+
     def transform(row: Row) -> Row:
         materialized = compiled.materialize_row(row)
         scope = MergeScope(model)
@@ -489,6 +492,7 @@ def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], R
             materialized.values,
             LevelContext(
                 materialized.resolved_entity,
+                layouts.entity(materialized.resolved_entity),
                 compiled.projected_documents,
                 compiled.attribute_reads(materialized.resolved_entity),
             ),

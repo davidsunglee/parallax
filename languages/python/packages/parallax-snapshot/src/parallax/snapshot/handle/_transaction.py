@@ -48,6 +48,7 @@ from parallax.core.entity import (
     EntityRowCodec,
 )
 from parallax.core.entity import Entity as EntityBase
+from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     TransactionAttemptActivity,
@@ -147,6 +148,7 @@ class Transaction:
         "_construction",
         "_dialect",
         "_inserted_objects",
+        "_layouts",
         "_lifecycle",
         "_meta",
         "_uow",
@@ -157,6 +159,7 @@ class Transaction:
         uow: UnitOfWork,
         conn: DbPort,
         meta: Metamodel,
+        layouts: LayoutCatalog,
         dialect: Dialect,
         construction: EntityGraphConstruction | None,
         codec: EntityRowCodec,
@@ -166,6 +169,7 @@ class Transaction:
         self._uow = uow
         self._conn = conn
         self._meta = meta
+        self._layouts = layouts
         self._dialect = dialect
         self._construction = construction
         self._codec = codec
@@ -605,6 +609,7 @@ class Transaction:
             self._wire_find,
             WireWriteLane(
                 self._meta,
+                self._layouts,
                 self._uow,
                 self._conn,
                 self._dialect,
@@ -649,7 +654,14 @@ class Transaction:
         with self._attempt.read(node.target, publication.interface) as read:
             if scans_an_axis(node):
                 return publication.from_history(
-                    find_history(node, self._meta, self._dialect, self._conn, read=read)
+                    find_history(
+                        node,
+                        self._meta,
+                        self._dialect,
+                        self._conn,
+                        layouts=self._layouts,
+                        read=read,
+                    )
                 )
             return publication.from_find(
                 find(
@@ -657,6 +669,7 @@ class Transaction:
                     self._meta,
                     self._dialect,
                     self._conn,
+                    layouts=self._layouts,
                     preference=self._uow.settings.concurrency,
                     ledger=self._uow,
                     read=read,
@@ -694,6 +707,7 @@ class Transaction:
                 self._meta,
                 self._dialect,
                 self._conn,
+                layouts=self._layouts,
                 preference=self._uow.settings.concurrency,
                 read=read,
             )
@@ -763,6 +777,7 @@ class Transaction:
         buffer_predicate(
             self._uow,
             self._meta,
+            self._layouts,
             self._conn,
             self._dialect,
             "update",
@@ -783,6 +798,7 @@ class Transaction:
         buffer_predicate(
             self._uow,
             self._meta,
+            self._layouts,
             self._conn,
             self._dialect,
             "delete",
@@ -803,6 +819,7 @@ class Transaction:
         buffer_predicate(
             self._uow,
             self._meta,
+            self._layouts,
             self._conn,
             self._dialect,
             "terminate",
@@ -826,6 +843,7 @@ class Transaction:
         buffer_predicate(
             self._uow,
             self._meta,
+            self._layouts,
             self._conn,
             self._dialect,
             "updateUntil",
@@ -847,6 +865,7 @@ class Transaction:
         buffer_predicate(
             self._uow,
             self._meta,
+            self._layouts,
             self._conn,
             self._dialect,
             "terminateUntil",

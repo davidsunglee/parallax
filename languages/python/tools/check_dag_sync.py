@@ -178,6 +178,20 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # producer structurally unable to reach the writer, `construct`, or model
     # formation — the layering rule stays enforced rather than merely asserted.
     "parallax.core.entity._graph_input": frozenset({"parallax.core.metamodel"}),
+    # The exact-model member layouts are a pure function of the accepted
+    # Metamodel, so they are scoped apart from the frontend that owns them and
+    # granted only the facets a layout is derived from. Granting them narrowly is
+    # what lets row-to-graph materialization take the layouts alone: the parent
+    # frontend reaches model formation, Object Query, and — through
+    # `_formation_profile -> opt_lock -> unit_work` — the Database Port, none of
+    # which a positional member row depends on.
+    "parallax.core.entity._layout": frozenset(
+        {
+            "parallax.core.metamodel",
+            "parallax.core.inheritance",
+            "parallax.core.relationship",
+        }
+    ),
     # The typed Object Query is generic over Entity Classes, so it reaches the
     # Entity frontend for the descriptor values a clause call is written with. Its
     # parent package must stay reachable by every execution module that realizes a
@@ -263,6 +277,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot.materialize": frozenset(
         {
             "parallax.core.entity._graph_input",
+            "parallax.core.entity._layout",
             "parallax.core.deep_fetch",
             "parallax.core.document_codec",
             "parallax.core.metamodel",
@@ -342,6 +357,7 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.core.entity._expressions": "parallax.core.entity",
     "parallax.core.object_query._fluent": "parallax.core.object_query",
     "parallax.core.entity._graph_input": "parallax.core.entity",
+    "parallax.core.entity._layout": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._materializer": "parallax.snapshot.handle",
     "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
