@@ -1,6 +1,6 @@
 """What one materialized Snapshot graph retains, and what it costs to build.
 
-The representative graph COR-108 states its acceptance figure over — about twenty
+The representative graph the recorded baseline is stated over — about twenty
 scalar members, nested One and Many Value Objects, polymorphic projections, three
 view slots, duplicate logical nodes, and relationship fan-out — driven through
 the production converter, builder, and merge with no database anywhere. It is a
@@ -25,12 +25,13 @@ what demonstrates it rather than asserting it: the identical graph shape with
 every string leaf an order of magnitude longer must read identically.
 
 **Why the instruments are copied rather than imported.** They are the recipe
-``tests/unit/_lifecycle_cost_support.py`` states — warm-up passes before every
-window, a double collection before every sample, survivor OBJECTS bound rather
-than their addresses, the sampler warmed separately from the seam, and the line
-tracer uninstalled for the window. A tool runs with ``tools`` on the path and
-``tests`` off it, so what a report can share with a suite is the recipe and not
-the module.
+``tests/unit/_lifecycle_cost_support.py``'s own sampling instruments follow — a
+collection before every sample so a reading answers what is still REACHABLE,
+warm-up passes before every window, survivor OBJECTS bound rather than their
+addresses, the sampler warmed separately from the seam, and the line tracer
+uninstalled for the window. A tool runs with ``tools`` on the path and ``tests``
+off it, so what a report can share with a suite is the recipe and not the
+module.
 
 Run it through `just python-report-snapshot-graph-overhead`.
 """
@@ -71,7 +72,8 @@ from parallax.snapshot.materialize._views import ChildSlot, RelationshipViewKey,
 
 PRE_CUTOVER_BYTES: Final = 4_721.8
 """Retained bytes per projection this identical workload read on the per-cell
-carrier representation, at base commit ``31c5c67e``. A reference figure printed
+carrier representation, transcribed from ``docs/snapshot-graph-baseline.md``,
+which records the conditions it was taken under. A reference figure printed
 beside the reading, never a threshold: `tracemalloc` totals move with the
 interpreter, so a ratio across two of them measures the interpreter."""
 
@@ -80,8 +82,9 @@ PRE_CUTOVER_SURVIVORS: Final = 63.89
 43.28 were per-cell carriers."""
 
 CRITERION: Final = 0.60
-"""The reduction COR-108's performance gate names. Printed as the ceiling it
-implies so a reader can see the reading against it without this judging one."""
+"""The reduction the recorded baseline states its ceiling from. Printed as the
+ceiling it implies so a reader can see the reading against it without this
+judging one."""
 
 WARMUP: Final = 200
 """Runs before every window, so import, cache-fill, and first-call costs are
@@ -198,13 +201,13 @@ def warmed(seam: Seam) -> Seam:
 
 # --------------------------------------------------------------------------- #
 # The workload model. Bespoke because no model in the tree carries all six of   #
-# the traits COR-108's representative graph names at the width it names them:   #
-# the corpus tops out at eight applicable Attributes on one Entity, and no      #
-# document there combines wide scalars with nested Value Objects, an            #
-# inheritance family, and relationship fan-out.                                 #
+# the representative graph's traits at the width it names them: the corpus tops #
+# out at eight applicable Attributes on one Entity, and no document there       #
+# combines wide scalars with nested Value Objects, an inheritance family, and   #
+# relationship fan-out.                                                         #
 # --------------------------------------------------------------------------- #
 
-NAMESPACE: Final = "cor108.baseline"
+NAMESPACE: Final = "snapshot.overhead"
 
 
 class Leaf(ValueObject):
@@ -223,7 +226,7 @@ class Tag(ValueObject):
 
 class Node(
     Entity,
-    table="cor108_node",
+    table="overhead_node",
     namespace=NAMESPACE,
     inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
 ):
@@ -271,7 +274,7 @@ class Beta(Node, namespace=NAMESPACE, inheritance=ConcreteSubtype(tag_value="bet
     weight: Attr[float | None]
 
 
-class Owner(Entity, table="cor108_owner", namespace=NAMESPACE):
+class Owner(Entity, table="overhead_owner", namespace=NAMESPACE):
     """The root of every cell, carrying the three view slots: a broad to-many, a
     narrowed to-many, and a to-one into the same family."""
 
@@ -312,16 +315,35 @@ VIEW_FAVORITE: Final = RelationshipViewKey(RelationshipIdentity(_OWNER, "favorit
 VIEW_OWNER: Final = RelationshipViewKey(RelationshipIdentity(_identity("Node"), "owner"))
 
 ROOT_SOURCE: Final = 0
-CHILD_SOURCE: Final = 1
+BROAD_SOURCE: Final = 1
+NARROWED_SOURCE: Final = 2
 SLOT_TABLE: Final = (
     (ChildSlot(VIEW_NODES), ChildSlot(VIEW_SPECIAL), ChildSlot(VIEW_FAVORITE)),
+    (),
     (ChildSlot(VIEW_OWNER),),
+    (),
+    (),
 )
-"""The slot table a real execution's fetch plan yields for this workload, dense
-by source level: the root level's parents receive the three views their own
-levels attach, and the one level below them receives the back reference. Built
-here rather than through ``ViewSchema.of``, which would put every slot on one
-level and give each owner a row it can never fill."""
+"""The slot table ``handle/_read._slot_table`` yields for this workload's plan,
+dense by source level.
+
+The plan is four levels under one root: the broad ``nodes`` hop, the narrowed
+``special[Alpha]`` hop, the ``favorite`` hop — all three parented by the root,
+which is why all three slots land on level 0 — and the back-reference ``owner``
+hop parented by the narrowed one, whose slot therefore lands on the level the
+narrowed hop's own projections are read at. Broad and narrowed are DISTINCT plan
+levels, so only the narrowed duplicates can receive ``owner``; a table putting
+both populations on one level would give the four broad children a slot no plan
+of theirs attaches.
+
+The last two entries are empty because a level owns an entry whether or not it
+converts a row here: the back-reference level converts none by contract, and the
+``favorite`` hop's arm is aliased onto the broad level's first child rather than
+converted a second time, which is what holds this drive to the seven projections
+per cell the recorded pre-cutover half measured.
+
+Built here rather than through ``ViewSchema.of``, which would put every slot on
+one level and give each projection a row it can never fill."""
 
 FANOUT: Final = 4
 DUPLICATES: Final = 2
@@ -431,18 +453,23 @@ def fattened(count: int) -> tuple[Cell, ...]:
 # --------------------------------------------------------------------------- #
 
 
-def build(plan: tuple[Cell, ...]) -> SnapshotGraph:
-    """Convert every projection, write every view, and seal the graph — the shape
-    a read's own level loop has, with the builder dying in this frame."""
-    builder = GraphBuilder(ViewSchema(SLOT_TABLE))
+def sealed(builder: GraphBuilder, plan: tuple[Cell, ...]) -> SnapshotGraph:
+    """Convert every projection into ``builder``, write every view, and seal —
+    the shape a read's own level loop has, with the builder dying in this frame.
+
+    Taking the builder rather than making one is what lets the wall clock time
+    the same span the pre-cutover reading timed, which constructed its scope
+    before starting its own clock.
+    """
     roots: list[int] = []
     for cell in plan:
         owner = convert_row(cell.owner, OWNER_LEVEL, builder, source=ROOT_SOURCE)
         children = tuple(
-            convert_row(row, level, builder, source=CHILD_SOURCE) for row, level in cell.children
+            convert_row(row, level, builder, source=BROAD_SOURCE) for row, level in cell.children
         )
         duplicates = tuple(
-            convert_row(row, ALPHA_LEVEL, builder, source=CHILD_SOURCE) for row in cell.duplicates
+            convert_row(row, ALPHA_LEVEL, builder, source=NARROWED_SOURCE)
+            for row in cell.duplicates
         )
         builder.write_view(owner, VIEW_NODES, children)
         builder.write_view(owner, VIEW_SPECIAL, duplicates)
@@ -451,6 +478,11 @@ def build(plan: tuple[Cell, ...]) -> SnapshotGraph:
             builder.write_view(duplicate, VIEW_OWNER, owner)
         roots.append(owner)
     return builder.seal(tuple(roots), PIN)
+
+
+def build(plan: tuple[Cell, ...]) -> SnapshotGraph:
+    """One execution's whole graph: a schema of its own, and every row under it."""
+    return sealed(GraphBuilder(ViewSchema(SLOT_TABLE)), plan)
 
 
 def compose(plan: tuple[Cell, ...]) -> tuple[SnapshotGraph, GraphMerge]:
@@ -475,13 +507,24 @@ def seam_over(plan: tuple[Cell, ...], *, merged: bool = True) -> Seam:
 
 
 def timings(plan: tuple[Cell, ...]) -> tuple[float, float]:
-    """Mean wall-clock seconds to build the sealed graph, and to merge it."""
+    """Mean wall-clock seconds to build the sealed graph, and to merge it.
+
+    Each repetition gets a builder and a view schema of its own, constructed
+    OUTSIDE its own clock: the recorded pre-cutover half timed conversion,
+    attachment, and composition with its ``MergeScope`` already constructed, and
+    a window that also carried the execution's own setup would compare two
+    different spans. Every per-row and per-level cost the schema defers — a
+    source layout built on a level's first reach, a merged layout on a
+    concrete's — still falls inside the timed span, exactly as the scope's own
+    per-row caches did.
+    """
     building = 0.0
     merging = 0.0
     with _untraced():
         for _ in range(REPEATS):
+            builder = GraphBuilder(ViewSchema(SLOT_TABLE))
             start = perf_counter()
-            graph = build(plan)
+            graph = sealed(builder, plan)
             building += perf_counter() - start
             start = perf_counter()
             merged = merge_graph_input(graph)
@@ -512,7 +555,7 @@ def _verified(plan: tuple[Cell, ...]) -> None:
 
     Every count the workload claims, read off the sealed graph and its merge
     before any window opens — including that the path is CONFORMING, which is the
-    path COR-108's absolute claims are stated over.
+    path the baseline's absolute claims are stated over.
     """
     graph, merge = compose(plan)
     rows = graph_rows(graph)

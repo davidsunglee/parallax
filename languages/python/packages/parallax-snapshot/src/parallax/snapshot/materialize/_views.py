@@ -119,6 +119,12 @@ class MergedViewLayout:
     is walked: a node reached again from a second level widens nothing.
     ``index_of`` is how a caller holding a view key finds the slot to read.
 
+    So a view is absent here in two distinguishable ways, and a reader must not
+    read one as the other. A view this concrete carries at NO source level has no
+    slot at all — a path-root guard excluded it everywhere the view is attached.
+    A view it carries at some level the node was never projected at has a slot
+    holding ``ABSENT``. Both are unloaded; only the second occupies a position.
+
     ``to_merged`` translates a source row into this one, indexed by source level
     and then by that level's own slot: a projection's view row is positional
     against its :class:`SourceViewLayout`, and merging carries each written
