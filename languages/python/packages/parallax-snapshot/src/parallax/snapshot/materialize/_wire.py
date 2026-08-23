@@ -423,17 +423,20 @@ class _Unwind:
                 )
         view_layout = self._merge.view_layout(node)
         for view, child in subtree.children.items():
-            # Unloaded arrives two ways, and both mean the same thing here. A node
-            # whose concrete a path-root guard excluded from the level attaching
-            # this view holds NO SLOT for it, because a merged row is the union of
-            # the source rows its own concrete can carry. A node the level could
-            # have reached but did not holds the slot with ABSENT in it. Neither
-            # renders.
+            # A merged row is the union of the source rows its own concrete can
+            # carry, so a node whose concrete a path-root guard excluded from the
+            # level attaching this view holds NO SLOT for it, and renders none.
+            # The union's other unloaded state — a slot present and holding
+            # ABSENT, left wherever a level could have reached the node but did
+            # not — cannot arise at a view this walk names: reaching the node here
+            # meant following the arm that view's own level wrote, and a level
+            # writes every parent it gathers. So the skip below is the union's
+            # width showing through, and the one under it is unreachable.
             slot = view_layout.index_of.get(view)
             if slot is None:
                 continue
             value = self._merge.view(node, slot)
-            if value is ABSENT:  # pragma: no cover - a carried slot is a loaded one
+            if value is ABSENT:  # pragma: no cover - see above: a slot this walk names is written
                 continue
             key = view.narrowed_view or view.relationship.name
             _put(rendered, key, self._related(value, child))

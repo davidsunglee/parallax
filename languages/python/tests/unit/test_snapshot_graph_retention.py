@@ -23,27 +23,39 @@ what makes the readings exact: the merge's own tables are sized by projections
 and logical nodes, and a dictionary that resized between two points would put a
 capacity step into a reading that is otherwise pure tuple arithmetic.
 
+**The measured level is polymorphic.** Its children resolve to the two concretes
+of one table-per-hierarchy family, one reached through an intermediate abstract
+subtype and one descending from the root, so a graph carries two member layouts
+of different widths, two source view layouts, and two merged rows at once — and a
+duplicate of either merges onto the logical node its broad projection made.
+
 **Every measured projection also carries Value Object occurrences**, a top-level
 One holding a nested One and a nested Many beside a top-level Many, because the
 representation this replaced spent more of its per-cell cost inside documents
 than on Attributes: a record, an occurrence, and a per-leaf carrier each. Their
-shape is pinned across the grid — a fourth crossed axis would buy nothing the
-first three do not already refuse — and read instead as a step of its own, over
-the leaf count of the nested records.
+shape is pinned across the grid — three more crossed axes would buy nothing the
+first three do not already refuse — and read instead as three steps of their own,
+one per population: the leaves inside a record, the elements a Many holds, and
+the occurrences a projection declares.
 
 **What the readings say, in the order they get stronger.** The whole grid sits on
 one affine function of the three parameters fitted from its four smallest points,
 which refuses any cross term — a slot cost sized per member, say. Then each step
-is graded against the exact number of pointers the compact representation can
-charge: one per member per row, one per arm where the edge is recorded and one
-where it resolves, one per slot in every row a slot widens, and one per Value
-Object leaf in every record that carries it. Those readings are the ones that
-name "no per-cell carrier" in arithmetic, and the two controls are what prove
-they detect one —
+is graded against exactly what the compact representation can charge: one pointer
+per member per row, one per arm where the edge is recorded and one where it
+resolves, one per slot in every row a slot widens, one per Value Object leaf in
+every record that carries it, one whole positional row and its naming position
+per record, and one position and one record per occurrence. Those readings are
+the ones that name "no per-cell carrier" in arithmetic, and each is read beside
+the control that proves it detects one —
 :func:`test_the_member_step_is_what_refuses_a_representation_that_wraps_every_cell`
 wraps every member cell, stays exactly affine, and fails only at the member step;
 :func:`test_the_leaf_step_is_what_refuses_a_representation_wrapping_every_document_cell`
-wraps every Value Object cell and fails only at the leaf step.
+wraps every Value Object cell and fails only at the leaf step;
+:func:`test_the_record_step_is_what_refuses_a_representation_wrapping_every_record`
+and
+:func:`test_the_occurrence_step_is_what_refuses_a_representation_wrapping_every_occurrence`
+wrap what a step holding its own population fixed cannot see at all.
 
 Exported names carry no leading underscore only where another module imports
 them; nothing imports this one.
@@ -52,6 +64,7 @@ them; nothing imports this one.
 from __future__ import annotations
 
 import struct
+import sys
 import tracemalloc
 from collections.abc import Callable, Mapping
 from functools import cache
@@ -62,7 +75,15 @@ import pytest
 from memory_instruments import Seam, retained, survivors, warmed
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity, entity_by_name
+from parallax.core.metamodel import (
+    EntityIdentity,
+    Metamodel,
+    Multiplicity,
+    NestedValueObjectMetadata,
+    RelationshipIdentity,
+    ValueObjectMetadata,
+    entity_by_name,
+)
 from parallax.core.temporal_read import Pin
 from parallax.descriptor import domain_model_from_document
 from parallax.snapshot.materialize import SnapshotGraph, merge_graph_input
@@ -82,6 +103,13 @@ _POINTER: Final = struct.calcsize("P")
 one member: a position holds the decoded leaf itself, so a member costs the slot
 that points at it and nothing else. A representation that wrapped a cell would
 charge this plus a whole object per cell, which is what the grid refuses."""
+
+_EMPTY_ROW: Final = sys.getsizeof(())
+"""What a positional row of no positions costs. A row is a tuple, so its whole
+cost is this plus one pointer per position — which is what makes a record's own
+price a derived number rather than a constant anyone had to measure by hand.
+:func:`test_a_positional_row_costs_the_tuple_that_holds_it_and_nothing_more` is
+what holds the interpreter to it."""
 
 _NAMESPACE: Final = "snapshot.retention"
 
@@ -128,30 +156,62 @@ step rather than crossed into the grid: the occurrence shape is the same at ever
 grid point, so what this axis answers is what one more Value Object leaf costs
 and nothing about the other three."""
 
-_NESTED: Final = 2
-"""Elements in each Many occurrence. More than one, so a cost charged per Value
-Object RECORD is a different number from one charged per projection row."""
+_ELEMENTS: Final = (2, 3)
+"""Elements in each Many occurrence. More than one at the smaller count, so a cost
+charged per Value Object RECORD is a different number from one charged per
+projection row; read as a step of its own for what one more element costs, which
+is the one axis that moves the record and element populations while holding the
+leaves inside them fixed."""
+
+_OCCURRENCES: Final = (2, 3)
+"""Top-level Value Object members the measured Entity declares: ``mark`` and
+``marks`` always, and ``spare`` at the larger count. The axis that moves the
+occurrence population alone — one more occurrence per projection, at the same
+member, leaf, and element counts — so a cost charged once per occurrence has an
+axis it cannot sit still under."""
+
+_LABELS: Final = 1
+"""Leaves on each ``marks`` element: its one ``label``. The Many the leaf axis
+does not reach into, so its elements stay the narrowest records the workload
+has however wide the nested ones grow."""
 
 _VIEWS: Final = ("children", "arms", "extra1", "extra2")
 """The parent's declared relationships, in declaration order. A slot count names
 the first ``slots`` of them; the model declares them all at every count, so a
 relationship a plan did not use is model-owned metadata and costs no reading."""
 
+_CONCRETES: Final = ("Alpha", "Beta")
+"""The resolved concretes of the measured family, taken in turn down each
+parent's children. Both are read at the one child source level, so the level is
+polymorphic in the sense that costs a reading anything: two layouts of different
+widths, two source view layouts, and two merged rows, all inside one graph."""
 
-def _document(members: int, leaves: int) -> Mapping[str, object]:
-    """A two-Entity model descriptor whose Child carries ``members`` Attributes
-    and Value Object occurrences whose nested records carry ``leaves`` each.
 
-    Descriptor-backed rather than class-backed because the axes ARE the member
-    and leaf counts: one document generator answers every point of the grid,
-    where near-identical class pairs would answer the same question by
+def _document(members: int, leaves: int, occurrences: int) -> Mapping[str, object]:
+    """A model descriptor whose Child family carries ``members`` inherited
+    Attributes and ``occurrences`` top-level Value Objects, whose nested records
+    carry ``leaves`` each.
+
+    Descriptor-backed rather than class-backed because the axes ARE the member,
+    leaf, and occurrence counts: one document generator answers every point of
+    the grid, where near-identical class pairs would answer the same question by
     repetition. Nothing here constructs an Entity, so the classes a typed
     materializer would need are not part of what is measured.
 
+    ``Child`` is the ABSTRACT ROOT of a table-per-hierarchy family, so the
+    measured level is polymorphic: ``Alpha`` reaches it through the intermediate
+    abstract ``Special`` and ``Beta`` descends from the root directly, which
+    gives the two concretes different applicable member sets — five positions
+    against six at the smallest member count — and therefore different layouts,
+    different source view layouts, and different merged rows. Every member the
+    axes vary is declared on the root, so widening one widens both concretes'
+    rows alike and a step stays a count of rows rather than of concretes.
+
     The occurrences are what put a document on the measured path: ``mark`` is a
-    top-level One holding a nested One and a nested Many, and ``marks`` is a
-    top-level Many. A Many is declared at :data:`_NESTED` elements by the rows,
-    so a record count is not a row count.
+    top-level One holding a nested One and a nested Many, ``marks`` is a
+    top-level Many, and ``spare`` is the One the occurrence axis adds. A Many is
+    declared at :data:`_ELEMENTS` elements by the rows, so a record count is not
+    a row count.
     """
 
     def one_to_many(name: str, *, dependent: bool = False) -> dict[str, object]:
@@ -170,6 +230,24 @@ def _document(members: int, leaves: int) -> Mapping[str, object]:
     def leaf_run() -> list[dict[str, object]]:
         return [{"name": f"v{index:02d}", "type": "string"} for index in range(leaves)]
 
+    value_objects: list[dict[str, object]] = [
+        {
+            "name": "mark",
+            "attributes": [{"name": "label", "type": "string"}],
+            "valueObjects": [
+                {"name": "inner", "attributes": leaf_run()},
+                {"name": "inners", "multiplicity": "many", "attributes": leaf_run()},
+            ],
+        },
+        {
+            "name": "marks",
+            "multiplicity": "many",
+            "attributes": [{"name": "label", "type": "string"}],
+        },
+    ]
+    if occurrences > _OCCURRENCES[0]:
+        value_objects.append({"name": "spare", "attributes": leaf_run()})
+
     return {
         "entities": [
             {
@@ -186,6 +264,11 @@ def _document(members: int, leaves: int) -> Mapping[str, object]:
                 "name": "Child",
                 "namespace": _NAMESPACE,
                 "table": "retention_child",
+                "inheritance": {
+                    "role": "root",
+                    "strategy": "table-per-hierarchy",
+                    "tag": {"column": "kind"},
+                },
                 "attributes": [
                     {"name": "id", "type": "int64", "primaryKey": True},
                     {"name": "parentId", "type": "int64"},
@@ -194,23 +277,37 @@ def _document(members: int, leaves: int) -> Mapping[str, object]:
                         for index in range(members - 2)
                     ),
                 ],
-                "valueObjects": [
-                    {
-                        "name": "mark",
-                        "attributes": [{"name": "label", "type": "string"}],
-                        "valueObjects": [
-                            {"name": "inner", "attributes": leaf_run()},
-                            {"name": "inners", "multiplicity": "many", "attributes": leaf_run()},
-                        ],
-                    },
-                    {
-                        "name": "marks",
-                        "multiplicity": "many",
-                        "attributes": [{"name": "label", "type": "string"}],
-                    },
-                ],
+                "valueObjects": value_objects,
                 "relationships": [{"name": "parent", "reverseOf": f"{_NAMESPACE}.Parent.children"}],
                 "indices": [{"name": "retention_child_parent", "attributes": ["parentId"]}],
+            },
+            {
+                "name": "Special",
+                "namespace": _NAMESPACE,
+                "inheritance": {"role": "abstract-subtype", "parent": f"{_NAMESPACE}.Child"},
+                "attributes": [{"name": "rank", "type": "int64", "nullable": True}],
+            },
+            {
+                "name": "Alpha",
+                "namespace": _NAMESPACE,
+                "inheritance": {
+                    "role": "concrete-subtype",
+                    "parent": f"{_NAMESPACE}.Special",
+                    "tagValue": "alpha",
+                },
+            },
+            {
+                "name": "Beta",
+                "namespace": _NAMESPACE,
+                "inheritance": {
+                    "role": "concrete-subtype",
+                    "parent": f"{_NAMESPACE}.Child",
+                    "tagValue": "beta",
+                },
+                "attributes": [
+                    {"name": "weight", "type": "float64", "nullable": True},
+                    {"name": "note", "type": "string", "maxLength": 32, "nullable": True},
+                ],
             },
         ]
     }
@@ -227,27 +324,32 @@ def _level(layout: EntityLayout) -> LevelContext:
 
 
 class _Workload(NamedTuple):
-    """One member count's whole model and its rows, formed once at import.
+    """One shape's whole model and its rows, formed once at import.
 
     Every row a window converts is allocated out here, which is what excludes
     decoded payload leaves from the readings STRUCTURALLY rather than by
     filtering: a compact row that merely references one of these values costs the
     reading the position and not the value.
+
+    ``levels`` is the resolved concrete each child position is read at, in
+    position order, so a conversion takes the exact Entity's own layout exactly
+    as a polymorphic level's compiled read hands one over per row.
     """
 
     meta: Metamodel
     parent: LevelContext
-    child: LevelContext
+    levels: tuple[LevelContext, ...]
     views: tuple[RelationshipViewKey, ...]
     back: RelationshipViewKey
     parents: tuple[dict[str, object], ...]
     children: tuple[tuple[dict[str, object], ...], ...]
 
 
-def _workload(members: int, leaves: int) -> _Workload:
-    meta = model_of(domain_model_from_document(_document(members, leaves)))
+def _workload(members: int, leaves: int, elements: int, occurrences: int) -> _Workload:
+    meta = model_of(domain_model_from_document(_document(members, leaves, occurrences)))
     catalog = CatalogedModel(meta).layouts
     parent, child = _identity(meta, "Parent"), _identity(meta, "Child")
+    concretes = tuple(_level(catalog.entity(_identity(meta, name))) for name in _CONCRETES)
     parent_rows: list[dict[str, object]] = [{"id": 1_000 + cell} for cell in range(_LARGER)]
     child_rows: list[tuple[dict[str, object], ...]] = []
     for cell in range(_LARGER):
@@ -256,20 +358,27 @@ def _workload(members: int, leaves: int) -> _Workload:
             row: dict[str, object] = {"id": 10_000 + cell * 100 + index, "parent_id": 1_000 + cell}
             for position in range(members - 2):
                 row[f"c{position:02d}"] = f"c{position:02d}-value-{cell}-{index}"
+            if index % len(_CONCRETES) == 0:
+                row["rank"] = index
+            else:
+                row["weight"] = float(index)
+                row["note"] = f"note-{cell}-{index}"
             row["mark"] = {
                 "label": f"mark-{cell}-{index}",
                 "inner": _record(leaves, cell, index),
-                "inners": [_record(leaves, cell, index) for _ in range(_NESTED)],
+                "inners": [_record(leaves, cell, index) for _ in range(elements)],
             }
             row["marks"] = [
-                {"label": f"marks-{cell}-{index}-{element}"} for element in range(_NESTED)
+                {"label": f"marks-{cell}-{index}-{element}"} for element in range(elements)
             ]
+            if occurrences > _OCCURRENCES[0]:
+                row["spare"] = _record(leaves, cell, index)
             rows.append(row)
         child_rows.append(tuple(rows))
     return _Workload(
         meta,
         _level(catalog.entity(parent)),
-        _level(catalog.entity(child)),
+        tuple(concretes[index % len(_CONCRETES)] for index in range(_CHILDREN)),
         tuple(RelationshipViewKey(RelationshipIdentity(parent, name)) for name in _VIEWS),
         RelationshipViewKey(RelationshipIdentity(child, "parent")),
         tuple(parent_rows),
@@ -282,14 +391,17 @@ def _record(leaves: int, cell: int, index: int) -> dict[str, object]:
     return {f"v{position:02d}": f"v{position:02d}-{cell}-{index}" for position in range(leaves)}
 
 
-_WORKLOADS: Final = {
-    (members, leaves): _workload(members, leaves)
-    for members in _MEMBERS
-    for leaves in (_LEAVES if members == _MEMBERS[0] else _LEAVES[:1])
-}
-"""One workload per grid member count, plus the one the leaf step's second point
-needs. The leaf axis is read at the smallest member count alone, which is where
-every step in this suite is read."""
+_SHAPES: Final = (
+    *((members, _LEAVES[0], _ELEMENTS[0], _OCCURRENCES[0]) for members in _MEMBERS),
+    (_MEMBERS[0], _LEAVES[1], _ELEMENTS[0], _OCCURRENCES[0]),
+    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[1], _OCCURRENCES[0]),
+    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[0], _OCCURRENCES[1]),
+)
+"""What the model and its rows are formed at: one shape per grid member count,
+plus the second point of each of the three document steps. Every step is read at
+the smallest member count, which is where every step in this suite is read."""
+
+_WORKLOADS: Final = {shape: _workload(*shape) for shape in _SHAPES}
 
 _PIN: Final = Pin()
 
@@ -312,17 +424,28 @@ the list make: not one of them is per projection, per member, or per edge.
 
 
 class _Point(NamedTuple):
-    """One workload the readings are stated over: ``members`` applicable
-    Attributes on each child projection, ``slots`` relationship views declared at
-    the root source level, ``arms`` projection references in the narrowed view of
-    them, and ``leaves`` on each nested Value Object record.
+    """One workload the readings are stated over: ``members`` Attributes the
+    family root declares, ``slots`` relationship views declared at the root
+    source level, ``arms`` projection references in the narrowed view of them,
+    ``leaves`` on each nested Value Object record, ``elements`` in each Many
+    occurrence, and ``occurrences`` top-level Value Objects on each child
+    projection.
 
-    The crossed grid pins ``leaves``; only the leaf step moves it."""
+    The crossed grid pins the last three; each of the three document steps moves
+    exactly one of them."""
 
     members: int
     slots: int
     arms: int
     leaves: int = _LEAVES[0]
+    elements: int = _ELEMENTS[0]
+    occurrences: int = _OCCURRENCES[0]
+
+    @property
+    def shape(self) -> tuple[int, int, int, int]:
+        """The model and rows this point converts, which is what the axes moving
+        a document share and the three view axes do not."""
+        return self.members, self.leaves, self.elements, self.occurrences
 
 
 _GRID: Final = tuple(
@@ -338,13 +461,29 @@ reads.
 
 _LEAST: Final = _Point(_MEMBERS[0], _SLOTS[0], _ARMS[0])
 
+_WIDER_LEAVES: Final = _LEAST._replace(leaves=_LEAVES[1])
+_WIDER_ELEMENTS: Final = _LEAST._replace(elements=_ELEMENTS[1])
+_WIDER_OCCURRENCES: Final = _LEAST._replace(occurrences=_OCCURRENCES[1])
+"""The second point of each document step. One axis moves and five stand still,
+which is what lets each step name one population of the document rather than a
+mixture of them."""
+
+_LEAF_POOL: Final = tuple(f"leaf-{index:02d}" for index in range(max(_LEAVES) + _LABELS))
+"""Leaves the row calibration fills its rows from, allocated out here for the
+reason every workload row is: what it prices is the row, not the values in it."""
+
+_ROWS: Final = (256, 512)
+"""Rows the calibration holds, at two counts, so what it reads is the marginal
+cost of one row rather than a total carrying whatever else the seam allocated."""
+
 
 def _compose(point: _Point, cells: int) -> tuple[SnapshotGraph, GraphMerge]:
     """One whole materialization of ``cells`` cells, built and merged the way a
     read builds and merges one: a fresh slot table and view schema per execution,
-    every row converted through the production converter, the builder dropped at
-    sealing, and the sealed graph and its merge the only things that come back."""
-    workload = _WORKLOADS[point.members, point.leaves]
+    every row converted through the production converter under the concrete its
+    own level resolved it to, the builder dropped at sealing, and the sealed graph
+    and its merge the only things that come back."""
+    workload = _WORKLOADS[point.shape]
     views = workload.views[: point.slots]
     schema = ViewSchema((tuple(ChildSlot(view) for view in views), (ChildSlot(workload.back),)))
     builder = GraphBuilder(schema)
@@ -352,12 +491,15 @@ def _compose(point: _Point, cells: int) -> tuple[SnapshotGraph, GraphMerge]:
     for cell in range(cells):
         parent = convert_row(workload.parents[cell], workload.parent, builder, source=_ROOT_SOURCE)
         children = tuple(
-            convert_row(row, workload.child, builder, source=_CHILD_SOURCE)
-            for row in workload.children[cell]
+            convert_row(row, level, builder, source=_CHILD_SOURCE)
+            for row, level in zip(workload.children[cell], workload.levels, strict=True)
         )
         duplicates = tuple(
             convert_row(
-                workload.children[cell][index], workload.child, builder, source=_CHILD_SOURCE
+                workload.children[cell][index],
+                workload.levels[index],
+                builder,
+                source=_CHILD_SOURCE,
             )
             for index in range(_DUPLICATES)
         )
@@ -444,20 +586,26 @@ def _measured(cells: int) -> dict[_Point, int]:
 
 
 @cache
-def _leaf_step(seam: Callable[[_Point, int], Seam], cells: int) -> int:
-    """What one more leaf on every nested Value Object record costs ``seam``.
-
-    Read as a two-point difference rather than off the crossed grid, for the
-    reason :data:`_LEAVES` states: the occurrence shape is pinned everywhere
-    else, so the whole of what moves between these two points is one leaf per
-    record.
-    """
+def _at(seam: Callable[[_Point, int], Seam], point: _Point, cells: int) -> int:
+    """``seam``'s retained bytes at one point, measured once however many steps
+    read it — the smallest point is the baseline all three document steps are
+    taken against."""
     tracemalloc.start()
     try:
-        wide = retained(seam(_LEAST._replace(leaves=_LEAVES[1]), cells))
-        return wide - retained(seam(_LEAST, cells))
+        return retained(seam(point, cells))
     finally:
         tracemalloc.stop()
+
+
+def _step(seam: Callable[[_Point, int], Seam], wide: _Point, cells: int) -> int:
+    """What moving one document axis from :data:`_LEAST` to ``wide`` costs
+    ``seam``.
+
+    Read as a two-point difference rather than off the crossed grid, for the
+    reason :data:`_LEAVES` states: every other axis holds the same value at both
+    points, so the whole of what moves between them is the one the caller varied.
+    """
+    return _at(seam, wide, cells) - _at(seam, _LEAST, cells)
 
 
 @cache
@@ -501,7 +649,54 @@ def _leaf_records(cells: int) -> int:
     elements. A record is a positional row of its own, so this is a count of rows
     rather than of projections — which is what a per-cell carrier inside a
     document would multiply."""
-    return _member_rows(cells) * (1 + _NESTED)
+    return _member_rows(cells) * (1 + _ELEMENTS[0])
+
+
+def _row_bytes(positions: int) -> int:
+    """What one whole positional row of ``positions`` positions costs: the tuple
+    itself, plus one pointer for each position it holds."""
+    return _EMPTY_ROW + positions * _POINTER
+
+
+def _element_bytes(leaves: int) -> int:
+    """What one more element in every Many occurrence costs one child projection:
+    the ``inners`` element's own record and the position naming it in that
+    occurrence's row, plus the same for ``marks``, whose elements carry the one
+    ``label`` however wide the nested records grow.
+
+    A representation charging anything per RECORD — the pre-cutover graph held a
+    ``ValueObjectRecord`` for each — charges it twice more here, which is what
+    this reading is stated exactly enough to refuse.
+    """
+    return _row_bytes(leaves) + _row_bytes(_LABELS) + 2 * _POINTER
+
+
+def _occurrence_bytes(leaves: int) -> int:
+    """What one more top-level occurrence costs one child projection: the position
+    it takes in the member row after the Attributes, and the one record that
+    position holds.
+
+    A representation charging anything per OCCURRENCE — the pre-cutover graph held
+    a ``ValueObjectOccurrenceInput`` for each — is a term this reading has and the
+    element and leaf steps do not, because their populations move underneath a
+    fixed number of occurrences.
+    """
+    return _POINTER + _row_bytes(leaves)
+
+
+def _rows_seam(rows: int, positions: int) -> Seam:
+    """``rows`` positional rows of ``positions`` positions, built inside the
+    window over leaves allocated outside it and held in one tuple that names
+    them — the graph's own arrangement of a record, reduced to what is priced."""
+
+    def run(sample: Callable[[], None]) -> None:
+        held = tuple(
+            tuple(_LEAF_POOL[position] for position in range(positions)) for _ in range(rows)
+        )
+        sample()
+        assert held is not None
+
+    return run
 
 
 def _slot_rows(cells: int) -> int:
@@ -531,6 +726,61 @@ def test_the_workload_holds_its_projection_and_logical_node_counts_across_the_wh
         assert len(rows.roots) == _CELLS, point
         assert len(merge.order) == _CELLS * (1 + _CHILDREN), point
         assert not merge.has_issues, point
+
+
+def test_the_measured_level_resolves_two_concretes_of_one_family_to_two_layouts() -> None:
+    # The workload is the representative graph's polymorphic half, stated as the
+    # facts the readings depend on rather than as the model that produces them.
+    # One child source level resolves both concretes of one family; their member
+    # layouts are different objects of different widths, so a per-row cost is
+    # charged against two layouts rather than one; both are laid out and merged
+    # by the one execution-owned schema; and a duplicate of either merges onto the
+    # logical node its broad projection already made, which is what keeps the
+    # projection and logical-node counts above apart.
+    graph, merge = _compose(_LEAST, _CELLS)
+    rows = graph_rows(graph)
+    children = [
+        layout
+        for layout, source in zip(rows.layouts, rows.sources, strict=True)
+        if source == _CHILD_SOURCE
+    ]
+    concretes = {layout.concrete.name: layout for layout in children}
+    assert sorted(concretes) == sorted(_CONCRETES)
+    alpha, beta = (concretes[name] for name in _CONCRETES)
+    assert alpha.family == beta.family
+    assert alpha.attribute_count != beta.attribute_count
+    assert rows.schema.merged(alpha) is not rows.schema.merged(beta)
+    assert {id(rows.schema.merged(layout)) for layout in children} == {
+        id(rows.schema.merged(alpha)),
+        id(rows.schema.merged(beta)),
+    }
+    per_cell = 1 + _CHILDREN + _DUPLICATES
+    for cell in range(_CELLS):
+        broad = cell * per_cell + 1
+        for index in range(_DUPLICATES):
+            duplicate = broad + _CHILDREN + index
+            assert rows.logical_ids[duplicate] == rows.logical_ids[broad + index], (cell, index)
+    assert not merge.has_issues
+
+
+def test_a_positional_row_costs_the_tuple_that_holds_it_and_nothing_more() -> None:
+    # What the two record readings below are stated in, measured rather than
+    # assumed. Every claim about a Value Object record's price rests on a row
+    # costing its own tuple and one pointer per position, so the price is derived
+    # from the interpreter's own sizing and this is what holds the interpreter to
+    # it: the marginal cost of one more row, in a structure that names it, is the
+    # row plus the position naming it. An interpreter that ever charged a row
+    # differently would fail here rather than silently moving what a record step
+    # means.
+    tracemalloc.start()
+    try:
+        for positions in _LEAVES:
+            small = retained(_rows_seam(_ROWS[0], positions))
+            large = retained(_rows_seam(_ROWS[1], positions))
+            grown = (_ROWS[1] - _ROWS[0]) * (_row_bytes(positions) + _POINTER)
+            assert large - small == grown, positions
+    finally:
+        tracemalloc.stop()
 
 
 def test_retained_bytes_are_affine_in_the_members_slots_and_arms_at_once() -> None:
@@ -565,10 +815,40 @@ def test_a_value_object_leaf_costs_one_pointer_in_every_record_that_carries_it()
     # positional row exactly as an Entity's members are, at every depth, so one
     # more leaf costs one pointer in each RECORD that declares it — three per
     # child projection here, the one `inner` and the two `inners` elements — and
-    # nothing per occurrence, per element, or per cell. Read at two graph sizes
-    # for the reason the member step is.
-    assert _leaf_step(_seam, _CELLS) == _leaf_records(_CELLS) * _POINTER
-    assert _leaf_step(_seam, _LARGER) == _leaf_records(_LARGER) * _POINTER
+    # nothing per CELL of one. What a record itself costs, and what an occurrence
+    # itself costs, are the two steps below; this one holds their populations
+    # still and prices what a leaf adds inside them. Read at two graph sizes for
+    # the reason the member step is.
+    assert _step(_seam, _WIDER_LEAVES, _CELLS) == _leaf_records(_CELLS) * _POINTER
+    assert _step(_seam, _WIDER_LEAVES, _LARGER) == _leaf_records(_LARGER) * _POINTER
+
+
+def test_a_value_object_record_costs_its_own_row_and_the_position_that_names_it() -> None:
+    # The population the leaf step holds still, varied on its own: one more
+    # element in every Many occurrence, at the same members, leaves, and
+    # occurrences. What it may cost is exactly two more rows per child projection
+    # — one `inners` element and one `marks` element — and the two positions
+    # naming them. Nothing per record beyond the record, which is the claim the
+    # leaf step cannot make, because a fixed cost per record sits still while
+    # leaves move and is absorbed by the fit's origin at every graph size.
+    small = _member_rows(_CELLS) * _element_bytes(_LEAVES[0])
+    large = _member_rows(_LARGER) * _element_bytes(_LEAVES[0])
+    assert _step(_seam, _WIDER_ELEMENTS, _CELLS) == small
+    assert _step(_seam, _WIDER_ELEMENTS, _LARGER) == large
+
+
+def test_a_top_level_occurrence_costs_one_position_in_the_row_and_its_own_record() -> None:
+    # And the population both other document steps hold still: one more top-level
+    # Value Object on the measured Entity, at the same members, leaves, and
+    # elements. An occurrence is a position in the member row after the
+    # Attributes, holding the one record it reduced to — so it costs a pointer and
+    # a row, and the wrapper the replaced representation put around each one costs
+    # nothing here because there is no wrapper. Read at two graph sizes for the
+    # reason the member step is.
+    small = _member_rows(_CELLS) * _occurrence_bytes(_LEAVES[0])
+    large = _member_rows(_LARGER) * _occurrence_bytes(_LEAVES[0])
+    assert _step(_seam, _WIDER_OCCURRENCES, _CELLS) == small
+    assert _step(_seam, _WIDER_OCCURRENCES, _LARGER) == large
 
 
 def test_an_edge_costs_one_pointer_where_it_is_recorded_and_one_where_it_resolves() -> None:
@@ -629,21 +909,23 @@ def _catalog_seam(graphs: int) -> Seam:
     through it — and nothing of the graphs themselves, each of which is
     unreachable again before the next one is built.
     """
-    workload = _WORKLOADS[_LEAST.members, _LEAST.leaves]
+    workload = _WORKLOADS[_LEAST.shape]
     views = workload.views[: _LEAST.slots]
 
     def run(sample: Callable[[], None]) -> None:
         cataloged = CatalogedModel(workload.meta)
         parent = _level(cataloged.layouts.entity(workload.parent.concrete_entity))
-        child = _level(cataloged.layouts.entity(workload.child.concrete_entity))
+        levels = tuple(
+            _level(cataloged.layouts.entity(level.concrete_entity)) for level in workload.levels
+        )
         for _ in range(graphs):
             builder = GraphBuilder(
                 ViewSchema((tuple(ChildSlot(view) for view in views), (ChildSlot(workload.back),)))
             )
             root = convert_row(workload.parents[0], parent, builder, source=_ROOT_SOURCE)
             children = tuple(
-                convert_row(row, child, builder, source=_CHILD_SOURCE)
-                for row in workload.children[0]
+                convert_row(row, level, builder, source=_CHILD_SOURCE)
+                for row, level in zip(workload.children[0], levels, strict=True)
             )
             builder.write_view(root, views[0], children)
             builder.write_view(root, views[1], children[: _LEAST.arms])
@@ -759,7 +1041,104 @@ def test_the_leaf_step_is_what_refuses_a_representation_wrapping_every_document_
     # would notice: the member, slot, and arm steps and the affine shape are all
     # untouched by what happens inside an occurrence. So the leaf step is the only
     # reading standing between that representation and this graph.
-    step = _leaf_step(_document_wrapping_seam, _CELLS)
+    step = _step(_document_wrapping_seam, _WIDER_LEAVES, _CELLS)
     assert step > _leaf_records(_CELLS) * _POINTER
     with pytest.raises(AssertionError):
         assert step == _leaf_records(_CELLS) * _POINTER
+
+
+def _record_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
+    """``point``'s materialization, plus one carrier per Value Object RECORD at
+    every depth — a representation that wraps each reduced record rather than each
+    of its cells, which is the population the pre-cutover graph's
+    ``ValueObjectRecord`` was."""
+
+    def run(sample: Callable[[], None]) -> None:
+        graph, merge = _compose(point, cells)
+        rows = graph_rows(graph)
+        carriers = [
+            carrier
+            for layout, row in zip(rows.layouts, rows.member_rows, strict=True)
+            for position, declared in enumerate(layout.occurrences, start=layout.attribute_count)
+            for carrier in _records(row[position], declared)
+        ]
+        sample()
+        assert graph is not None and merge is not None and carriers is not None
+
+    return run
+
+
+def _occurrence_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
+    """``point``'s materialization, plus one carrier per top-level OCCURRENCE of
+    every projection — the population the pre-cutover graph's
+    ``ValueObjectOccurrenceInput`` was, which is fixed per projection and
+    therefore invisible to every reading that varies something inside a
+    document."""
+
+    def run(sample: Callable[[], None]) -> None:
+        graph, merge = _compose(point, cells)
+        rows = graph_rows(graph)
+        carriers = [
+            _CellCarrier(row[position])
+            for layout, row in zip(rows.layouts, rows.member_rows, strict=True)
+            for position in range(layout.attribute_count, len(row))
+        ]
+        sample()
+        assert graph is not None and merge is not None and carriers is not None
+
+    return run
+
+
+def _records(
+    value: object, declared: ValueObjectMetadata | NestedValueObjectMetadata
+) -> list[_CellCarrier]:
+    """One carrier per record reached from one occurrence position: the record
+    itself, and each record nested inside it, descending a Many by its elements
+    and a One by its single row."""
+    if declared.multiplicity is Multiplicity.MANY:
+        return [
+            carrier
+            for element in cast("tuple[object, ...]", value)
+            for carrier in _record_carriers(element, declared)
+        ]
+    return _record_carriers(value, declared)
+
+
+def _record_carriers(
+    row: object, declared: ValueObjectMetadata | NestedValueObjectMetadata
+) -> list[_CellCarrier]:
+    """One carrier for one record, and one for each record below it."""
+    positions = cast("tuple[object, ...]", row)
+    return [
+        _CellCarrier(row),
+        *(
+            carrier
+            for offset, nested in enumerate(declared.value_objects, start=len(declared.attributes))
+            for carrier in _records(positions[offset], nested)
+        ),
+    ]
+
+
+def test_the_record_step_is_what_refuses_a_representation_wrapping_every_record() -> None:
+    # What the record reading is worth. A seam keeping one carrier per reduced
+    # record — no cell wrapped, no occurrence wrapped — moves the element step by
+    # a whole object per element and moves nothing else in this suite: the affine
+    # shape, the member, slot, and arm steps, and the leaf step all price
+    # populations it holds fixed. So a `ValueObjectRecord` returning to the
+    # retained graph fails exactly here.
+    step = _step(_record_wrapping_seam, _WIDER_ELEMENTS, _CELLS)
+    assert step > _member_rows(_CELLS) * _element_bytes(_LEAVES[0])
+    with pytest.raises(AssertionError):
+        assert step == _member_rows(_CELLS) * _element_bytes(_LEAVES[0])
+
+
+def test_the_occurrence_step_is_what_refuses_a_representation_wrapping_every_occurrence() -> None:
+    # And what the occurrence reading is worth, which is the reading with no
+    # substitute at all: a carrier held once per top-level occurrence is a
+    # constant per projection, so it stands still down every axis the grid varies
+    # and is absorbed whole by the fit's origin at each graph size. It moves this
+    # step by an object per occurrence, and nothing else here notices it.
+    step = _step(_occurrence_wrapping_seam, _WIDER_OCCURRENCES, _CELLS)
+    assert step > _member_rows(_CELLS) * _occurrence_bytes(_LEAVES[0])
+    with pytest.raises(AssertionError):
+        assert step == _member_rows(_CELLS) * _occurrence_bytes(_LEAVES[0])
