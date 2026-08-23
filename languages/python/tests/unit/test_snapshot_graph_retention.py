@@ -71,8 +71,8 @@ from functools import cache
 from typing import Final, NamedTuple, cast
 
 import pytest
-
 from memory_instruments import Seam, retained, survivors, warmed
+
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (

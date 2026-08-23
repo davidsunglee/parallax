@@ -53,12 +53,11 @@ or integer is invisible to every count. The instruments are read together for
 that reason — the byte counts see a retained integer no count can, and the
 survivor sample sees a free-list list the byte counts cannot.
 
-Both a pytest suite and a report run as a script read these, which is what puts
-them here: ``pythonpath = ["tools", "tests"]`` (``pyproject.toml``) gives pytest
-both roots, while ``python tools/<report>.py`` gets only this one. Nothing here
-imports anything but the standard library, so the subject of a measurement stays
-the caller's to supply and no import contract governing the shipped packages
-reaches this module. Never imported by production code.
+Three ``tests/unit`` cost suites read these, which is what puts them here beside
+them; ``tools/snapshot_graph_overhead.py`` reads them too, and names this
+directory to do it. Nothing here imports anything but the standard library, so
+the subject of a measurement stays the caller's to supply. Never imported by
+production code.
 
 A name another module imports carries no leading underscore, because importing
 an underscored name across modules is a `reportPrivateUsage` error under pyright

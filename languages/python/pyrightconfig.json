@@ -10,7 +10,7 @@
     "tools",
     "tests"
   ],
-  "extraPaths": ["tools", "tests"],
+  "extraPaths": ["tools", "tests", "tests/unit"],
   "stubPath": "typings",
   "exclude": [
     "**/__pycache__",

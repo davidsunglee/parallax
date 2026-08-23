@@ -45,8 +45,9 @@ no test command of its own.
 `pythonpath = ["tools", "tests"]` (`pyproject.toml`) puts `tests/` on the import
 path, so a symbol reads `from _support.corpus import case_document` and a model
 module reads `from _support import mirrored_models as mm`, regardless of which
-surface pytest collects first; `pyrightconfig.json`'s `extraPaths` mirrors it. A
-test module imports from `_support`, never from another test module.
+surface pytest collects first; `pyrightconfig.json`'s `extraPaths` carries the
+same two roots. A test module imports from `_support`, never from another test
+module.
 
 Support code only one surface uses stays inside that surface —
 `tests/unit/_corpus_identity_support.py`, `_corpus_model_support.py`,
@@ -55,15 +56,18 @@ Support code only one surface uses stays inside that surface —
 `_metamodel_support.py`, `_mixed_strategy_model.py`,
 `_snapshot_graph_support.py`, `_source_inventory_support.py`,
 `_transact_support.py`,
+`tests/unit/memory_instruments.py`,
 `tests/unit/observation_models.py`, and
 `tests/unit/value_object_bad_models.py`.
 
-The memory instruments those cost suites read are not among them:
-`tools/memory_instruments.py` holds them, and `tools/snapshot_graph_overhead.py`
-reads the same definitions. `pythonpath` puts `tools/` on pytest's import path
-and a report invoked as `python tools/<report>.py` has only that directory on
-its own, so neither import spells a path. `_lifecycle_cost_support.py` is what
-the lifecycle suites own alone: the seam values they drive.
+Two of those serve the cost suites and split by subject:
+`memory_instruments.py` is what all three measure WITH, and
+`_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
+with. `tools/snapshot_graph_overhead.py` reads the instruments as well, and is
+the one place in the tree that spells `tests/unit` as an import root — it
+appends that directory to `sys.path` before importing them, which is also why
+`pyrightconfig.json`'s `extraPaths` carries `tests/unit` beside the two
+`pythonpath` roots.
 
 `_support/` is the only package under `tests/`. Every surface directory is
 rootless, so pytest imports its modules by bare basename and those basenames must

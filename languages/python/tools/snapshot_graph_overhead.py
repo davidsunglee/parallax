@@ -38,10 +38,10 @@ import sys
 import tracemalloc
 from collections import Counter
 from collections.abc import Callable
+from pathlib import Path
 from time import perf_counter
 from typing import Final, NamedTuple, cast
 
-from memory_instruments import WARMUP, LiveGraph, Seam, live_graph, retained, untraced, warmed
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -65,6 +65,29 @@ from parallax.snapshot.materialize import GraphMerge, SnapshotGraph, merge_graph
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import GraphBuilder, graph_rows
 from parallax.snapshot.materialize._views import ChildSlot, RelationshipViewKey, ViewSchema
+
+INSTRUMENTS: Final = Path(__file__).resolve().parents[1] / "tests" / "unit"
+"""The one directory this report names, so it can read the instruments the gated
+suites read.
+
+They are support code for `tests/unit/`, whose three cost suites are their only
+other readers, and `core/spec/language-testing.md` §4 keeps single-surface
+support code inside its surface — a report is no surface of its own, so picking
+them up here does not move them. That leaves the reach deliberate and one-way:
+the path is spelled once, here, and nothing under `tests/` knows this file
+exists.
+"""
+sys.path.append(str(INSTRUMENTS))
+
+from memory_instruments import (  # noqa: E402
+    WARMUP,
+    LiveGraph,
+    Seam,
+    live_graph,
+    retained,
+    untraced,
+    warmed,
+)
 
 PRE_CUTOVER_BYTES: Final = 4_721.8
 """Retained bytes per projection this identical workload read on the per-cell
