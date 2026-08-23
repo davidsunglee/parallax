@@ -16,8 +16,9 @@ composed per-node record would over-produce for every one of them.
 What it retains is the logical-node-to-allocation mapping, the projection-to-
 allocation mapping, the allocation order, the winning projection per logical
 node, one fixed view row per logical node aligned to that node's merged view
-layout, and the accumulated issues. It clones no member payload: a merged node's
-member row IS the winning projection's row.
+layout, that layout itself by reference to the schema that owns it, and the
+accumulated issues. It clones no member payload: a merged node's member row IS
+the winning projection's row.
 
 Two passes over one order. Pass 1 walks roots in first-encounter preorder,
 assigning each logical node its zero-based allocation index and recording the
@@ -27,9 +28,10 @@ allocate/populate loop over the same order.
 The preorder is fixed: roots in result order; each projection's relationship
 views in accepted metadata declaration order; the broad view before that
 relationship's narrowed views; narrowed views by their canonical derived key;
-children in to-many result order. Nothing here sorts to achieve it — the sealed
-graph ordered each projection's views by its member layout's own rule, and this
-orders each merged node's union once through the same rule.
+children in to-many result order. Nothing here sorts or unions to achieve it —
+the execution's view schema fixed both a projection's slot order and its merged
+node's before any row was converted, so a walk carries each written slot across
+through a precomputed translation and reads the merged layout off the schema.
 
 A repeated logical node reuses its first index, and every projection is walked
 exactly once, so a projection reached late still contributes its own children at
@@ -47,20 +49,19 @@ accumulated, undeduplicated.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from types import MappingProxyType
 from typing import cast
 
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize._graph import (
+    ABSENT,
     InvalidRootInput,
-    MergedViewLayout,
-    RelationshipViewKey,
     SnapshotGraph,
     StoredDataIssueInput,
     graph_rows,
 )
+from parallax.snapshot.materialize._views import MergedViewLayout
 
 __all__ = ["GraphMerge", "merge_graph_input"]
 
@@ -78,7 +79,6 @@ class GraphMerge:
         "_invalid_roots",
         "_issues",
         "_logical",
-        "_merged",
         "_order",
         "_resolved",
         "_roots",
@@ -95,11 +95,9 @@ class GraphMerge:
         self._logical: dict[int, int] = {}
         self._resolved = [_UNREACHED] * len(rows.layouts)
         self._issues: list[tuple[StoredDataIssueInput, ...]] = []
-        self._merged: dict[
-            tuple[EntityIdentity, tuple[RelationshipViewKey, ...]], MergedViewLayout
-        ] = {}
+        self._view_layouts: list[MergedViewLayout] = []
         invalid_roots: list[InvalidRootInput] = []
-        winners: list[dict[RelationshipViewKey, object]] = []
+        winners: list[list[object]] = []
         root_indices: list[int | None] = []
         for root in rows.roots:
             if isinstance(root, InvalidRootInput):
@@ -111,12 +109,7 @@ class GraphMerge:
         self._invalid_roots = tuple(invalid_roots)
         self._roots = tuple(root_indices)
         self._order = tuple(rows.layouts[winner].concrete for winner in self._winner)
-        self._view_layouts: list[MergedViewLayout] = []
-        self._view_rows: list[tuple[object, ...]] = []
-        for index, carried in enumerate(winners):
-            layout = self._merged_layout(rows.layouts[self._winner[index]], carried)
-            self._view_layouts.append(layout)
-            self._view_rows.append(tuple(self._allocation(carried[key]) for key in layout.slots))
+        self._view_rows = [tuple(self._allocation(value) for value in row) for row in winners]
 
     # ----------------------------------------------------------------------- #
     # The whole-graph surface.                                                  #
@@ -201,7 +194,7 @@ class GraphMerge:
     # Pass 1.                                                                   #
     # ----------------------------------------------------------------------- #
 
-    def _walk(self, projection: int, winners: list[dict[RelationshipViewKey, object]]) -> None:
+    def _walk(self, projection: int, winners: list[list[object]]) -> None:
         if self._resolved[projection] != _UNREACHED:
             return
         rows = self._rows
@@ -212,49 +205,33 @@ class GraphMerge:
             self._logical[logical] = index
             self._winner.append(projection)
             self._issues.append(rows.issues[projection])
-            winners.append({})
+            merged = rows.schema.merged(rows.layouts[projection])
+            self._view_layouts.append(merged)
+            winners.append([ABSENT] * len(merged.slots))
         else:
             carried = rows.issues[projection]
             if carried:
                 self._issues[index] = (*self._issues[index], *carried)
         self._resolved[projection] = index
-        values = rows.view_values[projection]
+        values = rows.view_rows[projection]
         carried_views = winners[index]
-        for slot, key in enumerate(rows.view_keys[projection]):
-            carried_views.setdefault(key, values[slot])
+        to_merged = self._view_layouts[index].to_merged[rows.sources[projection]]
+        for slot, value in enumerate(values):
+            merged_slot = to_merged[slot]
+            if value is not ABSENT and carried_views[merged_slot] is ABSENT:
+                carried_views[merged_slot] = value
         for value in values:
             for child in _edges(value):
                 self._walk(child, winners)
 
     # ----------------------------------------------------------------------- #
-    # Pass 1's epilogue: the merged view rows.                                  #
+    # Pass 1's epilogue: a walked projection's edges as allocation indices.     #
     # ----------------------------------------------------------------------- #
-
-    def _merged_layout(
-        self, layout: EntityLayout, carried: Mapping[RelationshipViewKey, object]
-    ) -> MergedViewLayout:
-        """The canonical slot order for one merged node's union of views.
-
-        Memoized on the concrete Entity and the union as encountered, because a
-        graph's nodes of one concrete overwhelmingly carry one view set reached
-        one way — so the ordering rule runs once per shape rather than once per
-        node, and every node of that shape shares the one layout it produced.
-        """
-        keys = tuple(carried)
-        memo = self._merged.get((layout.concrete, keys))
-        if memo is not None:
-            return memo
-        slots = layout.ordered(keys)
-        built = MergedViewLayout(
-            slots, MappingProxyType({key: slot for slot, key in enumerate(slots)})
-        )
-        self._merged[layout.concrete, keys] = built
-        return built
 
     def _allocation(self, value: object) -> object:
         """One view value's projection references as allocation indices."""
-        if value is None:
-            return None
+        if value is None or value is ABSENT:
+            return value
         if isinstance(value, tuple):
             return tuple(self._resolved[child] for child in cast("tuple[int, ...]", value))
         return self._resolved[cast("int", value)]
@@ -278,9 +255,10 @@ def _edges(value: object) -> tuple[int, ...]:
     """The projection indexes one relationship view value reaches, in order.
 
     The graph boundary already settled that every one is an exact in-range
-    ``int``, so the shape is read rather than re-judged.
+    ``int``, so the shape is read rather than re-judged. An unloaded slot and a
+    loaded null both reach nothing.
     """
-    if value is None:
+    if value is None or value is ABSENT:
         return ()
     if isinstance(value, tuple):
         return cast("tuple[int, ...]", value)

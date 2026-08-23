@@ -24,12 +24,18 @@ from _support.document_reads import fold_mapping_rows
 from parallax.conformance import models, read_models
 from parallax.conformance import vo_models as vo
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
-from parallax.core import LATEST, TX_TIME, Attr, DomainModel, Entity, ValueObject, attr
+from parallax.core import LATEST, TX_TIME, Attr, DomainModel, Entity, ValueObject, attr, deep_fetch
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    Metamodel,
+    RelationshipIdentity,
+    entity_by_name,
+)
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
@@ -44,13 +50,15 @@ from parallax.snapshot import (
     StoredDataIssue,
     handle,
 )
-from parallax.snapshot.handle import _database
+from parallax.snapshot.handle import _database, _read
 from parallax.snapshot.materialize import (
     InvalidRootInput,
+    RelationshipViewKey,
     SnapshotDecodingError,
     SnapshotGraph,
 )
 from parallax.snapshot.materialize._graph import ABSENT, GraphRows, graph_rows
+from parallax.snapshot.materialize._views import ChildSlot
 
 _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]
@@ -60,6 +68,29 @@ RATE = _MODELS["rate"]
 DOCUMENT = _MODELS["document"]
 
 _UTC = dt.UTC
+
+_ORDER_ROW: dict[str, object] = {
+    "id": 0,
+    "name": "Ada",
+    "sku": "A",
+    "qty": 1,
+    "price": Decimal("1"),
+    "active": True,
+    "ordered_on": dt.date(2024, 1, 1),
+}
+"""One `Order` row, its key named by whichever case reads it."""
+
+_ANIMAL_ROW: dict[str, object] = {
+    "id": 0,
+    "name": "",
+    "owner_id": 10,
+    "license_id": None,
+    "indoor": None,
+    "bark_volume": None,
+    "tusk_length": None,
+    "kind": "dog",
+}
+"""One shared-table animal row, per-concrete columns null until a case names one."""
 
 
 class RequiredProfile(ValueObject):
@@ -103,11 +134,17 @@ def _value(rows: GraphRows, projection: int, entity: str, member: str) -> object
 
 def _view(rows: GraphRows, projection: int, attach_key: str) -> object:
     """The value a projection's view carries, found by the attach key a plan
-    derived — and ``ABSENT`` where the projection carries no such view at all."""
+    derived — and ``ABSENT`` where the projection holds no such slot at all.
+
+    A view row is positional against the source layout the execution's schema
+    laid the projection out with, so finding a slot by name means asking the
+    schema which slots that ``(source level, concrete)`` pair carries.
+    """
+    layout = rows.schema.source(rows.sources[projection], rows.layouts[projection])
     return next(
         (
-            rows.view_values[projection][slot]
-            for slot, key in enumerate(rows.view_keys[projection])
+            rows.view_rows[projection][slot]
+            for slot, key in enumerate(layout.slots)
             if (key.narrowed_view or key.relationship.name) == attach_key
         ),
         ABSENT,
@@ -984,6 +1021,32 @@ def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> N
     assert _view(_rows(result.graph), _root(result), "owner") is None
 
 
+def test_a_parent_the_child_level_returned_no_row_for_is_loaded_empty() -> None:
+    # The level ran and gathered both keys, so both parents are attached to; the
+    # one no returned row correlates with is loaded-EMPTY rather than unloaded,
+    # which is the other half of the empty-key short-circuit's own claim.
+    port = QueuePort(
+        [
+            [
+                {**_ORDER_ROW, "id": 1},
+                {**_ORDER_ROW, "id": 2},
+            ],
+            [{"id": 11, "order_id": 1, "sku": "x", "quantity": 1, "shipped_on": None}],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Order",
+            "predicate": {"all": {}},
+            "includes": [{"segments": [{"rel": "Order.items"}]}],
+        }
+    )
+    result = handle.find(query, _cataloged(ORDERS), POSTGRES, port)
+    rows = _rows(result.graph)
+    assert len(port.executed) == 2
+    assert [_view(rows, root, "items") for root in (0, 1)] == [(2,), ()]
+
+
 def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
     # A null correlation key needs no identity lookup at all — no ancestor row
     # exists to resolve — so the view is attached as loaded-null directly.
@@ -1018,3 +1081,202 @@ def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
         if layout.concrete == EntityIdentity("parallax.compatibility", "OrderItem")
     )
     assert _view(rows, item, "order") is None
+
+
+# --------------------------------------------------------------------------- #
+# The view-slot seam: a plan in, a slot table out, and the schema every graph  #
+# of one execution is laid out by.                                            #
+# --------------------------------------------------------------------------- #
+def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[ChildSlot, ...], ...]:
+    """The slot table ``find`` derives from ``document``'s own plan.
+
+    Reached through the module rather than by name so the executor's own
+    derivation is what is graded — this is the one place the plan vocabulary
+    stops, and nothing below it ever sees a `FetchLevel` again.
+    """
+    query = deserialize_query(document)
+    entity = entity_by_name(model, cast("str", document["target"]))
+    assert entity is not None
+    return _read._slot_table(  # pyright: ignore[reportPrivateUsage] - the seam under test
+        deep_fetch.plan(entity, query, model)
+    )
+
+
+def _view_key(entity: str, name: str, narrowed: str | None = None) -> RelationshipViewKey:
+    return RelationshipViewKey(
+        RelationshipIdentity(EntityIdentity("parallax.compatibility", entity), name), narrowed
+    )
+
+
+def test_the_slot_table_places_each_level_under_the_source_that_gathers_it() -> None:
+    # A level's slot belongs to whichever source its PARENT rows came from, and
+    # the table is dense over every source a projection can be converted at — so
+    # a back-reference level, which converts no row of its own, is named as a
+    # parent by nothing and owns an empty entry.
+    assert _slot_table(
+        ORDERS,
+        {
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
+        },
+    ) == (
+        (ChildSlot(_view_key("Order", "items")),),
+        (ChildSlot(_view_key("OrderItem", "order")),),
+        (),
+    )
+
+
+def test_a_root_parented_levels_guard_reaches_the_slot_table_as_its_admitted_set() -> None:
+    # The guard is the only thing that filters a level's parents, so it is the
+    # only per-concrete fact a slot carries — and a narrowed hop is a distinct
+    # view key rather than a qualification of the broad one.
+    assert _slot_table(
+        ANIMAL,
+        {
+            "target": "Animal",
+            "predicate": {"all": {}},
+            "includes": [
+                {
+                    "segments": [{"rel": "Animal.owner"}, {"rel": "Person.pets"}],
+                    "appliesTo": ["Dog"],
+                }
+            ],
+        },
+    ) == (
+        (
+            ChildSlot(
+                _view_key("Animal", "owner"),
+                frozenset({EntityIdentity("parallax.compatibility", "Dog")}),
+            ),
+        ),
+        (ChildSlot(_view_key("Person", "pets")),),
+        (),
+    )
+
+
+def test_a_narrowed_hop_takes_its_own_slot_beside_the_broad_one() -> None:
+    assert _slot_table(
+        ANIMAL,
+        {
+            "target": "Person",
+            "predicate": {"all": {}},
+            "includes": [
+                {"segments": [{"rel": "Person.pets"}]},
+                {"segments": [{"rel": "Person.pets", "narrowTo": ["Dog"]}]},
+            ],
+        },
+    ) == (
+        (
+            ChildSlot(_view_key("Person", "pets")),
+            ChildSlot(_view_key("Person", "pets", "pets[Dog]")),
+        ),
+        (),
+        (),
+    )
+
+
+def test_a_guarded_out_parent_holds_no_slot_for_the_level_it_was_excluded_from() -> None:
+    # The dog is admitted and receives its owner; the cat was never a parent of
+    # that level at all, so its row holds no such position — which is what keeps
+    # "no such related row" distinct from "this object never participated".
+    port = QueuePort(
+        [
+            [
+                {**_ANIMAL_ROW, "id": 1, "name": "Rex", "bark_volume": 7, "kind": "dog"},
+                {**_ANIMAL_ROW, "id": 2, "name": "Tom", "indoor": True, "kind": "cat"},
+            ],
+            [{"id": 10, "name": "Alice"}],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Animal",
+            "predicate": {"all": {}},
+            "includes": [{"segments": [{"rel": "Animal.owner"}], "appliesTo": ["Dog"]}],
+        }
+    )
+    result = handle.find(query, _cataloged(ANIMAL), POSTGRES, port)
+    rows = _rows(result.graph)
+    dog, cat = (
+        next(
+            projection
+            for projection, layout in enumerate(rows.layouts)
+            if layout.concrete == EntityIdentity("parallax.compatibility", name)
+        )
+        for name in ("Dog", "Cat")
+    )
+    assert _view(rows, dog, "owner") is not ABSENT
+    assert _view(rows, cat, "owner") is ABSENT
+    assert rows.view_rows[cat] == ()
+
+
+def test_two_levels_filling_one_view_leave_the_last_fetch_plan_result_in_its_slot() -> None:
+    # A broad path and a guarded sibling are distinct hops that attach under one
+    # name, so each runs its own statement and each writes the same slot. The
+    # slot retains the LAST of them — two projections of one row, and the plan's
+    # own order decides which the graph holds.
+    port = QueuePort(
+        [
+            [{**_ANIMAL_ROW, "id": 1, "name": "Rex", "bark_volume": 7, "kind": "dog"}],
+            [{"id": 10, "name": "Alice"}],
+            [{"id": 10, "name": "Alice"}],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Animal",
+            "predicate": {"all": {}},
+            "includes": [
+                {"segments": [{"rel": "Animal.owner"}]},
+                {"segments": [{"rel": "Animal.owner"}], "appliesTo": ["Dog"]},
+            ],
+        }
+    )
+    result = handle.find(query, _cataloged(ANIMAL), POSTGRES, port)
+    assert len(port.executed) == 3
+    rows = _rows(result.graph)
+    people = [
+        projection
+        for projection, layout in enumerate(rows.layouts)
+        if layout.concrete == EntityIdentity("parallax.compatibility", "Person")
+    ]
+    assert len(people) == 2
+    assert _view(rows, _valid_root(rows), "owner") == people[-1]
+
+
+def test_every_milestone_graph_of_one_read_is_laid_out_by_the_one_schema() -> None:
+    # A schema is a fact about the PLAN, so partitioning one batch's rows into
+    # milestones derives none: the staging graph's own schema is what every
+    # milestone builder lays its imported rows out against.
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": Decimal("75.00"),
+                    "in_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                    "out_z": INFINITY,
+                },
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": Decimal("50.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
+                    "out_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                },
+            ]
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "InvoiceLine",
+            "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+            "temporal": {"transaction-time": {"history": {}}},
+        }
+    )
+    result = handle.find_history(query, _cataloged(INVOICE), POSTGRES, port)
+    schemas = {id(_rows(graph).schema) for graph in result.graphs}
+    assert len(result.graphs) == 2
+    assert len(schemas) == 1

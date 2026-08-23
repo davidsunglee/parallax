@@ -70,7 +70,7 @@ def _status_row(status_id: int) -> dict[str, object]:
 
 def _order_graph(*, items: tuple[dict[str, object], ...] | None = None) -> Any:
     """One `SnapOrder` root, optionally with a loaded `items` view."""
-    fixture = GraphFixture(_ORDERS)
+    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     if items is not None:
         refs = tuple(fixture.node("SnapOrderItem", row) for row in items)
@@ -174,7 +174,11 @@ def test_view_answers_the_loaded_value_and_raises_for_an_unloaded_one() -> None:
 
 
 def test_a_to_many_path_fans_out_into_one_flat_tuple_in_traversal_order() -> None:
-    fixture = GraphFixture(_ORDERS)
+    fixture = GraphFixture(
+        _ORDERS,
+        "parallax.compatibility.SnapOrder.items",
+        "parallax.compatibility.SnapOrderItem.statuses",
+    )
     order = fixture.node("SnapOrder", _ORDER_ROW)
     first = fixture.node("SnapOrderItem", _item_row(11))
     second = fixture.node("SnapOrderItem", _item_row(12))
@@ -202,7 +206,11 @@ def test_an_empty_to_many_branch_contributes_no_terminal_and_stays_a_tuple() -> 
 
 
 def test_an_all_to_one_path_answers_its_terminal_or_none() -> None:
-    fixture = GraphFixture(_ORDERS)
+    fixture = GraphFixture(
+        _ORDERS,
+        "parallax.compatibility.SnapOrder.items",
+        "parallax.compatibility.SnapOrderItem.order",
+    )
     order = fixture.node("SnapOrder", _ORDER_ROW)
     item = fixture.node("SnapOrderItem", _item_row(11))
     orphan = fixture.node("SnapOrderItem", _item_row(50))
@@ -227,7 +235,7 @@ def test_an_unloaded_view_on_a_deeper_segment_is_the_one_reported() -> None:
 
 
 def _narrowed_owner(view_key: str, columns: dict[str, object] | None = None) -> Any:
-    fixture = GraphFixture(_ANIMAL)
+    fixture = GraphFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", view_key))
     owner = fixture.node("AnimalOwner", columns if columns is not None else _OWNER_ROW)
     dog = fixture.node("Dog", _DOG_ROW)
     fixture.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed=view_key)
@@ -265,7 +273,9 @@ def test_an_unrequested_narrowed_view_answers_false_rather_than_raising() -> Non
 def test_a_narrowed_to_one_view_answers_the_node_itself_or_loaded_null() -> None:
     # A to-one hop narrows exactly as a to-many one does, and its view value is
     # then a single node — or loaded-null — rather than a tuple.
-    fixture = GraphFixture(_ANIMAL)
+    fixture = GraphFixture(
+        _ANIMAL, ("parallax.compatibility.AnimalOwner.favorite", "favorite[Dog]")
+    )
     alice = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": 1})
     bob = fixture.node("AnimalOwner", {"id": 11, "name": "Bob", "favorite_id": None})
     fixture.attach(
@@ -284,7 +294,7 @@ def test_a_narrowed_to_one_view_answers_the_node_itself_or_loaded_null() -> None
 
 
 def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() -> None:
-    fixture = GraphFixture(_ANIMAL)
+    fixture = GraphFixture(_ANIMAL, "parallax.compatibility.AnimalOwner.animals")
     owner = fixture.node("AnimalOwner", _OWNER_ROW)
     fixture.attach(
         owner, "parallax.compatibility.AnimalOwner.animals", (fixture.node("Dog", _DOG_ROW),)

@@ -131,6 +131,12 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
+from parallax.snapshot.materialize._views import (
+    ROOT_LEVEL,
+    ChildSlot,
+    SourceLevel,
+    ViewSchema,
+)
 
 __all__ = [
     "CheckedSnapshot",
@@ -434,7 +440,7 @@ def find(
     meta = model.meta
     root_entity = _metadata(meta, query.target.canonical)
     plan_ = deep_fetch.plan(root_entity, query, meta)
-    builder = GraphBuilder()
+    builder = GraphBuilder(ViewSchema(_slot_table(plan_)))
     observations = ReadObservations()
 
     root_compiled = compile_read(
@@ -444,10 +450,12 @@ def find(
         result_form="instance",
         lock=entity_read_lock(meta, root_entity.identity, preference),
     )
-    root_refs = _convert_level(builder, model, port, dialect, root_compiled, read, observations)
+    root_refs = _convert_level(
+        builder, ROOT_LEVEL, model, port, dialect, root_compiled, read, observations
+    )
 
     level_refs: list[tuple[int, ...]] = []
-    for level in plan_.levels:
+    for index, level in enumerate(plan_.levels):
         parents = _guarded_parents(
             builder, level, _parent_refs(level.parent, root_refs, level_refs)
         )
@@ -469,7 +477,7 @@ def find(
             lock=entity_read_lock(meta, child_query.target, preference),
         )
         child_refs = _convert_level(
-            builder, model, port, dialect, child_compiled, read, observations
+            builder, index + 1, model, port, dialect, child_compiled, read, observations
         )
         _attach_children(builder, meta, level, parents, child_refs)
         level_refs.append(child_refs)
@@ -496,6 +504,10 @@ class StagedRows:
     converting them a second time. ``merge`` is the merge over that same staging
     graph, which the lane either classifies or refuses; each row occupies the
     root position of the same ordinal, so a verdict lands on the row it judged.
+    ``schema`` is the view schema this batch was laid out against — a flat batch
+    plans no levels, so it carries no slot — and it travels with the batch so a
+    lane building further graphs out of these rows shares the one schema of its
+    execution rather than deriving a second.
     """
 
     rows: tuple[MaterializedReadRow, ...]
@@ -503,6 +515,7 @@ class StagedRows:
     graph: SnapshotGraph
     roots: tuple[int, ...]
     merge: GraphMerge
+    schema: ViewSchema
 
 
 def stage_publishable_rows(
@@ -549,12 +562,14 @@ def stage_rows(
         )
         for row in materialized
     )
-    builder = GraphBuilder()
+    schema = ViewSchema.of()
+    builder = GraphBuilder(schema)
     roots = tuple(
         convert_row(
             row.values,
             context,
             builder,
+            source=ROOT_LEVEL,
             findings=row.findings,
             family_tag_unknown=row.family_tag_unknown,
             classified_members=row.classified_members,
@@ -562,7 +577,7 @@ def stage_rows(
         for row, context in zip(materialized, contexts, strict=True)
     )
     graph = builder.seal(roots, pin)
-    return StagedRows(materialized, contexts, graph, roots, merge_graph_input(graph))
+    return StagedRows(materialized, contexts, graph, roots, merge_graph_input(graph), schema)
 
 
 def find_rows(
@@ -668,6 +683,11 @@ def find_history(
     first, matching the corpus's own authored `then.graphs` order) rather than in
     the database's unspecified natural row order, and rows within one milestone
     keep that natural order.
+
+    Every milestone graph is laid out against the staging batch's OWN view
+    schema, so one milestone-set read has exactly one — a milestone-set query
+    carries no includes, and a schema is a fact about the plan rather than about
+    a partition of its rows.
     """
     meta = model.meta
     metadata = _metadata(meta, query.target.canonical)
@@ -695,9 +715,11 @@ def find_history(
         edge = milestone_edge(entity, row.values)
         milestone = milestones.get(edge)
         if milestone is None:
-            milestone = _Milestone(GraphBuilder(), _edge_sort_key(entity, row.values))
+            milestone = _Milestone(GraphBuilder(stage.schema), _edge_sort_key(entity, row.values))
             milestones[edge] = milestone
-        milestone.roots.append(milestone.builder.import_projection(stage.graph, staged_ref))
+        milestone.roots.append(
+            milestone.builder.import_projection(ROOT_LEVEL, stage.graph, staged_ref)
+        )
     graphs = tuple(
         milestone.builder.seal(tuple(milestone.roots), _edge_pin(edge))
         for edge, milestone in sorted(milestones.items(), key=lambda entry: entry[1].rank)
@@ -707,6 +729,7 @@ def find_history(
 
 def _convert_level(
     builder: GraphBuilder,
+    source: SourceLevel,
     model: CatalogedModel,
     port: DbPort,
     dialect: Dialect,
@@ -715,6 +738,10 @@ def _convert_level(
     observations: ReadObservations,
 ) -> tuple[int, ...]:
     """Execute one level and convert each of its rows as that row materializes.
+
+    ``source`` is where in the plan these rows land, which is what sizes each
+    projection's view row: the levels attaching BELOW this one are what its rows
+    can receive.
 
     The observation is taken from the SAME row the conversion reads, while that
     row is still live, and paired with the projection that row converted into —
@@ -747,6 +774,7 @@ def _convert_level(
             row.values,
             context,
             builder,
+            source=source,
             findings=row.findings,
             family_tag_unknown=row.family_tag_unknown,
             classified_members=row.classified_members,
@@ -789,6 +817,34 @@ def _view_key(level: deep_fetch.FetchLevel) -> RelationshipViewKey:
     own name."""
     narrowed = None if level.attach_key == level.relationship.name else level.attach_key
     return RelationshipViewKey(level.relationship, narrowed)
+
+
+def _slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...], ...]:
+    """Which view slots each source level's parents can receive, indexed by
+    source level: the root is 0 and plan level ``i`` is ``i + 1``.
+
+    A level contributes one slot to whichever source level its own PARENT rows
+    came from, carrying that level's path-root guard as the concretes it admits.
+    The table is dense over every source level the plan can produce a projection
+    at — a level attaching nothing still owns an empty entry, and a
+    back-reference level, which converts no row of its own, is simply never
+    named as a parent.
+
+    This is where the plan vocabulary stops: what crosses into ``materialize`` is
+    slots, so nothing there interprets a fetch plan.
+    """
+    table: list[list[ChildSlot]] = [[] for _ in range(len(plan.levels) + 1)]
+    for level in plan.levels:
+        parent = (
+            ROOT_LEVEL if isinstance(level.parent, deep_fetch.RootRef) else level.parent.index + 1
+        )
+        table[parent].append(
+            ChildSlot(
+                _view_key(level),
+                None if level.source_position is None else frozenset(level.source_position),
+            )
+        )
+    return tuple(tuple(slots) for slots in table)
 
 
 def _attach_children(

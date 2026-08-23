@@ -53,6 +53,7 @@ from parallax.core.metamodel import (
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import RelationshipViewKey, merge_graph_input
 from parallax.snapshot.materialize._graph import GraphBuilder
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
 _NAMESPACE = "parallax.compatibility"
 _COMPOSITE_KEY = frozenset({"id", "sku"})
@@ -387,8 +388,8 @@ def test_ordered_answers_an_empty_selection_and_a_single_view_unchanged() -> Non
 def _merged(layout: EntityLayout, row: tuple[object, ...], views: tuple[RelationshipViewKey, ...]):
     """One projection of ``layout``'s Entity carrying ``row`` and ``views``,
     merged — the state every consumer of these two rules reads them through."""
-    builder = GraphBuilder()
-    projection = builder.add(layout, row)
+    builder = GraphBuilder(ViewSchema.of(*views))
+    projection = builder.add(ROOT_LEVEL, layout, row)
     for view in views:
         builder.write_view(projection, view, None)
     return merge_graph_input(builder.seal((projection,), Pin()))
@@ -411,10 +412,10 @@ def test_every_corpus_entitys_family_and_key_agree_with_the_merge_identity_rule(
         where = (stem, identity.canonical)
         row = tuple(range(100, 100 + len(layout.members)))
         other = tuple(value + 1 for value in row)
-        builder = GraphBuilder()
-        first = builder.add(layout, row)
-        again = builder.add(layout, row)
-        apart = builder.add(layout, other)
+        builder = GraphBuilder(ViewSchema.of())
+        first = builder.add(ROOT_LEVEL, layout, row)
+        again = builder.add(ROOT_LEVEL, layout, row)
+        apart = builder.add(ROOT_LEVEL, layout, other)
         merge = merge_graph_input(builder.seal((first, again, apart), Pin()))
         assert merge.roots == (0, 0, 1), where
         assert builder_key_of(layout, row) != builder_key_of(layout, other), where
@@ -443,9 +444,9 @@ def test_a_composite_key_agrees_with_the_merge_identity_rule_as_a_whole_tuple() 
     varied = tuple(
         value + 1 if position == first_column else value for position, value in enumerate(row)
     )
-    builder = GraphBuilder()
-    first = builder.add(layout, row)
-    apart = builder.add(layout, varied)
+    builder = GraphBuilder(ViewSchema.of())
+    first = builder.add(ROOT_LEVEL, layout, row)
+    apart = builder.add(ROOT_LEVEL, layout, varied)
     merge = merge_graph_input(builder.seal((first, apart), Pin()))
     assert merge.roots == (0, 1)
 
