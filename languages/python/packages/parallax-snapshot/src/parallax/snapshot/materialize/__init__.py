@@ -9,6 +9,10 @@ projection merge that produce and consume it.
   the absent/null/empty spellings, graph-local identity, the index-addressed
   edges a graph boundary refuses anything else at, and the sealing that turns a
   builder's arrays into one opaque graph.
+- :mod:`~parallax.snapshot.materialize._views` fixes the relationship view slots
+  a projection can receive, per source level and resolved concrete Entity, for
+  one whole execution — and the merged union each logical node's row is laid out
+  by, with the translation from a source row into it.
 - :mod:`~parallax.snapshot.materialize._convert` turns one SQL-materialized
   row's transformed values plus its level context and classified provenance into
   one projection. SQL row transforms classify and decode projected Entity-document

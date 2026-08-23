@@ -43,6 +43,7 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
 __all__ = [
     "GraphFixture",
@@ -143,6 +144,15 @@ def _occurrence_row(row: tuple[object, ...], declared: _VoContainer) -> dict[str
 class GraphFixture:
     """One graph under construction, plus the materialization over it.
 
+    ``views`` are the relationship views this graph attaches, declared up front
+    because a projection's view row is sized when the row is added and a fan-back
+    only names a slot the plan already fixed. A broad view is its relationship's
+    own spelling; a narrowed one is that spelling paired with the derived view
+    key. They all sit on one unguarded source level, which is the shape
+    :meth:`ViewSchema.of` exists for: it lets a suite state a graph with no plan,
+    no executor, and no database, at the cost of every projection carrying every
+    declared slot rather than only its own level's.
+
     ``model`` overrides the accepted model conversion and merging read without
     changing the classes construction resolves, which is how a suite exercises a
     model and its classes disagreeing — a member the model calls a Value Object
@@ -155,13 +165,25 @@ class GraphFixture:
 
     __slots__ = ("_builder", "_domain", "_layouts", "_model", "_sealed")
 
-    def __init__(self, domain: DomainModel, model: Metamodel | None = None) -> None:
+    def __init__(
+        self,
+        domain: DomainModel,
+        *views: str | tuple[str, str],
+        model: Metamodel | None = None,
+    ) -> None:
         assert class_index(domain) is not None, "the graph suites compose class-backed models"
         self._domain = domain
         self._model = model if model is not None else model_of(domain)
         self._layouts = LayoutCatalog(self._model)
-        self._builder = GraphBuilder()
+        self._builder = GraphBuilder(ViewSchema.of(*map(self._declared, views)))
         self._sealed: tuple[tuple[tuple[int, ...], Pin], SnapshotGraph] | None = None
+
+    def _declared(self, view: str | tuple[str, str]) -> RelationshipViewKey:
+        """One declared view: a broad one is a spelling, a narrowed one a pair."""
+        if isinstance(view, str):
+            return self.view_key(view)
+        relationship, narrowed = view
+        return self.view_key(relationship, narrowed=narrowed)
 
     @property
     def builder(self) -> GraphBuilder:
@@ -172,7 +194,7 @@ class GraphFixture:
         """Convert one row of ``entity`` exactly as a level of a read would."""
         identity = identity_of(self._model, entity)
         context = LevelContext(self._layouts.entity(identity), documents_of(self._model, identity))
-        return convert_row(dict(columns), context, self._builder)
+        return convert_row(dict(columns), context, self._builder, source=ROOT_LEVEL)
 
     def layout_for(self, entity: str) -> EntityLayout:
         """``entity``'s member layout under this fixture's own accepted model."""

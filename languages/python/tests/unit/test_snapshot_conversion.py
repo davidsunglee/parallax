@@ -83,6 +83,7 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
 ORDERS = corpus_model("orders")
 ANIMAL = corpus_model("animal")
@@ -150,16 +151,16 @@ def _context(model: Metamodel, entity: str) -> LevelContext:
 def _converted(
     model: Metamodel, entity: str, row: dict[str, object], **provenance: Any
 ) -> _Projection:
-    builder = GraphBuilder()
-    index = convert_row(row, _context(model, entity), builder, **provenance)
+    builder = GraphBuilder(ViewSchema.of())
+    index = convert_row(row, _context(model, entity), builder, source=ROOT_LEVEL, **provenance)
     rows = graph_rows(builder.seal((index,), Pin()))
     return _Projection(rows.layouts[index], rows.member_rows[index], rows.issues[index])
 
 
 def _projection(context: LevelContext, row: dict[str, object]) -> _Projection:
     """One row converted under a caller-built level context."""
-    builder = GraphBuilder()
-    index = convert_row(row, context, builder)
+    builder = GraphBuilder(ViewSchema.of())
+    index = convert_row(row, context, builder, source=ROOT_LEVEL)
     rows = graph_rows(builder.seal((index,), Pin()))
     return _Projection(rows.layouts[index], rows.member_rows[index], rows.issues[index])
 
@@ -696,16 +697,16 @@ def test_the_builder_registers_the_first_projection_of_a_logical_key() -> None:
     # Graph-local identity resolution names the FIRST projection registered for a
     # key, which is what a back-reference level resolves against. A single-column
     # key resolves by its raw scalar, the spelling the layout's own rule gives it.
-    builder = GraphBuilder()
+    builder = GraphBuilder(ViewSchema.of())
     context = _context(ORDERS, "Order")
-    first = convert_row({"id": 1, "name": "Ada"}, context, builder)
-    second = convert_row({"id": 1, "name": "Ada"}, context, builder)
+    first = convert_row({"id": 1, "name": "Ada"}, context, builder, source=ROOT_LEVEL)
+    second = convert_row({"id": 1, "name": "Ada"}, context, builder, source=ROOT_LEVEL)
     assert first != second
     assert builder.resolve(EntityIdentity(_NAMESPACE, "Order"), 1) == first
 
 
 def test_the_builder_answers_nothing_for_a_key_it_never_registered() -> None:
-    assert GraphBuilder().resolve(EntityIdentity(_NAMESPACE, "Order"), 999) is None
+    assert GraphBuilder(ViewSchema.of()).resolve(EntityIdentity(_NAMESPACE, "Order"), 999) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -818,8 +819,8 @@ def test_a_member_the_read_did_not_carry_is_absent_rather_than_null() -> None:
     ],
 )
 def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], code: str) -> None:
-    builder = GraphBuilder()
-    ref = convert_row(row, _context(CUSTOMER, "Customer"), builder)
+    builder = GraphBuilder(ViewSchema.of())
+    ref = convert_row(row, _context(CUSTOMER, "Customer"), builder, source=ROOT_LEVEL)
     graph = builder.seal((ref,), Pin())
     root = graph_rows(graph).roots[0]
     assert isinstance(root, InvalidRootInput)

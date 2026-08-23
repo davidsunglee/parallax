@@ -2,10 +2,16 @@
 
 One projection is a reference to its exact Entity's member layout plus one
 ``member_values`` tuple read against it — Attributes in the layout's order first,
-then top-level Value Object occurrences — plus one relationship view row, one
-dense graph-local logical-node ID, and, only where stored data contradicted the
-model, its issues. Nothing wraps a cell: what a row holds at a position is the
-decoded value itself.
+then top-level Value Object occurrences — plus one relationship view row, the
+source level that produced it, one dense graph-local logical-node ID, and, only
+where stored data contradicted the model, its issues. Nothing wraps a cell: what
+a row holds at a position is the decoded value itself.
+
+The view row is positional too, against the
+:class:`~parallax.snapshot.materialize._views.ViewSchema` the execution planned:
+its width is what the levels below that projection's own source attach, so a
+fan-back names a view and the builder resolves the slot, and no key travels
+beside a value.
 
 Absence stops being spelled by omission, because a positional row has no way to
 omit. :data:`~parallax.core.entity._row.ABSENT` carries it — the one sentinel the
@@ -41,7 +47,6 @@ IDs without re-extracting or re-hashing a key.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
@@ -52,18 +57,22 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     MemberIdentity,
-    RelationshipIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
 from parallax.core.temporal_read import Pin
+from parallax.snapshot.materialize._views import (
+    RelationshipViewKey,
+    SourceLevel,
+    SourceViewLayout,
+    ViewSchema,
+)
 
 __all__ = [
     "ABSENT",
     "GraphBuilder",
     "GraphRows",
     "InvalidRootInput",
-    "MergedViewLayout",
     "RelationshipViewKey",
     "SnapshotGraph",
     "StoredDataIssueCode",
@@ -119,39 +128,13 @@ class InvalidRootInput:
 
 
 @dataclass(frozen=True, slots=True)
-class RelationshipViewKey:
-    """One relationship view a projection loaded.
-
-    ``relationship`` is the declared direction. ``narrowed_view`` is the derived
-    ``<rel>[<Concrete>,<Concrete>]`` key of a narrowed polymorphic hop, or
-    ``None`` for the broad view — the two are distinct views of one direction and
-    never merge into each other. The derived key is the plan's own canonical
-    spelling of the hop's effective concrete-identity set; deriving a second one
-    here would duplicate a decision deep-fetch planning already made.
-    """
-
-    relationship: RelationshipIdentity
-    narrowed_view: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class MergedViewLayout:
-    """One merged logical node's relationship view slots, in canonical order.
-
-    ``slots`` is the union of the views the node's projections carried, ordered
-    by the member layout's own rule, so a walk that visits slots by index visits
-    them in declaration order without sorting anything. ``index_of`` is how a
-    caller holding a view key finds the slot to read; a key it does not hold is a
-    view no projection loaded.
-    """
-
-    slots: tuple[RelationshipViewKey, ...]
-    index_of: Mapping[RelationshipViewKey, int]
-
-
-@dataclass(frozen=True, slots=True)
 class GraphRows:
     """One sealed graph's arrays, all indexed by projection.
+
+    ``view_rows`` are positional against ``schema``: projection ``i``'s row is
+    laid out by the source layout its own ``sources[i]`` and layout resolve to,
+    so a reader translating one into a merged row asks the schema for the
+    translation rather than carrying a key beside every value.
 
     Reached only through :func:`graph_rows`, which is what makes
     :class:`SnapshotGraph` opaque to the result holders that carry one.
@@ -161,8 +144,9 @@ class GraphRows:
     member_rows: tuple[tuple[object, ...], ...]
     issues: tuple[tuple[StoredDataIssueInput, ...], ...]
     logical_ids: tuple[int, ...]
-    view_keys: tuple[tuple[RelationshipViewKey, ...], ...]
-    view_values: tuple[tuple[object, ...], ...]
+    sources: tuple[SourceLevel, ...]
+    view_rows: tuple[tuple[object, ...], ...]
+    schema: ViewSchema
     roots: tuple[int | InvalidRootInput, ...]
     pin: Pin
 
@@ -224,10 +208,12 @@ class GraphBuilder:
     own. The FIRST projection registered for a logical key is the one a later
     back-reference resolves to.
 
-    Relationship views accumulate apart from the rows because a parent's views
-    are only known once its child level lands, and the parent's raw row is long
-    gone by then. :meth:`seal` orders each projection's views canonically once,
-    so nothing downstream sorts a view again.
+    Relationship views accumulate beside the rows rather than inside them,
+    because a parent's views are only known once its child level lands and the
+    parent's raw row is long gone by then. What a row can receive is fixed the
+    moment it is added: ``schema`` lays out its slots from the source level that
+    produced it and the Entity it resolved to, so a fan-back names a view and the
+    builder resolves the position, and nothing downstream orders a view again.
     """
 
     __slots__ = (
@@ -237,16 +223,22 @@ class GraphBuilder:
         "_layouts",
         "_logical_ids",
         "_member_rows",
+        "_schema",
         "_sealed",
+        "_slots",
+        "_sources",
         "_views",
     )
 
-    def __init__(self) -> None:
+    def __init__(self, schema: ViewSchema) -> None:
+        self._schema = schema
         self._layouts: list[EntityLayout] = []
         self._member_rows: list[tuple[object, ...]] = []
         self._issues: list[tuple[StoredDataIssueInput, ...]] = []
         self._logical_ids: list[int] = []
-        self._views: list[dict[RelationshipViewKey, object] | None] = []
+        self._sources: list[SourceLevel] = []
+        self._slots: list[SourceViewLayout] = []
+        self._views: list[list[object]] = []
         self._identity: dict[tuple[EntityIdentity, object], int] = {}
         self._first: list[int] = []
         self._sealed = False
@@ -257,11 +249,17 @@ class GraphBuilder:
 
     def add(
         self,
+        source: SourceLevel,
         layout: EntityLayout,
         member_values: tuple[object, ...],
         issues: tuple[StoredDataIssueInput, ...] = (),
     ) -> int:
-        """Append one converted projection and answer the index naming it.
+        """Append one converted projection of ``source`` and answer its index.
+
+        ``source`` is the plan level that produced the row, which together with
+        the layout's own Entity decides the view row this projection carries: a
+        fixed-width row of ``ABSENT`` slots, each one a level below ``source``
+        will write.
 
         The logical-node ID is assigned here, through the layout's own key rule,
         so identity is computed once for the life of the graph. Duplicates of one
@@ -270,15 +268,18 @@ class GraphBuilder:
         nothing — not even a second read of the identical unreadable row.
         """
         self._require_open()
+        slots = self._schema.source(source, layout)
         projection = len(self._layouts)
         self._layouts.append(layout)
         self._member_rows.append(member_values)
         self._issues.append(issues)
-        self._views.append(None)
+        self._sources.append(source)
+        self._slots.append(slots)
+        self._views.append([ABSENT] * len(slots.slots))
         self._logical_ids.append(self._logical(layout, member_values, issues, projection))
         return projection
 
-    def import_projection(self, graph: SnapshotGraph, projection: int) -> int:
+    def import_projection(self, source: SourceLevel, graph: SnapshotGraph, projection: int) -> int:
         """Carry one sealed projection's row into this builder, by reference.
 
         Its layout, member row, and issues are the ones the sealed graph already
@@ -288,9 +289,14 @@ class GraphBuilder:
         only by accident, because a staging graph holding many milestones at once
         already collapses two milestones of one row onto one ID while their
         partitions must not share one.
+
+        Its view row is NOT carried: ``source`` names where the row lands in THIS
+        builder's own plan, so the importing graph lays out what the imported row
+        can receive rather than inheriting a width from the graph it left.
         """
         rows = graph_rows(graph)
         return self.add(
+            source,
             rows.layouts[projection],
             rows.member_rows[projection],
             rows.issues[projection],
@@ -301,21 +307,29 @@ class GraphBuilder:
 
         ``value`` is ``None`` for loaded-null, a projection index for a loaded
         to-one, and a tuple of them — empty included — for a loaded to-many. A
-        view never written is unloaded, which is what a path-root guard leaves
-        behind when it excludes a parent from a level.
+        slot never written stays :data:`ABSENT`, which is unloaded — what a
+        path-root guard leaves behind when it excludes a parent from a level.
 
-        Keyed rather than appended, because two levels may legitimately write one
-        view: a guarded path and its broad sibling are distinct hops with the
-        same view key, and a parent both admit is written twice with the same
-        value.
+        Named by view rather than by position, so a fan-back never learns about
+        slots: the projection's own source layout resolves one. Two levels may
+        legitimately write one view — a guarded path and its broad sibling are
+        distinct hops with the same view key — and the last write is the one the
+        slot retains, exactly as the fetch plan's own order decided.
+
+        Raises :class:`ValueError` for a view no level below this projection's
+        own source attaches, which is a fan-back writing against a plan the
+        schema was not built from.
         """
         self._require_open()
         _require_edge(value, len(self._layouts))
-        writes = self._views[projection]
-        if writes is None:
-            writes = {}
-            self._views[projection] = writes
-        writes[view] = value
+        slot = self._slots[projection].index_of.get(view)
+        if slot is None:
+            raise ValueError(
+                f"no level below source {self._sources[projection]} attaches "
+                f"{view.narrowed_view or view.relationship.name!r} to "
+                f"{self._layouts[projection].concrete.canonical}"
+            )
+        self._views[projection][slot] = value
 
     def seal(self, roots: tuple[int, ...], pin: Pin) -> SnapshotGraph:
         """Publish this builder's arrays as one sealed graph, roots in result order.
@@ -333,23 +347,14 @@ class GraphBuilder:
         count = len(self._layouts)
         for root in roots:
             _require_index(root, count, "a root")
-        view_keys: list[tuple[RelationshipViewKey, ...]] = []
-        view_values: list[tuple[object, ...]] = []
-        for projection, writes in enumerate(self._views):
-            if not writes:
-                view_keys.append(())
-                view_values.append(())
-                continue
-            ordered = self._layouts[projection].ordered(writes)
-            view_keys.append(ordered)
-            view_values.append(tuple(writes[key] for key in ordered))
         rows = GraphRows(
             layouts=tuple(self._layouts),
             member_rows=tuple(self._member_rows),
             issues=tuple(self._issues),
             logical_ids=tuple(self._logical_ids),
-            view_keys=tuple(view_keys),
-            view_values=tuple(view_values),
+            sources=tuple(self._sources),
+            view_rows=tuple(tuple(row) for row in self._views),
+            schema=self._schema,
             roots=tuple(
                 InvalidRootInput(ordinal, self._issues[root])
                 if _keyless(self._issues[root])
@@ -363,6 +368,8 @@ class GraphBuilder:
         self._member_rows = []
         self._issues = []
         self._logical_ids = []
+        self._sources = []
+        self._slots = []
         self._views = []
         self._identity = {}
         self._first = []

@@ -2005,9 +2005,9 @@ or descriptor authoring form and performs no audit stamping.
   pin is the one fact it publishes, because a Snapshot publishes that pin.
 
   A graph carries, per projection: a reference to the exact-model member layout
-  its row is read against, one positional `member_values` tuple, one relationship
-  view row, one dense graph-local logical-node ID, and its classified stored-data
-  issues where it has any. Nothing wraps a cell: a position holds the decoded
+  its row is read against, one positional `member_values` tuple, one positional
+  relationship view row and the source level that sized it, one dense graph-local
+  logical-node ID, and its classified stored-data issues where it has any. Nothing wraps a cell: a position holds the decoded
   value itself, and no per-cell record, member dictionary, or member-keyed entry
   stands between the row and the value. Absence is spelled rather than omitted,
   because a positional row cannot omit, by ONE private sentinel — the one owned
@@ -2033,8 +2033,8 @@ or descriptor authoring form and performs no audit stamping.
   projections are each refused where the edge or root is recorded, so a graph
   that exists is a graph whose references resolve and no whole-graph validation
   pass stands between building one and merging it. Two entries for one member or
-  one view within a projection are unrepresentable rather than rejected: a member
-  has one position and a view is written by key. `roots` order and the tuple
+  one view within a projection are unrepresentable rather than rejected: each has
+  exactly one position. `roots` order and the tuple
   inside a loaded-many relationship view are semantic and preserved; projection
   order is not. Separate projections may resolve to one logical node; those are
   the duplicate projections the materializer merges. A view never written is
@@ -2161,6 +2161,29 @@ or descriptor authoring form and performs no audit stamping.
   merged representation, and no per-node record composed out of them is
   permitted, whether retained or composed per call. Construction operations are
   emitted directly out of that indexed state into Entity Graph Construction.
+- **Execution-owned view slots.** A relationship view row is positional, and what
+  fixes its positions belongs to the EXECUTION rather than to a row, a graph, or
+  a model. One fetch plan yields one immutable view schema, and every graph that
+  execution builds — its staging graph and each milestone graph alike — is laid
+  out by that one schema.
+
+  A schema fixes one slot tuple per `(source level, resolved concrete Entity)`
+  pair, where the source level is the plan level that produced the projection: a
+  level's own view is a slot on whichever source its parent rows came from, minus
+  whatever that level's path-root guard excluded the concrete from. A guard
+  selects parents by their own resolved concrete, so admission is a fact about
+  the pair and never about a row. Two levels attaching one view key share that
+  key's one slot, and the later write is what the slot retains. Broad and
+  narrowed views of one direction take distinct slots.
+
+  Each resolved concrete also has one merged slot tuple — the union of that
+  concrete's own source layouts, in the member layout's canonical order — plus a
+  translation of each source level's row into it, so merging carries a written
+  position across once rather than resolving a key per read. Slot tuples are
+  derived on the first reach of the pair they describe, are immutable, and are
+  interned, so concretes no guard splits share one; and nothing about them is
+  retained beyond the execution that planned them. No query shape may be cached
+  for the lifetime of a model.
 - **Exact-model member layouts.** Which members a resolved concrete Entity
   carries, in what order, where its Attribute / Value Object boundary falls,
   which positions its family's primary key occupies, which of its Attributes may

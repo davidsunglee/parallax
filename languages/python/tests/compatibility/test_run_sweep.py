@@ -55,6 +55,7 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import GraphBuilder
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
 # level's nodes PER PROJECTION — the unnarrowed concrete superset with a sibling
@@ -486,7 +487,7 @@ def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], R
 
     def transform(row: Row) -> Row:
         materialized = compiled.materialize_row(row)
-        builder = GraphBuilder()
+        builder = GraphBuilder(ViewSchema.of())
         ref = convert_row(
             materialized.values,
             LevelContext(
@@ -495,6 +496,7 @@ def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], R
                 compiled.attribute_reads(materialized.resolved_entity),
             ),
             builder,
+            source=ROOT_LEVEL,
             findings=materialized.findings,
             family_tag_unknown=materialized.family_tag_unknown,
             classified_members=materialized.classified_members,

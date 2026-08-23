@@ -99,7 +99,7 @@ def _classify(fixture: GraphFixture, *roots: object, offset: int = 0) -> GraphCl
 def test_a_conforming_graph_is_answered_without_walking_or_wrapping() -> None:
     # The common case pays nothing: no issue anywhere means no reachability walk,
     # no excluded node, and no record to unwrap at publication.
-    fixture = GraphFixture(ORDERS_MODEL)
+    fixture = GraphFixture(ORDERS_MODEL, "parallax.compatibility.Order.items")
     order = fixture.node("Order", _ORDER_ROW)
     fixture.attach(
         order, "parallax.compatibility.Order.items", (fixture.node("OrderItem", _ITEM_ROW),)
@@ -115,7 +115,7 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
     # Reaching one affected object through several roots repeats its diagnosis in
     # each affected root's record, because classification is root-granular and no
     # root may deliver a pruned or partly published tree.
-    fixture = GraphFixture(ORDERS_MODEL)
+    fixture = GraphFixture(ORDERS_MODEL, "parallax.compatibility.Order.items")
     first = fixture.node("Order", _ORDER_ROW)
     second = fixture.node("Order", {**_ORDER_ROW, "id": 2})
     shared = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
@@ -134,7 +134,7 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
 
 
 def test_a_root_reaching_no_issue_stays_conforming_beside_an_invalid_sibling() -> None:
-    fixture = GraphFixture(ORDERS_MODEL)
+    fixture = GraphFixture(ORDERS_MODEL, "parallax.compatibility.Order.items")
     clean = fixture.node("Order", _ORDER_ROW)
     affected = fixture.node("Order", {**_ORDER_ROW, "id": 2})
     fixture.attach(clean, "parallax.compatibility.Order.items", ())
@@ -153,7 +153,11 @@ def test_one_invalid_node_reached_twice_from_one_root_carries_one_diagnosis() ->
     # A broad view and its narrowed sibling reach the same node, and an object
     # diagnosed once is diagnosed once: the record is a set of facts, not a walk
     # log, so the second path adds nothing.
-    fixture = GraphFixture(ORDERS_MODEL)
+    fixture = GraphFixture(
+        ORDERS_MODEL,
+        "parallax.compatibility.Order.items",
+        ("parallax.compatibility.Order.items", "items[OrderItem]"),
+    )
     order = fixture.node("Order", _ORDER_ROW)
     item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
     fixture.attach(order, "parallax.compatibility.Order.items", (item,))
@@ -177,7 +181,9 @@ def test_the_ordinal_offset_positions_a_record_in_the_published_result() -> None
 # The construction scope narrows with the classification.                      #
 # --------------------------------------------------------------------------- #
 def test_a_non_hydrating_root_leaves_its_own_subtree_out_of_construction() -> None:
-    fixture = GraphFixture(ORDERS_MODEL)
+    fixture = GraphFixture(
+        ORDERS_MODEL, "parallax.compatibility.OrderItem.order", "parallax.compatibility.Order.items"
+    )
     order = fixture.node("Order", _ORDER_ROW)
     item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
     # A loaded-null view reaches nothing and so attributes nothing, which is the
@@ -194,7 +200,7 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
     # Exclusion follows publication, not blame: the shared item is constructible
     # and the conforming root needs it, so only the nodes no publishable root
     # reaches are left out.
-    fixture = GraphFixture(ORDERS_MODEL)
+    fixture = GraphFixture(ORDERS_MODEL, "parallax.compatibility.Order.items")
     clean = fixture.node("Order", _ORDER_ROW)
     affected = fixture.node("Order", {**_ORDER_ROW, "id": 2})
     shared = fixture.node("OrderItem", _ITEM_ROW)
@@ -300,7 +306,9 @@ def test_a_versioned_root_whose_version_did_not_decode_locates_no_version() -> N
 def test_a_loaded_to_one_view_carries_attribution_to_its_parent() -> None:
     # A to-one arm is a lone allocation index rather than a tuple, and reaching an
     # invalid node through one invalidates its holder exactly as a to-many does.
-    fixture = GraphFixture(ORDERS_MODEL)
+    fixture = GraphFixture(
+        ORDERS_MODEL, "parallax.compatibility.OrderItem.order", "parallax.compatibility.Order.items"
+    )
     order = fixture.node("Order", _ORDER_ROW)
     item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
     fixture.attach(item, "parallax.compatibility.OrderItem.order", order)

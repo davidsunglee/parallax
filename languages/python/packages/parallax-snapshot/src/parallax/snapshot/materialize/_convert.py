@@ -74,6 +74,7 @@ from parallax.snapshot.materialize._publication import (
     SNAPSHOT_DECODING_FAILED,
     SnapshotDecodingError,
 )
+from parallax.snapshot.materialize._views import SourceLevel
 
 __all__ = [
     "SNAPSHOT_DECODING_FAILED",
@@ -144,6 +145,7 @@ def convert_row(
     level: LevelContext,
     builder: GraphBuilder,
     *,
+    source: SourceLevel,
     findings: tuple[DocumentFinding, ...] = (),
     family_tag_unknown: bool = False,
     classified_members: frozenset[str] = frozenset(),
@@ -153,6 +155,11 @@ def convert_row(
     Answers the projection index the builder assigned rather than the row
     itself: the builder retains the row, and a caller that held its own copy
     would be the second place a projection lives.
+
+    ``source`` is the plan level this row was read at, and is a fact about where
+    the projection lands rather than about how the row decodes — which is why it
+    travels beside the builder rather than inside ``level``, whose own identity
+    distinguishes what a row converts under and nothing else.
 
     The row is POSITIONAL, laid out by ``level.layout``: every applicable
     Attribute occupies its declared position and every applicable top-level
@@ -215,7 +222,7 @@ def convert_row(
             for finding in occurrence_findings
         )
         members.append(value)
-    return builder.add(layout, tuple(members), tuple(issues))
+    return builder.add(source, layout, tuple(members), tuple(issues))
 
 
 def _attribute_issue(

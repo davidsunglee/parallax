@@ -64,6 +64,7 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
 # Descriptor-backed Domain Models, because a connection takes the Domain Model
 # itself; the accepted Metamodel underneath one is what the materialize-level
@@ -261,11 +262,12 @@ def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() ->
     # occurrence reduction has to answer exactly as the row transform's does, or
     # one stored state publishes two nodes depending on which door it came in by.
     identity = identity_of(CUSTOMER_META, "Customer")
-    builder = GraphBuilder()
+    builder = GraphBuilder(ViewSchema.of())
     ref = convert_row(
         {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
         LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
         builder,
+        source=ROOT_LEVEL,
     )
     (published,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), CUSTOMER_META)
     assert _mapping(_entity(published)["address"]) == {"street": "9 Beacon St", "phones": []}
@@ -278,11 +280,12 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
     # member the value does not have — the marker itself is unreachable, at every
     # depth a document can nest to.
     identity = identity_of(CUSTOMER_META, "Customer")
-    builder = GraphBuilder()
+    builder = GraphBuilder(ViewSchema.of())
     ref = convert_row(
         {"id": 3, "address": {"street": "9 Beacon St", "geo": {"country": "NO"}}},
         LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
         builder,
+        source=ROOT_LEVEL,
     )
     (published,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), CUSTOMER_META)
     node = _entity(published)
@@ -851,7 +854,7 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
             "archive_profile": PresentDocument({"label": "archive"}),
         }
     )
-    builder = GraphBuilder()
+    builder = GraphBuilder(ViewSchema.of())
     ref = convert_row(
         materialized.values,
         LevelContext(
@@ -859,6 +862,7 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
             compiled.documents,
         ),
         builder,
+        source=ROOT_LEVEL,
     )
     (root,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), _VARIANT_MODEL)
     assert root == {

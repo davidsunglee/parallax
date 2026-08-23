@@ -103,7 +103,11 @@ def test_a_merged_node_becomes_a_frozen_instance_of_its_registered_class() -> No
 
 
 def test_an_included_to_many_is_a_tuple_and_its_back_reference_closes_the_cycle() -> None:
-    fixture = GraphFixture(_ORDERS)
+    fixture = GraphFixture(
+        _ORDERS,
+        "parallax.compatibility.SnapOrder.items",
+        "parallax.compatibility.SnapOrderItem.order",
+    )
     order = fixture.node("SnapOrder", _ORDER_ROW)
     item = fixture.node("SnapOrderItem", _ITEM_ROW)
     fixture.attach(order, "parallax.compatibility.SnapOrder.items", (item,))
@@ -123,7 +127,11 @@ def test_a_relationship_no_projection_carried_stays_unloaded() -> None:
 
 
 def test_loaded_null_and_loaded_empty_are_distinct_from_unloaded() -> None:
-    fixture = GraphFixture(_ORDERS)
+    fixture = GraphFixture(
+        _ORDERS,
+        "parallax.compatibility.SnapOrder.items",
+        "parallax.compatibility.SnapOrderItem.order",
+    )
     order = fixture.node("SnapOrder", _ORDER_ROW)
     item = fixture.node("SnapOrderItem", _ITEM_ROW)
     fixture.attach(order, "parallax.compatibility.SnapOrder.items", ())
@@ -199,7 +207,12 @@ def test_an_invalid_root_ordinal_is_its_result_position_by_construction() -> Non
 # `itemsByShipDate`), the shape m-snapshot-read-001 itself exercises.           #
 # --------------------------------------------------------------------------- #
 def test_a_diamond_collapses_onto_one_instance_and_unions_the_views() -> None:
-    fixture = GraphFixture(_STORY_ORDERS)
+    fixture = GraphFixture(
+        _STORY_ORDERS,
+        "parallax.compatibility.Order.items",
+        "parallax.compatibility.Order.itemsByShipDate",
+        "parallax.compatibility.OrderItem.order",
+    )
     order = fixture.node("Order", _ORDER_ROW)
     via_items = fixture.node("OrderItem", _ITEM_ROW)
     via_ship_date = fixture.node("OrderItem", _ITEM_ROW)
@@ -215,7 +228,12 @@ def test_a_diamond_collapses_onto_one_instance_and_unions_the_views() -> None:
 
 
 def test_a_view_both_projections_carried_wires_exactly_once() -> None:
-    fixture = GraphFixture(_STORY_ORDERS)
+    fixture = GraphFixture(
+        _STORY_ORDERS,
+        "parallax.compatibility.Order.items",
+        "parallax.compatibility.Order.itemsByShipDate",
+        "parallax.compatibility.OrderItem.order",
+    )
     order = fixture.node("Order", _ORDER_ROW)
     via_items = fixture.node("OrderItem", _ITEM_ROW)
     via_ship_date = fixture.node("OrderItem", _ITEM_ROW)
@@ -235,7 +253,11 @@ def test_each_to_many_view_keeps_its_own_order_through_the_merge() -> None:
     # instance per row, so a per-view order that survived only because the two
     # tuples happened to hold distinct objects would be indistinguishable from
     # one that did not — which is what a REVERSED sibling states.
-    fixture = GraphFixture(_STORY_ORDERS)
+    fixture = GraphFixture(
+        _STORY_ORDERS,
+        "parallax.compatibility.Order.items",
+        "parallax.compatibility.Order.itemsByShipDate",
+    )
     order = fixture.node("Order", _ORDER_ROW)
     first_by_id = fixture.node("OrderItem", {**_ITEM_ROW, "id": 12, "sku": "later"})
     second_by_id = fixture.node("OrderItem", _ITEM_ROW)
@@ -261,7 +283,11 @@ def test_a_scalar_the_first_projection_carries_wins_without_comparison() -> None
     # sees and compares nothing. A second projection carrying a DIFFERENT value
     # is unreachable through a read; what the assertion pins is that no
     # comparison happens and no refusal is raised.
-    fixture = GraphFixture(_STORY_ORDERS)
+    fixture = GraphFixture(
+        _STORY_ORDERS,
+        "parallax.compatibility.Order.items",
+        "parallax.compatibility.Order.itemsByShipDate",
+    )
     order = fixture.node("Order", _ORDER_ROW)
     first = fixture.node("OrderItem", _ITEM_ROW)
     second = fixture.node("OrderItem", {**_ITEM_ROW, "sku": "y"})
@@ -275,7 +301,11 @@ def test_a_scalar_the_first_projection_carries_wins_without_comparison() -> None
 def test_duplicate_projections_preserve_each_physical_stored_data_issue() -> None:
     # Two sibling levels can project one invalid row twice. Merge retains both
     # physical findings; per-root classification owns any later deduplication.
-    fixture = GraphFixture(_STORY_ORDERS)
+    fixture = GraphFixture(
+        _STORY_ORDERS,
+        "parallax.compatibility.Order.items",
+        "parallax.compatibility.Order.itemsByShipDate",
+    )
     order = fixture.node("Order", _ORDER_ROW)
     invalid_row = {**_ITEM_ROW, "shipped_on": "not-a-date"}
     via_items = fixture.node("OrderItem", invalid_row)
@@ -297,7 +327,7 @@ def test_an_invalid_descendant_classifies_the_reachable_root() -> None:
     # Classification is root-granular: a clean root cannot hide an invalid
     # included child merely because the root's own members are constructible,
     # and the child's undecodable leaf leaves no value to hydrate the root from.
-    fixture = GraphFixture(_STORY_ORDERS)
+    fixture = GraphFixture(_STORY_ORDERS, "parallax.compatibility.Order.items")
     order = fixture.node("Order", _ORDER_ROW)
     invalid = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
     fixture.attach(order, "parallax.compatibility.Order.items", (invalid,))
@@ -325,7 +355,7 @@ def test_an_unrequested_invalid_projection_does_not_refuse_a_clean_root() -> Non
 def test_an_invalid_descendant_key_never_enters_logical_identity() -> None:
     # A child with no usable primary key remains a classified projection rather
     # than being merged under a synthetic `(None,)` logical key.
-    fixture = GraphFixture(_STORY_ORDERS)
+    fixture = GraphFixture(_STORY_ORDERS, "parallax.compatibility.Order.items")
     order = fixture.node("Order", _ORDER_ROW)
     invalid = fixture.node("OrderItem", {**_ITEM_ROW, "id": None})
     fixture.attach(order, "parallax.compatibility.Order.items", (invalid,))
@@ -344,7 +374,7 @@ def test_an_invalid_descendant_key_never_enters_logical_identity() -> None:
 # Polymorphic concrete resolution and narrowed views.                          #
 # --------------------------------------------------------------------------- #
 def test_polymorphic_children_materialize_as_their_concrete_classes() -> None:
-    fixture = GraphFixture(_ANIMAL)
+    fixture = GraphFixture(_ANIMAL, "parallax.compatibility.AnimalOwner.animals")
     owner = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = fixture.node("Dog", _DOG_ROW)
     cat = fixture.node("Cat", _CAT_ROW)
@@ -358,7 +388,7 @@ def test_polymorphic_children_materialize_as_their_concrete_classes() -> None:
 
 
 def test_a_narrowed_view_is_independent_of_the_broad_relationship() -> None:
-    fixture = GraphFixture(_ANIMAL)
+    fixture = GraphFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"))
     owner = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = fixture.node("Dog", _DOG_ROW)
     fixture.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
@@ -375,7 +405,11 @@ def test_a_narrowed_view_is_independent_of_the_broad_relationship() -> None:
 
 
 def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
-    fixture = GraphFixture(_ANIMAL)
+    fixture = GraphFixture(
+        _ANIMAL,
+        ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"),
+        ("parallax.compatibility.AnimalOwner.pets", "pets[Cat]"),
+    )
     owner = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = fixture.node("Dog", _DOG_ROW)
     cat = fixture.node("Cat", _CAT_ROW)
@@ -391,7 +425,7 @@ def test_every_authoring_route_to_one_narrowed_view_reaches_the_same_value() -> 
     # A `RelationshipPath` is a frozen value carrying nothing but its segments,
     # its target spelling and its source, so a directly built path and a copy
     # each key the same view as the class-derived one.
-    fixture = GraphFixture(_ANIMAL)
+    fixture = GraphFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"))
     owner = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = fixture.node("Dog", _DOG_ROW)
     fixture.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
@@ -409,7 +443,9 @@ def test_every_authoring_route_to_one_narrowed_view_reaches_the_same_value() -> 
 
 
 def test_a_narrowed_to_one_view_carries_a_single_node_or_loaded_null() -> None:
-    fixture = GraphFixture(_ANIMAL)
+    fixture = GraphFixture(
+        _ANIMAL, ("parallax.compatibility.AnimalOwner.favorite", "favorite[Dog]")
+    )
     alice = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": 1})
     bob = fixture.node("AnimalOwner", {"id": 11, "name": "Bob", "favorite_id": None})
     dog = fixture.node("Dog", _DOG_ROW)
@@ -691,6 +727,16 @@ def test_a_to_many_edge_is_refused_element_by_element() -> None:
         builder.write_view(order, _ITEMS, (0, 4))
 
 
+def test_a_view_this_projections_own_level_never_attaches_is_refused() -> None:
+    # A view row has no position for a level that does not attach here, and the
+    # refusal is what keeps that a fact about the plan rather than a silent
+    # write into whichever slot happened to be nearby.
+    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
+    order = fixture.node("SnapOrder", _ORDER_ROW)
+    with pytest.raises(ValueError, match="no level below source 0 attaches 'order'"):
+        fixture.attach(order, "parallax.compatibility.SnapOrderItem.order", None)
+
+
 def test_a_root_outside_the_graph_is_refused_at_sealing() -> None:
     builder, _ = _one_projection()
     with pytest.raises(ValueError, match="a root names projection 3"):
@@ -726,7 +772,7 @@ def test_every_merge_accessor_answers_the_identical_object_on_a_second_call() ->
     # The whole-graph properties are held to the same rule as the per-node
     # reads, over a graph whose every one of them is nonempty — a merged node
     # with duplicate projections, a loaded to-many, and a keyless root.
-    fixture = GraphFixture(_ORDERS)
+    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     first = fixture.node("SnapOrderItem", _ITEM_ROW)
     second = fixture.node("SnapOrderItem", {**_ITEM_ROW, "id": 12})
@@ -753,7 +799,7 @@ def test_every_merge_accessor_answers_the_identical_object_on_a_second_call() ->
 def test_one_view_shape_is_shared_by_every_node_that_carries_it() -> None:
     # Two Orders reached one way carry one merged view layout, so the ordering
     # rule runs once per shape rather than once per node.
-    fixture = GraphFixture(_ORDERS)
+    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
     first = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 1})
     second = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 2})
     fixture.attach(first, "parallax.compatibility.SnapOrder.items", ())

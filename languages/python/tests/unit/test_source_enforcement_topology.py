@@ -93,6 +93,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.materialize._graph", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._graph", "_row"): frozenset({"ABSENT"}),
     ("parallax.snapshot.materialize._merge", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.snapshot.materialize._views", "_layout"): frozenset({"EntityLayout"}),
 }
 
 

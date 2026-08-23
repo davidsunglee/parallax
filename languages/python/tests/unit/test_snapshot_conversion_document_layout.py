@@ -41,6 +41,7 @@ from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import StoredDataIssueInput
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import GraphBuilder, graph_rows
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
 _CORPUS = models.load_models()["document-layout"]
 _TWIN_DOCUMENT = document_model()
@@ -60,7 +61,7 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Co
     target = entity(model, name)
     compiled = compile_read(oa.All(), model, POSTGRES, target, result_form="instance")
     materialized = compiled.materialize_row(stored)
-    builder = GraphBuilder()
+    builder = GraphBuilder(ViewSchema.of())
     context = LevelContext(
         layout_of(model, materialized.resolved_entity),
         compiled.projected_documents,
@@ -70,6 +71,7 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Co
         materialized.values,
         context,
         builder,
+        source=ROOT_LEVEL,
         findings=materialized.findings,
         family_tag_unknown=materialized.family_tag_unknown,
         classified_members=materialized.classified_members,
