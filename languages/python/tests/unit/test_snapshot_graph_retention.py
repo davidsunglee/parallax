@@ -26,7 +26,8 @@ capacity step into a reading that is otherwise pure tuple arithmetic.
 **The measured level is polymorphic.** Its children resolve to the two concretes
 of one table-per-hierarchy family, one reached through an intermediate abstract
 subtype and one descending from the root, so a graph carries two member layouts
-of different widths, two source view layouts, and two merged rows at once — and a
+of different widths and two merged rows at once, over a source view row whose
+width belongs to the source level rather than to either concrete — and a
 duplicate of either merges onto the logical node its broad projection made.
 
 **Each level of the plan owns a source of its own.** A schema fixes one slot
@@ -39,14 +40,26 @@ count of positions production lays out rather than of positions the workload
 declared for itself.
 
 **Every measured projection also carries Value Object occurrences**, a top-level
-One holding a nested One and a nested Many beside a top-level Many, because the
-representation this replaced spent more of its per-cell cost inside documents
-than on Attributes: a record, an occurrence, and a per-leaf carrier each. Their
-shape is pinned across the grid — four more crossed axes would buy nothing the
-first three do not already refuse — and read instead as four steps of their own,
-one per population: the leaves inside a record, the elements a Many holds, and
-the top-level occurrences a projection declares of each multiplicity, which are
-two steps because the production reduction is two branches.
+One holding a nested One and a nested Many whose every element holds one more,
+beside a top-level Many, because the representation this replaced spent more of
+its per-cell cost inside documents than on Attributes: a record, an occurrence,
+and a per-leaf carrier each. Their shape is pinned across the grid — four more
+crossed axes would buy nothing the first three do not already refuse — and read
+instead as four steps of their own, one per population an axis can move: the
+leaves inside a record, the elements a Many holds, and the top-level occurrences
+a projection declares of each multiplicity, which are two steps because the
+production reduction is two branches.
+
+**What no axis moves is read as a total instead.** How many occurrences a
+document NESTS is a property of the declaration, so it stands still under every
+axis above and a cost charged once per nested occurrence is a constant per
+projection that every step absorbs. The whole document is therefore also read
+against a graph of the same shape that declares no Value Object at all, priced by
+a recursion over the declaration rather than by a term per level: every
+occurrence, every record, and every position, at whatever depth a declaration
+reaches. That is what makes the document readings complete rather than one level
+deep — widening the axis a level at a time would leave the level below it exactly
+where the nested one was.
 
 **What the readings say, in the order they get stronger.** The whole grid sits on
 one affine function of the three parameters fitted from its four smallest points,
@@ -56,9 +69,10 @@ per member per row, one per arm where the edge is recorded and one where it
 resolves, one per slot in every row a slot widens, one per Value Object leaf in
 every record that carries it, one whole positional row and its naming position
 per record, one position and one record per One occurrence, and one position, one
-row of elements, and one record per element per Many occurrence. Those readings
-are the ones that name "no per-cell carrier" in arithmetic, and each is read
-beside the control that proves it detects one —
+row of elements, and one record per element per Many occurrence. Then the whole
+declared document, exactly, at every point that declares one. Those readings are
+the ones that name "no per-cell carrier" in arithmetic, and each is read beside
+the control that proves it detects one —
 :func:`test_the_member_step_is_what_refuses_a_representation_that_wraps_every_cell`
 wraps every member cell, stays exactly affine, and fails only at the member step;
 :func:`test_the_leaf_step_is_what_refuses_a_representation_wrapping_every_document_cell`
@@ -68,7 +82,10 @@ wraps every Value Object cell and fails only at the leaf step;
 and
 :func:`test_the_many_occurrence_step_is_what_refuses_a_wrapper_around_a_many_occurrence`
 wrap what a step holding its own population fixed cannot see at all, the last two
-one multiplicity branch at a time.
+one multiplicity branch at a time; and
+:func:`test_the_whole_document_reading_is_what_refuses_a_wrapper_around_a_nested_occurrence`
+wraps what no step here holds a count of, leaving all four of them exactly at
+their priced values and only the total off.
 
 Exported names carry no leading underscore only where another module imports
 them; nothing imports this one.
@@ -178,27 +195,31 @@ member row — and therefore a term in the PRODUCT of this axis and the member
 axis — into a reading meant to price two positions."""
 
 _LEAVES: Final = (1, 2)
-"""Leaves on each NESTED Value Object record. Two counts one apart, read as a
-step rather than crossed into the grid: the occurrence shape is the same at every
-grid point, so what this axis answers is what one more Value Object leaf costs
-and nothing about the other three."""
+"""Leaves on the nested records the ``mark`` occurrence holds — its ``inner``, and
+each element of its ``inners``. Two counts one apart, read as a step rather than
+crossed into the grid: the occurrence shape is the same at every grid point, so
+what this axis answers is what one more Value Object leaf costs and nothing about
+the other three."""
 
 _ELEMENTS: Final = (2, 3)
 """Elements in each Many occurrence. More than one at the smaller count, so a cost
 charged per Value Object RECORD is a different number from one charged per
 projection row; read as a step of its own for what one more element costs, which
 is the one axis that moves the record and element populations while holding the
-leaves inside them fixed."""
+leaves inside them fixed. An element of the nested Many brings the ``stamp`` its
+own declaration nests under it, so this is also the axis that prices a record
+reached only by descending a Many."""
 
 _ONES: Final = (1, 2)
-"""Top-level ONE Value Objects the measured Entity declares: ``mark`` always, and
-``spare`` at the larger count. One of the two axes that move the occurrence
-population alone — one more occurrence per projection, at the same member, leaf,
-and element counts."""
+"""Top-level ONE Value Objects the measured Entity declares: ``mark`` at the
+smaller count and ``spare`` beside it at the larger. One of the two axes that move
+the occurrence population alone — one more occurrence per projection, at the same
+member, leaf, and element counts. Zero is not a point of this axis but a whole
+model of its own, :data:`_BARE`."""
 
 _MANYS: Final = (1, 2)
-"""Top-level MANY Value Objects the measured Entity declares: ``marks`` always,
-and ``notes`` at the larger count.
+"""Top-level MANY Value Objects the measured Entity declares: ``marks`` at the
+smaller count and ``notes`` beside it at the larger.
 
 The other occurrence axis, and separate from :data:`_ONES` because the
 production reduction is separate: a Many occurrence is structured through its own
@@ -213,6 +234,12 @@ _LABELS: Final = 1
 the leaf axis does not reach into, so their elements stay the narrowest records
 the workload has however wide the nested ones grow."""
 
+_STAMPS: Final = 1
+"""Leaves on the ``stamp`` record each element of the nested Many carries: the
+deepest record the workload declares, and the only one a reduction reaches by
+descending a Many first. Fixed like :data:`_LABELS`, so widening a leaf moves one
+population of records rather than every population at once."""
+
 _VIEWS: Final = ("children", "arms", "extra1", "extra2")
 """The parent's declared relationships, in declaration order. A slot count names
 the first ``slots`` of them; the model declares them all at every count, so a
@@ -225,9 +252,11 @@ parent of that hop receives the attachment, exactly as a fan-back writes one."""
 
 _CONCRETES: Final = ("Alpha", "Beta")
 """The resolved concretes of the measured family, taken in turn down each
-parent's children. Both are read at the one child source level, so the level is
-polymorphic in the sense that costs a reading anything: two layouts of different
-widths, two source view layouts, and two merged rows, all inside one graph."""
+parent's children, and again down the duplicates the twin hop converts — so each
+of the two child source levels resolves both of them. That is the sense of
+polymorphic that costs a reading anything: two member layouts of different
+widths, two merged rows, and a source view row whose width is the source level's
+rather than the concrete's, all inside one graph."""
 
 
 def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, object]:
@@ -251,10 +280,19 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
     rows alike and a step stays a count of rows rather than of concretes.
 
     The occurrences are what put a document on the measured path: ``mark`` is a
-    top-level One holding a nested One and a nested Many, ``marks`` is a
-    top-level Many, and ``spare`` and ``notes`` are the One and the Many their
-    own axes add. A Many is declared at :data:`_ELEMENTS` elements by the rows,
-    so a record count is not a row count.
+    top-level One holding a nested One and a nested Many, whose every element
+    holds a ``stamp`` of its own; ``marks`` is a top-level Many; and ``spare``
+    and ``notes`` are the One and the Many their own axes add. A Many is declared
+    at :data:`_ELEMENTS` elements by the rows, so a record count is not a row
+    count. Between them those reach every path the reduction has: a One and a
+    Many occurrence each at the top and nested inside another, and a record whose
+    own nested occurrence is reached only by descending a Many. Depth is not what
+    makes that complete — ``_structure`` and ``_structure_occurrence`` call each
+    other with no notion of how deep either is — which is why the tree is priced
+    by that same recursion rather than by one more level per reading.
+
+    Zero of either count declares no Value Object at all, which is the
+    document-free graph the whole-document reading is taken against.
 
     ``twin`` is the child's own many-to-one back into its family, named by a
     ``twinId`` every child row carries. It is not the inverse of the hop the
@@ -279,21 +317,33 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
     def leaf_run() -> list[dict[str, object]]:
         return [{"name": f"v{index:02d}", "type": "string"} for index in range(leaves)]
 
-    value_objects: list[dict[str, object]] = [
-        {
-            "name": "mark",
-            "attributes": [{"name": "label", "type": "string"}],
-            "valueObjects": [
-                {"name": "inner", "attributes": leaf_run()},
-                {"name": "inners", "multiplicity": "many", "attributes": leaf_run()},
-            ],
-        },
-        {
-            "name": "marks",
-            "multiplicity": "many",
-            "attributes": [{"name": "label", "type": "string"}],
-        },
-    ]
+    value_objects: list[dict[str, object]] = []
+    if ones:
+        value_objects.append(
+            {
+                "name": "mark",
+                "attributes": [{"name": "label", "type": "string"}],
+                "valueObjects": [
+                    {"name": "inner", "attributes": leaf_run()},
+                    {
+                        "name": "inners",
+                        "multiplicity": "many",
+                        "attributes": leaf_run(),
+                        "valueObjects": [
+                            {"name": "stamp", "attributes": [{"name": "at", "type": "string"}]}
+                        ],
+                    },
+                ],
+            }
+        )
+    if manys:
+        value_objects.append(
+            {
+                "name": "marks",
+                "multiplicity": "many",
+                "attributes": [{"name": "label", "type": "string"}],
+            }
+        )
     if ones > _ONES[0]:
         value_objects.append({"name": "spare", "attributes": leaf_run()})
     if manys > _MANYS[0]:
@@ -435,14 +485,18 @@ def _workload(members: int, leaves: int, elements: int, ones: int, manys: int) -
             else:
                 row["weight"] = float(index)
                 row["note"] = f"note-{cell}-{index}"
-            row["mark"] = {
-                "label": f"mark-{cell}-{index}",
-                "inner": _record(leaves, cell, index),
-                "inners": [_record(leaves, cell, index) for _ in range(elements)],
-            }
-            row["marks"] = [
-                {"label": f"marks-{cell}-{index}-{element}"} for element in range(elements)
-            ]
+            if ones:
+                row["mark"] = {
+                    "label": f"mark-{cell}-{index}",
+                    "inner": _record(leaves, cell, index),
+                    "inners": [
+                        _element(leaves, cell, index, element) for element in range(elements)
+                    ],
+                }
+            if manys:
+                row["marks"] = [
+                    {"label": f"marks-{cell}-{index}-{element}"} for element in range(elements)
+                ]
             if ones > _ONES[0]:
                 row["spare"] = _record(leaves, cell, index)
             if manys > _MANYS[0]:
@@ -467,16 +521,28 @@ def _record(leaves: int, cell: int, index: int) -> dict[str, object]:
     return {f"v{position:02d}": f"v{position:02d}-{cell}-{index}" for position in range(leaves)}
 
 
+def _element(leaves: int, cell: int, index: int, element: int) -> dict[str, object]:
+    """One element of the nested Many, carrying the ``stamp`` its own declaration
+    nests under it — the occurrence a reduction reaches only by descending a Many
+    first."""
+    return {
+        **_record(leaves, cell, index),
+        "stamp": {"at": f"stamp-{cell}-{index}-{element}"},
+    }
+
+
 _SHAPES: Final = (
     *((members, _LEAVES[0], _ELEMENTS[0], _ONES[0], _MANYS[0]) for members in _MEMBERS),
     (_MEMBERS[0], _LEAVES[1], _ELEMENTS[0], _ONES[0], _MANYS[0]),
     (_MEMBERS[0], _LEAVES[0], _ELEMENTS[1], _ONES[0], _MANYS[0]),
     (_MEMBERS[0], _LEAVES[0], _ELEMENTS[0], _ONES[1], _MANYS[0]),
     (_MEMBERS[0], _LEAVES[0], _ELEMENTS[0], _ONES[0], _MANYS[1]),
+    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[0], 0, 0),
 )
 """What the model and its rows are formed at: one shape per grid member count,
-plus the second point of each of the four document steps. Every step is read at
-the smallest member count, which is where every step in this suite is read."""
+the second point of each of the four document steps, and the document-free shape
+the whole-document reading is taken against. Every step is read at the smallest
+member count, which is where every step in this suite is read."""
 
 _WORKLOADS: Final = {shape: _workload(*shape) for shape in _SHAPES}
 
@@ -547,6 +613,20 @@ _WIDER_MANYS: Final = _LEAST._replace(manys=_MANYS[1])
 which is what lets each step name one population of the document rather than a
 mixture of them."""
 
+_BARE: Final = _LEAST._replace(ones=0, manys=0)
+"""The same graph with no Value Object declared at all.
+
+The baseline the whole-document reading is taken against, and the only point that
+is neither a grid point nor the far end of a document step. What separates it
+from :data:`_LEAST` is every record the declaration names at every depth, which
+is what turns that reading into an exact TOTAL: a step prices the population it
+moves and absorbs every population it holds still, and an occurrence nested
+inside another one is held still by every axis this suite has."""
+
+_DOCUMENTS: Final = (_LEAST, _WIDER_LEAVES, _WIDER_ELEMENTS, _WIDER_ONES, _WIDER_MANYS)
+"""Every point that declares a document, which is every point the total is read
+at."""
+
 _LEAF_POOL: Final = tuple(f"leaf-{index:02d}" for index in range(max(_LEAVES) + _LABELS))
 """Leaves the row calibration fills its rows from, allocated out here for the
 reason every workload row is: what it prices is the row, not the values in it."""
@@ -570,9 +650,10 @@ def _slot_table(point: _Point) -> tuple[tuple[ChildSlot, ...], ...]:
     anything attaches beneath it.
 
     Every source level carries a slot tuple no other source shares, which is what
-    makes the reading exact about where a view row is stored: a table that put the
-    broad children and the twin hop's duplicates on one source would give four
-    projections a position no plan of theirs writes.
+    makes the reading exact about where a view row is stored: the twin slot is on
+    entry 1 and every projection read at that source receives it, while the
+    duplicates read at source 2 carry none. A table that put both populations on
+    one source would hand the duplicates a twin position no plan of theirs writes.
     """
     return (
         tuple(ChildSlot(view) for view in _WORKLOADS[point.shape].views[: point.slots]),
@@ -700,15 +781,19 @@ def _at(seam: Callable[[_Point, int], Seam], point: _Point, cells: int) -> int:
         tracemalloc.stop()
 
 
-def _step(seam: Callable[[_Point, int], Seam], wide: _Point, cells: int) -> int:
-    """What moving one document axis from :data:`_LEAST` to ``wide`` costs
-    ``seam``.
+def _step(
+    seam: Callable[[_Point, int], Seam], wide: _Point, cells: int, base: _Point = _LEAST
+) -> int:
+    """What moving from ``base`` to ``wide`` costs ``seam``.
 
     Read as a two-point difference rather than off the crossed grid, for the
     reason :data:`_LEAVES` states: every other axis holds the same value at both
     points, so the whole of what moves between them is the one the caller varied.
+    A step over one document axis leaves ``base`` at :data:`_LEAST`; the total
+    takes it from :data:`_BARE`, where the axes are not one apart but the whole
+    document is.
     """
-    return _at(seam, wide, cells) - _at(seam, _LEAST, cells)
+    return _at(seam, wide, cells) - _at(seam, base, cells)
 
 
 @cache
@@ -763,15 +848,17 @@ def _row_bytes(positions: int) -> int:
 
 def _element_bytes(leaves: int) -> int:
     """What one more element in every Many occurrence costs one child projection:
-    the ``inners`` element's own record and the position naming it in that
-    occurrence's row, plus the same for ``marks``, whose elements carry the one
-    ``label`` however wide the nested records grow.
+    the ``inners`` element's own record — its leaves and the position naming the
+    ``stamp`` its declaration nests under it — that ``stamp`` record itself, and
+    the position naming the element in the occurrence's row; plus the same for
+    ``marks``, whose elements carry the one ``label`` and nothing below it however
+    wide the nested records grow.
 
     A representation charging anything per RECORD — the pre-cutover graph held a
-    ``ValueObjectRecord`` for each — charges it twice more here, which is what
-    this reading is stated exactly enough to refuse.
+    ``ValueObjectRecord`` for each — charges it three times more here, which is
+    what this reading is stated exactly enough to refuse.
     """
-    return _row_bytes(leaves) + _row_bytes(_LABELS) + 2 * _POINTER
+    return _row_bytes(leaves + 1) + _row_bytes(_STAMPS) + _row_bytes(_LABELS) + 2 * _POINTER
 
 
 def _one_occurrence_bytes(leaves: int) -> int:
@@ -799,6 +886,56 @@ def _many_occurrence_bytes(elements: int) -> int:
     exactly where it is.
     """
     return _POINTER + _row_bytes(elements) + elements * _row_bytes(_LABELS)
+
+
+def _occurrence_price(
+    declared: ValueObjectMetadata | NestedValueObjectMetadata, elements: int
+) -> int:
+    """What one whole occurrence of ``declared`` costs, every record under it
+    included.
+
+    The recursion :func:`~parallax.snapshot.materialize._convert._structure_occurrence`
+    reduces one by, priced instead of walked: a Many is a row of element positions
+    holding one record per element, a One is a single record, and a record is its
+    own positional row plus whatever its nested occurrences cost. Depth is not a
+    parameter for the same reason it is not one there — the two branches call each
+    other, and neither knows how deep it is — so this prices whatever tree a
+    declaration names rather than the depth some reading happened to reach.
+    """
+    if declared.multiplicity is Multiplicity.MANY:
+        return _row_bytes(elements) + elements * _record_price(declared, elements)
+    return _record_price(declared, elements)
+
+
+def _record_price(declared: ValueObjectMetadata | NestedValueObjectMetadata, elements: int) -> int:
+    """What one reduced record of ``declared`` costs: the positional row holding
+    its leaves and then its nested occurrences, and every occurrence those later
+    positions name."""
+    return _row_bytes(len(declared.attributes) + len(declared.value_objects)) + sum(
+        _occurrence_price(nested, elements) for nested in declared.value_objects
+    )
+
+
+def _document_bytes(point: _Point, cells: int) -> int:
+    """What the whole Value Object half of a ``cells``-cell graph may cost, priced
+    from the declaration rather than read off the graph: per projection the
+    workload converts, one position in its member row per top-level occurrence
+    plus the subtree that position holds.
+
+    Summed over the levels a cell converts — the parent, every child, and the
+    duplicates the twin hop reads again — rather than over a count of rows, so
+    two concretes declaring different occurrences would be priced apart rather
+    than assumed alike."""
+    workload = _WORKLOADS[point.shape]
+    projections = tuple(
+        sum(
+            _POINTER + _occurrence_price(declared, point.elements)
+            for declared in level.layout.occurrences
+        )
+        for level in (workload.parent, *workload.levels)
+    )
+    root, children = projections[0], projections[1:]
+    return cells * (root + sum(children) + sum(children[:_DUPLICATES]))
 
 
 def _rows_seam(rows: int, positions: int) -> Seam:
@@ -848,9 +985,9 @@ def test_the_workload_holds_its_projection_and_logical_node_counts_across_the_wh
 def test_the_measured_level_resolves_two_concretes_of_one_family_to_two_layouts() -> None:
     # The workload is the representative graph's polymorphic half, stated as the
     # facts the readings depend on rather than as the model that produces them.
-    # One child source level resolves both concretes of one family; their member
-    # layouts are different objects of different widths, so a per-row cost is
-    # charged against two layouts rather than one; both are laid out and merged
+    # The broad child source level resolves both concretes of one family; their
+    # member layouts are different objects of different widths, so a per-row cost
+    # is charged against two layouts rather than one; both are laid out and merged
     # by the one execution-owned schema; and a duplicate of either merges onto the
     # logical node its broad projection already made, which is what keeps the
     # projection and logical-node counts above apart.
@@ -1007,6 +1144,25 @@ def test_a_top_level_many_occurrence_costs_its_row_of_elements_and_a_record_for_
     large = _member_rows(_LARGER) * _many_occurrence_bytes(_ELEMENTS[0])
     assert _step(_seam, _WIDER_MANYS, _CELLS) == small
     assert _step(_seam, _WIDER_MANYS, _LARGER) == large
+
+
+def test_a_whole_document_costs_the_rows_its_declaration_names_and_nothing_at_any_depth() -> None:
+    # What the four steps cannot say between them, and the reading that needs no
+    # fifth axis to say it: what a graph retains ABOVE the same graph declaring no
+    # Value Object at all, against the price of the whole declared tree — every
+    # occurrence, every record, every position, at every depth. A step prices the
+    # population it MOVES and absorbs every population it holds still, so a cost
+    # charged once per NESTED occurrence is a constant per projection that the
+    # crossed grid, both record steps, and both top-level occurrence steps
+    # arithmetically cannot see: nothing here varies how many occurrences a
+    # document nests. This baseline holds none of them, so the difference is the
+    # whole subtree and the price is a recursion over the declaration rather than
+    # a term per level anyone enumerated. Read at every point that declares a
+    # document and at two graph sizes, so a cost fixed per model has nowhere to
+    # sit either.
+    for point in _DOCUMENTS:
+        assert _step(_seam, point, _CELLS, _BARE) == _document_bytes(point, _CELLS), point
+        assert _step(_seam, point, _LARGER, _BARE) == _document_bytes(point, _LARGER), point
 
 
 def test_an_edge_costs_one_pointer_where_it_is_recorded_and_one_where_it_resolves() -> None:
@@ -1335,3 +1491,79 @@ def test_the_many_occurrence_step_is_what_refuses_a_wrapper_around_a_many_occurr
     assert _step(_many_occurrence_wrapping_seam, _WIDER_ONES, _CELLS) == _member_rows(
         _CELLS
     ) * _one_occurrence_bytes(_LEAVES[0])
+
+
+def _nested_occurrence_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
+    """``point``'s materialization, plus one carrier per occurrence NESTED inside
+    another one that no axis in this suite counts.
+
+    The population is named by the property that hides it rather than by a depth:
+    an occurrence reached from a member row without descending a Many is declared
+    once per projection, however wide the members, the leaves, the elements, or
+    the top-level occurrence counts grow. Descending a Many would reach
+    occurrences the element axis multiplies, and an axis that multiplies a
+    population is an axis that prices it — so those are left out, and what is left
+    is exactly what every step here holds still.
+    """
+
+    def run(sample: Callable[[], None]) -> None:
+        graph, merge = _compose(point, cells)
+        rows = graph_rows(graph)
+        carriers = [
+            carrier
+            for layout, row in zip(rows.layouts, rows.member_rows, strict=True)
+            for position, declared in enumerate(layout.occurrences, start=layout.attribute_count)
+            for carrier in _nested_occurrences(row[position], declared)
+        ]
+        sample()
+        assert graph is not None and merge is not None and carriers is not None
+
+    return run
+
+
+def _nested_occurrences(
+    value: object, declared: ValueObjectMetadata | NestedValueObjectMetadata
+) -> list[_CellCarrier]:
+    """One carrier per occurrence nested under ``value``, and per occurrence
+    nested under each of those, stopping at a Many rather than descending its
+    elements."""
+    if declared.multiplicity is Multiplicity.MANY:
+        return []
+    positions = cast("tuple[object, ...]", value)
+    return [
+        carrier
+        for offset, nested in enumerate(declared.value_objects, start=len(declared.attributes))
+        for carrier in (
+            _CellCarrier(positions[offset]),
+            *_nested_occurrences(positions[offset], nested),
+        )
+    ]
+
+
+def test_the_whole_document_reading_is_what_refuses_a_wrapper_around_a_nested_occurrence() -> None:
+    # What that total is worth, against the defect no step in this suite can
+    # catch. A carrier held once per nested occurrence is a constant per
+    # projection: the crossed grid never varies a document at all, the leaf and
+    # element steps move populations underneath a fixed set of occurrences, and
+    # each top-level occurrence step adds an occurrence that nests none — so all
+    # four steps read exactly their priced values under this control, which is the
+    # half that says the total reads a population none of them reaches. The total
+    # sees it because the graph it is measured against declares no occurrence for
+    # anything to nest inside.
+    measured = _step(_nested_occurrence_wrapping_seam, _LEAST, _CELLS, _BARE)
+    assert measured > _document_bytes(_LEAST, _CELLS)
+    with pytest.raises(AssertionError):
+        assert measured == _document_bytes(_LEAST, _CELLS)
+    assert (
+        _step(_nested_occurrence_wrapping_seam, _WIDER_LEAVES, _CELLS)
+        == _leaf_records(_CELLS) * _POINTER
+    )
+    assert _step(_nested_occurrence_wrapping_seam, _WIDER_ELEMENTS, _CELLS) == _member_rows(
+        _CELLS
+    ) * _element_bytes(_LEAVES[0])
+    assert _step(_nested_occurrence_wrapping_seam, _WIDER_ONES, _CELLS) == _member_rows(
+        _CELLS
+    ) * _one_occurrence_bytes(_LEAVES[0])
+    assert _step(_nested_occurrence_wrapping_seam, _WIDER_MANYS, _CELLS) == _member_rows(
+        _CELLS
+    ) * _many_occurrence_bytes(_ELEMENTS[0])

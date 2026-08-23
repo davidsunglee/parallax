@@ -11,37 +11,50 @@ it passes no verdict and belongs to no aggregate, because a total in bytes is
 machine- and interpreter-relative — `tracemalloc` figures move with CPython, and
 every CI job runs the floating `ubuntu-latest` label, so a tight ratio can flip
 on an interpreter bump that changed nothing. The *shape* of what a graph retains
-is gated instead, in `tests/unit/test_snapshot_graph_retention.py`, which
-`just python-test-dbfree` owns: that suite fits an affine function of members,
+is gated instead, in `tests/unit/test_snapshot_graph_retention.py`, which `just
+python-test-dbfree` owns: that suite fits an affine function of members,
 declared view slots, and recorded edges over a crossed grid and requires exact
-equality at every point of it, grades seven steps against exactly what a compact
-representation can charge, and asserts that no object of Parallax's own survives
-a conforming materialization except the sealed graph's own structures. Three of
-the steps price a pointer — one per member per row, one per arm where the edge is
-recorded and one where it resolves, one per slot in every row a slot widens — and
-four price a document: one pointer per Value Object leaf in every record that
-carries it, one whole positional row and the position naming it per record, one
-position and one record per top-level One occurrence, and one position, one row
-of element positions, and one record per element per top-level Many occurrence.
-Its projections carry documents for that reason: the representation replaced here
-spent more of its per-cell cost inside Value Objects than on Attributes, so a gate
-blind to occurrences would be blind to most of what it is refusing — and the four
-document steps move those populations one at a time, because a cost charged per
-record or per occurrence stands still while leaves move and would otherwise be
-absorbed whole by the fit's origin. The two occurrence steps are two because the
-production reduction has two branches: a carrier that came back around Many
-occurrences alone is fixed per projection and invisible to every reading that
-varies a One. Its measured level is polymorphic for the same kind of reason: two
+equality at every point of it, grades seven steps and one exact total against
+exactly what a compact representation can charge, and asserts that no object of
+Parallax's own survives a conforming materialization except the sealed graph's
+own structures. Three of the steps price a pointer — one per member per row, one
+per arm where the edge is recorded and one where it resolves, one per slot in
+every row a slot widens — and four price a document: one pointer per Value
+Object leaf in every record that carries it, one whole positional row and the
+position naming it per record, one position and one record per top-level One
+occurrence, and one position, one row of element positions, and one record per
+element per top-level Many occurrence. Its projections carry documents for that
+reason: the representation replaced here spent more of its per-cell cost inside
+Value Objects than on Attributes, so a gate blind to occurrences would be blind
+to most of what it is refusing — and the four document steps move those
+populations one at a time, because a cost charged per record or per occurrence
+stands still while leaves move and would otherwise be absorbed whole by the
+fit's origin. The two occurrence steps are two because the production reduction
+has two branches: a carrier that came back around Many occurrences alone is
+fixed per projection and invisible to every reading that varies a One. What no
+step can vary at all is how deep a document nests — an occurrence declared
+inside another one is a fixed count per projection, so a carrier charged once
+per nested occurrence stands still under every axis and the fit absorbs it into
+the origin — and that is what the total is for: what a graph retains above the
+same graph declaring no Value Object at all, against the price of the whole
+declared tree, computed by the same recursion the reduction descends it with. It
+closes every depth at once instead of one level per reading, over a workload
+that reaches every path that reduction has: a One and a Many occurrence each at
+the top and nested inside another, and a record reached only by descending a
+Many. Its measured level is polymorphic for the same kind of reason: two
 concretes of one family, of different widths, are laid out and merged inside one
 graph, and each level of its plan produces projections at a source level of its
-own, so the slot readings count positions production lays out. Five negative
-controls state what each reading is worth — one wraps every member cell and fails
-only the member step, one wraps every Value Object cell and fails only the leaf
-step, one wraps every reduced record and fails only the record step, and one per
-multiplicity wraps every top-level occurrence of that multiplicity and fails only
-at that branch's step. A per-cell, per-record, or per-occurrence carrier
-reappearing on any of those paths fails there, structurally, without anyone
-re-taking this reading.
+own, so the slot readings count positions production lays out. Six negative
+controls state what each reading is worth — one wraps every member cell and
+fails only the member step, one wraps every Value Object cell and fails only the
+leaf step, one wraps every reduced record and fails only the record step, one
+per multiplicity wraps every top-level occurrence of that multiplicity and fails
+only at that branch's step, and one wraps every occurrence a document nests
+inside another with no Many between them — the population no axis counts — and
+fails only the total, leaving all four document steps exactly at their priced
+values. A per-cell, per-record, or per-occurrence carrier reappearing at any
+depth on any of those paths fails there, structurally, without anyone re-taking
+this reading.
 
 ## The figure
 
@@ -65,8 +78,10 @@ conversion, view writes, and sealing, with the builder and its view schema
 constructed before the clock starts, exactly as the pre-cutover half constructed
 its `MergeScope` before starting its own — but post-cutover processes have read
 anywhere from 19.67 to 22.31 ms where every byte reading was identical, and the
-pre-cutover half was taken in a different session. The row records the slowest of
-them. Read those two percentages as a direction, not as a measurement.
+pre-cutover half was taken in a different session. The row is the build time of
+the run the rest of this table was taken from, near the slow end of that spread;
+the spread's own ends would put the change anywhere between −33.5% and −41.4%.
+Read those two percentages as a direction, not as a measurement.
 
 The companion absolute claim — "zero retained per-cell Snapshot carrier objects
 on the conforming path" — is met exactly. The pre-cutover census itemized 43.28
