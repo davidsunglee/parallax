@@ -14,26 +14,32 @@ on an interpreter bump that changed nothing. The *shape* of what a graph retains
 is gated instead, in `tests/unit/test_snapshot_graph_retention.py`, which
 `just python-test-dbfree` owns: that suite fits an affine function of members,
 declared view slots, and recorded edges over a crossed grid and requires exact
-equality at every point of it, grades six steps against exactly what a compact
+equality at every point of it, grades seven steps against exactly what a compact
 representation can charge, and asserts that no object of Parallax's own survives
 a conforming materialization except the sealed graph's own structures. Three of
 the steps price a pointer — one per member per row, one per arm where the edge is
 recorded and one where it resolves, one per slot in every row a slot widens — and
-three price a document: one pointer per Value Object leaf in every record that
-carries it, one whole positional row and the position naming it per record, and
-one position and one record per top-level occurrence. Its projections carry
-documents for that reason: the representation replaced here spent more of its
-per-cell cost inside Value Objects than on Attributes, so a gate blind to
-occurrences would be blind to most of what it is refusing — and the three
+four price a document: one pointer per Value Object leaf in every record that
+carries it, one whole positional row and the position naming it per record, one
+position and one record per top-level One occurrence, and one position, one row
+of element positions, and one record per element per top-level Many occurrence.
+Its projections carry documents for that reason: the representation replaced here
+spent more of its per-cell cost inside Value Objects than on Attributes, so a gate
+blind to occurrences would be blind to most of what it is refusing — and the four
 document steps move those populations one at a time, because a cost charged per
 record or per occurrence stands still while leaves move and would otherwise be
-absorbed whole by the fit's origin. Its measured level is polymorphic for the
-same kind of reason: two concretes of one family, of different widths, are laid
-out and merged inside one graph. Four negative controls state what each reading
-is worth — one wraps every member cell and fails only the member step, one wraps
-every Value Object cell and fails only the leaf step, one wraps every reduced
-record and fails only the record step, one wraps every occurrence and fails only
-the occurrence step. A per-cell, per-record, or per-occurrence carrier
+absorbed whole by the fit's origin. The two occurrence steps are two because the
+production reduction has two branches: a carrier that came back around Many
+occurrences alone is fixed per projection and invisible to every reading that
+varies a One. Its measured level is polymorphic for the same kind of reason: two
+concretes of one family, of different widths, are laid out and merged inside one
+graph, and each level of its plan produces projections at a source level of its
+own, so the slot readings count positions production lays out. Five negative
+controls state what each reading is worth — one wraps every member cell and fails
+only the member step, one wraps every Value Object cell and fails only the leaf
+step, one wraps every reduced record and fails only the record step, and one per
+multiplicity wraps every top-level occurrence of that multiplicity and fails only
+at that branch's step. A per-cell, per-record, or per-occurrence carrier
 reappearing on any of those paths fails there, structurally, without anyone
 re-taking this reading.
 
@@ -57,10 +63,10 @@ The two wall-clock rows are the only ones that are not reproducible, and they ar
 recorded for visibility rather than compared. Both halves time the same span —
 conversion, view writes, and sealing, with the builder and its view schema
 constructed before the clock starts, exactly as the pre-cutover half constructed
-its `MergeScope` before starting its own — but five post-cutover processes spread
-21.35 to 22.31 ms where every byte reading was identical, and the pre-cutover
-half was taken in a different session. Read those two percentages as a direction,
-not as a measurement.
+its `MergeScope` before starting its own — but post-cutover processes have read
+anywhere from 19.67 to 22.31 ms where every byte reading was identical, and the
+pre-cutover half was taken in a different session. The row records the slowest of
+them. Read those two percentages as a direction, not as a measurement.
 
 The companion absolute claim — "zero retained per-cell Snapshot carrier objects
 on the conforming path" — is met exactly. The pre-cutover census itemized 43.28

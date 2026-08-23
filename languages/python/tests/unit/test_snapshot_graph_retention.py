@@ -29,14 +29,24 @@ subtype and one descending from the root, so a graph carries two member layouts
 of different widths, two source view layouts, and two merged rows at once — and a
 duplicate of either merges onto the logical node its broad projection made.
 
+**Each level of the plan owns a source of its own.** A schema fixes one slot
+tuple per source level and resolved concrete, where the source level is the plan
+level that produced the projection, so the workload reads its roots at level 0,
+every child of the broad hop at level 1, and the duplicates of a second hop below
+that one at level 2 — with the second hop's own slot on the source its parents
+came from, written to every one of them. That is what keeps the slot arithmetic a
+count of positions production lays out rather than of positions the workload
+declared for itself.
+
 **Every measured projection also carries Value Object occurrences**, a top-level
 One holding a nested One and a nested Many beside a top-level Many, because the
 representation this replaced spent more of its per-cell cost inside documents
 than on Attributes: a record, an occurrence, and a per-leaf carrier each. Their
-shape is pinned across the grid — three more crossed axes would buy nothing the
-first three do not already refuse — and read instead as three steps of their own,
+shape is pinned across the grid — four more crossed axes would buy nothing the
+first three do not already refuse — and read instead as four steps of their own,
 one per population: the leaves inside a record, the elements a Many holds, and
-the occurrences a projection declares.
+the top-level occurrences a projection declares of each multiplicity, which are
+two steps because the production reduction is two branches.
 
 **What the readings say, in the order they get stronger.** The whole grid sits on
 one affine function of the three parameters fitted from its four smallest points,
@@ -45,17 +55,20 @@ is graded against exactly what the compact representation can charge: one pointe
 per member per row, one per arm where the edge is recorded and one where it
 resolves, one per slot in every row a slot widens, one per Value Object leaf in
 every record that carries it, one whole positional row and its naming position
-per record, and one position and one record per occurrence. Those readings are
-the ones that name "no per-cell carrier" in arithmetic, and each is read beside
-the control that proves it detects one —
+per record, one position and one record per One occurrence, and one position, one
+row of elements, and one record per element per Many occurrence. Those readings
+are the ones that name "no per-cell carrier" in arithmetic, and each is read
+beside the control that proves it detects one —
 :func:`test_the_member_step_is_what_refuses_a_representation_that_wraps_every_cell`
 wraps every member cell, stays exactly affine, and fails only at the member step;
 :func:`test_the_leaf_step_is_what_refuses_a_representation_wrapping_every_document_cell`
 wraps every Value Object cell and fails only at the leaf step;
-:func:`test_the_record_step_is_what_refuses_a_representation_wrapping_every_record`
+:func:`test_the_record_step_is_what_refuses_a_representation_wrapping_every_record`,
+:func:`test_the_one_occurrence_step_is_what_refuses_a_wrapper_around_a_one_occurrence`,
 and
-:func:`test_the_occurrence_step_is_what_refuses_a_representation_wrapping_every_occurrence`
-wrap what a step holding its own population fixed cannot see at all.
+:func:`test_the_many_occurrence_step_is_what_refuses_a_wrapper_around_a_many_occurrence`
+wrap what a step holding its own population fixed cannot see at all, the last two
+one multiplicity branch at a time.
 
 Exported names carry no leading underscore only where another module imports
 them; nothing imports this one.
@@ -88,7 +101,7 @@ from parallax.core.temporal_read import Pin
 from parallax.descriptor import domain_model_from_document
 from parallax.snapshot.materialize import SnapshotGraph, merge_graph_input
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
-from parallax.snapshot.materialize._graph import GraphBuilder, GraphRows, graph_rows
+from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, GraphRows, graph_rows
 from parallax.snapshot.materialize._merge import GraphMerge
 from parallax.snapshot.materialize._views import (
     ChildSlot,
@@ -114,15 +127,22 @@ what holds the interpreter to it."""
 _NAMESPACE: Final = "snapshot.retention"
 
 _ROOT_SOURCE: Final = 0
-_CHILD_SOURCE: Final = 1
-"""The two source levels the workload plans: the parents its roots are, and the
-one level below them every child projection is read at."""
+_BROAD_SOURCE: Final = 1
+_TWIN_SOURCE: Final = 2
+"""The three source levels the workload's plan produces projections at.
+
+``handle/_read`` converts plan level ``i`` at source ``i + 1``, so no two levels
+ever share a source: the roots are level 0, the broad hop below them reads every
+child at source 1, and the ``twin`` hop below THAT — a many-to-one each child
+names, whose rows are children the broad hop already read — reads its duplicates
+at source 2."""
 
 _CHILDREN: Final = 6
 _DUPLICATES: Final = 2
-"""Children per parent, and how many of them a second level converts a second
-time. Duplicates are what make projections and logical nodes different counts, so
-a reading charged per logical node cannot pass for one charged per projection."""
+"""Children per parent, and how many distinct children their ``twin`` references
+name, which is how many of them the twin hop converts a second time. Duplicates
+are what make projections and logical nodes different counts, so a reading
+charged per logical node cannot pass for one charged per projection."""
 
 _CELLS: Final = 4
 _LARGER: Final = 8
@@ -137,18 +157,25 @@ largest is four times the smallest — far enough that a cost quadratic in the r
 width would be whole members off the line rather than within one member of it."""
 
 _SLOTS: Final = (2, 3, 4)
-"""Relationship views the plan declares at the root source level. Two are always
+"""Relationship views the plan's root-parented levels declare. Two are always
 written — the broad view holding every child, and the narrowed arm the third axis
 varies — and the rest are levels that gathered a parent and found nothing, which
-is what a declared-and-empty slot is. Four is the ceiling deliberately: the slot
-tables are dictionaries, and a fifth entry in the merged union would resize one
-and put a capacity step into a reading that is otherwise exact."""
+is what a declared-and-empty slot is. Four is the ceiling deliberately: a layout
+indexes its slots by a dictionary, a merged layout's union runs one wider than
+this because of the child-side ``twin`` slot, and a sixth entry in that union
+would resize one and put a capacity step into a reading that is otherwise
+exact."""
 
 _ARMS: Final = (1, 2, 4)
-"""Projection references in the narrowed arm. The children it does not name are
-still reached through the broad view, so the graph's projection and logical-node
-counts do not move with this axis — which is what makes it a reading of the edges
-alone."""
+"""Projection references in the narrowed arm.
+
+The narrowed hop's arm is aliased onto projections the broad hop already read
+rather than converted a second time, which is the one simplification this
+workload makes and the reason the axis reads edges alone: the children the arm
+does not name are still reached through the broad view, so no count the merge
+sizes a table by moves with it. Converting the arm instead would put a whole
+member row — and therefore a term in the PRODUCT of this axis and the member
+axis — into a reading meant to price two positions."""
 
 _LEAVES: Final = (1, 2)
 """Leaves on each NESTED Value Object record. Two counts one apart, read as a
@@ -163,22 +190,38 @@ projection row; read as a step of its own for what one more element costs, which
 is the one axis that moves the record and element populations while holding the
 leaves inside them fixed."""
 
-_OCCURRENCES: Final = (2, 3)
-"""Top-level Value Object members the measured Entity declares: ``mark`` and
-``marks`` always, and ``spare`` at the larger count. The axis that moves the
-occurrence population alone — one more occurrence per projection, at the same
-member, leaf, and element counts — so a cost charged once per occurrence has an
-axis it cannot sit still under."""
+_ONES: Final = (1, 2)
+"""Top-level ONE Value Objects the measured Entity declares: ``mark`` always, and
+``spare`` at the larger count. One of the two axes that move the occurrence
+population alone — one more occurrence per projection, at the same member, leaf,
+and element counts."""
+
+_MANYS: Final = (1, 2)
+"""Top-level MANY Value Objects the measured Entity declares: ``marks`` always,
+and ``notes`` at the larger count.
+
+The other occurrence axis, and separate from :data:`_ONES` because the
+production reduction is separate: a Many occurrence is structured through its own
+branch, reducing to a row per element, where a One reduces to a single row or to
+nothing. A cost charged only on the Many branch is fixed per projection, so it
+stands still under every other axis here — the member, slot, and arm crossing,
+the leaf and element steps inside a document, and the One-occurrence step
+alike."""
 
 _LABELS: Final = 1
-"""Leaves on each ``marks`` element: its one ``label``. The Many the leaf axis
-does not reach into, so its elements stay the narrowest records the workload
-has however wide the nested ones grow."""
+"""Leaves on each element of a top-level Many: its one ``label``. The occurrences
+the leaf axis does not reach into, so their elements stay the narrowest records
+the workload has however wide the nested ones grow."""
 
 _VIEWS: Final = ("children", "arms", "extra1", "extra2")
 """The parent's declared relationships, in declaration order. A slot count names
 the first ``slots`` of them; the model declares them all at every count, so a
 relationship a plan did not use is model-owned metadata and costs no reading."""
+
+_TWIN: Final = "twin"
+"""The child's own many-to-one, whose slot the plan puts on the source the broad
+hop's children were read at. Every one of them names a twin, so every admitted
+parent of that hop receives the attachment, exactly as a fan-back writes one."""
 
 _CONCRETES: Final = ("Alpha", "Beta")
 """The resolved concretes of the measured family, taken in turn down each
@@ -187,10 +230,10 @@ polymorphic in the sense that costs a reading anything: two layouts of different
 widths, two source view layouts, and two merged rows, all inside one graph."""
 
 
-def _document(members: int, leaves: int, occurrences: int) -> Mapping[str, object]:
+def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, object]:
     """A model descriptor whose Child family carries ``members`` inherited
-    Attributes and ``occurrences`` top-level Value Objects, whose nested records
-    carry ``leaves`` each.
+    Attributes, ``ones`` top-level One Value Objects and ``manys`` top-level Many
+    ones, whose nested records carry ``leaves`` each.
 
     Descriptor-backed rather than class-backed because the axes ARE the member,
     leaf, and occurrence counts: one document generator answers every point of
@@ -209,9 +252,15 @@ def _document(members: int, leaves: int, occurrences: int) -> Mapping[str, objec
 
     The occurrences are what put a document on the measured path: ``mark`` is a
     top-level One holding a nested One and a nested Many, ``marks`` is a
-    top-level Many, and ``spare`` is the One the occurrence axis adds. A Many is
-    declared at :data:`_ELEMENTS` elements by the rows, so a record count is not
-    a row count.
+    top-level Many, and ``spare`` and ``notes`` are the One and the Many their
+    own axes add. A Many is declared at :data:`_ELEMENTS` elements by the rows,
+    so a record count is not a row count.
+
+    ``twin`` is the child's own many-to-one back into its family, named by a
+    ``twinId`` every child row carries. It is not the inverse of the hop the
+    children arrived through — ``parent`` is — so a plan reaching it issues a
+    real query rather than resolving the ancestor already in hand, and the rows
+    it reads are children the broad hop read already.
     """
 
     def one_to_many(name: str, *, dependent: bool = False) -> dict[str, object]:
@@ -245,8 +294,16 @@ def _document(members: int, leaves: int, occurrences: int) -> Mapping[str, objec
             "attributes": [{"name": "label", "type": "string"}],
         },
     ]
-    if occurrences > _OCCURRENCES[0]:
+    if ones > _ONES[0]:
         value_objects.append({"name": "spare", "attributes": leaf_run()})
+    if manys > _MANYS[0]:
+        value_objects.append(
+            {
+                "name": "notes",
+                "multiplicity": "many",
+                "attributes": [{"name": "label", "type": "string"}],
+            }
+        )
 
     return {
         "entities": [
@@ -272,13 +329,24 @@ def _document(members: int, leaves: int, occurrences: int) -> Mapping[str, objec
                 "attributes": [
                     {"name": "id", "type": "int64", "primaryKey": True},
                     {"name": "parentId", "type": "int64"},
+                    {"name": "twinId", "type": "int64"},
                     *(
                         {"name": f"c{index:02d}", "type": "string", "maxLength": 32}
-                        for index in range(members - 2)
+                        for index in range(members - 3)
                     ),
                 ],
                 "valueObjects": value_objects,
-                "relationships": [{"name": "parent", "reverseOf": f"{_NAMESPACE}.Parent.children"}],
+                "relationships": [
+                    {"name": "parent", "reverseOf": f"{_NAMESPACE}.Parent.children"},
+                    {
+                        "name": _TWIN,
+                        "cardinality": "many-to-one",
+                        "join": {
+                            "source": "twinId",
+                            "target": {"entity": f"{_NAMESPACE}.Child", "attribute": "id"},
+                        },
+                    },
+                ],
                 "indices": [{"name": "retention_child_parent", "attributes": ["parentId"]}],
             },
             {
@@ -340,13 +408,13 @@ class _Workload(NamedTuple):
     parent: LevelContext
     levels: tuple[LevelContext, ...]
     views: tuple[RelationshipViewKey, ...]
-    back: RelationshipViewKey
+    twin: RelationshipViewKey
     parents: tuple[dict[str, object], ...]
     children: tuple[tuple[dict[str, object], ...], ...]
 
 
-def _workload(members: int, leaves: int, elements: int, occurrences: int) -> _Workload:
-    meta = model_of(domain_model_from_document(_document(members, leaves, occurrences)))
+def _workload(members: int, leaves: int, elements: int, ones: int, manys: int) -> _Workload:
+    meta = model_of(domain_model_from_document(_document(members, leaves, ones, manys)))
     catalog = CatalogedModel(meta).layouts
     parent, child = _identity(meta, "Parent"), _identity(meta, "Child")
     concretes = tuple(_level(catalog.entity(_identity(meta, name))) for name in _CONCRETES)
@@ -355,8 +423,12 @@ def _workload(members: int, leaves: int, elements: int, occurrences: int) -> _Wo
     for cell in range(_LARGER):
         rows: list[dict[str, object]] = []
         for index in range(_CHILDREN):
-            row: dict[str, object] = {"id": 10_000 + cell * 100 + index, "parent_id": 1_000 + cell}
-            for position in range(members - 2):
+            row: dict[str, object] = {
+                "id": 10_000 + cell * 100 + index,
+                "parent_id": 1_000 + cell,
+                "twin_id": 10_000 + cell * 100 + index % _DUPLICATES,
+            }
+            for position in range(members - 3):
                 row[f"c{position:02d}"] = f"c{position:02d}-value-{cell}-{index}"
             if index % len(_CONCRETES) == 0:
                 row["rank"] = index
@@ -371,8 +443,12 @@ def _workload(members: int, leaves: int, elements: int, occurrences: int) -> _Wo
             row["marks"] = [
                 {"label": f"marks-{cell}-{index}-{element}"} for element in range(elements)
             ]
-            if occurrences > _OCCURRENCES[0]:
+            if ones > _ONES[0]:
                 row["spare"] = _record(leaves, cell, index)
+            if manys > _MANYS[0]:
+                row["notes"] = [
+                    {"label": f"notes-{cell}-{index}-{element}"} for element in range(elements)
+                ]
             rows.append(row)
         child_rows.append(tuple(rows))
     return _Workload(
@@ -380,7 +456,7 @@ def _workload(members: int, leaves: int, elements: int, occurrences: int) -> _Wo
         _level(catalog.entity(parent)),
         tuple(concretes[index % len(_CONCRETES)] for index in range(_CHILDREN)),
         tuple(RelationshipViewKey(RelationshipIdentity(parent, name)) for name in _VIEWS),
-        RelationshipViewKey(RelationshipIdentity(child, "parent")),
+        RelationshipViewKey(RelationshipIdentity(child, _TWIN)),
         tuple(parent_rows),
         tuple(child_rows),
     )
@@ -392,13 +468,14 @@ def _record(leaves: int, cell: int, index: int) -> dict[str, object]:
 
 
 _SHAPES: Final = (
-    *((members, _LEAVES[0], _ELEMENTS[0], _OCCURRENCES[0]) for members in _MEMBERS),
-    (_MEMBERS[0], _LEAVES[1], _ELEMENTS[0], _OCCURRENCES[0]),
-    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[1], _OCCURRENCES[0]),
-    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[0], _OCCURRENCES[1]),
+    *((members, _LEAVES[0], _ELEMENTS[0], _ONES[0], _MANYS[0]) for members in _MEMBERS),
+    (_MEMBERS[0], _LEAVES[1], _ELEMENTS[0], _ONES[0], _MANYS[0]),
+    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[1], _ONES[0], _MANYS[0]),
+    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[0], _ONES[1], _MANYS[0]),
+    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[0], _ONES[0], _MANYS[1]),
 )
 """What the model and its rows are formed at: one shape per grid member count,
-plus the second point of each of the three document steps. Every step is read at
+plus the second point of each of the four document steps. Every step is read at
 the smallest member count, which is where every step in this suite is read."""
 
 _WORKLOADS: Final = {shape: _workload(*shape) for shape in _SHAPES}
@@ -425,13 +502,13 @@ the list make: not one of them is per projection, per member, or per edge.
 
 class _Point(NamedTuple):
     """One workload the readings are stated over: ``members`` Attributes the
-    family root declares, ``slots`` relationship views declared at the root
-    source level, ``arms`` projection references in the narrowed view of them,
+    family root declares, ``slots`` relationship views its root-parented levels
+    declare, ``arms`` projection references in the narrowed view of them,
     ``leaves`` on each nested Value Object record, ``elements`` in each Many
-    occurrence, and ``occurrences`` top-level Value Objects on each child
-    projection.
+    occurrence, and ``ones`` and ``manys`` top-level Value Objects of each
+    multiplicity on each child projection.
 
-    The crossed grid pins the last three; each of the three document steps moves
+    The crossed grid pins the last four; each of the four document steps moves
     exactly one of them."""
 
     members: int
@@ -439,13 +516,14 @@ class _Point(NamedTuple):
     arms: int
     leaves: int = _LEAVES[0]
     elements: int = _ELEMENTS[0]
-    occurrences: int = _OCCURRENCES[0]
+    ones: int = _ONES[0]
+    manys: int = _MANYS[0]
 
     @property
-    def shape(self) -> tuple[int, int, int, int]:
+    def shape(self) -> tuple[int, int, int, int, int]:
         """The model and rows this point converts, which is what the axes moving
         a document share and the three view axes do not."""
-        return self.members, self.leaves, self.elements, self.occurrences
+        return self.members, self.leaves, self.elements, self.ones, self.manys
 
 
 _GRID: Final = tuple(
@@ -463,8 +541,9 @@ _LEAST: Final = _Point(_MEMBERS[0], _SLOTS[0], _ARMS[0])
 
 _WIDER_LEAVES: Final = _LEAST._replace(leaves=_LEAVES[1])
 _WIDER_ELEMENTS: Final = _LEAST._replace(elements=_ELEMENTS[1])
-_WIDER_OCCURRENCES: Final = _LEAST._replace(occurrences=_OCCURRENCES[1])
-"""The second point of each document step. One axis moves and five stand still,
+_WIDER_ONES: Final = _LEAST._replace(ones=_ONES[1])
+_WIDER_MANYS: Final = _LEAST._replace(manys=_MANYS[1])
+"""The second point of each document step. One axis moves and six stand still,
 which is what lets each step name one population of the document rather than a
 mixture of them."""
 
@@ -477,6 +556,31 @@ _ROWS: Final = (256, 512)
 cost of one row rather than a total carrying whatever else the seam allocated."""
 
 
+def _slot_table(point: _Point) -> tuple[tuple[ChildSlot, ...], ...]:
+    """The table ``handle/_read._slot_table`` yields for this workload's plan,
+    dense by source level.
+
+    The plan descends the broad ``children`` hop first and the ``twin`` hop
+    directly under it, then the root's remaining views — the narrowed arm, and
+    however many gathered nothing. So ``twin`` is plan level 1 and reads its
+    duplicates at source 2, and every level after it attaches to the root. A
+    level's slot lands on whichever source its OWN parents came from, so every
+    root-parented level's slot is on entry 0 and ``twin``'s is on entry 1, and
+    every entry after those is empty because a level owns an entry whether or not
+    anything attaches beneath it.
+
+    Every source level carries a slot tuple no other source shares, which is what
+    makes the reading exact about where a view row is stored: a table that put the
+    broad children and the twin hop's duplicates on one source would give four
+    projections a position no plan of theirs writes.
+    """
+    return (
+        tuple(ChildSlot(view) for view in _WORKLOADS[point.shape].views[: point.slots]),
+        (ChildSlot(_WORKLOADS[point.shape].twin),),
+        *(() for _ in range(point.slots)),
+    )
+
+
 def _compose(point: _Point, cells: int) -> tuple[SnapshotGraph, GraphMerge]:
     """One whole materialization of ``cells`` cells, built and merged the way a
     read builds and merges one: a fresh slot table and view schema per execution,
@@ -485,30 +589,29 @@ def _compose(point: _Point, cells: int) -> tuple[SnapshotGraph, GraphMerge]:
     and its merge the only things that come back."""
     workload = _WORKLOADS[point.shape]
     views = workload.views[: point.slots]
-    schema = ViewSchema((tuple(ChildSlot(view) for view in views), (ChildSlot(workload.back),)))
-    builder = GraphBuilder(schema)
+    builder = GraphBuilder(ViewSchema(_slot_table(point)))
     roots: list[int] = []
     for cell in range(cells):
         parent = convert_row(workload.parents[cell], workload.parent, builder, source=_ROOT_SOURCE)
         children = tuple(
-            convert_row(row, level, builder, source=_CHILD_SOURCE)
+            convert_row(row, level, builder, source=_BROAD_SOURCE)
             for row, level in zip(workload.children[cell], workload.levels, strict=True)
         )
-        duplicates = tuple(
+        twins = tuple(
             convert_row(
                 workload.children[cell][index],
                 workload.levels[index],
                 builder,
-                source=_CHILD_SOURCE,
+                source=_TWIN_SOURCE,
             )
             for index in range(_DUPLICATES)
         )
-        builder.write_view(parent, views[0], (*children, *duplicates))
+        builder.write_view(parent, views[0], children)
         builder.write_view(parent, views[1], children[: point.arms])
         for empty in views[2:]:
             builder.write_view(parent, empty, ())
-        for duplicate in duplicates:
-            builder.write_view(duplicate, workload.back, parent)
+        for index, child in enumerate(children):
+            builder.write_view(child, workload.twin, twins[index % _DUPLICATES])
         roots.append(parent)
     graph = builder.seal(tuple(roots), _PIN)
     return graph, merge_graph_input(graph)
@@ -588,7 +691,7 @@ def _measured(cells: int) -> dict[_Point, int]:
 @cache
 def _at(seam: Callable[[_Point, int], Seam], point: _Point, cells: int) -> int:
     """``seam``'s retained bytes at one point, measured once however many steps
-    read it — the smallest point is the baseline all three document steps are
+    read it — the smallest point is the baseline all four document steps are
     taken against."""
     tracemalloc.start()
     try:
@@ -671,10 +774,10 @@ def _element_bytes(leaves: int) -> int:
     return _row_bytes(leaves) + _row_bytes(_LABELS) + 2 * _POINTER
 
 
-def _occurrence_bytes(leaves: int) -> int:
-    """What one more top-level occurrence costs one child projection: the position
-    it takes in the member row after the Attributes, and the one record that
-    position holds.
+def _one_occurrence_bytes(leaves: int) -> int:
+    """What one more top-level ONE occurrence costs one child projection: the
+    position it takes in the member row after the Attributes, and the one record
+    that position holds.
 
     A representation charging anything per OCCURRENCE — the pre-cutover graph held
     a ``ValueObjectOccurrenceInput`` for each — is a term this reading has and the
@@ -682,6 +785,20 @@ def _occurrence_bytes(leaves: int) -> int:
     fixed number of occurrences.
     """
     return _POINTER + _row_bytes(leaves)
+
+
+def _many_occurrence_bytes(elements: int) -> int:
+    """What one more top-level MANY occurrence costs one child projection: the
+    position in the member row, the occurrence's own row of element positions, and
+    one record per element — each of them carrying the single ``label`` a
+    workload Many declares.
+
+    Read separately from the One because the reduction is separate: the Many
+    branch structures a row per element where the One branch structures one row or
+    none, so a cost that returned to one branch alone would leave the other's step
+    exactly where it is.
+    """
+    return _POINTER + _row_bytes(elements) + elements * _row_bytes(_LABELS)
 
 
 def _rows_seam(rows: int, positions: int) -> Seam:
@@ -742,7 +859,7 @@ def test_the_measured_level_resolves_two_concretes_of_one_family_to_two_layouts(
     children = [
         layout
         for layout, source in zip(rows.layouts, rows.sources, strict=True)
-        if source == _CHILD_SOURCE
+        if source == _BROAD_SOURCE
     ]
     concretes = {layout.concrete.name: layout for layout in children}
     assert sorted(concretes) == sorted(_CONCRETES)
@@ -761,6 +878,30 @@ def test_the_measured_level_resolves_two_concretes_of_one_family_to_two_layouts(
             duplicate = broad + _CHILDREN + index
             assert rows.logical_ids[duplicate] == rows.logical_ids[broad + index], (cell, index)
     assert not merge.has_issues
+
+
+def test_every_planned_level_owns_a_source_of_its_own_and_writes_every_slot_it_declares() -> None:
+    # `python.md`'s "Execution-owned view slots", as the two facts the slot
+    # arithmetic below depends on. A schema fixes one slot tuple per (source
+    # level, resolved concrete), where the source level is the plan level that
+    # produced the projection, and `handle/_read` converts plan level `i` at
+    # source `i + 1` — so no two levels share a source, and the twin hop's
+    # duplicates are laid out by their own level's row rather than by the broad
+    # hop's. A fan-back then writes its level's view to every admitted parent, so
+    # every declared position is one some level fills. Both matter because the
+    # readings below count positions: a graph that gave a projection a slot no
+    # plan of its own attaches would be charged for storage production never lays
+    # out, and the arithmetic would agree with it.
+    for point in (_LEAST, _GRID[-1]):
+        graph, _ = _compose(point, _CELLS)
+        rows = graph_rows(graph)
+        cell = (_ROOT_SOURCE, *(_BROAD_SOURCE,) * _CHILDREN, *(_TWIN_SOURCE,) * _DUPLICATES)
+        assert rows.sources == cell * _CELLS, point
+        assert {
+            source: len(rows.schema.source(source, layout).slots)
+            for layout, source in zip(rows.layouts, rows.sources, strict=True)
+        } == {_ROOT_SOURCE: point.slots, _BROAD_SOURCE: 1, _TWIN_SOURCE: 0}, point
+        assert all(value is not ABSENT for row in rows.view_rows for value in row), point
 
 
 def test_a_positional_row_costs_the_tuple_that_holds_it_and_nothing_more() -> None:
@@ -837,18 +978,35 @@ def test_a_value_object_record_costs_its_own_row_and_the_position_that_names_it(
     assert _step(_seam, _WIDER_ELEMENTS, _LARGER) == large
 
 
-def test_a_top_level_occurrence_costs_one_position_in_the_row_and_its_own_record() -> None:
-    # And the population both other document steps hold still: one more top-level
-    # Value Object on the measured Entity, at the same members, leaves, and
-    # elements. An occurrence is a position in the member row after the
-    # Attributes, holding the one record it reduced to — so it costs a pointer and
-    # a row, and the wrapper the replaced representation put around each one costs
-    # nothing here because there is no wrapper. Read at two graph sizes for the
-    # reason the member step is.
-    small = _member_rows(_CELLS) * _occurrence_bytes(_LEAVES[0])
-    large = _member_rows(_LARGER) * _occurrence_bytes(_LEAVES[0])
-    assert _step(_seam, _WIDER_OCCURRENCES, _CELLS) == small
-    assert _step(_seam, _WIDER_OCCURRENCES, _LARGER) == large
+def test_a_top_level_one_occurrence_costs_one_position_in_the_row_and_its_own_record() -> None:
+    # And the population the other document steps hold still, for the first of the
+    # two branches a reduction has: one more top-level ONE Value Object on the
+    # measured Entity, at the same members, leaves, and elements. A One occurrence
+    # is a position in the member row after the Attributes, holding the one record
+    # it reduced to — so it costs a pointer and a row, and the wrapper the replaced
+    # representation put around each one costs nothing here because there is no
+    # wrapper. Read at two graph sizes for the reason the member step is.
+    small = _member_rows(_CELLS) * _one_occurrence_bytes(_LEAVES[0])
+    large = _member_rows(_LARGER) * _one_occurrence_bytes(_LEAVES[0])
+    assert _step(_seam, _WIDER_ONES, _CELLS) == small
+    assert _step(_seam, _WIDER_ONES, _LARGER) == large
+
+
+def test_a_top_level_many_occurrence_costs_its_row_of_elements_and_a_record_for_each() -> None:
+    # The other branch, and a reading with no substitute anywhere else in this
+    # suite: one more top-level MANY Value Object, at the same members, leaves, and
+    # elements. `_structure_occurrence` reduces a Many through its own branch, so a
+    # carrier that came back around Many occurrences alone would be a constant per
+    # projection — invisible to the crossed grid, which never varies a document;
+    # invisible to the leaf and element steps, which move populations underneath a
+    # fixed set of occurrences; and invisible to the One step above, which adds an
+    # occurrence the Many branch never sees. What it may cost is the position in
+    # the member row, the row of element positions, and one narrow record per
+    # element. Read at two graph sizes for the reason the member step is.
+    small = _member_rows(_CELLS) * _many_occurrence_bytes(_ELEMENTS[0])
+    large = _member_rows(_LARGER) * _many_occurrence_bytes(_ELEMENTS[0])
+    assert _step(_seam, _WIDER_MANYS, _CELLS) == small
+    assert _step(_seam, _WIDER_MANYS, _LARGER) == large
 
 
 def test_an_edge_costs_one_pointer_where_it_is_recorded_and_one_where_it_resolves() -> None:
@@ -919,12 +1077,10 @@ def _catalog_seam(graphs: int) -> Seam:
             _level(cataloged.layouts.entity(level.concrete_entity)) for level in workload.levels
         )
         for _ in range(graphs):
-            builder = GraphBuilder(
-                ViewSchema((tuple(ChildSlot(view) for view in views), (ChildSlot(workload.back),)))
-            )
+            builder = GraphBuilder(ViewSchema(_slot_table(_LEAST)))
             root = convert_row(workload.parents[0], parent, builder, source=_ROOT_SOURCE)
             children = tuple(
-                convert_row(row, level, builder, source=_CHILD_SOURCE)
+                convert_row(row, level, builder, source=_BROAD_SOURCE)
                 for row, level in zip(workload.children[0], levels, strict=True)
             )
             builder.write_view(root, views[0], children)
@@ -1068,12 +1224,17 @@ def _record_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
     return run
 
 
-def _occurrence_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
-    """``point``'s materialization, plus one carrier per top-level OCCURRENCE of
-    every projection — the population the pre-cutover graph's
-    ``ValueObjectOccurrenceInput`` was, which is fixed per projection and
-    therefore invisible to every reading that varies something inside a
-    document."""
+def _occurrence_wrapping_seam(point: _Point, cells: int, branch: Multiplicity) -> Seam:
+    """``point``'s materialization, plus one carrier per top-level occurrence of
+    ``branch``'s multiplicity on every projection — the population the pre-cutover
+    graph's ``ValueObjectOccurrenceInput`` was, which is fixed per projection and
+    therefore invisible to every reading that varies something inside a document.
+
+    Taken one multiplicity at a time because the production reduction is written
+    one multiplicity at a time: a wrapper that returned to the Many branch alone
+    is a different defect from one that returned to both, and only a control that
+    can be that narrow shows which reading catches it.
+    """
 
     def run(sample: Callable[[], None]) -> None:
         graph, merge = _compose(point, cells)
@@ -1081,12 +1242,23 @@ def _occurrence_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
         carriers = [
             _CellCarrier(row[position])
             for layout, row in zip(rows.layouts, rows.member_rows, strict=True)
-            for position in range(layout.attribute_count, len(row))
+            for position, declared in enumerate(layout.occurrences, start=layout.attribute_count)
+            if declared.multiplicity is branch
         ]
         sample()
         assert graph is not None and merge is not None and carriers is not None
 
     return run
+
+
+def _one_occurrence_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
+    """The control wrapping every top-level ONE occurrence and nothing else."""
+    return _occurrence_wrapping_seam(point, cells, Multiplicity.ONE)
+
+
+def _many_occurrence_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
+    """The control wrapping every top-level MANY occurrence and nothing else."""
+    return _occurrence_wrapping_seam(point, cells, Multiplicity.MANY)
 
 
 def _records(
@@ -1132,13 +1304,34 @@ def test_the_record_step_is_what_refuses_a_representation_wrapping_every_record(
         assert step == _member_rows(_CELLS) * _element_bytes(_LEAVES[0])
 
 
-def test_the_occurrence_step_is_what_refuses_a_representation_wrapping_every_occurrence() -> None:
-    # And what the occurrence reading is worth, which is the reading with no
-    # substitute at all: a carrier held once per top-level occurrence is a
-    # constant per projection, so it stands still down every axis the grid varies
-    # and is absorbed whole by the fit's origin at each graph size. It moves this
-    # step by an object per occurrence, and nothing else here notices it.
-    step = _step(_occurrence_wrapping_seam, _WIDER_OCCURRENCES, _CELLS)
-    assert step > _member_rows(_CELLS) * _occurrence_bytes(_LEAVES[0])
+def test_the_one_occurrence_step_is_what_refuses_a_wrapper_around_a_one_occurrence() -> None:
+    # And what the two occurrence readings are worth, starting with the One
+    # branch. A carrier held once per top-level One occurrence is a constant per
+    # projection, so it stands still down every axis the grid varies and is
+    # absorbed whole by the fit's origin at each graph size. It moves the One step
+    # by an object per One occurrence, and the Many step not at all — which is the
+    # half that says the two steps read two populations rather than one twice.
+    step = _step(_one_occurrence_wrapping_seam, _WIDER_ONES, _CELLS)
+    assert step > _member_rows(_CELLS) * _one_occurrence_bytes(_LEAVES[0])
     with pytest.raises(AssertionError):
-        assert step == _member_rows(_CELLS) * _occurrence_bytes(_LEAVES[0])
+        assert step == _member_rows(_CELLS) * _one_occurrence_bytes(_LEAVES[0])
+    assert _step(_one_occurrence_wrapping_seam, _WIDER_MANYS, _CELLS) == _member_rows(
+        _CELLS
+    ) * _many_occurrence_bytes(_ELEMENTS[0])
+
+
+def test_the_many_occurrence_step_is_what_refuses_a_wrapper_around_a_many_occurrence() -> None:
+    # And the Many branch, which is the reading with no substitute anywhere: a
+    # carrier around the Many occurrences alone is what a regression confined to
+    # `_structure_occurrence`'s Many branch leaves behind, and it is a fixed count
+    # per projection that the crossed grid, both record readings, and the One step
+    # above all hold still. It moves this step by an object per Many occurrence,
+    # and the One step not at all — so the One step alone would have passed a
+    # graph carrying it.
+    step = _step(_many_occurrence_wrapping_seam, _WIDER_MANYS, _CELLS)
+    assert step > _member_rows(_CELLS) * _many_occurrence_bytes(_ELEMENTS[0])
+    with pytest.raises(AssertionError):
+        assert step == _member_rows(_CELLS) * _many_occurrence_bytes(_ELEMENTS[0])
+    assert _step(_many_occurrence_wrapping_seam, _WIDER_ONES, _CELLS) == _member_rows(
+        _CELLS
+    ) * _one_occurrence_bytes(_LEAVES[0])
