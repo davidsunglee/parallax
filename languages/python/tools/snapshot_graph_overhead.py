@@ -24,28 +24,24 @@ reading the position and not the leaf. The control at the end of the output is
 what demonstrates it rather than asserting it: the identical graph shape with
 every string leaf an order of magnitude longer must read identically.
 
-**Why the instruments are copied rather than imported.** They are the recipe
-``tests/unit/_lifecycle_cost_support.py``'s own sampling instruments follow — a
-collection before every sample so a reading answers what is still REACHABLE,
-warm-up passes before every window, survivor OBJECTS bound rather than their
-addresses, the sampler warmed separately from the seam, and the line tracer
-uninstalled for the window. A tool runs with ``tools`` on the path and ``tests``
-off it, so what a report can share with a suite is the recipe and not the
-module.
+**What it is measured with.** ``memory_instruments``, the one definition the
+gated suites read the same claims through: a collection before every sample so a
+reading answers what is still REACHABLE, warm-up passes before every window,
+survivor OBJECTS bound rather than their addresses, the sampler warmed
+separately from the seam, and the line tracer uninstalled for the window.
 
 Run it through `just python-report-snapshot-graph-overhead`.
 """
 
-import gc
 import platform
 import sys
 import tracemalloc
 from collections import Counter
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from collections.abc import Callable
 from time import perf_counter
 from typing import Final, NamedTuple, cast
 
+from memory_instruments import WARMUP, LiveGraph, Seam, live_graph, retained, untraced, warmed
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -86,10 +82,6 @@ CRITERION: Final = 0.60
 ceiling it implies so a reader can see the reading against it without this
 judging one."""
 
-WARMUP: Final = 200
-"""Runs before every window, so import, cache-fill, and first-call costs are
-outside it."""
-
 REPEATS: Final = 50
 """Timed repetitions of build and merge. Wall clock is recorded for visibility
 alone, so this buys a stable mean rather than a distribution."""
@@ -100,103 +92,6 @@ per-projection one."""
 
 REPRESENTATIVE: Final = 64
 """The size the headline is taken at, and the largest of the grid."""
-
-type Seam = Callable[[Callable[[], None]], None]
-"""One sequence through the seam, calling its argument at its innermost point."""
-
-
-def _unsampled() -> None:
-    """The sampler a byte measurement passes: the sequence runs unobserved."""
-
-
-@contextmanager
-def _untraced() -> Generator[None]:
-    """A window with the line tracer uninstalled, which under coverage would
-    otherwise allocate and keep per-line state inside every reading."""
-    tracer = sys.gettrace()
-    sys.settrace(None)
-    try:
-        yield
-    finally:
-        sys.settrace(tracer)
-
-
-class LiveGraph(NamedTuple):
-    """What a window left reachable at its innermost point, from both ends of a
-    reference: the objects it created that are still alive, and how many
-    references anywhere in the heap point at one of them."""
-
-    survivors: list[object]
-    inbound: int
-
-
-def live_graph(seam: Seam) -> LiveGraph:
-    """What is alive at ``seam``'s innermost point that was not alive before it.
-
-    The baseline BINDS the objects it found rather than only their addresses, so
-    no address it recorded can be reused by an object born in the window and read
-    back as already known.
-    """
-    sampled: list[list[object]] = []
-
-    def sample() -> None:
-        gc.collect()
-        sampled.append(gc.get_objects())
-
-    with _untraced():
-        gc.collect()
-        known = gc.get_objects()
-        before = {id(obj) for obj in known}
-        seam(sample)
-    heap = sampled[0]
-    instruments = {id(heap), id(known), id(before), id(sampled)}
-    born = [obj for obj in heap if id(obj) not in before and id(obj) not in instruments]
-    identities = {id(obj) for obj in born}
-    inbound = sum(
-        1
-        for holder in heap
-        if id(holder) not in instruments
-        for referent in gc.get_referents(holder)
-        if id(referent) in identities
-    )
-    return LiveGraph(born, inbound)
-
-
-def retained(seam: Seam) -> int:
-    """Bytes reachable at ``seam``'s innermost point that were not reachable
-    before it began.
-
-    The seam is warmed, and the SAMPLER is warmed separately from it: a sampled
-    run collects and reads the tracer where an unsampled one does not, and the
-    first of those in a process leaves bytes behind that every later one does not.
-    """
-    sampled: list[int] = []
-
-    def sample() -> None:
-        gc.collect()
-        sampled.append(tracemalloc.get_traced_memory()[0])
-
-    with _untraced():
-        for _ in range(WARMUP):
-            seam(_unsampled)
-        seam(sample)
-        gc.collect()
-        before, _ = tracemalloc.get_traced_memory()
-        seam(sample)
-    return sampled[1] - before
-
-
-def warmed(seam: Seam) -> Seam:
-    """``seam`` with its first-reach costs already paid, for :func:`live_graph`.
-
-    That instrument opens its window before the first run, so a memo filled on
-    first reach anywhere under the seam would read as a survivor of the graph
-    rather than as what it is. Warming outside the window puts every one of them
-    in the baseline the sample is compared against.
-    """
-    for _ in range(WARMUP):
-        seam(_unsampled)
-    return seam
 
 
 # --------------------------------------------------------------------------- #
@@ -520,7 +415,7 @@ def timings(plan: tuple[Cell, ...]) -> tuple[float, float]:
     """
     building = 0.0
     merging = 0.0
-    with _untraced():
+    with untraced():
         for _ in range(REPEATS):
             builder = GraphBuilder(ViewSchema(SLOT_TABLE))
             start = perf_counter()

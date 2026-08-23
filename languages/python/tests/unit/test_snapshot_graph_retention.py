@@ -10,7 +10,7 @@ reviewed.
 lifecycle suites' balance. A compact row is a tuple of decoded leaves and an edge
 is a built-in ``int``: a tuple holding only untracked items is untracked itself
 after a collection, so a survivor count classified by type sees almost none of
-what a graph holds. :func:`~_lifecycle_cost_support.retained` sees all of it, and
+what a graph holds. :func:`~memory_instruments.retained` sees all of it, and
 the survivor count is read beside it for the one claim bytes cannot make on their
 own — that no OBJECT of Parallax's own survives a conforming materialization
 except the sealed graph's own structures.
@@ -58,8 +58,8 @@ from functools import cache
 from typing import Final, NamedTuple, cast
 
 import pytest
-from _lifecycle_cost_support import WARMUP, Seam, retained, survivors
 
+from memory_instruments import Seam, retained, survivors, warmed
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity, entity_by_name
@@ -388,24 +388,6 @@ def _seam(point: _Point, cells: int = _CELLS) -> Seam:
     return run
 
 
-def _warmed(seam: Seam) -> Seam:
-    """``seam`` with its first-reach costs already paid.
-
-    :func:`~_lifecycle_cost_support.survivors` opens its window before the first
-    run, so a memo filled on first reach anywhere under the seam would read as a
-    survivor of the graph rather than as what it is. Warming outside the window
-    puts every one of them in the baseline the sample is compared against, which
-    is what :func:`~_lifecycle_cost_support.retained` already does for itself.
-    """
-    for _ in range(WARMUP):
-        seam(_nothing)
-    return seam
-
-
-def _nothing() -> None:
-    """The sampler a warm-up pass takes: the sequence runs unobserved."""
-
-
 class _Fit(NamedTuple):
     """Retained bytes as one function of the whole workload: ``origin``, plus
     ``member`` for every applicable Attribute, ``slot`` for every declared view,
@@ -621,7 +603,7 @@ def test_a_conforming_materialization_leaves_no_object_of_its_own_alive_per_cell
     # readings cannot say, because a tuple of decoded leaves is untracked and
     # invisible to a survivor count either way.
     for point in (_LEAST, _GRID[-1]):
-        alive = _graph_survivors(_warmed(_seam(point)))
+        alive = _graph_survivors(warmed(_seam(point)))
         assert [obj for obj in alive if not isinstance(obj, _GRAPH_STRUCTURES)] == [], point
 
 
@@ -630,8 +612,8 @@ def test_what_a_conforming_materialization_leaves_alive_does_not_grow_with_the_g
     # the projections and twice the logical nodes, and the same objects of
     # Parallax's own alive at the sample point — so the list above is a bound on
     # what a materialization retains rather than a census of one graph's size.
-    small = _graph_survivors(_warmed(_seam(_LEAST, _CELLS)))
-    large = _graph_survivors(_warmed(_seam(_LEAST, _LARGER)))
+    small = _graph_survivors(warmed(_seam(_LEAST, _CELLS)))
+    large = _graph_survivors(warmed(_seam(_LEAST, _LARGER)))
     assert len(small) == len(large) > 0
     assert sorted(type(obj).__qualname__ for obj in small) == sorted(
         type(obj).__qualname__ for obj in large
@@ -688,8 +670,8 @@ def test_a_models_layout_catalog_is_the_same_size_after_one_graph_and_after_sixt
         tracemalloc.stop()
     assert one > 0, "a catalog derived inside the window costs something to derive"
     assert one == many
-    assert len(_graph_survivors(_warmed(_catalog_seam(1)))) == len(
-        _graph_survivors(_warmed(_catalog_seam(64)))
+    assert len(_graph_survivors(warmed(_catalog_seam(1)))) == len(
+        _graph_survivors(warmed(_catalog_seam(64)))
     )
 
 

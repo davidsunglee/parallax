@@ -52,11 +52,22 @@ Support code only one surface uses stays inside that surface —
 `tests/unit/_corpus_identity_support.py`, `_corpus_model_support.py`,
 `_document_layout_support.py`, `_layout_twin_columns.py`,
 `_layout_twin_document.py`, `_lifecycle_cost_support.py`,
-`_metamodel_support.py`,
-`_snapshot_graph_support.py`, `_transact_support.py`,
+`_metamodel_support.py`, `_mixed_strategy_model.py`,
+`_snapshot_graph_support.py`, `_source_inventory_support.py`,
+`_transact_support.py`,
 `tests/unit/observation_models.py`, and
-`_source_inventory_support.py`,
 `tests/unit/value_object_bad_models.py`.
+
+Read forward, that rule also says where code a second reader picks up goes:
+out of the surface. `tools/memory_instruments.py` is the case whose second
+reader is not a surface at all — the memory instruments are read by
+`tests/unit/`'s cost suites and by `tools/snapshot_graph_overhead.py`, and a
+report invoked as `python tools/<report>.py` has only `tools/` on its import
+path, while `pythonpath` puts that same directory on pytest's. One definition
+therefore serves both and neither import spells a path. It imports nothing but
+the standard library, so what a reading measures stays the caller's to supply.
+`_lifecycle_cost_support.py` is what the lifecycle suites still own alone: the
+seam values they drive.
 
 `_support/` is the only package under `tests/`. Every surface directory is
 rootless, so pytest imports its modules by bare basename and those basenames must

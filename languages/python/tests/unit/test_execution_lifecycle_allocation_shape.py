@@ -15,11 +15,11 @@ be BUILT, a real Lowered Statement, and a row list far longer than the
 interpreter's small-integer cache. A seam that spells that target or sizes those
 rows allocates, and allocating is the whole assertion.
 
-Both instruments live in ``_lifecycle_cost_support``, which states what each
+Both instruments live in ``memory_instruments``, which states what each
 measures and what neither can see. Neither number here is compared against a byte
 count that would drift: the free paths are graded at zero, and the declined path
 against the cost of exactly one permitted opening.
-:func:`~_lifecycle_cost_support.first_run` is read in a CHILD interpreter, one
+:func:`~memory_instruments.first_run` is read in a CHILD interpreter, one
 seam per child, so no measured first run has been warmed by another and a lazily
 built cache paid once is inside the window rather than before it.
 """
@@ -27,25 +27,18 @@ built cache paid once is inside the window rather than before it.
 from __future__ import annotations
 
 import gc
+import os
 import subprocess
 import sys
 import tracemalloc
 from collections.abc import Callable
+from pathlib import Path
 from typing import Final
 from uuid import uuid4
 
-from _lifecycle_cost_support import (
-    AFFECTED,
-    REPEATS,
-    STATEMENT,
-    TARGET,
-    Seam,
-    allocation,
-    first_run,
-    rows,
-    survivors,
-)
+from _lifecycle_cost_support import AFFECTED, STATEMENT, TARGET, rows
 
+from memory_instruments import REPEATS, Seam, allocation, first_run, survivors
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandler, RootExecution
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -183,11 +176,31 @@ a cost the first had already paid.
 """
 
 
+def _child_environment() -> dict[str, str]:
+    """This process's environment carrying the import root the instruments live
+    under.
+
+    ``pythonpath = ["tools", "tests"]`` is a pytest setting and reaches no
+    subprocess: a child launched as ``python <this file>`` gets this directory
+    alone, which is enough for a sibling support module and not for
+    ``memory_instruments``.
+    """
+    inherited = os.environ.get("PYTHONPATH")
+    roots = [str(Path(__file__).resolve().parents[2] / "tools")]
+    if inherited:
+        roots.append(inherited)
+    return {**os.environ, "PYTHONPATH": os.pathsep.join(roots)}
+
+
 def _first_run_in_a_child(seam: str) -> tuple[int, int]:
-    """:func:`~_lifecycle_cost_support.first_run` for ``seam``, in a process that
+    """:func:`~memory_instruments.first_run` for ``seam``, in a process that
     has run nothing else."""
     report = subprocess.run(
-        [sys.executable, __file__, seam], capture_output=True, text=True, check=True
+        [sys.executable, __file__, seam],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=_child_environment(),
     )
     kept, transient = report.stdout.split()
     return int(kept), int(transient)
