@@ -279,6 +279,18 @@ python-test-distribution:
 python-report-lifecycle-overhead:
     cd {{python}} && uv run python tools/lifecycle_overhead.py
 
+# Its neighbour above belongs to no aggregate because a wall clock cannot judge;
+# this one because a total in bytes is machine- and interpreter-relative, so the
+# ratio it prints against the recorded pre-cutover reading is evidence rather
+# than a verdict. The SHAPE of what a graph retains is gated instead, in
+# `tests/unit/test_snapshot_graph_retention.py`, which `python-test-dbfree` owns.
+# What has been read off this, and under what conditions, is
+# `languages/python/docs/snapshot-graph-baseline.md`.
+[metadata("runtime:medium")]
+[doc("Retained Snapshot graph overhead per projection, and what building one costs.")]
+python-report-snapshot-graph-overhead:
+    cd {{python}} && uv run python tools/snapshot_graph_overhead.py
+
 # Both prerequisites are soundness conditions, not merely file dependencies.
 # diff-cover derives its line inventory from git, so an untracked production
 # module scores zero changed lines and `--fail-under 100` passes vacuously over
