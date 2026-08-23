@@ -188,9 +188,9 @@ from _transact_support import (
     deadlock,
     new_account,
 )
+from memory_instruments import REPEATS, Closure, Seam, allocation, closure, live_graph, retained
 
 from _support import mirrored_models as mm
-from memory_instruments import REPEATS, Closure, Seam, allocation, closure, live_graph, retained
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, TransactionOutcome
 from parallax.core.execution_lifecycle import (

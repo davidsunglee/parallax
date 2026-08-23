@@ -27,18 +27,16 @@ built cache paid once is inside the window rather than before it.
 from __future__ import annotations
 
 import gc
-import os
 import subprocess
 import sys
 import tracemalloc
 from collections.abc import Callable
-from pathlib import Path
 from typing import Final
 from uuid import uuid4
 
 from _lifecycle_cost_support import AFFECTED, STATEMENT, TARGET, rows
-
 from memory_instruments import REPEATS, Seam, allocation, first_run, survivors
+
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandler, RootExecution
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -176,31 +174,21 @@ a cost the first had already paid.
 """
 
 
-def _child_environment() -> dict[str, str]:
-    """This process's environment carrying the import root the instruments live
-    under.
-
-    ``pythonpath = ["tools", "tests"]`` is a pytest setting and reaches no
-    subprocess: a child launched as ``python <this file>`` gets this directory
-    alone, which is enough for a sibling support module and not for
-    ``memory_instruments``.
-    """
-    inherited = os.environ.get("PYTHONPATH")
-    roots = [str(Path(__file__).resolve().parents[2] / "tools")]
-    if inherited:
-        roots.append(inherited)
-    return {**os.environ, "PYTHONPATH": os.pathsep.join(roots)}
-
-
 def _first_run_in_a_child(seam: str) -> tuple[int, int]:
     """:func:`~memory_instruments.first_run` for ``seam``, in a process that
-    has run nothing else."""
+    has run nothing else.
+
+    The child inherits this process's environment untouched, so every comparison
+    below grades two children that differ only in the seam they are asked for. It
+    needs no import root handed to it: ``python <this file>`` puts this file's own
+    directory first on the child's path, and both support modules are siblings
+    there.
+    """
     report = subprocess.run(
         [sys.executable, __file__, seam],
         capture_output=True,
         text=True,
         check=True,
-        env=_child_environment(),
     )
     kept, transient = report.stdout.split()
     return int(kept), int(transient)
