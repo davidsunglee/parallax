@@ -14,18 +14,27 @@ on an interpreter bump that changed nothing. The *shape* of what a graph retains
 is gated instead, in `tests/unit/test_snapshot_graph_retention.py`, which
 `just python-test-dbfree` owns: that suite fits an affine function of members,
 declared view slots, and recorded edges over a crossed grid and requires exact
-equality at every point of it, grades four steps against the exact number of
-pointers a compact row can charge — one per member per row, one per arm where the
-edge is recorded and one where it resolves, one per slot in every row a slot
-widens, and one per Value Object leaf in every record that carries it — and
-asserts that no object of Parallax's own survives a conforming materialization
-except the sealed graph's own structures. Its projections carry documents for
-that reason: the representation replaced here spent more of its per-cell cost
-inside Value Objects than on Attributes, so a gate blind to occurrences would be
-blind to most of what it is refusing. Two negative controls state what each
-reading is worth — one wraps every member cell and fails only the member step,
-one wraps every Value Object cell and fails only the leaf step. A per-cell
-carrier reappearing on either side fails there, structurally, without anyone
+equality at every point of it, grades six steps against exactly what a compact
+representation can charge, and asserts that no object of Parallax's own survives
+a conforming materialization except the sealed graph's own structures. Three of
+the steps price a pointer — one per member per row, one per arm where the edge is
+recorded and one where it resolves, one per slot in every row a slot widens — and
+three price a document: one pointer per Value Object leaf in every record that
+carries it, one whole positional row and the position naming it per record, and
+one position and one record per top-level occurrence. Its projections carry
+documents for that reason: the representation replaced here spent more of its
+per-cell cost inside Value Objects than on Attributes, so a gate blind to
+occurrences would be blind to most of what it is refusing — and the three
+document steps move those populations one at a time, because a cost charged per
+record or per occurrence stands still while leaves move and would otherwise be
+absorbed whole by the fit's origin. Its measured level is polymorphic for the
+same kind of reason: two concretes of one family, of different widths, are laid
+out and merged inside one graph. Four negative controls state what each reading
+is worth — one wraps every member cell and fails only the member step, one wraps
+every Value Object cell and fails only the leaf step, one wraps every reduced
+record and fails only the record step, one wraps every occurrence and fails only
+the occurrence step. A per-cell, per-record, or per-occurrence carrier
+reappearing on any of those paths fails there, structurally, without anyone
 re-taking this reading.
 
 ## The figure
