@@ -178,18 +178,7 @@ from itertools import product
 from typing import Final, NamedTuple, get_type_hints
 
 import pytest
-from _lifecycle_cost_support import (
-    REPEATS,
-    STATEMENT,
-    TARGET,
-    Closure,
-    Seam,
-    allocation,
-    closure,
-    live_graph,
-    retained,
-    rows,
-)
+from _lifecycle_cost_support import STATEMENT, TARGET, rows
 from _transact_support import (
     ACCOUNT,
     FIXED,
@@ -201,6 +190,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from memory_instruments import REPEATS, Closure, Seam, allocation, closure, live_graph, retained
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, TransactionOutcome
 from parallax.core.execution_lifecycle import (
