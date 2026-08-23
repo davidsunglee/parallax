@@ -77,7 +77,27 @@ them up here does not move them. That leaves the reach deliberate and one-way:
 the path is spelled once, here, and nothing under `tests/` knows this file
 exists.
 """
-sys.path.append(str(INSTRUMENTS))
+
+INSTRUMENT_MODULE: Final = INSTRUMENTS / "memory_instruments.py"
+"""The exact file the reading is taken through.
+
+``memory_instruments`` is a generic name on a path this process does not own, so
+prepending the directory is only half of what makes the import deterministic: a
+module of that name already in :data:`sys.modules` wins before any path entry is
+consulted at all. The report therefore states which file it means and refuses to
+measure through any other, because the alternative failure is silent — a
+different definition of the sampling recipe would still produce a number, and the
+number would not be the one the recorded baseline is stated over.
+"""
+sys.path.insert(0, str(INSTRUMENTS))
+
+import memory_instruments  # noqa: E402
+
+if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
+    raise ImportError(
+        f"this report measures through {INSTRUMENT_MODULE}, but 'memory_instruments' "
+        f"resolved to {memory_instruments.__file__}"
+    )
 
 from memory_instruments import (  # noqa: E402
     WARMUP,

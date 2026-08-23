@@ -65,7 +65,8 @@ Two of those serve the cost suites and split by subject:
 `_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
 with. `tools/snapshot_graph_overhead.py` reads the instruments as well, and is
 the one place in the tree that spells `tests/unit` as an import root — it
-appends that directory to `sys.path` before importing them, which is also why
+prepends that directory to `sys.path` and then refuses any `memory_instruments`
+that did not resolve to the file it named, which is also why
 `pyrightconfig.json`'s `extraPaths` carries `tests/unit` beside the two
 `pythonpath` roots.
 
