@@ -423,8 +423,12 @@ class _Unwind:
                 )
         view_layout = self._merge.view_layout(node)
         for view, child in subtree.children.items():
-            # A view the node never received is a level a path-root guard excluded
-            # this parent from: it holds no slot, which is what unloaded means.
+            # Unloaded arrives two ways, and both mean the same thing here. A node
+            # whose concrete a path-root guard excluded from the level attaching
+            # this view holds NO SLOT for it, because a merged row is the union of
+            # the source rows its own concrete can carry. A node the level could
+            # have reached but did not holds the slot with ABSENT in it. Neither
+            # renders.
             slot = view_layout.index_of.get(view)
             if slot is None:
                 continue
