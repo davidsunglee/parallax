@@ -180,3 +180,24 @@ jobs:
         run: uv sync --frozen
       - name: just python-check-db
         run: just python-check-db
+
+  # Every Python check needing an interpreter no other test shares: the memory
+  # instruments read the whole process, so each measurement is taken in a child
+  # that has loaded only what it needs. `just check` deliberately omits this
+  # class (core/spec/language-testing.md §7) so the command run after every
+  # change stays fast; this job is what keeps it gated on every change instead.
+  python-check-cost:
+    runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: just python-check-cost
+        run: just python-check-cost

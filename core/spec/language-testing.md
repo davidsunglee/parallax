@@ -146,8 +146,8 @@ Each scope that declares a partition MUST:
 - define how a file whose items have differing requirements is handled —
   classified per item, or split so each file is uniform;
 - keep the selections of its aggregates disjoint and collectively complete; and
-- give every logical gate exactly one execution owner inside a complete
-  aggregate.
+- give every logical gate exactly one execution owner inside the complete
+  aggregate ([§7](#7-command-roles-and-composition)).
 
 "Mechanically" excludes review and prose: enforcement MUST live in collection or
 in a blocking command. Deriving each test's class from the resources the test
@@ -172,33 +172,43 @@ silently understates what it needs.
 
 ### The classes
 
-The scheduling classes are `dbfree` and `db`. The vocabulary is closed the way
-[§2](#2-operation-vocabulary)'s is: a class named anywhere else has no defined
-meaning and MUST NOT be declared.
+The scheduling classes are `dbfree`, `db`, and `cost`. The vocabulary is closed
+the way [§2](#2-operation-vocabulary)'s is: a class named anywhere else has no
+defined meaning and MUST NOT be declared.
 
 | Class | A test belongs to it when |
 |---|---|
 | `db` | Running it requires a live database |
-| `dbfree` | Running it does not |
+| `cost` | Running it requires an interpreter no other test shares |
+| `dbfree` | Running it requires neither |
 
-One resource decides both, and `dbfree` is `db`'s complement. That is what the
-derived classification above rests on: a test either reaches a live database or
-it does not, so neither zero nor two classes is representable and there is no
-third answer for a case to fall into.
+Every class but `dbfree` names one resource, and `dbfree` is the complement of
+their union. That is what the derived classification above rests on: a test is
+classified by the resources it reaches, so neither zero nor two classes is
+representable — reaching none is `dbfree`, and reaching two is a contradiction
+the collection hook MUST fail on rather than an order of precedence a reader has
+to remember.
 
-`db`'s defining resource is the live database, so the entry-point restriction
-above is `db`'s alone. The blocking check confining it is
-`<scope>-check-database-access`, and one of the scope's class aggregates
-([§7](#7-command-roles-and-composition)) MUST run it. `dbfree` is defined by that
-resource's absence and owes no such check, because an absence has no entry point
-to confine.
+`cost`'s resource is an interpreter whose heap the test controls. A reading taken
+over the whole process — every tracked object, every reference among them, every
+collection walking all of them — is a reading of whatever else the runner loaded
+as much as of its own subject: it costs what that process holds, and the floor it
+is read against moves with it. Such a measurement is meaningful only in a process
+it does not share, which is a requirement on the environment in the same sense a
+live database is, and is confined the same way.
+
+Each resource-bearing class is confined by a blocking check, and one of the
+scope's class aggregates ([§7](#7-command-roles-and-composition)) MUST run it:
+`<scope>-check-database-access` for `db`, and `<scope>-check-instrument-access`
+for `cost`. `dbfree` is defined by those resources' absence and owes no such
+check, because an absence has no entry point to confine.
 
 A scope declares the classes its own tests populate: both where its tests divide,
 and one where the other would hold nothing and the commands
 [§7](#7-command-roles-and-composition) derives for it would select no test.
 
-Fixing the pair here, rather than leaving each scope to name its own, is what
-makes the entry-point restriction enforceable at all. Which resource a class is
+Fixing the vocabulary here, rather than leaving each scope to name its own, is
+what makes the entry-point restriction enforceable at all. Which resource a class is
 about is not readable from a command graph, so a scope free to invent a class is
 a scope whose defining resource nothing can confine, and the restriction binds
 only the classes the blocking check [§8](#8-graph-inspection) requires was
@@ -263,9 +273,30 @@ dependency-only aggregate over its execution commands directly.
 The repository-wide commands follow the same shape one level up. `check-<class>`
 is a dependency-only aggregate over each scope's aggregate for that class, the
 complete check aggregate of each scope that declares no class, and the
-repository-wide execution commands assigned to the class. `check` is a
-dependency-only aggregate over the class aggregates plus the repository-wide
-blocking commands that belong to no single class.
+repository-wide execution commands assigned to the class.
+
+Two aggregates stand over those. `check-all` is a dependency-only aggregate over
+every class aggregate plus the repository-wide blocking commands belonging to no
+single class: it is the COMPLETE aggregate, and every rule elsewhere in this
+contract quantifying over the complete aggregate means it. `check` is a
+dependency-only aggregate over the same commands less the class aggregates this
+section excludes, and is what a merge gates on.
+
+`cost` is the one class `check` excludes. A gate is worth what the frequency it
+is actually run at makes it worth, and `cost` is the slowest class by a wide
+margin, paid by every local verification of every change including those that
+could not move a byte. Excluding it keeps the command a reader runs after each
+change fast enough to keep running, and forfeits no coverage: the class stays in
+`check-all`, and [§9](#9-continuous-integration-contract)'s job union gates it on
+every proposed change like any other. This is the one place this contract weighs
+elapsed time, and it weighs it against how often a gate is run rather than as a
+threshold anything passes ([§6](#6-runtime-classification)). Excluding a class is
+therefore a change to this section, never a local decision.
+
+`check` is consequently NOT complete, and nothing may describe it as though it
+were. Every document naming these commands MUST say which aggregate is complete
+and which gates a merge, and [§8](#8-graph-inspection)'s blocking check compares
+what they say against the graph.
 
 Every composition rule above quantifies over blocking commands
 ([§2](#2-operation-vocabulary)). A non-blocking command belongs to no gate, and a
@@ -319,7 +350,8 @@ verification runs. A second gate manifest MUST NOT be introduced.
 - The repository MUST provide a blocking `check` command over that graph,
   failing on naming, declaration-order, role, scheduling-composition,
   declared-metadata, test-layout, runner-configuration, documentation, and CI
-  drift. The repository's own check aggregate MUST depend on it.
+  drift. `check` MUST depend on it: a graph that has drifted is a gate that has
+  drifted, and a merge is what that costs.
 
 ## 9. Continuous integration contract
 

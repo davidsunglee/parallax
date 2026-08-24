@@ -18,15 +18,22 @@ None of them is restated here.
 1. **While iterating**, run the narrowest command covering what you changed —
    a focused test selector, or the one execution command that owns the gate you
    are working against.
-2. **After the last relevant change**, run `just check` once. It is the complete
-   merge gate, and it ends with a single stable line naming its verdict.
+2. **After the last relevant change**, run `just check` once. It is the merge
+   gate, and it ends with a single stable line naming its verdict.
 3. **After a failure**, run the focused command that owns the failing gate to get
    a short diagnostic loop, and fix the cause there. Do not repeat the aggregate
    until something relevant has changed.
 
+`just check` is the merge gate, not the complete one. It omits the `cost` class —
+the memory measurements, which read a whole interpreter each and are the slowest
+thing here by a wide margin. `just check-all` adds them, and CI runs them on
+every change, so nothing that `just check` skips goes ungated. Run `check-all`
+locally when you have touched what those measurements grade; otherwise let CI
+own it.
+
 Rerun a command that already passed only when it did not run to completion, when
 relevant repository state changed afterwards, or when you are explicitly asked
-to. The aggregate is slow because it is complete; running it twice on one tree
+to. The aggregate is slow because it is broad; running it twice on one tree
 proves nothing the first run did not.
 
 ## Reading a command name
@@ -45,9 +52,11 @@ compatibility corpus; `harness`, the reference harness's own health; and
 
 | Command | Runs |
 |---|---|
-| `just check` | The complete merge gate: every blocking check in the repository |
+| `just check` | The merge gate: every blocking check a merge waits on |
+| `just check-all` | The complete gate: `check` plus the `cost` class CI also runs |
 | `just check-dbfree` | Every blocking check that needs no live database |
 | `just check-db` | Every blocking check that needs a live database (Docker) |
+| `just check-cost` | Every blocking check needing an interpreter no other test shares |
 | `just check-gates` | This repository's command graph against the testing contract |
 | `just lint-markdown` | Markdown lint across `core/spec`, `languages/**/spec`, and the root |
 
@@ -60,11 +69,13 @@ compatibility corpus; `harness`, the reference harness's own health; and
 | `just harness-check-db` | The compatibility corpus against every selected provider |
 | `just python-check-dbfree` | Every Python gate that needs no database, including coverage and diff coverage |
 | `just python-check-db` | Every Python gate that needs one |
-| `just python-check` | Both Python class aggregates |
+| `just python-check-cost` | The memory measurements, and the guard confining them |
+| `just python-check` | All three Python class aggregates |
 
-Everything in both tables above is covered by `just check`, so naming one of
-them beside it adds no coverage. `just show-gates check` resolves exactly what a
-run contains.
+Everything in both tables above is covered by `just check-all`, and everything
+but the `cost` entries by `just check`, so naming one of them beside its
+aggregate adds no coverage. `just show-gates check` and `just show-gates
+check-all` resolve exactly what each run contains.
 
 ## Focused iteration
 
@@ -99,8 +110,9 @@ layout, the runner configuration, these maps, or the CI job list drift apart.
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs the same commands, one job per aggregate, so its
-job identifiers are recipe names. The union of the jobs covers the whole `check`
-graph.
+job identifiers are recipe names. The union of the jobs covers the whole
+`check-all` graph — including the `cost` class that `just check` omits, which is
+what makes omitting it locally safe.
 
 | Job | Matrix | Runs |
 |---|---|---|
@@ -111,6 +123,7 @@ graph.
 | `harness-check-db` | `postgres`, `mariadb` | `just harness-check-db` |
 | `python-check-dbfree` | CPython 3.12 / 3.13 / 3.14 | `just python-check-dbfree` |
 | `python-check-db` | — | `just python-check-db` |
+| `python-check-cost` | — | `just python-check-cost` |
 
 `secrets` and `commitlint` are event checks rather than repository verification
 gates, and stay native CI steps. The monthly `python-deps-refresh` workflow

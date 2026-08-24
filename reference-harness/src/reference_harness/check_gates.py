@@ -25,6 +25,7 @@ import sys
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 import yaml
 
@@ -70,15 +71,45 @@ naming convention."""
 SUPPORT_DIRECTORY = "_support"
 """The one non-surface directory a language scope's test root may hold."""
 
-_SCHEDULING_GUARDS: Mapping[str, str | None] = {"db": "database-access", "dbfree": None}
-"""§5's closed scheduling vocabulary, as the qualifier of the blocking check
-confining each class's defining resource.
+MERGE_AGGREGATE = "check"
+"""§7's merge gate: the aggregate a merge waits on, and the command a reader runs
+after a change."""
+
+COMPLETE_AGGREGATE = "check-all"
+"""§7's complete aggregate: every class aggregate and every repository-wide
+blocking command. Every rule here quantifying over completeness reads this one,
+because `check` deliberately omits the classes §7 excludes from it."""
+
+
+class _Class(NamedTuple):
+    """§5's record for one scheduling class."""
+
+    guard: str | None
+    """The qualifier of the blocking check confining the class's resource."""
+
+    merge_gate: bool
+    """Whether §7 puts the class's aggregate inside `check`."""
+
+
+_SCHEDULING_CLASSES: Mapping[str, _Class] = {
+    "db": _Class("database-access", True),
+    "dbfree": _Class(None, True),
+    "cost": _Class("instrument-access", False),
+}
+"""§5's closed scheduling vocabulary, as the blocking check confining each class's
+defining resource and whether §7's merge gate composes it.
 
 A class is honest only while the resource that defines it is unreachable by any
 other route, and §5 makes that restriction a blocking check of its own. `db` is
 defined by the live database, which §5 confines through
-`<scope>-check-database-access`; `dbfree` maps to ``None`` because it is defined
-by the *absence* of that resource, and an absence has no entry point to confine.
+`<scope>-check-database-access`, and `cost` by the interpreter a measurement does
+not share, which §5 confines through `<scope>-check-instrument-access`; `dbfree`
+maps to ``None`` because it is defined by the *absence* of both, and an absence
+has no entry point to confine.
+
+`cost` is the one class outside `check`. §7 excludes it there and keeps it in
+`check-all`, so the command run after every change stays fast enough to keep
+being run while nothing goes ungated.
 
 The mapping is closed because §5's vocabulary is. A class in neither position has
 no defined membership rule and no resource anything could confine, so it is
@@ -361,7 +392,11 @@ def _check_order(repository: _Repository) -> Iterator[Diagnostic]:
 
 def _required_aggregates(repository: _Repository) -> tuple[str, ...]:
     """Every command §7 requires to be dependency-only, that the graph declares."""
-    required = ["check", *(f"check-{cls}" for cls in repository.scheduling_classes)]
+    required = [
+        MERGE_AGGREGATE,
+        COMPLETE_AGGREGATE,
+        *(f"check-{cls}" for cls in repository.scheduling_classes),
+    ]
     for scope in repository.scopes:
         required.append(f"{scope}-check")
         required.extend(f"{scope}-check-{cls}" for cls in repository.scope_classes(scope))
@@ -531,16 +566,16 @@ def _check_scheduling_guard(
         if repository.declares(aggregate):
             reachable.update(recipe.name for recipe in repository.graph.closure(aggregate))
     for scheduling_class in classes:
-        if scheduling_class not in _SCHEDULING_GUARDS:
+        if scheduling_class not in _SCHEDULING_CLASSES:
             yield Diagnostic(
                 "unknown-scheduling-class",
                 f"`{scope}` declares the scheduling class `{scheduling_class}`, which is "
-                f"outside §5's closed vocabulary ({', '.join(sorted(_SCHEDULING_GUARDS))}); a "
+                f"outside §5's closed vocabulary ({', '.join(sorted(_SCHEDULING_CLASSES))}); a "
                 f"class named elsewhere has no membership rule and no defining resource for a "
                 f"blocking check to confine",
             )
             continue
-        qualifier = _SCHEDULING_GUARDS[scheduling_class]
+        qualifier = _SCHEDULING_CLASSES[scheduling_class].guard
         if qualifier is None:
             continue
         guard = f"{scope}-check-{qualifier}"
@@ -607,20 +642,41 @@ def _check_repository_aggregates(repository: _Repository) -> Iterator[Diagnostic
                 f"{len(carriers)} class aggregate(s); exactly one must run it",
             )
 
-    if not repository.declares("check"):
-        yield Diagnostic(
-            "missing-aggregate",
-            "the repository exposes no `check` aggregate over its scheduling classes",
-        )
-        return
-    complete = set(graph.recipe("check").dependencies)
+    for name in (MERGE_AGGREGATE, COMPLETE_AGGREGATE):
+        if not repository.declares(name):
+            yield Diagnostic(
+                "missing-aggregate",
+                f"the repository exposes no `{name}` aggregate over its scheduling classes",
+            )
+            return
+    # Both are read through the closure rather than the direct dependencies: §7
+    # fixes what each must reach, not the shape of the composition reaching it,
+    # and the complete aggregate reaches most of its classes through the merge
+    # gate it composes.
+    complete = {recipe.name for recipe in graph.closure(COMPLETE_AGGREGATE)}
+    merge = {recipe.name for recipe in graph.closure(MERGE_AGGREGATE)}
     for scheduling_class in repository.scheduling_classes:
         aggregate = f"check-{scheduling_class}"
-        if repository.declares(aggregate) and aggregate not in complete:
+        if not repository.declares(aggregate):
+            continue
+        if aggregate not in complete:
             yield Diagnostic(
                 "incomplete-aggregate",
-                f"`check` does not compose `{aggregate}`, so the complete merge gate omits "
-                f"the `{scheduling_class}` class",
+                f"`{COMPLETE_AGGREGATE}` does not compose `{aggregate}`, so the complete "
+                f"aggregate omits the `{scheduling_class}` class",
+            )
+        gates_merge = _SCHEDULING_CLASSES[scheduling_class].merge_gate
+        if gates_merge and aggregate not in merge:
+            yield Diagnostic(
+                "incomplete-merge-gate",
+                f"`{MERGE_AGGREGATE}` does not compose `{aggregate}`; §7 excludes only the "
+                f"classes it names, and `{scheduling_class}` is not one of them",
+            )
+        if not gates_merge and aggregate in merge:
+            yield Diagnostic(
+                "excluded-class-in-merge-gate",
+                f"`{MERGE_AGGREGATE}` composes `{aggregate}`, which §7 excludes from it; the "
+                f"merge gate is what a reader runs after every change",
             )
 
     owners: dict[str, set[str]] = {}
@@ -652,9 +708,9 @@ def _check_gate_ownership(repository: _Repository) -> Iterator[Diagnostic]:
     focused selector cuts across the scheduling partition, so §3 requires it to
     be no aggregate's dependency.
     """
-    if not repository.declares("check"):
+    if not repository.declares(COMPLETE_AGGREGATE):
         return
-    owned = set(repository.execution_owners("check"))
+    owned = set(repository.execution_owners(COMPLETE_AGGREGATE))
     for recipe in repository.public:
         if recipe.role != "execution" or recipe.name in owned:
             continue
@@ -662,7 +718,8 @@ def _check_gate_ownership(repository: _Repository) -> Iterator[Diagnostic]:
             continue
         yield Diagnostic(
             "unowned-gate",
-            f"`{recipe.name}` performs a blocking `{recipe.operation}` that `check` never runs; "
+            f"`{recipe.name}` performs a blocking `{recipe.operation}` that "
+            f"`{COMPLETE_AGGREGATE}` never runs; "
             f"a gate outside the complete aggregate passes only while someone remembers to "
             f"invoke it",
         )
@@ -870,9 +927,9 @@ def _check_ci(repository: _Repository) -> Iterator[Diagnostic]:
                 f"expands one job, and anything else is a gate owned twice",
             )
 
-    if not repository.declares("check"):
+    if not repository.declares(COMPLETE_AGGREGATE):
         return
-    for missing in sorted(repository.blocking_owners("check") - covered):
+    for missing in sorted(repository.blocking_owners(COMPLETE_AGGREGATE) - covered):
         yield Diagnostic(
             "ci-uncovered-gate",
             f"no job runs `{missing}`; the union of jobs covers the complete required check "
