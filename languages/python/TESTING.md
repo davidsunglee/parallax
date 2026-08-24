@@ -162,7 +162,7 @@ composing one would run part of it twice.
 
 | Workflow and job | Matrix | Runs |
 |---|---|---|
-| `ci` / `python-check-dbfree` | CPython 3.13 / 3.14 | `just python-check-dbfree`, checked out at `fetch-depth: 0` because `python-coverage-diff` compares against `origin/main` |
-| `ci` / `python-check-db` | — | `just python-check-db` against Testcontainers Postgres, with `PARALLAX_REQUIRE_DB=1` so a provider skip fails the job |
-| `ci` / `python-check-cost` | — | `just python-check-cost`, the class `just check` omits so the local gate stays fast |
-| `python-deps-refresh` / `refresh` (monthly) | — | `uv lock --upgrade`, opening a pull request the three jobs above still gate |
+| `ci` / `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14 runs `just python-check-dbfree`, checked out at `fetch-depth: 0` because `python-coverage-diff` compares against `origin/main`; 3.13 runs `just python-test-dbfree` with coverage disabled to prove runtime compatibility without repeating the coverage verdict on the slower C tracer |
+| `ci` / `python-check-db` | — | `just python-check-db` on CPython 3.14 against Testcontainers Postgres, with `PARALLAX_REQUIRE_DB=1` so a provider skip fails the job |
+| `ci` / `python-check-cost` | — | `just python-check-cost` on CPython 3.14, the class `just check` omits so the local gate stays fast |
+| `python-deps-refresh` / `refresh` (monthly) | — | `uv lock --upgrade` on CPython 3.14, opening a pull request the three jobs above still gate |

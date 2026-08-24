@@ -40,6 +40,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
       - name: Sync harness deps
         working-directory: reference-harness
         run: uv sync --frozen
@@ -57,6 +59,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
       - name: Sync harness deps
         working-directory: reference-harness
         run: uv sync --frozen
@@ -103,6 +107,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
       - name: Sync harness deps
         working-directory: reference-harness
         run: uv sync --frozen
@@ -121,6 +127,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
       - name: Sync harness deps
         working-directory: reference-harness
         run: uv sync --frozen
@@ -129,12 +137,12 @@ jobs:
           PARALLAX_DATABASES: ${{ matrix.database }}
         run: just harness-check-db
 
-  # Every Python check that needs no live database, across the supported CPython
-  # matrix: ruff (lint + format check), Pyright strict, the generated
-  # import-linter forbidden-edge complement (DAG-sync check) + lint-imports, the
-  # database-free test selection + branch coverage + diff-cover, the
-  # database-access guard, dead-code scan, build + distribution metadata, and the
-  # supply-chain audit. No Docker.
+  # Every Python check that needs no live database on the latest CPython: ruff
+  # (lint + format check), Pyright strict, the generated import-linter
+  # forbidden-edge complement (DAG-sync check) + lint-imports, the database-free
+  # test selection + branch coverage + diff-cover, the database-access guard,
+  # dead-code scan, build + distribution metadata, and the supply-chain audit.
+  # The previous CPython minor runs the database-free tests only. No Docker.
   python-check-dbfree:
     runs-on: ubuntu-latest
     strategy:
@@ -156,8 +164,22 @@ jobs:
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
+
+      # The latest supported interpreter owns the complete database-free gate,
+      # including the branch-coverage and diff-coverage verdicts.
       - name: just python-check-dbfree
+        if: matrix.python-version == '3.14'
         run: just python-check-dbfree
+
+      # The previous supported interpreter proves runtime compatibility without
+      # recomputing coverage. Before Python 3.14, coverage.py cannot use
+      # sys.monitoring for branch coverage and falls back to the slower C tracer.
+      # Remove this step and the condition above when Python 3.13 rolls off.
+      - name: just python-test-dbfree
+        if: matrix.python-version != '3.14'
+        env:
+          PYTEST_ADDOPTS: "--no-cov"
+        run: just python-test-dbfree
 
   # Every Python check that needs a live database: provisions Testcontainers
   # Postgres and runs the pg-full run sweep, provider contract, adapter smoke,
@@ -174,7 +196,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
@@ -195,7 +217,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen

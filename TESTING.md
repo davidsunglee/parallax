@@ -121,13 +121,16 @@ what makes omitting it locally safe.
 | `lint-markdown` | — | `just lint-markdown` |
 | `harness-check-dbfree` | — | `just harness-check-dbfree` |
 | `harness-check-db` | `postgres`, `mariadb` | `just harness-check-db` |
-| `python-check-dbfree` | CPython 3.13 / 3.14 | `just python-check-dbfree` |
+| `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14: `just python-check-dbfree`; 3.13: `just python-test-dbfree` with coverage disabled |
 | `python-check-db` | — | `just python-check-db` |
 | `python-check-cost` | — | `just python-check-cost` |
 
 `secrets` and `commitlint` are event checks rather than repository verification
 gates, and stay native CI steps. The monthly `python-deps-refresh` workflow
-opens a lockfile-upgrade pull request that the jobs above then gate.
+uses CPython 3.14 to open a lockfile-upgrade pull request that the jobs above
+then gate. The 3.13 `python-check-dbfree` leg proves runtime compatibility only;
+the 3.14 leg owns the full database-free gate and its coverage verdicts.
+Every other uv-backed CI job is also pinned to CPython 3.14.
 
 ## Databases
 
