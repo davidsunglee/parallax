@@ -37,11 +37,17 @@ every child of the broad hop at level 1, and the duplicates of a second hop belo
 that one at level 2 — with the second hop's own slot on the source its parents
 came from, written to every one of them. That is what keeps the slot arithmetic a
 count of positions production lays out rather than of positions the workload
-declared for itself. Every edge those slots hold is one the two rows' own join
-Attributes produce, in every state below as well: a child's ``parentId`` names
-the root the broad hop gathered it under and its ``twinId`` names the projection
-the twin hop resolved, so the fan-out being priced is a topology a query returns
-rather than one the composition wrote by hand.
+declared for itself. What those slots HOLD is exactly what each one's own
+relationship join returns, in every state below as well, and no two of the root's
+views join alike: a child's ``parentId`` names the root the broad hop gathered it
+under, its ``armId`` names that same root only where the narrowed arm gathers it,
+and its ``twinId`` names another child and no root at all, which is what leaves
+the declared-and-empty views empty. So the fan-out being priced is the one a query
+returns rather than a subset the composition chose — asserted in both directions,
+against the accepted model's own joins, over every row the graph holds. What that
+leaves outside is provenance rather than shape: the arm names the projections the
+broad hop already read instead of converting its own, so what is checked is which
+LOGICAL NODES a view holds, not which source level each was read at.
 
 **Every measured projection also carries Value Object occurrences**, a top-level
 One holding a nested One and a nested Many whose every element holds one more,
@@ -132,6 +138,7 @@ from parallax.core.base import Float64, Int64
 from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
+    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     Metamodel,
@@ -142,6 +149,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
+from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
 from parallax.descriptor import domain_model_from_document
 from parallax.snapshot.materialize import SnapshotGraph, merge_graph_input
@@ -199,7 +207,11 @@ _MEMBERS: Final = (4, 5, 8, 16)
 """Applicable Attributes on the measured Entity. The two smallest are one apart,
 so their difference is what one more member costs rather than a ratio, and the
 largest is four times the smallest — far enough that a cost quadratic in the row
-width would be whole members off the line rather than within one member of it."""
+width would be whole members off the line rather than within one member of it.
+
+The smallest count is the primary key and the three join Attributes alone, which
+:data:`_JOIN_KEYS` carries in every state, so the Attributes a state zeroes at
+that count are the two concretes' own."""
 
 _SLOTS: Final = (2, 3, 4)
 """Relationship views the plan's root-parented levels declare. Two are always
@@ -212,9 +224,16 @@ would resize one and put a capacity step into a reading that is otherwise
 exact."""
 
 _ARMS: Final = (1, 2, 4)
-"""Projection references in the narrowed arm.
+"""Children the narrowed arm gathers, and therefore projection references it
+records.
 
-The narrowed hop's arm is aliased onto projections the broad hop already read
+What varies down this axis is the RESULT SET of one relationship query rather
+than a slice this module chose: the arm joins the root's key against an arm key
+only the first ``arms`` children of a cell carry, so the rest are rows that hop
+cannot return. That is why the count is a row-set fact and lives in
+:attr:`_Point.shape` beside the member and document counts.
+
+Those references are aliased onto the projections the broad hop already read
 rather than converted a second time, which is the one simplification this
 workload makes and the reason the axis reads edges alone: the children the arm
 does not name are still reached through the broad view, so no count the merge
@@ -277,7 +296,16 @@ population of records rather than every population at once."""
 _VIEWS: Final = ("children", "arms", "extra1", "extra2")
 """The parent's declared relationships, in declaration order. A slot count names
 the first ``slots`` of them; the model declares them all at every count, so a
-relationship a plan did not use is model-owned metadata and costs no reading."""
+relationship a plan did not use is model-owned metadata and costs no reading.
+
+No two of them JOIN alike, which is what makes their three fan-outs three
+different result sets rather than three spellings of one: the broad view gathers
+by the child's parent key, which every child fills with its own root's; the
+narrowed arm by an arm key only the children it gathers carry; and the two extras
+by the child's twin key, which every child fills with a CHILD's key and no root's,
+so a level fetching one gathers nothing at all. Four unnarrowed views of one join
+would each return every child, and a slot holding fewer would be storage no plan
+lays out."""
 
 _TWIN: Final = "twin"
 """The child's own many-to-one, whose slot the plan puts on the source the broad
@@ -286,33 +314,15 @@ parent of that hop receives the attachment, exactly as a fan-back writes one."""
 
 _ID_KEY: Final = "id"
 _PARENT_KEY: Final = "parentId"
+_ARM_KEY: Final = "armId"
 _TWIN_KEY: Final = "twinId"
-"""The Attributes a hop joins through: the primary key a hop resolves a target by,
-the one the broad hop gathers children by, and the one the twin hop resolves a
-second projection through. Their stored values are the only Attribute values that
-name anything, which is why they are spelled apart from the rest."""
-
-_JOIN_KEYS: Final = frozenset({_PARENT_KEY, _TWIN_KEY})
-"""The two join Attributes, carried in every stored state beside the primary key
-and alone among the rest of them.
-
-What a hop RETURNS is derived from these two values, so a row holding one of them
-zero is not this graph in another state but a different graph: a child whose
-``parentId`` is null or absent is not a row the broad hop's query gathers under
-any parent, and one whose ``twinId`` is names no target for the twin hop to
-resolve, while the fan-out written above it would still hold both edges. Every
-other Attribute is nullable and reaches both zero spellings, which is what covers
-the Attribute position's admitted states without leaving the composed graph a
-topology no plan produces."""
-
-_JOINS: Final = {
-    **dict.fromkeys(_VIEWS, (_ID_KEY, _PARENT_KEY)),
-    _TWIN: (_TWIN_KEY, _ID_KEY),
-}
-"""What each declared relationship joins FROM on the side holding the view and
-matches ON at the side it names: every parent-side view gathers by ``parentId``
-against the root's own key, and the child's many-to-one resolves its ``twinId``
-against the target's."""
+"""The Attributes the plan's hops join through, as the descriptor below spells
+them: the primary key a hop resolves a target by, the one the broad hop gathers
+children by, the one the narrowed arm gathers its own by, and the one the twin hop
+resolves a second projection through. Their stored values are the only Attribute
+values that name anything, which is why they are spelled apart from the rest.
+What each RELATIONSHIP does with them is the declaration's business and is read
+back off it as :data:`_JOIN_KEYS` and by :func:`_unproduced`."""
 
 _CONCRETES: Final = ("Alpha", "Beta")
 """The resolved concretes of the measured family, taken in turn down each
@@ -375,15 +385,25 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
     children arrived through — ``parent`` is — so a plan reaching it issues a
     real query rather than resolving the ancestor already in hand, and the rows
     it reads are children the broad hop read already.
+
+    The root's four views join THREE different ways, which is what makes the
+    fan-out under one root three different sets of rows rather than one set
+    written three times: ``children`` gathers by ``parentId``, which every child
+    fills with its own root's key; ``arms`` by ``armId``, which only the children
+    that hop gathers carry; and ``extra1`` and ``extra2`` by ``twinId``, which
+    every child fills with a CHILD's key and no root's, so each of them is a level
+    that gathered a parent and found nothing. Every one of those is an ordinary
+    unnarrowed view, so what one returns is its join and nothing else — four views
+    of one join would return one another's rows exactly.
     """
 
-    def one_to_many(name: str, *, dependent: bool = False) -> dict[str, object]:
+    def one_to_many(name: str, gathers_by: str, *, dependent: bool = False) -> dict[str, object]:
         declared: dict[str, object] = {
             "name": name,
             "cardinality": "one-to-many",
             "join": {
-                "source": "id",
-                "target": {"entity": f"{_NAMESPACE}.Child", "attribute": _PARENT_KEY},
+                "source": _ID_KEY,
+                "target": {"entity": f"{_NAMESPACE}.Child", "attribute": gathers_by},
             },
         }
         if dependent:
@@ -437,8 +457,9 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
                 "table": "retention_parent",
                 "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
                 "relationships": [
-                    one_to_many(_VIEWS[0], dependent=True),
-                    *(one_to_many(name) for name in _VIEWS[1:]),
+                    one_to_many(_VIEWS[0], _PARENT_KEY, dependent=True),
+                    one_to_many(_VIEWS[1], _ARM_KEY),
+                    *(one_to_many(name, _TWIN_KEY) for name in _VIEWS[2:]),
                 ],
             },
             {
@@ -451,8 +472,9 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
                     "tag": {"column": "kind"},
                 },
                 "attributes": [
-                    {"name": "id", "type": "int64", "primaryKey": True},
+                    {"name": _ID_KEY, "type": "int64", "primaryKey": True},
                     {"name": _PARENT_KEY, "type": "int64", "nullable": True},
+                    {"name": _ARM_KEY, "type": "int64", "nullable": True},
                     {"name": _TWIN_KEY, "type": "int64", "nullable": True},
                     *(
                         {
@@ -461,7 +483,7 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
                             "maxLength": 32,
                             "nullable": True,
                         }
-                        for index in range(members - 3)
+                        for index in range(members - 4)
                     ),
                 ],
                 "valueObjects": value_objects,
@@ -533,6 +555,50 @@ def _model(members: int, leaves: int, ones: int, manys: int) -> tuple[Metamodel,
     return meta, CatalogedModel(meta).layouts
 
 
+def _join_keys(meta: Metamodel) -> frozenset[str]:
+    """Every Attribute of the measured family that some declared hop joins
+    through, read off ``meta``'s own relationship metadata.
+
+    Derived rather than restated so the rows and the descriptor cannot drift: a
+    join retargeted in the declaration moves what :func:`_child_row` carries
+    through a state and what :func:`_unproduced` reads an edge against together.
+    The measured family's side alone, because these names select positions in a
+    CHILD's row; the root's own end of every one of them is its primary key,
+    which is carried for a reason of its own.
+    """
+    facet = relationship_view(meta)
+    child = _identity(meta, "Child")
+    return frozenset(
+        endpoint.name
+        for entity in (_identity(meta, "Parent"), child)
+        for declared in facet.relationships(entity) or ()
+        for endpoint in (declared.join.source, declared.join.target)
+        if endpoint.entity == child
+    )
+
+
+_JOIN_KEYS: Final = _join_keys(_model(_MEMBERS[0], _LEAVES[0], _ONES[0], _MANYS[0])[0])
+"""The join Attributes, carried in every stored state beside the primary key and
+alone among the rest of them. Taken off the smallest declaration because every
+point declares the identical relationships; only the Attribute and Value Object
+counts move.
+
+What a hop RETURNS is derived from these values, so a row holding one of them
+zero is not this graph in another state but a different graph: a child whose
+``parentId`` is null or absent is not a row the broad hop's query gathers under
+any parent, and one whose ``twinId`` is names no target for the twin hop to
+resolve, while the fan-out written above it would still hold both edges. A
+child's ``armId`` is null exactly where the narrowed arm does not gather it, so
+zeroing that population is what would make the arm's own axis unproducible. Every
+other Attribute is nullable and reaches both zero spellings, which is what covers
+the Attribute position's admitted states without leaving the composed graph a
+topology no plan produces.
+
+The primary key is in here too — it is a join target, and the twin hop resolves
+against it — and changes nothing, because :func:`_child_row` answers a key before
+it reads this set."""
+
+
 class _Stored(NamedTuple):
     """Which of a row's declared members hold their ZERO value, and how that zero
     is spelled.
@@ -599,6 +665,11 @@ class _Point(NamedTuple):
     :attr:`shape`, which two points share exactly when they convert the same
     rows against the same model.
 
+    ``slots`` is outside it for the opposite reason and is the only other
+    parameter that is: how many views a plan declares is a fact about the plan,
+    and moves no row at all. ``arms`` is inside, because the arm's fan-out is
+    what its own join returns and that is a property of the rows.
+
     The crossed grid pins everything after ``arms``; each of the four document
     steps moves exactly one of the four counts; and each state point moves
     ``stored`` or ``projected`` alone.
@@ -615,10 +686,18 @@ class _Point(NamedTuple):
     projected: bool = True
 
     @property
-    def shape(self) -> tuple[int, int, int, int, int, _Stored]:
+    def shape(self) -> tuple[int, int, int, int, int, int, _Stored]:
         """The model and rows this point converts, which is what the axes moving
-        a document share and the three view axes do not."""
-        return self.members, self.leaves, self.elements, self.ones, self.manys, self.stored
+        a document share and the slot axis does not."""
+        return (
+            self.members,
+            self.arms,
+            self.leaves,
+            self.elements,
+            self.ones,
+            self.manys,
+            self.stored,
+        )
 
 
 _GRID: Final = tuple(
@@ -745,7 +824,7 @@ class _Workload(NamedTuple):
 
 
 def _workload(
-    members: int, leaves: int, elements: int, ones: int, manys: int, stored: _Stored
+    members: int, arms: int, leaves: int, elements: int, ones: int, manys: int, stored: _Stored
 ) -> _Workload:
     meta, catalog = _model(members, leaves, ones, manys)
     parent, child = _identity(meta, "Parent"), _identity(meta, "Child")
@@ -761,7 +840,7 @@ def _workload(
         tuple({"id": 1_000 + cell} for cell in range(_LARGER)),
         tuple(
             tuple(
-                _child_row(levels[index].layout, elements, stored, cell, index)
+                _child_row(levels[index].layout, arms, elements, stored, cell, index)
                 for index in range(_CHILDREN)
             )
             for cell in range(_LARGER)
@@ -770,12 +849,12 @@ def _workload(
 
 
 def _child_row(
-    layout: EntityLayout, elements: int, stored: _Stored, cell: int, index: int
+    layout: EntityLayout, arms: int, elements: int, stored: _Stored, cell: int, index: int
 ) -> dict[str, object]:
     """One child's stored row, keyed as its concrete's own storage names and
     filled to ``stored``.
 
-    The primary key and the two join Attributes are carried in every state, alone
+    The primary key and the join Attributes are carried in every state, alone
     among the Attributes, and for the same kind of reason. A row whose key is
     absent or null is a ``stored-data-primary-key-null`` projection that merges
     with nothing, which is the non-conforming path rather than a presence state of
@@ -788,7 +867,7 @@ def _child_row(
         if isinstance(attribute.primary_key, PrimaryKey):
             row[attribute.storage.name] = 10_000 + cell * 100 + index
         elif attribute.identity.name in _JOIN_KEYS or not stored.attributes:
-            row[attribute.storage.name] = _attribute_value(attribute, cell, index, tag)
+            row[attribute.storage.name] = _attribute_value(attribute, arms, cell, index, tag)
         elif not stored.omitted:
             row[attribute.storage.name] = None
     for occurrence in layout.occurrences:
@@ -800,17 +879,25 @@ def _child_row(
     return row
 
 
-def _attribute_value(attribute: AttributeMetadata, cell: int, index: int, tag: str) -> object:
+def _attribute_value(
+    attribute: AttributeMetadata, arms: int, cell: int, index: int, tag: str
+) -> object:
     """One Attribute's carried stored value, spelled by its declared Neutral Type.
 
-    The two join Attributes are answered before the types, because what they hold
-    has to name something: every child's ``parentId`` is its own cell's root, and
-    its ``twinId`` is one of the duplicates the twin hop converts a second time —
-    which is what makes that hop a real fetch level over rows the broad hop read
-    already rather than a second spelling of the same projection.
+    The join Attributes are answered before the types, because what they hold is
+    what each hop's query returns. Every child's ``parentId`` is its own cell's
+    root, so the broad hop gathers all of them; its ``armId`` is that same root
+    for the first ``arms`` of them and null for the rest, so the narrowed arm
+    gathers exactly those and cannot reach one more; and its ``twinId`` is one of
+    the duplicates the twin hop converts a second time — which is what makes that
+    hop a real fetch level over rows the broad hop read already rather than a
+    second spelling of the same projection, and what leaves the two views joining
+    against it empty, since no root's key is a child's.
     """
     if attribute.identity.name == _PARENT_KEY:
         return 1_000 + cell
+    if attribute.identity.name == _ARM_KEY:
+        return 1_000 + cell if index < arms else None
     if attribute.identity.name == _TWIN_KEY:
         return 10_000 + cell * 100 + index % _DUPLICATES
     if isinstance(attribute.type, Int64):
@@ -940,6 +1027,13 @@ def _compose(point: _Point, cells: int) -> tuple[SnapshotGraph, GraphMerge]:
     every row converted through the production converter under the concrete its
     own level resolved it to, the builder dropped at sealing, and the sealed graph
     and its merge the only things that come back.
+
+    Each view holds what its own join returns and nothing else: the broad hop
+    every child of the cell, the narrowed arm the children whose arm key names
+    that root, and each remaining view nothing at all.
+    :func:`test_every_view_the_graph_records_holds_exactly_what_its_own_join_produces`
+    is what holds this to that, so the prefix here is a consequence of the rows
+    rather than a choice made beside them.
 
     ``point.projected`` selects which resolved level each child row converts
     under, because that is where a read states which document columns its
@@ -1270,13 +1364,31 @@ def _graph_survivors(seam: Seam) -> list[object]:
     return [obj for obj in survivors(seam) if type(obj).__module__.startswith("parallax.")]
 
 
-def _stored_at(layout: EntityLayout, row: tuple[object, ...], name: str) -> object:
-    """What ``row`` holds at the Attribute ``name`` names, found by position
-    because a member row carries no key beside a value."""
+_UNDECLARED: Final = object()
+"""What a row holds at an Attribute its own Entity does not declare, which is not
+a value and matches nothing. A join names one Attribute of one Entity, so every
+projection of another family answers this rather than a position."""
+
+
+def _stored_at(
+    layout: EntityLayout, row: tuple[object, ...], attribute: AttributeIdentity
+) -> object:
+    """What ``row`` holds at ``attribute``, found by position because a member row
+    carries no key beside a value, and :data:`_UNDECLARED` where this projection's
+    Entity declares no such Attribute at all.
+
+    By Identity rather than by name: a layout carries every applicable Attribute
+    under the Identity of the Entity that DECLARED it, so ``Parent.id`` and
+    ``Child.id`` are two Attributes here exactly as they are two columns in
+    storage, and a join through one of them reaches only its own family's rows.
+    """
     return next(
-        row[position]
-        for position, attribute in enumerate(layout.attributes)
-        if attribute.identity.name == name
+        (
+            row[position]
+            for position, declared in enumerate(layout.attributes)
+            if declared.identity == attribute
+        ),
+        _UNDECLARED,
     )
 
 
@@ -1288,29 +1400,77 @@ def _edges(value: object) -> tuple[int, ...]:
     return () if value is ABSENT else (cast("int", value),)
 
 
-def _unjoined(rows: GraphRows) -> list[tuple[int, str, int]]:
-    """Every recorded edge the two rows' own stored values could not have
-    produced, as the projection holding the view, the relationship, and the
-    projection it names.
+def _nodes(rows: GraphRows, projections: Sequence[int]) -> tuple[int, ...]:
+    """``projections`` as the logical nodes they merge onto, in ascending order.
 
-    What a relationship query returns is the rows whose target Attribute matches
-    the source's, so an edge between two rows that do not match is one no plan
-    could have written — however conforming each row is on its own, and however
-    exactly the arithmetic prices the storage it occupies. Read off the sealed
-    graph rather than off the composition that wrote it, so a workload whose rows
-    stopped naming what its fan-out claims fails here instead of grading a
-    topology production cannot reach.
+    Sorted and by NODE because that is the granularity a returned row has once the
+    graph holds it: the same stored row read at two source levels is one node, so
+    a hop that reached it through either has returned the same thing, and the
+    order a to-many result arrives in is the declared ``orderBy``'s business
+    rather than this reading's. Duplicates are kept, so a fan-out naming one node
+    twice is a fan-out no single-pass query returned.
     """
-    unjoined: list[tuple[int, str, int]] = []
+    return tuple(sorted(rows.logical_ids[projection] for projection in projections))
+
+
+def _produced(rows: GraphRows, target: AttributeIdentity, held: object) -> tuple[int, ...]:
+    """Every logical node a relationship query matching ``target`` against
+    ``held`` returns, read off the graph's own rows.
+
+    A join returns the rows whose target Attribute EQUALS the value the holding
+    row joins from, so a null, absent, or undeclared value on either side returns
+    nothing at all — none of the three is a value anything equals. One node per
+    matching row: a duplicate the twin hop read a second time is the same row
+    matched once, not a second row to return.
+    """
+    if held is None or held is ABSENT or held is _UNDECLARED:
+        return ()
+    return tuple(
+        sorted(
+            {
+                rows.logical_ids[projection]
+                for projection, layout in enumerate(rows.layouts)
+                if _stored_at(layout, rows.member_rows[projection], target) == held
+            }
+        )
+    )
+
+
+def _unproduced(rows: GraphRows, meta: Metamodel) -> list[tuple[int, str, tuple[int, ...]]]:
+    """Every view position holding something other than exactly the fan-out its
+    own relationship's join produces, as the projection holding the view, the
+    relationship, and the nodes the join would have returned.
+
+    What a relationship query returns is every row whose target Attribute matches
+    the source's, so a recorded edge between two rows that do not match is storage
+    no plan lays out — and so is a MISSING one, which is the half a per-edge check
+    cannot see: four views of one join return one another's rows exactly, and any
+    two of them holding different sets is a graph no execution produced, however
+    conforming each row is on its own and however exactly the arithmetic prices
+    the positions. Both halves are the one comparison here, because both are the
+    same question asked of a set rather than of an edge.
+
+    Read off the sealed graph and the accepted model, never off the composition
+    that wrote the views: the joins come from ``meta``'s own relationship
+    metadata, so a fixture that retargets one and a fan-out that did not follow it
+    disagree here.
+
+    What it can see is bounded by the graph: the candidate rows are the ones the
+    graph holds, so a row a query would have returned and nothing converted at all
+    is outside it. The population assertion beside every call is what pins that —
+    the graph holds every row the workload has.
+    """
+    facet = relationship_view(meta)
+    unproduced: list[tuple[int, str, tuple[int, ...]]] = []
     for holder, layout in enumerate(rows.layouts):
         for slot, view in enumerate(rows.schema.source(rows.sources[holder], layout).slots):
-            joins_from, matches_on = _JOINS[view.relationship.name]
-            held = _stored_at(layout, rows.member_rows[holder], joins_from)
-            for target in _edges(rows.view_rows[holder][slot]):
-                named = _stored_at(rows.layouts[target], rows.member_rows[target], matches_on)
-                if named != held:
-                    unjoined.append((holder, view.relationship.name, target))
-    return unjoined
+            declared = facet.relationship(view.relationship)
+            assert declared is not None, view
+            held = _stored_at(layout, rows.member_rows[holder], declared.join.source)
+            produced = _produced(rows, declared.join.target, held)
+            if _nodes(rows, _edges(rows.view_rows[holder][slot])) != produced:
+                unproduced.append((holder, view.relationship.name, produced))
+    return unproduced
 
 
 _ATTRIBUTE_POSITION: Final = "Entity Attribute"
@@ -1497,21 +1657,28 @@ def test_every_planned_level_owns_a_source_of_its_own_and_writes_every_slot_it_d
         assert all(value is not ABSENT for row in rows.view_rows for value in row), point
 
 
-def test_every_edge_the_graph_records_is_one_the_two_rows_join_attributes_produce() -> None:
+def test_every_view_the_graph_records_holds_exactly_what_its_own_join_produces() -> None:
     # What makes the fan-out the readings price a topology a plan could have
     # produced rather than one this module wrote by hand. `_compose` writes each
     # view because the workload says a hop gathered those rows, and what a
-    # relationship query gathers is rows whose join Attribute matches the
-    # source's — so an edge between two rows that do not match is storage no read
-    # would have laid out, however conforming each row is on its own and however
-    # exactly the arithmetic prices the positions it occupies. Read at every point
-    # the suite measures anything at, the states above all: what a state moves is
-    # the rows the fan-out over them was joined from, so a zeroing that reached a
-    # join key would leave the relationships standing and unproducible, and every
-    # byte reading taken over them exact.
+    # relationship query gathers is every row whose join Attribute matches the
+    # source's — no more, which refuses an edge between two rows that do not
+    # match, and no fewer, which refuses a view holding a SUBSET of what its join
+    # returns. The second half is the one that needs a whole view to state: three
+    # of these four views hold different sets of children, and they may only
+    # because no two of them join alike. Read at every point the suite measures
+    # anything at, the states above all: what a state moves is the rows the
+    # fan-out over them was joined from, so a zeroing that reached a join key
+    # would leave the relationships standing and unproducible, and every byte
+    # reading taken over them exact. The projection count is asserted in the same
+    # walk, because the rows the graph holds are the rows a join is checked
+    # against: a workload that converted fewer would narrow what a query could
+    # have returned to whatever it recorded.
     for point in _POINTS:
         graph, _ = _compose(point, _CELLS)
-        assert _unjoined(graph_rows(graph)) == [], point
+        rows = graph_rows(graph)
+        assert len(rows.layouts) == _CELLS * (1 + _CHILDREN + _DUPLICATES), point
+        assert _unproduced(rows, _WORKLOADS[point.shape].meta) == [], point
 
 
 def test_every_measured_position_reaches_every_state_its_contract_admits() -> None:
