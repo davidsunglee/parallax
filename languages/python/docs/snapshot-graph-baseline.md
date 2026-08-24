@@ -50,7 +50,7 @@ side of any of them. The same exact total is read once more in each state a
 conforming read can leave a position in, priced state-aware, and that those
 states are a closed set is asserted rather than claimed: the union of the states
 they put each kind of position in is exactly what the read contract admits for
-that kind. The primary key and the two Attributes its hops join through stay
+that kind. The primary key and the three Attributes its hops join through stay
 carried in every one of those states, because the graph's own fan-out is derived
 from their values — a row holding one of them zero is not that graph in another
 state but one no query would have returned — and the remaining Attributes are
@@ -58,13 +58,21 @@ what carry the Attribute position through its own three. Its measured level is
 polymorphic for the same kind of reason: two concretes of one family, of
 different widths, are laid out and merged inside one graph, and each level of its
 plan produces projections at a source level of its own, so the slot readings
-count positions production lays out — and every edge those slots hold is
-asserted, at every point and in every state, to be a pair of rows whose join
-Attributes match, so a fan-out no query could return fails rather than being
-priced as though a plan produced it. Seven negative
-controls state what each reading is worth — one wraps every member cell and
-fails only the member step, one wraps every Value Object cell and fails only the
-leaf step, one wraps every reduced record and fails only the record step, one
+count positions production lays out. Its relationships are three different joins
+for a related reason — the broad hop gathers every child of a root, the narrowed
+arm the ones carrying an arm key that names it, and the two declared-and-empty
+views join against a key no root's own key equals — and every view those slots
+hold is asserted, at every point and in every state, to hold exactly the rows its
+own join returns: none whose join Attributes do not match, and none missing
+either. That second half is what keeps three views under one root three different
+result sets rather than one set recorded three ways, which is all four could be
+if they joined alike. Its reach is stated with it: the rows a view is checked
+against are the ones the graph holds, and what is compared is which logical nodes
+a view names rather than which source level each was read at, since the arm names
+projections the broad hop already read instead of converting its own. Seven
+negative controls state what each reading is worth — one wraps every member cell
+and fails only the member step, one wraps every Value Object cell and fails only
+the leaf step, one wraps every reduced record and fails only the record step, one
 per multiplicity wraps every top-level occurrence of that multiplicity and fails
 only at that branch's step, one wraps every occurrence a document nests inside
 another with no Many between them — the population no axis counts — and fails
