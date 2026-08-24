@@ -53,6 +53,15 @@ or integer is invisible to every count. The instruments are read together for
 that reason — the byte counts see a retained integer no count can, and the
 survivor sample sees a free-list list the byte counts cannot.
 
+**Where a reading is taken.** Every instrument here reads the whole process and
+not the seam alone — the survivor sample lists each tracked object and counts the
+references among them, and every collection walks all of them. What a reading
+costs, and the floor it is read against, therefore belong to the interpreter
+rather than to what is being measured. :func:`in_a_child_interpreter` is how a
+suite says so: the measurement is taken in a process that has loaded only what it
+needs, which is what leaves one reading comparable with the same reading taken
+beside anything else.
+
 Three ``tests/unit`` cost suites read these, which is what puts them here beside
 them; ``tools/snapshot_graph_overhead.py`` reads them too, and names this
 directory to do it. Nothing here imports anything but the standard library, so
@@ -67,10 +76,14 @@ strict; :func:`_unsampled` has no caller outside this module.
 from __future__ import annotations
 
 import gc
+import os
+import subprocess
 import sys
+import threading
 import tracemalloc
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
+from functools import wraps
 from typing import Final, NamedTuple
 
 __all__ = [
@@ -82,8 +95,10 @@ __all__ = [
     "allocation",
     "closure",
     "first_run",
+    "in_a_child_interpreter",
     "live_graph",
     "retained",
+    "serve_one_measurement",
     "survivors",
     "untraced",
     "warmed",
@@ -112,19 +127,28 @@ def _unsampled() -> None:
 
 @contextmanager
 def untraced() -> Generator[None]:
-    """A window with the line tracer uninstalled.
+    """A window with the line tracer uninstalled, on this thread and on any the
+    window starts.
 
     Under branch coverage the tracer allocates per executed line and keeps what
     it records, which would be the only thing a measurement inside the window
     saw. Every line inside a window is covered by the suites grading its
     behavior.
+
+    A thread carries the trace function installed when it STARTS rather than the
+    one its parent holds, so uninstalling only this thread's would leave a
+    threaded seam measuring the tracer on every worker it opens — the one place
+    the window is widest and the reading is least able to show it.
     """
     tracer = sys.gettrace()
+    spawned = threading.gettrace()
     sys.settrace(None)
+    threading.settrace(None)
     try:
         yield
     finally:
         sys.settrace(tracer)
+        threading.settrace(spawned)
 
 
 def allocation(work: Seam) -> tuple[int, int]:
@@ -348,3 +372,85 @@ def warmed(seam: Seam) -> Seam:
     for _ in range(WARMUP):
         seam(_unsampled)
     return seam
+
+
+_MEASUREMENTS: Final[dict[str, Callable[[], None]]] = {}
+"""Every measurement a child can be asked for, filled by the decorator below as
+the defining module is imported — in the parent, where the entry is never read,
+and in the child, where it is the only one that matters."""
+
+
+_COVERAGE_VARIABLES: Final = (
+    "COV_CORE_SOURCE",
+    "COV_CORE_CONFIG",
+    "COV_CORE_DATAFILE",
+    "COVERAGE_PROCESS_START",
+)
+"""What activates a coverage tracer inside a subprocess, by the names
+``pytest-cov`` and ``coverage`` publish for it."""
+
+
+def _child_environment() -> dict[str, str]:
+    """The parent's environment, less what would trace the child.
+
+    The paths are carried over because the runner rather than the interpreter is
+    what puts this test tree on the path, and a child started from a module file
+    sees only that module's own directory.
+
+    The tracer is dropped because the child exists to measure without one: a
+    traced child allocates per executed line inside every window, which is the
+    cost and the distortion the parent already steps around, and the readings it
+    would take are the parent's readings again rather than cheaper ones. Nothing
+    is lost by it — the production lines a measurement drives are the same lines
+    the suites grading their behavior already cover.
+    """
+    inherited = {
+        name: value for name, value in os.environ.items() if name not in _COVERAGE_VARIABLES
+    }
+    return inherited | {"PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry)}
+
+
+def in_a_child_interpreter(measurement: Callable[[], None]) -> Callable[[], None]:
+    """``measurement``, taken in an interpreter that has loaded only what it needs.
+
+    What the module docstring states as a contract, applied to one measurement:
+    the reading becomes a property of the seam rather than of whatever else the
+    runner happened to load beside it.
+
+    The child re-runs the defining module as a script, naming the measurement,
+    and asserts for itself; the parent reports the child's whole output when it
+    exits nonzero. A module holding one of these MUST therefore answer
+    :func:`serve_one_measurement` from its ``__main__``, and MUST leave nothing
+    but definitions to run at import — the child pays for its import before every
+    reading it takes.
+    """
+    _MEASUREMENTS[measurement.__name__] = measurement
+    script = measurement.__globals__["__file__"]
+
+    @wraps(measurement)
+    def taken_in_a_child() -> None:
+        report = subprocess.run(
+            [sys.executable, script, measurement.__name__],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_child_environment(),
+        )
+        if report.returncode != 0:
+            raise AssertionError(
+                f"{measurement.__name__} failed in its child interpreter "
+                f"(exit {report.returncode})\n{report.stdout}{report.stderr}"
+            )
+
+    return taken_in_a_child
+
+
+def serve_one_measurement(name: str) -> None:
+    """Take the one measurement ``name`` names, for the child
+    :func:`in_a_child_interpreter` starts.
+
+    The registered function is the one the decorator wrapped rather than the
+    wrapper, so the child takes the reading instead of starting a child of its
+    own.
+    """
+    _MEASUREMENTS[name]()

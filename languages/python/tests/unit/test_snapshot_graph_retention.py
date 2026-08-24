@@ -132,7 +132,14 @@ from functools import cache
 from typing import Final, NamedTuple, cast
 
 import pytest
-from memory_instruments import Seam, retained, survivors, warmed
+from memory_instruments import (
+    Seam,
+    in_a_child_interpreter,
+    retained,
+    serve_one_measurement,
+    survivors,
+    warmed,
+)
 
 from parallax.core.base import Float64, Int64
 from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
@@ -1708,6 +1715,7 @@ def test_every_measured_position_reaches_every_state_its_contract_admits() -> No
     assert {kind: frozenset(states) for kind, states in reached.items()} == _ADMITTED_STATES
 
 
+@in_a_child_interpreter
 def test_a_positional_row_costs_the_tuple_that_holds_it_and_nothing_more() -> None:
     # What the two record readings below are stated in, measured rather than
     # assumed. Every claim about a Value Object record's price rests on a row
@@ -1732,6 +1740,7 @@ def test_a_positional_row_costs_the_tuple_that_holds_it_and_nothing_more() -> No
         tracemalloc.stop()
 
 
+@in_a_child_interpreter
 def test_retained_bytes_are_affine_in_the_members_slots_and_arms_at_once() -> None:
     # The whole crossing against the shape a compact representation has: a base,
     # plus an independent cost per member, per declared slot, and per recorded
@@ -1745,6 +1754,7 @@ def test_retained_bytes_are_affine_in_the_members_slots_and_arms_at_once() -> No
     assert measured == {point: _predicts(fit, point) for point in _GRID}
 
 
+@in_a_child_interpreter
 def test_a_member_costs_one_pointer_in_one_row_and_nothing_else() -> None:
     # "No retained per-cell Snapshot carriers", in arithmetic, for the Attribute
     # half of a row. A compact row holds the decoded leaf itself at each position,
@@ -1757,6 +1767,7 @@ def test_a_member_costs_one_pointer_in_one_row_and_nothing_else() -> None:
     assert _corner(_LARGER).member == _member_rows(_LARGER) * _POINTER
 
 
+@in_a_child_interpreter
 def test_a_value_object_leaf_costs_one_pointer_in_every_record_that_carries_it() -> None:
     # The same claim for the document half, which is where the replaced
     # representation kept most of its per-cell cost: a record object, an
@@ -1772,6 +1783,7 @@ def test_a_value_object_leaf_costs_one_pointer_in_every_record_that_carries_it()
     assert _step(_seam, _WIDER_LEAVES, _LARGER) == _leaf_records(_LARGER) * _POINTER
 
 
+@in_a_child_interpreter
 def test_a_value_object_record_costs_its_own_row_and_the_position_that_names_it() -> None:
     # The population the leaf step holds still, varied on its own: one more
     # element in every Many occurrence, at the same members, leaves, and
@@ -1786,6 +1798,7 @@ def test_a_value_object_record_costs_its_own_row_and_the_position_that_names_it(
     assert _step(_seam, _WIDER_ELEMENTS, _LARGER) == large
 
 
+@in_a_child_interpreter
 def test_a_top_level_one_occurrence_costs_one_position_in_the_row_and_its_own_record() -> None:
     # And the population the other document steps hold still, for the first of the
     # two branches a reduction has: one more top-level ONE Value Object on the
@@ -1800,6 +1813,7 @@ def test_a_top_level_one_occurrence_costs_one_position_in_the_row_and_its_own_re
     assert _step(_seam, _WIDER_ONES, _LARGER) == large
 
 
+@in_a_child_interpreter
 def test_a_top_level_many_occurrence_costs_its_row_of_elements_and_a_record_for_each() -> None:
     # The other branch, and a reading with no substitute anywhere else in this
     # suite: one more top-level MANY Value Object, at the same members, leaves, and
@@ -1817,6 +1831,7 @@ def test_a_top_level_many_occurrence_costs_its_row_of_elements_and_a_record_for_
     assert _step(_seam, _WIDER_MANYS, _LARGER) == large
 
 
+@in_a_child_interpreter
 def test_a_whole_document_costs_the_rows_its_declaration_names_and_nothing_at_any_depth() -> None:
     # What the four steps cannot say between them, and the reading that needs no
     # fifth axis to say it: what a graph retains ABOVE the same graph declaring no
@@ -1836,6 +1851,7 @@ def test_a_whole_document_costs_the_rows_its_declaration_names_and_nothing_at_an
         assert _step(_seam, point, _LARGER, _BARE) == _document_bytes(point, _LARGER), point
 
 
+@in_a_child_interpreter
 def test_a_whole_document_costs_that_same_total_in_every_state_its_positions_admit() -> None:
     # The other half of the total, and the one an exact total over fully carried
     # documents cannot state. Every reading above is taken over a document whose
@@ -1856,6 +1872,7 @@ def test_a_whole_document_costs_that_same_total_in_every_state_its_positions_adm
         assert _step(_seam, point, _CELLS, _BARE) == _document_bytes(point, _CELLS), point
 
 
+@in_a_child_interpreter
 def test_an_edge_costs_one_pointer_where_it_is_recorded_and_one_where_it_resolves() -> None:
     # The relationships term of the bound. A to-many arm is a tuple of projection
     # indexes in the sealed graph and a tuple of allocation indexes in the merged
@@ -1866,6 +1883,7 @@ def test_an_edge_costs_one_pointer_where_it_is_recorded_and_one_where_it_resolve
     assert _corner(_LARGER).arm == _arm_positions(_LARGER) * _POINTER
 
 
+@in_a_child_interpreter
 def test_a_declared_view_slot_costs_one_pointer_in_every_row_it_widens() -> None:
     # The view-slot term, which unlike the other two carries a fixed
     # per-EXECUTION part as well: a slot is one entry in the plan's slot table and
@@ -1879,6 +1897,7 @@ def test_a_declared_view_slot_costs_one_pointer_in_every_row_it_widens() -> None
     assert small.slot - _slot_rows(_CELLS) * _POINTER == large.slot - _slot_rows(_LARGER) * _POINTER
 
 
+@in_a_child_interpreter
 def test_a_conforming_materialization_leaves_no_object_of_its_own_alive_per_cell() -> None:
     # The absolute claim, as an exact empty list. Every Parallax object a held
     # materialization leaves alive is one of the whole-graph structures: the
@@ -1892,6 +1911,7 @@ def test_a_conforming_materialization_leaves_no_object_of_its_own_alive_per_cell
         assert [obj for obj in alive if not isinstance(obj, _GRAPH_STRUCTURES)] == [], point
 
 
+@in_a_child_interpreter
 def test_what_a_conforming_materialization_leaves_alive_does_not_grow_with_the_graph() -> None:
     # And that the permitted kinds are not per-row either. Twice the cells, twice
     # the projections and twice the logical nodes, and the same objects of
@@ -1939,6 +1959,7 @@ def _catalog_seam(graphs: int) -> Seam:
     return run
 
 
+@in_a_child_interpreter
 def test_a_models_layout_catalog_is_the_same_size_after_one_graph_and_after_sixty_four() -> None:
     # `python.md`'s "retained layout count and size are independent of the number
     # of graphs materialized", measured. Entries are derived per exact Entity on
@@ -1990,6 +2011,7 @@ def _wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
     return run
 
 
+@in_a_child_interpreter
 def test_the_member_step_is_what_refuses_a_representation_that_wraps_every_cell() -> None:
     # What the arithmetic above is worth, demonstrated rather than asserted. A
     # control that keeps one wrapper per cell sits on an affine function of the
@@ -2036,6 +2058,7 @@ def _wrapped(value: object) -> list[_CellCarrier]:
     return [_CellCarrier(value)]
 
 
+@in_a_child_interpreter
 def test_the_leaf_step_is_what_refuses_a_representation_wrapping_every_document_cell() -> None:
     # The document half of the control above, and the one that matters most,
     # because a document is where the replaced representation kept most of its
@@ -2138,6 +2161,7 @@ def _record_carriers(
     ]
 
 
+@in_a_child_interpreter
 def test_the_record_step_is_what_refuses_a_representation_wrapping_every_record() -> None:
     # What the record reading is worth. A seam keeping one carrier per reduced
     # record — no cell wrapped, no occurrence wrapped — moves the element step by
@@ -2151,6 +2175,7 @@ def test_the_record_step_is_what_refuses_a_representation_wrapping_every_record(
         assert step == _member_rows(_CELLS) * _element_bytes(_LEAVES[0])
 
 
+@in_a_child_interpreter
 def test_the_one_occurrence_step_is_what_refuses_a_wrapper_around_a_one_occurrence() -> None:
     # And what the two occurrence readings are worth, starting with the One
     # branch. A carrier held once per top-level One occurrence is a constant per
@@ -2167,6 +2192,7 @@ def test_the_one_occurrence_step_is_what_refuses_a_wrapper_around_a_one_occurren
     ) * _many_occurrence_bytes(_ELEMENTS[0])
 
 
+@in_a_child_interpreter
 def test_the_many_occurrence_step_is_what_refuses_a_wrapper_around_a_many_occurrence() -> None:
     # And the Many branch, which is the reading with no substitute anywhere: a
     # carrier around the Many occurrences alone is what a regression confined to
@@ -2231,6 +2257,7 @@ def _nested_occurrences(
     ]
 
 
+@in_a_child_interpreter
 def test_the_whole_document_reading_is_what_refuses_a_wrapper_around_a_nested_occurrence() -> None:
     # What that total is worth, against the defect no step in this suite can
     # catch. A carrier held once per nested occurrence is a constant per
@@ -2291,6 +2318,7 @@ def _zero_state_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
     return run
 
 
+@in_a_child_interpreter
 def test_the_state_readings_are_what_refuse_a_wrapper_around_a_position_stored_zero() -> None:
     # What the state sweep is worth, against the defect every reading over a
     # carried document is blind to by construction. A carrier held once per
@@ -2315,3 +2343,7 @@ def test_the_state_readings_are_what_refuse_a_wrapper_around_a_position_stored_z
         assert measured > priced, point
         with pytest.raises(AssertionError):
             assert measured == priced
+
+
+if __name__ == "__main__":
+    serve_one_measurement(sys.argv[1])

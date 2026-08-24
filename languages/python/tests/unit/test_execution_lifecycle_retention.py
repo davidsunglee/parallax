@@ -170,6 +170,7 @@ they are stated where the attribution rule they follow from is stated.
 from __future__ import annotations
 
 import gc
+import sys
 import threading
 import tracemalloc
 from collections.abc import Callable, Mapping
@@ -188,7 +189,17 @@ from _transact_support import (
     deadlock,
     new_account,
 )
-from memory_instruments import REPEATS, Closure, Seam, allocation, closure, live_graph, retained
+from memory_instruments import (
+    REPEATS,
+    Closure,
+    Seam,
+    allocation,
+    closure,
+    in_a_child_interpreter,
+    live_graph,
+    retained,
+    serve_one_measurement,
+)
 
 from _support import mirrored_models as mm
 from parallax.core.db_error import DatabaseError
@@ -1183,6 +1194,7 @@ class _CountingPort(NoIoPort):
         return super().transaction(body)
 
 
+@in_a_child_interpreter
 def test_a_completed_read_leaves_no_lifecycle_object_alive() -> None:
     # The published result is where a retained trace would hang: a caller holds
     # that value for as long as it likes and long after the root has finished,
@@ -1193,6 +1205,7 @@ def test_a_completed_read_leaves_no_lifecycle_object_alive() -> None:
     assert _left_behind(_one_read(db)) == []
 
 
+@in_a_child_interpreter
 def test_a_completed_transaction_leaves_no_lifecycle_object_alive() -> None:
     # A transaction is the deep root: an invocation over an attempt over a write
     # batch over its Database Calls, with a participating read and its dependency
@@ -1207,6 +1220,7 @@ def test_a_completed_transaction_leaves_no_lifecycle_object_alive() -> None:
     assert _left_behind(lambda: db.transact(body)) == []
 
 
+@in_a_child_interpreter
 def test_a_retried_transaction_leaves_neither_its_events_nor_its_diagnostics_alive() -> None:
     # The failure path is where retention has something to hold: a rendered
     # diagnostic, an attribution pairing an exception with a child, and one
@@ -1225,6 +1239,7 @@ def test_a_retried_transaction_leaves_neither_its_events_nor_its_diagnostics_ali
     assert port.begins == 2
 
 
+@in_a_child_interpreter
 def test_a_hundred_sequential_roots_leave_exactly_what_one_leaves() -> None:
     # The slope claim, stated as an equality of two definite answers rather than
     # as a trend anyone has to read: if a completed root left one reference, a
@@ -1240,6 +1255,7 @@ def test_a_hundred_sequential_roots_leave_exactly_what_one_leaves() -> None:
     assert _left_behind(one) == _left_behind(many) == []
 
 
+@in_a_child_interpreter
 def test_two_hundred_observed_roots_keep_no_bytes_between_them() -> None:
     # What reference liveness cannot answer. `gc.get_objects` reports only what
     # the collector tracks, so a retained integer, an empty tuple, or an
@@ -1255,6 +1271,7 @@ def test_two_hundred_observed_roots_keep_no_bytes_between_them() -> None:
     assert kept < REPEATS
 
 
+@in_a_child_interpreter
 def test_an_observed_root_costs_the_same_over_ten_times_the_result() -> None:
     # Independence from result cardinality, as an equality rather than a trend.
     # A seam that sized, copied, or held the rows would allocate ten times as
@@ -1289,6 +1306,7 @@ def test_an_observed_root_costs_the_same_over_ten_times_the_result() -> None:
     assert _live(_observed_read_owning(SMALL_ROWS)) == _live(_observed_read_owning(LARGE_ROWS))
 
 
+@in_a_child_interpreter
 def test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once() -> None:
     # The `N` and `P` of `O(N * (P + D))`, over the roots open at once and the
     # Providers active on each of them, and over both the shallowest per-root
@@ -1343,6 +1361,7 @@ def test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once() -> None:
     _bytes_within_the_bound(kept)
 
 
+@in_a_child_interpreter
 def test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once() -> None:
     # The `D` of `O(N * (P + D))`, over the one construction that grows it: a
     # callback calling `db.transact` again nests a joining scope inside the one
@@ -1401,6 +1420,7 @@ def test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once() -
     _bytes_within_the_bound(kept)
 
 
+@in_a_child_interpreter
 def test_live_lifecycle_memory_is_affine_in_the_roots_providers_and_levels_at_once() -> None:
     # `N * (P + D)` as one claim rather than three, over every combination of the
     # three counts. A grid that varies one parameter while pinning the others
@@ -1428,6 +1448,7 @@ def test_live_lifecycle_memory_is_affine_in_the_roots_providers_and_levels_at_on
     _within_the_bound(measured)
 
 
+@in_a_child_interpreter
 def test_the_bytes_live_roots_keep_stay_within_the_bound_at_every_crossing_of_it() -> None:
     # The fifth reading over the same crossing, at its corners. What none of the
     # four counts can answer is an UNTRACKED value — no object to
@@ -1472,6 +1493,7 @@ def test_every_root_is_open_at_its_full_depth_when_the_workload_is_sampled() -> 
     )
 
 
+@in_a_child_interpreter
 def test_the_byte_reading_refuses_an_untracked_hold_sized_by_the_nesting() -> None:
     # What the byte reading is worth, demonstrated rather than asserted, and the
     # shape the four counts are blind to: a composition that keeps one untracked
@@ -1493,6 +1515,7 @@ def test_the_byte_reading_refuses_an_untracked_hold_sized_by_the_nesting() -> No
         _bytes_within_the_bound(kept)
 
 
+@in_a_child_interpreter
 def test_the_concurrency_readings_refuse_a_composition_that_keeps_what_is_open() -> None:
     # What the readings above are worth, demonstrated rather than asserted, and
     # what each one reaches: the same grid over a composition that notes, per
@@ -1603,6 +1626,7 @@ def test_an_activity_holds_the_same_at_every_depth_it_can_open_at() -> None:
     assert disagreeing == {}
 
 
+@in_a_child_interpreter
 def test_nothing_of_a_closed_root_is_alive_once_the_sample_is_past() -> None:
     # Every grid sample is taken while every scope is still open, so none of them
     # says anything about what happens when they close. Leaving them closes them
@@ -1614,3 +1638,7 @@ def test_nothing_of_a_closed_root_is_alive_once_the_sample_is_past() -> None:
     assert _left_behind(lambda: _concurrent_roots(16, 3, deepest)(lambda: None)) == []
     assert _left_behind(lambda: nested(lambda: None)) == []
     assert _left_behind(lambda: crossed(lambda: None)) == []
+
+
+if __name__ == "__main__":
+    serve_one_measurement(sys.argv[1])
