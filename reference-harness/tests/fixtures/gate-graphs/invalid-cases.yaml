@@ -109,7 +109,7 @@
   old: '[metadata("runtime:medium", "scheduling:dbfree")]'
   new: '[metadata("runtime:medium", "scheduling:offline")]'
   code: unknown-scheduling-class
-  message: "`harness` declares the scheduling class `offline`, which is outside §5's closed vocabulary (db, dbfree)"
+  message: "`harness` declares the scheduling class `offline`, which is outside §5's closed vocabulary (cost, db, dbfree)"
 
 - name: class-owner-selecting-the-other-class
   file: justfile
@@ -173,7 +173,7 @@
   old: "python-check-dbfree: python-format-check python-lint python-typecheck"
   new: "python-check-dbfree: python-format-check python-typecheck"
   code: unowned-gate
-  message: "`python-lint` performs a blocking `lint` that `check` never runs"
+  message: "`python-lint` performs a blocking `lint` that `check-all` never runs"
   problems: 1
 
 - name: undeclared-runtime-class
@@ -319,8 +319,8 @@
 
 - name: agent-guidance-citing-a-command-the-graph-does-not-declare
   file: AGENTS.md
-  old: "`just check`"
-  new: "`just chekc`"
+  old: "`just check` for a merge-ready run"
+  new: "`just chekc` for a merge-ready run"
   code: doc-unknown-command
   message: "AGENTS.md cites `just chekc`, which the graph does not declare"
 

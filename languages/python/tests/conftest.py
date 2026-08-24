@@ -24,19 +24,46 @@ _DB_SKIPS: list[str] = []
 # route would be classified `dbfree` while needing a container.
 _DATABASE_FIXTURES = frozenset({"provisioner"})
 
+# What marks an item as needing an interpreter no other test shares, spelled as
+# `tests/unit/memory_instruments.py` sets it. This module loads before any surface
+# directory reaches the path and so cannot import that one; the two spellings are
+# held together by `tools/check_instrument_access.py`.
+_OWN_INTERPRETER_ATTRIBUTE = "__parallax_own_interpreter__"
+
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Assign each collected item its scheduling class.
 
-    The class is read off the item's resolved fixture closure rather than
-    authored beside the test, so it covers indirect requests, is decided per
-    item rather than per module, and can be neither absent nor doubled. An item
-    that is not a test function requests no fixture and is therefore `dbfree`.
+    The class is read off what the item requires — its resolved fixture closure
+    for a database, the boundary its function carries for an interpreter of its
+    own — rather than authored beside the test, so it covers indirect requests,
+    is decided per item rather than per module, and can be neither absent nor
+    doubled. An item that is not a test function requires neither and is
+    therefore `dbfree`.
+
+    Two resources at once is a contradiction rather than a precedence: a reading
+    over the whole interpreter cannot be taken of a process a container is also
+    living in, so the run fails instead of picking a winner.
     """
     for item in items:
-        closure = item.fixturenames if isinstance(item, pytest.Function) else ()
-        needs_database = bool(_DATABASE_FIXTURES.intersection(closure))
-        item.add_marker(pytest.mark.db if needs_database else pytest.mark.dbfree)
+        function = item if isinstance(item, pytest.Function) else None
+        needs_database = (
+            bool(_DATABASE_FIXTURES.intersection(function.fixturenames)) if function else False
+        )
+        needs_interpreter = (
+            getattr(function.obj, _OWN_INTERPRETER_ATTRIBUTE, False) is True if function else False
+        )
+        if needs_database and needs_interpreter:
+            raise pytest.UsageError(
+                f"{item.nodeid} requires both a live database and an interpreter of its own; "
+                f"a scheduling class names one resource (core/spec/language-testing.md §5)"
+            )
+        if needs_database:
+            item.add_marker(pytest.mark.db)
+        elif needs_interpreter:
+            item.add_marker(pytest.mark.cost)
+        else:
+            item.add_marker(pytest.mark.dbfree)
 
 
 def record_db_skip(reason: str) -> None:

@@ -55,14 +55,20 @@ default:
 # The success summary is a terminal dependency rather than a command body: an
 # aggregate carrying a body cannot be composed without re-running it, and a
 # `report` passes no judgement, so it adds output and no second verdict.
-[doc("Complete merge gate: every blocking check in the repository.")]
+[doc("Merge gate: every blocking check a merge waits on.")]
 check: check-gates check-dbfree check-db report-check-summary
+
+[doc("Complete gate: the merge gate plus the cost class CI also runs.")]
+check-all: check check-cost report-check-all-summary
 
 [doc("Every blocking check that needs no live database.")]
 check-dbfree: core-check lint-markdown harness-check-dbfree python-check-dbfree
 
 [doc("Every blocking check that needs a live database (Docker).")]
 check-db: harness-check-db python-check-db
+
+[doc("Every blocking check needing an interpreter no other test shares.")]
+check-cost: python-check-cost
 
 [metadata("runtime:fast")]
 [doc("This file matches the grammar, roles, and composition core/spec/language-testing.md fixes.")]
@@ -91,9 +97,14 @@ report-matrix:
     cd {{harness}} && uv run python -m reference_harness.matrix ../core/compatibility
 
 [metadata("runtime:fast")]
-[doc("The line a complete `just check` ends with when every gate passed.")]
+[doc("The line `just check` ends with when every gate it runs passed.")]
 report-check-summary:
-    @echo "check OK: every blocking check in this repository passed."
+    @echo "check OK: every merge-gating check in this repository passed. The cost class is not one of them: `just check-all` adds it, and CI runs it on every change."
+
+[metadata("runtime:fast")]
+[doc("The line `just check-all` ends with when every gate passed.")]
+report-check-all-summary:
+    @echo "check-all OK: every blocking check in this repository passed."
 
 # ===========================================================================
 # Core spec: validation of the core specification and compatibility corpus.
@@ -217,13 +228,16 @@ harness-format:
 # ===========================================================================
 
 [doc("Every blocking check over the Python implementation.")]
-python-check: python-check-dbfree python-check-db
+python-check: python-check-dbfree python-check-db python-check-cost
 
 [doc("Every Python check that needs no live database.")]
 python-check-dbfree: python-format-check python-lint python-typecheck python-check-imports python-check-database-access python-check-dead-code python-test-dbfree python-coverage-diff python-check-distribution-metadata python-check-lock python-audit
 
 [doc("Every Python check that needs a live database (Docker).")]
 python-check-db: python-test-db
+
+[doc("Every Python check needing an interpreter no other test shares.")]
+python-check-cost: python-check-instrument-access python-test-cost
 
 [metadata("runtime:slow", "scheduling:dbfree")]
 [doc("Every Python test whose fixture closure reaches no database, plus branch coverage.")]
@@ -234,6 +248,15 @@ python-test-dbfree:
 [doc("Every Python test whose fixture closure reaches a database (Testcontainers; Docker).")]
 python-test-db:
     cd {{python}} && uv run pytest -m db
+
+# No coverage here. Every reading is taken in a child interpreter the parent does
+# not trace, so what this selects contributes nothing to a coverage report; the
+# production lines these measurements drive are covered by the suites grading
+# their behavior, which `python-test-dbfree` owns.
+[metadata("runtime:slow", "scheduling:cost")]
+[doc("Every Python test reading the whole interpreter, each in one of its own.")]
+python-test-cost:
+    cd {{python}} && uv run pytest -m cost
 
 # The six semantic surfaces are focused selectors for iteration, and deliberately
 # no gate's dependencies: each cuts across the scheduling partition, so an
@@ -346,6 +369,14 @@ python-check-untracked-sources:
 [doc("Live database access in the Python suite goes through the designated fixture.")]
 python-check-database-access:
     cd {{python}} && uv run python tools/check_database_access.py
+
+# The same soundness condition one class over: an item reading the whole
+# interpreter without acquiring one of its own would be classified `dbfree`, and
+# would still pass — against a heap the rest of the suite decided the size of.
+[metadata("runtime:fast")]
+[doc("Whole-interpreter readings in the Python suite go through the designated boundary.")]
+python-check-instrument-access:
+    cd {{python}} && uv run python tools/check_instrument_access.py
 
 [metadata("runtime:fast")]
 [doc("Dead-code scan over the Python workspace.")]

@@ -94,27 +94,37 @@ for runtimes other than Docker Desktop — is in the root `README.md`.
 
 ## Scheduling labels
 
-Two classes, and every collected item carries exactly one.
+Three classes, and every collected item carries exactly one.
 
 | Class | Marker | Means | Owning command |
 |---|---|---|---|
-| Database-free | `dbfree` | The item's fixture closure reaches no live database | `just python-test-dbfree` |
-| Database-backed | `db` | It does, so a Docker daemon is required | `just python-test-db` |
+| Database-free | `dbfree` | The item requires neither resource below | `just python-test-dbfree` |
+| Database-backed | `db` | Its fixture closure reaches a live database, so Docker is required | `just python-test-db` |
+| Cost | `cost` | It reads the whole interpreter, so it needs one no other test shares | `just python-test-cost` |
 
-Neither marker is ever written beside a test. `tests/conftest.py`'s collection
-hook adds one to every item, chosen by whether the item's resolved fixture
-closure contains `provisioner` — so the label covers indirect requests, is
-decided per item rather than per file, and can be neither missing nor doubled.
-Deleting `provisioner` from a test's signature reclassifies that test.
+No marker is ever written beside a test. `tests/conftest.py`'s collection hook
+adds one to every item, chosen by what that item requires — `provisioner` in its
+resolved fixture closure for `db`, the `in_a_child_interpreter` boundary on its
+function for `cost` — so the label covers indirect requests, is decided per item
+rather than per file, and can be neither missing nor doubled. Requiring both is a
+contradiction the hook fails on rather than an order of precedence. Deleting
+`provisioner` from a test's signature, or the boundary from its definition,
+reclassifies that test.
+
+`tools/check_database_access.py` and `tools/check_instrument_access.py` are what
+keep the labels honest: each confines its class's resource to the one entry point
+the classifier reads, so a test acquiring it another way is a finding rather than
+a silent misclassification.
 
 Scheduling class is orthogonal to the semantic surface. `compatibility/` and
-`api/` hold both classes; `unit/`, `dialect/`, and `distribution/` are entirely
-`dbfree`; `provider_contract/` is entirely `db`. A surface is therefore never a
-substitute for a class, in either direction.
+`api/` hold both database classes; `dialect/` and `distribution/` are entirely
+`dbfree`; `provider_contract/` is entirely `db`; `unit/` holds `dbfree` and the
+whole of `cost`. A surface is therefore never a substitute for a class, in either
+direction.
 
 Two further markers exist and classify nothing — `compile_sweep` and
 `adapter_smoke` are focused selectors for iteration, authored where they apply.
-They are the whole catalog beside `dbfree` and `db`.
+They are the whole catalog beside the three classes.
 
 ## Expected failures
 
@@ -139,7 +149,8 @@ Run from the repository root through `just`, or from `languages/python` through
 |---|---|
 | Every database-free gate | `just python-check-dbfree` |
 | Every database-backed gate (Docker) | `just python-check-db` |
-| Both | `just python-check` |
+| Every cost gate | `just python-check-cost` |
+| All three | `just python-check` |
 | Iterate on one surface | `just python-test-<surface>` |
 | Iterate on one module | `cd languages/python && uv run pytest tests/<surface>/test_<name>.py` |
 
@@ -153,4 +164,5 @@ composing one would run part of it twice.
 |---|---|---|
 | `ci` / `python-check-dbfree` | CPython 3.12 / 3.13 / 3.14 | `just python-check-dbfree`, checked out at `fetch-depth: 0` because `python-coverage-diff` compares against `origin/main` |
 | `ci` / `python-check-db` | — | `just python-check-db` against Testcontainers Postgres, with `PARALLAX_REQUIRE_DB=1` so a provider skip fails the job |
-| `python-deps-refresh` / `refresh` (monthly) | — | `uv lock --upgrade`, opening a pull request the two jobs above still gate |
+| `ci` / `python-check-cost` | — | `just python-check-cost`, the class `just check` omits so the local gate stays fast |
+| `python-deps-refresh` / `refresh` (monthly) | — | `uv lock --upgrade`, opening a pull request the three jobs above still gate |

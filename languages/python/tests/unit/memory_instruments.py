@@ -87,6 +87,7 @@ from functools import wraps
 from typing import Final, NamedTuple
 
 __all__ = [
+    "OWN_INTERPRETER_ATTRIBUTE",
     "REPEATS",
     "WARMUP",
     "Closure",
@@ -100,6 +101,7 @@ __all__ = [
     "retained",
     "serve_one_measurement",
     "survivors",
+    "takes_its_own_interpreter",
     "untraced",
     "warmed",
 ]
@@ -374,6 +376,15 @@ def warmed(seam: Seam) -> Seam:
     return seam
 
 
+OWN_INTERPRETER_ATTRIBUTE: Final = "__parallax_own_interpreter__"
+"""What marks a collected item as needing an interpreter of its own.
+
+Named here and read by the runner's collection hook, which cannot import this
+module: the hook loads before any surface directory reaches the path. The two
+spellings are held together by `tools/check_instrument_access.py` rather than by
+an import."""
+
+
 _MEASUREMENTS: Final[dict[str, Callable[[], None]]] = {}
 """Every measurement a child can be asked for, filled by the decorator below as
 the defining module is imported — in the parent, where the entry is never read,
@@ -442,7 +453,19 @@ def in_a_child_interpreter(measurement: Callable[[], None]) -> Callable[[], None
                 f"(exit {report.returncode})\n{report.stdout}{report.stderr}"
             )
 
+    setattr(taken_in_a_child, OWN_INTERPRETER_ATTRIBUTE, True)
     return taken_in_a_child
+
+
+def takes_its_own_interpreter(test: object) -> bool:
+    """Whether ``test`` is a measurement :func:`in_a_child_interpreter` wrapped.
+
+    What the runner's collection hook reads to classify an item `cost`
+    (`core/spec/language-testing.md` §5). The attribute rather than the registry
+    is what answers it: the registry is keyed by name and holds the measurement,
+    while what the runner collected is the wrapper standing in for it.
+    """
+    return getattr(test, OWN_INTERPRETER_ATTRIBUTE, False) is True
 
 
 def serve_one_measurement(name: str) -> None:

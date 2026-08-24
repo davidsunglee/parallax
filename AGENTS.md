@@ -26,7 +26,9 @@
 ## Verification
 
 - Resolve what an aggregate command already runs before listing or running verification — `just show-gates <command>` prints its execution owners — and never list a focused command beside an aggregate that contains it.
-- Invoke an authoritative aggregate — `just check` for the whole repository — directly rather than piping it through an output filter, and trust the status the execution tool reports.
+- Invoke an authoritative aggregate — `just check` for a merge-ready run — directly rather than piping it through an output filter, and trust the status the execution tool reports.
+- `just check` is the merge gate and the only aggregate to run locally. It omits the `cost` class, whose memory measurements CI owns and gates on every change: `just check-all` and `just check-cost` are CI's, not a local step. Report a green `just check` as a green merge gate, never as every blocking check having passed.
+- While iterating on what the `cost` class grades — the memory instruments, or a suite reading a whole interpreter — `just python-check-cost` is the one command owning that gate, and running it is focused iteration rather than a completeness run.
 - If another agent reports that an exact verification command passed, do not rerun it unless relevant repository state changed afterward.
 - [`TESTING.md`](TESTING.md) is the operational map: which command owns which gate, and the workflow from focused iteration with the `<scope>-test-<surface>` selectors to one merge-ready run.
 

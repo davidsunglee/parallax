@@ -4115,12 +4115,18 @@ remains observable rather than making Python its own oracle.
   honest without hard-coding which cases are excluded. No partial profiles
   exist; MariaDB is a §1 deferral, not a profile exclusion.
 - **Commands and skip reporting.** Every collected item carries exactly one
-  scheduling marker — `dbfree` or `db` — added at collection from whether the
-  item's fixture closure reaches the session-scoped database fixture, so no
-  item can carry none or both. `compile_sweep` and `adapter_smoke` remain as
-  orthogonal focused selectors and classify nothing. `just python-test-dbfree`
-  and `just python-test-db` each own one invocation of their class, aggregated
-  by `just python-check-dbfree`, `just python-check-db`, and `just python-check`.
+  scheduling marker — `dbfree`, `db`, or `cost` — added at collection from what
+  the item requires: `db` when its fixture closure reaches the session-scoped
+  database fixture, `cost` when its function carries the `in_a_child_interpreter`
+  boundary, `dbfree` otherwise. No item can carry none, and requiring both
+  resources is a collection error rather than a precedence. `compile_sweep` and
+  `adapter_smoke` remain as orthogonal focused selectors and classify nothing.
+  `just python-test-dbfree`, `just python-test-db`, and `just python-test-cost`
+  each own one invocation of their class, aggregated by
+  `just python-check-dbfree`, `just python-check-db`, `just python-check-cost`,
+  and `just python-check`. The `cost` class is outside `just check` and inside
+  `just check-all` (`core/spec/language-testing.md` §7); its own CI job gates it
+  on every change.
   Database-backed checks skip only when Docker is
   unavailable; a session-scoped fixture prints a final summary naming every
   skipped database-backed check and its reason, and the CI database lane fails

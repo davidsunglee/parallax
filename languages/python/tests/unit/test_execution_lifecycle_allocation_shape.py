@@ -35,7 +35,15 @@ from typing import Final
 from uuid import uuid4
 
 from _lifecycle_cost_support import AFFECTED, STATEMENT, TARGET, rows
-from memory_instruments import REPEATS, Seam, allocation, first_run, survivors
+from memory_instruments import (
+    REPEATS,
+    Seam,
+    allocation,
+    first_run,
+    in_a_child_interpreter,
+    serve_one_measurement,
+    survivors,
+)
 
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandler, RootExecution
 from parallax.core.execution_lifecycle._activity import (
@@ -218,6 +226,7 @@ def _survivors_without_coverage_state(seam: Seam) -> list[object]:
     return [item for item in observed if id(item) not in ignored]
 
 
+@in_a_child_interpreter
 def test_an_unobserved_read_allocates_nothing_at_all() -> None:
     tracemalloc.start()
     try:
@@ -230,6 +239,7 @@ def test_an_unobserved_read_allocates_nothing_at_all() -> None:
     assert kept < REPEATS
 
 
+@in_a_child_interpreter
 def test_a_declined_root_costs_only_its_uuid_descriptor_and_opening_call() -> None:
     # Equality is exact rather than an upper bound, and the declined path does
     # everything the control does: any further object would have to be born
@@ -249,6 +259,7 @@ def test_a_declined_root_costs_only_its_uuid_descriptor_and_opening_call() -> No
     assert permitted_kept < REPEATS
 
 
+@in_a_child_interpreter
 def test_after_a_decline_the_scopes_cost_what_the_default_path_costs() -> None:
     # "After decline it has the same event-, counter-, diagnostic-, and
     # clock-free path": the opening is the whole difference, so what a declined
@@ -266,6 +277,7 @@ def test_after_a_decline_the_scopes_cost_what_the_default_path_costs() -> None:
     assert default_kept < REPEATS
 
 
+@in_a_child_interpreter
 def test_an_unobserved_write_batch_allocates_nothing_either() -> None:
     # A transaction's flush publishes under the same shared inert activity, so
     # the claim is one claim: the write seam is graded by the same measurement
@@ -279,6 +291,7 @@ def test_an_unobserved_write_batch_allocates_nothing_either() -> None:
     assert kept < REPEATS
 
 
+@in_a_child_interpreter
 def test_an_unobserved_transaction_allocates_nothing_across_its_whole_seam() -> None:
     # The invocation, the attempt, the batch, and the enforcement bracket are
     # four more scopes an unobserved operation opens, and the specification costs
@@ -292,6 +305,7 @@ def test_an_unobserved_transaction_allocates_nothing_across_its_whole_seam() -> 
     assert kept < REPEATS
 
 
+@in_a_child_interpreter
 def test_an_unobserved_read_leaves_no_tracked_object_alive_behind_it() -> None:
     # The claim the byte count cannot make. A list, a dict, or a method object
     # the free list serves moves no byte counter at all, and an activity that
@@ -300,6 +314,7 @@ def test_an_unobserved_read_leaves_no_tracked_object_alive_behind_it() -> None:
     assert _survivors_without_coverage_state(_unobserved_read) == []
 
 
+@in_a_child_interpreter
 def test_a_declined_root_keeps_no_tracked_object_of_its_opening_alive() -> None:
     # The permitted UUID and descriptor are the opening's own transients: by the
     # time the scopes the decline hands back are running, neither is reachable,
@@ -307,10 +322,12 @@ def test_a_declined_root_keeps_no_tracked_object_of_its_opening_alive() -> None:
     assert _survivors_without_coverage_state(_declined_read) == []
 
 
+@in_a_child_interpreter
 def test_an_unobserved_write_batch_leaves_no_tracked_object_alive_either() -> None:
     assert _survivors_without_coverage_state(_flush_under(INERT)) == []
 
 
+@in_a_child_interpreter
 def test_an_unobserved_transaction_leaves_no_tracked_object_alive_either() -> None:
     assert _survivors_without_coverage_state(_unobserved_transaction) == []
 
@@ -338,8 +355,15 @@ def test_a_declined_roots_first_run_costs_only_its_permitted_opening() -> None:
     assert _first_run_in_a_child("declined") == _first_run_in_a_child("opening")
 
 
+# Two callers, told apart by what they name. A first-run child is asked for one
+# seam and answers with its two numbers; a measurement child is asked for one
+# test and asserts for itself. The seams are checked first because that protocol
+# predates the other and its names are the closed set.
 if __name__ == "__main__":
-    tracemalloc.start()
-    first_run(_nothing)
-    print(*first_run(FIRST_RUN_SEAMS[sys.argv[1]]))
-    tracemalloc.stop()
+    if sys.argv[1] in FIRST_RUN_SEAMS:
+        tracemalloc.start()
+        first_run(_nothing)
+        print(*first_run(FIRST_RUN_SEAMS[sys.argv[1]]))
+        tracemalloc.stop()
+    else:
+        serve_one_measurement(sys.argv[1])

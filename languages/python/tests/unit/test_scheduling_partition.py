@@ -1,9 +1,10 @@
 """The scheduling partition, and the layout it is orthogonal to.
 
-Every collected item's class is derived from its fixture closure by the
-collection hook in ``tests/conftest.py``, so neither zero nor two classes is
-representable — provided the derivation stays the only source, which is what the
-authored-marker check below pins. The remaining assertions grade the real
+Every collected item's class is derived from what it requires by the collection
+hook in ``tests/conftest.py`` — its fixture closure for a database, the boundary
+its function carries for an interpreter of its own — so neither zero nor two
+classes is representable, provided the derivation stays the only source, which is
+what the authored-marker check below pins. The remaining assertions grade the real
 session rather than a synthetic one: whichever selection is running, every item
 it holds is graded.
 """
@@ -16,11 +17,12 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from memory_instruments import takes_its_own_interpreter
 
 from _support.repo import PY_ROOT, REPO_ROOT
 from check_database_access import ENTRY_POINT_FIXTURE
 
-SCHEDULING_CLASSES = frozenset({"dbfree", "db"})
+SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cost"})
 DATABASE_FIXTURES = frozenset({ENTRY_POINT_FIXTURE})
 ORTHOGONAL_SELECTORS = frozenset({"compile_sweep", "adapter_smoke"})
 
@@ -70,13 +72,21 @@ def test_every_collected_item_carries_exactly_one_scheduling_class(
     assert offenders == {}
 
 
-def test_an_items_class_agrees_with_its_fixture_closure(
+def test_an_items_class_agrees_with_what_it_requires(
     request: pytest.FixtureRequest,
 ) -> None:
     for item in request.session.items:
-        closure = item.fixturenames if isinstance(item, pytest.Function) else ()
+        function = item if isinstance(item, pytest.Function) else None
+        closure = function.fixturenames if function else ()
         needs_database = bool(DATABASE_FIXTURES.intersection(closure))
-        expected = {"db"} if needs_database else {"dbfree"}
+        needs_interpreter = takes_its_own_interpreter(function.obj) if function else False
+        assert not (needs_database and needs_interpreter), item.nodeid
+        if needs_database:
+            expected = {"db"}
+        elif needs_interpreter:
+            expected = {"cost"}
+        else:
+            expected = {"dbfree"}
         assert _classes_of(item) == expected, item.nodeid
 
 
