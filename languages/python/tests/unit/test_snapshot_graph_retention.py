@@ -37,7 +37,11 @@ every child of the broad hop at level 1, and the duplicates of a second hop belo
 that one at level 2 — with the second hop's own slot on the source its parents
 came from, written to every one of them. That is what keeps the slot arithmetic a
 count of positions production lays out rather than of positions the workload
-declared for itself.
+declared for itself. Every edge those slots hold is one the two rows' own join
+Attributes produce, in every state below as well: a child's ``parentId`` names
+the root the broad hop gathered it under and its ``twinId`` names the projection
+the twin hop resolved, so the fan-out being priced is a topology a query returns
+rather than one the composition wrote by hand.
 
 **Every measured projection also carries Value Object occurrences**, a top-level
 One holding a nested One and a nested Many whose every element holds one more,
@@ -72,8 +76,11 @@ state-aware — a zeroed occurrence costs its position and nothing under it. Tho
 states are a closed set rather than the ones anyone thought of, and closed by
 assertion: the union of the states they put each kind of position in is exactly
 what `python.md` admits for that kind, one nesting rank, the leaves, and the
-Attributes at a time, in both spellings a stored document has, plus the read that
-carried no document column at all.
+Attributes no join reads at a time, in both spellings a stored document has, plus
+the read that carried no document column at all. The primary key and the two join
+Attributes stay carried through every one of them, because a row holding one of
+those zero is not this graph in another state but a different graph — one whose
+fan-out no query would have returned.
 
 **What the readings say, in the order they get stronger.** The whole grid sits on
 one affine function of the three parameters fitted from its four smallest points,
@@ -114,7 +121,7 @@ from __future__ import annotations
 import struct
 import sys
 import tracemalloc
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from functools import cache
 from typing import Final, NamedTuple, cast
 
@@ -277,12 +284,35 @@ _TWIN: Final = "twin"
 hop's children were read at. Every one of them names a twin, so every admitted
 parent of that hop receives the attachment, exactly as a fan-back writes one."""
 
+_ID_KEY: Final = "id"
 _PARENT_KEY: Final = "parentId"
 _TWIN_KEY: Final = "twinId"
-"""The two Attributes a hop joins from: the one the broad hop gathers children by,
-and the one the twin hop resolves a second projection through. Their stored values
-are the only Attribute values that name anything, which is why they are spelled
-apart from the rest."""
+"""The Attributes a hop joins through: the primary key a hop resolves a target by,
+the one the broad hop gathers children by, and the one the twin hop resolves a
+second projection through. Their stored values are the only Attribute values that
+name anything, which is why they are spelled apart from the rest."""
+
+_JOIN_KEYS: Final = frozenset({_PARENT_KEY, _TWIN_KEY})
+"""The two join Attributes, carried in every stored state beside the primary key
+and alone among the rest of them.
+
+What a hop RETURNS is derived from these two values, so a row holding one of them
+zero is not this graph in another state but a different graph: a child whose
+``parentId`` is null or absent is not a row the broad hop's query gathers under
+any parent, and one whose ``twinId`` is names no target for the twin hop to
+resolve, while the fan-out written above it would still hold both edges. Every
+other Attribute is nullable and reaches both zero spellings, which is what covers
+the Attribute position's admitted states without leaving the composed graph a
+topology no plan produces."""
+
+_JOINS: Final = {
+    **dict.fromkeys(_VIEWS, (_ID_KEY, _PARENT_KEY)),
+    _TWIN: (_TWIN_KEY, _ID_KEY),
+}
+"""What each declared relationship joins FROM on the side holding the view and
+matches ON at the side it names: every parent-side view gathers by ``parentId``
+against the root's own key, and the child's many-to-one resolves its ``twinId``
+against the target's."""
 
 _CONCRETES: Final = ("Alpha", "Beta")
 """The resolved concretes of the measured family, taken in turn down each
@@ -524,7 +554,8 @@ class _Stored(NamedTuple):
 
     ``leaves`` and ``attributes`` zero the two populations that are not
     occurrences: every Value Object leaf at every depth, and every Entity
-    Attribute but the primary key.
+    Attribute that neither identifies a row nor joins one to another, which is
+    :data:`_JOIN_KEYS`.
 
     ``omitted`` is the spelling — the stored document has no key for the member,
     rather than a key holding JSON null. The two spellings are ONE state wherever
@@ -744,17 +775,19 @@ def _child_row(
     """One child's stored row, keyed as its concrete's own storage names and
     filled to ``stored``.
 
-    The primary key is carried in every state, alone among the Attributes: a row
-    whose key is absent or null is a ``stored-data-primary-key-null``
-    projection that merges with nothing, which is the non-conforming path rather
-    than a presence state of the conforming one.
+    The primary key and the two join Attributes are carried in every state, alone
+    among the Attributes, and for the same kind of reason. A row whose key is
+    absent or null is a ``stored-data-primary-key-null`` projection that merges
+    with nothing, which is the non-conforming path rather than a presence state of
+    the conforming one; a row whose join key is either is one no hop of this plan
+    would have gathered, which is :data:`_JOIN_KEYS`.
     """
     tag = f"{cell}-{index}"
     row: dict[str, object] = {}
     for attribute in layout.attributes:
         if isinstance(attribute.primary_key, PrimaryKey):
             row[attribute.storage.name] = 10_000 + cell * 100 + index
-        elif not stored.attributes:
+        elif attribute.identity.name in _JOIN_KEYS or not stored.attributes:
             row[attribute.storage.name] = _attribute_value(attribute, cell, index, tag)
         elif not stored.omitted:
             row[attribute.storage.name] = None
@@ -835,9 +868,12 @@ def _stored_record(
     return document
 
 
-_SHAPES: Final = tuple(
-    dict.fromkeys(point.shape for point in (*_GRID, *_DOCUMENTS, *_STATE_POINTS, _BARE))
-)
+_POINTS: Final = (*_GRID, *_DOCUMENTS, *_STATE_POINTS, _BARE)
+"""Every point this suite measures anything at: the crossed grid, the far end of
+each document step, the widest document in each state its positions admit, and
+the document-free baseline the totals are taken against."""
+
+_SHAPES: Final = tuple(dict.fromkeys(point.shape for point in _POINTS))
 """What the models and their rows are formed at, taken off the points that read
 them rather than listed beside them, so a point and the workload it names cannot
 drift apart."""
@@ -1234,6 +1270,49 @@ def _graph_survivors(seam: Seam) -> list[object]:
     return [obj for obj in survivors(seam) if type(obj).__module__.startswith("parallax.")]
 
 
+def _stored_at(layout: EntityLayout, row: tuple[object, ...], name: str) -> object:
+    """What ``row`` holds at the Attribute ``name`` names, found by position
+    because a member row carries no key beside a value."""
+    return next(
+        row[position]
+        for position, attribute in enumerate(layout.attributes)
+        if attribute.identity.name == name
+    )
+
+
+def _edges(value: object) -> tuple[int, ...]:
+    """The projections one view position names: a to-many arm's whole tuple, a
+    to-one's single index, and none at all where no level wrote the slot."""
+    if isinstance(value, tuple):
+        return cast("tuple[int, ...]", value)
+    return () if value is ABSENT else (cast("int", value),)
+
+
+def _unjoined(rows: GraphRows) -> list[tuple[int, str, int]]:
+    """Every recorded edge the two rows' own stored values could not have
+    produced, as the projection holding the view, the relationship, and the
+    projection it names.
+
+    What a relationship query returns is the rows whose target Attribute matches
+    the source's, so an edge between two rows that do not match is one no plan
+    could have written — however conforming each row is on its own, and however
+    exactly the arithmetic prices the storage it occupies. Read off the sealed
+    graph rather than off the composition that wrote it, so a workload whose rows
+    stopped naming what its fan-out claims fails here instead of grading a
+    topology production cannot reach.
+    """
+    unjoined: list[tuple[int, str, int]] = []
+    for holder, layout in enumerate(rows.layouts):
+        for slot, view in enumerate(rows.schema.source(rows.sources[holder], layout).slots):
+            joins_from, matches_on = _JOINS[view.relationship.name]
+            held = _stored_at(layout, rows.member_rows[holder], joins_from)
+            for target in _edges(rows.view_rows[holder][slot]):
+                named = _stored_at(rows.layouts[target], rows.member_rows[target], matches_on)
+                if named != held:
+                    unjoined.append((holder, view.relationship.name, target))
+    return unjoined
+
+
 _ATTRIBUTE_POSITION: Final = "Entity Attribute"
 _LEAF_POSITION: Final = "Value Object leaf"
 _OCCURRENCE_POSITION: Final = {
@@ -1284,26 +1363,63 @@ def _state_of(value: object, *, many: bool) -> str:
     return "carried"
 
 
-def _reached(
+class _Position(NamedTuple):
+    """One position a converted member row holds at whatever depth: which KIND of
+    position it is, the ``value`` at it, and the ``state`` that value puts it
+    in."""
+
+    kind: str
+    value: object
+    state: str
+
+
+def _positions(layout: EntityLayout, row: tuple[object, ...]) -> Iterator[_Position]:
+    """Every position one projection's member row holds: its Attributes in the
+    layout's order, then each top-level occurrence and everything under it.
+
+    The one walk of a reduced row this suite has, and one rather than two on
+    purpose. The census the state readings rest on and the control claimed to
+    cover that census are both read off it —
+    :func:`test_every_measured_position_reaches_every_state_its_contract_admits`
+    takes each position's state and :func:`_zero_state_wrapping_seam` takes the
+    value at every position in a state other than carried — so a position either
+    of them reaches is one the other reaches, and a declaration or state that
+    widened the proof without widening its control cannot exist. Sharing costs
+    that control nothing, because what it has to be able to contradict is the
+    PRICE those readings are stated against, which :func:`_document_bytes`
+    derives from the declaration and not from any walk of a row.
+    """
+    for cell in row[: layout.attribute_count]:
+        yield _Position(_ATTRIBUTE_POSITION, cell, _state_of(cell, many=False))
+    for position, declared in enumerate(layout.occurrences, start=layout.attribute_count):
+        yield from _occurrence_positions(row[position], declared, top_level=True)
+
+
+def _occurrence_positions(
     value: object,
     declared: ValueObjectMetadata | NestedValueObjectMetadata,
     *,
     top_level: bool,
-    into: dict[str, set[str]],
-) -> None:
-    """Record the state of ``value``'s own position and of every position under
-    it, descending a Many by its elements and a One by its single record."""
+) -> Iterator[_Position]:
+    """``value``'s own occurrence position, and every position under it,
+    descending a Many by its elements and a One by its single record.
+
+    An occurrence holding a zero value ends the descent rather than yielding what
+    is under it, because nothing is: that branch reduced to ``None``, ``ABSENT``,
+    or the shared empty tuple, and a position it might have held exists in the
+    declaration alone.
+    """
     many = declared.multiplicity is Multiplicity.MANY
     state = _state_of(value, many=many)
-    into.setdefault(_OCCURRENCE_POSITION[top_level, declared.multiplicity], set()).add(state)
+    yield _Position(_OCCURRENCE_POSITION[top_level, declared.multiplicity], value, state)
     if state != "carried":
         return
     rows = cast("tuple[tuple[object, ...], ...]", value if many else (value,))
     for row in rows:
         for cell in row[: len(declared.attributes)]:
-            into.setdefault(_LEAF_POSITION, set()).add(_state_of(cell, many=False))
+            yield _Position(_LEAF_POSITION, cell, _state_of(cell, many=False))
         for offset, nested in enumerate(declared.value_objects, start=len(declared.attributes)):
-            _reached(row[offset], nested, top_level=False, into=into)
+            yield from _occurrence_positions(row[offset], nested, top_level=False)
 
 
 def test_the_workload_holds_its_projection_and_logical_node_counts_across_the_whole_grid() -> None:
@@ -1367,7 +1483,8 @@ def test_every_planned_level_owns_a_source_of_its_own_and_writes_every_slot_it_d
     # every declared position is one some level fills. Both matter because the
     # readings below count positions: a graph that gave a projection a slot no
     # plan of its own attaches would be charged for storage production never lays
-    # out, and the arithmetic would agree with it.
+    # out, and the arithmetic would agree with it. What those slots HOLD is the
+    # next test's claim.
     for point in (_LEAST, _GRID[-1]):
         graph, _ = _compose(point, _CELLS)
         rows = graph_rows(graph)
@@ -1378,6 +1495,23 @@ def test_every_planned_level_owns_a_source_of_its_own_and_writes_every_slot_it_d
             for layout, source in zip(rows.layouts, rows.sources, strict=True)
         } == {_ROOT_SOURCE: point.slots, _BROAD_SOURCE: 1, _TWIN_SOURCE: 0}, point
         assert all(value is not ABSENT for row in rows.view_rows for value in row), point
+
+
+def test_every_edge_the_graph_records_is_one_the_two_rows_join_attributes_produce() -> None:
+    # What makes the fan-out the readings price a topology a plan could have
+    # produced rather than one this module wrote by hand. `_compose` writes each
+    # view because the workload says a hop gathered those rows, and what a
+    # relationship query gathers is rows whose join Attribute matches the
+    # source's — so an edge between two rows that do not match is storage no read
+    # would have laid out, however conforming each row is on its own and however
+    # exactly the arithmetic prices the positions it occupies. Read at every point
+    # the suite measures anything at, the states above all: what a state moves is
+    # the rows the fan-out over them was joined from, so a zeroing that reached a
+    # join key would leave the relationships standing and unproducible, and every
+    # byte reading taken over them exact.
+    for point in _POINTS:
+        graph, _ = _compose(point, _CELLS)
+        assert _unjoined(graph_rows(graph)) == [], point
 
 
 def test_every_measured_position_reaches_every_state_its_contract_admits() -> None:
@@ -1391,7 +1525,10 @@ def test_every_measured_position_reaches_every_state_its_contract_admits() -> No
     # here rather than sit unmeasured. Conformance is asserted in the same walk
     # and for the same reason: the claim is about the CONFORMING path, so every
     # one of these rows has to be one the read contract accepts, and a stored
-    # spelling that recorded an issue would be a different claim.
+    # spelling that recorded an issue would be a different claim. That these rows
+    # still produce the graph composed over them — that no state zeroed a value an
+    # edge was joined from — is the test above, over these points among all the
+    # others.
     reached: dict[str, set[str]] = {}
     for point in _STATE_POINTS:
         graph, merge = _compose(point, _CELLS)
@@ -1399,10 +1536,8 @@ def test_every_measured_position_reaches_every_state_its_contract_admits() -> No
         assert not any(rows.issues), point
         assert not merge.has_issues, point
         for layout, row in zip(rows.layouts, rows.member_rows, strict=True):
-            for cell in row[: layout.attribute_count]:
-                reached.setdefault(_ATTRIBUTE_POSITION, set()).add(_state_of(cell, many=False))
-            for position, declared in enumerate(layout.occurrences, start=layout.attribute_count):
-                _reached(row[position], declared, top_level=True, into=reached)
+            for position in _positions(layout, row):
+                reached.setdefault(position.kind, set()).add(position.state)
     assert {kind: frozenset(states) for kind, states in reached.items()} == _ADMITTED_STATES
 
 
@@ -1546,10 +1681,10 @@ def test_a_whole_document_costs_that_same_total_in_every_state_its_positions_adm
     # costs its position and nothing under it, because `None` and `()` are both
     # objects the interpreter already had. So the equalities say what a state
     # COSTS as well as that it is reached — including that zeroing every leaf, or
-    # every Attribute, moves nothing at all, since a position holds its pointer
-    # whatever is at the end of it. One graph size is enough where the four steps
-    # need two: this is an exact equality against a price already multiplied by
-    # the cells, so a byte charged per row has no size to hide at.
+    # every Attribute no join reads, moves nothing at all, since a position holds
+    # its pointer whatever is at the end of it. One graph size is enough where the
+    # four steps need two: this is an exact equality against a price already
+    # multiplied by the cells, so a byte charged per row has no size to hide at.
     for point in _STATE_POINTS:
         assert _step(_seam, point, _CELLS, _BARE) == _document_bytes(point, _CELLS), point
 
@@ -1968,62 +2103,25 @@ def _zero_state_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
     control invisible to every reading taken over one: the crossed grid, the four
     document steps, and the carried total all convert rows whose every declared
     member is supplied, so this seam holds nothing at all at any of their points.
+
+    Selected out of :func:`_positions` rather than walked again, so the population
+    it wraps is the same one the census asserts a closed set of states over — the
+    control cannot come to cover less than the proof claims it covers.
     """
 
     def run(sample: Callable[[], None]) -> None:
         graph, merge = _compose(point, cells)
         rows = graph_rows(graph)
         carriers = [
-            carrier
+            _CellCarrier(position.value)
             for layout, row in zip(rows.layouts, rows.member_rows, strict=True)
-            for carrier in (
-                *(
-                    _CellCarrier(cell)
-                    for cell in row[: layout.attribute_count]
-                    if _state_of(cell, many=False) != "carried"
-                ),
-                *(
-                    nested
-                    for position, declared in enumerate(
-                        layout.occurrences, start=layout.attribute_count
-                    )
-                    for nested in _zero_states(row[position], declared)
-                ),
-            )
+            for position in _positions(layout, row)
+            if position.state != "carried"
         ]
         sample()
         assert graph is not None and merge is not None and carriers is not None
 
     return run
-
-
-def _zero_states(
-    value: object, declared: ValueObjectMetadata | NestedValueObjectMetadata
-) -> list[_CellCarrier]:
-    """One carrier for this occurrence position if it holds a zero value, and one
-    for every zero-valued position under it otherwise."""
-    many = declared.multiplicity is Multiplicity.MANY
-    if _state_of(value, many=many) != "carried":
-        return [_CellCarrier(value)]
-    rows = cast("tuple[tuple[object, ...], ...]", value if many else (value,))
-    return [
-        carrier
-        for row in rows
-        for carrier in (
-            *(
-                _CellCarrier(cell)
-                for cell in row[: len(declared.attributes)]
-                if _state_of(cell, many=False) != "carried"
-            ),
-            *(
-                nested
-                for offset, inner in enumerate(
-                    declared.value_objects, start=len(declared.attributes)
-                )
-                for nested in _zero_states(row[offset], inner)
-            ),
-        )
-    ]
 
 
 def test_the_state_readings_are_what_refuse_a_wrapper_around_a_position_stored_zero() -> None:

@@ -50,10 +50,18 @@ side of any of them. The same exact total is read once more in each state a
 conforming read can leave a position in, priced state-aware, and that those
 states are a closed set is asserted rather than claimed: the union of the states
 they put each kind of position in is exactly what the read contract admits for
-that kind. Its measured level is polymorphic for the same kind of reason: two
-concretes of one family, of different widths, are laid out and merged inside one
-graph, and each level of its plan produces projections at a source level of its
-own, so the slot readings count positions production lays out. Seven negative
+that kind. The primary key and the two Attributes its hops join through stay
+carried in every one of those states, because the graph's own fan-out is derived
+from their values — a row holding one of them zero is not that graph in another
+state but one no query would have returned — and the remaining Attributes are
+what carry the Attribute position through its own three. Its measured level is
+polymorphic for the same kind of reason: two concretes of one family, of
+different widths, are laid out and merged inside one graph, and each level of its
+plan produces projections at a source level of its own, so the slot readings
+count positions production lays out — and every edge those slots hold is
+asserted, at every point and in every state, to be a pair of rows whose join
+Attributes match, so a fan-out no query could return fails rather than being
+priced as though a plan produced it. Seven negative
 controls state what each reading is worth — one wraps every member cell and
 fails only the member step, one wraps every Value Object cell and fails only the
 leaf step, one wraps every reduced record and fails only the record step, one
