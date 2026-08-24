@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-81**.
+Entry numbering is continuous and never reused. The next new number is **D-82**.
 
 ## Entries
 
@@ -495,6 +495,45 @@ proper subset of its concrete — which is exactly the change
 makes when it streams a deep fetch at fixed memory. The witness belongs with that
 change, where the disagreeing shape is a real read rather than a fixture, and it
 is owed before that change lands rather than after.
+
+### D-81 — The retained-graph gate proves no carrier per member, record, occurrence or slot, and cannot prove none per projection
+
+*Low, and a limit of the instrument rather than a suspected defect.* Relates to
+`tests/unit/test_snapshot_graph_retention.py`,
+`languages/python/docs/snapshot-graph-baseline.md`.
+
+**What.** The gate reads a retained total against the same graph declaring no
+Value Object, prices the whole declared tree by the recursion the reduction
+descends it with, and steps each population — members, leaves, records,
+occurrences of each multiplicity, view slots — with a negative control per step.
+That closes a carrier charged per member, per record, per occurrence, or per
+slot, at any depth, in any state a conforming read can leave a position in.
+
+It cannot close a carrier held exactly **once per projection**. Such a wrapper
+scales with the projection count every step holds fixed, so it lands in the fit's
+origin and moves no difference; and being a built-in `tuple` or `dict` it is
+indistinguishable by type from the graph's own arrays, so the survivor census
+— which keeps only Parallax's own types — does not name it either. Two readings
+bound it without closing it: the retained total is affine in the populations with
+no per-projection term the layout does not explain, and the census names every
+surviving type and its count.
+
+Two narrower shapes sit beside it. A state point puts a whole population in one
+state, so rows mixing zero and carried members across one row are unread — what
+is closed is that each kind of position reaches each state its contract admits.
+And the primary key and the three join Attributes stay carried in every state,
+because a row holding one of them zero is one no query would have returned, so
+their own zero states are reached through the other Attributes.
+
+**Why it is deferred rather than fixed.** Closing it needs an instrument that
+distinguishes a graph's own arrays from a wrapper over them by provenance rather
+than by type — the census filter would have to know which `tuple` a sealed graph
+allocated, which `tracemalloc` and the gc do not record. The bound the affine fit
+and the census already give is what a byte-level instrument can state, and the
+representation this gate was written for allocates no such wrapper: the sealed
+graph's arrays are its rows. The gap is worth an entry because it is the one part
+of "zero retained per-cell carriers" that is argued rather than measured, and a
+future representation could reintroduce exactly the shape it cannot see.
 
 ## Forwarding pointers
 

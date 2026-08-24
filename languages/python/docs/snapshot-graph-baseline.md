@@ -83,6 +83,41 @@ per-occurrence carrier reappearing at any depth, on any of those paths, in any
 of those states, fails there, structurally, without anyone re-taking this
 reading.
 
+## What the gate does not prove
+
+Stated so a reader takes the assertions above for what they are. None of these
+is a known defect; each is a shape the instrument cannot see.
+
+**A carrier held once per projection.** Every step prices a difference per
+member, per record, per occurrence, or per slot, and the survivor census keeps
+only Parallax's own types. A built-in wrapper allocated exactly once per
+projection moves no step — it scales with the projection count the steps hold
+fixed — and a `tuple` or `dict` among the graph's own arrays is indistinguishable
+from them by type. What bounds it instead is the retained total itself, which is
+affine in the populations with no per-projection term the layout does not
+explain, and the census, which names every surviving type and count.
+
+**Mixed states inside one population.** A state point puts a whole population in
+one state: every Many loaded empty, or every One stored null. Rows holding some
+members zero and others carried are not read. What is closed is that each kind of
+position reaches each state its own contract admits, not every combination across
+a row.
+
+**The join Attributes' own zero states.** The primary key and the three Attributes
+the hops join through stay carried in every state, because a row holding one of
+them zero is a row no query would have returned. Their positions cost what any
+Attribute position costs, so no price is unmeasured — but those two states are
+reached through the other Attributes rather than through these.
+
+**Which source level a view's rows were read at.** The view oracle compares which
+logical nodes a view names against which its declared join produces. It does not
+compare the source level each was read at, because the arm names projections the
+broad hop already read rather than converting its own.
+
+**Wall clock.** One process's readings, not a reproducible measurement. The build
+and merge rows are recorded for direction only, and the spread across processes
+is stated beside them.
+
 ## The figure
 
 | | before | after | change |
