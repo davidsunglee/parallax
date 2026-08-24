@@ -58,10 +58,10 @@ def test_a_seam_reached_under_an_alias_is_found() -> None:
 def test_the_container_and_driver_seams_are_found() -> None:
     assert _seams(
         "import psycopg\n"
-        "from testcontainers.postgres import PostgresContainer\n"
+        "from testcontainers.community.postgres import PostgresContainer\n"
         "psycopg.connect('')\n"
         "PostgresContainer('img')\n"
-    ) == ["psycopg.connect", "testcontainers.postgres.PostgresContainer"]
+    ) == ["psycopg.connect", "testcontainers.community.postgres.PostgresContainer"]
 
 
 def test_the_adapter_connect_classmethod_is_a_seam_but_its_constructor_is_not() -> None:

@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 import pymysql
 from pymysql.constants import FIELD_TYPE
-from testcontainers.mysql import MySqlContainer
+from testcontainers.community.mysql import MySqlContainer
 
 from .. import errors
 from ..ddl_builder import quote_identifier

@@ -12,7 +12,7 @@ import enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, TypeAlias
+from typing import Any
 
 from .inheritance import (
     ROLE_ROOT,
@@ -82,7 +82,7 @@ class RelationalDocument:
     layout_owner: str
 
 
-ColumnContributor: TypeAlias = (
+type ColumnContributor = (
     AttributeContributor | ValueObjectContributor | InheritanceDiscriminator | RelationalDocument
 )
 """The closed identity-bearing Attribute, Value Object, discriminator, or shared
@@ -123,7 +123,7 @@ class DocumentPath:
     path: tuple[str, ...]
 
 
-MemberPlacement: TypeAlias = DirectColumn | DocumentPath
+type MemberPlacement = DirectColumn | DocumentPath
 """Where one logical member of one Table lives."""
 
 

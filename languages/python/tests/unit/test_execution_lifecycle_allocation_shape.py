@@ -142,7 +142,7 @@ def _flush_under(batch: WriteBatchActivity) -> Seam:
     """The other seam an unobserved operation drives: a flush's Database Call.
 
     The activity is closed over rather than named as a module global, which is
-    how every call site receives it — and is not a detail: on CPython 3.12 an
+    how every call site receives it — and is not a detail: on CPython 3.13 an
     attribute call on a module global can leave the interpreter binding a method
     object, so the global spelling would measure that instead of the seam.
     """

@@ -57,11 +57,14 @@ def test_a_seam_reached_under_an_alias_is_found() -> None:
 
 def test_the_container_classes_are_seams() -> None:
     assert _seams(
-        "from testcontainers.mysql import MySqlContainer\n"
-        "from testcontainers.postgres import PostgresContainer\n"
+        "from testcontainers.community.mysql import MySqlContainer\n"
+        "from testcontainers.community.postgres import PostgresContainer\n"
         "MySqlContainer('img')\n"
         "PostgresContainer('img')\n"
-    ) == ["testcontainers.mysql.MySqlContainer", "testcontainers.postgres.PostgresContainer"]
+    ) == [
+        "testcontainers.community.mysql.MySqlContainer",
+        "testcontainers.community.postgres.PostgresContainer",
+    ]
 
 
 def test_the_cli_entry_points_that_boot_providers_are_seams() -> None:

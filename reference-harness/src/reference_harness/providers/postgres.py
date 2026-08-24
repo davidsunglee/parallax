@@ -18,7 +18,7 @@ import psycopg
 from psycopg.abc import QueryNoTemplate
 from psycopg.adapt import Loader
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
-from testcontainers.postgres import PostgresContainer
+from testcontainers.community.postgres import PostgresContainer
 
 from .. import errors
 from ..ddl_builder import quote_identifier

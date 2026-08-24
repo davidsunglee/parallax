@@ -680,7 +680,7 @@ def test_wire_names_expose_the_member_roles_the_write_path_needs() -> None:
 def test_deferred_annotations_are_recovered_without_the_future_import() -> None:
     # This module omits ``from __future__ import annotations``, so on Python
     # 3.14+ a class body carries a deferred ``__annotate_func__`` the engine
-    # must evaluate to see the live member types. The eager 3.12/3.13 path is
+    # must evaluate to see the live member types. The eager 3.13 path is
     # exercised throughout this module; this pins the deferred recovery on its
     # own runtime, so a broken ``annotationlib`` recovery fails here rather than
     # silently yielding a memberless declaration.

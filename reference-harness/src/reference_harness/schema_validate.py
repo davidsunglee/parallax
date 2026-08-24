@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
@@ -451,7 +451,7 @@ query-backed list, `m-op-list`), so its members stand where its source does.
 """
 
 
-_Position: TypeAlias = tuple[str, ...]
+type _Position = tuple[str, ...]
 """Where a scenario step's result stands: every concrete Entity a node there could be.
 
 A position is known by its concretes and by nothing else — never by a declared

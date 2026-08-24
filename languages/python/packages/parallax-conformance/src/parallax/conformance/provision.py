@@ -355,7 +355,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
     """A session-scoped Testcontainers Postgres with the simple per-case reset path."""
 
     def __init__(self) -> None:
-        from testcontainers.postgres import PostgresContainer
+        from testcontainers.community.postgres import PostgresContainer
 
         from parallax.conformance import constants
         from parallax.postgres import PostgresAdapter

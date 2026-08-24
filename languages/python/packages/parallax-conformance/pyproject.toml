@@ -3,7 +3,7 @@ name = "parallax-conformance"
 version = "0.1.0"
 description = "Parallax conformance tooling (development-only): corpus/case loading, the recording/refusing compile port, provisioning, and the describe/compile/run CLI."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = "Apache-2.0"
 authors = [{ name = "Parallax" }]
 dependencies = [

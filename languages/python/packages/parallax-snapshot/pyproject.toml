@@ -3,7 +3,7 @@ name = "parallax-snapshot"
 version = "0.1.0"
 description = "Parallax snapshot lifecycle extension: Snapshot[T] materialization and the developer handle over the parallax-core spine."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = "Apache-2.0"
 authors = [{ name = "Parallax" }]
 dependencies = [

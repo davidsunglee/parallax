@@ -423,7 +423,7 @@ blocking unless its policy cell defines a narrower, objective exception.
 | Dead code and unused exports | **(decide and record — All slices)** | | | | If ecosystem tooling cannot check one class, state the limitation, evidence, and compensating check. |
 | Built-artifact and public-export health | **(decide and record — All slices)** | | | | Inspect packed artifacts, entry points, types/metadata, and accidental files/exports. |
 | Clean-install production smoke tests | **(decide and record — All slices)** | | | | Exercise every selective topology from §8 in clean environments. |
-| Supported language/runtime versions | **(decide and record — All slices)** | | | | List the exact version matrix, minimum policy, and end-of-life policy. |
+| Supported language/runtime versions | **(decide and record — All slices)** | | | | List the exact version matrix and end-of-life policy. Support the current stable version and its immediately prior version. |
 | Dependency and supply-chain audit | **(decide and record — All slices)** | | | | Define lockfile/freshness policy, severity threshold, exception owner, expiry, and provenance/license checks if used. |
 | Compatibility Conformance Suite | **(decide and record — All slices)** | | | | Select active slice ∩ capability tags and validate adapter envelopes. |
 | API Conformance Suite and Usage Guide | **(decide and record — All slices)** | | | | Enforce coverage partition, no-drift guard, real-adapter proof, and guide drift. |

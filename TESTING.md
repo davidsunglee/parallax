@@ -121,7 +121,7 @@ what makes omitting it locally safe.
 | `lint-markdown` | — | `just lint-markdown` |
 | `harness-check-dbfree` | — | `just harness-check-dbfree` |
 | `harness-check-db` | `postgres`, `mariadb` | `just harness-check-db` |
-| `python-check-dbfree` | CPython 3.12 / 3.13 / 3.14 | `just python-check-dbfree` |
+| `python-check-dbfree` | CPython 3.13 / 3.14 | `just python-check-dbfree` |
 | `python-check-db` | — | `just python-check-db` |
 | `python-check-cost` | — | `just python-check-cost` |
 

@@ -9,7 +9,7 @@
 name = "parallax-python"
 version = "0.0.0"
 description = "uv workspace root for the Parallax Python target (slice-snapshot-1). Not published."
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "parallax-core",
     "parallax-descriptor",
@@ -107,7 +107,7 @@ exclude_also = [
 [tool.ruff]
 line-length = 100
 src = ["packages/parallax-core/src", "packages/parallax-descriptor/src", "packages/parallax-snapshot/src", "packages/parallax-postgres/src", "packages/parallax-conformance/src", "tools", "tests"]
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]

@@ -1,6 +1,6 @@
 {
   "typeCheckingMode": "strict",
-  "pythonVersion": "3.12",
+  "pythonVersion": "3.13",
   "include": [
     "packages/parallax-core/src",
     "packages/parallax-descriptor/src",

@@ -99,7 +99,7 @@ report-matrix:
 [metadata("runtime:fast")]
 [doc("The line `just check` ends with when every gate it runs passed.")]
 report-check-summary:
-    @echo "check OK: every merge-gating check in this repository passed. The cost class is not one of them: `just check-all` adds it, and CI runs it on every change."
+    @echo 'check OK: every merge-gating check in this repository passed. The cost class is not one of them: `just check-all` adds it, and CI runs it on every change.'
 
 [metadata("runtime:fast")]
 [doc("The line `just check-all` ends with when every gate passed.")]

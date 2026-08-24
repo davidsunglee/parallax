@@ -497,7 +497,7 @@ def _pydantic_class(
 def _class_body_annotations(ns: dict[str, object]) -> dict[str, object]:
     """The class-body annotations, read from the metaclass namespace cross-version.
 
-    On Python 3.12/3.13 the live annotation objects sit eagerly in
+    On Python 3.13 the live annotation objects sit eagerly in
     ``__annotations__``. Under PEP 649 / PEP 749 the namespace carries a deferred
     ``__annotate_func__`` instead. The result is always a fresh mapping the
     caller may mutate.
@@ -516,11 +516,11 @@ def _resolve_deferred(annotate: object) -> dict[str, object]:
 
     Reached only on Python 3.14+, where a class declared without
     ``from __future__ import annotations`` carries an ``__annotate_func__``
-    instead of an eager ``__annotations__`` mapping; 3.12 and 3.13 always take
+    instead of an eager ``__annotations__`` mapping; 3.13 always takes
     the eager path. Evaluated in ``VALUE`` format to recover the same live
     objects the eager path returns. The ``sys.version_info`` guard is a
     static-typing shim that keeps the 3.14-only ``annotationlib`` import off
-    Pyright's 3.12 path; it is never taken at runtime because this function runs
+    Pyright's 3.13 path; it is never taken at runtime because this function runs
     only on 3.14+.
     """
     if sys.version_info < (3, 14):  # pragma: no cover - typing shim; runs only on 3.14+

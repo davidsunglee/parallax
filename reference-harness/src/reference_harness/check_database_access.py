@@ -59,8 +59,8 @@ DATABASE_SEAMS: frozenset[str] = frozenset(
         "reference_harness.benchmark.main",
         "reference_harness.matrix.main",
         "reference_harness.providers.provider_for",
-        "testcontainers.mysql.MySqlContainer",
-        "testcontainers.postgres.PostgresContainer",
+        "testcontainers.community.mysql.MySqlContainer",
+        "testcontainers.community.postgres.PostgresContainer",
     }
 )
 

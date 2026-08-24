@@ -53,7 +53,7 @@ DATABASE_SEAMS: frozenset[str] = frozenset(
         "parallax.conformance.provision.Provisioner",
         "parallax.postgres.PostgresAdapter.connect",
         "psycopg.connect",
-        "testcontainers.postgres.PostgresContainer",
+        "testcontainers.community.postgres.PostgresContainer",
     }
 )
 
