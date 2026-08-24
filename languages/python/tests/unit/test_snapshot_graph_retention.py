@@ -57,9 +57,23 @@ projection that every step absorbs. The whole document is therefore also read
 against a graph of the same shape that declares no Value Object at all, priced by
 a recursion over the declaration rather than by a term per level: every
 occurrence, every record, and every position, at whatever depth a declaration
-reaches. That is what makes the document readings complete rather than one level
-deep — widening the axis a level at a time would leave the level below it exactly
-where the nested one was.
+reaches. That is what closes the DECLARATION at every depth at once rather than
+one level deep — widening the axis a level at a time would leave the level below
+it exactly where the nested one was.
+
+**What a declaration cannot close is the state its positions hold.** Every
+reading above converts rows whose every declared member is supplied, so a cost
+charged on a zero-value branch is on neither side of any difference between two
+of them: a Many loaded empty reduces to the interpreter's own shared `()`, a One
+stored null or omitted to `None`, and a member a read never carried to `ABSENT`.
+The same exact total is therefore read once more over the widest declaration in
+each state a conforming read can leave its positions in, with the price
+state-aware — a zeroed occurrence costs its position and nothing under it. Those
+states are a closed set rather than the ones anyone thought of, and closed by
+assertion: the union of the states they put each kind of position in is exactly
+what `python.md` admits for that kind, one nesting rank, the leaves, and the
+Attributes at a time, in both spellings a stored document has, plus the read that
+carried no document column at all.
 
 **What the readings say, in the order they get stronger.** The whole grid sits on
 one affine function of the three parameters fitted from its four smallest points,
@@ -70,9 +84,10 @@ resolves, one per slot in every row a slot widens, one per Value Object leaf in
 every record that carries it, one whole positional row and its naming position
 per record, one position and one record per One occurrence, and one position, one
 row of elements, and one record per element per Many occurrence. Then the whole
-declared document, exactly, at every point that declares one. Those readings are
-the ones that name "no per-cell carrier" in arithmetic, and each is read beside
-the control that proves it detects one —
+declared document, exactly, at every point that declares one — and that same
+total again in every presence state the widest declaration's positions admit.
+Those readings are the ones that name "no per-cell carrier" in arithmetic, and
+each is read beside the control that proves it detects one —
 :func:`test_the_member_step_is_what_refuses_a_representation_that_wraps_every_cell`
 wraps every member cell, stays exactly affine, and fails only at the member step;
 :func:`test_the_leaf_step_is_what_refuses_a_representation_wrapping_every_document_cell`
@@ -85,7 +100,10 @@ wrap what a step holding its own population fixed cannot see at all, the last tw
 one multiplicity branch at a time; and
 :func:`test_the_whole_document_reading_is_what_refuses_a_wrapper_around_a_nested_occurrence`
 wraps what no step here holds a count of, leaving all four of them exactly at
-their priced values and only the total off.
+their priced values and only the total off; and
+:func:`test_the_state_readings_are_what_refuse_a_wrapper_around_a_position_stored_zero`
+wraps what a carried document has none of, leaving the total exact at every point
+that declares one and failing at every state but the carried one.
 
 Exported names carry no leading underscore only where another module imports
 them; nothing imports this one.
@@ -96,20 +114,23 @@ from __future__ import annotations
 import struct
 import sys
 import tracemalloc
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from functools import cache
 from typing import Final, NamedTuple, cast
 
 import pytest
 from memory_instruments import Seam, retained, survivors, warmed
 
-from parallax.core.entity._layout import CatalogedModel, EntityLayout
+from parallax.core.base import Float64, Int64
+from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
+    AttributeMetadata,
     EntityIdentity,
     Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
+    PrimaryKey,
     RelationshipIdentity,
     ValueObjectMetadata,
     entity_by_name,
@@ -208,7 +229,13 @@ projection row; read as a step of its own for what one more element costs, which
 is the one axis that moves the record and element populations while holding the
 leaves inside them fixed. An element of the nested Many brings the ``stamp`` its
 own declaration nests under it, so this is also the axis that prices a record
-reached only by descending a Many."""
+reached only by descending a Many.
+
+Zero is not a point of this axis but a STATE of the occurrence — the read
+contract's own zero value, reached by storing nothing where these rows store
+elements — and is read as :data:`_STATES`. Nothing between the two counts here is
+a state: the Many branch has no predicate on how many elements a nonempty
+occurrence holds, so what one more of them costs is all this axis has to say."""
 
 _ONES: Final = (1, 2)
 """Top-level ONE Value Objects the measured Entity declares: ``mark`` at the
@@ -250,6 +277,13 @@ _TWIN: Final = "twin"
 hop's children were read at. Every one of them names a twin, so every admitted
 parent of that hop receives the attachment, exactly as a fan-back writes one."""
 
+_PARENT_KEY: Final = "parentId"
+_TWIN_KEY: Final = "twinId"
+"""The two Attributes a hop joins from: the one the broad hop gathers children by,
+and the one the twin hop resolves a second projection through. Their stored values
+are the only Attribute values that name anything, which is why they are spelled
+apart from the rest."""
+
 _CONCRETES: Final = ("Alpha", "Beta")
 """The resolved concretes of the measured family, taken in turn down each
 parent's children, and again down the duplicates the twin hop converts — so each
@@ -274,22 +308,34 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
     measured level is polymorphic: ``Alpha`` reaches it through the intermediate
     abstract ``Special`` and ``Beta`` descends from the root directly, which
     gives the two concretes different applicable member sets — five positions
-    against six at the smallest member count — and therefore different layouts,
-    different source view layouts, and different merged rows. Every member the
-    axes vary is declared on the root, so widening one widens both concretes'
-    rows alike and a step stays a count of rows rather than of concretes.
+    against six at the smallest member count — and therefore different layouts
+    and different merged rows, under one source view row a schema interns per
+    admitted slot tuple and both of them share. Every member the axes vary is
+    declared on the root, so widening one widens both concretes' rows alike and a
+    step stays a count of rows rather than of concretes.
 
     The occurrences are what put a document on the measured path: ``mark`` is a
     top-level One holding a nested One and a nested Many, whose every element
     holds a ``stamp`` of its own; ``marks`` is a top-level Many; and ``spare``
     and ``notes`` are the One and the Many their own axes add. A Many is declared
     at :data:`_ELEMENTS` elements by the rows, so a record count is not a row
-    count. Between them those reach every path the reduction has: a One and a
-    Many occurrence each at the top and nested inside another, and a record whose
-    own nested occurrence is reached only by descending a Many. Depth is not what
-    makes that complete — ``_structure`` and ``_structure_occurrence`` call each
-    other with no notion of how deep either is — which is why the tree is priced
-    by that same recursion rather than by one more level per reading.
+    count. Between them those reach every SHAPE the reduction descends: a One and
+    a Many occurrence each at the top and nested inside another, and a record
+    whose own nested occurrence is reached only by descending a Many. Depth is
+    not what makes that complete — ``_structure`` and ``_structure_occurrence``
+    call each other with no notion of how deep either is — which is why the tree
+    is priced by that same recursion rather than by one more level per reading.
+    Which PRESENCE STATE each of those reaches is the rows' business rather than
+    the declaration's, and is :data:`_STATES`.
+
+    Every occurrence of One multiplicity, every Value Object leaf, and every
+    Attribute but the primary key is declared NULLABLE, which is what makes the
+    absent and null spellings of each a conforming stored state instead of a
+    ``required-member-absent`` or ``stored-data-attribute-null`` finding: a
+    reading of the conforming path can only be taken over documents the read
+    contract accepts. A Many declares none, because a Many is never nullable and
+    needs no declaration to reach its zero state — the read contract gives its
+    omitted and null spellings one empty value at every depth.
 
     Zero of either count declares no Value Object at all, which is the
     document-free graph the whole-document reading is taken against.
@@ -307,7 +353,7 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
             "cardinality": "one-to-many",
             "join": {
                 "source": "id",
-                "target": {"entity": f"{_NAMESPACE}.Child", "attribute": "parentId"},
+                "target": {"entity": f"{_NAMESPACE}.Child", "attribute": _PARENT_KEY},
             },
         }
         if dependent:
@@ -315,45 +361,43 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
         return declared
 
     def leaf_run() -> list[dict[str, object]]:
-        return [{"name": f"v{index:02d}", "type": "string"} for index in range(leaves)]
+        return [
+            {"name": f"v{index:02d}", "type": "string", "nullable": True} for index in range(leaves)
+        ]
+
+    def label() -> list[dict[str, object]]:
+        return [{"name": "label", "type": "string", "nullable": True}]
 
     value_objects: list[dict[str, object]] = []
     if ones:
         value_objects.append(
             {
                 "name": "mark",
-                "attributes": [{"name": "label", "type": "string"}],
+                "nullable": True,
+                "attributes": label(),
                 "valueObjects": [
-                    {"name": "inner", "attributes": leaf_run()},
+                    {"name": "inner", "nullable": True, "attributes": leaf_run()},
                     {
                         "name": "inners",
                         "multiplicity": "many",
                         "attributes": leaf_run(),
                         "valueObjects": [
-                            {"name": "stamp", "attributes": [{"name": "at", "type": "string"}]}
+                            {
+                                "name": "stamp",
+                                "nullable": True,
+                                "attributes": [{"name": "at", "type": "string", "nullable": True}],
+                            }
                         ],
                     },
                 ],
             }
         )
     if manys:
-        value_objects.append(
-            {
-                "name": "marks",
-                "multiplicity": "many",
-                "attributes": [{"name": "label", "type": "string"}],
-            }
-        )
+        value_objects.append({"name": "marks", "multiplicity": "many", "attributes": label()})
     if ones > _ONES[0]:
-        value_objects.append({"name": "spare", "attributes": leaf_run()})
+        value_objects.append({"name": "spare", "nullable": True, "attributes": leaf_run()})
     if manys > _MANYS[0]:
-        value_objects.append(
-            {
-                "name": "notes",
-                "multiplicity": "many",
-                "attributes": [{"name": "label", "type": "string"}],
-            }
-        )
+        value_objects.append({"name": "notes", "multiplicity": "many", "attributes": label()})
 
     return {
         "entities": [
@@ -378,10 +422,15 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
                 },
                 "attributes": [
                     {"name": "id", "type": "int64", "primaryKey": True},
-                    {"name": "parentId", "type": "int64"},
-                    {"name": "twinId", "type": "int64"},
+                    {"name": _PARENT_KEY, "type": "int64", "nullable": True},
+                    {"name": _TWIN_KEY, "type": "int64", "nullable": True},
                     *(
-                        {"name": f"c{index:02d}", "type": "string", "maxLength": 32}
+                        {
+                            "name": f"c{index:02d}",
+                            "type": "string",
+                            "maxLength": 32,
+                            "nullable": True,
+                        }
                         for index in range(members - 3)
                     ),
                 ],
@@ -392,12 +441,12 @@ def _document(members: int, leaves: int, ones: int, manys: int) -> Mapping[str, 
                         "name": _TWIN,
                         "cardinality": "many-to-one",
                         "join": {
-                            "source": "twinId",
+                            "source": _TWIN_KEY,
                             "target": {"entity": f"{_NAMESPACE}.Child", "attribute": "id"},
                         },
                     },
                 ],
-                "indices": [{"name": "retention_child_parent", "attributes": ["parentId"]}],
+                "indices": [{"name": "retention_child_parent", "attributes": [_PARENT_KEY]}],
             },
             {
                 "name": "Special",
@@ -441,129 +490,66 @@ def _level(layout: EntityLayout) -> LevelContext:
     return LevelContext(layout, layout.occurrences)
 
 
-class _Workload(NamedTuple):
-    """One shape's whole model and its rows, formed once at import.
+@cache
+def _model(members: int, leaves: int, ones: int, manys: int) -> tuple[Metamodel, LayoutCatalog]:
+    """One document's accepted model and its layout catalog.
 
-    Every row a window converts is allocated out here, which is what excludes
-    decoded payload leaves from the readings STRUCTURALLY rather than by
-    filtering: a compact row that merely references one of these values costs the
-    reading the position and not the value.
+    Keyed by what the DECLARATION varies, which is every workload parameter but
+    the stored state: two row sets holding different presence states are two
+    fillings of one model, and deriving the model twice would be the only
+    expensive thing about a state.
+    """
+    meta = model_of(domain_model_from_document(_document(members, leaves, ones, manys)))
+    return meta, CatalogedModel(meta).layouts
 
-    ``levels`` is the resolved concrete each child position is read at, in
-    position order, so a conversion takes the exact Entity's own layout exactly
-    as a polymorphic level's compiled read hands one over per row.
+
+class _Stored(NamedTuple):
+    """Which of a row's declared members hold their ZERO value, and how that zero
+    is spelled.
+
+    `python.md`'s *Value Object member rows* closes what a position may hold: an
+    occurrence slot admits ``ABSENT | None | row`` for a One and ``ABSENT |
+    tuple[row, ...]`` for a Many, and a leaf position admits its decoded value or
+    ``ABSENT`` where the stored document did not carry it, with ``None`` for a
+    stored null. A fully carried document reaches only the populated half of
+    those sets, so which members are stored zero is a parameter of the WORKLOAD
+    rather than of the declaration — the same model, filled differently.
+
+    ``rank`` names the nesting rank whose occurrences are stored zero, counted off
+    the occurrence's own identity path: a top-level occurrence is rank 0 and an
+    occurrence declared inside a record of rank ``r`` is rank ``r + 1``. By rank
+    rather than by name because a zeroed occurrence reduces to nothing for
+    anything below it to sit in, so one rank at a time is the coarsest grouping
+    that can still reach every rank the declaration has.
+
+    ``leaves`` and ``attributes`` zero the two populations that are not
+    occurrences: every Value Object leaf at every depth, and every Entity
+    Attribute but the primary key.
+
+    ``omitted`` is the spelling — the stored document has no key for the member,
+    rather than a key holding JSON null. The two spellings are ONE state wherever
+    the read contract collapses them: a top-level occurrence reads an absent
+    column and a null one through the same ``SqlNull`` carrier, and a Many's
+    omitted and null spellings are one zero value at every depth
+    (`m-snapshot-read` *What a materialized value carries*). They are two states
+    for a nested One and for a leaf, which read ``ABSENT`` for the first and
+    ``None`` for the second.
     """
 
-    meta: Metamodel
-    parent: LevelContext
-    levels: tuple[LevelContext, ...]
-    views: tuple[RelationshipViewKey, ...]
-    twin: RelationshipViewKey
-    parents: tuple[dict[str, object], ...]
-    children: tuple[tuple[dict[str, object], ...], ...]
+    rank: int | None = None
+    leaves: bool = False
+    attributes: bool = False
+    omitted: bool = False
 
 
-def _workload(members: int, leaves: int, elements: int, ones: int, manys: int) -> _Workload:
-    meta = model_of(domain_model_from_document(_document(members, leaves, ones, manys)))
-    catalog = CatalogedModel(meta).layouts
-    parent, child = _identity(meta, "Parent"), _identity(meta, "Child")
-    concretes = tuple(_level(catalog.entity(_identity(meta, name))) for name in _CONCRETES)
-    parent_rows: list[dict[str, object]] = [{"id": 1_000 + cell} for cell in range(_LARGER)]
-    child_rows: list[tuple[dict[str, object], ...]] = []
-    for cell in range(_LARGER):
-        rows: list[dict[str, object]] = []
-        for index in range(_CHILDREN):
-            row: dict[str, object] = {
-                "id": 10_000 + cell * 100 + index,
-                "parent_id": 1_000 + cell,
-                "twin_id": 10_000 + cell * 100 + index % _DUPLICATES,
-            }
-            for position in range(members - 3):
-                row[f"c{position:02d}"] = f"c{position:02d}-value-{cell}-{index}"
-            if index % len(_CONCRETES) == 0:
-                row["rank"] = index
-            else:
-                row["weight"] = float(index)
-                row["note"] = f"note-{cell}-{index}"
-            if ones:
-                row["mark"] = {
-                    "label": f"mark-{cell}-{index}",
-                    "inner": _record(leaves, cell, index),
-                    "inners": [
-                        _element(leaves, cell, index, element) for element in range(elements)
-                    ],
-                }
-            if manys:
-                row["marks"] = [
-                    {"label": f"marks-{cell}-{index}-{element}"} for element in range(elements)
-                ]
-            if ones > _ONES[0]:
-                row["spare"] = _record(leaves, cell, index)
-            if manys > _MANYS[0]:
-                row["notes"] = [
-                    {"label": f"notes-{cell}-{index}-{element}"} for element in range(elements)
-                ]
-            rows.append(row)
-        child_rows.append(tuple(rows))
-    return _Workload(
-        meta,
-        _level(catalog.entity(parent)),
-        tuple(concretes[index % len(_CONCRETES)] for index in range(_CHILDREN)),
-        tuple(RelationshipViewKey(RelationshipIdentity(parent, name)) for name in _VIEWS),
-        RelationshipViewKey(RelationshipIdentity(child, _TWIN)),
-        tuple(parent_rows),
-        tuple(child_rows),
-    )
+_CARRIED: Final = _Stored()
+"""Every declared member carried at every depth: the state the crossed grid, all
+four document steps, and the row calibration are read at."""
 
 
-def _record(leaves: int, cell: int, index: int) -> dict[str, object]:
-    """One nested Value Object record's stored document."""
-    return {f"v{position:02d}": f"v{position:02d}-{cell}-{index}" for position in range(leaves)}
-
-
-def _element(leaves: int, cell: int, index: int, element: int) -> dict[str, object]:
-    """One element of the nested Many, carrying the ``stamp`` its own declaration
-    nests under it — the occurrence a reduction reaches only by descending a Many
-    first."""
-    return {
-        **_record(leaves, cell, index),
-        "stamp": {"at": f"stamp-{cell}-{index}-{element}"},
-    }
-
-
-_SHAPES: Final = (
-    *((members, _LEAVES[0], _ELEMENTS[0], _ONES[0], _MANYS[0]) for members in _MEMBERS),
-    (_MEMBERS[0], _LEAVES[1], _ELEMENTS[0], _ONES[0], _MANYS[0]),
-    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[1], _ONES[0], _MANYS[0]),
-    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[0], _ONES[1], _MANYS[0]),
-    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[0], _ONES[0], _MANYS[1]),
-    (_MEMBERS[0], _LEAVES[0], _ELEMENTS[0], 0, 0),
-)
-"""What the model and its rows are formed at: one shape per grid member count,
-the second point of each of the four document steps, and the document-free shape
-the whole-document reading is taken against. Every step is read at the smallest
-member count, which is where every step in this suite is read."""
-
-_WORKLOADS: Final = {shape: _workload(*shape) for shape in _SHAPES}
-
-_PIN: Final = Pin()
-
-_GRAPH_STRUCTURES: Final = (
-    SnapshotGraph,
-    GraphRows,
-    GraphMerge,
-    ViewSchema,
-    SourceViewLayout,
-    MergedViewLayout,
-    ChildSlot,
-)
-"""What a held materialization is allowed to leave alive, by kind.
-
-One sealed graph, its arrays, its merge, and the execution's own view schema with
-the slot table and layouts that schema was built from. Every one of them is a
-whole-graph or whole-execution structure, which is the claim the counts beside
-the list make: not one of them is per projection, per member, or per edge.
-"""
+def _zeroed(declared: ValueObjectMetadata | NestedValueObjectMetadata, stored: _Stored) -> bool:
+    """Whether ``stored`` holds ``declared``'s occurrence in its zero value."""
+    return stored.rank == len(declared.identity.path) - 1
 
 
 class _Point(NamedTuple):
@@ -571,11 +557,21 @@ class _Point(NamedTuple):
     family root declares, ``slots`` relationship views its root-parented levels
     declare, ``arms`` projection references in the narrowed view of them,
     ``leaves`` on each nested Value Object record, ``elements`` in each Many
-    occurrence, and ``ones`` and ``manys`` top-level Value Objects of each
-    multiplicity on each child projection.
+    occurrence, ``ones`` and ``manys`` top-level Value Objects of each
+    multiplicity on each child projection, and the ``stored`` state the rows hold
+    those declarations in.
 
-    The crossed grid pins the last four; each of the four document steps moves
-    exactly one of them."""
+    ``projected`` is the one parameter that is a fact about the READ rather than
+    about the model or the rows: a read whose resolved position carries no
+    document column leaves every top-level occurrence position ``ABSENT``,
+    whatever the row underneath it stores. It is therefore outside
+    :attr:`shape`, which two points share exactly when they convert the same
+    rows against the same model.
+
+    The crossed grid pins everything after ``arms``; each of the four document
+    steps moves exactly one of the four counts; and each state point moves
+    ``stored`` or ``projected`` alone.
+    """
 
     members: int
     slots: int
@@ -584,12 +580,14 @@ class _Point(NamedTuple):
     elements: int = _ELEMENTS[0]
     ones: int = _ONES[0]
     manys: int = _MANYS[0]
+    stored: _Stored = _CARRIED
+    projected: bool = True
 
     @property
-    def shape(self) -> tuple[int, int, int, int, int]:
+    def shape(self) -> tuple[int, int, int, int, int, _Stored]:
         """The model and rows this point converts, which is what the axes moving
         a document share and the three view axes do not."""
-        return self.members, self.leaves, self.elements, self.ones, self.manys
+        return self.members, self.leaves, self.elements, self.ones, self.manys, self.stored
 
 
 _GRID: Final = tuple(
@@ -616,16 +614,254 @@ mixture of them."""
 _BARE: Final = _LEAST._replace(ones=0, manys=0)
 """The same graph with no Value Object declared at all.
 
-The baseline the whole-document reading is taken against, and the only point that
-is neither a grid point nor the far end of a document step. What separates it
-from :data:`_LEAST` is every record the declaration names at every depth, which
-is what turns that reading into an exact TOTAL: a step prices the population it
-moves and absorbs every population it holds still, and an occurrence nested
-inside another one is held still by every axis this suite has."""
+The baseline every whole-document reading is taken against, and the only point
+that is neither a grid point, the far end of a document step, nor a state of the
+widest document. What separates it from a point that declares one is every record
+that declaration names at every depth, which is what turns the reading into an
+exact TOTAL: a step prices the population it moves and absorbs every population
+it holds still, and an occurrence nested inside another one is held still by
+every axis this suite has."""
 
 _DOCUMENTS: Final = (_LEAST, _WIDER_LEAVES, _WIDER_ELEMENTS, _WIDER_ONES, _WIDER_MANYS)
-"""Every point that declares a document, which is every point the total is read
-at."""
+"""Every point a document step is read at, which is every point the total is read
+at with its members carried."""
+
+_WIDEST: Final = _LEAST._replace(ones=_ONES[1], manys=_MANYS[1])
+"""Both occurrence axes at their far ends at once, which is the declaration whose
+sites are the union of every other point's.
+
+Where the states are read, so a state reading covers a top-level One and a
+top-level Many that nest something and a pair that nest nothing, rather than
+whichever of them one step happened to add."""
+
+
+def _declared(point: _Point) -> tuple[ValueObjectMetadata, ...]:
+    """The top-level occurrences the measured level declares at ``point``.
+
+    Read off one concrete because every occurrence the workload declares is
+    declared on the family root, so the two concretes carry the identical
+    occurrence tree and differ only in Attributes.
+    """
+    meta, catalog = _model(point.members, point.leaves, point.ones, point.manys)
+    return catalog.entity(_identity(meta, _CONCRETES[0])).occurrences
+
+
+def _ranks(declared: Sequence[ValueObjectMetadata | NestedValueObjectMetadata]) -> frozenset[int]:
+    """Every nesting rank the occurrences under ``declared`` reach."""
+    return frozenset[int]().union(
+        *(
+            {len(occurrence.identity.path) - 1, *_ranks(occurrence.value_objects)}
+            for occurrence in declared
+        )
+    )
+
+
+_RANKS: Final = tuple(sorted(_ranks(_declared(_WIDEST))))
+"""The nesting ranks the measured declaration reaches, taken off the declaration
+rather than enumerated by hand: a document nested one level deeper grows this
+tuple, and the states below with it."""
+
+_STATES: Final = (
+    _CARRIED,
+    *(_Stored(rank=rank, omitted=omitted) for rank in _RANKS for omitted in (False, True)),
+    *(_Stored(leaves=True, omitted=omitted) for omitted in (False, True)),
+    *(_Stored(attributes=True, omitted=omitted) for omitted in (False, True)),
+)
+"""Every stored state the widest document is measured in.
+
+Generated rather than listed: one state per (population, spelling), where the
+populations are the occurrence ranks the declaration reaches plus the leaves and
+the Attributes, and the spellings are the two a stored document has. What makes
+the set CLOSED is not this construction but its consequence — the union of the
+states it puts each kind of position in is exactly :data:`_ADMITTED_STATES`,
+asserted by
+:func:`test_every_measured_position_reaches_every_state_its_contract_admits`
+rather than argued here."""
+
+_STATE_POINTS: Final = (
+    *(_WIDEST._replace(stored=stored) for stored in _STATES),
+    _WIDEST._replace(projected=False),
+)
+"""Where the state readings are taken: the widest document in each stored state,
+and once more with its column not projected at all — the one way a TOP-LEVEL
+position reads ``ABSENT``, which no stored document can produce because an absent
+column and a null one are one carrier."""
+
+
+class _Workload(NamedTuple):
+    """One shape's whole model and its rows, formed once at import.
+
+    Every row a window converts is allocated out here, which is what excludes
+    decoded payload leaves from the readings STRUCTURALLY rather than by
+    filtering: a compact row that merely references one of these values costs the
+    reading the position and not the value.
+
+    ``levels`` is the resolved concrete each child position is read at, in
+    position order, so a conversion takes the exact Entity's own layout exactly
+    as a polymorphic level's compiled read hands one over per row. ``unread`` is
+    the same levels resolved by a read that projected no document column, which
+    is what a point measures the unprojected state through.
+    """
+
+    meta: Metamodel
+    parent: LevelContext
+    levels: tuple[LevelContext, ...]
+    unread: tuple[LevelContext, ...]
+    views: tuple[RelationshipViewKey, ...]
+    twin: RelationshipViewKey
+    parents: tuple[dict[str, object], ...]
+    children: tuple[tuple[dict[str, object], ...], ...]
+
+
+def _workload(
+    members: int, leaves: int, elements: int, ones: int, manys: int, stored: _Stored
+) -> _Workload:
+    meta, catalog = _model(members, leaves, ones, manys)
+    parent, child = _identity(meta, "Parent"), _identity(meta, "Child")
+    concretes = tuple(_level(catalog.entity(_identity(meta, name))) for name in _CONCRETES)
+    levels = tuple(concretes[index % len(_CONCRETES)] for index in range(_CHILDREN))
+    return _Workload(
+        meta,
+        _level(catalog.entity(parent)),
+        levels,
+        tuple(LevelContext(level.layout, ()) for level in levels),
+        tuple(RelationshipViewKey(RelationshipIdentity(parent, name)) for name in _VIEWS),
+        RelationshipViewKey(RelationshipIdentity(child, _TWIN)),
+        tuple({"id": 1_000 + cell} for cell in range(_LARGER)),
+        tuple(
+            tuple(
+                _child_row(levels[index].layout, elements, stored, cell, index)
+                for index in range(_CHILDREN)
+            )
+            for cell in range(_LARGER)
+        ),
+    )
+
+
+def _child_row(
+    layout: EntityLayout, elements: int, stored: _Stored, cell: int, index: int
+) -> dict[str, object]:
+    """One child's stored row, keyed as its concrete's own storage names and
+    filled to ``stored``.
+
+    The primary key is carried in every state, alone among the Attributes: a row
+    whose key is absent or null is a ``stored-data-primary-key-null``
+    projection that merges with nothing, which is the non-conforming path rather
+    than a presence state of the conforming one.
+    """
+    tag = f"{cell}-{index}"
+    row: dict[str, object] = {}
+    for attribute in layout.attributes:
+        if isinstance(attribute.primary_key, PrimaryKey):
+            row[attribute.storage.name] = 10_000 + cell * 100 + index
+        elif not stored.attributes:
+            row[attribute.storage.name] = _attribute_value(attribute, cell, index, tag)
+        elif not stored.omitted:
+            row[attribute.storage.name] = None
+    for occurrence in layout.occurrences:
+        name = occurrence.storage.name
+        if not _zeroed(occurrence, stored):
+            row[name] = _stored_occurrence(occurrence, elements, stored, f"{name}-{tag}")
+        elif not stored.omitted:
+            row[name] = None
+    return row
+
+
+def _attribute_value(attribute: AttributeMetadata, cell: int, index: int, tag: str) -> object:
+    """One Attribute's carried stored value, spelled by its declared Neutral Type.
+
+    The two join Attributes are answered before the types, because what they hold
+    has to name something: every child's ``parentId`` is its own cell's root, and
+    its ``twinId`` is one of the duplicates the twin hop converts a second time —
+    which is what makes that hop a real fetch level over rows the broad hop read
+    already rather than a second spelling of the same projection.
+    """
+    if attribute.identity.name == _PARENT_KEY:
+        return 1_000 + cell
+    if attribute.identity.name == _TWIN_KEY:
+        return 10_000 + cell * 100 + index % _DUPLICATES
+    if isinstance(attribute.type, Int64):
+        return 10_000 + cell * 100 + index
+    if isinstance(attribute.type, Float64):
+        return float(index)
+    return f"{attribute.identity.name}-{tag}"
+
+
+def _stored_occurrence(
+    declared: ValueObjectMetadata | NestedValueObjectMetadata,
+    elements: int,
+    stored: _Stored,
+    tag: str,
+) -> object:
+    """The document ``declared`` holds under ``stored``: a Many stores
+    ``elements`` element documents and a One stores a single document.
+
+    Reduced from the declaration rather than written out, so the rows a workload
+    converts and the price :func:`_occurrence_price` charges walk one tree by one
+    recursion and a declaration nobody thought to fill cannot exist.
+    """
+    if declared.multiplicity is Multiplicity.MANY:
+        return [
+            _stored_record(declared, elements, stored, f"{tag}-{element}")
+            for element in range(elements)
+        ]
+    return _stored_record(declared, elements, stored, tag)
+
+
+def _stored_record(
+    declared: ValueObjectMetadata | NestedValueObjectMetadata,
+    elements: int,
+    stored: _Stored,
+    tag: str,
+) -> dict[str, object]:
+    """One record's stored document: every declared leaf, then every nested
+    occurrence, each of them carried or spelled zero.
+
+    Nothing here consults a leaf's type because every Value Object leaf the
+    workload declares is a string.
+    """
+    document: dict[str, object] = {}
+    for leaf in declared.attributes:
+        if not stored.leaves:
+            document[leaf.identity.name] = f"{leaf.identity.name}-{tag}"
+        elif not stored.omitted:
+            document[leaf.identity.name] = None
+    for nested in declared.value_objects:
+        name = nested.identity.path[-1]
+        if not _zeroed(nested, stored):
+            document[name] = _stored_occurrence(nested, elements, stored, f"{name}-{tag}")
+        elif not stored.omitted:
+            document[name] = None
+    return document
+
+
+_SHAPES: Final = tuple(
+    dict.fromkeys(point.shape for point in (*_GRID, *_DOCUMENTS, *_STATE_POINTS, _BARE))
+)
+"""What the models and their rows are formed at, taken off the points that read
+them rather than listed beside them, so a point and the workload it names cannot
+drift apart."""
+
+_WORKLOADS: Final = {shape: _workload(*shape) for shape in _SHAPES}
+
+_PIN: Final = Pin()
+
+_GRAPH_STRUCTURES: Final = (
+    SnapshotGraph,
+    GraphRows,
+    GraphMerge,
+    ViewSchema,
+    SourceViewLayout,
+    MergedViewLayout,
+    ChildSlot,
+)
+"""What a held materialization is allowed to leave alive, by kind.
+
+One sealed graph, its arrays, its merge, and the execution's own view schema with
+the slot table and layouts that schema was built from. Every one of them is a
+whole-graph or whole-execution structure, which is the claim the counts beside
+the list make: not one of them is per projection, per member, or per edge.
+"""
 
 _LEAF_POOL: Final = tuple(f"leaf-{index:02d}" for index in range(max(_LEAVES) + _LABELS))
 """Leaves the row calibration fills its rows from, allocated out here for the
@@ -667,8 +903,13 @@ def _compose(point: _Point, cells: int) -> tuple[SnapshotGraph, GraphMerge]:
     read builds and merges one: a fresh slot table and view schema per execution,
     every row converted through the production converter under the concrete its
     own level resolved it to, the builder dropped at sealing, and the sealed graph
-    and its merge the only things that come back."""
+    and its merge the only things that come back.
+
+    ``point.projected`` selects which resolved level each child row converts
+    under, because that is where a read states which document columns its
+    position carried."""
     workload = _WORKLOADS[point.shape]
+    levels = workload.levels if point.projected else workload.unread
     views = workload.views[: point.slots]
     builder = GraphBuilder(ViewSchema(_slot_table(point)))
     roots: list[int] = []
@@ -676,12 +917,12 @@ def _compose(point: _Point, cells: int) -> tuple[SnapshotGraph, GraphMerge]:
         parent = convert_row(workload.parents[cell], workload.parent, builder, source=_ROOT_SOURCE)
         children = tuple(
             convert_row(row, level, builder, source=_BROAD_SOURCE)
-            for row, level in zip(workload.children[cell], workload.levels, strict=True)
+            for row, level in zip(workload.children[cell], levels, strict=True)
         )
         twins = tuple(
             convert_row(
                 workload.children[cell][index],
-                workload.levels[index],
+                levels[index],
                 builder,
                 source=_TWIN_SOURCE,
             )
@@ -842,8 +1083,13 @@ def _leaf_records(cells: int) -> int:
 
 def _row_bytes(positions: int) -> int:
     """What one whole positional row of ``positions`` positions costs: the tuple
-    itself, plus one pointer for each position it holds."""
-    return _EMPTY_ROW + positions * _POINTER
+    itself, plus one pointer for each position it holds.
+
+    A row of no positions costs NOTHING rather than :data:`_EMPTY_ROW`, because
+    the interpreter answers every one of them with a single shared object — which
+    is the object a zero-element Many occurrence reduces to, so this is what makes
+    that state free rather than a row wide."""
+    return _EMPTY_ROW + positions * _POINTER if positions else 0
 
 
 def _element_bytes(leaves: int) -> int:
@@ -889,10 +1135,10 @@ def _many_occurrence_bytes(elements: int) -> int:
 
 
 def _occurrence_price(
-    declared: ValueObjectMetadata | NestedValueObjectMetadata, elements: int
+    declared: ValueObjectMetadata | NestedValueObjectMetadata, elements: int, stored: _Stored
 ) -> int:
-    """What one whole occurrence of ``declared`` costs, every record under it
-    included.
+    """What one whole occurrence of ``declared`` costs under ``stored``, every
+    record under it included.
 
     The recursion :func:`~parallax.snapshot.materialize._convert._structure_occurrence`
     reduces one by, priced instead of walked: a Many is a row of element positions
@@ -901,26 +1147,46 @@ def _occurrence_price(
     parameter for the same reason it is not one there — the two branches call each
     other, and neither knows how deep it is — so this prices whatever tree a
     declaration names rather than the depth some reading happened to reach.
+
+    An occurrence ``stored`` holds in its zero value costs NOTHING at all, and
+    nothing under it exists to cost anything: that branch reduces to ``None`` for
+    a One and to the interpreter's shared empty tuple for a Many, and neither is
+    an allocation. The position naming it stays charged, by the row that holds
+    it — which is what makes a zero state a state of the SAME row rather than a
+    narrower one.
     """
+    if _zeroed(declared, stored):
+        return 0
     if declared.multiplicity is Multiplicity.MANY:
-        return _row_bytes(elements) + elements * _record_price(declared, elements)
-    return _record_price(declared, elements)
+        return _row_bytes(elements) + elements * _record_price(declared, elements, stored)
+    return _record_price(declared, elements, stored)
 
 
-def _record_price(declared: ValueObjectMetadata | NestedValueObjectMetadata, elements: int) -> int:
+def _record_price(
+    declared: ValueObjectMetadata | NestedValueObjectMetadata, elements: int, stored: _Stored
+) -> int:
     """What one reduced record of ``declared`` costs: the positional row holding
     its leaves and then its nested occurrences, and every occurrence those later
-    positions name."""
+    positions name.
+
+    ``stored`` reaches this only through the occurrences: a leaf position costs
+    its pointer whether it holds a decoded value, ``None``, or ``ABSENT``, so the
+    two zero states of a leaf are exactly as wide as the carried one.
+    """
     return _row_bytes(len(declared.attributes) + len(declared.value_objects)) + sum(
-        _occurrence_price(nested, elements) for nested in declared.value_objects
+        _occurrence_price(nested, elements, stored) for nested in declared.value_objects
     )
 
 
 def _document_bytes(point: _Point, cells: int) -> int:
     """What the whole Value Object half of a ``cells``-cell graph may cost, priced
-    from the declaration rather than read off the graph: per projection the
-    workload converts, one position in its member row per top-level occurrence
-    plus the subtree that position holds.
+    from the declaration and ``point``'s stored state rather than read off the
+    graph: per projection the workload converts, one position in its member row
+    per top-level occurrence plus the subtree that position holds.
+
+    An unprojected read holds every one of those subtrees at nothing — the
+    position reads ``ABSENT`` whatever the row beneath it stores — so what is left
+    is the positions alone, which is the floor a declared document can cost.
 
     Summed over the levels a cell converts — the parent, every child, and the
     duplicates the twin hop reads again — rather than over a count of rows, so
@@ -929,7 +1195,8 @@ def _document_bytes(point: _Point, cells: int) -> int:
     workload = _WORKLOADS[point.shape]
     projections = tuple(
         sum(
-            _POINTER + _occurrence_price(declared, point.elements)
+            _POINTER
+            + (_occurrence_price(declared, point.elements, point.stored) if point.projected else 0)
             for declared in level.layout.occurrences
         )
         for level in (workload.parent, *workload.levels)
@@ -965,6 +1232,78 @@ def _graph_survivors(seam: Seam) -> list[object]:
     """Every object of Parallax's own that ``seam`` leaves alive at its sample
     point, whatever kind it is."""
     return [obj for obj in survivors(seam) if type(obj).__module__.startswith("parallax.")]
+
+
+_ATTRIBUTE_POSITION: Final = "Entity Attribute"
+_LEAF_POSITION: Final = "Value Object leaf"
+_OCCURRENCE_POSITION: Final = {
+    (True, Multiplicity.ONE): "top-level One occurrence",
+    (True, Multiplicity.MANY): "top-level Many occurrence",
+    (False, Multiplicity.ONE): "nested One occurrence",
+    (False, Multiplicity.MANY): "nested Many occurrence",
+}
+"""The four occurrence positions a presence state is closed at separately: the two
+multiplicities reduce through separate branches, and a top-level occurrence is the
+only member a READ can decline to carry."""
+
+_ADMITTED_STATES: Final = {
+    _ATTRIBUTE_POSITION: frozenset({"carried", "null", "absent"}),
+    _LEAF_POSITION: frozenset({"carried", "null", "absent"}),
+    _OCCURRENCE_POSITION[True, Multiplicity.ONE]: frozenset({"carried", "null", "absent"}),
+    _OCCURRENCE_POSITION[True, Multiplicity.MANY]: frozenset({"carried", "empty", "absent"}),
+    _OCCURRENCE_POSITION[False, Multiplicity.ONE]: frozenset({"carried", "null", "absent"}),
+    _OCCURRENCE_POSITION[False, Multiplicity.MANY]: frozenset({"carried", "empty"}),
+}
+"""Every state a conforming read leaves each kind of position in, which is what
+makes :data:`_STATES` a closed set rather than a list of states someone thought
+of.
+
+`python.md`'s *Value Object member rows* fixes the document rows directly: a One
+position admits ``ABSENT | None | row``, a Many admits ``ABSENT |
+tuple[row, ...]`` — where the tuple may hold no element — and a leaf holds its
+decoded value, ``None`` for a stored null, or ``ABSENT`` where the stored
+document did not carry it. An Entity Attribute position reads the same three, by
+the same rule one position lower.
+
+A NESTED Many is the one position that does not reach its whole admitted set, and
+not for want of a state to store: `python.md`'s *Value Objects* makes a Many's
+omitted and null spellings one zero value ``()`` at every nesting depth, so
+nothing a stored document holds leaves one ``ABSENT``. What does is a read that
+did not carry the member at all, and only a TOP-LEVEL occurrence has that — a
+nested one is carried exactly when the record around it is."""
+
+
+def _state_of(value: object, *, many: bool) -> str:
+    """Which of the admitted states ``value`` is in at its own position."""
+    if value is ABSENT:
+        return "absent"
+    if value is None:
+        return "null"
+    if many and value == ():
+        return "empty"
+    return "carried"
+
+
+def _reached(
+    value: object,
+    declared: ValueObjectMetadata | NestedValueObjectMetadata,
+    *,
+    top_level: bool,
+    into: dict[str, set[str]],
+) -> None:
+    """Record the state of ``value``'s own position and of every position under
+    it, descending a Many by its elements and a One by its single record."""
+    many = declared.multiplicity is Multiplicity.MANY
+    state = _state_of(value, many=many)
+    into.setdefault(_OCCURRENCE_POSITION[top_level, declared.multiplicity], set()).add(state)
+    if state != "carried":
+        return
+    rows = cast("tuple[tuple[object, ...], ...]", value if many else (value,))
+    for row in rows:
+        for cell in row[: len(declared.attributes)]:
+            into.setdefault(_LEAF_POSITION, set()).add(_state_of(cell, many=False))
+        for offset, nested in enumerate(declared.value_objects, start=len(declared.attributes)):
+            _reached(row[offset], nested, top_level=False, into=into)
 
 
 def test_the_workload_holds_its_projection_and_logical_node_counts_across_the_whole_grid() -> None:
@@ -1041,6 +1380,32 @@ def test_every_planned_level_owns_a_source_of_its_own_and_writes_every_slot_it_d
         assert all(value is not ABSENT for row in rows.view_rows for value in row), point
 
 
+def test_every_measured_position_reaches_every_state_its_contract_admits() -> None:
+    # What makes the state readings below a SWEEP rather than two more points.
+    # Declaration shape and presence state are the two things a reduced document
+    # varies, and the axes and the total close the first one only: they move how
+    # many occurrences, records, and positions a projection has, never what those
+    # positions hold. This is the second closed, and it is closed by assertion —
+    # the union of the states `_STATES` puts each kind of position in is exactly
+    # the set `python.md` admits for that kind, so a state outside it would fail
+    # here rather than sit unmeasured. Conformance is asserted in the same walk
+    # and for the same reason: the claim is about the CONFORMING path, so every
+    # one of these rows has to be one the read contract accepts, and a stored
+    # spelling that recorded an issue would be a different claim.
+    reached: dict[str, set[str]] = {}
+    for point in _STATE_POINTS:
+        graph, merge = _compose(point, _CELLS)
+        rows = graph_rows(graph)
+        assert not any(rows.issues), point
+        assert not merge.has_issues, point
+        for layout, row in zip(rows.layouts, rows.member_rows, strict=True):
+            for cell in row[: layout.attribute_count]:
+                reached.setdefault(_ATTRIBUTE_POSITION, set()).add(_state_of(cell, many=False))
+            for position, declared in enumerate(layout.occurrences, start=layout.attribute_count):
+                _reached(row[position], declared, top_level=True, into=reached)
+    assert {kind: frozenset(states) for kind, states in reached.items()} == _ADMITTED_STATES
+
+
 def test_a_positional_row_costs_the_tuple_that_holds_it_and_nothing_more() -> None:
     # What the two record readings below are stated in, measured rather than
     # assumed. Every claim about a Value Object record's price rests on a row
@@ -1049,10 +1414,14 @@ def test_a_positional_row_costs_the_tuple_that_holds_it_and_nothing_more() -> No
     # it: the marginal cost of one more row, in a structure that names it, is the
     # row plus the position naming it. An interpreter that ever charged a row
     # differently would fail here rather than silently moving what a record step
-    # means.
+    # means. Zero positions is read first and is not one more of the same
+    # reading: it is what a Many occurrence's zero-element value is, and it costs
+    # the naming position alone, because the interpreter answers every empty
+    # tuple with one shared object. That is the fact every zero-state price below
+    # rests on.
     tracemalloc.start()
     try:
-        for positions in _LEAVES:
+        for positions in (0, *_LEAVES):
             small = retained(_rows_seam(_ROWS[0], positions))
             large = retained(_rows_seam(_ROWS[1], positions))
             grown = (_ROWS[1] - _ROWS[0]) * (_row_bytes(positions) + _POINTER)
@@ -1163,6 +1532,26 @@ def test_a_whole_document_costs_the_rows_its_declaration_names_and_nothing_at_an
     for point in _DOCUMENTS:
         assert _step(_seam, point, _CELLS, _BARE) == _document_bytes(point, _CELLS), point
         assert _step(_seam, point, _LARGER, _BARE) == _document_bytes(point, _LARGER), point
+
+
+def test_a_whole_document_costs_that_same_total_in_every_state_its_positions_admit() -> None:
+    # The other half of the total, and the one an exact total over fully carried
+    # documents cannot state. Every reading above is taken over a document whose
+    # every One is supplied and whose every Many holds elements, so a carrier that
+    # came back on a ZERO-state branch — a Many loaded empty, a One stored null or
+    # omitted, a member the read never carried — sits on neither side of any
+    # difference and leaves all of them exact. This reads the same exact total
+    # over the widest declaration in every state its positions admit, against the
+    # same document-free baseline, with the price state-aware: a zeroed occurrence
+    # costs its position and nothing under it, because `None` and `()` are both
+    # objects the interpreter already had. So the equalities say what a state
+    # COSTS as well as that it is reached — including that zeroing every leaf, or
+    # every Attribute, moves nothing at all, since a position holds its pointer
+    # whatever is at the end of it. One graph size is enough where the four steps
+    # need two: this is an exact equality against a price already multiplied by
+    # the cells, so a byte charged per row has no size to hide at.
+    for point in _STATE_POINTS:
+        assert _step(_seam, point, _CELLS, _BARE) == _document_bytes(point, _CELLS), point
 
 
 def test_an_edge_costs_one_pointer_where_it_is_recorded_and_one_where_it_resolves() -> None:
@@ -1567,3 +1956,97 @@ def test_the_whole_document_reading_is_what_refuses_a_wrapper_around_a_nested_oc
     assert _step(_nested_occurrence_wrapping_seam, _WIDER_MANYS, _CELLS) == _member_rows(
         _CELLS
     ) * _many_occurrence_bytes(_ELEMENTS[0])
+
+
+def _zero_state_wrapping_seam(point: _Point, cells: int = _CELLS) -> Seam:
+    """``point``'s materialization, plus one carrier per member position holding
+    a ZERO value — an Attribute or leaf reading ``ABSENT`` or ``None``, a One
+    occurrence reading either, a Many occurrence reading ``ABSENT`` or the empty
+    tuple — at every depth.
+
+    The population a fully carried document has none of, which is what makes this
+    control invisible to every reading taken over one: the crossed grid, the four
+    document steps, and the carried total all convert rows whose every declared
+    member is supplied, so this seam holds nothing at all at any of their points.
+    """
+
+    def run(sample: Callable[[], None]) -> None:
+        graph, merge = _compose(point, cells)
+        rows = graph_rows(graph)
+        carriers = [
+            carrier
+            for layout, row in zip(rows.layouts, rows.member_rows, strict=True)
+            for carrier in (
+                *(
+                    _CellCarrier(cell)
+                    for cell in row[: layout.attribute_count]
+                    if _state_of(cell, many=False) != "carried"
+                ),
+                *(
+                    nested
+                    for position, declared in enumerate(
+                        layout.occurrences, start=layout.attribute_count
+                    )
+                    for nested in _zero_states(row[position], declared)
+                ),
+            )
+        ]
+        sample()
+        assert graph is not None and merge is not None and carriers is not None
+
+    return run
+
+
+def _zero_states(
+    value: object, declared: ValueObjectMetadata | NestedValueObjectMetadata
+) -> list[_CellCarrier]:
+    """One carrier for this occurrence position if it holds a zero value, and one
+    for every zero-valued position under it otherwise."""
+    many = declared.multiplicity is Multiplicity.MANY
+    if _state_of(value, many=many) != "carried":
+        return [_CellCarrier(value)]
+    rows = cast("tuple[tuple[object, ...], ...]", value if many else (value,))
+    return [
+        carrier
+        for row in rows
+        for carrier in (
+            *(
+                _CellCarrier(cell)
+                for cell in row[: len(declared.attributes)]
+                if _state_of(cell, many=False) != "carried"
+            ),
+            *(
+                nested
+                for offset, inner in enumerate(
+                    declared.value_objects, start=len(declared.attributes)
+                )
+                for nested in _zero_states(row[offset], inner)
+            ),
+        )
+    ]
+
+
+def test_the_state_readings_are_what_refuse_a_wrapper_around_a_position_stored_zero() -> None:
+    # What the state sweep is worth, against the defect every reading over a
+    # carried document is blind to by construction. A carrier held once per
+    # position in a zero state is retained on exactly the branches a fully
+    # supplied row never takes, so this control holds nothing at all at any point
+    # that declares a carried document: the total is exact at every one of them,
+    # and therefore so is each of the four steps between two of them. That is the
+    # half saying the state readings reach a population no other reading here
+    # does. Every state but the carried one fails, by one carrier per position it
+    # zeroed — so the sweep catches a wrapper on any single branch, whichever
+    # population and whichever nesting rank it came back on.
+    for point in _DOCUMENTS:
+        assert _step(_zero_state_wrapping_seam, point, _CELLS, _BARE) == _document_bytes(
+            point, _CELLS
+        ), point
+    for point in _STATE_POINTS:
+        measured = _step(_zero_state_wrapping_seam, point, _CELLS, _BARE)
+        priced = _document_bytes(point, _CELLS)
+        if point.stored == _CARRIED and point.projected:
+            assert measured == priced, point
+            continue
+        assert measured > priced, point
+        with pytest.raises(AssertionError):
+            assert measured == priced
