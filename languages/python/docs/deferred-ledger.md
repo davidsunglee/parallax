@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-82**.
+Entry numbering is continuous and never reused. The next new number is **D-83**.
 
 ## Entries
 
@@ -506,6 +506,137 @@ representation this gate was written for allocates no such wrapper: the sealed
 graph's arrays are its rows. The gap is worth an entry because it is the one part
 of "zero retained per-cell carriers" that is argued rather than measured, and a
 future representation could reintroduce exactly the shape it cannot see.
+
+### D-82 — A published dump builds the same presentation twice, and removing the second build needs no bracket
+
+*Medium — two identical mapping builds are 62% of a published `model_dump`, and
+1.55x of it is recoverable with retained memory measured flat.* Relates to
+`parallax.core.entity._instance_state._DeclaredState.__get__`,
+`parallax.core.entity._instance_state.plan_of`,
+`parallax.core.entity._instance_state._PresentedState`.
+
+A published value's serialization cost is an accepted part of the Interface:
+`_instance_state`'s module docstring and `spec/python.md` §2 both state that a
+published `model_dump` runs roughly twice an ordinary one because the presentation
+is built per read. This entry is the optimization path for that stated cost, held
+here so the accepted fact and what is known about reducing it cannot drift apart.
+
+**What.** The two `__dict__` reads per instance per dump are both in
+pydantic-core's `ModelSerializer`, and the first one's value is discarded.
+`ModelSerializer::allow_value` answers the `SerCheck::None` case with
+`value.hasattr("__dict__")` and uses only the boolean;
+`ModelSerializer::get_inner_value` then performs the real
+`getattr(...).cast_into::<PyDict>()`. Because `hasattr` on a data descriptor
+invokes `__get__`, answering that boolean costs a whole presentation build.
+Measured on CPython 3.14.7 / pydantic 2.13.4 / pydantic-core 2.46.4, against real
+published values built through `allocate` and `publish` over the six canonical
+scenarios of `languages/python/docs/instance-state-baseline.md`: one published
+`__dict__` read is 542–576 ns, and the two of them are 62% of the dump. Three
+independent readings agree — the Rust source at 2.41.5 and at 2.48.0, which
+bracket the installed 2.46.4 (whose own tag was not fetchable); a poison test on
+the installed binary, proving the first read's value is discarded and the second
+is the cast; and a union differential, where a plain union makes `SerCheck`
+`Strict`/`Lax`, answers by type, and drops the count to exactly one.
+
+**The pair is structurally adjacent, and that is the load-bearing result.** No
+Python executes between the two reads, at any depth and inside any container. The
+scope that needs covering is therefore the pair rather than the run, and a pair
+disposes of itself on its second read: **no bracket is needed**, which is what
+makes every bracketing mechanism below unnecessary rather than merely expensive.
+
+**What it buys.** Three ingredients, measured over a `TypeAdapter(list[…])` dump
+of 1000 distinct published instances of one all-optional-member declared class —
+1557 µs published today against 585 µs for the same class ordinarily backed:
+
+- **Drop `strict=True` from the `zip`** that builds the presentation — −50 ns per
+  read, **1.09x**, no behavior change. It is a redundant assertion:
+  `PublicationPlan.field_values` is an `itemgetter` built from exactly
+  `plan.fields`, and `install` already refuses a plan whose members and the
+  class's collected Pydantic fields name different sets. The same argument covers
+  the sibling zips in `declared` and `named_state`, which were not priced.
+- **Replace `plan_of`'s MRO `getattr` with a type-keyed dict lookup** — 66.5 ns
+  to 17.2 ns, a further **1.08x**, no behavior change. The caveat to decide
+  rather than absorb: a `dict[type, PublicationPlan]` pins every published class
+  for the life of the process, and a `WeakKeyDictionary` costs more than the
+  `getattr` it replaces. A domain model's classes are process-lifetime anyway,
+  which is an argument for the strong dict and not a reason to skip the choice.
+- **A one-slot, one-shot, `has_auxiliary`-gated memo on the presentation** — hit
+  returns the mapping and clears the slot, miss builds and stores, and a class
+  whose `PublicationPlan.has_auxiliary` is true never memoizes at all. The hit
+  rate is exactly 50.0% in every scenario, which is the adjacency above restated:
+  every pair hits. **1.39x alone**, **1.55x** with the two ingredients above, and
+  **1.65x** with the gated fourth below — taking a published dump from 2.66x an
+  ordinary value's to 1.62x.
+
+**Retained memory is O(1) and measured flat**, which is what distinguishes this
+memo from the per-node cache `_DeclaredState` forbids. `tracemalloc` after a full
+run with the output freed and `gc.collect()` called reads 656 / 592 / 512 B total
+at 1k / 5k / 20k nodes today and 624 / 544 / 480 B for the memo arm, and
+`gc.get_referents(node)` names zero `dict` referents on every node in every arm.
+The memo holds one `(instance, mapping)` pair in one module-level slot, never a
+node's own storage, so no node acquires an instance dictionary. A pass taking it
+must also reword the prohibition: `_DeclaredState`'s docstring and `spec/python.md`
+§2 forbid memoizing the presentation *on the value*, and a reader will apply that
+sentence to this memo unless it is restated as the per-node rule it means.
+
+**Hazards, each concrete and each to be carried forward whole.**
+
+- **A stale entry on a `has_auxiliary` class is reproducible and observable.**
+  Three reads leave a memoized mapping that a later auxiliary write does not
+  update, so a hit returns a mapping missing the warmed key while a fresh build
+  includes it. Because equality compares whole presented mappings, it surfaces as
+  a wrong `__eq__` rather than as a slow path. The `has_auxiliary` gate closes it
+  completely: auxiliary state is the only thing that can change between two reads
+  of a frozen published value.
+- **Presentation identity becomes observable.** `v.__dict__ is v.__dict__` is
+  always `False` today and sometimes `True` with the memo, so any assertion in the
+  Pydantic-floor corpus or the unit suites that depends on freshness will see it.
+- **An O(1) residue survives at odd-read sites.** A plain union, `__eq__`, and
+  `repr` each read once, leaving one `(instance, mapping)` pair alive — 424 B,
+  constant, and healed by the next run. It satisfies the letter of the
+  retained-memory rule while holding one arbitrary Typed node alive indefinitely
+  after a run finishes, which is a thing to decide deliberately rather than
+  discover.
+- **Free-threaded builds are reasoned about, not verified.** No free-threaded
+  interpreter was available. Eight threads on a GIL build showed no errors and an
+  unchanged hit rate, and the `entry[0] is value` identity gate degrades a lost
+  race to a miss rather than to a wrong answer — but a real free-threaded run is
+  owed before this ships.
+
+**A fourth ingredient that is not free, and is a decision rather than an
+optimization.** Returning a plain `dict` instead of `_PresentedState` for
+`has_auxiliary=False` classes buys another **1.09x**, and makes an unknown-key
+write to `v.__dict__` on such a class **silently evaporate** where today it lands
+in the auxiliary slot and seeds the next presentation. The rule that every write
+path ends as a documented demotion or a loud refusal, and that silently inert
+survives nowhere, is what makes this a decision — it may only be taken explicitly.
+
+**What is already closed, so no later pass re-explores it.** A
+`@model_serializer(mode="wrap")` bracket does bracket both reads at every depth,
+and is rejected anyway: it costs +394 ns per instance to save roughly 530,
+reintroduces the core-schema mechanism this seam exists without, and is silently
+displaced by any authored subclass `@model_serializer`. A `model_dump` /
+`model_dump_json` override bracket is never entered for a nested instance or for
+a `TypeAdapter` entry point. `__pydantic_serializer__` re-entry has the same
+reach problem. No lazier or cheaper mapping type helps, because
+`cast_into::<PyDict>()` followed by concrete dict C-API access bypasses every
+Python-level override; a template `.copy()` plus `update(zip(...))` measures
+300 ns against `dict(zip(...))`'s 299.
+
+**The order a pass should take.** The two no-behavior-change ingredients first
+(1.18x together, no new hazard, nothing to decide); then the memo behind its
+`has_auxiliary` gate, with the identity and residue hazards stated and a
+free-threaded run taken; and the plain-`dict` question only behind an explicit
+decision on silent evaporation.
+
+**Why it is deferred rather than fixed.** The cost it removes is stated at the
+seam as a settled trade, so taking it is a revision of the Interface's own
+performance statement in two documents and not only an implementation change.
+Two of the three ingredients need a decision that outlives them — pinning every
+published class in a strong dict, and what a one-entry process-lifetime memo may
+hold after a run — and the memo needs an interpreter nobody here has run it on.
+Each of those is cheap to answer and expensive to answer wrongly inside a change
+whose gates are about representation rather than about serialization speed.
 
 ## Forwarding pointers
 
