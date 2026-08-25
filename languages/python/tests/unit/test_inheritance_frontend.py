@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, PydanticUserError, ValidationError
 from pydantic_core import PydanticUndefined
 
 from _support import inheritance_models as im
@@ -396,3 +396,17 @@ def test_an_inherited_framework_owned_member_is_still_refused_of_a_descendant() 
             tx_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
         )
     assert {error["loc"][0] for error in caught.value.errors()} == {"tx_start"}
+
+
+def test_a_descendant_binding_an_inherited_member_without_annotating_it_is_refused() -> None:
+    # Nothing the engine puts in the way of Pydantic's field collection reaches a
+    # name the class body bound: an unannotated override of an inherited member
+    # stays Pydantic's own refusal rather than being quietly discarded.
+    with pytest.raises(PydanticUserError) as caught:
+
+        class Kite(  # pyright: ignore[reportUnusedClass] - class body must run to trigger the declaration-time rejection
+            _Winged, name="Kite", namespace=_NS, inheritance=ConcreteSubtype(tag_value="k")
+        ):
+            fleet_id = 5  # pyright: ignore[reportAssignmentType] - an unannotated override is the subject
+
+    assert caught.value.code == "model-field-overridden"
