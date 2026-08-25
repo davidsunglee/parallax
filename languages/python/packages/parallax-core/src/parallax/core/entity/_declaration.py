@@ -22,7 +22,7 @@ import re
 import sys
 from dataclasses import dataclass
 from types import NoneType, UnionType
-from typing import Any, ClassVar, Final, ForwardRef, Union, cast, get_args, get_origin
+from typing import Any, ClassVar, Final, ForwardRef, Never, Union, cast, get_args, get_origin
 
 from pydantic import ConfigDict, field_validator
 from pydantic._internal._model_construction import ModelMetaclass
@@ -536,9 +536,9 @@ def build_class(
     the one body that installs such a descriptor: a declared class body carries
     members and nothing else, so it keeps Pydantic's unannotated-attribute
     rejection whole rather than inheriting a blanket exemption for a type it
-    never binds. Every configuration also exempts
-    :class:`_InheritedMemberShadow`, which the engine itself seeds and removes
-    around class creation and no class body can bind.
+    never binds. Nothing else is exempted anywhere — the shadow the engine seeds
+    around class creation is a ``property``, which Pydantic passes over already
+    (:class:`_InheritedMemberShadow`).
     """
     if mint is None:
         # Every declared kind, and before the configuration below, which itself
@@ -547,9 +547,7 @@ def build_class(
         # framework's own markers and slots are what the reservation protects.
         _reject_shadowed_class_names(cls_name, ns, kind)
     frontend_types = ignored_types if mint is not None else ()
-    ns["model_config"] = ConfigDict(
-        frozen=True, ignored_types=(*frontend_types, _InheritedMemberShadow)
-    )
+    ns["model_config"] = ConfigDict(frozen=True, ignored_types=frontend_types)
     if mint is not None:
         if mint is not FRAMEWORK_MINT:
             raise EntityDefinitionError(
@@ -564,7 +562,7 @@ def build_class(
     return _build_value_object(mcs, cls_name, bases, ns)
 
 
-class _InheritedMemberShadow:
+class _InheritedMemberShadow(property):
     """A stand-in that hides an installed descriptor from Pydantic's field collection.
 
     Pydantic reads a field's default off the class under construction with
@@ -578,14 +576,23 @@ class _InheritedMemberShadow:
     declaring class's own.
 
     Raising ``AttributeError`` is what makes ``getattr`` report "no assigned
-    value" rather than a value. The shadow lives only for the duration of class
-    creation: :func:`_pydantic_class` removes it once the class exists, leaving
-    the inherited descriptor reachable through the MRO again.
+    value" rather than a value — including the class access field collection
+    makes, where an ordinary ``property`` would answer with itself and become the
+    default. The shadow lives only for the duration of class creation:
+    :func:`_pydantic_class` removes it once the class exists, leaving the
+    inherited descriptor reachable through the MRO again.
+
+    It extends ``property`` so that a namespace carrying one needs no exemption
+    of its own: Pydantic already passes over a ``property`` when it rejects
+    unannotated class attributes, so seeding these leaves that rejection exactly
+    as wide as Pydantic's own — where an ``ignored_types`` entry would have
+    exempted this type from every declared class body as well as from the
+    engine's own seeding.
     """
 
     __slots__ = ()
 
-    def __get__(self, obj: object | None, owner: type | None = None) -> object:
+    def __get__(self, obj: object | None, owner: type | None = None) -> Never:
         raise AttributeError("an inherited member is unreadable while its class is being built")
 
 

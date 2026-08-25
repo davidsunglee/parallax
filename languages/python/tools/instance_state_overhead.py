@@ -1,4 +1,4 @@
-"""What one published Entity retains today, over COR-111's canonical mix.
+"""What one published Entity retains today, over the six canonical scenarios.
 
 Six scenarios — shallow, wide, nested, nullable, partial, polymorphic — each
 measured in a fresh child interpreter of its own, with every arm of that scenario

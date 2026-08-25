@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import datetime as dt
+import gc
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -21,6 +22,7 @@ from _authored_storage_support import (
     forge_into_storage,
     stored_state,
 )
+from _compact_support import published
 from _snapshot_graph_support import GraphFixture
 from pydantic import TypeAdapter
 
@@ -426,6 +428,17 @@ def test_edited_row_omits_a_touched_member_whose_value_is_unchanged() -> None:
     assert _accounts().edited_row(edited) == {"id": 1, "owner": "Grace"}
 
 
+def test_edited_row_reads_a_published_value_s_provenance_without_creating_storage() -> None:
+    # A published value keeps its members in a row and no instance dictionary at
+    # all. The provenance slot is absent either way, but reaching for the storage
+    # to learn that would CREATE the dictionary — permanently, per node, on a
+    # read the codec makes of every value it weighs.
+    value = published(mm.Account, id=1, owner="Ada", balance=Decimal("100.00"), version=1)
+    assert _accounts().edited_row(value) is None
+    assert _accounts().full_row(value) == {"id": 1, "owner": "Ada", "balance": Decimal("100.00")}
+    assert not [held for held in gc.get_referents(value) if isinstance(held, dict)]
+
+
 def test_edited_row_answers_none_for_a_net_zero_edit() -> None:
     assert _accounts().edited_row(_account("100.00").edit(balance=Decimal("100.00"))) is None
 
@@ -820,9 +833,9 @@ def test_the_codec_depends_on_metadata_its_own_frontend_and_instance_storage() -
     # Principal, Subject Identity, Session, Clock Strategy, Transaction Instant,
     # Audit Metadata, temporal planning, Write Planner, SQL, or Storage Layout is
     # reachable from here. §7's generated contracts enforce the scope-level half.
-    # `_pydantic_storage` is the third dependency the module admits to, and it
-    # reaches the value's own attribute storage and nothing beyond it; every
-    # other entity-scope name is a frontend one.
+    # `_instance_state` is the third dependency the module admits to, and it
+    # answers what a value holds by name under either backing and nothing beyond
+    # it; every other entity-scope name is a frontend one.
     assert _codec_imports() == {
         "__future__",
         "collections.abc",
@@ -833,7 +846,7 @@ def test_the_codec_depends_on_metadata_its_own_frontend_and_instance_storage() -
         "parallax.core.entity._entity",
         "parallax.core.entity._errors",
         "parallax.core.entity._expressions",
-        "parallax.core.entity._pydantic_storage",
+        "parallax.core.entity._instance_state",
         "parallax.core.entity._model",
         "parallax.core.inheritance",
         "parallax.core.metamodel",

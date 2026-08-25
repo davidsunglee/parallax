@@ -1,15 +1,15 @@
 """The canonical scenarios published-instance state is measured over, and the
 fixture that builds one node the way publication builds it today.
 
-COR-111's measurement contract names six scenarios — shallow, wide, nested,
-nullable, partial, polymorphic — and asks for retained bytes on both sides of a
-representation change. The "before" side has a problem the "after" side does not:
-once publication attaches a compact tuple there is no legacy path left to measure,
-so a comparison taken later would have nothing to compare against. This module is
-that half, held as a fixture rather than as a number: :data:`SCENARIOS` names the
-shapes, :func:`legacy_publication` builds one node the way Entity Graph
-Construction builds one today, and :func:`disagreements` compares the fixture
-against the real path so the fixture cannot quietly stop standing for it.
+Six scenarios — shallow, wide, nested, nullable, partial, polymorphic — carry
+retained bytes on both sides of a representation change. The "before" side has a
+problem the "after" side does not: once publication attaches a compact tuple
+there is no legacy path left to measure, so a comparison taken later would have
+nothing to compare against. This module is that half, held as a fixture rather
+than as a number: :data:`SCENARIOS` names the shapes, :func:`legacy_publication`
+builds one node the way Entity Graph Construction builds one today, and
+:func:`disagreements` compares the fixture against the real path so the fixture
+cannot quietly stop standing for it.
 
 **Why the fixture is not ordinary construction.** A materialized node is
 ``cls.model_construct()`` with no arguments followed by one
@@ -166,8 +166,8 @@ class Phone(ValueObject):
 
 
 class Nested(Entity, table="instance_state_nested", namespace=NAMESPACE):
-    """The ticket's directional nested shape: an Address carrying a Geo, and two
-    Phone records under a Many occurrence."""
+    """The directional nested shape: an Address carrying a Geo, and two Phone
+    records under a Many occurrence."""
 
     id: Attr[int] = attr(primary_key=True)
     parent_id: Attr[int | None]
