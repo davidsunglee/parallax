@@ -425,20 +425,22 @@ def test_a_class_body_inventing_the_slot_leaves_an_ordinary_value_pickleable() -
     assert snapshot_state_of(restored) is None
 
 
-def test_a_class_body_forging_the_slot_into_storage_leaves_a_value_pickleable_too() -> None:
+def test_a_class_body_forging_the_slot_into_storage_refuses_its_own_values() -> None:
     # The invented slot above is an answer the refusal reads past; this one is
     # written into the storage the refusal reads, because Pydantic fills a fresh
-    # instance by assigning `__dict__` under that name. A lifecycle attaches its
-    # state to a value that is already built, so construction leaves the
-    # framework's reserved namespace empty and no class body hands a plainly
-    # constructed value the evidence of a read that never happened — here of a
-    # state that could not have crossed a process boundary at all.
+    # instance by assigning `__dict__` under that name. What such a body buys is
+    # the refusal, on its own plainly constructed values: the state is opaque to
+    # Entity, so no reader here can tell a forged one from a real one, and the
+    # readers that grant anything for carrying it do not ask Entity — a
+    # lifecycle authenticates its own state (`snapshot_state_of`), which is what
+    # a class body answering for the slot's name through `__getattr__` has
+    # always run into.
     value = _ForgingDict(id=7)
-    assert LIFECYCLE_STATE_SLOT not in stored_state(value)
+    assert stored_state(value)[LIFECYCLE_STATE_SLOT] is _INVENTED_STATE
+    assert snapshot_state_of(value) is None
 
-    restored = cast("_ForgingDict", pickle.loads(pickle.dumps(value)))
-    assert restored.id == 7
-    assert snapshot_state_of(restored) is None
+    with pytest.raises(pickle.PicklingError):
+        pickle.dumps(value)
 
 
 def test_an_edited_copy_of_a_value_whose_dictionary_denies_the_slot_is_refused_too() -> None:

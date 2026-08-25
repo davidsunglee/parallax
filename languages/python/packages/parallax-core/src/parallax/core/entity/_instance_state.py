@@ -14,10 +14,11 @@ somewhere they do not look.
 
 Construction is the one storage write the framework does not make here:
 Pydantic fills a fresh instance by assigning ``__dict__`` under that name, so a
-class body binding it decides what the new value starts out holding. Every slot
-the framework owns is attached after a value is built and through this seam, so
-one present at construction came from the class rather than the framework, which
-is what :func:`clear_prefixed_state` is for.
+class body binding it decides what a new value starts out holding, and this seam
+neither prevents that nor cleans up after it. What a slot found there is worth is
+its own reader's question: the Change Record's reader accepts only the carrier an
+edit constructs, so a mapping a class body writes under that slot is corruption
+rather than provenance.
 
 Reaching past a binding is each caller's own decision, and the framework reads
 that do not are deliberate. ``lifecycle_state_of`` resolves the slot through the
@@ -36,12 +37,7 @@ from typing import Any, Final, cast
 
 from pydantic import BaseModel
 
-__all__ = [
-    "attach_instance_state",
-    "clear_prefixed_state",
-    "instance_state",
-    "replace_instance_state",
-]
+__all__ = ["attach_instance_state", "instance_state", "replace_instance_state"]
 
 _MODEL_STORAGE: Final = BaseModel.__dict__["__dict__"]
 """Pydantic's own slot descriptor for the instance storage every model carries."""
@@ -60,10 +56,3 @@ def attach_instance_state(value: BaseModel, name: str, state: object) -> None:
 def replace_instance_state(value: BaseModel, state: dict[str, object]) -> None:
     """Make ``state`` the whole of ``value``'s storage."""
     _MODEL_STORAGE.__set__(value, state)
-
-
-def clear_prefixed_state(value: BaseModel, prefix: str) -> None:
-    """Drop every slot named under ``prefix`` from ``value``'s storage."""
-    stored = instance_state(value)
-    for name in [name for name in stored if name.startswith(prefix)]:
-        del stored[name]

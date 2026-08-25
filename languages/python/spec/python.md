@@ -1179,13 +1179,7 @@ temporal member, so those spellings are ordinary Value Object members.
   shadowed member surface but a shadowed framework value: ordinary reads would
   answer the class's binding, and a `functools.cached_property` spelled under
   one would additionally recompute that binding on an Edited Copy, because §3's
-  invalidation rule reads a derived cache off the class. Nothing under the prefix
-  survives construction either: the private instance slots are an Entity's, and
-  the framework attaches each of them to a value that is already built, so a
-  fresh Entity is emptied of the whole prefix — through the validating
-  constructor and through `model_construct` alike — and a class body answering
-  for the instance-dictionary assignment construction makes hands the framework
-  no private state it never wrote;
+  invalidation rule reads a derived cache off the class;
 - the ten declaration members `identity`, `container`, `persistence`, `layout`,
   `attributes`, `relationships`, `value_objects`, `as_of_axes`, `inheritance`,
   and `indices`. An Entity Class *is* its own `UnresolvedEntityDeclaration`: the
@@ -3626,10 +3620,10 @@ These feature tests do not claim the deferred `benchmark` command or general
   `entity-row-malformed-provenance` instead, and private state the framework
   never wrote is such a thing however well shaped it is, because what makes a
   mapping a Change Record is that `edit(...)` made it. That refusal reports
-  corruption of private first-party state rather than classifying anything a developer
-  authored, which is why it survives while the absent-record refusal does not:
-  collapsing an unreadable carrier into "nothing to write" would name the wrong
-  defect and leave the corruption unreported. Which verbs accept a plain,
+  corruption of private first-party state rather than classifying anything a
+  developer authored, which is why it survives while the absent-record refusal
+  does not: collapsing an unreadable carrier into "nothing to write" would name
+  the wrong defect and leave the corruption unreported. Which verbs accept a plain,
   never-edited value is not the codec's question at all — the write verb decides
   it from the value's provenance, before deriving any row (§5). A recorded name
   the resolved identity does not declare is not a provenance defect either — it
