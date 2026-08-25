@@ -86,6 +86,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CHANGE_RECORD_SLOT",
     "Bitemporal",
+    "ChangeRecord",
     "Entity",
     "EntityMeta",
     "TxTemporal",
@@ -355,28 +356,46 @@ def build_object_query(
     )
 
 
+class ChangeRecord(dict[str, object]):
+    """The carrier an Edited Copy's Change Record is stored as.
+
+    Being this type is what makes a mapping a Change Record. :meth:`Entity.edit`
+    is the only site that constructs one and both readers accept nothing else, so
+    a value's slot holds provenance exactly when the framework put it there —
+    whatever a class body binds, and whichever door built the value. Pydantic
+    fills a fresh instance by assigning ``__dict__`` under that name, so a class
+    answering for that name decides what a new value's storage starts out
+    holding; what it can put under the slot is a mapping of the right shape, and
+    a Change Record is not a shape.
+    """
+
+    __slots__ = ()
+
+
 CHANGE_RECORD_SLOT: Final = "__parallax_changes__"
 """The one private instance slot an Edited Copy's Change Record lives in.
 
-Only :meth:`Entity.edit` ever writes it — construction drops whatever a class
-body leaves under it (:meth:`Entity.model_post_init`) — and two readers interpret
-what it holds: the edit surface reads the record an edit extends
-(:func:`_change_record`), and the Entity Row Codec derives an Edited Copy's
-sparse row from it. It lives in ``__dict__`` rather than in a declared field so
-it stays outside ``model_fields_set``, outside canonical serialization, and
-outside the declared model — which is also why every inherited copy door that
-shallow-copies that dictionary is refused."""
+Only :meth:`Entity.edit` ever writes it, and what it writes is a
+:class:`ChangeRecord`. Two readers interpret what the slot holds: the edit
+surface reads the record an edit extends (:func:`_change_record`), and the Entity
+Row Codec derives an Edited Copy's sparse row from it and reports anything else
+under the slot as corruption of private first-party state. It lives in
+``__dict__`` rather than in a declared field so it stays outside
+``model_fields_set``, outside canonical serialization, and outside the declared
+model — which is also why every inherited copy door that shallow-copies that
+dictionary is refused."""
 
 
-def _change_record(value: BaseModel) -> dict[str, object] | None:
+def _change_record(value: BaseModel) -> ChangeRecord | None:
     """``value``'s Change Record, or ``None`` when it carries none.
 
     The edit surface's own reader: it needs only the record it will extend, and
-    an unedited value extends an empty one. Telling an absent record apart from
-    an unreadable one is the Row Codec's question, not this one's.
+    an unedited value extends an empty one. Anything else under the slot was
+    written by no edit and so names no original to preserve; reporting it as the
+    corruption it is belongs to the Row Codec, not here.
     """
     record = instance_state(value).get(CHANGE_RECORD_SLOT)
-    return cast("dict[str, object]", record) if isinstance(record, dict) else None
+    return record if isinstance(record, ChangeRecord) else None
 
 
 def _edit_violations(
@@ -449,7 +468,7 @@ def _restate[E: Entity](
     value: E,
     declared_state: dict[str, object],
     carried: dict[str, object],
-    record: dict[str, object],
+    record: ChangeRecord,
 ) -> E:
     """A fresh value holding exactly ``value``'s state under ``record``."""
     restated = restate(value, declared_state | carried)
@@ -617,7 +636,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         validated either. ``changes`` cannot name one: the shared judgement
         refuses it before any merge.
         """
-        record = dict(_change_record(self) or {})
+        record = ChangeRecord(_change_record(self) or {})
         names = wire_names_of(type(self))
         declared_state, carried = partition_declared(self, set(names.py_to_name))
         if not changes:

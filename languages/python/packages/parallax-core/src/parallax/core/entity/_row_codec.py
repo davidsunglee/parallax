@@ -40,7 +40,13 @@ from types import MappingProxyType
 from typing import Final, cast
 
 from parallax.core.entity._declaration import declaration_of, is_entity_class
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT, Entity, WireNames, wire_names_of
+from parallax.core.entity._entity import (
+    CHANGE_RECORD_SLOT,
+    ChangeRecord,
+    Entity,
+    WireNames,
+    wire_names_of,
+)
 from parallax.core.entity._errors import (
     ENTITY_ROW_MALFORMED_PROVENANCE,
     ENTITY_ROW_MEMBER_MISSING,
@@ -387,42 +393,34 @@ def _change_record(facts: _RowFacts, value: object) -> Mapping[str, object]:
 
     An absent slot and an empty record name the same selection, because both say
     an edit chain touched nothing: the ordinary plain, never-edited value is not
-    a defect and earns no refusal. A slot holding anything unreadable is a
-    different matter — it reports corruption of private first-party state, and
-    collapsing that into the empty selection would leave it unreported.
+    a defect and earns no refusal. A slot holding anything else is a different
+    matter — it reports corruption of private first-party state, and collapsing
+    that into the empty selection would leave it unreported.
 
     Read from the value's own storage, which is where :meth:`Entity.edit` wrote
-    it: the slot is private first-party state, so what a row claims a caller
-    authored must not be decided by a class body binding ``__dict__`` or the
-    slot's own name.
+    it, and accepted on the carrier's type rather than its shape: only that edit
+    constructs a :class:`~parallax.core.entity._entity.ChangeRecord`, so what a
+    row claims a caller authored is decided neither by a class body binding
+    ``__dict__`` or the slot's own name, nor by one answering for the
+    instance-dictionary assignment construction makes and writing a well-shaped
+    mapping into the storage a fresh value starts out holding. Which names the
+    accepted record holds is the member rule's question, judged beside the
+    primary key as one selection; deciding it here would report corruption for a
+    member a selection merely cannot emit.
     """
     record = instance_state(cast("Entity", value)).get(CHANGE_RECORD_SLOT, _NO_RECORD)
     if record is _NO_RECORD:
         return {}
-    if not _is_change_record(record):
+    if not isinstance(record, ChangeRecord):
         raise EntityRowError(
             code=ENTITY_ROW_MALFORMED_PROVENANCE,
             message=(
-                f"this {facts.identity.canonical} value's Change Record slot holds "
-                f"{type(record).__name__}, which names no touched member"
+                f"this {facts.identity.canonical} value's Change Record slot holds a "
+                f"{type(record).__name__} no edit wrote, so it names no touched member"
             ),
             identity=facts.identity,
         )
-    return cast("Mapping[str, object]", record)
-
-
-def _is_change_record(candidate: object) -> bool:
-    """Whether the private slot holds a readable Change Record: a mapping from
-    member names to the values they held when the chain first touched them.
-
-    Readability is a question about the carrier's shape alone. Whether the names
-    it holds can be declared and emitted belongs to the member rule, which judges
-    them beside the primary key as one selection; deciding it here would report
-    corruption for a member a selection merely cannot emit.
-    """
-    return isinstance(candidate, dict) and all(
-        isinstance(key, str) for key in cast("dict[object, object]", candidate)
-    )
+    return record
 
 
 def _assignment_matches_original(assigned: object, original: object) -> bool:

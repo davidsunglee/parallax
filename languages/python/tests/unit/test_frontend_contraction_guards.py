@@ -81,7 +81,7 @@ from _source_inventory_support import (
 from pydantic import BaseModel
 
 from parallax.core.entity import EntityRowError
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
 
 # Row derivation: the codec answers, holding vocabulary Snapshot never holds.
 #
@@ -94,6 +94,7 @@ DELETED_ROW_HELPERS = frozenset(
 FORBIDDEN_ROW_IMPORTS = DELETED_ROW_HELPERS | {
     "BaseModel",
     "CHANGE_RECORD_SLOT",
+    "ChangeRecord",
     "WireNames",
 }
 
@@ -117,12 +118,14 @@ def _codec_refusals() -> frozenset[str]:
 # Pydantic's internal vocabulary, read off the base class rather than listed, so
 # `model_dump` and `__pydantic_fields_set__` are forbidden on the same terms as
 # `model_fields_set` without anyone having had to think of them; the private
-# Change Record slot joins them as the value it actually keys. The two prefixes
-# are the boundary of what a spelling can decide: every other name `BaseModel`
-# carries is either a name any object has or one of the V1 aliases below.
+# Change Record slot joins them as the value it actually keys, and the carrier
+# that slot holds joins them as the thing constructing one would forge. The two
+# prefixes are the boundary of what a spelling can decide: every other name
+# `BaseModel` carries is either a name any object has or one of the V1 aliases
+# below.
 PRIVATE_VALUE_VOCABULARY = frozenset(
     name for name in dir(BaseModel) if name.startswith(("model_", "__pydantic"))
-) | {CHANGE_RECORD_SLOT}
+) | {CHANGE_RECORD_SLOT, ChangeRecord.__name__}
 
 
 def _row_vocabulary_sites(
