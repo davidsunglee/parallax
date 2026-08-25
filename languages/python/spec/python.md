@@ -1932,6 +1932,25 @@ or descriptor authoring form and performs no audit stamping.
 
   Rationale: single source of truth in user code, no generated-file lifecycle,
   strict-Pyright-clean class-level expressions via the annotation aliases.
+- **Published instance state, and what it trades.** An instance a Snapshot read
+  published holds its declared members in one immutable tuple with a presence
+  bitmap, on a slot of its own, and carries no instance dictionary and no
+  populated-member set at all; an instance ordinary construction produced holds
+  Pydantic's own storage unchanged. Which of the two a value carries is not a
+  public distinction: the framework answers `__dict__` and
+  `__pydantic_fields_set__` for both (the reservation above), so equality,
+  hashing, repr, iteration, JSON Schema, and every documented serialization
+  option agree between the two backings and with a hand-written plain
+  `BaseModel` of the same fields. The **cost is part of the contract**, not an
+  implementation detail, because a caller can measure it: a published instance
+  retains roughly a fifth of what an ordinary one does, and pays for that on
+  serialization, where the presentation is built per read — `model_dump` of a
+  published instance runs roughly twice an ordinary instance's and roughly
+  three times a plain Pydantic model's, and equality comparably. Attribute
+  reads and everything on an ordinary instance are a plain Pydantic model's,
+  unchanged. The presentation is deliberately **not** memoized on the instance:
+  a mapping cached at first dump is retained per-node state, which is the cost
+  publication exists to remove.
 - **Drift prevention without codegen.** The API Conformance Suite's
   descriptor-equality guard (idiomatic class exports ≡ corpus descriptor) and
   the query no-drift guard (idiomatic Object Query serialization ≡ the corpus

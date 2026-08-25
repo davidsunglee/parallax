@@ -21,6 +21,18 @@ construction rather than by restatement: equality, hashing, repr, the compiled
 serializer, and every documented serialization option, including the ones no
 reimplementation of the model schema can reach.
 
+**What the seam costs is part of what it offers.** A published value retains
+roughly a fifth of what an ordinary one does — one tuple and two pointers
+against a dictionary and a name-keyed set — and pays for that every time
+Pydantic reads its state. The compiled serializer reaches ``__dict__`` twice per
+instance per dump and each read builds a mapping, so serializing a published
+value runs about twice an ordinary one and about three times a plain
+``BaseModel`` of the same fields, and equality comparably. Ordinary values pay
+none of it: their reads reach Pydantic's own slot descriptor and answer with the
+storage itself, and an ordinary attribute read is a plain model's. That is a
+settled trade rather than an unfinished one — :class:`_DeclaredState` states why
+the cache that would flatten it is forbidden.
+
 Only a few questions vary by backing — what a declared member holds, whether the
 read carried it, and, once a caller reads a published relationship tail, what a
 relationship position holds. Everything else needs declared values and, at most,
@@ -375,6 +387,15 @@ class _DeclaredState:
     rather than a copy of it, because a caller that writes through it — a
     relationship slot, a lifecycle slot, a ``cached_property`` — has to reach the
     value.
+
+    A published value's presentation is built per read and MUST NOT be memoized
+    on the value. Caching it is the obvious way to pay the build once rather than
+    twice per dump, and it is forbidden: a mapping held from the first dump
+    onward is a per-node retained dictionary, which is the whole of what this
+    backing exists to remove, reintroduced on exactly the values that removed it.
+    What may be optimized is the build — it carries no ``__init__``, the
+    auxiliary read is gated on a class fact, and the ordinary branch reaches the
+    slot descriptor rather than a function over it.
 
     Assignment is where a published value stops being one. Every write Pydantic
     makes to a model's state is a wholesale assignment of this name, and the
