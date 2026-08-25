@@ -15,7 +15,8 @@ import functools
 from typing import TYPE_CHECKING, Final
 
 from parallax.core.entity._errors import EditError, EditViolation
-from parallax.core.entity._pydantic_storage import instance_state, replace_instance_state
+from parallax.core.entity._instance_state import named_state
+from parallax.core.entity._pydantic_storage import replace_instance_state
 
 if TYPE_CHECKING:
     from collections.abc import Container
@@ -72,18 +73,20 @@ def partition_declared(
     reserved from every class body, which is what keeps a lifecycle's state and a
     Change Record outside anything a class can declare derived.
 
-    Both halves are read off the value's own storage
-    (:func:`~parallax.core.entity._pydantic_storage.instance_state`) rather than
-    through ``__dict__``, so a class body binding that name can neither drop the
-    lifecycle state a copy must carry forward nor invent a Change Record the
-    value never earned.
+    Both halves are read through the backing
+    (:func:`~parallax.core.entity._instance_state.named_state`) rather than
+    through ``__dict__``, so a class body answering for that name can neither
+    drop the lifecycle state a copy must carry forward nor invent a Change Record
+    the value never earned — and a published value is partitioned out of its row,
+    so editing one neither loses the members the row holds nor creates the
+    instance dictionary it exists without.
 
     Every branch of both edit surfaces partitions here, so none of them can hold
     its own opinion of the boundary.
     """
     declared_state: dict[str, object] = {}
     carried: dict[str, object] = {}
-    for key, member in instance_state(value).items():
+    for key, member in named_state(value).items():
         if key in declared:
             declared_state[key] = member
         elif not _is_derived_cache(type(value), key):

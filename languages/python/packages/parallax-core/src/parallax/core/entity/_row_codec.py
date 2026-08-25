@@ -55,8 +55,8 @@ from parallax.core.entity._errors import (
     EntityRowError,
 )
 from parallax.core.entity._expressions import serialize_member
+from parallax.core.entity._instance_state import named_state
 from parallax.core.entity._model import DomainModel, model_of
-from parallax.core.entity._pydantic_storage import instance_state
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -397,18 +397,17 @@ def _change_record(facts: _RowFacts, value: object) -> Mapping[str, object]:
     matter — it reports corruption of private first-party state, and collapsing
     that into the empty selection would leave it unreported.
 
-    Read from the value's own storage, which is where :meth:`Entity.edit` wrote
-    it, and accepted on the carrier's type rather than its shape: only that edit
-    constructs a :class:`~parallax.core.entity._entity.ChangeRecord`, so what a
-    row claims a caller authored is decided neither by a class body binding
-    ``__dict__`` or the slot's own name, nor by one answering for the
-    instance-dictionary assignment construction makes and writing a well-shaped
-    mapping into the storage a fresh value starts out holding. Which names the
+    Read through the value's own backing, which is where :meth:`Entity.edit`
+    wrote it, and accepted on the carrier's type rather than its shape: only that
+    edit constructs a :class:`~parallax.core.entity._entity.ChangeRecord`, so what
+    a row claims a caller authored is decided neither by a class body answering
+    for the slot's own name, nor by one writing a well-shaped mapping into the
+    storage a fresh value starts out holding. Which names the
     accepted record holds is the member rule's question, judged beside the
     primary key as one selection; deciding it here would report corruption for a
     member a selection merely cannot emit.
     """
-    record = instance_state(cast("Entity", value)).get(CHANGE_RECORD_SLOT, _NO_RECORD)
+    record = named_state(cast("Entity", value)).get(CHANGE_RECORD_SLOT, _NO_RECORD)
     if record is _NO_RECORD:
         return {}
     if not isinstance(record, ChangeRecord):

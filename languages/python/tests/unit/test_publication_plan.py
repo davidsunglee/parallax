@@ -30,6 +30,9 @@ from parallax.core.entity import (
     attr,
     rel,
 )
+from parallax.core.entity._declaration import (
+    _InheritedMemberShadow,  # pyright: ignore[reportPrivateUsage]
+)
 from parallax.core.entity._instance_state import (
     COMPACT_STATE_SLOT,
     allocate,
@@ -147,6 +150,20 @@ def test_no_member_of_a_built_class_collected_a_descriptor_as_its_default(owner:
     for py_name, field in cast("Any", owner).__pydantic_fields__.items():
         assert isinstance(vars(owner)[py_name], AttrDescriptor)
         assert field.is_required() or field.get_default(call_default_factory=True) is None
+
+
+def test_the_shadow_that_keeps_it_that_way_costs_no_exemption_of_the_framework_s_own() -> None:
+    # The shadow is seeded into the namespace Pydantic inspects, where an
+    # unannotated class attribute is refused — so it is a `property`, one of the
+    # kinds Pydantic passes over already. An `ignored_types` entry for it instead
+    # would have exempted that type from every DECLARED body too, so a class body
+    # binding one would be accepted where any other unannotated binding is
+    # refused. What each configuration carries is the frontend's own vocabulary
+    # and nothing else.
+    assert issubclass(_InheritedMemberShadow, property)
+    assert cast("Any", Cat).model_config["ignored_types"] == ()
+    assert cast("Any", Animal).model_config["ignored_types"] == ()
+    assert cast("Any", Entity).model_config["ignored_types"] == (type(vars(Entity)["all"]),)
 
 
 def test_the_plan_is_stamped_per_exact_class_and_never_shared() -> None:

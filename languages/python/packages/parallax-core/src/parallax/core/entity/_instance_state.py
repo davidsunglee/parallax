@@ -80,6 +80,7 @@ __all__ = [
     "is_present",
     "is_published",
     "iterate",
+    "named_state",
     "plan_of",
     "publish",
 ]
@@ -265,10 +266,19 @@ class _PresentedState(dict[str, Any]):
     """One published value's row, presented as the mapping Pydantic reads.
 
     Built per read and discarded with it: nothing here is the value's storage,
-    and the row it was derived from is never reached through it. A write is the
-    one thing that outlives the mapping — ``functools.cached_property`` memoizes
-    by assigning into what it was handed — so a write is forwarded to the value's
-    auxiliary slot, which the next presentation is seeded from.
+    and the row it was derived from is never reached through it. A mutation is
+    the one thing that has to outlive the mapping — ``functools.cached_property``
+    memoizes by assigning into what it was handed — so EVERY mutating operation
+    ``dict`` defines is answered here rather than only item assignment. Left
+    inherited, ``update``, ``setdefault``, ``|=``, ``pop``, ``popitem``, and
+    ``clear`` would each write the temporary at C speed and vanish with it, which
+    is the one outcome this seam may not have.
+
+    Each ends one of two ways. A key outside the row is author-owned state: it
+    lands in the value's auxiliary slot, which the next presentation is seeded
+    from. A key the row holds is a declared member of a row attached once, which
+    no mapping operation can shadow or remove without splitting the value between
+    what an attribute read answers and what a dump emits — so those refuse.
 
     It deliberately declares no ``__init__``: every read of a published value's
     state builds one of these, so ``dict``'s own initializer and one slot write
@@ -280,8 +290,67 @@ class _PresentedState(dict[str, Any]):
     __slots__ = ("_value",)
 
     def __setitem__(self, key: str, item: Any) -> None:
+        if key in self and key not in (_auxiliary(self._value) or ()):
+            raise TypeError(self._row_member(key))
         auxiliary(self._value)[key] = item
         super().__setitem__(key, item)
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        if key in self:
+            return self[key]
+        self[key] = default
+        return default
+
+    def update(self, *state: Any, **members: Any) -> None:
+        for key, item in dict(*state, **members).items():
+            self[key] = item
+
+    def __ior__(self, state: Any) -> _PresentedState:
+        self.update(state)
+        return self
+
+    def __delitem__(self, key: str) -> None:
+        del self._warmed(key)[key]
+        super().__delitem__(key)
+
+    def pop(self, key: str, /, *default: Any) -> Any:
+        if default and key not in self:
+            return default[0]
+        item = self[key]
+        del self[key]
+        return item
+
+    def popitem(self) -> tuple[str, Any]:
+        if not self:
+            return super().popitem()
+        key = next(reversed(self))
+        item = self[key]
+        del self[key]
+        return key, item
+
+    def clear(self) -> None:
+        for key in self:
+            self._warmed(key)
+        warmed = _auxiliary(self._value)
+        if warmed is not None:
+            warmed.clear()
+        super().clear()
+
+    def _warmed(self, key: str) -> dict[str, Any]:
+        """The auxiliary state holding ``key``, for an operation about to drop it."""
+        warmed = _auxiliary(self._value)
+        if warmed is not None and key in warmed:
+            return warmed
+        if key in self:
+            raise TypeError(self._row_member(key))
+        raise KeyError(key)
+
+    def _row_member(self, key: str) -> str:
+        return (
+            f"{type(self._value).__name__}.{key} is a declared member of a published row, "
+            "which is attached once and cannot be rewritten or dropped through the mapping "
+            "presenting it; derive a value that differs with edit(...)"
+        )
 
     def __reduce__(self) -> tuple[Any, ...]:
         """Copied and pickled as the plain mapping it presents.
@@ -511,6 +580,38 @@ def declared(value: BaseModel) -> dict[str, object]:
         state = instance_state(value)
         return {py_name: state[py_name] for py_name in plan.fields if py_name in state}
     return dict(zip(plan.fields, plan.field_values(row), strict=True))
+
+
+def named_state(value: BaseModel) -> Mapping[str, object]:
+    """Everything ``value`` holds under a name, reached without creating storage.
+
+    An ordinary value keeps its declared members and every framework slot beside
+    them in one instance dictionary, and that dictionary itself is the answer: a
+    caller partitioning it, or reading one slot out of it, is reading the value.
+    A published value keeps its declared members in its row and holds no instance
+    dictionary at all, so the answer is derived from the row — asking the storage
+    would CREATE the dictionary publication exists to do without, permanently,
+    on a path that only meant to read. A relationship the read loaded is named
+    here too, under the name ordinary backing files it in storage under, so a
+    copy derived from either backing carries the same loaded tails forward; an
+    unloaded position names nothing, exactly as a dictionary that was never
+    written names nothing.
+
+    So this is what a framework read of a value's whole name-keyed state goes
+    through, and :func:`~parallax.core.entity._pydantic_storage.instance_state`
+    is left to the callers that mean the storage itself.
+    """
+    row = _compact(value)
+    if row is None:
+        return instance_state(value)
+    plan = plan_of(type(value))
+    state: dict[str, object] = dict(zip(plan.fields, plan.field_values(row), strict=True))
+    state.update(
+        (py_name, related)
+        for py_name, index in plan.relationships.items()
+        if (related := row[index]) is not UNLOADED
+    )
+    return state
 
 
 def is_present(value: BaseModel, bit: int) -> bool:

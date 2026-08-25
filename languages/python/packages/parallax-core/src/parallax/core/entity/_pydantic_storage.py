@@ -15,16 +15,21 @@ somewhere they do not look.
 The framework binds under those two names itself, so these reach past its own
 presentation as well: a published value answers ``__dict__`` and
 ``__pydantic_fields_set__`` with a mapping and a set derived from its compact
-row, and what these return is the storage underneath that — empty on a published
-value, which is the whole of what publication buys.
+row, and what these return is the storage underneath that. On a published value
+there is none, and asking is what would CREATE one — permanently, on a read — so
+these are for a caller that means the storage itself. A framework read of what a
+value holds by name goes through the backing instead
+(``_instance_state.named_state``), which answers a published value out of its
+row.
 
-Construction is the one storage write the framework does not make here:
-Pydantic fills a fresh instance by assigning ``__dict__`` under that name, so a
-class body binding it decides what a new value starts out holding, and this seam
-neither prevents that nor cleans up after it. What a slot found there is worth is
-its own reader's question: the Change Record's reader accepts only the carrier an
-edit constructs, so a mapping a class body writes under that slot is corruption
-rather than provenance.
+Construction is the one storage write the framework does not make here: Pydantic
+fills a fresh instance by assigning ``__dict__``, which the framework's own
+descriptor for that name answers — so the write lands in the storage below and
+the value ends up ordinary, whatever it was before. What no seam decides is what
+a mapping found in that storage is WORTH, and that stays each reader's question:
+the Change Record's reader accepts only the carrier an edit constructs, so
+provenance cannot be forged by a well-shaped mapping reaching the storage some
+other way.
 
 Reaching past a binding is each caller's own decision, and the framework reads
 that do not are deliberate. ``lifecycle_state_of`` resolves the slot through the
@@ -66,7 +71,12 @@ MODEL_PRESENCE: Final = BaseModel.__dict__["__pydantic_fields_set__"]
 
 
 def instance_state(value: BaseModel) -> dict[str, Any]:
-    """``value``'s own attribute storage, as the mutable mapping it is."""
+    """``value``'s own attribute storage, as the mutable mapping it is.
+
+    Creates one on a value that holds none, which a published value does — so a
+    read that only means to see what a value holds belongs on the backing's own
+    reader instead, and this is for the callers that mean the storage.
+    """
     return cast("dict[str, Any]", MODEL_STORAGE.__get__(value))
 
 

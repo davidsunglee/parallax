@@ -20,6 +20,7 @@ there is to make no such write of its own, which is what the last section grades
 from __future__ import annotations
 
 import copy
+import gc
 import pickle
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
@@ -73,6 +74,15 @@ class Bare(Entity, table="bare", namespace=_NS):
 class Place(ValueObject):
     city: Attr[str]
     zip_code: Attr[str | None]
+
+
+class Marker(ValueObject):
+    """A Value Object declaring no member, so what a published one presents is
+    author-owned state alone."""
+
+    @cached_property
+    def stamp(self) -> str:
+        return "on"
 
 
 def _crate() -> Crate:
@@ -184,6 +194,75 @@ def test_a_lifecycle_free_published_entity_pickles_the_same_way() -> None:
     assert restored._mark == 3
 
 
+def test_every_other_mutation_of_that_mapping_reaches_the_same_slot() -> None:
+    # `functools.cached_property` assigns an item, but a third-party descriptor
+    # memoizing through the mapping it was handed can reach for any of `dict`'s
+    # mutators. Each is answered rather than inherited, because an inherited one
+    # writes the temporary at C speed and vanishes with it — the property would
+    # recompute forever, with no signal that it had.
+    value = _crate()
+    state = cast("dict[str, Any]", value.__dict__)
+    state.setdefault("first", 1)
+    state.update({"second": 2})
+    state |= {"third": 3}
+    assert auxiliary(value) == {"first": 1, "second": 2, "third": 3}
+    assert state.setdefault("first", 99) == 1
+    assert state.pop("second") == 2
+    assert state.pop("second", "gone") == "gone"
+    assert auxiliary(value) == {"first": 1, "third": 3}
+    assert cast("dict[str, Any]", value.__dict__)["third"] == 3
+    assert raw_row(value) == (0b011, 1, "x", None, UNLOADED)
+    assert real_storage(value) == {}
+
+
+_ROW_MUTATIONS: tuple[Callable[[dict[str, Any]], object], ...] = (
+    lambda state: state.__setitem__("label", "y"),
+    lambda state: state.update(label="y"),
+    lambda state: state.__ior__({"label": "y"}),
+    lambda state: state.__delitem__("label"),
+    lambda state: state.pop("label"),
+    lambda state: state.pop("label", None),
+    lambda state: state.popitem(),
+    lambda state: state.clear(),
+)
+
+
+def test_a_presentation_of_author_owned_state_alone_drops_it_the_ordinary_way() -> None:
+    # A class declaring no member presents its author-owned state and nothing
+    # else, so the removals that must refuse anywhere a row is presented have
+    # nothing to refuse here and answer as `dict` does — including on the mapping
+    # they leave empty.
+    value = published(Marker)
+    state = cast("dict[str, Any]", value.__dict__)
+    state.clear()
+    state.update(first=1, second=2)
+    assert state.popitem() == ("second", 2)
+    assert auxiliary(value) == {"first": 1}
+    state.clear()
+    assert auxiliary(value) == {}
+    assert cast("dict[str, Any]", value.__dict__) == {}
+    with pytest.raises(KeyError):
+        del state["first"]
+    with pytest.raises(KeyError):
+        state.popitem()
+    assert real_storage(value) == {}
+
+
+@pytest.mark.parametrize("mutation", _ROW_MUTATIONS)
+def test_mutating_a_declared_member_through_that_mapping_is_refused(
+    mutation: Callable[[dict[str, Any]], object],
+) -> None:
+    # The other end of the same rule: a member the row holds cannot be rewritten
+    # or dropped through the mapping presenting it. Absorbing the write would
+    # split the value — the descriptor keeps answering from the row while a dump
+    # reads the shadow — which is the outcome the seam may not have.
+    value = published(Bare, id=1, label="x", peer_id=None)
+    with pytest.raises(TypeError, match="attached once"):
+        mutation(cast("dict[str, Any]", value.__dict__))
+    assert raw_row(value) == (0b111, 1, "x", None, UNLOADED)
+    assert value.model_dump() == {"id": 1, "label": "x", "peer_id": None}
+
+
 def test_writing_into_a_published_value_s_own_mapping_reaches_its_auxiliary_slot() -> None:
     # The one write that must neither refuse nor demote, because
     # `functools.cached_property` makes it and author-owned dynamic state is
@@ -263,14 +342,21 @@ def test_validating_an_already_published_value_returns_that_same_value() -> None
 # --------------------------------------------------------------------------- #
 
 
+def _dict_referents(value: object) -> list[Any]:
+    """Every mapping ``value`` itself holds, without asking it for one.
+
+    Asking is what creates one, so an assertion that reads ``__dict__`` cannot
+    tell a storage that was never created from one created empty by the read.
+    """
+    return [held for held in gc.get_referents(value) if isinstance(held, dict)]
+
+
 def test_no_framework_read_of_a_published_value_writes_its_storage() -> None:
     # `object.__setattr__` resolves no `__setattr__` and reaches a value's
     # storage directly, so no framework can intercept it — the same door the
     # pickle refusal is already stated against. What the framework owes is that
     # none of its own paths take it, which is what this grades: every read a
     # published value answers leaves its storage uncreated.
-    import gc
-
     value = published(Bare, {"peer": None}, id=1, label="x", peer_id=None)
     matrix: tuple[dict[str, Any], ...] = ({}, {"exclude_unset": True}, {"round_trip": True})
     for kwargs in matrix:
@@ -283,8 +369,42 @@ def test_no_framework_read_of_a_published_value_writes_its_storage() -> None:
     _ = value.peer
     _ = value.label
     assert value == published(Bare, id=1, label="x", peer_id=None)
-    assert not [held for held in gc.get_referents(value) if isinstance(held, dict)]
+    assert not _dict_referents(value)
     # Read last, because reading it is what creates it.
+    assert real_storage(value) == {}
+
+
+def test_nor_does_a_framework_read_that_wants_the_whole_of_a_value_s_named_state() -> None:
+    # Edit, pickle, and the Row Codec's provenance read each want everything a
+    # value holds under a name rather than one member, and ordinary backing keeps
+    # all of that in the instance dictionary. Reaching for the dictionary on a
+    # published value would answer "nothing" AND create one — losing the row's
+    # members into a copy built from an empty mapping, permanently, on a read.
+    value = published(Bare, {"peer": None}, id=1, label="x", peer_id=None)
+    edited = value.edit(label="y")
+    assert edited.model_dump() == {"id": 1, "label": "y", "peer_id": None}
+    assert edited.peer is None
+    assert value.model_dump() == {"id": 1, "label": "x", "peer_id": None}
+    assert pickle.loads(pickle.dumps(value)) == value
+    assert not _dict_referents(value)
+    assert real_storage(value) == {}
+
+
+def test_a_published_value_object_edits_out_of_its_row_the_same_way() -> None:
+    value = published(Place, city="Springfield", zip_code="49007")
+    edited = value.edit(city="Shelbyville")
+    assert edited.model_dump() == {"city": "Shelbyville", "zip_code": "49007"}
+    assert not _dict_referents(value)
+    assert real_storage(value) == {}
+
+
+def test_an_edit_that_authors_nothing_carries_the_whole_row_forward() -> None:
+    # The branch that never reaches the constructor, and so has nothing to catch
+    # a partition that came back empty: it restates whatever it was handed.
+    value = published(Bare, {"peer": None}, id=1, label="x", peer_id=None)
+    assert value.edit() == value
+    assert value.edit().model_fields_set == {"id", "label", "peer_id"}
+    assert not _dict_referents(value)
     assert real_storage(value) == {}
 
 

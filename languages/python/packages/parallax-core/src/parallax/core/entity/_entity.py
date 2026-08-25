@@ -48,9 +48,9 @@ from parallax.core.entity._expressions import (
     member_location,
     serialize_member,
 )
-from parallax.core.entity._instance_state import BackedModel
+from parallax.core.entity._instance_state import BackedModel, named_state
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
-from parallax.core.entity._pydantic_storage import attach_instance_state, instance_state
+from parallax.core.entity._pydantic_storage import attach_instance_state
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -391,7 +391,7 @@ def _change_record(value: BaseModel) -> ChangeRecord | None:
     written by no edit and so names no original to preserve; reporting it as the
     corruption it is belongs to the Row Codec, not here.
     """
-    record = instance_state(value).get(CHANGE_RECORD_SLOT)
+    record = named_state(value).get(CHANGE_RECORD_SLOT)
     return record if isinstance(record, ChangeRecord) else None
 
 
@@ -724,13 +724,13 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         lookup, so either hook — both deliberately left authorable — can answer
         with state carrying the slot.
 
-        The slot is read off the instance's own storage rather than through any
+        The slot is read through the value's own backing rather than through any
         name lookup, which is also where a read attaches it and an edit carries it
-        forward, so no authored ``__getattr__``, ``__getattribute__``,
-        ``__dict__``, or descriptor at the slot's own name makes a lifecycle-free
-        value answer as a materialized one or hides the state of one that is.
+        forward, so no authored ``__getattr__``, ``__getattribute__``, or
+        descriptor at the slot's own name makes a lifecycle-free value answer as a
+        materialized one or hides the state of one that is.
         """
-        if instance_state(self).get(LIFECYCLE_STATE_SLOT) is not None:
+        if named_state(self).get(LIFECYCLE_STATE_SLOT) is not None:
             raise pickle.PicklingError(
                 f"{type(self).__name__} carries the lifecycle state of the read that published "
                 "it, which describes a live read in a live process and cannot be reconstructed "

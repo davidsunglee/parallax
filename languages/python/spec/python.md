@@ -4351,10 +4351,11 @@ Each is a seam between two first-party packages that a developer
 never needs, so exporting the names to spell the reach publicly would widen the
 developer surface to serve one lifecycle package. None of the three modules
 takes a scope row of its own: they belong to `parallax.core.entity`, whose edge
-every importer above already declares, and `parallax.core.entity._construction_input`,
-`._expressions`, `._graph_input`, `._instance_state`, `._layout`, `._pydantic_storage`,
-and `._row` carry rows below because each needs a NARROWER grant than its parent — not because they
-are the only children an importer may reach.
+every importer above already declares, and
+`parallax.core.entity._construction_input`, `._expressions`, `._graph_input`,
+`._instance_state`, `._layout`, `._pydantic_storage`, and `._row` carry rows
+below because each needs a NARROWER grant than its parent — not because they are
+the only children an importer may reach.
 
 `parallax.core.entity._instance_state` owns the physical backing beneath a
 published Entity or Value Object — the per-class publication plan, the compact
@@ -4444,9 +4445,9 @@ residue over the sealed scope's own files, in every spelling, so what a sealed
 scope reaches inside its parent package is what its row grants and nothing more,
 and a granted sibling stays legal however the import that reaches it is written.
 `parallax.core.entity._construction_input`, `._graph_input`, `._instance_state`,
-`._layout`, `._pydantic_storage`, and `._row` are the sealed scopes; a scope not marked so is judged by
-its contract alone, and reaching a private module of its parent is what child
-scopes ordinarily do.
+`._layout`, `._pydantic_storage`, and `._row` are the sealed scopes; a scope not
+marked so is judged by its contract alone, and reaching a private module of its
+parent is what child scopes ordinarily do.
 
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
