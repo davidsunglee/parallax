@@ -27,6 +27,7 @@ from parallax.core.entity._declaration import (
 )
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
+    FRAMEWORK_NAME_PREFIX,
     LIFECYCLE_STATE_SLOT,
     DeclarationKind,
     EntityHeader,
@@ -49,7 +50,11 @@ from parallax.core.entity._expressions import (
     member_location,
     serialize_member,
 )
-from parallax.core.entity._instance_state import attach_instance_state, instance_state
+from parallax.core.entity._instance_state import (
+    attach_instance_state,
+    clear_prefixed_state,
+    instance_state,
+)
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -353,11 +358,14 @@ def build_object_query(
 CHANGE_RECORD_SLOT: Final = "__parallax_changes__"
 """The one private instance slot an Edited Copy's Change Record lives in.
 
-Only :meth:`Entity.edit` ever writes it, and the Entity Row Codec is its only
-reader. It lives in ``__dict__`` rather than in a declared field so it stays
-outside ``model_fields_set``, outside canonical serialization, and outside the
-declared model — which is also why every inherited copy door that shallow-copies
-that dictionary is refused."""
+Only :meth:`Entity.edit` ever writes it — construction drops whatever a class
+body leaves under it (:meth:`Entity.model_post_init`) — and two readers interpret
+what it holds: the edit surface reads the record an edit extends
+(:func:`_change_record`), and the Entity Row Codec derives an Edited Copy's
+sparse row from it. It lives in ``__dict__`` rather than in a declared field so
+it stays outside ``model_fields_set``, outside canonical serialization, and
+outside the declared model — which is also why every inherited copy door that
+shallow-copies that dictionary is refused."""
 
 
 def _change_record(value: BaseModel) -> dict[str, object] | None:
@@ -545,6 +553,27 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
             )
         operand: PredicateNode = where.node if where is not None else All()
         return Predicate(Narrow(to=canonical_subtype_selection(to), operand=operand))
+
+    def model_post_init(self, context: Any, /) -> None:
+        """Leave construction carrying none of the framework's private state.
+
+        Pydantic fills a fresh instance by assigning ``__dict__`` under that
+        name, so a class body binding it decides what the storage the framework
+        reads its own slots from starts out holding. Every one of those slots is
+        attached after a value is built and written into the storage directly
+        (:mod:`~parallax.core.entity._instance_state`), so one present here was
+        put there by the class: dropping the reserved namespace whole leaves a
+        plainly constructed value with no Change Record it never earned and no
+        lifecycle state no read attached, whatever its class body writes. Both
+        construction doors run this — the validating constructor and
+        ``model_construct``, which is the door materialization and an edit build
+        through — and each of those attaches what it carries afterwards.
+
+        A class body cannot author this hook either: the ``model_*`` namespace is
+        reserved from every declaration (spec §2).
+        """
+        super().model_post_init(context)
+        clear_prefixed_state(self, FRAMEWORK_NAME_PREFIX)
 
     def edit(self, **changes: object) -> Self:
         """The one door to an Edited Copy (spec §3).

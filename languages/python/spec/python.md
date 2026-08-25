@@ -1179,7 +1179,13 @@ temporal member, so those spellings are ordinary Value Object members.
   shadowed member surface but a shadowed framework value: ordinary reads would
   answer the class's binding, and a `functools.cached_property` spelled under
   one would additionally recompute that binding on an Edited Copy, because §3's
-  invalidation rule reads a derived cache off the class;
+  invalidation rule reads a derived cache off the class. Nothing under the prefix
+  survives construction either: the private instance slots are an Entity's, and
+  the framework attaches each of them to a value that is already built, so a
+  fresh Entity is emptied of the whole prefix — through the validating
+  constructor and through `model_construct` alike — and a class body answering
+  for the instance-dictionary assignment construction makes hands the framework
+  no private state it never wrote;
 - the ten declaration members `identity`, `container`, `persistence`, `layout`,
   `attributes`, `relationships`, `value_objects`, `as_of_axes`, `inheritance`,
   and `indices`. An Entity Class *is* its own `UnresolvedEntityDeclaration`: the

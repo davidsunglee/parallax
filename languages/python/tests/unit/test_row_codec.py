@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from _authored_storage_support import AuthoredInstanceDict
+from _authored_storage_support import AuthoredInstanceDict, ForgingInstanceDict, stored_state
 from _snapshot_graph_support import GraphFixture
 
 from _support import mirrored_models as mm
@@ -128,6 +128,16 @@ class InventedWidget(Entity, name="Widget", table="widget", namespace=_NS):
     label: Attr[str]
 
     __dict__ = AuthoredInstanceDict.inventing(CHANGE_RECORD_SLOT, {"label": "never authored"})  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
+
+
+class ForgingWidget(Entity, name="Widget", table="widget", namespace=_NS):
+    """A declaration whose class body writes a Change Record into the storage
+    every construction of it fills."""
+
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str]
+
+    __dict__ = ForgingInstanceDict(CHANGE_RECORD_SLOT, {"label": "never authored"})  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
 
 
 class _ClasslessSource:
@@ -689,6 +699,29 @@ def test_a_class_body_inventing_a_change_record_earns_no_row() -> None:
     assert plain.__dict__[CHANGE_RECORD_SLOT] == {"label": "never authored"}
 
     assert row_codec_of(NARROW_MODEL).edited_row(plain) is None
+
+
+def test_a_class_body_forging_a_change_record_into_storage_earns_no_row() -> None:
+    # Reading the storage answers a class that binds `__dict__` to lie about what
+    # it holds; this one tells the truth about a storage it doctored on the way
+    # in, because Pydantic fills a fresh instance by assigning `__dict__` under
+    # that name. The record is written by `edit(...)` and by nothing else, so
+    # construction leaves the framework's reserved namespace empty however that
+    # assignment is answered — through the validating constructor and through
+    # `model_construct`, the door materialization and an edit build through.
+    for plain in (ForgingWidget(id=1, label="a"), ForgingWidget.model_construct(id=1, label="a")):
+        assert CHANGE_RECORD_SLOT not in stored_state(plain)
+        assert row_codec_of(NARROW_MODEL).edited_row(plain) is None
+
+
+def test_an_edit_of_such_a_value_still_records_the_original_it_touched() -> None:
+    # Emptying that namespace at construction drops nothing an edit earns: the
+    # edited copy is built through the same doctored assignment and then carries
+    # its own record, so the row names the member the caller touched and the
+    # original the value really held.
+    edited = ForgingWidget(id=1, label="a").edit(label="b")
+
+    assert row_codec_of(NARROW_MODEL).edited_row(edited) == {"id": 1, "label": "b"}
 
 
 # --------------------------------------------------------------------------- #
