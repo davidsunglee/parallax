@@ -150,12 +150,12 @@ the rule that owns it rather than by this one: the copy verb ``edit``, the pickl
 entry point ``__reduce_ex__``, and the query-root and introspection spellings by
 name (:data:`RESERVED_MEMBER_NAMES`), Pydantic's ``model_config`` by the
 ``model_*`` namespace rule, and the injected temporal members by the
-canonical-name rule that runs on a family extending a temporal root. What the prefix covers is only
-what a declaration never names, which is why reserving the whole prefix rather
-than enumerating it stays correct as markers and slots are added, and why the
-reservation can be total: it applies to every Entity and Value Object class body
-alike, and only a framework root — the framework declaring itself — binds under
-it.
+canonical-name rule that runs on a family extending a temporal root. What the
+prefix covers is only what a declaration never names, which is why reserving the
+whole prefix rather than enumerating it stays correct as markers and slots are
+added, and why the reservation can be total: it applies to every Entity and Value
+Object class body alike, and only a framework root — the framework declaring
+itself — binds under it.
 
 What it protects is that no class body shadows one of those bindings: a body
 binding under one of these names answers every ordinary read the framework's own
@@ -192,7 +192,9 @@ canonical serialization, equality, and ``repr``. Pickling is the one conversion
 it does not merely disappear from: the instance dictionary is what a pickle
 carries, and a lifecycle's private record of a live read has no truthful form on
 the other side of a process boundary, so a value holding this slot is refused at
-the pickle entry point rather than quietly emptied of it."""
+the pickle entry point rather than quietly emptied of it. Emptying is what
+remains for the conversions that reach ``Entity.__getstate__`` without passing
+that entry point."""
 
 _ATTR_TEXT = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
 _REL_TEXT = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)
@@ -228,13 +230,15 @@ a Value Object Class alike.
 _PICKLE_ENTRY_NAME: Final = "__reduce_ex__"
 """The pickle entry point, which the framework owns on either kind.
 
-``pickle`` reaches a value through this one name; ``__reduce__`` and
-``__getstate__`` are what ``object.__reduce_ex__`` consults once it has been
+``pickle``'s own dispatch reaches a value through this one name; ``__reduce__``
+and ``__getstate__`` are what ``object.__reduce_ex__`` consults once it has been
 entered. So this is where an Entity refuses to let a materialized node's
 lifecycle state cross a process boundary, and a class body authoring the name
 would replace that refusal rather than run after it. Reserving exactly this name
 is also what keeps the other two authorable: an authored ``__reduce__`` or
-``__getstate__`` still runs, downstream of a guard that has already passed.
+``__getstate__`` still runs, downstream of a guard that has already passed. What
+the reservation cannot reach is a caller who replaces the dispatch itself, which
+is a choice made at the pickling site rather than in a class body.
 
 The reservation holds on a Value Object Class for the reason the copy verb's
 does — what a value of either kind becomes outside the process is derived from
@@ -1456,8 +1460,8 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
     under it takes is one of the framework's own private bindings rather than a
     member surface; Pydantic's namespace, because both kinds are Pydantic models;
     the copy verb, because both kinds install one; and the pickle entry point,
-    because both kinds leave the process through it. Only the Entity surface
-    names follow.
+    because it is where ``pickle``'s own dispatch enters either kind. Only the
+    Entity surface names follow.
     """
     if py_name.startswith(FRAMEWORK_NAME_PREFIX):
         return (
