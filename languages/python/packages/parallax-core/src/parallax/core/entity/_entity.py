@@ -27,7 +27,6 @@ from parallax.core.entity._declaration import (
 )
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
-    FRAMEWORK_NAME_PREFIX,
     LIFECYCLE_STATE_SLOT,
     DeclarationKind,
     EntityHeader,
@@ -50,11 +49,7 @@ from parallax.core.entity._expressions import (
     member_location,
     serialize_member,
 )
-from parallax.core.entity._instance_state import (
-    attach_instance_state,
-    clear_prefixed_state,
-    instance_state,
-)
+from parallax.core.entity._instance_state import attach_instance_state, instance_state
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -572,27 +567,6 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
             )
         operand: PredicateNode = where.node if where is not None else All()
         return Predicate(Narrow(to=canonical_subtype_selection(to), operand=operand))
-
-    def model_post_init(self, context: Any, /) -> None:
-        """Leave construction carrying none of the framework's private state.
-
-        Pydantic fills a fresh instance by assigning ``__dict__`` under that
-        name, so a class body binding it decides what the storage the framework
-        reads its own slots from starts out holding. Every one of those slots is
-        attached after a value is built and written into the storage directly
-        (:mod:`~parallax.core.entity._instance_state`), so one present here was
-        put there by the class: dropping the reserved namespace whole leaves a
-        plainly constructed value with no Change Record it never earned and no
-        lifecycle state no read attached, whatever its class body writes. Both
-        construction doors run this — the validating constructor and
-        ``model_construct``, which is the door materialization and an edit build
-        through — and each of those attaches what it carries afterwards.
-
-        A class body cannot author this hook either: the ``model_*`` namespace is
-        reserved from every declaration (spec §2).
-        """
-        super().model_post_init(context)
-        clear_prefixed_state(self, FRAMEWORK_NAME_PREFIX)
 
     def edit(self, **changes: object) -> Self:
         """The one door to an Edited Copy (spec §3).

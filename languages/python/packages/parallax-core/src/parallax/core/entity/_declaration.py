@@ -204,7 +204,12 @@ body binding ``__getattr__``, ``__getattribute__``, ``__dict__``, or a descripto
 at this very name can make the two disagree. Every write the framework makes — a
 read's attachment and an edit's carry-forward alike — goes to the storage, so
 what such a class buys is blinding its own lifecycle's readers rather than a
-pickle of a node a read published.
+pickle of a node a read published. A class deciding what a fresh instance's
+storage starts out holding — Pydantic fills one by assigning ``__dict__`` under
+that name — runs the same trade the other way: it denies its own plainly
+constructed values a pickle, and buys no read's evidence, because the state is
+opaque here and the lifecycle that would grant anything for it authenticates
+what it attached itself.
 
 Emptying is what remains for the conversions that reach ``Entity.__getstate__``
 without passing that entry point, and it drops the slot however it is filled."""
