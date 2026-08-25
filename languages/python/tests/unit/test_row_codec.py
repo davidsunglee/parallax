@@ -11,14 +11,13 @@ from __future__ import annotations
 import ast
 import datetime as dt
 import uuid
-from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, cast
 
 import pytest
+from _authored_storage_support import AuthoredInstanceDict
 from _snapshot_graph_support import GraphFixture
-from pydantic import BaseModel
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
@@ -112,30 +111,6 @@ NARROW_MODEL = DomainModel(Widget)
 WIDER_MODEL = DomainModel(WiderWidget)
 INTERLEAVED_MODEL = DomainModel(Interleaved)
 
-_MODEL_STORAGE: Final = BaseModel.__dict__["__dict__"]
-
-
-class _AuthoredInstanceDict:
-    """A class-body ``__dict__`` standing between a value and its own storage.
-
-    Pydantic's slot descriptor is what holds that storage, so an authored one can
-    delegate every write to it and still answer reads with a mapping of its
-    choosing — including one that denies the Change Record the storage holds, or
-    offers one no edit ever wrote.
-    """
-
-    def __init__(self, *, invented: Mapping[str, object] | None) -> None:
-        self._invented = invented
-
-    def __get__(self, instance: BaseModel, owner: type[object] | None = None) -> dict[str, Any]:
-        stored = cast("dict[str, Any]", _MODEL_STORAGE.__get__(instance))
-        if self._invented is not None:
-            return {**stored, CHANGE_RECORD_SLOT: dict(self._invented)}
-        return {name: value for name, value in stored.items() if name != CHANGE_RECORD_SLOT}
-
-    def __set__(self, instance: BaseModel, value: dict[str, Any]) -> None:
-        _MODEL_STORAGE.__set__(instance, value)
-
 
 class FilteredWidget(Entity, name="Widget", table="widget", namespace=_NS):
     """A declaration whose class body denies the Change Record its storage holds."""
@@ -143,7 +118,7 @@ class FilteredWidget(Entity, name="Widget", table="widget", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str]
 
-    __dict__ = _AuthoredInstanceDict(invented=None)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - a type checker forbids the binding the interpreter allows, and the interpreter is what the codec answers to
+    __dict__ = AuthoredInstanceDict.denying(CHANGE_RECORD_SLOT)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - a type checker forbids the binding the interpreter allows, and the interpreter is what the codec answers to
 
 
 class InventedWidget(Entity, name="Widget", table="widget", namespace=_NS):
@@ -152,7 +127,7 @@ class InventedWidget(Entity, name="Widget", table="widget", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str]
 
-    __dict__ = _AuthoredInstanceDict(invented={"label": "never authored"})  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
+    __dict__ = AuthoredInstanceDict.inventing(CHANGE_RECORD_SLOT, {"label": "never authored"})  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
 
 
 class _ClasslessSource:
@@ -761,13 +736,14 @@ def _codec_imports() -> set[str]:
     return imported
 
 
-def test_the_codec_depends_on_accepted_metadata_and_its_own_frontend_alone() -> None:
+def test_the_codec_depends_on_metadata_its_own_frontend_and_instance_storage() -> None:
     # The audit-neutrality proof, stated as the module's own import list: no
     # Principal, Subject Identity, Session, Clock Strategy, Transaction Instant,
     # Audit Metadata, temporal planning, Write Planner, SQL, or Storage Layout is
     # reachable from here. §7's generated contracts enforce the scope-level half.
-    # Every entity-scope name here is a frontend one, `_instance_state` included:
-    # it reaches the value's own attribute storage and nothing beyond it.
+    # `_instance_state` is the third dependency the module admits to, and it
+    # reaches the value's own attribute storage and nothing beyond it; every
+    # other entity-scope name is a frontend one.
     assert _codec_imports() == {
         "__future__",
         "collections.abc",

@@ -20,6 +20,7 @@ from decimal import Decimal
 from typing import Any, ClassVar, Final, cast
 
 import pytest
+from _authored_storage_support import AuthoredInstanceDict, stored_state
 from _transact_support import (
     BALANCE,
     PERSON,
@@ -188,30 +189,7 @@ class _HidingAttributes(Entity, table="hiding_attributes", namespace="parallax.c
         return object.__getattribute__(self, name)
 
 
-_MODEL_STORAGE: Final = BaseModel.__dict__["__dict__"]
 _INVENTED_STATE: Final = object()
-
-
-class _AuthoredInstanceDict:
-    """A class-body ``__dict__`` standing between a value and its own storage.
-
-    Pydantic's slot descriptor is what holds that storage, so an authored one can
-    delegate every write to it and still answer reads with a mapping of its
-    choosing — including one that denies the lifecycle slot the storage holds, or
-    offers one the storage never held.
-    """
-
-    def __init__(self, *, carrying: bool) -> None:
-        self._carrying = carrying
-
-    def __get__(self, instance: BaseModel, owner: type[object] | None = None) -> dict[str, Any]:
-        stored = cast("dict[str, Any]", _MODEL_STORAGE.__get__(instance))
-        if self._carrying:
-            return {**stored, LIFECYCLE_STATE_SLOT: _INVENTED_STATE}
-        return {name: value for name, value in stored.items() if name != LIFECYCLE_STATE_SLOT}
-
-    def __set__(self, instance: BaseModel, value: dict[str, Any]) -> None:
-        _MODEL_STORAGE.__set__(instance, value)
 
 
 class _FilteredDict(Entity, table="filtered_dict", namespace="parallax.compatibility"):
@@ -220,7 +198,7 @@ class _FilteredDict(Entity, table="filtered_dict", namespace="parallax.compatibi
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=64)
 
-    __dict__ = _AuthoredInstanceDict(carrying=False)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - a type checker forbids the binding the interpreter allows, and the interpreter is what the refusal answers to
+    __dict__ = AuthoredInstanceDict.denying(LIFECYCLE_STATE_SLOT)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - a type checker forbids the binding the interpreter allows, and the interpreter is what the refusal answers to
 
 
 class _InventedDict(Entity, table="invented_dict", namespace="parallax.compatibility"):
@@ -228,7 +206,7 @@ class _InventedDict(Entity, table="invented_dict", namespace="parallax.compatibi
 
     id: Attr[int] = attr(primary_key=True)
 
-    __dict__ = _AuthoredInstanceDict(carrying=True)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
+    __dict__ = AuthoredInstanceDict.inventing(LIFECYCLE_STATE_SLOT, _INVENTED_STATE)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
 
 
 _DIVERTED_TO: Final = "_diverted_lifecycle"
@@ -245,10 +223,10 @@ class _DivertedSlot:
     def __get__(self, instance: BaseModel | None, owner: type[object] | None = None) -> object:
         if instance is None:
             return self
-        return cast("dict[str, Any]", _MODEL_STORAGE.__get__(instance)).get(_DIVERTED_TO)
+        return stored_state(instance).get(_DIVERTED_TO)
 
     def __set__(self, instance: BaseModel, value: object) -> None:
-        cast("dict[str, Any]", _MODEL_STORAGE.__get__(instance))[_DIVERTED_TO] = value
+        stored_state(instance)[_DIVERTED_TO] = value
 
 
 class _InstallsDivertedSlot:
@@ -470,7 +448,7 @@ def test_a_class_diverting_the_lifecycle_slot_is_refused_all_the_same() -> None:
     (root,) = graph_construction_of(_DIVERTED_MODEL).construct(
         build, state_factory=lambda _view, _handle: state
     )
-    assert cast("dict[str, Any]", _MODEL_STORAGE.__get__(root))[LIFECYCLE_STATE_SLOT] is state
+    assert stored_state(cast("_DivertedSlotNode", root))[LIFECYCLE_STATE_SLOT] is state
 
     with pytest.raises(pickle.PicklingError):
         pickle.dumps(root)
