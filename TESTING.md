@@ -82,6 +82,7 @@ check-all` resolve exactly what each run contains.
 | Purpose | Command |
 |---|---|
 | One Python semantic surface | `just python-test-<surface>`, one per surface — `just python-test-unit` and its five siblings |
+| The Pydantic parity corpus on the declared floor | `just python-test-pydantic-floor` |
 | The language-contract diagnostics | `just harness-test-contract-tools` |
 | One canonical slice's capabilities and cases | `just core-show-slice slice-snapshot-1` |
 | One language spec, drafted or complete | `just core-show-language-spec languages/python/spec/python.md` |

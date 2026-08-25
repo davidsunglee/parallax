@@ -41,7 +41,7 @@ from _instance_state_support import (
 import instance_state_overhead as report
 from parallax.core.entity import UNLOADED
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
-from parallax.core.entity._instance_state import instance_state
+from parallax.core.entity._pydantic_storage import instance_state
 from parallax.core.entity._row import ABSENT
 
 # --------------------------------------------------------------------------- #

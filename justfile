@@ -41,6 +41,11 @@ harness := "reference-harness"
 # Path to the Python implementation module.
 python := "languages/python"
 
+# The minimum Pydantic release `parallax-core` declares. The floor and the locked
+# release are the two ends of the supported range, and the parity corpus is graded
+# on both.
+pydantic_floor := "2.13.0"
+
 # The bare `just` entry point. Private because it is the listing itself rather
 # than a verification command, and the grammar governs the public interface.
 [private]
@@ -290,6 +295,20 @@ python-test-provider-contract:
 [doc("Focused: built-wheel content and the clean-venv install topologies.")]
 python-test-distribution:
     cd {{python}} && uv run pytest tests/distribution
+
+# A focused selector like the six above it, differing in what it RESOLVES rather
+# than in what it selects. The lock pins one Pydantic release; what a published
+# object's serialization has to hold on is the whole supported range, and its
+# floor is the end where a behaviour this seam is built over could differ.
+# `--with` overlays that release onto the workspace resolution for one run and
+# leaves the lock alone, so `python-test-dbfree` grades the corpus on the lock and
+# this grades the same corpus on the floor. Composing it into an aggregate would
+# make the floor a merge gate rather than an iteration command, which is a
+# decision about what CI owns rather than about this recipe.
+[metadata("runtime:medium")]
+[doc("Focused: the Pydantic parity corpus on the declared floor rather than the locked release.")]
+python-test-pydantic-floor:
+    cd {{python}} && uv run --with 'pydantic=={{pydantic_floor}}' pytest tests/unit/test_pydantic_parity.py
 
 # Like the focused selectors above it this belongs to no aggregate, and for a
 # different reason: a `report` passes no judgement, so no number it prints can

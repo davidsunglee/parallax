@@ -122,7 +122,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 __all__ = [
-    "UNLOADED",
     "AllPredicate",
     "AttributeAssignment",
     "AttributeExpr",
@@ -165,18 +164,6 @@ class _Documentable(Protocol):
 
     def __parallax_document__(self) -> dict[str, object]: ...
 
-
-class _Unloaded:
-    """The private closed-world sentinel a frozen node's relationship field holds
-    when its path was outside the include set (spec §3); never a public value."""
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:  # pragma: no cover - debug aid only
-        return "UNLOADED"
-
-
-UNLOADED: _Unloaded = _Unloaded()
 
 _BOOL_HINT = (
     "a Parallax expression has no truth value; combine predicates with & / | / ~ and "

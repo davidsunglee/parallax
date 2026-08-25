@@ -55,8 +55,8 @@ from parallax.core.entity._errors import (
     EntityRowError,
 )
 from parallax.core.entity._expressions import serialize_member
-from parallax.core.entity._instance_state import instance_state
 from parallax.core.entity._model import DomainModel, model_of
+from parallax.core.entity._pydantic_storage import instance_state
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeMetadata,

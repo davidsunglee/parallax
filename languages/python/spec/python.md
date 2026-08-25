@@ -1137,14 +1137,15 @@ supported import path.
 
 **Reserved member names.** A member name may not collide with a name the class
 object already carries, because class-level access is where the typed expression
-surface lives and the class-level name would win. Seven families are reserved,
-and a collision fails at class creation (`entity-reserved-member-name`). Four of
+surface lives and the class-level name would win. Eight families are reserved,
+and a collision fails at class creation (`entity-reserved-member-name`). Five of
 them — the `model_*` namespace, the `__parallax_` prefix, the copy verb `edit`,
-and the pickle entry point `__reduce_ex__` — hold over every declared class body,
-an Entity Class and a Value Object Class alike, because both kinds carry what
-they protect. The other three are the Entity surface itself and hold on an Entity
-Class only: a Value Object has no query root, no declaration protocol, and no
-temporal member, so those spellings are ordinary Value Object members.
+the pickle entry point `__reduce_ex__`, and the schema seam
+`__get_pydantic_core_schema__` — hold over every declared class body, an Entity
+Class and a Value Object Class alike, because both kinds carry what they protect.
+The other three are the Entity surface itself and hold on an Entity Class only: a
+Value Object has no query root, no declaration protocol, and no temporal member,
+so those spellings are ordinary Value Object members.
 
 - the query-root and introspection classmethods — `where`, `narrow`, `include`,
   `as_of`, `as_of_range`, `history`, `meta`, `descriptor`;
@@ -1159,6 +1160,14 @@ temporal member, so those spellings are ordinary Value Object members.
   Reserving exactly this name is what keeps `__reduce__` and `__getstate__`
   authorable: `object.__reduce_ex__` consults both, so an authored hook runs
   downstream of a guard that has already passed;
+- the schema seam `__get_pydantic_core_schema__`, on either kind, because the
+  framework installs each declared class's serialization through it. An authored
+  one replaces that rather than composing with it. Reserving exactly this name is
+  what keeps every other Pydantic extension point authorable: a field serializer,
+  a model serializer, a computed field, a validator, and the JSON-schema hook
+  `__get_pydantic_json_schema__` all still run, and the last of those is
+  deliberately NOT reserved — the framework composes with an authored one through
+  `super()` rather than owning it outright;
 - the `model_*` namespace Pydantic reserves, on either kind, since both are
   Pydantic models;
 - the framework temporal members, on a class whose family extends `TxTemporal`
@@ -1329,10 +1338,11 @@ members `attr(...)` admits the naming and type-shaping options — `name=`,
 together on a `decimal.Decimal` member). Entity-only options fail at class
 creation: storage, keys, generation, locking, and `max_length=` (the schema
 gives a Value Object attribute no length bound). Of the reserved member-name
-families above, the four that are not the Entity surface — `model_*`, the
+families above, the five that are not the Entity surface — `model_*`, the
 `__parallax_` prefix (which covers the renderer a Value Object serializes itself
-through), the copy verb `edit` (§3), and the pickle entry point `__reduce_ex__`
-(§3) — hold over a Value Object class body as well, on a declared member and on
+through), the copy verb `edit` (§3), the pickle entry point `__reduce_ex__` (§3),
+and the schema seam `__get_pydantic_core_schema__` — hold over a Value Object
+class body as well, on a declared member and on
 an unannotated binding alike. An
 Entity-level occurrence member additionally admits `column=`, the occurrence's
 Structured Column override. When it is omitted, the already-resolved canonical
@@ -1388,7 +1398,7 @@ set is:
 | `entity-member-value-invalid` | class creation | the assignment slot holds a bare value, an `attr(...)` under `Rel[...]`, or a `rel(...)` under `Attr[...]` |
 | `entity-option-invalid-value` | factory call | an intrinsically invalid argument value: an ill-typed or out-of-range `attr(...)`, `rel(...)`, `index(...)`, or `Sequence(...)` argument |
 | `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list, a `MAX`/`Sequence(...)` generation on a non-integer member |
-| `entity-reserved-member-name` | class creation | a reserved query-root, introspection, or edit-verb name, the pickle entry point `__reduce_ex__`, a `model_*` name, a `__parallax_` framework name, a framework-temporal member name, or one of the ten declaration member names |
+| `entity-reserved-member-name` | class creation | a reserved query-root, introspection, or edit-verb name, the pickle entry point `__reduce_ex__`, the schema seam `__get_pydantic_core_schema__`, a `model_*` name, a `__parallax_` framework name, a framework-temporal member name, or one of the ten declaration member names |
 | `entity-canonical-name-collision` | class creation | two members converting to one canonical name |
 | `entity-relationship-annotation-mismatch` | Domain Model construction (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
 
@@ -4330,10 +4340,29 @@ Each is a seam between two first-party packages that a developer
 never needs, so exporting the names to spell the reach publicly would widen the
 developer surface to serve one lifecycle package. None of the three modules
 takes a scope row of its own: they belong to `parallax.core.entity`, whose edge
-every importer above already declares, and `parallax.core.entity._expressions`,
-`._graph_input`, `._layout`, and `._row` carry rows below because each needs a
-NARROWER grant than its parent — not because they are the only children an
-importer may reach.
+every importer above already declares, and `parallax.core.entity._construction_input`,
+`._expressions`, `._graph_input`, `._instance_state`, `._layout`, `._pydantic_storage`,
+and `._row` carry rows below because each needs a NARROWER grant than its parent — not because they
+are the only children an importer may reach.
+
+`parallax.core.entity._instance_state` owns the physical backing beneath a
+published Entity or Value Object — the per-class publication plan, the compact
+slot, the tuple and its presence bitmap, both Adapters, and the two Pydantic
+schema seams — and its grant row is what keeps that a deep module rather than a
+second declaration engine. Granted one sibling and nothing else, it can reach
+neither the engine that builds a class nor the writer that publishes one, so a
+publication plan has to ARRIVE as plain data the engine computed rather than be
+derived here from a model the scope could import. `._construction_input` is that
+one sibling, and is granted `(none)`: the sentinels a positional construction
+input spells are read by the layout side, by the writer, by the descriptors that
+answer a member read, and by the backing above, which are scopes that
+deliberately cannot reach one another — so the sentinels are housed where every
+one of them may reach and nothing may be reached back.
+`._pydantic_storage` is granted `(none)` for its own reason: it reaches a value's
+attribute storage past every name a class body can bind, which is Pydantic's own
+slot descriptor and nothing else, so a first-party import of any kind would mean
+it had grown a second job. All three are marked **sealed**, for the reason the
+three below them are.
 
 `parallax.core.entity._layout` and `parallax.core.entity._row` are reached the
 other way round. Each carries a row of its own because a runtime that
@@ -4402,9 +4431,10 @@ it happen to import. The same `tools/check_scope_ownership.py` walk closes that
 residue over the sealed scope's own files, in every spelling, so what a sealed
 scope reaches inside its parent package is what its row grants and nothing more,
 and a granted sibling stays legal however the import that reaches it is written.
-`parallax.core.entity._graph_input`, `._layout`, and `._row` are the sealed
-scopes; a scope not marked so is judged by its contract alone, and reaching a
-private module of its parent is what child scopes ordinarily do.
+`parallax.core.entity._construction_input`, `._graph_input`, `._instance_state`,
+`._layout`, `._pydantic_storage`, and `._row` are the sealed scopes; a scope not marked so is judged by
+its contract alone, and reaching a private module of its parent is what child
+scopes ordinarily do.
 
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
@@ -4454,6 +4484,9 @@ private module of its parent is what child scopes ordinarily do.
 | Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
 | Entity and Object Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` | generated forbidden contracts |
 | Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
+| Construction-input sentinels (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._construction_input` | `parallax.core.entity._construction_input` | (none) | generated forbidden contracts |
+| Published instance state (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._instance_state` | `parallax.core.entity._instance_state` | `parallax.core.entity._construction_input` | generated forbidden contracts |
+| A value's own Pydantic storage (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._pydantic_storage` | `parallax.core.entity._pydantic_storage` | (none) | generated forbidden contracts |
 | Entity graph-input carriers (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._graph_input` | `parallax.core.entity._graph_input` | `m-metamodel` | generated forbidden contracts |
 | Exact-model member layouts (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._layout` | `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | Positional member rows and their carrier translation (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._row` | `parallax.core.entity._row` | `m-metamodel`, `parallax.core.entity._layout`, `parallax.core.entity._graph_input` | generated forbidden contracts |
@@ -4510,6 +4543,9 @@ parallax.core.object_query._fluent --> parallax.core.base
 parallax.core.object_query._fluent --> parallax.core.metamodel
 parallax.core.object_query._fluent --> parallax.core.predicate
 parallax.core.object_query._fluent --> parallax.core.entity
+parallax.core.entity._construction_input --> (none)
+parallax.core.entity._pydantic_storage --> (none)
+parallax.core.entity._instance_state --> parallax.core.entity._construction_input
 parallax.core.entity._graph_input --> parallax.core.metamodel
 parallax.core.entity._layout --> parallax.core.metamodel
 parallax.core.entity._layout --> parallax.core.inheritance

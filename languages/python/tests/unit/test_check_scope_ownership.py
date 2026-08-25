@@ -254,14 +254,18 @@ def test_a_sibling_that_imports_first_party_is_left_to_the_import_gate() -> None
 def test_the_rule_applies_only_where_a_zero_grant_scope_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Scoped to the reason it exists. Grant the refusal leaf anything and the
-    # package stops being special: its row then has a closure to complement, and
-    # an import-free sibling is no longer the row's blind spot.
-    assert own.zero_grant_scopes() == {
-        "parallax.snapshot.handle._errors": "parallax.snapshot.handle"
+    # Scoped to the reason it exists. Grant every zero-grant scope something and
+    # no package is special any more: each row then has a closure to complement,
+    # and an import-free sibling is no longer any row's blind spot.
+    zero_grant = own.zero_grant_scopes()
+    assert zero_grant == {
+        "parallax.core.entity._construction_input": "parallax.core.entity",
+        "parallax.core.entity._pydantic_storage": "parallax.core.entity",
+        "parallax.snapshot.handle._errors": "parallax.snapshot.handle",
     }
     tampered = dict(dag.SUPPORT_SCOPE_DEPS)
-    tampered["parallax.snapshot.handle._errors"] = frozenset({"parallax.core.base"})
+    for scope in zero_grant:
+        tampered[scope] = frozenset({"parallax.core.base"})
     monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
     assert own.zero_grant_scopes() == {}
     _STDLIB_LEAF.write_text(_IMPORT_FREE)

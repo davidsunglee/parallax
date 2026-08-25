@@ -350,6 +350,41 @@ def define_value_object_reserved_pickle_entry_name() -> type:
     return Bad
 
 
+def define_reserved_core_schema_hook_name() -> type:
+    """An Entity class body binding the Pydantic core-schema hook.
+
+    The framework installs a published value's serialization through that hook,
+    so an authored one replaces it rather than composing with it — which is why
+    it is the one Pydantic extension point a declaration may not take.
+    """
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+
+        @classmethod
+        def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
+            return handler(source)
+
+    return Bad
+
+
+def define_value_object_reserved_core_schema_hook_name() -> type:
+    """A Value Object class body binding the Pydantic core-schema hook.
+
+    A Value Object is published the same way an Entity is, so the reservation
+    holds on its body too and is proved there rather than inferred.
+    """
+
+    class Bad(ValueObject):
+        city: Attr[str]
+
+        @classmethod
+        def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
+            return handler(source)
+
+    return Bad
+
+
 def define_wide_union_annotation() -> type:
     """A union that is not ``X | None``, which optionality alone may spell."""
 

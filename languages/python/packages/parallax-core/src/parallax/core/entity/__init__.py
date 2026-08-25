@@ -25,6 +25,7 @@ imports no descriptor interchange code at all.
 
 from __future__ import annotations
 
+from parallax.core.entity._construction_input import UNLOADED
 from parallax.core.entity._declaration import EntityDeclaration, shape_of, snake_to_camel
 from parallax.core.entity._entity import Bitemporal, Entity, TxTemporal
 from parallax.core.entity._errors import (
@@ -44,7 +45,6 @@ from parallax.core.entity._errors import (
     UnloadedRelationshipError,
 )
 from parallax.core.entity._expressions import (
-    UNLOADED,
     AllPredicate,
     AttributeAssignment,
     AttributeExpr,

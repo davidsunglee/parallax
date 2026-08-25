@@ -31,6 +31,8 @@ from parallax.core.base import FLOAT32, INT32, Decimal, Float32, Int32, NeutralT
 from parallax.core.base import infer_neutral_type as _infer_neutral_type
 from parallax.core.entity._errors import EntityDefinitionError
 from parallax.core.entity._expressions import AttributeRef, RelationshipRef, snake_to_camel
+from parallax.core.entity._instance_state import PublicationPlan
+from parallax.core.entity._instance_state import install as install_publication_plan
 from parallax.core.entity._members import (
     AbstractSubtype,
     Attr,
@@ -243,6 +245,23 @@ A declared member of this name installs its descriptor over the verb and silentl
 disables editing for that class, which is the same harm on either kind — so this
 is one of the two public framework bindings reserved against an Entity Class and
 a Value Object Class alike.
+"""
+
+_CORE_SCHEMA_HOOK_NAME: Final = "__get_pydantic_core_schema__"
+"""Pydantic's advanced schema-construction seam, which the framework owns.
+
+A published value holds its declared members in one tuple rather than in the
+instance dictionary Pydantic's compiled serializer reads, so the framework
+installs a serialization that reaches them as attributes — and it installs it
+through this hook. An authored one replaces that, which would leave a published
+value serializing as empty rather than as itself, so this is the one Pydantic
+extension point a declaration may not take. Its JSON-schema sibling
+``__get_pydantic_json_schema__`` is deliberately NOT reserved: the framework
+composes with an authored one there rather than replacing it, so JSON-schema
+customization stays authorable.
+
+The reservation holds on either kind, because a Value Object is published the
+same way an Entity is.
 """
 
 _PICKLE_ENTRY_NAME: Final = "__reduce_ex__"
@@ -1008,8 +1027,17 @@ def _build_value_object(
         many_py=frozenset(many_py),
     )
     cls = _pydantic_class(mcs, cls_name, bases, ns)
+    plan = install_publication_plan(
+        cls,
+        members=(
+            *(py_name for py_name in py_to_name if py_name not in nested_classes),
+            *(py_name for py_name in py_to_name if py_name in nested_classes),
+        ),
+        occurrences=nested_classes,
+        relationships=(),
+    )
     for py_name, canonical in py_to_name.items():
-        setattr(cls, py_name, ElementAttr(canonical, py_name))
+        setattr(cls, py_name, ElementAttr(canonical, plan.indexes[py_name]))
     return cls
 
 
@@ -1179,6 +1207,13 @@ def _build_entity(
         vo_classes=vo_classes,
     )
     cls = _pydantic_class(mcs, cls_name, bases, ns)
+    family = _family_publication_facts(cls)
+    plan = install_publication_plan(
+        cls,
+        members=family.members,
+        occurrences=family.occurrences,
+        relationships=family.relationships,
+    )
     # Every reference this class hands out is seeded with the Entity's EXACT
     # canonical spelling, so everything downstream that re-emits it — a
     # serialized query, a durable write document — carries an identity two
@@ -1188,7 +1223,11 @@ def _build_entity(
         setattr(
             cls,
             py_name,
-            Attr(AttributeRef(identity.canonical, canonical), py_name, members[canonical]),
+            Attr(
+                AttributeRef(identity.canonical, canonical),
+                plan.indexes[py_name],
+                members[canonical],
+            ),
         )
     for canonical, py_name in relationship_py.items():
         setattr(
@@ -1197,10 +1236,95 @@ def _build_entity(
             Rel(
                 RelationshipRef(identity.canonical, canonical),
                 py_name,
+                plan.relationships[py_name],
                 _target_spelling(identity, tuple(relationships), canonical),
             ),
         )
+    _install_inherited_descriptors(cls, plan, own=set(py_to_name) | set(relationship_py.values()))
     return cls
+
+
+@dataclass(frozen=True, slots=True)
+class _FamilyPublicationFacts:
+    """The class side of one exact Entity's published row.
+
+    The member order is the family-effective one an accepted Metamodel fixes for
+    the same concrete — every contributor's attributes root-first, then every
+    contributor's Value Object occurrences the same way — derived here from the
+    Python inheritance chain and each contributor's own declared members. The two
+    derivations read different material and are compared where a model and a
+    class first meet.
+    """
+
+    members: tuple[str, ...]
+    occurrences: dict[str, type]
+    relationships: tuple[str, ...]
+
+
+def _family_publication_facts(cls: type) -> _FamilyPublicationFacts:
+    """``cls``'s family-effective members and relationships, root-first."""
+    chain = [
+        ancestor
+        for ancestor in cls.__mro__
+        if isinstance(ancestor.__dict__.get(_MEMBERS), MemberNames)
+    ]
+    chain.reverse()
+    attributes: list[str] = []
+    occurrences: list[str] = []
+    vo_classes: dict[str, type] = {}
+    relationships: list[str] = []
+    for ancestor in chain:
+        names = cast("MemberNames", ancestor.__dict__[_MEMBERS])
+        for py_name in names.py_to_name:
+            (occurrences if py_name in names.vo_classes else attributes).append(py_name)
+        vo_classes.update(names.vo_classes)
+        relationships.extend(names.relationship_py.values())
+    return _FamilyPublicationFacts(
+        members=(*attributes, *occurrences),
+        occurrences=vo_classes,
+        relationships=tuple(relationships),
+    )
+
+
+def _install_inherited_descriptors(cls: type, plan: PublicationPlan, *, own: set[str]) -> None:
+    """Give every member this class inherits a descriptor addressing THIS row.
+
+    Only an attribute's position survives inheritance, because ancestry
+    contributes attributes root-first; an occurrence and a relationship both sit
+    after the exact class's own attribute count, which is a fact about the
+    concrete rather than the family. So one inherited descriptor cannot carry one
+    position for a whole family, and each descendant installs its own — derived
+    from the declaring class's, so the reference it hands out and the target it
+    names are unchanged at every depth.
+
+    They are installed once the class exists, never seeded into the namespace
+    Pydantic collects fields from: a descriptor reachable under a member's name
+    while the class is being built becomes that member's collected DEFAULT, which
+    is the defect :class:`_InheritedMemberShadow` exists to prevent.
+    """
+    for py_name, index in (*plan.indexes.items(), *plan.relationships.items()):
+        if py_name in own:
+            continue
+        setattr(cls, py_name, _declaring_descriptor(cls, py_name).rebound(index))
+
+
+def _declaring_descriptor(cls: type, py_name: str) -> Attr[Any] | Rel[Any]:
+    """The descriptor an ancestor installed for ``py_name``.
+
+    Read out of the owning class's own namespace rather than through attribute
+    access, because class access to a member yields its query-authoring seed
+    rather than the descriptor that produced it. Only an Entity family inherits
+    members at all, so only those two descriptors are ever looked for: a Value
+    Object Class extends the framework root and nothing else.
+    """
+    for ancestor in cls.__mro__:
+        bound = ancestor.__dict__.get(py_name)
+        if isinstance(bound, Attr | Rel):
+            return cast("Attr[Any] | Rel[Any]", bound)
+    raise EntityDefinitionError(  # pragma: no cover - every inherited member declares one
+        code="entity-base-invalid",
+        message=f"{cls.__name__}.{py_name} is inherited from no Parallax declaration",
+    )
 
 
 def _attribute(
@@ -1536,9 +1660,10 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
     framework's own prefix (:data:`FRAMEWORK_NAME_PREFIX`), because what a binding
     under it takes is one of the framework's own private bindings rather than a
     member surface; Pydantic's namespace, because both kinds are Pydantic models;
-    the copy verb, because both kinds install one; and the pickle entry point,
-    because it is the name ``pickle``'s own dispatch asks either kind for. Only
-    the Entity surface names follow.
+    the copy verb, because both kinds install one; the schema seam, because the
+    framework's own serialization is installed through it; and the pickle entry
+    point, because it is the name ``pickle``'s own dispatch asks either kind for.
+    Only the Entity surface names follow.
     """
     if py_name.startswith(FRAMEWORK_NAME_PREFIX):
         return (
@@ -1552,6 +1677,14 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
         return (
             f"reuses the instance-level copy verb `{_COPY_VERB_NAME}`, which a declared member "
             "of that name would overwrite"
+        )
+    if py_name == _CORE_SCHEMA_HOOK_NAME:
+        return (
+            f"reuses `{_CORE_SCHEMA_HOOK_NAME}`, the schema seam the framework owns — an "
+            "authored one replaces the serialization that reads a published value's members "
+            "as attributes, so such a value would serialize as empty; author "
+            "`__get_pydantic_json_schema__`, a field or model serializer, a computed field, "
+            "or a validator instead, all of which still run"
         )
     if py_name == _PICKLE_ENTRY_NAME:
         return (

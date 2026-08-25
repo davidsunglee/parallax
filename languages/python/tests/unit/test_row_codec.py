@@ -836,7 +836,7 @@ def test_the_codec_depends_on_metadata_its_own_frontend_and_instance_storage() -
     # Principal, Subject Identity, Session, Clock Strategy, Transaction Instant,
     # Audit Metadata, temporal planning, Write Planner, SQL, or Storage Layout is
     # reachable from here. §7's generated contracts enforce the scope-level half.
-    # `_instance_state` is the third dependency the module admits to, and it
+    # `_pydantic_storage` is the third dependency the module admits to, and it
     # reaches the value's own attribute storage and nothing beyond it; every
     # other entity-scope name is a frontend one.
     assert _codec_imports() == {
@@ -849,7 +849,7 @@ def test_the_codec_depends_on_metadata_its_own_frontend_and_instance_storage() -
         "parallax.core.entity._entity",
         "parallax.core.entity._errors",
         "parallax.core.entity._expressions",
-        "parallax.core.entity._instance_state",
+        "parallax.core.entity._pydantic_storage",
         "parallax.core.entity._model",
         "parallax.core.inheritance",
         "parallax.core.metamodel",

@@ -15,7 +15,7 @@ import functools
 from typing import TYPE_CHECKING, Final
 
 from parallax.core.entity._errors import EditError, EditViolation
-from parallax.core.entity._instance_state import instance_state, replace_instance_state
+from parallax.core.entity._pydantic_storage import instance_state, replace_instance_state
 
 if TYPE_CHECKING:
     from collections.abc import Container
@@ -73,7 +73,7 @@ def partition_declared(
     Change Record outside anything a class can declare derived.
 
     Both halves are read off the value's own storage
-    (:func:`~parallax.core.entity._instance_state.instance_state`) rather than
+    (:func:`~parallax.core.entity._pydantic_storage.instance_state`) rather than
     through ``__dict__``, so a class body binding that name can neither drop the
     lifecycle state a copy must carry forward nor invent a Change Record the
     value never earned.

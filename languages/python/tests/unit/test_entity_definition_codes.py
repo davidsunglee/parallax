@@ -62,6 +62,8 @@ _PROBES: dict[str, str] = {
     "define_framework_slot_binding": "entity-reserved-member-name",
     "define_reserved_pickle_entry_name": "entity-reserved-member-name",
     "define_value_object_reserved_pickle_entry_name": "entity-reserved-member-name",
+    "define_reserved_core_schema_hook_name": "entity-reserved-member-name",
+    "define_value_object_reserved_core_schema_hook_name": "entity-reserved-member-name",
     "define_nullable_many_relationship": "entity-annotation-invalid",
     "define_wide_union_annotation": "entity-annotation-invalid",
     "define_wide_union_relationship_target": "entity-annotation-invalid",
