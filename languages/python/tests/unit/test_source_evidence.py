@@ -29,6 +29,7 @@ from _transact_support import (
     db_for,
     new_account,
 )
+from pydantic import BaseModel
 
 from _support import mirrored_models as mm
 from parallax.conformance import vo_models as vo
@@ -179,6 +180,48 @@ class _HidingAttributes(Entity, table="hiding_attributes", namespace="parallax.c
         return object.__getattribute__(self, name)
 
 
+_MODEL_STORAGE: Final = BaseModel.__dict__["__dict__"]
+_INVENTED_STATE: Final = object()
+
+
+class _AuthoredInstanceDict:
+    """A class-body ``__dict__`` standing between a value and its own storage.
+
+    Pydantic's slot descriptor is what holds that storage, so an authored one can
+    delegate every write to it and still answer reads with a mapping of its
+    choosing — including one that denies the lifecycle slot the storage holds, or
+    offers one the storage never held.
+    """
+
+    def __init__(self, *, carrying: bool) -> None:
+        self._carrying = carrying
+
+    def __get__(self, instance: BaseModel, owner: type[object] | None = None) -> dict[str, Any]:
+        stored = cast("dict[str, Any]", _MODEL_STORAGE.__get__(instance))
+        if self._carrying:
+            return {**stored, LIFECYCLE_STATE_SLOT: _INVENTED_STATE}
+        return {name: value for name, value in stored.items() if name != LIFECYCLE_STATE_SLOT}
+
+    def __set__(self, instance: BaseModel, value: dict[str, Any]) -> None:
+        _MODEL_STORAGE.__set__(instance, value)
+
+
+class _FilteredDict(Entity, table="filtered_dict", namespace="parallax.compatibility"):
+    """An Entity whose class body denies the lifecycle slot its storage holds."""
+
+    id: Attr[int] = attr(primary_key=True)
+
+    __dict__ = _AuthoredInstanceDict(carrying=False)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - a type checker forbids the binding the interpreter allows, and the interpreter is what the refusal answers to
+
+
+class _InventedDict(Entity, table="invented_dict", namespace="parallax.compatibility"):
+    """An Entity whose class body offers a lifecycle slot its storage never held."""
+
+    id: Attr[int] = attr(primary_key=True)
+
+    __dict__ = _AuthoredInstanceDict(carrying=True)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
+
+
 _HISTORICAL_PROTOCOL: Final = pickle.HIGHEST_PROTOCOL
 
 
@@ -188,10 +231,10 @@ class _StrippingPickler(pickle.Pickler):
     ``object.__reduce_ex__`` reached directly is exactly that implementation:
     ``Entity.__getstate__``'s lifecycle strip runs and no entry-point guard does,
     so what lands in the buffer is a historical pickle rather than an
-    approximation of one. Supplying the reducer is what makes that reachable —
-    the refusal reaches ``pickle``'s own dispatch, which a caller replacing it
-    has stepped outside of (spec §3) — so this is the writer of the historical
-    bytes and never a way to obtain them from the refusal.
+    approximation of one. Supplying the reducer is what makes that reachable — a
+    caller who answers for the entry point never enters the refusal (spec §3) —
+    so this is the writer of the historical bytes and never a way to obtain them
+    from the refusal.
     """
 
     def reducer_override(self, obj: Any) -> Any:
@@ -226,9 +269,9 @@ def test_pickling_a_typed_node_is_refused_while_it_carries_lifecycle_state() -> 
 
 
 def test_a_materialized_node_nested_in_what_is_pickled_is_refused_too() -> None:
-    # Being the pickle's root is not what the refusal is about: `pickle` reaches
-    # every object it writes through the same entry point, so a node buried in a
-    # container refuses the whole dump.
+    # Being the pickle's root is not what the refusal is about: `pickle`'s own
+    # dispatch asks every object it writes for the same entry point, so a node
+    # buried in a container refuses the whole dump.
     node = account_db(_account_port()).find(mm.Account.where(mm.Account.id == 1)).result()
 
     with pytest.raises(pickle.PicklingError):
@@ -307,6 +350,32 @@ def test_a_class_body_hiding_the_lifecycle_slot_is_refused_all_the_same() -> Non
 
     with pytest.raises(pickle.PicklingError):
         pickle.dumps(value)
+
+
+def test_a_class_body_filtering_its_instance_dictionary_is_refused_all_the_same() -> None:
+    # `__dict__` is a name a class body can bind like any other, and binding it
+    # decides what every reader of that name — `getattr` and
+    # `object.__getattribute__` alike — is told. The refusal reads the storage
+    # itself, so a value whose dictionary denies the state it carries pickles no
+    # more than a plainly materialized node does.
+    value = _FilteredDict(id=7)
+    object.__setattr__(value, LIFECYCLE_STATE_SLOT, object())
+    assert LIFECYCLE_STATE_SLOT not in value.__dict__
+
+    with pytest.raises(pickle.PicklingError):
+        pickle.dumps(value)
+
+
+def test_a_class_body_inventing_the_slot_leaves_an_ordinary_value_pickleable() -> None:
+    # The same fact from the other side: a dictionary answering with a slot the
+    # storage never held does not make a value a read never produced into a
+    # materialized node.
+    value = _InventedDict(id=7)
+    assert value.__dict__[LIFECYCLE_STATE_SLOT] is _INVENTED_STATE
+
+    restored = cast("_InventedDict", pickle.loads(pickle.dumps(value)))
+    assert restored.id == 7
+    assert snapshot_state_of(restored) is None
 
 
 def test_a_pickle_written_before_the_refusal_existed_still_loads() -> None:

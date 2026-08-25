@@ -191,10 +191,14 @@ alongside field values but outside the Pydantic field set, so it is invisible to
 canonical serialization, equality, and ``repr``. Pickling is the one conversion
 it does not merely disappear from: the instance dictionary is what a pickle
 carries, and a lifecycle's private record of a live read has no truthful form on
-the other side of a process boundary, so a value holding this slot is refused at
-the pickle entry point rather than quietly emptied of it. Emptying is what
-remains for the conversions that reach ``Entity.__getstate__`` without passing
-that entry point."""
+the other side of a process boundary, so a value carrying state here is refused
+at the pickle entry point rather than quietly emptied of it. Carrying state is
+``lifecycle_state_of``'s own question — the slot holding anything but ``None`` —
+rather than the slot being physically present, because a factory that returned
+``None`` leaves a node every reader of a lifecycle sees nothing on and a pickle
+of it can claim nothing untrue. Emptying is what remains for the conversions
+that reach ``Entity.__getstate__`` without passing that entry point, and it
+drops the slot however it is filled."""
 
 _ATTR_TEXT = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
 _REL_TEXT = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)
@@ -230,15 +234,16 @@ a Value Object Class alike.
 _PICKLE_ENTRY_NAME: Final = "__reduce_ex__"
 """The pickle entry point, which the framework owns on either kind.
 
-``pickle``'s own dispatch reaches a value through this one name; ``__reduce__``
-and ``__getstate__`` are what ``object.__reduce_ex__`` consults once it has been
+``pickle``'s own dispatch asks a value for this one name; ``__reduce__`` and
+``__getstate__`` are what ``object.__reduce_ex__`` consults once it has been
 entered. So this is where an Entity refuses to let a materialized node's
 lifecycle state cross a process boundary, and a class body authoring the name
 would replace that refusal rather than run after it. Reserving exactly this name
 is also what keeps the other two authorable: an authored ``__reduce__`` or
 ``__getstate__`` still runs, downstream of a guard that has already passed. What
-the reservation cannot reach is a caller who replaces the dispatch itself, which
-is a choice made at the pickling site rather than in a class body.
+the reservation cannot reach is whoever answers for the name instead of binding
+it — a pickling site that replaces the dispatch, and a class body authoring
+``__getattribute__``, which the lookup for this name goes through.
 
 The reservation holds on a Value Object Class for the reason the copy verb's
 does — what a value of either kind becomes outside the process is derived from
@@ -1460,8 +1465,8 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
     under it takes is one of the framework's own private bindings rather than a
     member surface; Pydantic's namespace, because both kinds are Pydantic models;
     the copy verb, because both kinds install one; and the pickle entry point,
-    because it is where ``pickle``'s own dispatch enters either kind. Only the
-    Entity surface names follow.
+    because it is the name ``pickle``'s own dispatch asks either kind for. Only
+    the Entity surface names follow.
     """
     if py_name.startswith(FRAMEWORK_NAME_PREFIX):
         return (
@@ -1479,7 +1484,7 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
     if py_name == _PICKLE_ENTRY_NAME:
         return (
             f"reuses `{_PICKLE_ENTRY_NAME}`, the pickle entry point the framework owns — an "
-            "authored one runs before the refusal that keeps a materialized node's lifecycle "
+            "authored one replaces the refusal that keeps a materialized node's lifecycle "
             "state from crossing a process boundary; author `__reduce__` or `__getstate__` "
             "instead, both of which still run"
         )

@@ -359,6 +359,18 @@ declared model — which is also why every inherited copy door that shallow-copi
 that dictionary is refused."""
 
 
+def _instance_dict(value: BaseModel) -> dict[str, Any]:
+    """``value``'s own attribute storage, read past every authored name lookup.
+
+    ``getattr`` and ``object.__getattribute__`` alike resolve ``__dict__``
+    through the type, so a class body binding that name decides what either one
+    answers and can filter or invent entries. Pydantic's own slot descriptor
+    reads the storage itself — where ``object.__setattr__`` writes a framework
+    slot, and what a pickle carries.
+    """
+    return cast("dict[str, Any]", BaseModel.__dict__["__dict__"].__get__(value))
+
+
 def _change_record(value: object) -> dict[str, object] | None:
     """``value``'s Change Record, or ``None`` when it carries none.
 
@@ -663,23 +675,24 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         where a write is meant to settle.
 
         The guard sits on ``__reduce_ex__`` because that is the name ``pickle``'s
-        own dispatch enters a value through; ``__reduce__`` and ``__getstate__``
-        are consulted by ``object.__reduce_ex__`` afterwards, so an authored hook
-        runs downstream of a guard that has already passed and never in place of
-        one. That ordering is what the class body's matching name reservation
-        (spec §2) keeps true. A caller supplying a reducer of their own — through
-        ``copyreg``, a ``Pickler.dispatch_table``, or ``reducer_override`` — has
-        replaced that dispatch and is never entered here; what still holds for
-        such a caller is :meth:`__getstate__`'s strip, and only while their
-        reducer delegates to ``object.__reduce_ex__``.
+        own dispatch asks a value for; ``__reduce__`` and ``__getstate__`` are
+        what ``object.__reduce_ex__`` consults afterwards, so an authored one of
+        those runs downstream of a guard that has already passed rather than in
+        place of it, which is what the class body's matching name reservation
+        (spec §2) keeps true. What no reservation on this name can reach is a
+        caller who answers for the name instead of the value: one supplying a
+        reducer through ``copyreg``, a ``Pickler.dispatch_table``, or
+        ``reducer_override``, and one authoring ``__getattribute__``, which the
+        attribute lookup for this entry point goes through. Neither is entered
+        here, and what still holds for either is :meth:`__getstate__`'s strip,
+        and only while what they return delegates to ``object.__reduce_ex__``.
 
-        The slot is read off the instance dictionary rather than through
-        ``getattr``, so an authored ``__getattr__`` cannot make a lifecycle-free
-        value answer as a materialized one, and an authored ``__getattribute__``
-        cannot hide the state of one that is.
+        The slot is read off the instance's own storage rather than through any
+        name lookup, so no authored ``__getattr__``, ``__getattribute__``, or
+        ``__dict__`` makes a lifecycle-free value answer as a materialized one or
+        hides the state of one that is.
         """
-        instance = cast("dict[str, Any]", object.__getattribute__(self, "__dict__"))
-        if instance.get(LIFECYCLE_STATE_SLOT) is not None:
+        if _instance_dict(self).get(LIFECYCLE_STATE_SLOT) is not None:
             raise pickle.PicklingError(
                 f"{type(self).__name__} carries the lifecycle state of the read that published "
                 "it, which describes a live read in a live process and cannot be reconstructed "
@@ -692,13 +705,14 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         """Serialize as ordinary domain data: declared member values, and no
         lifecycle state.
 
-        Under ``pickle``'s own dispatch the filter has nothing left to do: the
-        entry-point guard above refuses a lifecycle-bearing value before this
-        runs. It still answers for two callers the guard never sees — one
-        reaching this conversion directly, which asks for the value's state
-        rather than for a value that can be reconstituted elsewhere, and one
-        pickling through a reducer of their own that delegates to
-        ``object.__reduce_ex__``. Both are answered with the ordinary domain data
+        The entry-point guard above refuses a lifecycle-bearing value before this
+        runs, so wherever that guard is entered the filter has nothing left to
+        do. What remains for it is the conversions the guard never sees: one
+        reaching this method directly, which asks for the value's state rather
+        than for a value that can be reconstituted elsewhere, and one whose
+        pickle answered for the entry-point name itself — a supplied reducer, or
+        an authored ``__getattribute__`` — and then delegated to
+        ``object.__reduce_ex__``. Each is answered with the ordinary domain data
         the value is, carrying no keyed-source status.
 
         The Change Record travels: it is authored state, written by
