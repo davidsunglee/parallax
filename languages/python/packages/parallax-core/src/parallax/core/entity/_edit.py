@@ -15,6 +15,7 @@ import functools
 from typing import TYPE_CHECKING, Final
 
 from parallax.core.entity._errors import EditError, EditViolation
+from parallax.core.entity._instance_state import instance_state, replace_instance_state
 
 if TYPE_CHECKING:
     from collections.abc import Container
@@ -71,12 +72,18 @@ def partition_declared(
     reserved from every class body, which is what keeps a lifecycle's state and a
     Change Record outside anything a class can declare derived.
 
+    Both halves are read off the value's own storage
+    (:func:`~parallax.core.entity._instance_state.instance_state`) rather than
+    through ``__dict__``, so a class body binding that name can neither drop the
+    lifecycle state a copy must carry forward nor invent a Change Record the
+    value never earned.
+
     Every branch of both edit surfaces partitions here, so none of them can hold
     its own opinion of the boundary.
     """
     declared_state: dict[str, object] = {}
     carried: dict[str, object] = {}
-    for key, member in value.__dict__.items():
+    for key, member in instance_state(value).items():
         if key in declared:
             declared_state[key] = member
         elif not _is_derived_cache(type(value), key):
@@ -90,10 +97,12 @@ def restate[M: BaseModel](value: M, state: dict[str, object]) -> M:
     An edit that authors nothing validates nothing, so it builds through the
     validation-free construction path materialization already uses rather than
     through the constructor — which is also the only path left once every
-    inherited copy door is refused.
+    inherited copy door is refused. ``state`` lands in the copy's own storage,
+    so what a class body binds ``__dict__`` to cannot decide what the copy ends
+    up holding.
     """
     restated = type(value).model_construct()
-    object.__setattr__(restated, "__dict__", state)
+    replace_instance_state(restated, state)
     object.__setattr__(restated, "__pydantic_fields_set__", set(value.__pydantic_fields_set__))
     return restated
 

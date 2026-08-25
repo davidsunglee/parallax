@@ -182,23 +182,31 @@ LIFECYCLE_STATE_SLOT: Final = "__parallax_lifecycle__"
 Entity Graph Construction attaches whatever opaque value the constructing
 lifecycle's state factory returned and never interprets it, so a lifecycle
 package's own state — the Snapshot slice's views, pin, and edge, or a future
-managed slice's entirely different record — travels under one name that Entity
-neither reads nor exposes. One slot rather than a per-fact family is what keeps
-Entity free of every lifecycle's vocabulary.
+managed slice's entirely different record — travels under one name Entity
+exposes nowhere and interprets never. One slot rather than a per-fact family is
+what keeps Entity free of every lifecycle's vocabulary.
 
-The value lands in the instance ``__dict__`` through ``object.__setattr__``,
-alongside field values but outside the Pydantic field set, so it is invisible to
-canonical serialization, equality, and ``repr``. Pickling is the one conversion
-it does not merely disappear from: the instance dictionary is what a pickle
-carries, and a lifecycle's private record of a live read has no truthful form on
-the other side of a process boundary, so a value carrying state here is refused
-at the pickle entry point rather than quietly emptied of it. Carrying state is
-``lifecycle_state_of``'s own question — the slot holding anything but ``None`` —
-rather than the slot being physically present, because a factory that returned
-``None`` leaves a node every reader of a lifecycle sees nothing on and a pickle
-of it can claim nothing untrue. Emptying is what remains for the conversions
-that reach ``Entity.__getstate__`` without passing that entry point, and it
-drops the slot however it is filled."""
+The value is written into the instance's own storage, alongside field values but
+outside the Pydantic field set, so it is invisible to canonical serialization,
+equality, and ``repr``. Pickling is the one conversion it does not merely
+disappear from: that storage is what a pickle carries, and a lifecycle's private
+record of a live read has no truthful form on the other side of a process
+boundary, so a value carrying state here is refused at the pickle entry point
+rather than quietly emptied of it.
+
+That refusal is the one thing Entity reads this slot for, and it asks the storage
+directly whether the slot holds anything but ``None``: a factory returning
+``None`` leaves a node every reader of a lifecycle sees nothing on, and a pickle
+of it can claim nothing untrue. Reading the storage is a different read from
+``lifecycle_state_of``, which resolves the name through the class, so a class
+body binding ``__getattr__``, ``__getattribute__``, ``__dict__``, or a descriptor
+at this very name can make the two disagree. Every write the framework makes — a
+read's attachment and an edit's carry-forward alike — goes to the storage, so
+what such a class buys is blinding its own lifecycle's readers rather than a
+pickle of a node a read published.
+
+Emptying is what remains for the conversions that reach ``Entity.__getstate__``
+without passing that entry point, and it drops the slot however it is filled."""
 
 _ATTR_TEXT = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
 _REL_TEXT = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)
@@ -240,10 +248,14 @@ entered. So this is where an Entity refuses to let a materialized node's
 lifecycle state cross a process boundary, and a class body authoring the name
 would replace that refusal rather than run after it. Reserving exactly this name
 is also what keeps the other two authorable: an authored ``__reduce__`` or
-``__getstate__`` still runs, downstream of a guard that has already passed. What
-the reservation cannot reach is whoever answers for the name instead of binding
-it — a pickling site that replaces the dispatch, and a class body authoring
-``__getattribute__``, which the lookup for this name goes through.
+``__getstate__`` still runs, downstream of a guard that has already passed. The
+reservation judges the class body as authored, which is one namespace at one
+moment rather than a hold on the attribute for the life of the class: a later
+assignment onto the class, and a descriptor whose ``__set_name__`` installs the
+name once the body has been judged, both land outside it. Neither can it reach
+whoever answers for the name instead of binding it — a pickling site that
+replaces the dispatch, and a class body authoring ``__getattribute__``, which the
+lookup for this name goes through.
 
 The reservation holds on a Value Object Class for the reason the copy verb's
 does — what a value of either kind becomes outside the process is derived from

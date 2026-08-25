@@ -49,6 +49,7 @@ from parallax.core.entity._expressions import (
     member_location,
     serialize_member,
 )
+from parallax.core.entity._instance_state import attach_instance_state, instance_state
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -359,26 +360,14 @@ declared model — which is also why every inherited copy door that shallow-copi
 that dictionary is refused."""
 
 
-def _instance_dict(value: BaseModel) -> dict[str, Any]:
-    """``value``'s own attribute storage, read past every authored name lookup.
-
-    ``getattr`` and ``object.__getattribute__`` alike resolve ``__dict__``
-    through the type, so a class body binding that name decides what either one
-    answers and can filter or invent entries. Pydantic's own slot descriptor
-    reads the storage itself — where ``object.__setattr__`` writes a framework
-    slot, and what a pickle carries.
-    """
-    return cast("dict[str, Any]", BaseModel.__dict__["__dict__"].__get__(value))
-
-
-def _change_record(value: object) -> dict[str, object] | None:
+def _change_record(value: BaseModel) -> dict[str, object] | None:
     """``value``'s Change Record, or ``None`` when it carries none.
 
     The edit surface's own reader: it needs only the record it will extend, and
     an unedited value extends an empty one. Telling an absent record apart from
     an unreadable one is the Row Codec's question, not this one's.
     """
-    record = value.__dict__.get(CHANGE_RECORD_SLOT)
+    record = instance_state(value).get(CHANGE_RECORD_SLOT)
     return cast("dict[str, object]", record) if isinstance(record, dict) else None
 
 
@@ -456,7 +445,7 @@ def _restate[E: Entity](
 ) -> E:
     """A fresh value holding exactly ``value``'s state under ``record``."""
     restated = restate(value, declared_state | carried)
-    object.__setattr__(restated, CHANGE_RECORD_SLOT, record)
+    attach_instance_state(restated, CHANGE_RECORD_SLOT, record)
     return restated
 
 
@@ -619,11 +608,11 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         for py_name, value in carry_forward.items():
             object.__setattr__(validated, py_name, value)
         for py_name, member in carried.items():
-            object.__setattr__(validated, py_name, member)
+            attach_instance_state(validated, py_name, member)
         for py_name in changes:
             if py_name not in record:
                 record[py_name] = getattr(self, py_name)
-        object.__setattr__(validated, CHANGE_RECORD_SLOT, record)
+        attach_instance_state(validated, CHANGE_RECORD_SLOT, record)
         return validated
 
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
@@ -679,20 +668,28 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         what ``object.__reduce_ex__`` consults afterwards, so an authored one of
         those runs downstream of a guard that has already passed rather than in
         place of it, which is what the class body's matching name reservation
-        (spec §2) keeps true. What no reservation on this name can reach is a
+        (spec §2) keeps true. That reservation judges one namespace at one moment
+        rather than holding the attribute for the life of the class: assigning
+        the name onto the class afterwards, or binding a descriptor whose
+        ``__set_name__`` installs it once the body has been judged, puts another
+        reducer where ``pickle`` looks. Nor can a reservation on this name reach a
         caller who answers for the name instead of the value: one supplying a
         reducer through ``copyreg``, a ``Pickler.dispatch_table``, or
         ``reducer_override``, and one authoring ``__getattribute__``, which the
-        attribute lookup for this entry point goes through. Neither is entered
-        here, and what still holds for either is :meth:`__getstate__`'s strip,
-        and only while what they return delegates to ``object.__reduce_ex__``.
+        attribute lookup for this entry point goes through. None of those enters
+        here, and what :meth:`__getstate__`'s strip holds for is a reduction that
+        reaches it: ``object.__reduce_ex__`` calls an authored ``__reduce__`` in
+        place of its own reduction and resolves ``__getstate__`` by attribute
+        lookup, so either hook — both deliberately left authorable — can answer
+        with state carrying the slot.
 
         The slot is read off the instance's own storage rather than through any
-        name lookup, so no authored ``__getattr__``, ``__getattribute__``, or
-        ``__dict__`` makes a lifecycle-free value answer as a materialized one or
-        hides the state of one that is.
+        name lookup, which is also where a read attaches it and an edit carries it
+        forward, so no authored ``__getattr__``, ``__getattribute__``,
+        ``__dict__``, or descriptor at the slot's own name makes a lifecycle-free
+        value answer as a materialized one or hides the state of one that is.
         """
-        if _instance_dict(self).get(LIFECYCLE_STATE_SLOT) is not None:
+        if instance_state(self).get(LIFECYCLE_STATE_SLOT) is not None:
             raise pickle.PicklingError(
                 f"{type(self).__name__} carries the lifecycle state of the read that published "
                 "it, which describes a live read in a live process and cannot be reconstructed "
@@ -713,7 +710,11 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         pickle answered for the entry-point name itself — a supplied reducer, or
         an authored ``__getattribute__`` — and then delegated to
         ``object.__reduce_ex__``. Each is answered with the ordinary domain data
-        the value is, carrying no keyed-source status.
+        the value is, carrying no keyed-source status. Of that second kind only
+        the reductions that arrive here are: an authored ``__reduce__`` answers
+        the delegation in place of the reduction that would consult this method,
+        and an authored ``__getstate__`` answers in place of this one, so what
+        either hands back is its own.
 
         The Change Record travels: it is authored state, written by
         :meth:`edit` from values the caller supplied, and it earns a write

@@ -2622,46 +2622,60 @@ or descriptor authoring form and performs no audit stamping.
   a caller cannot predict: a net-zero edit means the same thing and is not
   detectable at the call site, so only one of the two could ever be refused.
 - **A materialized node does not pickle.** Wherever `pickle`'s own dispatch
-  reaches an Entity value carrying lifecycle state, `pickle.dumps` raises the
-  language's own `pickle.PicklingError` — not a Parallax exception and not a
-  Parallax code — with a message naming the value and what to move instead. Both
-  answers a pickle could otherwise give are untrue. Carrying the state would
-  hand a caller a value that answers a lifecycle's inspection surface and
-  claims a stored row's write evidence on the strength of a byte string, its
-  retained observation coming back as a fresh object whose consumed state is
-  whatever the bytes happened to capture. Dropping it silently would answer a
-  request to preserve a value with one that lost what the caller never learned
-  it had, and whose write the keyed verbs then refuse (§5) for provenance it
-  appeared to carry. So the refusal is at the door, and a caller moving a
-  read's data across a process moves domain data — `model_dump(...)` output or
-  a Wire read — and reads the row again where a write is meant to settle.
-  Everything carrying no lifecycle state is untouched: a plainly constructed
-  value and an Edited Copy of one round trip, and so does every Value Object,
-  including one a read published, since only an Entity node carries lifecycle
-  state at all.
+  asks an Entity value carrying lifecycle state for its reduction and reaches
+  `Entity.__reduce_ex__`, `pickle.dumps` raises the language's own
+  `pickle.PicklingError` — not a Parallax exception and not a Parallax code —
+  with a message naming the value and what to move instead. Both answers a
+  pickle could otherwise give are untrue. Carrying the state would hand a
+  caller a value that answers a lifecycle's inspection surface and claims a
+  stored row's write evidence on the strength of a byte string, its retained
+  observation coming back as a fresh object whose consumed state is whatever
+  the bytes happened to capture. Dropping it silently would answer a request to
+  preserve a value with one that lost what the caller never learned it had, and
+  whose write the keyed verbs then refuse (§5) for provenance it appeared to
+  carry. So the refusal is at the door, and a caller moving a read's data
+  across a process moves domain data — `model_dump(...)` output or a Wire
+  read — and reads the row again where a write is meant to settle. Everything
+  carrying no lifecycle state is untouched: a plainly constructed value and an
+  Edited Copy of one round trip, and so does every Value Object, including one
+  a read published, since only an Entity node carries lifecycle state at all.
 
   The refusal sits on `__reduce_ex__`, the name `pickle`'s own dispatch asks a
   value for, which is why that name is reserved from every class body (§2);
   `__reduce__` and `__getstate__` are what `object.__reduce_ex__` consults once
   the guard has passed, so they stay authorable and an authored one still runs.
   A node nested anywhere in what is being pickled is asked for that name the
-  same way the pickle's root is. What it does not reach is a pickle written
-  without `Entity.__reduce_ex__` ever running: a pickling site supplying a
-  reducer for the class through `copyreg`, a `Pickler.dispatch_table`, or
-  `reducer_override`, which replaces the dispatch; a class body authoring
-  `__getattribute__`, which answers the lookup for the name itself, so the
-  reservation stops a body from binding the name but not from answering for it;
-  and a caller invoking `object.__reduce_ex__(node, protocol)` directly. Each
-  of those has stepped past the entry point rather than through it, and what it
-  gets is the pre-refusal answer rather than a truthful one, since
-  `Entity.__getstate__` still drops the lifecycle state whenever what runs
-  delegates to `object.__reduce_ex__`. So what the refusal is for is `pickle`'s
-  own dispatch reaching a value through `__reduce_ex__` — every accidental
-  pickle, which is where the untruth would otherwise be told with nobody
-  choosing it — rather than a boundary against a class or a caller that sets
-  out to serialize a node anyway. Nothing is refused on the way back in: bytes
-  that carry no lifecycle state — including any written before this rule —
-  load into the ordinary value they describe.
+  same way the pickle's root is. What the guard asks is whether the
+  constructing lifecycle's state is attached to the value's own instance
+  storage and holds anything but `None` — that storage read directly, never a
+  name a class can bind, and the same storage a read attaches state to and an
+  edit carries it forward in. So no authored `__getattr__`, `__getattribute__`,
+  `__dict__`, or descriptor bound at the slot's own name makes a lifecycle-free
+  value answer as a materialized one, or hides the state of one that is.
+
+  What the refusal does not reach is a pickle written without
+  `Entity.__reduce_ex__` ever running. A pickling site can supply a reducer for
+  the class through `copyreg`, a `Pickler.dispatch_table`, or
+  `reducer_override`, which replaces the dispatch; a caller can invoke
+  `object.__reduce_ex__(node, protocol)` directly; and a class can answer for
+  the name rather than bind it — by authoring `__getattribute__`, which the
+  lookup for the name goes through, by assigning `__reduce_ex__` onto the class
+  once it exists, or by binding a descriptor whose `__set_name__` installs the
+  name after the class body has been judged. The reservation is a judgement of
+  the class body as authored, not a hold on the attribute for the life of the
+  class. Each of those routes has stepped past the entry point rather than
+  through it, and what it gets is the pre-refusal answer rather than a truthful
+  one; how much of the lifecycle state travels with it is then its own doing,
+  because delegating to `object.__reduce_ex__` reaches `Entity.__getstate__`'s
+  strip only when no authored `__reduce__` or `__getstate__` answers first, and
+  either of those — both deliberately left authorable — can hand back state
+  carrying the slot. So what the refusal is for is `pickle`'s own dispatch
+  reaching `Entity.__reduce_ex__` — every accidental pickle, which is where the
+  untruth would otherwise be told with nobody choosing it — rather than a
+  boundary against a class or a caller that sets out to serialize a node
+  anyway. Nothing is refused on the way back in: bytes that carry no lifecycle
+  state — including any written before this rule — load into the ordinary value
+  they describe.
 - **A Value Object has the same copy verb, and the same sealed doors.**
   `ValueObject.edit(**changes)` returns a validated copy carrying every member the
   value populates and the caller did not name, changing only what `changes` names:
@@ -3357,20 +3371,21 @@ These feature tests do not claim the deferred `benchmark` command or general
   publishes — the concrete Entity, the object the row denotes, the participation
   its read licensed, and the retained observation for the state it saw. A Typed
   node reaches its hint through the same private lifecycle state `edge_of` and
-  `pin_of` read, and `pickle` refuses one at the door rather than stripping it
-  (§3); a frozen `WireEntity` node carries it on a slot, never as a mapping
-  entry, so `dict(value)`, JSON, and pickle produce ordinary domain data with no
-  keyed-source status. Only an Entity node can carry one: a nested Value
-  Object mapping has no slot. `Entity.edit(...)` preserves lifecycle state and
-  therefore transfers the claim to the derived value; a Wire copy answers the
-  same object and therefore the same claim. A standalone `db.find` /
-  `db.wire.find` produces sources exactly as a participating read does and
-  differs only in stamping no participation. A transaction keeps a
-  `WeakValueDictionary` of the states its own reads saw plus the participation
-  token an effective-Locking write tests against, so eligibility is strong
-  reachability: when every source value and every buffered write for a state is
-  released, its evidence is gone, on the runtime's ordinary collection schedule
-  and with no claim counting, stack inspection, or reference-count semantics.
+  `pin_of` read, and a pickle reaching Entity's own entry point is refused at
+  that door rather than stripped (§3); a frozen `WireEntity` node carries it on
+  a slot, never as a mapping entry, so `dict(value)`, JSON, and pickle produce
+  ordinary domain data with no keyed-source status. Only an Entity node can
+  carry one: a nested Value Object mapping has no slot. `Entity.edit(...)`
+  preserves lifecycle state and therefore transfers the claim to the derived
+  value; a Wire copy answers the same object and therefore the same claim. A
+  standalone `db.find` / `db.wire.find` produces sources exactly as a
+  participating read does and differs only in stamping no participation. A
+  transaction keeps a `WeakValueDictionary` of the states its own reads saw
+  plus the participation token an effective-Locking write tests against, so
+  eligibility is strong reachability: when every source value and every
+  buffered write for a state is released, its evidence is gone, on the
+  runtime's ordinary collection schedule and with no claim counting, stack
+  inspection, or reference-count semantics.
 - **A successful flush consumes the evidence its writes used.** A retained
   observation carries one mutable fact — whether it has been spent — which lives
   on the shared object rather than in a transaction-side set, because a later

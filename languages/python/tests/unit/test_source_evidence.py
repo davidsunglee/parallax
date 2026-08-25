@@ -17,7 +17,7 @@ import gc
 import io
 import pickle
 from decimal import Decimal
-from typing import Any, Final, cast
+from typing import Any, ClassVar, Final, cast
 
 import pytest
 from _transact_support import (
@@ -35,7 +35,15 @@ from _support import mirrored_models as mm
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
 from parallax.core import Attr, Entity, attr
+from parallax.core.entity import (
+    EntityAttributeInput,
+    EntityGraphWriter,
+    NodeHandle,
+    graph_construction_of,
+)
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
+from parallax.core.entity._model import DomainModel
+from parallax.core.metamodel import AttributeIdentity
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     VersionedStateKey,
@@ -210,6 +218,7 @@ class _FilteredDict(Entity, table="filtered_dict", namespace="parallax.compatibi
     """An Entity whose class body denies the lifecycle slot its storage holds."""
 
     id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=64)
 
     __dict__ = _AuthoredInstanceDict(carrying=False)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - a type checker forbids the binding the interpreter allows, and the interpreter is what the refusal answers to
 
@@ -222,14 +231,61 @@ class _InventedDict(Entity, table="invented_dict", namespace="parallax.compatibi
     __dict__ = _AuthoredInstanceDict(carrying=True)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
 
 
+_DIVERTED_TO: Final = "_diverted_lifecycle"
+
+
+class _DivertedSlot:
+    """A data descriptor at the lifecycle slot's own name.
+
+    ``object.__setattr__`` honors a data descriptor, so a class carrying one here
+    takes whatever is assigned under that name and holds it wherever it likes —
+    here, under a name of its own in the same storage.
+    """
+
+    def __get__(self, instance: BaseModel | None, owner: type[object] | None = None) -> object:
+        if instance is None:
+            return self
+        return cast("dict[str, Any]", _MODEL_STORAGE.__get__(instance)).get(_DIVERTED_TO)
+
+    def __set__(self, instance: BaseModel, value: object) -> None:
+        cast("dict[str, Any]", _MODEL_STORAGE.__get__(instance))[_DIVERTED_TO] = value
+
+
+class _InstallsDivertedSlot:
+    """A class-body binding that installs that descriptor once the class exists.
+
+    ``__set_name__`` runs after the class body has been judged, which is what puts
+    a name no body may bind within a class's reach at all.
+    """
+
+    def __set_name__(self, owner: type[object], name: str) -> None:
+        del name
+        setattr(owner, LIFECYCLE_STATE_SLOT, _DivertedSlot())
+
+
+class _DivertedSlotNode(
+    Entity, table="diverted_slot", name="DivertedSlotNode", namespace="parallax.compatibility"
+):
+    """An Entity whose class installs a descriptor at the lifecycle slot's name."""
+
+    id: Attr[int] = attr(primary_key=True)
+
+    installer: ClassVar[_InstallsDivertedSlot] = _InstallsDivertedSlot()
+
+
+_DIVERTED_MODEL: Final = DomainModel(_DivertedSlotNode)
+
+
 _HISTORICAL_PROTOCOL: Final = pickle.HIGHEST_PROTOCOL
 
 
 class _StrippingPickler(pickle.Pickler):
     """Writes an Entity the way the implementation before the refusal wrote one.
 
-    ``object.__reduce_ex__`` reached directly is exactly that implementation:
-    ``Entity.__getstate__``'s lifecycle strip runs and no entry-point guard does,
+    ``object.__reduce_ex__`` reached directly is exactly that implementation: with
+    no authored ``__reduce__`` or ``__getstate__`` standing in front of it on
+    these models, ``Entity.__getstate__``'s lifecycle strip runs and no
+    entry-point guard does,
     so what lands in the buffer is a historical pickle rather than an
     approximation of one. Supplying the reducer is what makes that reachable — a
     caller who answers for the entry point never enters the refusal (spec §3) —
@@ -358,7 +414,7 @@ def test_a_class_body_filtering_its_instance_dictionary_is_refused_all_the_same(
     # `object.__getattribute__` alike — is told. The refusal reads the storage
     # itself, so a value whose dictionary denies the state it carries pickles no
     # more than a plainly materialized node does.
-    value = _FilteredDict(id=7)
+    value = _FilteredDict(id=7, name="Ada")
     object.__setattr__(value, LIFECYCLE_STATE_SLOT, object())
     assert LIFECYCLE_STATE_SLOT not in value.__dict__
 
@@ -376,6 +432,48 @@ def test_a_class_body_inventing_the_slot_leaves_an_ordinary_value_pickleable() -
     restored = cast("_InventedDict", pickle.loads(pickle.dumps(value)))
     assert restored.id == 7
     assert snapshot_state_of(restored) is None
+
+
+def test_an_edited_copy_of_a_value_whose_dictionary_denies_the_slot_is_refused_too() -> None:
+    # An edit carries every kind of instance state outside the declared members
+    # forward, so a class that filters `__dict__` could otherwise launder a
+    # materialized node one call deeper than the refusal: derive a copy, and the
+    # state the original's storage holds is dropped on the way. The edit surface
+    # reads and writes that storage itself, so the copy carries the claim the
+    # original transferred to it — through the no-change branch that restates a
+    # value whole and through the branch that rebuilds it around changes alike —
+    # and pickles no more than the node it came from.
+    value = _FilteredDict(id=7, name="Ada")
+    object.__setattr__(value, LIFECYCLE_STATE_SLOT, object())
+
+    for derived in (value.edit(), value.edit(name="Grace")):
+        with pytest.raises(pickle.PicklingError):
+            pickle.dumps(derived)
+
+
+def test_a_class_diverting_the_lifecycle_slot_is_refused_all_the_same() -> None:
+    # No class body may bind the lifecycle slot's name, but `__set_name__` runs
+    # after that judgement and can install a data descriptor there — one
+    # `object.__setattr__` would honor, taking the state a read attaches and
+    # holding it somewhere of the class's own choosing. Entity Graph Construction
+    # writes that state into the node's own storage instead, so a class can blind
+    # its own readers of the slot without making a materialized node answer as a
+    # value no read produced: the refusal reads what the lifecycle attached.
+    state = object()
+    identity = _DivertedSlotNode.identity
+
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        node = writer.allocate(identity)
+        writer.populate(node, (EntityAttributeInput(AttributeIdentity(identity, "id"), 7),), (), ())
+        return (node,)
+
+    (root,) = graph_construction_of(_DIVERTED_MODEL).construct(
+        build, state_factory=lambda _view, _handle: state
+    )
+    assert cast("dict[str, Any]", _MODEL_STORAGE.__get__(root))[LIFECYCLE_STATE_SLOT] is state
+
+    with pytest.raises(pickle.PicklingError):
+        pickle.dumps(root)
 
 
 def test_a_pickle_written_before_the_refusal_existed_still_loads() -> None:
