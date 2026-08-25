@@ -500,7 +500,9 @@ def build_class(
     the one body that installs such a descriptor: a declared class body carries
     members and nothing else, so it keeps Pydantic's unannotated-attribute
     rejection whole rather than inheriting a blanket exemption for a type it
-    never binds.
+    never binds. Every configuration also exempts
+    :class:`_InheritedMemberShadow`, which the engine itself seeds and removes
+    around class creation and no class body can bind.
     """
     if mint is None:
         # Every declared kind, and before the configuration below, which itself
@@ -508,8 +510,9 @@ def build_class(
         # class body authored. Only a framework root is exempt, because the
         # framework's own markers and slots are what the reservation protects.
         _reject_shadowed_class_names(cls_name, ns, kind)
+    frontend_types = ignored_types if mint is not None else ()
     ns["model_config"] = ConfigDict(
-        frozen=True, ignored_types=ignored_types if mint is not None else ()
+        frozen=True, ignored_types=(*frontend_types, _InheritedMemberShadow)
     )
     if mint is not None:
         if mint is not FRAMEWORK_MINT:
@@ -525,12 +528,61 @@ def build_class(
     return _build_value_object(mcs, cls_name, bases, ns)
 
 
+class _InheritedMemberShadow:
+    """A stand-in that hides an installed descriptor from Pydantic's field collection.
+
+    Pydantic reads a field's default off the class under construction with
+    ``getattr``, so on a subtype the descriptor installed for an inherited member
+    answers with that member's query-authoring seed and the seed becomes the
+    field's default — deep-copied into every hydrated instance, and read back in
+    place of the value whenever a construction omits the member. A member the
+    class body declares is already emptied out of the namespace before the class
+    is built; this restores the same emptiness for a member the body inherits, so
+    Pydantic takes its ordinary inheritance path and the subtype's field is the
+    declaring class's own.
+
+    Raising ``AttributeError`` is what makes ``getattr`` report "no assigned
+    value" rather than a value. The shadow lives only for the duration of class
+    creation: :func:`_pydantic_class` removes it once the class exists, leaving
+    the inherited descriptor reachable through the MRO again.
+    """
+
+    __slots__ = ()
+
+    def __get__(self, obj: object | None, owner: type | None = None) -> object:
+        raise AttributeError("an inherited member is unreadable while its class is being built")
+
+
 def _pydantic_class(
     mcs: type, cls_name: str, bases: tuple[type, ...], ns: dict[str, object]
 ) -> type:
-    return ModelMetaclass.__new__(
+    shadowed = _shadow_inherited_members(bases, ns)
+    cls = ModelMetaclass.__new__(
         cast("type[ModelMetaclass]", mcs), cls_name, bases, cast("dict[str, Any]", ns)
     )
+    for py_name in shadowed:
+        delattr(cls, py_name)
+    return cls
+
+
+def _shadow_inherited_members(bases: tuple[type, ...], ns: dict[str, object]) -> tuple[str, ...]:
+    """Shadow every Pydantic field this body inherits rather than declares.
+
+    The inherited names are read from the bases' own collected fields, which is
+    the same source Pydantic's inheritance path reads, so a member is shadowed
+    exactly when that path would otherwise have supplied it.
+    """
+    inherited: set[str] = set()
+    for base in bases:
+        inherited.update(cast("dict[str, object]", getattr(base, "__pydantic_fields__", {})))
+    body: set[str] = set()
+    declared = ns.get("__annotations__")
+    if isinstance(declared, dict):
+        body.update(cast("dict[str, object]", declared))
+    shadowed = tuple(sorted(inherited - body))
+    for py_name in shadowed:
+        ns[py_name] = _InheritedMemberShadow()
+    return shadowed
 
 
 # --------------------------------------------------------------------------- #

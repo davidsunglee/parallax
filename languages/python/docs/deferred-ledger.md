@@ -61,34 +61,6 @@ makes both `position` and the returned names canonical, and the prior question i
 whether an unused export should exist at all. Both are unwitnessed: no `rejected`
 corpus model declares a namespace.
 
-### D-54 — Every inherited Pydantic field on an Entity subtype defaults to the ancestor descriptor's class-access expression, so a subtype constructs with no arguments
-
-*High — a required member silently holds a query expression.* Relates to
-`parallax.core.entity._declaration._build_entity`.
-
-**What.** `Tug()` — a concrete subtype of an abstract temporal root declaring no
-members of its own — constructs with no arguments, and every inherited member,
-**including required ones like `id`**, holds an `AttributeExpr`:
-
-```text
-Tug() -> Tug
-  .id       -> <parallax.core.entity._expressions.AttributeExpr object>
-  .tx_start -> <parallax.core.entity._expressions.AttributeExpr object>
-```
-
-**Why it is open.** `_build_entity` `setattr`s the class-access descriptor over
-the class attribute *after* Pydantic has built the parent model, and Pydantic
-re-reads that attribute when it collects a subclass's inherited fields — so the
-descriptor object itself becomes the inherited field's default. The Entity's own
-declared members are unaffected; only inherited ones are.
-
-**Why it is deferred rather than fixed.** It is pre-existing: a subtype's
-inherited members carried this default whether or not the parent supplied one.
-The fix is an ordering change in the declaration engine — install descriptors
-before Pydantic collects subclass fields, or strip them from the collected
-defaults — which touches the shared metaclass engine both the Entity and Value
-Object frontends depend on, so it wants its own coverage rather than a rider.
-
 ### D-55 — The reference harness grades a scenario find's `expectRows` against the raw projected row, disagreeing with `m-case-format` for a family target
 
 *Low — narrows what a corpus case may assert, never produces a wrong pass.*
@@ -549,6 +521,7 @@ prose.
 - **D-47** → fixed. `reduce_declared_members` preserves member presence at every containment depth, as `python.md` §3 and `core/spec/m-document-codec.md` state.
 - **D-51** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P6, item 6d. A defining to-one whose foreign key sits on the target side.
 - **D-52** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). The silent unbinding it describes was already gone: [COR-89](https://linear.app/flimflam/issue/COR-89/let-an-operation-reference-name-a-namespaced-entity-and-migrate-the) made `targets(model)` register canonical spellings unconditionally and every serialized surface emit `identity.canonical`, so no in-tree producer can supply an ambiguous one. What COR-51 added is classification at the external-producer boundary — `unit_work.instructions._entity` and `snapshot.handle._read._metadata` both raise `reference-ambiguous-entity-name` — so a spelling arriving from outside is one refusal naming both candidates rather than a missing observation binding.
+- **D-54** → fixed. A subtype's Pydantic field for a member it inherits is the declaring class's own — same default, same requiredness, at every depth — as `python.md` §2's realization-technique paragraph states. Class creation empties the inherited names out of the namespace it hands Pydantic and restores them once the class exists, so Pydantic's own inheritance path supplies each field; the entry's `Tug()` now raises for its missing required members, and a family whose root declares a Value Object occurrence can hydrate a subtype at all, which the undeep-copyable expression made impossible.
 - **D-57** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). `_identity_row` applies `serialize_member`, so all three Entity Row Codec operations carry one form; `python.md` §5 states that uniform contract in place of the asymmetry, and no golden moved, because a primary key is structurally a scalar Attribute that `serialize_member` passes through unchanged.
 - **D-58** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout) Phase 4. The holistic decision was taken rather than postponed, and it is neither shape alone: the merged graph keeps graph-local node identity, and the Wire read renders a FINITE value tree by unwinding the requested include tree (`parallax.snapshot.materialize._wire`), so a back-reference terminates because the tree strictly shrinks rather than because a cycle detector fired. Aliasing survives the tree — positions reaching one merged node under one subtree answer the identical frozen object — so the cost this entry accepted in advance (one logical node materializing as distinct objects) is not paid, and `then.graph` grades JSON-renderable values directly. Bounded-memory streaming is the one part left, and [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory) carries it: what it revisits is graph-level node uniqueness, not the wire shape this settled.
 - **D-60** → closed by this claim, and the module it named is since retired (ADR 0060): `MODULE_SCOPE` carries `parallax.core.execution_lifecycle`, the generated `[tool.importlinter]` block contracts it, and `core/spec/modules.md` carries `m-snapshot-read --> m-execution-lifecycle`. One consequence the entry did not foresee outlived the rename: the module reaches `m-sql`, so mapping the tag to `parallax.snapshot.materialize` would put SQL generation inside the closure of the grant `parallax.snapshot.handle._materializer` holds, dissolving the containment that child scope exists for. The tag therefore maps to `parallax.snapshot._read_result` — the scope that actually names the lifecycle seam — while `parallax.snapshot.materialize` carries the remaining `m-snapshot-read` edges as a support row.
