@@ -105,6 +105,7 @@ metadata is exposed on the `RelatedFinder` and every `Attribute`.
 | [27-read-enrollment-and-write-licensing.md](27-read-enrollment-and-write-licensing.md) | Transaction read state is keyed by object identity *plus* temporal coordinate, never by primary key alone; write eligibility is re-checked on the object being written, and every dated UPDATE is unconditionally gated on the milestone's own end columns |
 | [28-transaction-participation-mode-scope.md](28-transaction-participation-mode-scope.md) | Transaction participation mode is scoped by transaction and object portal/class, allowing locked unversioned Entities and optimistically gated versioned or temporal Entities to coexist in one Reladomo transaction |
 | [29-blind-write-prevention-for-deletes-and-terminates.md](29-blind-write-prevention-for-deletes-and-terminates.md) | Deletes carry the same version gate as updates because both consume one mode-aware primary-key where clause; dated writes add an unconditional milestone gate, so terminates are gated in every mode; only the affected-row check is weaker for DELETE |
+| [30-fixed-slot-data-objects.md](30-fixed-slot-data-objects.md) | A generated data object IS its layout — fixed Java fields, an out-of-band `isNullBitsN` mask covering nullable primitives alone, and a metadata-positioned hydration walk that can stop after the primary key |
 
 ## Research questions
 
@@ -181,6 +182,16 @@ DELETE, the write-enrollment lock that protects deletes under the locking modes,
 three deliberately blind bulk paths
 ([29](29-blind-write-prevention-for-deletes-and-terminates.md)). Descriptive; it
 recommends nothing.
+
+**Applied fixed-slot layout pass (2026-08-25, same commit).** A task-directed source pass answered
+how Reladomo physically lays out one row's state: the generated `[Name]Data` carrier as the layout
+itself, the four index spaces the generator assigns and never conflates, the `isNullBitsN` mask over
+nullable primitives with its "set means null" polarity, the off-heap offset table that writes the
+same bitmap-then-fields shape down as numbers, and the two-stage `_pos` hydration walk whose
+primary-key-only arm produces a partial carrier nothing records as partial. Applied rather than
+descriptive, like [25](25-cascade-operations.md): it closes with what Parallax adopts, adapts, and
+rejects for its compact published instance state
+([30](30-fixed-slot-data-objects.md)).
 
 ## Scope — what this research does not cover
 
