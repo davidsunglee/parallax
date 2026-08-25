@@ -75,9 +75,10 @@ slot plus the lifecycle slot. `read ns` is per declared field read, averaged ove
 every field of the node. Timings are recorded for direction only.
 
 The aggregate COR-111 accepts against is `1 - sum(after) / sum(before)` over the
-two summed columns, never the mean of per-scenario percentages. The sums are
-recorded here and the arithmetic is deliberately not performed: there is no
-"after" yet.
+two summed columns, never the mean of per-scenario percentages, and over two
+readings taken on the same object layout (*Two object layouts*, below — these
+sums are the layout that carries no framework slots). The sums are recorded here
+and the arithmetic is deliberately not performed: there is no "after" yet.
 
 ## What the scenarios are
 
@@ -150,31 +151,49 @@ nested scenario is the closest match, at 2.8 KB with lifecycle against 1.9 KB
 without it. Read the earlier figures as direction and these as the frozen
 comparison basis.
 
-## Why the live reading is now higher than the table
+## Two object layouts, and the rule for dividing them
 
-The tables above are the frozen reading, taken over a tree carrying no
-publication machinery at all. They stand as recorded: they are the "before" the
+This document carries figures from two different object layouts. Every summed
+number below belongs to exactly one of them, and an aggregate that mixes them is
+wrong in a way no reader can see from the number alone. So the layouts are named
+first and the rule for using them is stated after.
+
+The tables above are the **frozen reading**, taken over a tree carrying no
+publication machinery at all — an instance of a declared class was a Pydantic
+model and nothing more. They stand as recorded: they are the "before" the
 aggregate divides into, and re-freezing them over a tree COR-111 has already
 changed would hide COR-111's own cost inside its own baseline.
 
-Re-running the report today prints higher retained bytes, by **8 bytes per node**
-each time the framework root gained a slot. Two did: the compact-state slot every
-published value's row occupies, and the auxiliary slot a published value's
-`cached_property` results are redirected to. Both are declared on the shared root,
-so every instance of every declared class carries both pointers whichever backing
-it holds — which is why the legacy arm pays them too.
+Re-running the report on the **current tree** prints higher retained bytes,
+because the object in front of the storage grew. The framework root that both
+kinds of declared class extend gained two slots, **8 bytes per instance each, on
+both backings** — an ordinary value carries the two pointers exactly as a
+published one does, which is why the legacy arm this report measures pays them
+too:
 
-| reading | summed retained B, lifecycle included | excluded |
-|---|---:|---:|
-| frozen above, no slots | 7,328 | 6,424 |
-| plus the compact-state slot | 7,408 | 6,504 |
-| plus the auxiliary slot | 7,488 | 6,584 |
+| slot | what it holds | added with |
+|---|---|---|
+| `__parallax_compact__` | a published value's whole row, or `None` on an ordinary value | the compact representation |
+| `__parallax_auxiliary__` | a published value's `cached_property` results, allocated on the first such write | the instance-state presentation that replaced the schema seam |
 
-`slots`, `fields`, `lifecycle B`, and the scenario shapes are unchanged: the
-storage each node holds is the same mapping with the same entries, and what grew
-is the object in front of it. Whichever pair of sums a later aggregate divides,
-it must divide two readings taken over the same object layout, or say which two
-it took.
+| layout | tree | summed retained B, lifecycle included | excluded |
+|---|---|---:|---:|
+| no framework slots | the frozen tables above | 7,328 | 6,424 |
+| `__parallax_compact__` only | the first take of the compact seam | 7,408 | 6,504 |
+| both slots | the current tree, and what `just python-report-instance-state` prints today | 7,488 | 6,584 |
+
+`slots`, `fields`, `lifecycle B`, and the scenario shapes are unchanged across
+all three: the storage each node holds is the same mapping with the same
+entries, and what grew is the object in front of it.
+
+**The accounting rule.** The aggregate is `1 - sum(after) / sum(before)` over the
+two summed columns, and **both sums must come from the same layout row above**.
+An "after" measured on the current tree therefore divides the current tree's
+legacy arm — 7,488 / 6,584 — and not the frozen 7,328 / 6,424. Restating the
+frozen sums as the "before" of a current "after" understates the reduction,
+because it charges the compact arm for two slots the arm it is compared against
+does not carry. A reading that departs from the rule anyway is not wrong for
+departing; it is wrong for not saying which two readings it took.
 
 The `dump µs` column moved the other way and by more, because the serialization
 seam changed shape: on this machine the six scenarios read 0.57 / 0.99 / 1.54 /
