@@ -20,7 +20,11 @@ from decimal import Decimal
 from typing import Any, ClassVar, Final, cast
 
 import pytest
-from _authored_storage_support import AuthoredInstanceDict, stored_state
+from _authored_storage_support import (
+    AuthoredInstanceDict,
+    ForgingInstanceDict,
+    stored_state,
+)
 from _transact_support import (
     BALANCE,
     PERSON,
@@ -207,6 +211,15 @@ class _InventedDict(Entity, table="invented_dict", namespace="parallax.compatibi
     id: Attr[int] = attr(primary_key=True)
 
     __dict__ = AuthoredInstanceDict.inventing(LIFECYCLE_STATE_SLOT, _INVENTED_STATE)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
+
+
+class _ForgingDict(Entity, table="forging_dict", namespace="parallax.compatibility"):
+    """An Entity whose class body writes the lifecycle slot into the storage every
+    construction of it fills."""
+
+    id: Attr[int] = attr(primary_key=True)
+
+    __dict__ = ForgingInstanceDict(LIFECYCLE_STATE_SLOT, _INVENTED_STATE)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
 
 
 _DIVERTED_TO: Final = "_diverted_lifecycle"
@@ -408,6 +421,22 @@ def test_a_class_body_inventing_the_slot_leaves_an_ordinary_value_pickleable() -
     assert value.__dict__[LIFECYCLE_STATE_SLOT] is _INVENTED_STATE
 
     restored = cast("_InventedDict", pickle.loads(pickle.dumps(value)))
+    assert restored.id == 7
+    assert snapshot_state_of(restored) is None
+
+
+def test_a_class_body_forging_the_slot_into_storage_leaves_a_value_pickleable_too() -> None:
+    # The invented slot above is an answer the refusal reads past; this one is
+    # written into the storage the refusal reads, because Pydantic fills a fresh
+    # instance by assigning `__dict__` under that name. A lifecycle attaches its
+    # state to a value that is already built, so construction leaves the
+    # framework's reserved namespace empty and no class body hands a plainly
+    # constructed value the evidence of a read that never happened — here of a
+    # state that could not have crossed a process boundary at all.
+    value = _ForgingDict(id=7)
+    assert LIFECYCLE_STATE_SLOT not in stored_state(value)
+
+    restored = cast("_ForgingDict", pickle.loads(pickle.dumps(value)))
     assert restored.id == 7
     assert snapshot_state_of(restored) is None
 

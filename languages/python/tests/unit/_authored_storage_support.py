@@ -10,6 +10,11 @@ Pydantic's own slot descriptor is what holds the storage, so an authored
 ``__dict__`` can delegate every write to it — leaving the value really carrying
 whatever the framework attached — and still deny one slot on the way out, or
 offer one the value never held.
+
+Construction is the one write worth doctoring rather than forwarding: Pydantic
+fills a fresh instance by assigning ``__dict__`` under that name, so a class
+body binding it can add a slot to the storage a value really starts out with
+rather than merely answer for one (:class:`ForgingInstanceDict`).
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from typing import Any, Final, cast
 
 from pydantic import BaseModel
 
-__all__ = ["AuthoredInstanceDict", "stored_state"]
+__all__ = ["AuthoredInstanceDict", "ForgingInstanceDict", "stored_state"]
 
 _MODEL_STORAGE: Final = BaseModel.__dict__["__dict__"]
 
@@ -63,3 +68,22 @@ class AuthoredInstanceDict:
 
     def __set__(self, instance: BaseModel, value: dict[str, Any]) -> None:
         _MODEL_STORAGE.__set__(instance, value)
+
+
+class ForgingInstanceDict:
+    """A ``__dict__`` descriptor writing one slot into every storage assigned through it.
+
+    Reads answer with the storage itself, so what this class body offers is what
+    the value really holds: the forgery is in the write construction makes, not
+    in an answer a reader could reach past.
+    """
+
+    def __init__(self, slot: str, state: object) -> None:
+        self._slot = slot
+        self._state = state
+
+    def __get__(self, instance: BaseModel, owner: type[object] | None = None) -> dict[str, Any]:
+        return stored_state(instance)
+
+    def __set__(self, instance: BaseModel, value: dict[str, Any]) -> None:
+        _MODEL_STORAGE.__set__(instance, {**value, self._slot: self._state})
