@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from functools import cached_property
-from typing import ClassVar, Optional
+from typing import Any, ClassVar, Optional, SupportsIndex
 
 from parallax.core import MANY_TO_ONE, Attr, Entity, Rel, ValueObject, attr, index, rel
 from parallax.core.base import Int32
@@ -314,6 +314,38 @@ def define_framework_slot_binding() -> type:
 
         @cached_property
         def __parallax_lifecycle__(self) -> str:
+            return "shadow"
+
+    return Bad
+
+
+def define_reserved_pickle_entry_name() -> type:
+    """An Entity class body binding the pickle entry point.
+
+    An authored one would run before the framework's own refusal rather than
+    after it, so it is the one pickle hook a declaration may not take.
+    """
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+
+        def __reduce_ex__(self, protocol: SupportsIndex) -> str | tuple[Any, ...]:
+            return "shadow"
+
+    return Bad
+
+
+def define_value_object_reserved_pickle_entry_name() -> type:
+    """A Value Object class body binding the pickle entry point.
+
+    The reservation holds whatever the declaration is, so the Value Object half
+    is proved on its own body rather than inferred from the Entity one.
+    """
+
+    class Bad(ValueObject):
+        city: Attr[str]
+
+        def __reduce_ex__(self, protocol: SupportsIndex) -> str | tuple[Any, ...]:
             return "shadow"
 
     return Bad

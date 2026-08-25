@@ -146,11 +146,11 @@ declared class, the private slots it puts on an instance, and the
 ``__parallax_document__`` renderer every Value Object serializes itself through.
 
 The framework's public bindings sit outside this prefix, and each is reserved by
-the rule that owns it rather than by this one: the copy verb ``edit`` and the
-query-root and introspection spellings by name
-(:data:`RESERVED_MEMBER_NAMES`), Pydantic's ``model_config`` by the ``model_*``
-namespace rule, and the injected temporal members by the canonical-name rule
-that runs on a family extending a temporal root. What the prefix covers is only
+the rule that owns it rather than by this one: the copy verb ``edit``, the pickle
+entry point ``__reduce_ex__``, and the query-root and introspection spellings by
+name (:data:`RESERVED_MEMBER_NAMES`), Pydantic's ``model_config`` by the
+``model_*`` namespace rule, and the injected temporal members by the
+canonical-name rule that runs on a family extending a temporal root. What the prefix covers is only
 what a declaration never names, which is why reserving the whole prefix rather
 than enumerating it stays correct as markers and slots are added, and why the
 reservation can be total: it applies to every Entity and Value Object class body
@@ -188,11 +188,11 @@ Entity free of every lifecycle's vocabulary.
 
 The value lands in the instance ``__dict__`` through ``object.__setattr__``,
 alongside field values but outside the Pydantic field set, so it is invisible to
-canonical serialization, equality, and ``repr``. It is invisible to pickling
-too, and there by an explicit refusal rather than by the field set: the instance
-dictionary is what pickling carries, so ``Entity.__getstate__`` drops this slot
-from it and an unpickled value carries no lifecycle's private record of a read
-it did not come from."""
+canonical serialization, equality, and ``repr``. Pickling is the one conversion
+it does not merely disappear from: the instance dictionary is what a pickle
+carries, and a lifecycle's private record of a live read has no truthful form on
+the other side of a process boundary, so a value holding this slot is refused at
+the pickle entry point rather than quietly emptied of it."""
 
 _ATTR_TEXT = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
 _REL_TEXT = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)
@@ -221,8 +221,25 @@ _COPY_VERB_NAME: Final = "edit"
 
 A declared member of this name installs its descriptor over the verb and silently
 disables editing for that class, which is the same harm on either kind — so this
-is the one public framework binding reserved against an Entity Class and a Value
-Object Class alike.
+is one of the two public framework bindings reserved against an Entity Class and
+a Value Object Class alike.
+"""
+
+_PICKLE_ENTRY_NAME: Final = "__reduce_ex__"
+"""The pickle entry point, which the framework owns on either kind.
+
+``pickle`` reaches a value through this one name; ``__reduce__`` and
+``__getstate__`` are what ``object.__reduce_ex__`` consults once it has been
+entered. So this is where an Entity refuses to let a materialized node's
+lifecycle state cross a process boundary, and a class body authoring the name
+would replace that refusal rather than run after it. Reserving exactly this name
+is also what keeps the other two authorable: an authored ``__reduce__`` or
+``__getstate__`` still runs, downstream of a guard that has already passed.
+
+The reservation holds on a Value Object Class for the reason the copy verb's
+does — what a value of either kind becomes outside the process is derived from
+instance state the framework owns, so neither kind authors the door it leaves
+through.
 """
 
 # The reserved query-root and introspection spellings plus the declaration
@@ -1438,7 +1455,8 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
     framework's own prefix (:data:`FRAMEWORK_NAME_PREFIX`), because what a binding
     under it takes is one of the framework's own private bindings rather than a
     member surface; Pydantic's namespace, because both kinds are Pydantic models;
-    and the copy verb, because both kinds install one. Only the Entity surface
+    the copy verb, because both kinds install one; and the pickle entry point,
+    because both kinds leave the process through it. Only the Entity surface
     names follow.
     """
     if py_name.startswith(FRAMEWORK_NAME_PREFIX):
@@ -1453,6 +1471,13 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
         return (
             f"reuses the instance-level copy verb `{_COPY_VERB_NAME}`, which a declared member "
             "of that name would overwrite"
+        )
+    if py_name == _PICKLE_ENTRY_NAME:
+        return (
+            f"reuses `{_PICKLE_ENTRY_NAME}`, the pickle entry point the framework owns — an "
+            "authored one runs before the refusal that keeps a materialized node's lifecycle "
+            "state from crossing a process boundary; author `__reduce__` or `__getstate__` "
+            "instead, both of which still run"
         )
     if kind is DeclarationKind.ENTITY and py_name in RESERVED_MEMBER_NAMES:
         return "reuses a reserved query-root or introspection name"
