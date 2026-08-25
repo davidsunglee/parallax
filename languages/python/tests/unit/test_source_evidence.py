@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import datetime as dt
 import gc
+import io
 import pickle
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 from _transact_support import (
@@ -32,6 +33,7 @@ from _transact_support import (
 from _support import mirrored_models as mm
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
+from parallax.core import Attr, Entity, attr
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     VersionedStateKey,
@@ -123,27 +125,90 @@ def test_plain_dict_conversion_strips_a_wire_nodes_keyed_source_status() -> None
     assert not hasattr(converted, "_source")
 
 
-def test_pickling_a_typed_node_strips_its_keyed_source_status() -> None:
+# --------------------------------------------------------------------------- #
+# Pickle: the lifecycle refusal, and everything it leaves alone.              #
+# --------------------------------------------------------------------------- #
+def _rebuilt_by_hand(identifier: int) -> tuple[str, int]:
+    """What ``_AuthoredReduce``'s hook reconstructs, chosen so the restored value
+    is itself the evidence that the authored hook ran."""
+    return ("rebuilt by hand", identifier)
+
+
+class _AuthoredReduce(Entity, table="authored_reduce", namespace="parallax.compatibility"):
+    """An ordinary Entity authoring the hook ``object.__reduce_ex__`` consults."""
+
+    id: Attr[int] = attr(primary_key=True)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (_rebuilt_by_hand, (self.id,))
+
+
+class _AuthoredGetState(Entity, table="authored_getstate", namespace="parallax.compatibility"):
+    """The other authorable hook, marking the state it hands back."""
+
+    id: Attr[int] = attr(primary_key=True)
+
+    def __getstate__(self) -> dict[Any, Any]:
+        state = super().__getstate__()
+        instance = cast("dict[str, Any]", state["__dict__"])
+        return {**state, "__dict__": {**instance, "_authored_by_getstate": True}}
+
+
+_HISTORICAL_PROTOCOL: Final = pickle.HIGHEST_PROTOCOL
+
+
+class _StrippingPickler(pickle.Pickler):
+    """Writes an Entity the way the implementation before the refusal wrote one.
+
+    ``object.__reduce_ex__`` reached directly is exactly that implementation:
+    ``Entity.__getstate__``'s lifecycle strip runs and no entry-point guard does,
+    so what lands in the buffer is a historical pickle rather than an
+    approximation of one.
+    """
+
+    def reducer_override(self, obj: Any) -> Any:
+        if isinstance(obj, Entity):
+            return object.__reduce_ex__(obj, _HISTORICAL_PROTOCOL)
+        return NotImplemented
+
+
+def _stripped_pickle(node: Entity) -> bytes:
+    buffer = io.BytesIO()
+    _StrippingPickler(buffer, _HISTORICAL_PROTOCOL).dump(node)
+    return buffer.getvalue()
+
+
+def test_pickling_a_typed_node_is_refused_while_it_carries_lifecycle_state() -> None:
     # A pickled value crosses a boundary the lifecycle state cannot: the hint and
-    # the claim behind it describe a live read, and a round trip would otherwise
-    # rebuild the claim as a fresh object whose consumed state is whatever the
-    # bytes happened to capture. What comes back is ordinary domain data, so the
-    # verbs refuse it as a value no read of this store produced.
-    port = _account_port()
-    db = account_db(port)
-    node = db.find(mm.Account.where(mm.Account.id == 1)).result()
+    # the claim behind it describe a live read, and neither answer is truthful.
+    # Carrying the state would rebuild the claim as a fresh object whose consumed
+    # state is whatever the bytes happened to capture; dropping it silently would
+    # answer a request to preserve a value with one that quietly lost what the
+    # caller never learned it had. So the door refuses, and it refuses with the
+    # language's own pickling error rather than a Parallax one — a caller
+    # pickling a graph is inside `pickle`, not inside this framework.
+    node = account_db(_account_port()).find(mm.Account.where(mm.Account.id == 1)).result()
 
-    restored = cast("mm.Account", pickle.loads(pickle.dumps(node)))
-    assert restored == node
-    assert snapshot_state_of(restored) is None
-
-    with pytest.raises(KeyedWriteValueError) as refusal:
-        db.transact(lambda tx: tx.update(restored.edit(balance=Decimal("125.00"))))
-    assert refusal.value.code == "write-value-not-stored"
-    assert not any(op[0] == "write" for op in port.ops)
+    with pytest.raises(pickle.PicklingError) as refusal:
+        pickle.dumps(node)
+    assert type(refusal.value) is pickle.PicklingError
+    message = str(refusal.value)
+    assert "Account" in message
+    assert "model_dump()" in message
 
 
-def test_pickling_a_plainly_constructed_value_has_nothing_to_strip() -> None:
+def test_pickling_an_edited_copy_that_kept_the_claim_is_refused_too() -> None:
+    # An edit transfers the claim, so the derived value is a materialized node's
+    # equal in everything the refusal is about.
+    node = account_db(_account_port()).find(mm.Account.where(mm.Account.id == 1)).result()
+    edited = node.edit(balance=Decimal("125.00"))
+    assert _typed_hint(edited) is _typed_hint(node)
+
+    with pytest.raises(pickle.PicklingError):
+        pickle.dumps(edited)
+
+
+def test_pickling_a_plainly_constructed_value_has_nothing_to_refuse() -> None:
     # The other half of the same boundary: a value no read produced carries no
     # lifecycle state, so its round trip is the ordinary one and the result is
     # the value it always was.
@@ -151,6 +216,55 @@ def test_pickling_a_plainly_constructed_value_has_nothing_to_strip() -> None:
     restored = cast("mm.Account", pickle.loads(pickle.dumps(fresh)))
     assert restored == fresh
     assert snapshot_state_of(restored) is None
+
+
+def test_a_value_object_of_a_materialized_graph_round_trips() -> None:
+    # Only an Entity node can carry lifecycle state, so the refusal reaches no
+    # Value Object — including one a read published, which is ordinary domain
+    # data the moment it is held on its own.
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada", "address": {"street": "Main"}}])
+    customer = (
+        connect(port, vo.CUSTOMER_MODEL).find(vo.Customer.where(vo.Customer.id == 1)).result()
+    )
+    assert isinstance(customer, vo.Customer)
+
+    restored = cast("vo.CustomerAddress", pickle.loads(pickle.dumps(customer.address)))
+    assert restored == customer.address
+    assert restored is not customer.address
+
+
+def test_an_authored_reduce_hook_still_runs_on_a_lifecycle_free_value() -> None:
+    # The guard is on the entry point precisely so the hooks below it stay
+    # authorable: `object.__reduce_ex__` consults `__reduce__` only after the
+    # guard has passed, so an ordinary Entity's own pickle behavior is untouched.
+    assert pickle.loads(pickle.dumps(_AuthoredReduce(id=7))) == ("rebuilt by hand", 7)
+
+
+def test_an_authored_getstate_hook_still_runs_on_a_lifecycle_free_value() -> None:
+    value = _AuthoredGetState(id=7)
+    restored = cast("_AuthoredGetState", pickle.loads(pickle.dumps(value)))
+    assert restored == value
+    assert restored.__dict__["_authored_by_getstate"] is True
+
+
+def test_a_pickle_written_before_the_refusal_existed_still_loads() -> None:
+    # The refusal is on what may be written, never on what may be read: bytes
+    # whose lifecycle state was stripped at dump time load into exactly the
+    # ordinary domain data they always described — a value the write verbs then
+    # refuse for having lost its provenance, which is the same answer they gave
+    # such a value before.
+    port = _account_port()
+    db = account_db(port)
+    node = db.find(mm.Account.where(mm.Account.id == 1)).result()
+
+    restored = cast("mm.Account", pickle.loads(_stripped_pickle(node)))
+    assert restored == node
+    assert snapshot_state_of(restored) is None
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        db.transact(lambda tx: tx.update(restored.edit(balance=Decimal("125.00"))))
+    assert refusal.value.code == "write-value-not-stored"
+    assert not any(op[0] == "write" for op in port.ops)
 
 
 # --------------------------------------------------------------------------- #

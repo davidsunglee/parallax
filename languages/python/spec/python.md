@@ -1137,11 +1137,12 @@ supported import path.
 
 **Reserved member names.** A member name may not collide with a name the class
 object already carries, because class-level access is where the typed expression
-surface lives and the class-level name would win. Six families are reserved,
-and a collision fails at class creation (`entity-reserved-member-name`). Three of
-them — the `model_*` namespace, the `__parallax_` prefix, and the copy verb
-`edit` — hold over every declared class body, an Entity Class and a Value Object
-Class alike, because both kinds carry what they protect. The other three are the
+surface lives and the class-level name would win. Seven families are reserved,
+and a collision fails at class creation (`entity-reserved-member-name`). Four of
+them — the `model_*` namespace, the `__parallax_` prefix, the copy verb `edit`,
+and the pickle entry point `__reduce_ex__` — hold over every declared class body,
+an Entity Class and a Value Object Class alike, because both kinds carry what
+they protect. The other three are the
 Entity surface itself and hold on an Entity Class only: a Value Object has no
 query root, no declaration protocol, and no temporal member, so those spellings
 are ordinary Value Object members.
@@ -1152,6 +1153,13 @@ are ordinary Value Object members.
   one. A declared `edit` member installs its descriptor over the verb and
   silently disables editing for that class, which is the same harm whichever kind
   authors it;
+- the pickle entry point `__reduce_ex__` (§3), on either kind, because what a
+  value of either kind becomes outside the process is derived from instance state
+  the framework owns. On an Entity it is where the lifecycle refusal below sits,
+  and an authored one would run in place of that refusal rather than after it.
+  Reserving exactly this name is what keeps `__reduce__` and `__getstate__`
+  authorable: `object.__reduce_ex__` consults both, so an authored hook runs
+  downstream of a guard that has already passed;
 - the `model_*` namespace Pydantic reserves, on either kind, since both are
   Pydantic models;
 - the framework temporal members, on a class whose family extends `TxTemporal`
@@ -1322,9 +1330,10 @@ members `attr(...)` admits the naming and type-shaping options — `name=`,
 together on a `decimal.Decimal` member). Entity-only options fail at class
 creation: storage, keys, generation, locking, and `max_length=` (the schema
 gives a Value Object attribute no length bound). Of the reserved member-name
-families above, the three that are not the Entity surface — `model_*`, the
+families above, the four that are not the Entity surface — `model_*`, the
 `__parallax_` prefix (which covers the renderer a Value Object serializes itself
-through), and the copy verb `edit` (§3) — hold over a Value Object class body as
+through), the copy verb `edit` (§3), and the pickle entry point `__reduce_ex__`
+(§3) — hold over a Value Object class body as
 well, on a declared member and on an unannotated binding alike. An
 Entity-level occurrence member additionally admits `column=`, the occurrence's
 Structured Column override. When it is omitted, the already-resolved canonical
@@ -1380,7 +1389,7 @@ set is:
 | `entity-member-value-invalid` | class creation | the assignment slot holds a bare value, an `attr(...)` under `Rel[...]`, or a `rel(...)` under `Attr[...]` |
 | `entity-option-invalid-value` | factory call | an intrinsically invalid argument value: an ill-typed or out-of-range `attr(...)`, `rel(...)`, `index(...)`, or `Sequence(...)` argument |
 | `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list, a `MAX`/`Sequence(...)` generation on a non-integer member |
-| `entity-reserved-member-name` | class creation | a reserved query-root, introspection, or edit-verb name, a `model_*` name, a `__parallax_` framework name, a framework-temporal member name, or one of the ten declaration member names |
+| `entity-reserved-member-name` | class creation | a reserved query-root, introspection, or edit-verb name, the pickle entry point `__reduce_ex__`, a `model_*` name, a `__parallax_` framework name, a framework-temporal member name, or one of the ten declaration member names |
 | `entity-canonical-name-collision` | class creation | two members converting to one canonical name |
 | `entity-relationship-annotation-mismatch` | Domain Model construction (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
 
@@ -2613,6 +2622,29 @@ or descriptor authoring form and performs no audit stamping.
   something already represented as "nothing to write", and it would draw a line
   a caller cannot predict: a net-zero edit means the same thing and is not
   detectable at the call site, so only one of the two could ever be refused.
+- **A materialized node does not pickle.** `pickle.dumps` of an Entity value
+  carrying lifecycle state raises the language's own `pickle.PicklingError` —
+  not a Parallax exception and not a Parallax code — with a message naming the
+  value and what to move instead. Both answers a pickle could otherwise give are
+  untrue. Carrying the state would hand a caller a value that answers a
+  lifecycle's inspection surface and claims a stored row's write evidence on the
+  strength of a byte string, its retained observation coming back as a fresh
+  object whose consumed state is whatever the bytes happened to capture.
+  Dropping it silently would answer a request to preserve a value with one that
+  lost what the caller never learned it had, and whose write the keyed verbs
+  then refuse (§5) for provenance it appeared to carry. So the refusal is at the
+  door, and a caller moving a read's data across a process moves domain data —
+  `model_dump(...)` output or a Wire read — and reads the row again where a
+  write is meant to settle. Everything carrying no lifecycle state is untouched:
+  a plainly constructed value and an Edited Copy of one round trip, and so does
+  every Value Object, including one a read published, since only an Entity node
+  carries lifecycle state at all. The refusal sits on `__reduce_ex__`, the one
+  name `pickle` enters a value through, which is why that name is reserved from
+  every class body (§2); `__reduce__` and `__getstate__` are what
+  `object.__reduce_ex__` consults once the guard has passed, so they stay
+  authorable and an authored one still runs. Nothing is refused on the way back
+  in: bytes that carry no lifecycle state — including any written before this
+  rule — load into the ordinary value they describe.
 - **A Value Object has the same copy verb, and the same sealed doors.**
   `ValueObject.edit(**changes)` returns a validated copy carrying every member the
   value populates and the caller did not name, changing only what `changes` names:
@@ -3308,7 +3340,8 @@ These feature tests do not claim the deferred `benchmark` command or general
   publishes — the concrete Entity, the object the row denotes, the participation
   its read licensed, and the retained observation for the state it saw. A Typed
   node reaches its hint through the same private lifecycle state `edge_of` and
-  `pin_of` read; a frozen `WireEntity` node carries it on a slot, never as a
+  `pin_of` read, and pickling one is refused at the door rather than stripped
+  (§3); a frozen `WireEntity` node carries it on a slot, never as a
   mapping entry, so `dict(value)`, JSON, and pickle produce ordinary domain data
   with no keyed-source status. Only an Entity node can carry one: a nested Value
   Object mapping has no slot. `Entity.edit(...)` preserves lifecycle state and

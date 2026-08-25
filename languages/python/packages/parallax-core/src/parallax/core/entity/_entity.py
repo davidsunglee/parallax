@@ -14,9 +14,10 @@ no adapter and no mirrored record graph.
 
 from __future__ import annotations
 
+import pickle
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, Self, cast
+from typing import TYPE_CHECKING, Any, Final, Self, SupportsIndex, cast
 
 from pydantic import BaseModel
 from pydantic._internal._model_construction import ModelMetaclass
@@ -644,22 +645,49 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         del memo
         raise _use_edit(type(self), "__deepcopy__") from None
 
+    def __reduce_ex__(self, protocol: SupportsIndex) -> str | tuple[Any, ...]:
+        """Refused while lifecycle state is attached: a materialized node does
+        not pickle (spec §3).
+
+        That state is one lifecycle's private record of a value IT materialized —
+        the views it loaded, the coordinates it read at, and the private hint a
+        keyed write reads its evidence off — and every one of those facts is
+        about a live read in a live process. Neither answer a pickle could give
+        is truthful. Carrying it would hand a caller a value that answers a
+        lifecycle's inspection surface, and claims a stored row's write evidence,
+        on the strength of nothing but a byte string. Dropping it silently would
+        answer a request to preserve a value with one that lost what a caller
+        never learned it had, and whose write the keyed verbs then refuse for
+        provenance it appeared to carry. So the refusal is at the door, and the
+        remedy travels in the message: move domain data, and read the row again
+        where a write is meant to settle.
+
+        The guard sits on ``__reduce_ex__`` because that is the one name
+        ``pickle`` enters through; ``__reduce__`` and ``__getstate__`` are
+        consulted by ``object.__reduce_ex__`` afterwards, so an authored hook
+        runs downstream of a guard that has already passed and never in place of
+        one. That ordering is what the class body's matching name reservation
+        (§2) keeps true.
+        """
+        if getattr(self, LIFECYCLE_STATE_SLOT, None) is not None:
+            raise pickle.PicklingError(
+                f"{type(self).__name__} carries the lifecycle state of the read that published "
+                "it, which describes a live read in a live process and cannot be reconstructed "
+                "elsewhere; serialize ordinary domain data with `value.model_dump()` or a Wire "
+                "read, and read the row again where a write is meant to settle"
+            )
+        return super().__reduce_ex__(protocol)
+
     def __getstate__(self) -> dict[Any, Any]:
         """Serialize as ordinary domain data: declared member values, and no
         lifecycle state.
 
-        A pickled value crosses a boundary the lifecycle state cannot. That state
-        is one lifecycle's private record of a value IT materialized — the views
-        it loaded, the coordinates it read at, and the private hint a keyed write
-        reads its evidence off — and every one of those facts is about a live
-        read in a live process. Reconstructing them elsewhere would hand a caller
-        a value that answers a lifecycle's inspection surface, and claims a
-        stored row's write evidence, on the strength of nothing but a byte
-        string; the retained observation behind such a hint would come back as a
-        fresh object whose consumed state is whatever the pickling happened to
-        capture. What comes back is therefore an ordinary constructed value with
-        no keyed-source status, which is exactly what it is, and a caller that
-        means to write it reads the row again.
+        Through ``pickle`` the filter has nothing left to do: the entry-point
+        guard above refuses a lifecycle-bearing value before this runs. What it
+        still answers for is a caller reaching this conversion directly, which
+        asks for the value's state rather than for a value that can be
+        reconstituted elsewhere — so it answers with the ordinary domain data the
+        value is, carrying no keyed-source status.
 
         The Change Record travels: it is authored state, written by
         :meth:`edit` from values the caller supplied, and it earns a write
