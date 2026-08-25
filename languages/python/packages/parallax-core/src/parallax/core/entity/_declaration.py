@@ -566,20 +566,22 @@ def _pydantic_class(
 
 
 def _shadow_inherited_members(bases: tuple[type, ...], ns: dict[str, object]) -> tuple[str, ...]:
-    """Shadow every Pydantic field this body inherits rather than declares.
+    """Shadow every Pydantic field this body inherits rather than binds.
 
     The inherited names are read from the bases' own collected fields, which is
     the same source Pydantic's inheritance path reads, so a member is shadowed
-    exactly when that path would otherwise have supplied it.
+    exactly when that path would otherwise have supplied it. A name the body
+    binds is left alone whether it annotated the binding or not: the annotated
+    case is this class's own member, and the unannotated one is Pydantic's own
+    refusal to let a field be overridden without an annotation.
     """
     inherited: set[str] = set()
     for base in bases:
         inherited.update(cast("dict[str, object]", getattr(base, "__pydantic_fields__", {})))
-    body: set[str] = set()
     declared = ns.get("__annotations__")
     if isinstance(declared, dict):
-        body.update(cast("dict[str, object]", declared))
-    shadowed = tuple(sorted(inherited - body))
+        inherited.difference_update(cast("dict[str, object]", declared))
+    shadowed = tuple(sorted(inherited - set(ns)))
     for py_name in shadowed:
         ns[py_name] = _InheritedMemberShadow()
     return shadowed
