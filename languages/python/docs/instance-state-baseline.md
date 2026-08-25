@@ -49,24 +49,24 @@ their difference.
 
 | scenario | fields | slots | retained B | bare B | lifecycle B | build µs | read ns | dump µs | transient B |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| shallow | 4 | 6 | 784 | 560 | 224 | 2.49 | 28.4 | 0.57 | 592 |
-| wide | 16 | 18 | 976 | 840 | 136 | 7.29 | 24.7 | 1.01 | 1,016 |
-| nested | 5 | 7 | 2,832 | 2,696 | 136 | 8.56 | 26.4 | 1.52 | 2,528 |
-| nullable | 10 | 12 | 976 | 840 | 136 | 4.87 | 23.7 | 0.71 | 992 |
-| partial | 10 | 12 | 976 | 840 | 136 | 4.64 | 22.7 | 0.72 | 992 |
-| polymorphic | 7 | 9 | 784 | 648 | 136 | 82.48 | 26.1 | 0.65 | 6,072 |
+| shallow | 4 | 6 | 784 | 560 | 224 | 2.58 | 26.8 | 0.57 | 592 |
+| wide | 16 | 18 | 976 | 840 | 136 | 7.17 | 24.1 | 0.99 | 1,016 |
+| nested | 5 | 7 | 2,832 | 2,696 | 136 | 8.72 | 26.7 | 1.54 | 2,528 |
+| nullable | 10 | 12 | 976 | 840 | 136 | 4.91 | 22.9 | 0.73 | 992 |
+| partial | 10 | 12 | 976 | 840 | 136 | 4.60 | 24.1 | 0.70 | 992 |
+| polymorphic | 7 | 9 | 784 | 648 | 136 | 3.83 | 26.9 | 0.65 | 616 |
 | **summed** | | | **7,328** | **6,424** | **904** | | | | |
 
 ### CPython 3.13.15
 
 | scenario | fields | slots | retained B | bare B | lifecycle B | build µs | read ns | dump µs | transient B |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| shallow | 4 | 6 | 760 | 536 | 224 | 2.51 | 24.4 | 0.51 | 578 |
-| wide | 16 | 18 | 952 | 816 | 136 | 7.59 | 22.4 | 1.00 | 1,040 |
-| nested | 5 | 7 | 2,704 | 2,568 | 136 | 8.14 | 24.8 | 1.42 | 2,584 |
-| nullable | 10 | 12 | 952 | 816 | 136 | 5.05 | 21.0 | 0.73 | 1,016 |
-| partial | 10 | 12 | 952 | 816 | 136 | 4.78 | 23.6 | 0.73 | 1,016 |
-| polymorphic | 7 | 9 | 760 | 624 | 136 | 88.56 | 23.4 | 0.62 | 6,368 |
+| shallow | 4 | 6 | 760 | 536 | 224 | 2.50 | 26.2 | 0.53 | 578 |
+| wide | 16 | 18 | 952 | 816 | 136 | 7.60 | 22.1 | 1.01 | 1,040 |
+| nested | 5 | 7 | 2,704 | 2,568 | 136 | 8.31 | 26.0 | 1.49 | 2,584 |
+| nullable | 10 | 12 | 952 | 816 | 136 | 5.05 | 22.2 | 0.72 | 1,016 |
+| partial | 10 | 12 | 952 | 816 | 136 | 4.87 | 23.2 | 0.74 | 1,016 |
+| polymorphic | 7 | 9 | 760 | 624 | 136 | 3.87 | 23.5 | 0.63 | 640 |
 | **summed** | | | **7,080** | **6,176** | **904** | | | | |
 
 `fields` is the declared Pydantic field count; `slots` is the number of entries
@@ -111,7 +111,7 @@ between them, which is the distinction a compact bitmap has to preserve.
 | Isolation | one fresh child interpreter per complete scenario, every arm inside that child |
 | Warm-up | 200 unsampled runs before every window |
 | Timing samples | mean of 2,000 repetitions, taken with the line tracer uninstalled |
-| Repeatability | three independent processes returned byte-identical readings on 3.14; only the wall clock moved, by a few percent |
+| Repeatability | three independent processes on 3.14 and two on 3.13 returned byte-identical readings; only the wall clock moved, by a few percent |
 
 The matrix is 3.14 and 3.13. The ticket names 3.12 as well, but commit `226db9d3`
 — already in this branch — set `requires-python = ">=3.13"` across all five
@@ -150,10 +150,10 @@ nested scenario is the closest match, at 2.8 KB with lifecycle against 1.9 KB
 without it. Read the earlier figures as direction and these as the frozen
 comparison basis.
 
-## Two facts this reading surfaced
+## What this reading surfaced
 
-Neither is repaired here — this reading exists to record the tree as it stands —
-and both bear on how a later comparison is read.
+Not repaired here — this reading exists to record the tree as it stands — and it
+bears on how a later comparison is read.
 
 **Publication records no member presence at all today.** `nullable` and `partial`
 differ only in which positions the row carried, and their published nodes are
@@ -166,28 +166,26 @@ materialized node drops everything and `full_row`'s presence read
 bitmap is therefore new information rather than a re-encoding of information the
 current backing already holds.
 
-**Every inherited member's Pydantic field default on a subtype is a live
-`AttributeExpr`.** `_install_fields` rewrites only the members a class body
-declares, and by the time Pydantic collects a subtype's inherited fields the base
-class attribute has been replaced by the installed `Attr` descriptor — whose
-`__get__(None, owner)` answers an `AttributeExpr`, which Pydantic records as the
-field's default. Two consequences are visible here and one is not:
+## Why the polymorphic scenario's timings were re-frozen
 
-- `model_construct()` `smart_deepcopy`s that default once per inherited member per
-  node, which is what puts the polymorphic scenario at 82–89 µs to build against
-  2.5–8.6 µs for every other scenario, and its transient allocation at ~6 KB
-  against ~0.6–2.6 KB.
-- The reading itself is unaffected: the polymorphic scenario carries every
-  position, so each deep copy is overwritten and discarded rather than retained.
-- Not visible here, and outside this reading's subject: a published subtype whose
-  row does **not** carry an inherited optional Attribute reads that member back as
-  the `AttributeExpr` object rather than as `None`, and `model_dump()` emits it
-  with a `PydanticSerializationUnexpectedValue` warning. Reproduced on this tree
-  through the real publication path against the corpus's own `Cat`, whose
-  inherited `owner_id` and `license_id` read back as `AttributeExpr` where its
-  own-declared `indoor` reads `None`.
+This reading was first taken over a tree in which a subtype's Pydantic field for
+an inherited member was built from the descriptor the declaring class installs,
+so class access to that member — its query-authoring seed — was the field's
+default. `model_construct()` deep-copied that seed once per inherited member per
+node. The defect predates COR-111 and was repaired before any representational
+change landed, because a reading taken over it would have credited the
+representation with a construction cost the repair removes. The figures above are
+the re-derived reading, taken over the repaired tree by re-running the report:
+they did not drift, they were re-taken.
 
-A later comparison must not read the polymorphic scenario's construction-time
-improvement as a property of compact backing alone: a representation that builds
-its defaults from the declaration rather than from Pydantic's collected field
-defaults stops paying that deep copy as a side effect.
+What the repair moved is the polymorphic scenario alone, and only its timing and
+transient columns: build time from 82.5 µs to 3.8 on 3.14 and from 88.6 to 3.9 on
+3.13, and transient allocation from ~6.1 KB to 616 B and from ~6.4 KB to 640 B.
+Every retained-byte figure and both sums are unchanged on both interpreters,
+which is the reading working as its subject requires: the polymorphic scenario
+carries every position, so each deep copy was overwritten and discarded rather
+than retained.
+
+The consequence for a later comparison is that there is none left to make: the
+polymorphic scenario's construction time is now a property of the backing being
+measured rather than partly a defect no longer being paid.
