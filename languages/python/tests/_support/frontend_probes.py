@@ -321,8 +321,8 @@ def define_framework_slot_binding() -> type:
 def define_reserved_pickle_entry_name() -> type:
     """An Entity class body binding the pickle entry point.
 
-    An authored one would run before the framework's own refusal rather than
-    after it, so it is the one pickle hook a declaration may not take.
+    An authored one would run in place of the framework's own refusal rather
+    than after it, so it is the one pickle hook a declaration may not take.
     """
 
     class Bad(Entity, table="bad"):
