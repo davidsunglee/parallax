@@ -15,13 +15,17 @@ no adapter and no mirrored record graph.
 from __future__ import annotations
 
 import pickle
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Self, SupportsIndex, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, GetCoreSchemaHandler
 from pydantic._internal._model_construction import ModelMetaclass
+from pydantic.annotated_handlers import GetJsonSchemaHandler
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
+from parallax.core.entity import _instance_state as backing
 from parallax.core.entity._declaration import (
     DECLARATION_MEMBER_NAMES as _DECLARATION_MEMBERS,
 )
@@ -49,8 +53,9 @@ from parallax.core.entity._expressions import (
     member_location,
     serialize_member,
 )
-from parallax.core.entity._instance_state import attach_instance_state, instance_state
+from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
+from parallax.core.entity._pydantic_storage import attach_instance_state, instance_state
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -486,6 +491,77 @@ def _use_edit(cls: type, door: str) -> EditError:
 
 class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     """The frozen base every Parallax Entity Class extends."""
+
+    __slots__ = (COMPACT_STATE_SLOT,)
+    """The slot a published value's whole declared state occupies.
+
+    Declared once on the framework root so both backings share one object layout
+    and no read has to ask what shape the class is. A value that was never
+    published leaves it unset, which is what the descriptors and the
+    instance-state Module read as "ordinary Pydantic backing".
+    """
+
+    def __eq__(self, other: object) -> bool:
+        """Value equality over declared members, from whichever backing holds them."""
+        return cast("bool", backing.equal(self, other))
+
+    def __hash__(self) -> int:
+        """This value's hash over the same declared members equality reads.
+
+        Declared in the same body as ``__eq__`` because Python sets ``__hash__``
+        to ``None`` on any class that defines one without the other.
+        """
+        return backing.hashed(self)
+
+    def __iter__(self) -> Generator[tuple[str, Any]]:
+        """Declared members alone, which is the whole of what ``dict(value)`` is."""
+        return backing.iterate(self)
+
+    def __repr_args__(self) -> Iterable[tuple[str | None, Any]]:
+        """The arguments ``repr`` and ``str`` are rendered from.
+
+        Answering Pydantic's own repr seam rather than ``__repr__`` keeps every
+        rendering built on it — ``repr``, ``str``, and the pretty and rich
+        forms — in one place and identical across backings.
+        """
+        return cast("Iterable[tuple[str | None, Any]]", backing.repr_args(self))
+
+    @property
+    def model_fields_set(self) -> set[str]:
+        """A fresh snapshot of the members this value's read carried.
+
+        Synthesized per request and never memoized, so a published value retains
+        no name-keyed presence state at all. The result is the caller's own:
+        mutating it changes neither what the value carries nor a later
+        ``exclude_unset`` dump.
+        """
+        return backing.fields_set(self)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source: type[Any], handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        """The schema seam the framework owns, and the one it reserves (spec §2).
+
+        Validation is untouched; only the model's serialization is replaced, with
+        one that reaches declared members as attributes so a published value
+        serializes as itself — no proxy, no temporary population, and the same
+        schema for ordinary backing, so serialization never branches.
+        """
+        return backing.serialization_schema(source, handler(source))
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        """JSON Schema, generated from the validation schema in either mode.
+
+        Owned but deliberately not reserved: an authored override that delegates
+        through ``super()`` composes with this, which is what keeps JSON-schema
+        customization authorable while the core-schema seam above stays the
+        framework's.
+        """
+        return backing.json_schema_of(schema, handler)
 
     all = _All()
     """The explicitly unfiltered query over this Entity (``Animal.all``).

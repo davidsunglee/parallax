@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from _compact_support import published
 
 from _support import frontend_probes, frontend_probes_stringized
 from parallax.core import (
@@ -41,6 +42,7 @@ from parallax.core import (
 )
 from parallax.core.entity._declaration import (
     DeclarationKind,
+    EntityHeader,
     build_class,
     declaration_of,
     inherited_axes,
@@ -291,19 +293,41 @@ def test_one_shape_key_is_minted_per_value_object_class_and_reused_by_occurrence
     assert shape_of(Tag).shape.key is Left.value_objects[0].shape.key
 
 
-def test_the_attribute_descriptor_returns_the_instance_value_on_direct_invocation() -> None:
-    # Pydantic's instance ``__dict__`` shadows the descriptor under ordinary
-    # attribute access, so the instance branch of ``Attr.__get__`` is reached
-    # only by invoking the descriptor directly.
-    warehouse = Warehouse(id=7, code="WH")
+def test_indices_that_are_not_a_tuple_of_index_values_are_refused() -> None:
+    # Both halves of the same rejection: the header option is a tuple, and every
+    # entry in it is one `index(...)` built.
+    for declared in ("warehouse_code", (object(),)):
+        with pytest.raises(EntityDefinitionError) as caught:
+            build_class(
+                type(Entity),
+                "Bad",
+                (Entity,),
+                {"__annotations__": {"id": Attr[int]}, "id": attr(primary_key=True)},
+                kind=DeclarationKind.ENTITY,
+                mint=None,
+                axes=(),
+                header=EntityHeader(table="bad", indices=declared),
+            )
+        assert caught.value.code == "entity-header-invalid-value"
+
+
+def test_the_attribute_descriptor_reads_the_position_it_was_installed_with() -> None:
+    # Pydantic's instance ``__dict__`` shadows the descriptor on an ordinarily
+    # constructed value, so its instance branch answers only for a published one
+    # — and what it reads there is the tuple index the publication plan handed it.
+    warehouse = published(Warehouse, id=7, code="WH")
     descriptor = vars(Warehouse)["id"]
     assert descriptor.__get__(warehouse, Warehouse) == 7
+    assert warehouse.id == 7
+    assert Warehouse(id=7, code="WH").id == 7
 
 
-def test_the_element_descriptor_returns_the_instance_value_on_direct_invocation() -> None:
-    tag = Tag(label="priority")
+def test_the_element_descriptor_reads_the_position_it_was_installed_with() -> None:
+    tag = published(Tag, label="priority")
     descriptor = vars(Tag)["label"]
     assert descriptor.__get__(tag, Tag) == "priority"
+    assert tag.label == "priority"
+    assert Tag(label="priority").label == "priority"
 
 
 def test_a_many_value_object_occurrence_defaults_to_the_empty_tuple() -> None:

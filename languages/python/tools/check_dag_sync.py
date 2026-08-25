@@ -172,6 +172,25 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.object_query",
         }
     ),
+    # The physical backing beneath a published value — the publication plan, the
+    # compact slot, the tuple and its bitmap, both Adapters, and the two Pydantic
+    # schema seams — is scoped apart from the declaration engine that builds a
+    # class and the writer that publishes one. Granting it one sibling and nothing
+    # else is what forces a publication plan to ARRIVE as plain data rather than be
+    # derived here: a scope that could reach the model would grow a second
+    # declaration engine inside the module that owns the representation.
+    "parallax.core.entity._instance_state": frozenset({"parallax.core.entity._construction_input"}),
+    # The sentinels a positional construction input spells are read by the layout
+    # side, by the writer, by the descriptors that answer a member read, and by the
+    # backing above — scopes that deliberately cannot reach one another. Housing
+    # them in a scope granted nothing is what lets every one of them reach the same
+    # sentinel without reaching through a peer.
+    "parallax.core.entity._construction_input": frozenset(),
+    # A value's own attribute storage, reached past every name a class body can
+    # bind. What it reaches is Pydantic's own slot descriptor and nothing else, so
+    # a first-party import of any kind would mean it had grown a second job — which
+    # is what a grant row of nothing states and enforces.
+    "parallax.core.entity._pydantic_storage": frozenset(),
     # A materializing runtime and Entity Graph Construction share one exact
     # recursive immutable algebra, so the carriers are scoped apart from the
     # collaboration that consumes them. Granting the carriers alone is what keeps a
@@ -372,8 +391,11 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.core.execution_lifecycle.testing": "parallax.core.execution_lifecycle",
     "parallax.core.entity._expressions": "parallax.core.entity",
     "parallax.core.object_query._fluent": "parallax.core.object_query",
+    "parallax.core.entity._construction_input": "parallax.core.entity",
     "parallax.core.entity._graph_input": "parallax.core.entity",
+    "parallax.core.entity._instance_state": "parallax.core.entity",
     "parallax.core.entity._layout": "parallax.core.entity",
+    "parallax.core.entity._pydantic_storage": "parallax.core.entity",
     "parallax.core.entity._row": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._materializer": "parallax.snapshot.handle",
@@ -413,15 +435,21 @@ ISOLATED_CHILD_SCOPES: frozenset[str] = frozenset({"parallax.core.execution_life
 # rest over the files: the same division of labour `ISOLATED_CHILD_SCOPES` runs
 # the other way round.
 #
-# The three carrier-side children of the Entity frontend are sealed because their
-# whole reason to exist is what they cannot reach: a layout is a pure function of
-# accepted metadata, the carriers are an algebra over it, and the row walk
-# between them must reach neither the writer, `construct`, nor model formation —
-# all three of which sit in the parent package beside them.
+# The six publication-side children of the Entity frontend are sealed because
+# their whole reason to exist is what they cannot reach: a layout is a pure
+# function of accepted metadata, the carriers are an algebra over it, the row walk
+# between them must reach neither the writer, `construct`, nor model formation,
+# the backing beneath a published value must reach neither the declaration engine
+# nor the writer, the sentinels it reads must reach nothing at all, and a value's
+# own attribute storage must reach nothing either — every one of which sits in the
+# parent package beside them.
 SEALED_CHILD_SCOPES: frozenset[str] = frozenset(
     {
+        "parallax.core.entity._construction_input",
         "parallax.core.entity._graph_input",
+        "parallax.core.entity._instance_state",
         "parallax.core.entity._layout",
+        "parallax.core.entity._pydantic_storage",
         "parallax.core.entity._row",
     }
 )

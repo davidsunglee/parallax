@@ -68,10 +68,10 @@ from parallax.core.entity import (
 )
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT, shape_of
 from parallax.core.entity._entity import wire_names_of
-from parallax.core.entity._instance_state import instance_state
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.entity._model import DomainModel as ModelType
 from parallax.core.entity._model import cataloged_model, class_index
+from parallax.core.entity._pydantic_storage import instance_state
 from parallax.core.entity._row import ABSENT, member_carriers
 from parallax.core.metamodel import (
     EntityIdentity,

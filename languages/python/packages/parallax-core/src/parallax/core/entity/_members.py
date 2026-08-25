@@ -20,15 +20,16 @@ from dataclasses import dataclass
 from typing import Any, Final, overload
 
 from parallax.core.base import FLOAT32, INT32, Float32, Int32, NeutralType
+from parallax.core.entity._construction_input import UNLOADED
 from parallax.core.entity._errors import EntityDefinitionError, UnloadedRelationshipError
 from parallax.core.entity._expressions import (
-    UNLOADED,
     AttributeExpr,
     AttributeRef,
     ElementAttributeExpr,
     RelationshipPath,
     RelationshipRef,
 )
+from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -465,14 +466,25 @@ class Attr[T]:
     spell such a member through the class that declares it.
     """
 
-    __slots__ = ("_member", "_py_name", "_ref")
+    __slots__ = ("_index", "_member", "_ref")
 
     def __init__(
-        self, ref: AttributeRef, py_name: str, member: AttributeMetadata | ValueObjectMetadata
+        self, ref: AttributeRef, index: int, member: AttributeMetadata | ValueObjectMetadata
     ) -> None:
         self._ref = ref
-        self._py_name = py_name
+        self._index = index
         self._member = member
+
+    def rebound(self, index: int) -> Attr[T]:
+        """This member's descriptor, addressing ``index`` instead.
+
+        A descendant declares members of its own after the ones it inherits, so a
+        member's position is a fact about the exact class rather than about the
+        family. Deriving the descendant's descriptor from the declaring class's
+        own is what keeps the reference it hands out — which names the DECLARING
+        Entity — the same one at every depth.
+        """
+        return Attr(self._ref, index, self._member)
 
     @overload
     def __get__[E](self, obj: None, owner: type[E], /) -> AttributeExpr[E, T]: ...
@@ -481,11 +493,11 @@ class Attr[T]:
     def __get__(self, obj: object | None, _owner: type | None = None) -> AttributeExpr[Any, T] | T:
         if obj is None:
             return AttributeExpr(self._ref.entity, self._ref.attribute, member=self._member)
-        # As with `ElementAttr` below, Pydantic's own instance `__dict__`
-        # shadows this branch under ordinary attribute access; it is reached only
-        # by invoking the descriptor directly, the documented instance-access
-        # contract.
-        value: T = obj.__dict__[self._py_name]
+        # As with `ElementAttr` below, Pydantic's own instance `__dict__` shadows
+        # this branch on an ordinary value, so it answers exactly the values a
+        # published one holds. The index is absolute and means nothing here: what
+        # the row is laid out as belongs to the instance-state Module alone.
+        value: T = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
         return value
 
 
@@ -498,11 +510,11 @@ class ElementAttr[T]:
     it addresses rather than an Entity.
     """
 
-    __slots__ = ("_canonical", "_py_name")
+    __slots__ = ("_canonical", "_index")
 
-    def __init__(self, canonical: str, py_name: str) -> None:
+    def __init__(self, canonical: str, index: int) -> None:
         self._canonical = canonical
-        self._py_name = py_name
+        self._index = index
 
     @overload
     def __get__[V](self, obj: None, owner: type[V], /) -> ElementAttributeExpr[V, T]: ...
@@ -514,9 +526,8 @@ class ElementAttr[T]:
         if obj is None:
             return ElementAttributeExpr((self._canonical,))
         # A non-data descriptor, so Pydantic's own instance `__dict__` shadows
-        # this branch under ordinary attribute access; it is reached only by
-        # invoking the descriptor directly.
-        value: T = obj.__dict__[self._py_name]
+        # this branch on an ordinary value and it answers for a published one.
+        value: T = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
         return value
 
 
@@ -552,12 +563,21 @@ class Rel[T]:
     question about the QUERIED position, which only the Object Query knows.
     """
 
-    __slots__ = ("_py_name", "_ref", "_target")
+    __slots__ = ("_index", "_py_name", "_ref", "_target")
 
-    def __init__(self, ref: RelationshipRef, py_name: str, target: str) -> None:
+    def __init__(self, ref: RelationshipRef, py_name: str, index: int, target: str) -> None:
         self._ref = ref
         self._py_name = py_name
+        self._index = index
         self._target = target
+
+    def rebound(self, index: int) -> Rel[T]:
+        """This relationship's descriptor, addressing ``index`` instead.
+
+        A relationship position sits after the exact class's own member count, so
+        no position survives inheritance and a descendant installs its own.
+        """
+        return Rel(self._ref, self._py_name, index, self._target)
 
     @overload
     def __get__[E, R](
@@ -580,7 +600,10 @@ class Rel[T]:
                 target=self._target,
                 source=_access_source(_owner),
             )
-        value = obj.__dict__[self._py_name]
+        try:
+            value = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
+        except AttributeError:
+            value = obj.__dict__.get(self._py_name, UNLOADED)
         if value is UNLOADED:
             raise UnloadedRelationshipError(self._ref.relationship)
         return value

@@ -817,7 +817,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.7" }]
+requires-dist = [{ name = "pydantic", specifier = ">=2.13" }]
 
 [[package]]
 name = "parallax-descriptor"

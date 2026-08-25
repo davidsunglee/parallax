@@ -62,6 +62,7 @@ from typing import Any, Protocol, cast
 from pydantic import BaseModel
 
 from parallax.core.base import INFINITY, NeutralType, Timestamp, matches_neutral_type
+from parallax.core.entity._construction_input import UNLOADED
 from parallax.core.entity._declaration import (
     LIFECYCLE_STATE_SLOT,
     ValueObjectShape,
@@ -69,7 +70,6 @@ from parallax.core.entity._declaration import (
 )
 from parallax.core.entity._entity import wire_names_of
 from parallax.core.entity._errors import GraphConstructionError
-from parallax.core.entity._expressions import UNLOADED
 from parallax.core.entity._graph_input import (
     UNLOADED_VIEW,
     EntityAttributeInput,
@@ -83,8 +83,8 @@ from parallax.core.entity._graph_input import (
     ValueObjectOccurrenceInput,
     ValueObjectRecord,
 )
-from parallax.core.entity._instance_state import attach_instance_state
 from parallax.core.entity._model import ClassIndex, DomainModel, class_index, model_of
+from parallax.core.entity._pydantic_storage import attach_instance_state
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,

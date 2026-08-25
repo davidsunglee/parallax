@@ -107,7 +107,7 @@ from memory_instruments import (  # noqa: E402
 )
 from pydantic import BaseModel  # noqa: E402
 
-from parallax.core.entity._instance_state import instance_state  # noqa: E402
+from parallax.core.entity._pydantic_storage import instance_state  # noqa: E402
 
 REPETITIONS: Final = 2_000
 """Timed repetitions of each operation. Wall clock is recorded for visibility
