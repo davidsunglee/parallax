@@ -189,10 +189,11 @@ what keeps Entity free of every lifecycle's vocabulary.
 The value is written into the instance's own storage, alongside field values but
 outside the Pydantic field set, so it is invisible to canonical serialization,
 equality, and ``repr``. Pickling is the one conversion it does not merely
-disappear from: that storage is what a pickle carries, and a lifecycle's private
-record of a live read has no truthful form on the other side of a process
-boundary, so a value carrying state here is refused at the pickle entry point
-rather than quietly emptied of it.
+disappear from: a pickle carries the instance dictionary, which is that storage
+on every class that leaves ``__dict__`` alone, and a lifecycle's private record
+of a live read has no truthful form on the other side of a process boundary, so
+a value carrying state here is refused at the pickle entry point rather than
+quietly emptied of it.
 
 That refusal is the one thing Entity reads this slot for, and it asks the storage
 directly whether the slot holds anything but ``None``: a factory returning

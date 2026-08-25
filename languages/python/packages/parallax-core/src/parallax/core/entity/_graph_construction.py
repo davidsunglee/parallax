@@ -36,9 +36,12 @@ implementation detail:
    allocation order, each with a fresh single-use resolution view. A factory
    therefore sees every final instance fully wired, including cycles, and sees no
    attached state and no published root. What a factory returns is written into
-   the node's own storage rather than assigned by name, so it lands where the
-   framework reads it back — including where the pickle refusal (spec §3) looks —
-   whatever the node's class binds.
+   the node's own storage rather than assigned by name, so whatever the node's
+   class binds, it lands where the two consumers that go to the storage find it:
+   the pickle refusal (spec §3) and an edit's carry-forward of the state a node
+   carries. ``lifecycle_state_of`` is not one of them — it resolves the slot
+   through the class, so a class binding that name blinds its own lifecycle's
+   readers without moving what those two see.
 
 Failure precedence follows the same fixed order. Writer-operation failures are
 eager. A build-callback exception propagates unchanged and suppresses completion,
