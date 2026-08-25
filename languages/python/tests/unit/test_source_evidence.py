@@ -21,8 +21,8 @@ from typing import Any, ClassVar, Final, cast
 
 import pytest
 from _authored_storage_support import (
-    AuthoredInstanceDict,
-    ForgingInstanceDict,
+    answering_for_instance_state,
+    forge_into_storage,
     stored_state,
 )
 from _transact_support import (
@@ -42,6 +42,7 @@ from parallax.conformance.read_models import Person
 from parallax.core import Attr, Entity, attr
 from parallax.core.entity import (
     EntityAttributeInput,
+    EntityDefinitionError,
     EntityGraphWriter,
     NodeHandle,
     graph_construction_of,
@@ -202,7 +203,7 @@ class _FilteredDict(Entity, table="filtered_dict", namespace="parallax.compatibi
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=64)
 
-    __dict__ = AuthoredInstanceDict.denying(LIFECYCLE_STATE_SLOT)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - a type checker forbids the binding the interpreter allows, and the interpreter is what the refusal answers to
+    __getattribute__ = answering_for_instance_state(LIFECYCLE_STATE_SLOT)
 
 
 class _InventedDict(Entity, table="invented_dict", namespace="parallax.compatibility"):
@@ -210,16 +211,13 @@ class _InventedDict(Entity, table="invented_dict", namespace="parallax.compatibi
 
     id: Attr[int] = attr(primary_key=True)
 
-    __dict__ = AuthoredInstanceDict.inventing(LIFECYCLE_STATE_SLOT, _INVENTED_STATE)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
+    __getattribute__ = answering_for_instance_state(LIFECYCLE_STATE_SLOT, _INVENTED_STATE)
 
 
-class _ForgingDict(Entity, table="forging_dict", namespace="parallax.compatibility"):
-    """An Entity whose class body writes the lifecycle slot into the storage every
-    construction of it fills."""
+class _ForgeableDict(Entity, table="forging_dict", namespace="parallax.compatibility"):
+    """An Entity whose values a caller forges the lifecycle slot into."""
 
     id: Attr[int] = attr(primary_key=True)
-
-    __dict__ = ForgingInstanceDict(LIFECYCLE_STATE_SLOT, _INVENTED_STATE)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
 
 
 _DIVERTED_TO: Final = "_diverted_lifecycle"
@@ -400,11 +398,11 @@ def test_a_class_body_hiding_the_lifecycle_slot_is_refused_all_the_same() -> Non
 
 
 def test_a_class_body_filtering_its_instance_dictionary_is_refused_all_the_same() -> None:
-    # `__dict__` is a name a class body can bind like any other, and binding it
-    # decides what every reader of that name — `getattr` and
-    # `object.__getattribute__` alike — is told. The refusal reads the storage
-    # itself, so a value whose dictionary denies the state it carries pickles no
-    # more than a plainly materialized node does.
+    # No class body may bind `__dict__` — the framework presents a published
+    # value's state under that name — but `__getattribute__` is authorable and
+    # decides what every reader of the name is told. The refusal reads the
+    # storage itself, so a value whose dictionary denies the state it carries
+    # pickles no more than a plainly materialized node does.
     value = _FilteredDict(id=7, name="Ada")
     object.__setattr__(value, LIFECYCLE_STATE_SLOT, object())
     assert LIFECYCLE_STATE_SLOT not in value.__dict__
@@ -425,17 +423,17 @@ def test_a_class_body_inventing_the_slot_leaves_an_ordinary_value_pickleable() -
     assert snapshot_state_of(restored) is None
 
 
-def test_a_class_body_forging_the_slot_into_storage_refuses_its_own_values() -> None:
+def test_a_slot_forged_into_a_value_s_own_storage_refuses_that_value() -> None:
     # The invented slot above is an answer the refusal reads past; this one is
-    # written into the storage the refusal reads, because Pydantic fills a fresh
-    # instance by assigning `__dict__` under that name. What such a body buys is
-    # the refusal, on its own plainly constructed values: the state is opaque to
-    # Entity, so no reader here can tell a forged one from a real one, and the
-    # readers that grant anything for carrying it do not ask Entity — a
-    # lifecycle authenticates its own state (`snapshot_state_of`), which is what
-    # a class body answering for the slot's name through `__getattr__` has
-    # always run into.
-    value = _ForgingDict(id=7)
+    # written into the storage the refusal reads, by a caller holding the value —
+    # the residual no in-process design closes. What it buys is the refusal, on a
+    # plainly constructed value: the state is opaque to Entity, so no reader here
+    # can tell a forged one from a real one, and the readers that grant anything
+    # for carrying it do not ask Entity — a lifecycle authenticates its own state
+    # (`snapshot_state_of`), which is what a class body answering for the slot's
+    # name through `__getattr__` has always run into.
+    value = _ForgeableDict(id=7)
+    forge_into_storage(value, LIFECYCLE_STATE_SLOT, _INVENTED_STATE)
     assert stored_state(value)[LIFECYCLE_STATE_SLOT] is _INVENTED_STATE
     assert snapshot_state_of(value) is None
 
@@ -443,9 +441,23 @@ def test_a_class_body_forging_the_slot_into_storage_refuses_its_own_values() -> 
         pickle.dumps(value)
 
 
+def test_no_class_body_may_answer_for_the_name_that_presentation_uses() -> None:
+    # The route the doctored declarations above do NOT take, because it is closed
+    # at class creation: a body binding `__dict__` would decide what Pydantic
+    # reads of every instance of the class rather than doctoring one slot.
+    with pytest.raises(EntityDefinitionError) as refusal:
+
+        class Bound(Entity, table="bound_dict", namespace="parallax.compatibility"):  # pyright: ignore[reportUnusedClass] - the declaration is refused, so nothing uses it
+            id: Attr[int] = attr(primary_key=True)
+
+            __dict__ = {}  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - the point of the probe
+
+    assert refusal.value.code == "entity-reserved-member-name"
+
+
 def test_an_edited_copy_of_a_value_whose_dictionary_denies_the_slot_is_refused_too() -> None:
     # An edit carries every kind of instance state outside the declared members
-    # forward, so a class that filters `__dict__` could otherwise launder a
+    # forward, so a class that filters its instance state could otherwise launder a
     # materialized node one call deeper than the refusal: derive a copy, and the
     # state the original's storage holds is dropped on the way. The edit surface
     # reads and writes that storage itself, so the copy carries the claim the

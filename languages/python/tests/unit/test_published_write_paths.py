@@ -1,0 +1,300 @@
+"""Every write into a published value, and how each one ends.
+
+A published value's declared state is one immutable row, presented under the two
+names Pydantic reads instance state by. Reads are the easy half. A WRITE has
+nowhere obvious to land: the mapping a caller reaches through ``__dict__`` is
+built for that read and discarded with it, so a write into it would evaporate
+and the next read would answer from the row as though nothing had happened.
+
+Silently inert is the one outcome this seam may not have. So every write path
+into a published value ends as either a deliberate demotion — the value becomes
+an ordinary Pydantic-backed one holding the same members — or a loud refusal, and
+this module is the enumeration. One test per path, named for the path, so a new
+one arriving with a Pydantic release is a gap that reads as a gap.
+
+The one path no in-process design closes is ``object.__setattr__``, which resolves
+no ``__setattr__`` and reaches the storage itself; the framework's obligation
+there is to make no such write of its own, which is what the last section grades.
+"""
+
+from __future__ import annotations
+
+import copy
+import pickle
+from functools import cached_property
+from typing import TYPE_CHECKING, Any, cast
+
+import pytest
+from _compact_support import published, raw_row, real_storage
+from pydantic import BaseModel, ConfigDict, PrivateAttr, TypeAdapter, ValidationError
+
+from parallax.core.entity import (
+    MANY_TO_ONE,
+    UNLOADED,
+    Attr,
+    Entity,
+    Rel,
+    ValueObject,
+    attr,
+    rel,
+)
+from parallax.core.entity._errors import EditError, EntityDefinitionError
+from parallax.core.entity._instance_state import auxiliary
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+_NS = "writepaths"
+
+
+class Crate(Entity, table="crate", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str | None]
+    peer_id: Attr[int | None]
+    peer: Rel[Crate | None] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
+
+    _mark = PrivateAttr(default=3)
+
+    @cached_property
+    def warmed(self) -> int:
+        return self.id * 10
+
+
+class Bare(Entity, table="bare", namespace=_NS):
+    """The same shape carrying no author-owned state, so what a published value of
+    it references is exactly what publication attached."""
+
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str | None]
+    peer_id: Attr[int | None]
+    peer: Rel[Bare | None] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
+
+
+class Place(ValueObject):
+    city: Attr[str]
+    zip_code: Attr[str | None]
+
+
+def _crate() -> Crate:
+    return published(Crate, id=1, label="x")
+
+
+# --------------------------------------------------------------------------- #
+# Refusals
+# --------------------------------------------------------------------------- #
+
+
+def test_assigning_a_member_is_refused_because_every_declared_class_is_frozen() -> None:
+    with pytest.raises(ValidationError, match="frozen"):
+        cast("Any", _crate()).label = "y"
+
+
+def test_deleting_a_member_is_refused_for_the_same_reason() -> None:
+    with pytest.raises(ValidationError, match="frozen"):
+        del cast("Any", _crate()).label
+
+
+def test_assignment_validation_cannot_be_turned_on_by_a_class_body() -> None:
+    # `validate_assignment=True` would make Pydantic write a validated member
+    # back into the mapping it read, which for a published value is a temporary.
+    # It is unreachable rather than handled: the engine owns the configuration,
+    # and both spellings of asking for one are refused at class creation.
+    with pytest.raises(EntityDefinitionError, match="entity-reserved-member-name"):
+
+        class Configured(Entity, table="configured", namespace=_NS):  # pyright: ignore[reportUnusedClass] - the declaration is refused, so nothing uses it
+            id: Attr[int] = attr(primary_key=True)
+
+            model_config = ConfigDict(validate_assignment=True)
+
+    with pytest.raises(EntityDefinitionError, match="entity-header-unknown-option"):
+
+        class Headered(  # pyright: ignore[reportUnusedClass] - likewise
+            Entity,
+            table="headered",
+            namespace=_NS,
+            validate_assignment=True,
+        ):
+            id: Attr[int] = attr(primary_key=True)
+
+
+def test_the_engine_leaves_assignment_validation_and_revalidation_at_their_defaults() -> None:
+    # The other half of the reservation above: what the engine installs is frozen
+    # and nothing else, so neither option is on for any declared class.
+    for cls in (Crate, Place):
+        config = cast("Any", cls).model_config
+        assert config.get("frozen") is True
+        assert "validate_assignment" not in config
+        assert "revalidate_instances" not in config
+
+
+def test_assigning_a_relationship_on_a_published_value_is_refused() -> None:
+    # A relationship reads its own position in the row, and the row is attached
+    # once. A write reaching the presentation instead would be lost, so the
+    # descriptor refuses rather than absorbing it.
+    value = _crate()
+    with pytest.raises(AttributeError, match="attached once"):
+        object.__setattr__(value, "peer", None)
+    assert raw_row(value) == (0b011, 1, "x", None, UNLOADED)
+
+
+_COPY_DOORS: tuple[Callable[[Any], object], ...] = (
+    copy.copy,
+    copy.deepcopy,
+    lambda value: value.model_copy(),
+    lambda value: value.model_copy(update={"label": "y"}),
+    lambda value: value.copy(),
+    lambda value: copy.replace(value, label="y"),
+)
+
+
+@pytest.mark.parametrize("door", _COPY_DOORS)
+def test_every_inherited_copy_door_is_refused_on_a_published_value(
+    door: Callable[[Any], object],
+) -> None:
+    # Each would have written into a copy's mapping, and each was already refused
+    # for its own reason; this is the statement that publication reopens none.
+    with pytest.raises(EditError, match="edit-use-edit"):
+        door(_crate())
+
+
+# --------------------------------------------------------------------------- #
+# Deliberate demotions
+# --------------------------------------------------------------------------- #
+
+
+def test_a_published_value_object_pickles_as_an_ordinary_one_holding_the_same_state() -> None:
+    # Pydantic's own pickle support reads instance state and writes it back
+    # wholesale, so a published value crosses as declared values and presence and
+    # arrives ordinary. That is the contract rather than a limitation: compact
+    # backing is publication backing, not a persistent format.
+    value = published(Place, city="Springfield")
+    restored = pickle.loads(pickle.dumps(value))
+    assert restored == value
+    assert restored.model_fields_set == value.model_fields_set == {"city"}
+    assert raw_row(restored) is None
+    assert real_storage(restored) == {"city": "Springfield", "zip_code": None}
+
+
+def test_a_lifecycle_free_published_entity_pickles_the_same_way() -> None:
+    value = published(Crate, id=1, label="x")
+    restored = pickle.loads(pickle.dumps(value))
+    assert restored == value
+    assert restored.model_fields_set == {"id", "label"}
+    assert raw_row(restored) is None
+    assert restored._mark == 3
+
+
+def test_writing_into_a_published_value_s_own_mapping_reaches_its_auxiliary_slot() -> None:
+    # The one write that must neither refuse nor demote, because
+    # `functools.cached_property` makes it and author-owned dynamic state is
+    # explicitly kept at its ordinary cost. It lands in a slot of its own, so the
+    # row is untouched and the value's real storage is still not there.
+    value = _crate()
+    cast("dict[str, Any]", value.__dict__)["warmed"] = 99
+    assert auxiliary(value) == {"warmed": 99}
+    assert value.warmed == 99
+    assert raw_row(value) == (0b011, 1, "x", None, UNLOADED)
+    assert value.model_dump() == {"id": 1, "label": "x", "peer_id": None}
+    assert real_storage(value) == {}
+
+
+def test_assigning_instance_state_wholesale_demotes_the_value_it_is_assigned_to() -> None:
+    # Every path Pydantic writes a model's state by — validation,
+    # `model_construct`, `__setstate__` — assigns this name, and each is
+    # producing an ordinary value out of semantic state. The row is cleared with
+    # the same write, so no value is left split between a row nothing wrote and
+    # storage nothing reads.
+    value = _crate()
+    object.__setattr__(value, "__dict__", {"id": 9, "label": "z", "peer_id": None})
+    object.__setattr__(value, "__pydantic_fields_set__", {"id"})
+    assert raw_row(value) is None
+    assert value.id == 9
+    assert value.model_dump() == {"id": 9, "label": "z", "peer_id": None}
+    assert value.model_fields_set == {"id"}
+    assert value.model_dump(exclude_unset=True) == {"id": 9}
+
+
+def test_a_demoted_value_reports_a_member_its_new_storage_omits() -> None:
+    # Demotion replaces the row with storage, and storage a caller assembled can
+    # be missing a member the row always had a position for. Ordinary attribute
+    # dispatch reaches the member descriptor exactly then, and what it reports is
+    # the member's absence rather than the representation's.
+    value = _crate()
+    object.__setattr__(value, "__dict__", {"id": 9})
+    assert value.id == 9
+    with pytest.raises(AttributeError, match="has no attribute 'label'"):
+        _ = value.label
+    assert not hasattr(value, "label")
+
+
+def test_the_same_holds_for_a_value_object_member() -> None:
+    value = published(Place, city="Springfield")
+    object.__setattr__(value, "__dict__", {"city": "Shelbyville"})
+    assert value.city == "Shelbyville"
+    with pytest.raises(AttributeError, match="has no attribute 'zip_code'"):
+        _ = value.zip_code
+
+
+# --------------------------------------------------------------------------- #
+# Neither, because nothing is written
+# --------------------------------------------------------------------------- #
+
+
+def test_validating_an_already_published_value_returns_that_same_value() -> None:
+    # Pydantic's no-revalidation behaviour, which the engine's fixed
+    # configuration makes the only one available: a published value validated
+    # again IS the published value, so there is no de-publication to be silent
+    # about.
+    value = _crate()
+    assert Crate.model_validate(value) is value
+    assert TypeAdapter(Crate).validate_python(value) is value
+
+    class Outer(BaseModel):
+        model_config = ConfigDict(revalidate_instances="always")
+        crate: Crate
+
+    assert Outer(crate=value).crate is value
+    assert Outer.model_validate({"crate": value}).crate is value
+    assert raw_row(value) is not None
+
+
+# --------------------------------------------------------------------------- #
+# The residual, and the framework's own obligation under it
+# --------------------------------------------------------------------------- #
+
+
+def test_no_framework_read_of_a_published_value_writes_its_storage() -> None:
+    # `object.__setattr__` resolves no `__setattr__` and reaches a value's
+    # storage directly, so no framework can intercept it — the same door the
+    # pickle refusal is already stated against. What the framework owes is that
+    # none of its own paths take it, which is what this grades: every read a
+    # published value answers leaves its storage uncreated.
+    import gc
+
+    value = published(Bare, {"peer": None}, id=1, label="x", peer_id=None)
+    matrix: tuple[dict[str, Any], ...] = ({}, {"exclude_unset": True}, {"round_trip": True})
+    for kwargs in matrix:
+        value.model_dump(**kwargs)
+        value.model_dump_json(**kwargs)
+    repr(value)
+    hash(value)
+    dict(value)
+    _ = value.model_fields_set
+    _ = value.peer
+    _ = value.label
+    assert value == published(Bare, id=1, label="x", peer_id=None)
+    assert not [held for held in gc.get_referents(value) if isinstance(held, dict)]
+    # Read last, because reading it is what creates it.
+    assert real_storage(value) == {}
+
+
+def test_reaching_a_published_value_s_storage_directly_is_the_stated_residual() -> None:
+    # Recorded rather than pretended away. A caller that goes around the frozen
+    # refusal writes ordinary storage, which shadows the member descriptor on an
+    # attribute read while serialization keeps answering from the row. Nothing
+    # in-process prevents it; what the test above states is that the framework
+    # never does it.
+    value = _crate()
+    object.__setattr__(value, "label", "forged")
+    assert value.label == "forged"
+    assert value.model_dump()["label"] == "x"

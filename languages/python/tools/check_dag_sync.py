@@ -173,13 +173,22 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
         }
     ),
     # The physical backing beneath a published value — the publication plan, the
-    # compact slot, the tuple and its bitmap, both Adapters, and the two Pydantic
-    # schema seams — is scoped apart from the declaration engine that builds a
-    # class and the writer that publishes one. Granting it one sibling and nothing
-    # else is what forces a publication plan to ARRIVE as plain data rather than be
-    # derived here: a scope that could reach the model would grow a second
-    # declaration engine inside the module that owns the representation.
-    "parallax.core.entity._instance_state": frozenset({"parallax.core.entity._construction_input"}),
+    # compact slot, the tuple and its bitmap, both Adapters, and the framework
+    # root that answers Pydantic for a value's instance state — is scoped apart
+    # from the declaration engine that builds a class and the writer that
+    # publishes one. Granting it two siblings and nothing else is what forces a
+    # publication plan to ARRIVE as plain data rather than be derived here: a
+    # scope that could reach the model would grow a second declaration engine
+    # inside the module that owns the representation. The second grant is the seam
+    # that reaches a value's real storage, which the presentation is layered
+    # directly over: what a published value answers for `__dict__` is derived
+    # here, and what lies underneath it is read there.
+    "parallax.core.entity._instance_state": frozenset(
+        {
+            "parallax.core.entity._construction_input",
+            "parallax.core.entity._pydantic_storage",
+        }
+    ),
     # The sentinels a positional construction input spells are read by the layout
     # side, by the writer, by the descriptors that answer a member read, and by the
     # backing above — scopes that deliberately cannot reach one another. Housing

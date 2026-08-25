@@ -150,6 +150,41 @@ nested scenario is the closest match, at 2.8 KB with lifecycle against 1.9 KB
 without it. Read the earlier figures as direction and these as the frozen
 comparison basis.
 
+## Why the live reading is now higher than the table
+
+The tables above are the frozen reading, taken over a tree carrying no
+publication machinery at all. They stand as recorded: they are the "before" the
+aggregate divides into, and re-freezing them over a tree COR-111 has already
+changed would hide COR-111's own cost inside its own baseline.
+
+Re-running the report today prints higher retained bytes, by **8 bytes per node**
+each time the framework root gained a slot. Two did: the compact-state slot every
+published value's row occupies, and the auxiliary slot a published value's
+`cached_property` results are redirected to. Both are declared on the shared root,
+so every instance of every declared class carries both pointers whichever backing
+it holds — which is why the legacy arm pays them too.
+
+| reading | summed retained B, lifecycle included | excluded |
+|---|---:|---:|
+| frozen above, no slots | 7,328 | 6,424 |
+| plus the compact-state slot | 7,408 | 6,504 |
+| plus the auxiliary slot | 7,488 | 6,584 |
+
+`slots`, `fields`, `lifecycle B`, and the scenario shapes are unchanged: the
+storage each node holds is the same mapping with the same entries, and what grew
+is the object in front of it. Whichever pair of sums a later aggregate divides,
+it must divide two readings taken over the same object layout, or say which two
+it took.
+
+The `dump µs` column moved the other way and by more, because the serialization
+seam changed shape: on this machine the six scenarios read 0.57 / 0.99 / 1.54 /
+0.73 / 0.70 / 0.65 over the frozen tree, 0.91 / 2.03 / 3.83 / 1.35 / 1.36 / 1.19
+over the tree that reached declared members through a computed-field restatement,
+and 0.74 / 1.19 / 2.55 / 0.88 / 0.92 / 0.81 over the presentation that replaced
+it. Timings are recorded for direction only, and this one is direction: an
+ordinary value's serialization is materially cheaper than the seam it replaced
+and still above the tree that had none.
+
 ## What this reading surfaced
 
 Not repaired here — this reading exists to record the tree as it stands — and it

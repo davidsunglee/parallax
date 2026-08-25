@@ -15,14 +15,9 @@ written.
 
 from __future__ import annotations
 
-from collections.abc import Generator, Iterable
 from typing import TYPE_CHECKING, Any, Self, cast
 
-from pydantic import BaseModel, GetCoreSchemaHandler
 from pydantic._internal._model_construction import ModelMetaclass
-from pydantic.annotated_handlers import GetJsonSchemaHandler
-from pydantic.json_schema import JsonSchemaValue
-from pydantic_core import CoreSchema
 
 from parallax.core.document_codec import (
     NULL,
@@ -34,7 +29,6 @@ from parallax.core.document_codec import (
     encode_many,
     shape_of_declaration,
 )
-from parallax.core.entity import _instance_state as backing
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
     DeclarationKind,
@@ -50,7 +44,7 @@ from parallax.core.entity._edit import (
 )
 from parallax.core.entity._errors import EditError, EditViolation, EntityDefinitionError
 from parallax.core.entity._expressions import judged_edit_violation, serialize_member
-from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
+from parallax.core.entity._instance_state import BackedModel
 from parallax.core.metamodel import (
     MODEL_ROOT,
     AttributeIdentity,
@@ -107,83 +101,27 @@ class ValueObjectMeta(ModelMetaclass):
         )
 
 
-class ValueObject(BaseModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
+class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
     """The frozen base every Parallax Value Object Class extends.
 
     Instances are the only legal value for a Value Object member: a caller never
     assigns a raw mapping where an occurrence is declared.
+
+    Every question about what a value physically holds is answered one level
+    down, by :class:`~parallax.core.entity._instance_state.BackedModel`, exactly
+    as it is for an Entity: a Value Object is published the same way.
     """
 
-    __slots__ = (COMPACT_STATE_SLOT,)
-    """The slot a published value's whole declared state occupies.
+    __slots__ = ()
 
-    Declared once on the framework root so both backings share one object layout
-    and no read has to ask what shape the class is. A value that was never
-    published leaves it unset, which is what the descriptors and the
-    instance-state Module read as "ordinary Pydantic backing".
-    """
+    if TYPE_CHECKING:
+        # Declared for type checkers alone, and bound by nobody: Pydantic installs
+        # a hash over each frozen class's own declared members at class creation,
+        # which a checker cannot see, while `BaseModel` defining `__eq__` without
+        # one is what would otherwise make every declared class statically
+        # unhashable.
 
-    def __eq__(self, other: object) -> bool:
-        """Value equality over declared members, from whichever backing holds them."""
-        return cast("bool", backing.equal(self, other))
-
-    def __hash__(self) -> int:
-        """This value's hash over the same declared members equality reads.
-
-        Declared in the same body as ``__eq__`` because Python sets ``__hash__``
-        to ``None`` on any class that defines one without the other.
-        """
-        return backing.hashed(self)
-
-    def __iter__(self) -> Generator[tuple[str, Any]]:
-        """Declared members alone, which is the whole of what ``dict(value)`` is."""
-        return backing.iterate(self)
-
-    def __repr_args__(self) -> Iterable[tuple[str | None, Any]]:
-        """The arguments ``repr`` and ``str`` are rendered from.
-
-        Answering Pydantic's own repr seam rather than ``__repr__`` keeps every
-        rendering built on it — ``repr``, ``str``, and the pretty and rich
-        forms — in one place and identical across backings.
-        """
-        return cast("Iterable[tuple[str | None, Any]]", backing.repr_args(self))
-
-    @property
-    def model_fields_set(self) -> set[str]:
-        """A fresh snapshot of the members this value's read carried.
-
-        Synthesized per request and never memoized, so a published value retains
-        no name-keyed presence state at all. The result is the caller's own:
-        mutating it changes neither what the value carries nor a later
-        ``exclude_unset`` dump.
-        """
-        return backing.fields_set(self)
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls, source: type[Any], handler: GetCoreSchemaHandler
-    ) -> CoreSchema:
-        """The schema seam the framework owns, and the one it reserves (spec §2).
-
-        Validation is untouched; only the model's serialization is replaced, with
-        one that reaches declared members as attributes so a published value
-        serializes as itself — no proxy, no temporary population, and the same
-        schema for ordinary backing, so serialization never branches.
-        """
-        return backing.serialization_schema(source, handler(source))
-
-    @classmethod
-    def __get_pydantic_json_schema__(
-        cls, schema: CoreSchema, handler: GetJsonSchemaHandler
-    ) -> JsonSchemaValue:
-        """JSON Schema, generated from the validation schema in either mode.
-
-        Owned but deliberately not reserved: an authored override that delegates
-        through ``super()`` composes with this, which is what keeps JSON-schema
-        customization authorable while the core-schema seam above stays the
-        framework's.
-        """
-        return backing.json_schema_of(schema, handler)
+        def __hash__(self) -> int: ...
 
     def edit(self, **changes: object) -> Self:
         """The one door to an edited Value Object (spec §3).

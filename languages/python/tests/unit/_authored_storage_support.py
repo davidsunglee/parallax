@@ -1,29 +1,31 @@
 """A class body standing between a value and its own instance storage.
 
-Several unit proofs need a declaration whose ``__dict__`` answers with a mapping
-of its own choosing, so that a framework read of a private slot can be shown to
-reach the storage underneath rather than the name. They differ only in which
-slot is doctored and what an invented one holds, so the descriptor is shared and
+Several unit proofs need a declaration that answers for its instance state with
+a mapping of its own choosing, so that a framework read of a private slot can be
+shown to reach the storage underneath rather than the name. They differ only in
+which slot is doctored and what an invented one holds, so the hook is shared and
 each suite supplies those two facts.
 
-Pydantic's own slot descriptor is what holds the storage, so an authored
-``__dict__`` can delegate every write to it — leaving the value really carrying
-whatever the framework attached — and still deny one slot on the way out, or
-offer one the value never held.
-
-Construction is the one write worth doctoring rather than forwarding: Pydantic
-fills a fresh instance by assigning ``__dict__`` under that name, so a class
-body binding it can add a slot to the storage a value really starts out with
-rather than merely answer for one (:class:`ForgingInstanceDict`).
+``__dict__`` is not the route, because no declared class body may bind it: the
+framework presents a published value's compact row under that name, and a body
+answering for it would decide what Pydantic reads of every instance of the
+class. The route that remains is ``__getattribute__``, which is deliberately
+authorable and which answers every read of the name — ``getattr`` and
+``object.__getattribute__`` alike. It cannot reach a write: Pydantic fills a
+fresh instance by assigning ``__dict__``, and that assignment resolves a data
+descriptor rather than an attribute hook. So a forgery is written into the
+storage directly (:func:`forge_into_storage`), which is the residual any
+in-process design leaves open and the one these proofs are stated against.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Final, cast
 
 from pydantic import BaseModel
 
-__all__ = ["AuthoredInstanceDict", "ForgingInstanceDict", "stored_state"]
+__all__ = ["answering_for_instance_state", "forge_into_storage", "stored_state"]
 
 _MODEL_STORAGE: Final = BaseModel.__dict__["__dict__"]
 
@@ -39,51 +41,34 @@ def stored_state(value: BaseModel) -> dict[str, Any]:
     return cast("dict[str, Any]", _MODEL_STORAGE.__get__(value))
 
 
-class AuthoredInstanceDict:
-    """A ``__dict__`` descriptor answering for one doctored slot.
+def answering_for_instance_state(
+    slot: str, invented: object = _DENIED
+) -> Callable[[Any, str], Any]:
+    """A ``__getattribute__`` for a class body, doctoring one slot of ``__dict__``.
 
-    An invented slot is answered with the same object on every read, so a reader
-    that mutates what it was given changes what the next read sees.
+    With no ``invented`` state it hides ``slot`` from every read of the name,
+    whatever the storage holds under it; with one it offers ``slot`` holding that
+    state, which nothing wrote. The same object is answered on every read, so a
+    reader that mutates what it was given changes what the next read sees.
     """
 
-    def __init__(self, slot: str, invented: object) -> None:
-        self._slot = slot
-        self._invented = invented
+    def doctored(self: Any, name: str) -> Any:
+        if name != "__dict__":
+            return object.__getattribute__(self, name)
+        stored = stored_state(self)
+        if invented is _DENIED:
+            return {held: value for held, value in stored.items() if held != slot}
+        return {**stored, slot: invented}
 
-    @classmethod
-    def denying(cls, slot: str) -> AuthoredInstanceDict:
-        """A ``__dict__`` hiding ``slot``, whatever the storage holds under it."""
-        return cls(slot, _DENIED)
-
-    @classmethod
-    def inventing(cls, slot: str, state: object) -> AuthoredInstanceDict:
-        """A ``__dict__`` answering ``slot`` with ``state``, which nothing wrote."""
-        return cls(slot, state)
-
-    def __get__(self, instance: BaseModel, owner: type[object] | None = None) -> dict[str, Any]:
-        stored = stored_state(instance)
-        if self._invented is _DENIED:
-            return {name: value for name, value in stored.items() if name != self._slot}
-        return {**stored, self._slot: self._invented}
-
-    def __set__(self, instance: BaseModel, value: dict[str, Any]) -> None:
-        _MODEL_STORAGE.__set__(instance, value)
+    return doctored
 
 
-class ForgingInstanceDict:
-    """A ``__dict__`` descriptor writing one slot into every storage assigned through it.
+def forge_into_storage(value: BaseModel, slot: str, state: object) -> None:
+    """Write ``state`` into ``value``'s real storage under ``slot``.
 
-    Reads answer with the storage itself, so what this class body offers is what
-    the value really holds: the forgery is in the write construction makes, not
-    in an answer a reader could reach past.
+    The forgery a class body cannot make and arbitrary code holding a value
+    always can: what lands here is what every framework reader of that slot
+    really finds, so a guarantee stated against it is stated against the storage
+    rather than against an answer a reader could reach past.
     """
-
-    def __init__(self, slot: str, state: object) -> None:
-        self._slot = slot
-        self._state = state
-
-    def __get__(self, instance: BaseModel, owner: type[object] | None = None) -> dict[str, Any]:
-        return stored_state(instance)
-
-    def __set__(self, instance: BaseModel, value: dict[str, Any]) -> None:
-        _MODEL_STORAGE.__set__(instance, {**value, self._slot: self._state})
+    stored_state(value)[slot] = state

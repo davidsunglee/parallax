@@ -10,10 +10,11 @@ into the namespace Pydantic collects field defaults from.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+import gc
+from typing import Any, cast
 
 import pytest
-from _compact_support import published
+from _compact_support import published, raw_row
 from pydantic import BaseModel
 
 from parallax.core.entity import (
@@ -33,15 +34,13 @@ from parallax.core.entity._instance_state import (
     COMPACT_STATE_SLOT,
     allocate,
     install,
+    is_present,
     plan_of,
     publish,
-    serialization_schema,
 )
 from parallax.core.entity._members import Attr as AttrDescriptor
+from parallax.core.entity._pydantic_storage import instance_presence
 from parallax.core.metamodel import TablePerHierarchy
-
-if TYPE_CHECKING:
-    from pydantic_core import core_schema as cs
 
 _NS = "plan"
 
@@ -202,14 +201,6 @@ def test_a_plan_whose_members_are_not_the_class_s_fields_is_refused() -> None:
         install(Cat, members=("id",), occurrences={}, relationships=())
 
 
-def test_the_seam_leaves_a_schema_that_is_not_a_model_schema_alone() -> None:
-    # The hook is the framework root's, so what reaches it is always the schema of
-    # a model being built; leaving anything else untouched is what keeps that a
-    # statement rather than an assumption.
-    other = cast("cs.CoreSchema", {"type": "int"})
-    assert serialization_schema(Cat, other) is other
-
-
 # --------------------------------------------------------------------------- #
 # Presence, equality, and the state a published value does not keep
 # --------------------------------------------------------------------------- #
@@ -231,13 +222,53 @@ def test_two_values_differing_only_in_private_state_are_unequal() -> None:
 
 
 def test_a_published_value_keeps_no_name_keyed_presence_state() -> None:
+    # Not even a shared empty set: what a published value answers for
+    # `__pydantic_fields_set__` is synthesized from the bitmap, so the slot
+    # Pydantic's own storage keeps one in is never written at all.
     value = published(Cat, id=1, name="c")
-    row = object.__getattribute__(value, COMPACT_STATE_SLOT)
+    row = raw_row(value)
     assert isinstance(row, tuple)
     assert row[0] == 0b000011
-    assert object.__getattribute__(value, "__pydantic_fields_set__") == set()
+    assert value.model_fields_set == {"id", "name"}
+    with pytest.raises(AttributeError):
+        instance_presence(value)
     assert object.__getattribute__(value, "__pydantic_extra__") is None
-    assert not any(isinstance(held, dict | set) for held in cast("tuple[Any, ...]", row))
+    assert not any(isinstance(held, dict | set) for held in row)
+    assert not [held for held in gc.get_referents(value) if isinstance(held, dict | set)]
+
+
+def test_a_shell_awaiting_publication_holds_neither_state_nor_presence() -> None:
+    # The slot is unset rather than cleared until publication attaches the row,
+    # and that is what a shell answers with: empty storage, and no
+    # populated-member set at all — the two facts a refused publication leaves
+    # behind.
+    shell = allocate(Cat)
+    assert shell.__dict__ == {}
+    with pytest.raises(AttributeError):
+        _ = shell.__pydantic_fields_set__
+
+
+def test_presence_is_read_per_member_from_whichever_backing_holds_it() -> None:
+    # The only presence question internal code has, and the one that allocates
+    # nothing: both backings answer it from what they already hold, so a row or
+    # document walk never synthesizes a set to ask it.
+    bits = plan_of(Cat).bits
+    for value in (published(Cat, id=1, name="c"), Cat(id=1, name="c")):
+        assert is_present(value, bits["id"])
+        assert is_present(value, bits["name"])
+        assert not is_present(value, bits["indoor"])
+
+
+def test_a_value_object_declaring_no_member_publishes_and_dumps_as_empty() -> None:
+    # The degenerate width, which the permutation a plan carries has to spell
+    # rather than build: `operator.itemgetter` refuses to be constructed with no
+    # index at all.
+    class Nothing(ValueObject):
+        pass
+
+    value = published(Nothing)
+    assert value.model_dump() == Nothing().model_dump() == {}
+    assert plan_of(Nothing).fields == ()
 
 
 def test_a_published_relationship_reads_its_tail_position() -> None:
