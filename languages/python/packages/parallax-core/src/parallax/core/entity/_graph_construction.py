@@ -13,7 +13,8 @@ The collaboration owns everything about turning those carriers into Entity
 and Value Object instances — concrete class selection, canonical-to-Python member
 mapping, recursive Value Object construction, Pydantic's ``model_construct`` plus
 the ``object.__setattr__`` backdoor, broad relationship-slot installation, the one
-opaque lifecycle-state slot, and all-or-none publication. It owns nothing about
+opaque lifecycle-state slot written straight to instance storage, and all-or-none
+publication. It owns nothing about
 any lifecycle: it registers no callback, interprets no state value, and imports
 no lifecycle package. A caller passes one build function and one optional state
 factory per call, so two lifecycles coexist without either knowing the other.
@@ -34,7 +35,10 @@ implementation detail:
    populated, and the roots validate, do the per-node state factories run — in
    allocation order, each with a fresh single-use resolution view. A factory
    therefore sees every final instance fully wired, including cycles, and sees no
-   attached state and no published root.
+   attached state and no published root. What a factory returns is written into
+   the node's own storage rather than assigned by name, so it lands where the
+   framework reads it back — including where the pickle refusal (spec §3) looks —
+   whatever the node's class binds.
 
 Failure precedence follows the same fixed order. Writer-operation failures are
 eager. A build-callback exception propagates unchanged and suppresses completion,
@@ -51,6 +55,8 @@ from __future__ import annotations
 from collections.abc import Callable, Container, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
+
+from pydantic import BaseModel
 
 from parallax.core.base import INFINITY, NeutralType, Timestamp, matches_neutral_type
 from parallax.core.entity._declaration import (
@@ -74,6 +80,7 @@ from parallax.core.entity._graph_input import (
     ValueObjectOccurrenceInput,
     ValueObjectRecord,
 )
+from parallax.core.entity._instance_state import attach_instance_state
 from parallax.core.entity._model import ClassIndex, DomainModel, class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -444,7 +451,9 @@ class EntityGraphConstruction:
         published = _validated_roots(scope, roots)
         states = _factory_results(scope, state_factory)
         for index, state in enumerate(states):
-            object.__setattr__(scope.instances[index], LIFECYCLE_STATE_SLOT, state)
+            attach_instance_state(
+                cast(BaseModel, scope.instances[index]), LIFECYCLE_STATE_SLOT, state
+            )
         return tuple(scope.instances[index] for index in published)
 
     def facts_for(self, entity: EntityIdentity) -> _EntityFacts:
