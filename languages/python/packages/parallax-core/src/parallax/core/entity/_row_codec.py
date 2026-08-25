@@ -10,8 +10,8 @@ for one learns nothing about Pydantic, the private Change Record slot, physical
 column names, temporal planning, or Audit Provenance. It is an **authoring**
 codec: it emits only what a caller authored, never computes or stamps a
 framework-owned value, and is never an Audit Provenance extension point. Its
-dependencies are the accepted Metamodel and the value's own
-class, and nothing else.
+dependencies are the accepted Metamodel, the value's own class, and — for the
+private slot alone — the value's own instance storage, and nothing else.
 
 Input validation **resolves; it does not own.** The codec resolves the Entity
 Identity the value's class declares and refuses at resolution only when its model
@@ -49,6 +49,7 @@ from parallax.core.entity._errors import (
     EntityRowError,
 )
 from parallax.core.entity._expressions import serialize_member
+from parallax.core.entity._instance_state import instance_state
 from parallax.core.entity._model import DomainModel, model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -389,8 +390,13 @@ def _change_record(facts: _RowFacts, value: object) -> Mapping[str, object]:
     a defect and earns no refusal. A slot holding anything unreadable is a
     different matter — it reports corruption of private first-party state, and
     collapsing that into the empty selection would leave it unreported.
+
+    Read from the value's own storage, which is where :meth:`Entity.edit` wrote
+    it: the slot is private first-party state, so what a row claims a caller
+    authored must not be decided by a class body binding ``__dict__`` or the
+    slot's own name.
     """
-    record = value.__dict__.get(CHANGE_RECORD_SLOT, _NO_RECORD)
+    record = instance_state(cast("Entity", value)).get(CHANGE_RECORD_SLOT, _NO_RECORD)
     if record is _NO_RECORD:
         return {}
     if not _is_change_record(record):

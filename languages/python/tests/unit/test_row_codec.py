@@ -11,12 +11,14 @@ from __future__ import annotations
 import ast
 import datetime as dt
 import uuid
+from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 from _snapshot_graph_support import GraphFixture
+from pydantic import BaseModel
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
@@ -109,6 +111,48 @@ LABELLED_MODEL = DomainModel(Labelled)
 NARROW_MODEL = DomainModel(Widget)
 WIDER_MODEL = DomainModel(WiderWidget)
 INTERLEAVED_MODEL = DomainModel(Interleaved)
+
+_MODEL_STORAGE: Final = BaseModel.__dict__["__dict__"]
+
+
+class _AuthoredInstanceDict:
+    """A class-body ``__dict__`` standing between a value and its own storage.
+
+    Pydantic's slot descriptor is what holds that storage, so an authored one can
+    delegate every write to it and still answer reads with a mapping of its
+    choosing — including one that denies the Change Record the storage holds, or
+    offers one no edit ever wrote.
+    """
+
+    def __init__(self, *, invented: Mapping[str, object] | None) -> None:
+        self._invented = invented
+
+    def __get__(self, instance: BaseModel, owner: type[object] | None = None) -> dict[str, Any]:
+        stored = cast("dict[str, Any]", _MODEL_STORAGE.__get__(instance))
+        if self._invented is not None:
+            return {**stored, CHANGE_RECORD_SLOT: dict(self._invented)}
+        return {name: value for name, value in stored.items() if name != CHANGE_RECORD_SLOT}
+
+    def __set__(self, instance: BaseModel, value: dict[str, Any]) -> None:
+        _MODEL_STORAGE.__set__(instance, value)
+
+
+class FilteredWidget(Entity, name="Widget", table="widget", namespace=_NS):
+    """A declaration whose class body denies the Change Record its storage holds."""
+
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str]
+
+    __dict__ = _AuthoredInstanceDict(invented=None)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - a type checker forbids the binding the interpreter allows, and the interpreter is what the codec answers to
+
+
+class InventedWidget(Entity, name="Widget", table="widget", namespace=_NS):
+    """A declaration whose class body offers a Change Record no edit ever wrote."""
+
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str]
+
+    __dict__ = _AuthoredInstanceDict(invented={"label": "never authored"})  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
 
 
 class _ClasslessSource:
@@ -650,6 +694,28 @@ def test_an_unreadable_change_record_reports_corruption_rather_than_absence(
     assert refusal.value.code == "entity-row-malformed-provenance"
 
 
+def test_a_class_body_denying_the_change_record_still_writes_the_edit() -> None:
+    # `__dict__` is a name a class body can bind like any other, and binding it
+    # decides what every reader of that name is told. The Change Record is
+    # private first-party state only `edit(...)` writes, so the codec reads the
+    # value's own storage: an edit that touched a member lowers to the sparse row
+    # it authored even when the class denies the slot the storage holds.
+    edited = FilteredWidget(id=1, label="a").edit(label="b")
+    assert CHANGE_RECORD_SLOT not in edited.__dict__
+
+    assert row_codec_of(NARROW_MODEL).edited_row(edited) == {"id": 1, "label": "b"}
+
+
+def test_a_class_body_inventing_a_change_record_earns_no_row() -> None:
+    # The same fact from the other side: a dictionary answering with a record the
+    # storage never held names no edit, so the value a caller never edited stays
+    # the one proposition `None` makes rather than emitting an unearned write.
+    plain = InventedWidget(id=1, label="a")
+    assert plain.__dict__[CHANGE_RECORD_SLOT] == {"label": "never authored"}
+
+    assert row_codec_of(NARROW_MODEL).edited_row(plain) is None
+
+
 # --------------------------------------------------------------------------- #
 # Refusal order: one input, one code.                                         #
 # --------------------------------------------------------------------------- #
@@ -700,6 +766,8 @@ def test_the_codec_depends_on_accepted_metadata_and_its_own_frontend_alone() -> 
     # Principal, Subject Identity, Session, Clock Strategy, Transaction Instant,
     # Audit Metadata, temporal planning, Write Planner, SQL, or Storage Layout is
     # reachable from here. §7's generated contracts enforce the scope-level half.
+    # Every entity-scope name here is a frontend one, `_instance_state` included:
+    # it reaches the value's own attribute storage and nothing beyond it.
     assert _codec_imports() == {
         "__future__",
         "collections.abc",
@@ -710,6 +778,7 @@ def test_the_codec_depends_on_accepted_metadata_and_its_own_frontend_alone() -> 
         "parallax.core.entity._entity",
         "parallax.core.entity._errors",
         "parallax.core.entity._expressions",
+        "parallax.core.entity._instance_state",
         "parallax.core.entity._model",
         "parallax.core.inheritance",
         "parallax.core.metamodel",

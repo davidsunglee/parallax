@@ -3611,19 +3611,24 @@ These feature tests do not claim the deferred `benchmark` command or general
 
   A **Change Record** is a mapping from each member the edit chain touched to
   the value that member held when it was first touched, stored in one private
-  first-party slot that only `edit(...)` ever writes. An absent slot and an
-  empty record name the same empty selection, because both say the chain touched
-  nothing; a value whose slot holds something that is **not** a Change Record
-  raises `entity-row-malformed-provenance` instead. That refusal reports
-  corruption of private first-party state rather than classifying anything a
-  developer authored, which is why it survives while the absent-record refusal
-  does not: collapsing an unreadable carrier into "nothing to write" would name
-  the wrong defect and leave the corruption unreported. Which verbs accept a
-  plain, never-edited value is not the codec's question at all — the write verb
-  decides it from the value's provenance, before deriving any row (§5). A
-  recorded name the resolved identity does not declare is not a provenance
-  defect either — it is the same undeclared-member case `full_row` reports, so
-  it raises `entity-row-member-missing`.
+  first-party slot that only `edit(...)` ever writes. That slot lives in the
+  value's own instance storage and both sides reach it there — the edit that
+  writes it and the codec that reads it — never through a name a class body can
+  bind, so no authored `__dict__`, `__getattr__`, `__getattribute__`, or
+  descriptor at the slot's own name drops an edit's row or earns one an edit
+  never authored. An absent slot and an empty record name the same empty
+  selection, because both say the chain touched nothing; a value whose slot
+  holds something that is **not** a Change Record raises
+  `entity-row-malformed-provenance` instead. That refusal reports corruption of
+  private first-party state rather than classifying anything a developer
+  authored, which is why it survives while the absent-record refusal does not:
+  collapsing an unreadable carrier into "nothing to write" would name the wrong
+  defect and leave the corruption unreported. Which verbs accept a plain,
+  never-edited value is not the codec's question at all — the write verb decides
+  it from the value's provenance, before deriving any row (§5). A recorded name
+  the resolved identity does not declare is not a provenance defect either — it
+  is the same undeclared-member case `full_row` reports, so it raises
+  `entity-row-member-missing`.
 
   **Refusals are ordered, so one input has one code.** Every operation resolves
   the value's Entity Identity first — `entity-row-not-an-entity`, then

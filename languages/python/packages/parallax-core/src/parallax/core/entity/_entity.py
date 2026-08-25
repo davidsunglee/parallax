@@ -716,6 +716,15 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         and an authored ``__getstate__`` answers in place of this one, so what
         either hands back is its own.
 
+        Which domain data that is comes from ``BaseModel.__getstate__``, which
+        collects the instance dictionary by reading ``self.__dict__`` — a name a
+        class body can bind like any other. On a class that leaves it alone the
+        answer is the value's own storage; a class that binds it decides which
+        declared values its own pickle carries and may add values it never held.
+        The filter below applies to whichever dictionary arrives, so no lifecycle
+        state under the slot's name survives this either way, and the storage the
+        entry-point guard reads is a separate read from this one.
+
         The Change Record travels: it is authored state, written by
         :meth:`edit` from values the caller supplied, and it earns a write
         nothing, because provenance is the lifecycle state this drops.
