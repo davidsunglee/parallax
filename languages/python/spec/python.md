@@ -3611,14 +3611,12 @@ These feature tests do not claim the deferred `benchmark` command or general
 
   A **Change Record** is a mapping from each member the edit chain touched to
   the value that member held when it was first touched, stored in one private
-  first-party slot that only `edit(...)` ever writes. That slot lives in the
-  value's own instance storage and both sides reach it there — the edit that
-  writes it and the codec that reads it — never through a name a class body can
-  bind, so no authored `__dict__`, `__getattr__`, `__getattribute__`, or
-  descriptor at the slot's own name drops an edit's row or earns one an edit
-  never authored. An absent slot and an empty record name the same empty
-  selection, because both say the chain touched nothing; a value whose slot
-  holds something that is **not** a Change Record raises
+  first-party slot that only `edit(...)` ever writes. It is first-party state,
+  not a surface a class answers for, so no authored `__dict__`, `__getattr__`,
+  `__getattribute__`, or descriptor bound at the slot's own name drops an edit's
+  row or earns one an edit never authored. An absent slot and an empty record
+  name the same empty selection, because both say the chain touched nothing; a
+  value whose slot holds something that is **not** a Change Record raises
   `entity-row-malformed-provenance` instead. That refusal reports corruption of
   private first-party state rather than classifying anything a developer
   authored, which is why it survives while the absent-record refusal does not:
