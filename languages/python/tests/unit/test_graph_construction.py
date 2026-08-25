@@ -11,6 +11,7 @@ caller gives and what is reachable from them — never "the query result".
 from __future__ import annotations
 
 import datetime as dt
+import warnings
 from decimal import Decimal
 from typing import Any, cast
 
@@ -658,6 +659,68 @@ def test_a_temporal_start_attribute_admits_no_infinity(name: str) -> None:
         _bound(name)
     assert refusal.value.code == "entity-graph-invalid-value"
     assert refusal.value.identity == _attr(_MILESTONE, name)
+
+
+# --------------------------------------------------------------------------- #
+# Publishing a subtype, where a member's declaring class is not the published  #
+# one: what a member the read did not carry reads back as, and dumps as.       #
+# --------------------------------------------------------------------------- #
+
+_CAT = sm.Cat.identity
+_ANIMAL = sm.Animal.identity
+_PET = sm.Pet.identity
+
+
+def _cat(*carried: EntityAttributeInput) -> Any:
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        node = writer.allocate(_CAT)
+        writer.populate(
+            node,
+            (
+                EntityAttributeInput(_attr(_ANIMAL, "id"), 1),
+                EntityAttributeInput(_attr(_ANIMAL, "name"), "Tom"),
+                *carried,
+            ),
+            (),
+            (),
+        )
+        return (node,)
+
+    (root,) = graph_construction_of(sm.ANIMAL_MODEL).construct(build)
+    return cast("Any", root)
+
+
+def test_a_published_subtype_reads_an_uncarried_inherited_member_as_its_default() -> None:
+    # `ownerId` is the family root's and `licenseId` the abstract middle's, so
+    # this reads an absent member across both inheritance levels; the published
+    # class's own `indoor` is the control.
+    cat = _cat()
+    assert cat.owner_id is None
+    assert cat.license_id is None
+    assert cat.indoor is None
+
+
+def test_a_published_subtype_serializes_an_uncarried_inherited_member() -> None:
+    cat = _cat()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        dumped = cat.model_dump()
+    assert dumped == {
+        "id": 1,
+        "name": "Tom",
+        "owner_id": None,
+        "license_id": None,
+        "indoor": None,
+    }
+
+
+def test_a_published_subtype_reads_a_carried_inherited_member_as_the_carried_value() -> None:
+    cat = _cat(
+        EntityAttributeInput(_attr(_ANIMAL, "ownerId"), 5),
+        EntityAttributeInput(_attr(_PET, "licenseId"), "L-1"),
+        EntityAttributeInput(_attr(_CAT, "indoor"), True),
+    )
+    assert (cat.owner_id, cat.license_id, cat.indoor) == (5, "L-1", True)
 
 
 # --------------------------------------------------------------------------- #

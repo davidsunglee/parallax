@@ -1897,7 +1897,10 @@ or descriptor authoring form and performs no audit stamping.
   checker. The metaclass unwraps `Attr[T]` / `Rel[T]` to their inner types
   when building the Pydantic model fields, so instances stay ordinary frozen
   values and the classes still carry no information absent from the
-  descriptor schema.
+  descriptor schema. A member a descendant inherits rather than declares is the
+  declaring class's own field at every depth — the same default and the same
+  requiredness — so what a descendant's instance reads for a member no
+  construction supplied never depends on which class in the family declared it.
 
   ```python
   class Order(Entity, table="orders"):

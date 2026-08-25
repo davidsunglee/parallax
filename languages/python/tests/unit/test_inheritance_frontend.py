@@ -12,10 +12,15 @@ formation-time ``inheritance-*`` issue rather than through a Python-only rule.
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
+from pydantic import BaseModel, ValidationError
+from pydantic_core import PydanticUndefined
 
 from _support import inheritance_models as im
 from parallax.core import (
+    MANY_TO_ONE,
     READ_ONLY,
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
@@ -26,10 +31,15 @@ from parallax.core import (
     Entity,
     EntityDefinitionError,
     Int32,
+    Rel,
     TablePerHierarchy,
+    ValueObject,
     attr,
     inheritance,
+    rel,
 )
+from parallax.core import AbstractSubtype as AbstractSubtypeRole
+from parallax.core.entity import AttributeExpr, RelationshipPath
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AbstractSubtype,
@@ -264,3 +274,125 @@ def test_a_descendant_that_declares_no_mode_inherits_the_root_owned_one() -> Non
     silent = view.entity(_identity("SilentLedger"))
     assert silent is not None
     assert silent.persistence is PersistenceMode.READ_ONLY
+
+
+# --------------------------------------------------------------------------- #
+# What a descendant inherits as a Pydantic field. Class access to a member      #
+# yields its query-authoring seed, so the descriptor a base installs is a       #
+# class attribute answering for every member name a descendant does not         #
+# redeclare — and Pydantic reads a field's default off the class. What is       #
+# pinned here is that a descendant's inherited field is the declaring class's   #
+# own, for every member kind a family can contribute and at every depth.        #
+# --------------------------------------------------------------------------- #
+class _Badge(ValueObject):
+    code: Attr[str | None]
+    rank: Attr[int | None]
+
+
+class _Fleet(Entity, table="fleet", name="Fleet", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+
+
+class _Craft(
+    Bitemporal,
+    table="craft",
+    name="Craft",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    """Every member kind a family can contribute, declared on the root: a
+    required Attribute, a nullable one, a required and a nullable Value Object
+    occurrence, a many occurrence, a relationship, and — through the temporal
+    base — four framework-owned endpoints."""
+
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=32)
+    fleet_id: Attr[int | None]
+    hull: Attr[_Badge]
+    badge: Attr[_Badge | None]
+    badges: Attr[tuple[_Badge, ...]]
+    fleet: Rel[_Fleet | None] = rel(cardinality=MANY_TO_ONE, join=("fleet_id", "id"))
+
+
+class _Winged(_Craft, name="Winged", namespace=_NS, inheritance=AbstractSubtypeRole):
+    span: Attr[float | None]
+
+
+class _Glider(_Winged, name="Glider", namespace=_NS, inheritance=ConcreteSubtype(tag_value="g")):
+    tow_hook: Attr[bool | None]
+
+
+def _collected(cls: type[BaseModel]) -> dict[str, tuple[object, bool]]:
+    return {
+        py_name: (field.default, field.is_required())
+        for py_name, field in cls.__pydantic_fields__.items()
+    }
+
+
+_REQUIRED: tuple[object, bool] = (PydanticUndefined, True)
+_CRAFT_FIELDS: dict[str, tuple[object, bool]] = {
+    "id": _REQUIRED,
+    "name": _REQUIRED,
+    "fleet_id": (None, False),
+    "hull": _REQUIRED,
+    "badge": (None, False),
+    "badges": ((), False),
+    "valid_start": (None, False),
+    "valid_end": (None, False),
+    "tx_start": (None, False),
+    "tx_end": (None, False),
+}
+
+
+def test_a_descendant_inherits_every_member_kind_as_the_declaring_classs_field() -> None:
+    assert _collected(_Craft) == _CRAFT_FIELDS
+    assert _collected(_Winged) == {**_CRAFT_FIELDS, "span": (None, False)}
+    assert _collected(_Glider) == {
+        **_CRAFT_FIELDS,
+        "span": (None, False),
+        "tow_hook": (None, False),
+    }
+    # A relationship is never a stored field, at any depth.
+    assert "fleet" not in _Glider.__pydantic_fields__
+
+
+def test_class_access_to_an_inherited_member_still_seeds_a_predicate() -> None:
+    # Nothing the engine puts in the way of Pydantic's field collection outlives
+    # class creation: every inherited member name resolves through the MRO to the
+    # descriptor the declaring class installed.
+    assert isinstance(_Glider.name, AttributeExpr)
+    assert isinstance(_Glider.badges, AttributeExpr)
+    assert isinstance(_Glider.tx_start, AttributeExpr)
+    assert isinstance(_Glider.fleet, RelationshipPath)
+
+
+def test_hydrating_a_descendant_fills_every_uncarried_inherited_member() -> None:
+    # The validation-free path publication builds through: a member no read
+    # carried takes its declared default rather than whatever class access to
+    # that member answers.
+    hydrated = _Glider.model_construct()
+    assert hydrated.fleet_id is None
+    assert hydrated.badge is None
+    assert hydrated.badges == ()
+    assert hydrated.span is None
+    assert hydrated.tx_start is None
+    assert hydrated.tow_hook is None
+
+
+def test_an_inherited_required_member_is_still_required_of_a_descendant() -> None:
+    with pytest.raises(ValidationError) as caught:
+        _Glider(tow_hook=True)
+    assert {error["loc"][0] for error in caught.value.errors()} == {"id", "name", "hull"}
+
+
+def test_an_inherited_framework_owned_member_is_still_refused_of_a_descendant() -> None:
+    # The refusal is a validator the root's class body installs; a descendant
+    # inherits the member and the refusal together.
+    with pytest.raises(ValidationError) as caught:
+        _Glider(
+            id=1,
+            name="g",
+            hull=_Badge(code="h", rank=1),
+            tx_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
+        )
+    assert {error["loc"][0] for error in caught.value.errors()} == {"tx_start"}
