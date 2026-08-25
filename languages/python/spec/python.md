@@ -5032,8 +5032,8 @@ rows receive the transaction's shared lock.
   The reference-harness structural layout tests and corpus layout baseline run
   independently and no Python test satisfies them by importing or serializing
   production layout objects.
-- **Scheduling classes.** `dbfree` and `db`, the §6 partition every collected
-  item carries exactly one of.
+- **Scheduling classes.** `dbfree`, `db`, and `cost`, the §6 partition every
+  collected item carries exactly one of.
 - **Aggregate `dbfree` command.** `just python-check-dbfree` — one local command
   and one blocking CI job composing every database-free row above on CPython
   3.14 (imports/DAG, the `dbfree` test class + coverage, ruff check + format
@@ -5044,8 +5044,14 @@ rows receive the transaction's shared lock.
 - **Aggregate `db` command.** `just python-check-db` — one local command and one
   blocking CI job composing every database-backed row above (`pg-full`, provider
   contract, adapter smoke, API conformance + Usage Guide story runs).
-- **Complete verification command.** `just python-check` — both class aggregates,
-  ending with a summary block listing every check as run, failed, or
+- **Aggregate `cost` command.** `just python-check-cost` — one command and one
+  blocking CI job composing the `cost` test class and the guard confining the
+  memory instruments to it. It is the one aggregate outside `just check` and
+  inside `just check-all` (§6, *Commands and skip reporting*): a retained-byte
+  reading is machine-relative, so the fixed CI runner owns it rather than a
+  developer's local merge gate, and CI gates it on every change.
+- **Complete verification command.** `just python-check` — all three class
+  aggregates, ending with a summary block listing every check as run, failed, or
   skipped-with-reason.
 
 ## Completion check
