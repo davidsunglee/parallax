@@ -50,6 +50,7 @@ same two roots. A test module imports from `_support`, never from another test
 module.
 
 Support code only one surface uses stays inside that surface —
+`tests/unit/_authored_storage_support.py`,
 `tests/unit/_corpus_identity_support.py`, `_corpus_model_support.py`,
 `_document_layout_support.py`, `_layout_twin_columns.py`,
 `_layout_twin_document.py`, `_lifecycle_cost_support.py`,

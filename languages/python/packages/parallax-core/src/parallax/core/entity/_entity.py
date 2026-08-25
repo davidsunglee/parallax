@@ -725,9 +725,11 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         state under the slot's name survives this either way, and the storage the
         entry-point guard reads is a separate read from this one.
 
-        The Change Record travels: it is authored state, written by
-        :meth:`edit` from values the caller supplied, and it earns a write
-        nothing, because provenance is the lifecycle state this drops.
+        The Change Record is never filtered here: it is authored state, written
+        by :meth:`edit` from values the caller supplied, and it earns a write
+        nothing, because provenance is the lifecycle state this drops. So it
+        travels exactly when the dictionary that arrives carries it — on a class
+        that leaves ``__dict__`` alone, whenever the value holds one.
         """
         state = super().__getstate__()
         instance = cast("dict[str, Any]", state.get("__dict__", {}))
