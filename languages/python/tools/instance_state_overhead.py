@@ -283,8 +283,10 @@ def _totals(readings: list[Reading]) -> list[str]:
         f"  the mix's unchanged lifecycle share       = {retained_total - bare_total:,}",
         "",
         "An aggregate is 1 - sum(after) / sum(before) over these sums, never the mean",
-        "of per-scenario percentages. Both sums are printed so the arithmetic is the",
-        "reader's rather than this report's.",
+        "of per-scenario percentages, and both sums must come from one object layout:",
+        "these were taken on this tree, so a figure frozen on another one is not their",
+        "comparand. Both sums are printed so the arithmetic is the reader's rather",
+        "than this report's.",
     ]
 
 
