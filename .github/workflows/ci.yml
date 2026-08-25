@@ -223,3 +223,27 @@ jobs:
         run: uv sync --frozen
       - name: just python-check-cost
         run: just python-check-cost
+
+  # The Pydantic parity corpus resolved against the minimum Pydantic release
+  # parallax-core declares, rather than against the locked one
+  # `python-check-dbfree` already grades it on. A published value presents its
+  # instance state to Pydantic's own readers, so the declared floor is the end of
+  # the supported range where that seam could behave differently. The recipe is a
+  # focused selector and is therefore no aggregate's dependency
+  # (core/spec/language-testing.md §3); this job is what runs it on every change,
+  # the same division that gives the prior interpreter minor its own leg above.
+  python-test-pydantic-floor:
+    runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: just python-test-pydantic-floor
+        run: just python-test-pydantic-floor

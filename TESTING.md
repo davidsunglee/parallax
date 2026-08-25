@@ -95,6 +95,12 @@ check-all` resolve exactly what each run contains.
 No focused selector is part of `just check`, so a green focused run is never
 evidence that the gate covering it would pass. Iterate here; finish there.
 
+`python-test-pydantic-floor` is the one whose subject no aggregate covers at
+all: it re-resolves the parity corpus against the oldest Pydantic release
+`parallax-core` declares, while every aggregate grades the locked one. CI owns
+that end of the supported range in a job of its own, so it is gated on every
+change without `just check` growing a second dependency resolution.
+
 ## Inspecting the graph
 
 ```sh
@@ -111,10 +117,10 @@ layout, the runner configuration, these maps, or the CI job list drift apart.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs the same commands, one job per aggregate, so its
-job identifiers are recipe names. The union of the jobs covers the whole
-`check-all` graph — including the `cost` class that `just check` omits, which is
-what makes omitting it locally safe.
+`.github/workflows/ci.yml` runs the same commands, so its job identifiers are
+recipe names. The union of the jobs covers the whole `check-all` graph —
+including the `cost` class that `just check` omits, which is what makes omitting
+it locally safe.
 
 | Job | Matrix | Runs |
 |---|---|---|
@@ -126,6 +132,15 @@ what makes omitting it locally safe.
 | `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14: `just python-check-dbfree`; 3.13: `just python-test-dbfree` with coverage disabled |
 | `python-check-db` | — | `just python-check-db` |
 | `python-check-cost` | — | `just python-check-cost` |
+| `python-test-pydantic-floor` | — | `just python-test-pydantic-floor` |
+
+Every job but the last runs a command `check-all` contains.
+`python-test-pydantic-floor` runs a focused selector, which
+[`core/spec/language-testing.md`](core/spec/language-testing.md) §3 keeps out of
+every aggregate, so it is the one gate here that no local aggregate reaches and
+CI alone owns — the same division as the 3.13 `python-check-dbfree` leg, where
+CI owns the far end of a supported range and the local gate owns what the lock
+pins.
 
 `secrets` and `commitlint` are event checks rather than repository verification
 gates, and stay native CI steps. The monthly `python-deps-refresh` workflow
