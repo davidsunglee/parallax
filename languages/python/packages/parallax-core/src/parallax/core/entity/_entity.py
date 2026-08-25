@@ -662,14 +662,24 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         remedy travels in the message: move domain data, and read the row again
         where a write is meant to settle.
 
-        The guard sits on ``__reduce_ex__`` because that is the one name
-        ``pickle`` enters through; ``__reduce__`` and ``__getstate__`` are
-        consulted by ``object.__reduce_ex__`` afterwards, so an authored hook
+        The guard sits on ``__reduce_ex__`` because that is the name ``pickle``'s
+        own dispatch enters a value through; ``__reduce__`` and ``__getstate__``
+        are consulted by ``object.__reduce_ex__`` afterwards, so an authored hook
         runs downstream of a guard that has already passed and never in place of
         one. That ordering is what the class body's matching name reservation
-        (§2) keeps true.
+        (spec §2) keeps true. A caller supplying a reducer of their own — through
+        ``copyreg``, a ``Pickler.dispatch_table``, or ``reducer_override`` — has
+        replaced that dispatch and is never entered here; what still holds for
+        such a caller is :meth:`__getstate__`'s strip, and only while their
+        reducer delegates to ``object.__reduce_ex__``.
+
+        The slot is read off the instance dictionary rather than through
+        ``getattr``, so an authored ``__getattr__`` cannot make a lifecycle-free
+        value answer as a materialized one, and an authored ``__getattribute__``
+        cannot hide the state of one that is.
         """
-        if getattr(self, LIFECYCLE_STATE_SLOT, None) is not None:
+        instance = cast("dict[str, Any]", object.__getattribute__(self, "__dict__"))
+        if instance.get(LIFECYCLE_STATE_SLOT) is not None:
             raise pickle.PicklingError(
                 f"{type(self).__name__} carries the lifecycle state of the read that published "
                 "it, which describes a live read in a live process and cannot be reconstructed "
@@ -682,12 +692,14 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         """Serialize as ordinary domain data: declared member values, and no
         lifecycle state.
 
-        Through ``pickle`` the filter has nothing left to do: the entry-point
-        guard above refuses a lifecycle-bearing value before this runs. What it
-        still answers for is a caller reaching this conversion directly, which
-        asks for the value's state rather than for a value that can be
-        reconstituted elsewhere — so it answers with the ordinary domain data the
-        value is, carrying no keyed-source status.
+        Under ``pickle``'s own dispatch the filter has nothing left to do: the
+        entry-point guard above refuses a lifecycle-bearing value before this
+        runs. It still answers for two callers the guard never sees — one
+        reaching this conversion directly, which asks for the value's state
+        rather than for a value that can be reconstituted elsewhere, and one
+        pickling through a reducer of their own that delegates to
+        ``object.__reduce_ex__``. Both are answered with the ordinary domain data
+        the value is, carrying no keyed-source status.
 
         The Change Record travels: it is authored state, written by
         :meth:`edit` from values the caller supplied, and it earns a write

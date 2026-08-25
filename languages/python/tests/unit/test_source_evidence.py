@@ -34,6 +34,7 @@ from _support import mirrored_models as mm
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
 from parallax.core import Attr, Entity, attr
+from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     VersionedStateKey,
@@ -154,6 +155,30 @@ class _AuthoredGetState(Entity, table="authored_getstate", namespace="parallax.c
         return {**state, "__dict__": {**instance, "_authored_by_getstate": True}}
 
 
+class _DerivingAttributes(Entity, table="deriving_attributes", namespace="parallax.compatibility"):
+    """An Entity whose class body answers every name the instance does not carry.
+
+    The lifecycle slot's name is one of those, so a predicate that asked the
+    value for it would read a materialized node out of an ordinary one.
+    """
+
+    id: Attr[int] = attr(primary_key=True)
+
+    def __getattr__(self, name: str) -> Any:
+        return f"<derived {name}>"
+
+
+class _HidingAttributes(Entity, table="hiding_attributes", namespace="parallax.compatibility"):
+    """An Entity whose class body denies the lifecycle slot it carries."""
+
+    id: Attr[int] = attr(primary_key=True)
+
+    def __getattribute__(self, name: str) -> Any:
+        if name == LIFECYCLE_STATE_SLOT:
+            raise AttributeError(name)
+        return object.__getattribute__(self, name)
+
+
 _HISTORICAL_PROTOCOL: Final = pickle.HIGHEST_PROTOCOL
 
 
@@ -163,7 +188,10 @@ class _StrippingPickler(pickle.Pickler):
     ``object.__reduce_ex__`` reached directly is exactly that implementation:
     ``Entity.__getstate__``'s lifecycle strip runs and no entry-point guard does,
     so what lands in the buffer is a historical pickle rather than an
-    approximation of one.
+    approximation of one. Supplying the reducer is what makes that reachable —
+    the refusal reaches ``pickle``'s own dispatch, which a caller replacing it
+    has stepped outside of (spec §3) — so this is the writer of the historical
+    bytes and never a way to obtain them from the refusal.
     """
 
     def reducer_override(self, obj: Any) -> Any:
@@ -195,6 +223,16 @@ def test_pickling_a_typed_node_is_refused_while_it_carries_lifecycle_state() -> 
     message = str(refusal.value)
     assert "Account" in message
     assert "model_dump()" in message
+
+
+def test_a_materialized_node_nested_in_what_is_pickled_is_refused_too() -> None:
+    # Being the pickle's root is not what the refusal is about: `pickle` reaches
+    # every object it writes through the same entry point, so a node buried in a
+    # container refuses the whole dump.
+    node = account_db(_account_port()).find(mm.Account.where(mm.Account.id == 1)).result()
+
+    with pytest.raises(pickle.PicklingError):
+        pickle.dumps({"accounts": [node]})
 
 
 def test_pickling_an_edited_copy_that_kept_the_claim_is_refused_too() -> None:
@@ -245,6 +283,30 @@ def test_an_authored_getstate_hook_still_runs_on_a_lifecycle_free_value() -> Non
     restored = cast("_AuthoredGetState", pickle.loads(pickle.dumps(value)))
     assert restored == value
     assert restored.__dict__["_authored_by_getstate"] is True
+
+
+def test_a_class_body_answering_every_name_leaves_an_ordinary_value_pickleable() -> None:
+    # What the refusal asks is whether the state is attached, which is a fact
+    # about the instance dictionary rather than about what the value answers: a
+    # class body deriving the slot's name does not make a value a read never
+    # produced into a materialized node.
+    value = _DerivingAttributes(id=7)
+    assert getattr(value, LIFECYCLE_STATE_SLOT, None) is not None
+
+    restored = cast("_DerivingAttributes", pickle.loads(pickle.dumps(value)))
+    assert restored == value
+
+
+def test_a_class_body_hiding_the_lifecycle_slot_is_refused_all_the_same() -> None:
+    # The same fact read from the other side. The state is attached exactly as
+    # Entity Graph Construction attaches it, and a class body that denies the
+    # slot exists does not buy a pickle of a materialized node.
+    value = _HidingAttributes(id=7)
+    object.__setattr__(value, LIFECYCLE_STATE_SLOT, object())
+    assert getattr(value, LIFECYCLE_STATE_SLOT, None) is None
+
+    with pytest.raises(pickle.PicklingError):
+        pickle.dumps(value)
 
 
 def test_a_pickle_written_before_the_refusal_existed_still_loads() -> None:

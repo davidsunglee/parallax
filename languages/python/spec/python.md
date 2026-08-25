@@ -1142,10 +1142,9 @@ and a collision fails at class creation (`entity-reserved-member-name`). Four of
 them — the `model_*` namespace, the `__parallax_` prefix, the copy verb `edit`,
 and the pickle entry point `__reduce_ex__` — hold over every declared class body,
 an Entity Class and a Value Object Class alike, because both kinds carry what
-they protect. The other three are the
-Entity surface itself and hold on an Entity Class only: a Value Object has no
-query root, no declaration protocol, and no temporal member, so those spellings
-are ordinary Value Object members.
+they protect. The other three are the Entity surface itself and hold on an Entity
+Class only: a Value Object has no query root, no declaration protocol, and no
+temporal member, so those spellings are ordinary Value Object members.
 
 - the query-root and introspection classmethods — `where`, `narrow`, `include`,
   `as_of`, `as_of_range`, `history`, `meta`, `descriptor`;
@@ -1333,8 +1332,8 @@ gives a Value Object attribute no length bound). Of the reserved member-name
 families above, the four that are not the Entity surface — `model_*`, the
 `__parallax_` prefix (which covers the renderer a Value Object serializes itself
 through), the copy verb `edit` (§3), and the pickle entry point `__reduce_ex__`
-(§3) — hold over a Value Object class body as
-well, on a declared member and on an unannotated binding alike. An
+(§3) — hold over a Value Object class body as well, on a declared member and on
+an unannotated binding alike. An
 Entity-level occurrence member additionally admits `column=`, the occurrence's
 Structured Column override. When it is omitted, the already-resolved canonical
 occurrence name flows through `default_column_name()` exactly like a scalar
@@ -2638,13 +2637,20 @@ or descriptor authoring form and performs no audit stamping.
   write is meant to settle. Everything carrying no lifecycle state is untouched:
   a plainly constructed value and an Edited Copy of one round trip, and so does
   every Value Object, including one a read published, since only an Entity node
-  carries lifecycle state at all. The refusal sits on `__reduce_ex__`, the one
-  name `pickle` enters a value through, which is why that name is reserved from
-  every class body (§2); `__reduce__` and `__getstate__` are what
+  carries lifecycle state at all. The refusal sits on `__reduce_ex__`, the name
+  `pickle`'s own dispatch enters a value through, which is why that name is
+  reserved from every class body (§2); `__reduce__` and `__getstate__` are what
   `object.__reduce_ex__` consults once the guard has passed, so they stay
-  authorable and an authored one still runs. Nothing is refused on the way back
-  in: bytes that carry no lifecycle state — including any written before this
-  rule — load into the ordinary value they describe.
+  authorable and an authored one still runs. The rule reaches exactly that
+  dispatch, and a node nested anywhere in what is being pickled reaches it the
+  same way the pickle's root does. It does not reach a caller who supplies a
+  reducer for the class instead — through `copyreg`, a `Pickler.dispatch_table`,
+  or `reducer_override` — because such a caller has replaced the dispatch rather
+  than passed through it; `Entity.__getstate__` still drops the lifecycle state
+  for one whose reducer delegates to `object.__reduce_ex__`, so what that caller
+  gets is the pre-refusal answer rather than a truthful one. Nothing is refused
+  on the way back in: bytes that carry no lifecycle state — including any written
+  before this rule — load into the ordinary value they describe.
 - **A Value Object has the same copy verb, and the same sealed doors.**
   `ValueObject.edit(**changes)` returns a validated copy carrying every member the
   value populates and the caller did not name, changing only what `changes` names:
@@ -3340,10 +3346,10 @@ These feature tests do not claim the deferred `benchmark` command or general
   publishes — the concrete Entity, the object the row denotes, the participation
   its read licensed, and the retained observation for the state it saw. A Typed
   node reaches its hint through the same private lifecycle state `edge_of` and
-  `pin_of` read, and pickling one is refused at the door rather than stripped
-  (§3); a frozen `WireEntity` node carries it on a slot, never as a
-  mapping entry, so `dict(value)`, JSON, and pickle produce ordinary domain data
-  with no keyed-source status. Only an Entity node can carry one: a nested Value
+  `pin_of` read, and `pickle` refuses one at the door rather than stripping it
+  (§3); a frozen `WireEntity` node carries it on a slot, never as a mapping
+  entry, so `dict(value)`, JSON, and pickle produce ordinary domain data with no
+  keyed-source status. Only an Entity node can carry one: a nested Value
   Object mapping has no slot. `Entity.edit(...)` preserves lifecycle state and
   therefore transfers the claim to the derived value; a Wire copy answers the
   same object and therefore the same claim. A standalone `db.find` /
