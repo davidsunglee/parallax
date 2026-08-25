@@ -154,10 +154,19 @@ Run from the repository root through `just`, or from `languages/python` through
 | All three | `just python-check` |
 | Iterate on one surface | `just python-test-<surface>` |
 | Iterate on one module | `cd languages/python && uv run pytest tests/<surface>/test_<name>.py` |
+| The Pydantic parity corpus on the declared floor | `just python-test-pydantic-floor` |
 
 The six `python-test-<surface>` recipes are for iteration and are deliberately no
 aggregate's dependency: a surface cuts across both scheduling classes, so a gate
 composing one would run part of it twice.
+
+`python-test-pydantic-floor` is outside every aggregate for a different reason.
+It selects one module — `tests/unit/test_pydantic_parity.py`, which
+`python-test-dbfree` already grades on the locked Pydantic — and overlays the
+oldest release `parallax-core` declares onto the workspace resolution for that
+one run, so what it adds is the other end of the supported range rather than
+another selection. The `ci` / `python-test-pydantic-floor` job below is what owns
+that verdict; no local aggregate reaches it.
 
 ## Continuous integration
 
@@ -166,4 +175,5 @@ composing one would run part of it twice.
 | `ci` / `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14 runs `just python-check-dbfree`, checked out at `fetch-depth: 0` because `python-coverage-diff` compares against `origin/main`; 3.13 runs `just python-test-dbfree` with coverage disabled to prove runtime compatibility without repeating the coverage verdict on the slower C tracer |
 | `ci` / `python-check-db` | — | `just python-check-db` on CPython 3.14 against Testcontainers Postgres, with `PARALLAX_REQUIRE_DB=1` so a provider skip fails the job |
 | `ci` / `python-check-cost` | — | `just python-check-cost` on CPython 3.14, the class `just check` omits so the local gate stays fast |
-| `python-deps-refresh` / `refresh` (monthly) | — | `uv lock --upgrade` on CPython 3.14, opening a pull request the three jobs above still gate |
+| `ci` / `python-test-pydantic-floor` | — | `just python-test-pydantic-floor` on CPython 3.14, resolving the parity corpus against the minimum Pydantic release `parallax-core` declares instead of the locked one, so the seam a published value's serialization is built over is graded at both ends of the supported range |
+| `python-deps-refresh` / `refresh` (monthly) | — | `uv lock --upgrade` on CPython 3.14, opening a pull request the four jobs above still gate |

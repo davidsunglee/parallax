@@ -302,9 +302,10 @@ python-test-distribution:
 # floor is the end where a behaviour this seam is built over could differ.
 # `--with` overlays that release onto the workspace resolution for one run and
 # leaves the lock alone, so `python-test-dbfree` grades the corpus on the lock and
-# this grades the same corpus on the floor. Composing it into an aggregate would
-# make the floor a merge gate rather than an iteration command, which is a
-# decision about what CI owns rather than about this recipe.
+# this grades the same corpus on the floor. No aggregate composes it: the floor is
+# a verdict about the declared range rather than about a change, so CI owns it in
+# a job of its own, the same division that gives the prior interpreter minor its
+# own leg of the `python-check-dbfree` job.
 [metadata("runtime:medium")]
 [doc("Focused: the Pydantic parity corpus on the declared floor rather than the locked release.")]
 python-test-pydantic-floor:
