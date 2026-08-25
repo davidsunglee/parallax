@@ -314,6 +314,20 @@ python-report-lifecycle-overhead:
 python-report-snapshot-graph-overhead:
     cd {{python}} && uv run python tools/snapshot_graph_overhead.py
 
+# A `report` for the same reason as its neighbour above: a total in bytes is
+# machine- and interpreter-relative, so what it prints is evidence rather than a
+# verdict, and it belongs to no aggregate. What it DOES refuse is measuring at
+# all once the fixture it measures has stopped reproducing the real publication
+# path, which is a fact about the fixture rather than about a number — that
+# comparison is graded in `tests/unit/test_instance_state_baseline.py`, which
+# `python-test-dbfree` owns, and it exits non-zero here before any child starts.
+# What has been read off this, and under what conditions, is
+# `languages/python/docs/instance-state-baseline.md`.
+[metadata("runtime:medium")]
+[doc("Retained published Entity state over the canonical mix, and what building one costs.")]
+python-report-instance-state:
+    cd {{python}} && uv run python tools/instance_state_overhead.py
+
 # Both prerequisites are soundness conditions, not merely file dependencies.
 # diff-cover derives its line inventory from git, so an untracked production
 # module scores zero changed lines and `--fail-under 100` passes vacuously over
