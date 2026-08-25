@@ -3623,8 +3623,10 @@ These feature tests do not claim the deferred `benchmark` command or general
   row or earns one an edit never authored. An absent slot and an empty record
   name the same empty selection, because both say the chain touched nothing; a
   value whose slot holds something that is **not** a Change Record raises
-  `entity-row-malformed-provenance` instead. That refusal reports corruption of
-  private first-party state rather than classifying anything a developer
+  `entity-row-malformed-provenance` instead, and private state the framework
+  never wrote is such a thing however well shaped it is, because what makes a
+  mapping a Change Record is that `edit(...)` made it. That refusal reports
+  corruption of private first-party state rather than classifying anything a developer
   authored, which is why it survives while the absent-record refusal does not:
   collapsing an unreadable carrier into "nothing to write" would name the wrong
   defect and leave the corruption unreported. Which verbs accept a plain,
@@ -3637,10 +3639,10 @@ These feature tests do not claim the deferred `benchmark` command or general
   **Refusals are ordered, so one input has one code.** Every operation resolves
   the value's Entity Identity first — `entity-row-not-an-entity`, then
   `entity-row-target-not-in-model` — and judges members last. `edited_row`
-  settles the carrier's shape in between, before the Change Record is read for
-  names: an unreadable carrier raises `entity-row-malformed-provenance` whatever
-  else that value populates, so `entity-row-member-missing` from `edited_row`
-  always reports a name a readable record supplied. An absent record narrows
+  settles the carrier in between, before the Change Record is read for names: a
+  carrier no edit wrote raises `entity-row-malformed-provenance` whatever else
+  that value populates, so `entity-row-member-missing` from `edited_row` always
+  reports a name an accepted record supplied. An absent record narrows
   nothing: the primary-key half of the selection is judged exactly as it is for
   a net-zero chain, so a value whose class supplies no attribute for a declared
   key member is refused rather than answered `None`. `full_row` and

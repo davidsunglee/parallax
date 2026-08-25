@@ -18,6 +18,7 @@ from typing import Any, cast
 import pytest
 from _authored_storage_support import AuthoredInstanceDict, ForgingInstanceDict, stored_state
 from _snapshot_graph_support import GraphFixture
+from pydantic import TypeAdapter
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
@@ -32,7 +33,7 @@ from parallax.core.entity import (
     graph_construction_of,
     row_codec_of,
 )
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
 from parallax.core.entity._model import model_of
 from parallax.core.entity._row_codec import (
     _assignment_matches_original,  # pyright: ignore[reportPrivateUsage]
@@ -138,6 +139,47 @@ class ForgingWidget(Entity, name="Widget", table="widget", namespace=_NS):
     label: Attr[str]
 
     __dict__ = ForgingInstanceDict(CHANGE_RECORD_SLOT, {"label": "never authored"})  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
+
+
+class InterceptingForgingWidget(Entity, name="Widget", table="widget", namespace=_NS):
+    """The same forgery, by a class body that also answers for the framework's
+    own hook lookups.
+
+    Pydantic reaches ``model_post_init`` by ordinary instance attribute lookup,
+    so a class answering for that name decides whether any per-construction step
+    the framework might install runs at all.
+    """
+
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str]
+
+    __dict__ = ForgingInstanceDict(CHANGE_RECORD_SLOT, {"label": "never authored"})  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
+
+    def __getattribute__(self, name: str) -> Any:
+        if name == "model_post_init":
+            return _no_post_init
+        return object.__getattribute__(self, name)
+
+
+def _no_post_init(context: Any) -> None:
+    """A ``model_post_init`` doing nothing, in place of whatever Entity's does."""
+
+
+def _every_construction_door[E: Entity](cls: type[E], state: dict[str, Any]) -> tuple[E, ...]:
+    """One ``cls`` value from each door Pydantic builds one through.
+
+    The validating constructor and ``model_construct`` are the two the framework
+    itself uses — the second is what door materialization and an edit build
+    through — and ``model_validate`` and a nested ``TypeAdapter`` validation are
+    the two it never calls but a caller can: the last one builds inside
+    pydantic-core with no framework call site at all.
+    """
+    return (
+        cls(**state),
+        cls.model_construct(**state),
+        cls.model_validate(dict(state)),
+        TypeAdapter(list[cls]).validate_python([dict(state)])[0],
+    )
 
 
 class _ClasslessSource:
@@ -650,7 +692,7 @@ def test_a_recorded_name_the_value_supplies_no_attribute_for_is_refused() -> Non
     # judged before effectiveness because weighing effectiveness would itself
     # read that attribute, escaping the closed code set with an `AttributeError`.
     narrow = Widget(id=1, label="a")
-    object.__setattr__(narrow, CHANGE_RECORD_SLOT, {"extra": "x"})
+    object.__setattr__(narrow, CHANGE_RECORD_SLOT, ChangeRecord({"extra": "x"}))
     with pytest.raises(EntityRowError) as refusal:
         row_codec_of(WIDER_MODEL).edited_row(narrow)
     assert refusal.value.code == "entity-row-member-missing"
@@ -665,13 +707,17 @@ def test_a_never_edited_value_derives_no_edited_row() -> None:
 
 
 @pytest.mark.parametrize(
-    "carrier", [["balance"], "balance", {1: "not-a-member-name"}], ids=["list", "str", "int-keyed"]
+    "carrier",
+    [["balance"], "balance", {1: "not-a-member-name"}, {"balance": Decimal("1.00")}],
+    ids=["list", "str", "int-keyed", "well-shaped"],
 )
-def test_an_unreadable_change_record_reports_corruption_rather_than_absence(
+def test_a_change_record_no_edit_wrote_reports_corruption_rather_than_absence(
     carrier: object,
 ) -> None:
-    # Told apart by the SLOT rather than by its contents: collapsing an
-    # unreadable carrier into "never edited" would name the wrong defect.
+    # Told apart by the SLOT rather than by its contents: collapsing a carrier
+    # the framework never wrote into "never edited" would name the wrong defect.
+    # A well-shaped mapping is one of these, because what makes a mapping a
+    # Change Record is that `edit(...)` made it, not what it looks like.
     account = _account()
     object.__setattr__(account, CHANGE_RECORD_SLOT, carrier)
     with pytest.raises(EntityRowError) as refusal:
@@ -712,6 +758,20 @@ def test_a_class_body_forging_a_change_record_into_storage_earns_no_row() -> Non
     for plain in (ForgingWidget(id=1, label="a"), ForgingWidget.model_construct(id=1, label="a")):
         assert CHANGE_RECORD_SLOT not in stored_state(plain)
         assert row_codec_of(NARROW_MODEL).edited_row(plain) is None
+
+
+def test_a_class_body_answering_for_the_frameworks_own_hooks_earns_no_row_either() -> None:
+    # The forgery composed with hook interception: Pydantic reaches
+    # `model_post_init` by ordinary instance attribute lookup, so a class body
+    # answering for that name defeats any per-construction cleanup the framework
+    # might install — and nested `TypeAdapter` validation builds inside
+    # pydantic-core with no framework call site to move such a step to. The
+    # guarantee holds without one, because it is a question about who
+    # constructed the carrier rather than about what ran after construction.
+    for plain in _every_construction_door(InterceptingForgingWidget, {"id": 1, "label": "a"}):
+        with pytest.raises(EntityRowError) as refusal:
+            row_codec_of(NARROW_MODEL).edited_row(plain)
+        assert refusal.value.code == "entity-row-malformed-provenance"
 
 
 def test_an_edit_of_such_a_value_still_records_the_original_it_touched() -> None:
