@@ -353,9 +353,9 @@ def define_value_object_reserved_pickle_entry_name() -> type:
 def define_reserved_core_schema_hook_name() -> type:
     """An Entity class body binding the Pydantic core-schema hook.
 
-    The framework installs a published value's serialization through that hook,
-    so an authored one replaces it rather than composing with it — which is why
-    it is the one Pydantic extension point a declaration may not take.
+    An authored one replaces a declared class's whole validation and
+    serialization rather than composing with it, which is why it is the one
+    Pydantic extension point a declaration may not take.
     """
 
     class Bad(Entity, table="bad"):
@@ -381,6 +381,72 @@ def define_value_object_reserved_core_schema_hook_name() -> type:
         @classmethod
         def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
             return handler(source)
+
+    return Bad
+
+
+def define_reserved_instance_state_name() -> type:
+    """An Entity class body binding the name its instance state is presented under.
+
+    Pydantic reads what a model holds by that name rather than through the
+    interpreter's own struct pointer, so a class answering for it decides what
+    every Pydantic implementation over instance state sees.
+    """
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+
+        __dict__ = {  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - probe binds the instance-state presentation name
+            "id": 99
+        }
+
+    return Bad
+
+
+def define_reserved_populated_members_name() -> type:
+    """An Entity class body binding the populated-member set beside it.
+
+    Its sibling reservation: a published value synthesizes that set from its
+    presence bitmap, and an authored binding would answer `exclude_unset` for
+    every instance of the class.
+    """
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+
+        __pydantic_fields_set__ = frozenset(  # pyright: ignore[reportAssignmentType] - probe binds the populated-member set
+            {"id"}
+        )
+
+    return Bad
+
+
+def define_value_object_reserved_instance_state_name() -> type:
+    """A Value Object class body binding the same presentation name.
+
+    A Value Object is published the same way an Entity is, so the reservation
+    holds on its body too and is proved there rather than inferred.
+    """
+
+    class Bad(ValueObject):
+        city: Attr[str]
+
+        __dict__ = {  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - probe binds the instance-state presentation name
+            "city": "Springfield"
+        }
+
+    return Bad
+
+
+def define_value_object_reserved_populated_members_name() -> type:
+    """A Value Object class body binding the populated-member set."""
+
+    class Bad(ValueObject):
+        city: Attr[str]
+
+        __pydantic_fields_set__ = frozenset(  # pyright: ignore[reportAssignmentType] - probe binds the populated-member set
+            {"city"}
+        )
 
     return Bad
 

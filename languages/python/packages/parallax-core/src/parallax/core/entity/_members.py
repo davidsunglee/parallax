@@ -29,7 +29,7 @@ from parallax.core.entity._expressions import (
     RelationshipPath,
     RelationshipRef,
 )
-from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
+from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, is_published, plan_of
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -493,11 +493,16 @@ class Attr[T]:
     def __get__(self, obj: object | None, _owner: type | None = None) -> AttributeExpr[Any, T] | T:
         if obj is None:
             return AttributeExpr(self._ref.entity, self._ref.attribute, member=self._member)
-        # As with `ElementAttr` below, Pydantic's own instance `__dict__` shadows
+        # As with `ElementAttr` below, Pydantic's own instance storage shadows
         # this branch on an ordinary value, so it answers exactly the values a
         # published one holds. The index is absolute and means nothing here: what
         # the row is laid out as belongs to the instance-state Module alone.
-        value: T = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
+        # Reaching here on ordinary backing means the storage carries no such
+        # member, which the empty slot reports as the missing attribute it is.
+        try:
+            value: T = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
+        except TypeError:
+            raise AttributeError(_unstored(obj, self._index)) from None
         return value
 
 
@@ -525,9 +530,12 @@ class ElementAttr[T]:
     ) -> ElementAttributeExpr[Any, T] | T:
         if obj is None:
             return ElementAttributeExpr((self._canonical,))
-        # A non-data descriptor, so Pydantic's own instance `__dict__` shadows
+        # A non-data descriptor, so Pydantic's own instance storage shadows
         # this branch on an ordinary value and it answers for a published one.
-        value: T = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
+        try:
+            value: T = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
+        except TypeError:
+            raise AttributeError(_unstored(obj, self._index)) from None
         return value
 
 
@@ -602,13 +610,25 @@ class Rel[T]:
             )
         try:
             value = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
-        except AttributeError:
+        except (AttributeError, TypeError):
             value = obj.__dict__.get(self._py_name, UNLOADED)
         if value is UNLOADED:
             raise UnloadedRelationshipError(self._ref.relationship)
         return value
 
     def __set__(self, obj: object, value: object) -> None:
+        """Write the relationship into ordinary storage, or refuse.
+
+        A published value's whole state is attached once, so a later write has
+        nowhere truthful to land: the presentation it would reach is built per
+        read and discarded with it, and the tail the next read consults would
+        still hold the sentinel. So it is refused rather than absorbed.
+        """
+        if is_published(obj):
+            raise AttributeError(
+                f"{type(obj).__name__}.{self._py_name}: a published value's relationships are "
+                "attached once, with the rest of its state"
+            )
         obj.__dict__[self._py_name] = value
 
 
@@ -624,3 +644,19 @@ def _access_source(owner: type | None) -> str | None:
     """
     canonical = getattr(getattr(owner, "identity", None), "canonical", None)
     return canonical if isinstance(canonical, str) else None
+
+
+def _unstored(obj: object, index: int) -> str:
+    """The message a member read gets when neither backing carries it.
+
+    Reached only where ordinary storage was assigned without the member —
+    validation-free construction missing a required one — because every other
+    ordinary read is answered by the storage before this descriptor is consulted.
+    An error path, so the member's own name is recovered from the class's plan
+    rather than carried on every descriptor for the case that never happens.
+    """
+    name = next(
+        (py_name for py_name, at in plan_of(type(obj)).indexes.items() if at == index),
+        "?",
+    )
+    return f"{type(obj).__name__!r} object has no attribute {name!r}"

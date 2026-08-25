@@ -250,18 +250,35 @@ a Value Object Class alike.
 _CORE_SCHEMA_HOOK_NAME: Final = "__get_pydantic_core_schema__"
 """Pydantic's advanced schema-construction seam, which the framework owns.
 
-A published value holds its declared members in one tuple rather than in the
-instance dictionary Pydantic's compiled serializer reads, so the framework
-installs a serialization that reaches them as attributes — and it installs it
-through this hook. An authored one replaces that, which would leave a published
-value serializing as empty rather than as itself, so this is the one Pydantic
+A schema hook decides what validation and serialization a class gets, whole, and
+an authored one replaces rather than composes. A published value serializes as
+itself only because Pydantic's own compiled serializer runs over what
+:data:`_STATE_PRESENTATION_NAMES` present, so a class rewriting that schema
+decides what publication means for its own instances — which is the one Pydantic
 extension point a declaration may not take. Its JSON-schema sibling
 ``__get_pydantic_json_schema__`` is deliberately NOT reserved: the framework
-composes with an authored one there rather than replacing it, so JSON-schema
-customization stays authorable.
+installs none, so an authored one composes with Pydantic's own.
 
 The reservation holds on either kind, because a Value Object is published the
 same way an Entity is.
+"""
+
+_STATE_PRESENTATION_NAMES: Final[frozenset[str]] = frozenset(
+    {"__dict__", "__pydantic_fields_set__"}
+)
+"""The two names a value's instance state is presented under, which the framework
+owns.
+
+Pydantic reads what a model physically holds by these names rather than through
+the interpreter's own struct pointer, so what a framework root binds under them
+decides what every Pydantic implementation over instance state sees — equality,
+hashing, repr, the compiled serializer, and validation alike. A class body
+binding either one takes that decision for its own instances, and a published
+value of it would answer Pydantic with whatever the binding returned. The seam's
+integrity rests on this reservation, which is why it is stated rather than
+assumed.
+
+It holds on either kind, for the reason the schema seam above does.
 """
 
 _PICKLE_ENTRY_NAME: Final = "__reduce_ex__"
@@ -1660,10 +1677,11 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
     framework's own prefix (:data:`FRAMEWORK_NAME_PREFIX`), because what a binding
     under it takes is one of the framework's own private bindings rather than a
     member surface; Pydantic's namespace, because both kinds are Pydantic models;
-    the copy verb, because both kinds install one; the schema seam, because the
-    framework's own serialization is installed through it; and the pickle entry
-    point, because it is the name ``pickle``'s own dispatch asks either kind for.
-    Only the Entity surface names follow.
+    the copy verb, because both kinds install one; the schema seam, because an
+    authored one would redefine what publication means for its own instances; the
+    two names a value's instance state is presented under, because the framework
+    binds both; and the pickle entry point, because it is the name ``pickle``'s
+    own dispatch asks either kind for. Only the Entity surface names follow.
     """
     if py_name.startswith(FRAMEWORK_NAME_PREFIX):
         return (
@@ -1681,10 +1699,18 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
     if py_name == _CORE_SCHEMA_HOOK_NAME:
         return (
             f"reuses `{_CORE_SCHEMA_HOOK_NAME}`, the schema seam the framework owns — an "
-            "authored one replaces the serialization that reads a published value's members "
-            "as attributes, so such a value would serialize as empty; author "
-            "`__get_pydantic_json_schema__`, a field or model serializer, a computed field, "
-            "or a validator instead, all of which still run"
+            "authored one replaces a declared class's whole validation and serialization "
+            "rather than composing with it, so what publication means for its instances "
+            "would be the class's to redefine; author `__get_pydantic_json_schema__`, a "
+            "field or model serializer, a computed field, or a validator instead, all of "
+            "which still run"
+        )
+    if py_name in _STATE_PRESENTATION_NAMES:
+        return (
+            f"reuses `{py_name}`, one of the two names a value's instance state is "
+            "presented to Pydantic under — the framework binds both, and an authored one "
+            "decides what Pydantic reads of every instance of this class, including a "
+            "published one that holds no instance dictionary at all"
         )
     if py_name == _PICKLE_ENTRY_NAME:
         return (

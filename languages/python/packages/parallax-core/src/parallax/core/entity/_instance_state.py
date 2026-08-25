@@ -6,18 +6,31 @@ second backing, and without one Module owning it the compact-versus-ordinary
 branch would appear at every descriptor, at edit, at row derivation, at pickle,
 and inside Pydantic's own equality, repr, iteration, and compiled serializer. So
 the representation lives here alone: the per-class publication plan, the slot,
-the tuple and its presence bitmap, both Adapters, and the two Pydantic schema
-seams. Delete this Module and the layout reappears at each of those sites.
+the tuple and its presence bitmap, both Adapters, and the framework root that
+answers Pydantic for a value's instance state. Delete this Module and the layout
+reappears at each of those sites.
+
+**Pydantic reads instance state by name, never through the struct pointer.** Its
+compiled serializer reaches ``__dict__``, ``__pydantic_fields_set__``, and
+``__pydantic_extra__`` as interned attribute names, and so does its validator. So
+a data descriptor bound under those names on a shared framework root decides what
+Pydantic sees, and a published value can present its row as the instance
+dictionary Pydantic believes it is reading — without the row ever becoming one.
+Everything Pydantic implements over that dictionary is then correct again by
+construction rather than by restatement: equality, hashing, repr, the compiled
+serializer, and every documented serialization option, including the ones no
+reimplementation of the model schema can reach.
 
 Only a few questions vary by backing — what a declared member holds, whether the
 read carried it, and, once a caller reads a published relationship tail, what a
 relationship position holds. Everything else needs declared values and, at most,
 presence, so it is written once over both.
 
-The scope is sealed and granted one sibling: the sentinels a construction input
-spells. It therefore reaches neither the declaration engine that builds a class
-nor the writer that publishes one, which is what forces a publication plan to
-arrive as plain data its owner computed. What it does read of a class is the
+The scope is sealed and granted two siblings: the sentinels a construction input
+spells, and the seam that reaches a value's real storage past every name a class
+body can bind. It therefore reaches neither the declaration engine that builds a
+class nor the writer that publishes one, which is what forces a publication plan
+to arrive as plain data its owner computed. What it does read of a class is the
 class's own Pydantic facts — collected fields, their defaults, their order —
 because those are what a plan has to agree with.
 
@@ -34,38 +47,41 @@ to address the backing and nothing about how it is laid out.
 from __future__ import annotations
 
 import functools
+import operator
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
-from pydantic_core import core_schema as cs
 
 from parallax.core.entity._construction_input import UNLOADED
+from parallax.core.entity._pydantic_storage import (
+    MODEL_PRESENCE,
+    MODEL_STORAGE,
+    instance_presence,
+    instance_state,
+    replace_instance_presence,
+    replace_instance_state,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Mapping
-
-    from pydantic.annotated_handlers import GetJsonSchemaHandler
-    from pydantic.json_schema import JsonSchemaValue
+    from collections.abc import Callable, Generator, Mapping
 
 __all__ = [
+    "AUXILIARY_STATE_SLOT",
     "COMPACT_STATE_SLOT",
+    "BackedModel",
     "PublicationPlan",
     "allocate",
+    "auxiliary",
     "declared",
-    "equal",
-    "fields_set",
-    "hashed",
     "install",
     "is_present",
+    "is_published",
     "iterate",
-    "json_schema_of",
     "plan_of",
     "publish",
-    "repr_args",
-    "serialization_schema",
 ]
 
 COMPACT_STATE_SLOT: Final = "__parallax_compact__"
@@ -74,8 +90,21 @@ COMPACT_STATE_SLOT: Final = "__parallax_compact__"
 It holds a single immutable tuple — presence bitmap, then every declared member
 in the class's own model-fixed order, then, on an Entity, one position per
 declared broad relationship. A value that has never been published carries
-nothing here at all, and that absence IS the Adapter selection: nothing branches
-on a flag, because there is no flag to read.
+``None`` or nothing at all here, and that absence IS the Adapter selection:
+nothing branches on a flag, because there is no flag to read.
+"""
+
+AUXILIARY_STATE_SLOT: Final = "__parallax_auxiliary__"
+"""Where a published value's author-owned dynamic state goes instead.
+
+A ``functools.cached_property`` memoizes by writing into what it was handed as
+the instance dictionary, and what a published value hands it is a presentation
+rather than its storage — so the write would evaporate and the property would
+recompute forever with no signal. The presentation forwards that write here and
+is seeded from here, which is what makes the memoization correct while leaving
+the value's real storage empty. Allocated on the first such write and never
+before, so a published value of a class that declares no auxiliary state carries
+one null pointer and nothing else.
 """
 
 _PLAN_ATTRIBUTE: Final = "__parallax_plan__"
@@ -84,15 +113,6 @@ _PLAN_ATTRIBUTE: Final = "__parallax_plan__"
 Stamped per exact declared class rather than resolved through the MRO, because a
 descendant's occurrence and relationship positions sit after its own attribute
 count and so are not its ancestor's.
-"""
-
-_EMPTY_FIELDS_SET: Final[set[str]] = set()
-"""The one fields-set object every published value's slot points at.
-
-pydantic-core reads that slot from Rust before any Parallax code runs and refuses
-anything but a ``set``, so the slot cannot be left unset or filled with a frozen
-value. Nothing ever hands this object out: :func:`fields_set` synthesizes a fresh
-set per request, so mutating what a caller receives cannot reach it.
 """
 
 
@@ -124,6 +144,15 @@ class PublicationPlan:
     """The same members in Pydantic's own field order, which is what repr,
     iteration, and serialization are stated over and which a class body's
     declaration order can make differ from :attr:`py_names`."""
+    field_values: Callable[[tuple[object, ...]], tuple[object, ...]]
+    """One row's declared members, permuted into :attr:`fields` order in a single
+    call.
+
+    Key order is a contract rather than an implementation note: Pydantic emits a
+    model's keys in the order the mapping it read them from was built, not in
+    schema order. The row is in model-fixed order, which a class declaring an
+    occurrence between two attributes makes differ from field order, so the
+    permutation is prebuilt here rather than walked per value."""
     occurrences: Mapping[int, type]
     """Tuple index to the Value Object class that position takes."""
     relationships: Mapping[str, int]
@@ -177,6 +206,7 @@ def install(
         indexes=MappingProxyType(indexes),
         py_names=members,
         fields=tuple(fields),
+        field_values=_permutation(tuple(indexes[py_name] for py_name in fields)),
         occurrences=MappingProxyType(
             {indexes[py_name]: vo_class for py_name, vo_class in occurrences.items()}
         ),
@@ -192,6 +222,21 @@ def install(
 def plan_of(cls: type) -> PublicationPlan:
     """``cls``'s own publication plan."""
     return cast("PublicationPlan", getattr(cls, _PLAN_ATTRIBUTE))
+
+
+def _permutation(indexes: tuple[int, ...]) -> Callable[[tuple[object, ...]], tuple[object, ...]]:
+    """One C call that reads ``indexes`` out of a row, in that order.
+
+    ``operator.itemgetter`` answers a bare value rather than a one-tuple for a
+    single index and refuses to be built with none at all, so the two degenerate
+    widths are spelled out instead of special-cased at every call site.
+    """
+    if not indexes:
+        return lambda _row: ()
+    if len(indexes) == 1:
+        only = indexes[0]
+        return lambda row: (row[only],)
+    return cast("Callable[[tuple[object, ...]], tuple[object, ...]]", operator.itemgetter(*indexes))
 
 
 def _declares_auxiliary_state(cls: type) -> bool:
@@ -212,16 +257,242 @@ def _declares_auxiliary_state(cls: type) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# The instance state Pydantic reads, and the root that answers for it
+# --------------------------------------------------------------------------- #
+
+
+class _PresentedState(dict[str, Any]):
+    """One published value's row, presented as the mapping Pydantic reads.
+
+    Built per read and discarded with it: nothing here is the value's storage,
+    and the row it was derived from is never reached through it. A write is the
+    one thing that outlives the mapping — ``functools.cached_property`` memoizes
+    by assigning into what it was handed — so a write is forwarded to the value's
+    auxiliary slot, which the next presentation is seeded from.
+
+    It deliberately declares no ``__init__``: every read of a published value's
+    state builds one of these, so ``dict``'s own initializer and one slot write
+    are what it costs rather than a Python frame per read. :func:`_presented` is
+    the one door that builds one, and attaching the owner is the second half of
+    building it.
+    """
+
+    __slots__ = ("_value",)
+
+    def __setitem__(self, key: str, item: Any) -> None:
+        auxiliary(self._value)[key] = item
+        super().__setitem__(key, item)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Copied and pickled as the plain mapping it presents.
+
+        Whatever reaches a value's state through ``__dict__`` and carries it
+        somewhere — ``BaseModel.__getstate__`` is the one that does — is carrying
+        declared values, not a presentation of a value it will no longer be
+        beside. Reducing as ``dict`` says exactly that, and keeps the default
+        reduction of a ``dict`` subclass, which rebuilds by item assignment,
+        from writing into an auxiliary slot on the way out.
+        """
+        return (dict, (dict(self),))
+
+
+class _DeclaredState:
+    """What a value answers for ``__dict__``, under either backing.
+
+    Pydantic reaches instance state by this name and not through the struct
+    pointer, so binding here is what lets a published value present its row as
+    the instance dictionary every Pydantic implementation over that dictionary
+    believes it is reading. Ordinary backing answers with the storage ITSELF
+    rather than a copy of it, because a caller that writes through it — a
+    relationship slot, a lifecycle slot, a ``cached_property`` — has to reach the
+    value.
+
+    Assignment is where a published value stops being one. Every write Pydantic
+    makes to a model's state is a wholesale assignment of this name, and the
+    paths that make it — validation, ``model_construct``, ``__setstate__`` — are
+    each producing an ordinary value out of semantic state. Landing that write in
+    the real storage and clearing the row is what makes them do exactly that,
+    rather than split the value between a row nothing wrote and storage nothing
+    reads.
+
+    Class access is never answered here and no branch spells one: ``Cls.__dict__``
+    resolves the name through the METAtype, where ``type``'s own descriptor for a
+    class namespace wins, so this one is reached with an instance or not at all.
+    """
+
+    __slots__ = ()
+
+    def __get__(self, value: BaseModel, owner: type | None = None) -> Any:
+        try:
+            row = _CompactState.__get__(value)
+        except AttributeError:
+            row = None
+        if row is None:
+            return MODEL_STORAGE.__get__(value)
+        plan = plan_of(type(value))
+        members = zip(plan.fields, plan.field_values(row), strict=True)
+        if plan.has_auxiliary:
+            warmed = _auxiliary(value)
+            if warmed:
+                return _presented(value, [*members, *warmed.items()])
+        return _presented(value, members)
+
+    def __set__(self, value: BaseModel, state: dict[str, Any]) -> None:
+        _CompactState.__set__(value, None)
+        replace_instance_state(value, state)
+
+
+class _PopulatedMembers:
+    """What a value answers for ``__pydantic_fields_set__``, under either backing.
+
+    A published value keeps no ``set[str]``: the same bitmap ``exclude_unset``
+    reads answers this one, synthesized fresh per request and never memoized, so
+    the mutable result a caller receives changes neither compact presence nor a
+    later dump. Ordinary backing answers with the set it holds, as Pydantic's own
+    slot always did.
+
+    Assignment writes the value's own set and deliberately does NOT clear the
+    row: the two writes always arrive together, and it is the ``__dict__`` half
+    that decides which backing a value ends up with.
+
+    Class access IS reachable here, unlike its sibling above: no metatype answers
+    for this name, and Pydantic's own ``__getattr__`` asks ``hasattr`` of the
+    class before it re-raises. Answering with the descriptor is what makes that
+    question true and lets the instance read raise on its own terms.
+    """
+
+    __slots__ = ()
+
+    def __get__(self, value: BaseModel | None, owner: type | None = None) -> Any:
+        if value is None:
+            return self
+        try:
+            row = _CompactState.__get__(value)
+        except AttributeError:
+            row = None
+        if row is None:
+            return MODEL_PRESENCE.__get__(value)
+        bitmap = cast("int", row[0])
+        return {
+            py_name
+            for bit, py_name in enumerate(plan_of(type(value)).py_names)
+            if bitmap >> bit & 1
+        }
+
+    def __set__(self, value: BaseModel, populated: set[str]) -> None:
+        replace_instance_presence(value, populated)
+
+
+if TYPE_CHECKING:
+    BackedModel = BaseModel
+    """What a type checker sees of the root below: the Pydantic base it adds
+    nothing typed to.
+
+    The root exists to bind two names whose declared types no descriptor can
+    satisfy — a ``__dict__`` is a final ``MappingProxyType`` and a
+    populated-member set is a ``set[str]``, and what is bound answers with
+    exactly those at runtime while being neither — and to declare two slots,
+    which carry no type at all. What it overrides beyond them, Pydantic's own
+    base already declares with the same signature.
+
+    It is aliased rather than merely narrowed because a Pydantic model class
+    standing between ``BaseModel`` and a class with a metaclass of its own stops
+    Pyright synthesizing the constructor its ``@dataclass_transform`` promises,
+    for every declared class in the repository. Hiding a root that adds no typed
+    surface costs nothing and is the whole of the workaround.
+    """
+else:
+
+    class BackedModel(BaseModel):
+        """The Pydantic root beneath both framework roots, and the whole of the seam.
+
+        An Entity Class and a Value Object Class each extend a framework root
+        that extends this, so one pair of descriptors decides what Pydantic reads
+        of every declared value — and one pair of slots gives both kinds the same
+        object layout, so no read has to ask what shape a value is.
+
+        Nothing else belongs here. What a declared class IS remains its own
+        root's; this is the one place a value's physical state is answered for.
+        """
+
+        __slots__ = (AUXILIARY_STATE_SLOT, COMPACT_STATE_SLOT)
+
+        __dict__ = _DeclaredState()
+        __pydantic_fields_set__ = _PopulatedMembers()
+
+        def __iter__(self):
+            """Declared members alone, which is the whole of what ``dict(value)`` is.
+
+            Pydantic's inherited iteration walks instance state and filters only
+            underscored names, so an Entity's relationship positions and unloaded
+            sentinels would ride along with it. Its own signature is the one
+            declared on ``BaseModel``.
+            """
+            return iterate(self)
+
+
+_PresentedOwner: Final = _PresentedState.__dict__["_value"]
+"""The presentation's own owner slot, written without a Python frame."""
+
+
+def _presented(value: BaseModel, members: Any) -> _PresentedState:
+    """``members`` as the mapping ``value`` presents, built at C speed."""
+    presented = _PresentedState(members)
+    _PresentedOwner.__set__(presented, value)
+    return presented
+
+
+_CompactState: Final = cast("Any", BackedModel).__dict__[COMPACT_STATE_SLOT]
+"""The compact slot's own descriptor, reached without a name lookup."""
+
+_AuxiliaryState: Final = cast("Any", BackedModel).__dict__[AUXILIARY_STATE_SLOT]
+"""The auxiliary slot's own descriptor, likewise."""
+
+
+# --------------------------------------------------------------------------- #
 # The two Adapters, and the three questions that vary
 # --------------------------------------------------------------------------- #
 
 
 def _compact(value: BaseModel) -> tuple[object, ...] | None:
-    """``value``'s published row, or ``None`` when it carries ordinary backing."""
+    """``value``'s published row, or ``None`` when it carries ordinary backing.
+
+    The slot is unset on a value no construction path ever assigned state to and
+    ``None`` on one that de-published, and neither is a row — which is the whole
+    of the Adapter selection. There is no flag, because there is nothing a flag
+    would say that the row does not.
+    """
     try:
-        return cast("tuple[object, ...]", object.__getattribute__(value, COMPACT_STATE_SLOT))
+        return cast("tuple[object, ...] | None", _CompactState.__get__(value))
     except AttributeError:
         return None
+
+
+def _auxiliary(value: BaseModel) -> dict[str, Any] | None:
+    """``value``'s warmed author-owned state, or ``None`` while it has none.
+
+    Read only where the class declares state that could be there
+    (:attr:`PublicationPlan.has_auxiliary`), which is what keeps the presentation
+    of every other class one row read and one mapping.
+    """
+    try:
+        return cast("dict[str, Any] | None", _AuxiliaryState.__get__(value))
+    except AttributeError:
+        return None
+
+
+def auxiliary(value: BaseModel) -> dict[str, Any]:
+    """``value``'s warmed author-owned state, allocated if this is the first."""
+    warmed = _auxiliary(value)
+    if warmed is None:
+        warmed = {}
+        _AuxiliaryState.__set__(value, warmed)
+    return warmed
+
+
+def is_published(value: object) -> bool:
+    """Whether ``value``'s declared state is a published row."""
+    return isinstance(value, BackedModel) and _compact(value) is not None
 
 
 def declared(value: BaseModel) -> dict[str, object]:
@@ -237,10 +508,9 @@ def declared(value: BaseModel) -> dict[str, object]:
     plan = plan_of(type(value))
     row = _compact(value)
     if row is None:
-        state = value.__dict__
+        state = instance_state(value)
         return {py_name: state[py_name] for py_name in plan.fields if py_name in state}
-    indexes = plan.indexes
-    return {py_name: row[indexes[py_name]] for py_name in plan.fields}
+    return dict(zip(plan.fields, plan.field_values(row), strict=True))
 
 
 def is_present(value: BaseModel, bit: int) -> bool:
@@ -252,7 +522,7 @@ def is_present(value: BaseModel, bit: int) -> bool:
     """
     row = _compact(value)
     if row is None:
-        return plan_of(type(value)).py_names[bit] in value.__pydantic_fields_set__
+        return plan_of(type(value)).py_names[bit] in instance_presence(value)
     return bool(cast("int", row[0]) >> bit & 1)
 
 
@@ -261,36 +531,20 @@ def is_present(value: BaseModel, bit: int) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-def fields_set(value: BaseModel) -> set[str]:
-    """A fresh observational snapshot of what ``value``'s read carried.
-
-    Named for its single legitimate caller, ``model_fields_set``. It allocates,
-    so nothing internal reaches for it: the mutable result is the caller's own
-    and changes neither compact presence nor a later ``exclude_unset`` dump.
-    """
-    row = _compact(value)
-    if row is None:
-        return set(value.__pydantic_fields_set__)
-    bitmap = cast("int", row[0])
-    return {
-        py_name for bit, py_name in enumerate(plan_of(type(value)).py_names) if bitmap >> bit & 1
-    }
-
-
 def allocate(cls: type[Any]) -> Any:
     """An unpopulated publication shell of ``cls``.
 
     Neither the ordinary constructor nor ``model_construct`` is entered: a shell
     exists so a relationship can name it before it holds anything, and it holds
     nothing until :func:`publish` attaches its row. What it is given here is only
-    the Pydantic storage a shell cannot be missing — the fields-set slot
-    pydantic-core reads from Rust, the extra slot every read of the value
-    consults, and the private state an author's own ``PrivateAttr`` declares,
-    initialized to its declared defaults exactly as validation-free construction
-    would have initialized it.
+    the Pydantic storage a shell cannot be missing — the extra slot every read of
+    the value consults, and the private state an author's own ``PrivateAttr``
+    declares, initialized to its declared defaults exactly as validation-free
+    construction would have initialized it. It is given no populated-member set
+    at all: the bitmap answers that question, so a published value retains no
+    name-keyed presence state of any kind.
     """
     instance = cast("Any", cls).__new__(cls)
-    object.__setattr__(instance, "__pydantic_fields_set__", _EMPTY_FIELDS_SET)
     object.__setattr__(instance, "__pydantic_extra__", None)
     object.__setattr__(instance, "__pydantic_private__", _private_state(cls))
     return instance
@@ -355,59 +609,7 @@ def publish(
             raise ValueError(f"{type(instance).__name__} declares no relationship {py_name!r}")
         row[index] = related
     row[0] = bitmap
-    object.__setattr__(instance, COMPACT_STATE_SLOT, tuple(row))
-
-
-def equal(value: BaseModel, other: object) -> bool | Any:
-    """Pydantic's own value equality, over declared members from either backing.
-
-    Backing kind, presence bookkeeping, relationship positions, and lifecycle
-    state do not participate, so a published value equals the ordinary one
-    carrying the same members. Private attribute state does, because Pydantic's
-    own equality counts it and this replaces that implementation rather than
-    redefining it. Extra state is not read at all: the declaration engine fixes
-    the model configuration and leaves ``extra`` at Pydantic's own default, so a
-    declared value never carries any.
-    """
-    if not isinstance(other, BaseModel):
-        return NotImplemented
-    if type(other) is not type(value):
-        return False
-    if getattr(value, "__pydantic_private__", None) != getattr(other, "__pydantic_private__", None):
-        return False
-    return declared(value) == declared(other)
-
-
-def hashed(value: BaseModel) -> int:
-    """``value``'s hash over its declared members, in Pydantic field order.
-
-    Both backings reach the same tuple, which is what keeps a published value and
-    its ordinary twin — equal by :func:`equal` — hashing alike.
-    """
-    return hash(tuple(declared(value).values()))
-
-
-def repr_args(value: BaseModel) -> Generator[tuple[str, object]]:
-    """``value``'s repr arguments: declared members, then computed fields.
-
-    Answering Pydantic's own ``__repr_args__`` seam rather than ``__repr__``
-    leaves ``repr``, ``str``, and the pretty and rich renderings built on it in
-    one place and identical across backings. Computed fields are rendered first
-    so a ``cached_property`` among them cannot resize the instance dictionary
-    while the declared half is being read, which is the ordering Pydantic's own
-    implementation adopts for the same reason.
-    """
-    computed = [
-        (py_name, getattr(value, py_name))
-        for py_name, field in value.__pydantic_computed_fields__.items()
-        if field.repr
-    ]
-    fields = value.__pydantic_fields__
-    for py_name, member in declared(value).items():
-        field = fields.get(py_name)
-        if field is not None and field.repr:
-            yield py_name, (value.__repr_recursion__(member) if member is value else member)
-    yield from computed
+    _CompactState.__set__(instance, tuple(row))
 
 
 def iterate(value: BaseModel) -> Generator[tuple[str, object]]:
@@ -420,171 +622,3 @@ def iterate(value: BaseModel) -> Generator[tuple[str, object]]:
     declares rather than whatever the backing happened to hold.
     """
     yield from declared(value).items()
-
-
-# --------------------------------------------------------------------------- #
-# The two Pydantic schema seams
-# --------------------------------------------------------------------------- #
-
-
-def serialization_schema(source: type, schema: cs.CoreSchema) -> cs.CoreSchema:
-    """``schema`` with a serialization that reads members as attributes.
-
-    Pydantic's compiled model serializer sources declared fields from the
-    instance dictionary and computed fields by attribute, so the fields are
-    restated as computed ones and pydantic-core reaches each value through its
-    descriptor — which answers from the published tuple, or is shadowed by the
-    instance dictionary on an ordinary value. One schema then serves both
-    backings, so serialization never branches and a caller who never holds a
-    published value sees the same output it always did.
-
-    An authored model serializer is composed with rather than fought: a plain one
-    already receives the value itself and is left alone, a wrap one has its inner
-    schema retargeted so the handler it delegates to reads attributes too, and a
-    class authoring neither gets this as its serialization.
-
-    Two documented options answer with an empty mapping under this schema, on
-    either backing: ``round_trip`` and ``exclude_computed_fields``, both of which
-    pydantic-core skips computed fields for on the ground that a computed field
-    cannot be validated back. What that costs and what the alternatives cost is
-    recorded at :func:`_by_attribute`.
-    """
-    model = cast("dict[str, Any]", schema)
-    if model.get("type") != "model":
-        return schema
-    authored = cast("dict[str, Any] | None", model.get("serialization"))
-    if authored is not None and authored.get("type") != "function-wrap":
-        return schema
-    by_attribute = _by_attribute(source, cast("dict[str, Any]", model["schema"]))
-    if authored is None:
-        model["serialization"] = by_attribute
-    else:
-        authored["schema"] = by_attribute
-    return schema
-
-
-def json_schema_of(schema: cs.CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
-    """JSON Schema generated from ``schema`` with its serialization set aside.
-
-    A serialization-mode JSON Schema is derived from whatever the core schema
-    says serialization is, so the computed-field restatement above would widen
-    every declared member to required and read-only. Dropping the key before
-    delegating leaves both modes generated from the untouched validation schema,
-    which is what keeps the published output identical to an unhooked class's.
-    """
-    if schema.get("type") == "model" and "serialization" in schema:
-        schema = cast(
-            "cs.CoreSchema",
-            {key: item for key, item in schema.items() if key != "serialization"},
-        )
-    return handler(schema)
-
-
-def _by_attribute(source: type, fields_schema: dict[str, Any]) -> cs.SerSchema:
-    """The serialization schema that reads ``source``'s members as attributes.
-
-    Every declared field is restated as a computed field, because computed fields
-    are what pydantic-core reaches by attribute, and the field half is emptied so
-    nothing reads the instance dictionary. One schema then serves both backings:
-    on an ordinary value each descriptor is shadowed by the dictionary and answers
-    the same value it always did, and on a published one it answers from the row.
-
-    Leaving the field half populated as well was measured and rejected. It would
-    answer ``round_trip`` and ``exclude_computed_fields`` — the two options
-    pydantic-core skips computed fields for — from the instance dictionary, and so
-    keep those two working on ordinary backing. What it costs is worse than what
-    it buys: it makes those two options the one place compact and ordinary
-    backing disagree, and it makes a published value warn
-    ``PydanticSerializationUnexpectedValue`` inside a union serializer, which
-    reads the field count against an empty instance dictionary. It also emits
-    every key twice, which a Python mapping collapses and a JSON writer does not,
-    so it depends on a wrap serializer standing between the two — and confining
-    that wrap to JSON with ``when_used`` is not available either: pydantic-core
-    falls back to INFERENCE in Python mode when a ``when_used`` function does not
-    apply, which loses ``include``, ``exclude``, and ``serialize_as_any``
-    outright.
-    """
-    fields = cast("dict[str, dict[str, Any]]", fields_schema["fields"])
-    computed: list[cs.ComputedField] = []
-    filtered: list[tuple[str, object]] = []
-    for py_name, field in fields.items():
-        computed.append(cs.computed_field(py_name, cast("cs.CoreSchema", field["schema"])))
-        filtered.append((py_name, _excludable_default(field)))
-    computed.extend(cast("list[cs.ComputedField]", fields_schema.get("computed_fields") or ()))
-    by_attribute: cs.SerSchema = cs.model_ser_schema(
-        source,
-        cs.model_fields_schema(
-            {},
-            model_name=cast("str | None", fields_schema.get("model_name")),
-            computed_fields=computed,
-        ),
-    )
-    return cs.wrap_serializer_function_ser_schema(
-        _presence_filter(tuple(filtered)),
-        schema=cast("cs.CoreSchema", by_attribute),
-        info_arg=True,
-    )
-
-
-_NO_DEFAULT: Final = object()
-"""Marks a field ``exclude_defaults`` never drops, whatever its value.
-
-A required field has no default to match. A field carrying its own serialization —
-an authored ``@field_serializer`` — is not dropped either, because what
-pydantic-core compares against the default is what that serializer produced, which
-is not the default however the raw value compares.
-"""
-
-
-def _excludable_default(field: dict[str, Any]) -> object:
-    """The default ``exclude_defaults`` measures ``field`` against, or :data:`_NO_DEFAULT`."""
-    schema = cast("dict[str, Any]", field["schema"])
-    if schema.get("type") != "default" or "serialization" in schema:
-        return _NO_DEFAULT
-    return schema.get("default", _NO_DEFAULT)
-
-
-def _presence_filter(
-    fields: tuple[tuple[str, object], ...],
-) -> cs.WrapSerializerFunction:
-    """Apply ``exclude_unset`` and ``exclude_defaults``, which a computed field has
-    no notion of.
-
-    The plan is resolved from the value when the filter runs rather than captured
-    when the schema is built, and that is required rather than stylistic: with
-    polymorphic serialization off, a subtype dumped through a base's
-    ``TypeAdapter`` is serialized by the BASE's schema, so a filter holding the
-    base's bits would test them against the subtype's row — while its BITS are
-    always there to test, because ancestry contributes attributes root-first. The
-    field list and the defaults ARE captured, because they are the ones the schema
-    doing the serializing declared, which is what decides the keys in the result.
-
-    The keys are member names rather than aliases, and every declared member has
-    one: the declaration grammar produces a plain Pydantic field per member and
-    spells no serialization alias, no ``Field(exclude=...)``, and no conditional
-    exclusion, so the schema above restates exactly the members it was given.
-
-    It is installed on every class rather than only on one with a defaulted field.
-    A class whose members are all required can still be handed a fields-set a
-    caller built, and one rule over every class is what keeps what a dump answers
-    a property of the value rather than of which members its class happens to
-    declare optional.
-    """
-
-    def presence(value: object, handler: Any, info: Any) -> Any:
-        result = handler(value)
-        if not (info.exclude_unset or info.exclude_defaults):
-            return result
-        bits = plan_of(type(value)).bits
-        for py_name, default in fields:
-            if py_name not in result:
-                continue
-            if (info.exclude_unset and not is_present(cast("BaseModel", value), bits[py_name])) or (
-                info.exclude_defaults
-                and default is not _NO_DEFAULT
-                and getattr(value, py_name) == default
-            ):
-                del result[py_name]
-        return result
-
-    return cast("cs.WrapSerializerFunction", presence)

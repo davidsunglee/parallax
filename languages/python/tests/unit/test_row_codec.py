@@ -13,10 +13,14 @@ import datetime as dt
 import uuid
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
-from _authored_storage_support import AuthoredInstanceDict, ForgingInstanceDict, stored_state
+from _authored_storage_support import (
+    answering_for_instance_state,
+    forge_into_storage,
+    stored_state,
+)
 from _snapshot_graph_support import GraphFixture
 from pydantic import TypeAdapter
 
@@ -28,6 +32,7 @@ from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.entity import (
     ENTITY_ROW_CODES,
     DomainModel,
+    EntityDefinitionError,
     EntityRowCodec,
     EntityRowError,
     graph_construction_of,
@@ -113,13 +118,16 @@ WIDER_MODEL = DomainModel(WiderWidget)
 INTERLEAVED_MODEL = DomainModel(Interleaved)
 
 
+_FORGED_RECORD: Final = {"label": "never authored"}
+
+
 class FilteredWidget(Entity, name="Widget", table="widget", namespace=_NS):
     """A declaration whose class body denies the Change Record its storage holds."""
 
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str]
 
-    __dict__ = AuthoredInstanceDict.denying(CHANGE_RECORD_SLOT)  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - a type checker forbids the binding the interpreter allows, and the interpreter is what the codec answers to
+    __getattribute__ = answering_for_instance_state(CHANGE_RECORD_SLOT)
 
 
 class InventedWidget(Entity, name="Widget", table="widget", namespace=_NS):
@@ -128,41 +136,14 @@ class InventedWidget(Entity, name="Widget", table="widget", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str]
 
-    __dict__ = AuthoredInstanceDict.inventing(CHANGE_RECORD_SLOT, {"label": "never authored"})  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
+    __getattribute__ = answering_for_instance_state(CHANGE_RECORD_SLOT, _FORGED_RECORD)
 
 
-class ForgingWidget(Entity, name="Widget", table="widget", namespace=_NS):
-    """A declaration whose class body writes a Change Record into the storage
-    every construction of it fills."""
-
-    id: Attr[int] = attr(primary_key=True)
-    label: Attr[str]
-
-    __dict__ = ForgingInstanceDict(CHANGE_RECORD_SLOT, {"label": "never authored"})  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
-
-
-class InterceptingForgingWidget(Entity, name="Widget", table="widget", namespace=_NS):
-    """The same forgery, by a class body that also answers for the framework's
-    own hook lookups.
-
-    Pydantic reaches ``model_post_init`` by ordinary instance attribute lookup,
-    so a class answering for that name decides whether any per-construction step
-    the framework might install runs at all.
-    """
+class ForgeableWidget(Entity, name="Widget", table="widget", namespace=_NS):
+    """A declaration whose values a caller forges a Change Record into."""
 
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str]
-
-    __dict__ = ForgingInstanceDict(CHANGE_RECORD_SLOT, {"label": "never authored"})  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - as above
-
-    def __getattribute__(self, name: str) -> Any:
-        if name == "model_post_init":
-            return _no_post_init
-        return object.__getattribute__(self, name)
-
-
-def _no_post_init(context: Any) -> None:
-    """A ``model_post_init`` doing nothing, in place of whatever Entity's does."""
 
 
 def _every_construction_door[E: Entity](cls: type[E], state: dict[str, Any]) -> tuple[E, ...]:
@@ -726,11 +707,11 @@ def test_a_change_record_no_edit_wrote_reports_corruption_rather_than_absence(
 
 
 def test_a_class_body_denying_the_change_record_still_writes_the_edit() -> None:
-    # `__dict__` is a name a class body can bind like any other, and binding it
-    # decides what every reader of that name is told. The Change Record is
-    # private first-party state only `edit(...)` writes, so the codec reads the
-    # value's own storage: an edit that touched a member lowers to the sparse row
-    # it authored even when the class denies the slot the storage holds.
+    # No class body may bind `__dict__`, but `__getattribute__` is authorable and
+    # answers every read of that name. The Change Record is private first-party
+    # state only `edit(...)` writes, so the codec reads the value's own storage:
+    # an edit that touched a member lowers to the sparse row it authored even
+    # when the class denies the slot the storage holds.
     edited = FilteredWidget(id=1, label="a").edit(label="b")
     assert CHANGE_RECORD_SLOT not in edited.__dict__
 
@@ -738,50 +719,53 @@ def test_a_class_body_denying_the_change_record_still_writes_the_edit() -> None:
 
 
 def test_a_class_body_inventing_a_change_record_earns_no_row() -> None:
-    # The same fact from the other side: a dictionary answering with a record the
+    # The same fact from the other side: a class answering with a record the
     # storage never held names no edit, so the value a caller never edited stays
     # the one proposition `None` makes rather than emitting an unearned write.
     plain = InventedWidget(id=1, label="a")
-    assert plain.__dict__[CHANGE_RECORD_SLOT] == {"label": "never authored"}
+    assert plain.__dict__[CHANGE_RECORD_SLOT] == _FORGED_RECORD
 
     assert row_codec_of(NARROW_MODEL).edited_row(plain) is None
 
 
-def test_a_class_body_forging_a_change_record_into_storage_earns_no_row() -> None:
-    # Reading the storage answers a class that binds `__dict__` to lie about what
-    # it holds; this one tells the truth about a storage it doctored on the way
-    # in, because Pydantic fills a fresh instance by assigning `__dict__` under
-    # that name. What such a body can put there is a well-shaped mapping, and a
-    # Change Record is not a shape: only `edit(...)` constructs the carrier both
-    # readers accept, so private state the framework never wrote is corruption
-    # rather than provenance — through every door a value is built by.
-    for plain in _every_construction_door(ForgingWidget, {"id": 1, "label": "a"}):
-        assert stored_state(plain)[CHANGE_RECORD_SLOT] == {"label": "never authored"}
+def test_a_change_record_forged_into_a_value_s_own_storage_earns_no_row() -> None:
+    # Denial and invention are answers the codec reads past. This is the storage
+    # itself, doctored by a caller holding the value — the residual no in-process
+    # design closes, and the one the carrier answers. What can be put there is a
+    # well-shaped mapping, and a Change Record is not a shape: only `edit(...)`
+    # constructs the carrier both readers accept, so private state the framework
+    # never wrote is corruption rather than provenance — through every door a
+    # value is built by.
+    for plain in _every_construction_door(ForgeableWidget, {"id": 1, "label": "a"}):
+        forge_into_storage(plain, CHANGE_RECORD_SLOT, dict(_FORGED_RECORD))
+        assert stored_state(plain)[CHANGE_RECORD_SLOT] == _FORGED_RECORD
         with pytest.raises(EntityRowError) as refusal:
             row_codec_of(NARROW_MODEL).edited_row(plain)
         assert refusal.value.code == "entity-row-malformed-provenance"
 
 
-def test_a_class_body_answering_for_the_frameworks_own_hooks_earns_no_row_either() -> None:
-    # The forgery composed with hook interception: Pydantic reaches
-    # `model_post_init` by ordinary instance attribute lookup, so a class body
-    # answering for that name defeats any per-construction cleanup the framework
-    # might install — and nested `TypeAdapter` validation builds inside
-    # pydantic-core with no framework call site to move such a step to. The
-    # guarantee holds without one, because it is a question about who
-    # constructed the carrier rather than about what ran after construction.
-    for plain in _every_construction_door(InterceptingForgingWidget, {"id": 1, "label": "a"}):
-        with pytest.raises(EntityRowError) as refusal:
-            row_codec_of(NARROW_MODEL).edited_row(plain)
-        assert refusal.value.code == "entity-row-malformed-provenance"
+def test_no_class_body_may_answer_for_the_slot_the_record_lives_beside() -> None:
+    # The route the two doctored declarations above do NOT take, because it is
+    # closed at class creation: `__dict__` is the name the framework presents a
+    # published value's state under, so a body binding it would decide what every
+    # reader of every instance is told rather than doctoring one slot.
+    with pytest.raises(EntityDefinitionError) as refusal:
+
+        class Bound(Entity, name="Widget", table="widget", namespace=_NS):  # pyright: ignore[reportUnusedClass] - the declaration is refused, so nothing uses it
+            id: Attr[int] = attr(primary_key=True)
+
+            __dict__ = {}  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - the point of the probe
+
+    assert refusal.value.code == "entity-reserved-member-name"
 
 
 def test_an_edit_of_such_a_value_still_records_the_original_it_touched() -> None:
-    # Refusing the forgery costs an edit nothing: the copy is built through the
-    # same doctored assignment and then carries the carrier `edit(...)` wrote
-    # over it, so the row names the member the caller touched and the original
-    # the value really held.
-    edited = ForgingWidget(id=1, label="a").edit(label="b")
+    # Refusing the forgery costs an edit nothing: the copy carries the carrier
+    # `edit(...)` wrote over whatever the original held, so the row names the
+    # member the caller touched and the original the value really held.
+    original = ForgeableWidget(id=1, label="a")
+    forge_into_storage(original, CHANGE_RECORD_SLOT, dict(_FORGED_RECORD))
+    edited = original.edit(label="b")
 
     assert row_codec_of(NARROW_MODEL).edited_row(edited) == {"id": 1, "label": "b"}
 

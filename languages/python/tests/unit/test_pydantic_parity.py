@@ -1,10 +1,11 @@
 """Three arms that must agree: compact backing, ordinary backing, and plain Pydantic.
 
 A published value keeps its declared members in one tuple rather than in the
-instance dictionary Pydantic's compiled serializer reads, so the framework gives
-every declared class a serialization that reaches them as attributes. Nothing
-here asserts the shape of that schema. What it asserts is the only property the
-seam exists to provide: that the output is what it always was.
+instance dictionary Pydantic reads, and presents that row under the two names
+Pydantic reads instance state by. Nothing here asserts how. What it asserts is
+the only property the seam exists to provide: that the output is what it always
+was, across every documented option — including the ones no rewriting of a
+model's schema can reach, which is why there is no residual section at the end.
 
 Each shape is declared twice — once as a Parallax Entity or Value Object, once as
 a hand-restated plain ``BaseModel`` with the same fields, defaults, and authored
@@ -14,13 +15,11 @@ cross-product. The third arm is what makes the comparison mean anything: a
 diff, because both backings were equally wrong. The twins are hand-restated
 rather than derived from ``__pydantic_fields__``, so a defect in the derivation
 cannot make the diff pass vacuously.
-
-Two documented options are known to diverge on compact backing alone and are
-pinned as such rather than silently omitted; see the section at the end.
 """
 
 from __future__ import annotations
 
+import gc
 import json
 import re
 import warnings
@@ -29,7 +28,7 @@ from functools import cached_property
 from typing import Annotated, Any, cast
 
 import pytest
-from _compact_support import published
+from _compact_support import published, raw_row, real_storage
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -51,6 +50,7 @@ from parallax.core.entity import (
     ValueObject,
     attr,
 )
+from parallax.core.entity._instance_state import BackedModel, plan_of
 from parallax.core.metamodel import TablePerHierarchy
 
 _NS = "parity"
@@ -260,6 +260,24 @@ class PlainHolder(BaseModel):
     parcel: PlainParcel
 
 
+class Ledger(Entity, table="ledger", namespace=_NS):
+    # An occurrence declared BETWEEN two attributes, so this class's Pydantic
+    # field order and the model-fixed order its published row is laid out in are
+    # different orders. Key order in a dump follows the first.
+    id: Attr[int] = attr(primary_key=True)
+    site: Attr[Address | None]
+    opened: Attr[str]
+    closed: Attr[str | None]
+
+
+class PlainLedger(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    id: int
+    site: PlainAddress | None = None
+    opened: str
+    closed: str | None = None
+
+
 class Circle(ValueObject):
     radius: Attr[float]
 
@@ -365,6 +383,23 @@ def _arms() -> list[Arms]:
             PlainWrapped(id=1, n=2),
         ),
         Arms(
+            "authored-wrap-model-serializer-unset",
+            published(Wrapped, id=1),
+            Wrapped(id=1),
+            PlainWrapped(id=1),
+        ),
+        Arms(
+            "field-order-is-not-row-order",
+            published(
+                Ledger,
+                id=2,
+                site=published(Address, city="Springfield", geo=published(Geo, lat=1.5)),
+                opened="mon",
+            ),
+            Ledger(id=2, site=address, opened="mon"),
+            PlainLedger(id=2, site=plain_address, opened="mon"),
+        ),
+        Arms(
             "inherited-subtype",
             published(Cat, id=9, name="mog", indoor=True),
             Cat(id=9, name="mog", indoor=True),
@@ -388,8 +423,6 @@ def _arms() -> list[Arms]:
 ARMS = {arm.name: arm for arm in _arms()}
 
 # The serialization option cross-product every arm is required to agree on.
-# `round_trip` and `exclude_computed_fields` are deliberately absent and are
-# pinned separately at the end of this module.
 OPTIONS: dict[str, dict[str, Any]] = {
     "default": {},
     "by-alias": {"by_alias": True},
@@ -402,6 +435,12 @@ OPTIONS: dict[str, dict[str, Any]] = {
     "polymorphic": {"polymorphic_serialization": True},
     "serialize-as-any": {"serialize_as_any": True},
     "context": {"context": {"who": "test"}},
+    "round-trip": {"round_trip": True},
+    "exclude-computed-fields": {"exclude_computed_fields": True},
+    "round-trip-and-exclude-unset": {"round_trip": True, "exclude_unset": True},
+    "round-trip-and-by-alias": {"round_trip": True, "by_alias": True},
+    "round-trip-and-exclude-none": {"round_trip": True, "exclude_none": True},
+    "exclude-computed-fields-and-exclude": {"exclude_computed_fields": True, "exclude": {"id"}},
 }
 
 
@@ -605,16 +644,89 @@ def test_an_authored_extension_receives_the_original_compact_object() -> None:
 
 def test_serializing_a_compact_value_leaves_its_own_state_untouched() -> None:
     value = published(Parcel, id=1, weight=2.5, label="x")
-    row = object.__getattribute__(value, "__parallax_compact__")
-    fields_set = object.__getattribute__(value, "__pydantic_fields_set__")
+    row = raw_row(value)
     for kwargs in OPTIONS.values():
         value.model_dump(**kwargs)
         value.model_dump_json(**kwargs)
-    assert object.__getattribute__(value, "__parallax_compact__") == row
-    assert object.__getattribute__(value, "__pydantic_fields_set__") == fields_set
-    assert not fields_set
-    # Read last, because reading it is what would materialize it.
-    assert value.__dict__ == {}
+    assert raw_row(value) == row
+    assert not _dict_referents(value)
+    # Read last, because reading it is what would create it.
+    assert real_storage(value) == {}
+
+
+def _dict_referents(value: object) -> list[Any]:
+    """Every mapping ``value`` itself holds, without asking it for one.
+
+    ``gc.get_referents`` reads the object's own references, so it can tell an
+    instance dictionary that was never created apart from one that was created
+    empty — which asking for ``__dict__`` cannot, because asking is what creates
+    it.
+    """
+    return [held for held in gc.get_referents(value) if isinstance(held, dict)]
+
+
+@pytest.mark.parametrize("shape", sorted(ARMS))
+def test_serialization_never_materializes_a_published_value_s_storage(shape: str) -> None:
+    # The whole of what publication buys is that the storage is never there. A
+    # dump that reached `__dict__` the ordinary way would create one permanently
+    # per node, and an assertion reading `__dict__` afterwards could not see it,
+    # because reading is what creates it. So this probes the object's own
+    # references, before anything asks it for a mapping.
+    arm = ARMS[shape]
+    if not isinstance(arm.compact, BackedModel):
+        pytest.skip("this arm's outer value is a plain model holding a published one")
+    before = _dict_referents(arm.compact)
+    for kwargs in OPTIONS.values():
+        arm.compact.model_dump(**kwargs)
+        arm.compact.model_dump_json(**kwargs)
+    repr(arm.compact)
+    hash(arm.compact)
+    dict(arm.compact)
+    _ = arm.compact.model_fields_set
+    assert arm.compact == arm.ordinary
+    assert _dict_referents(arm.compact) == before
+
+
+def test_a_cached_property_memoizes_without_creating_the_storage_it_writes_to() -> None:
+    # `functools.cached_property` assigns into what it was handed as the instance
+    # dictionary, and what a published value hands it is a presentation built for
+    # that read. The write is forwarded to a slot of its own and the next
+    # presentation is seeded from it, so the property computes once — and the
+    # value's real storage still does not exist.
+    computed: list[int] = []
+
+    class Gauge(Entity, table="gauge", namespace=_NS):
+        id: Attr[int] = attr(primary_key=True)
+        reading: Attr[int]
+
+        @cached_property
+        def warmed(self) -> int:
+            computed.append(self.reading)
+            return self.reading + 1
+
+    value = published(Gauge, id=1, reading=5)
+    assert not _dict_referents(value)
+    assert value.warmed == value.warmed == value.warmed == 6
+    assert computed == [5]
+    warmed = _dict_referents(value)
+    assert warmed == [{"warmed": 6}]
+    assert value.model_dump() == {"id": 1, "reading": 5}
+    assert _dict_referents(value) == warmed
+    # Read last, for the reason above: this is what would have created one.
+    assert real_storage(value) == {}
+
+
+def test_key_order_follows_field_order_and_not_the_order_of_the_published_row() -> None:
+    # Pydantic emits a model's keys in the order the mapping it read them from
+    # was built, so what a published value presents has to be built in FIELD
+    # order — which a class declaring an occurrence between two attributes makes
+    # different from the model-fixed order its row is laid out in.
+    arm = ARMS["field-order-is-not-row-order"]
+    assert plan_of(Ledger).py_names == ("id", "opened", "closed", "site")
+    assert plan_of(Ledger).fields == ("id", "site", "opened", "closed")
+    assert list(arm.compact.model_dump()) == ["id", "site", "opened", "closed"]
+    assert list(arm.compact.model_dump()) == list(arm.plain.model_dump())
+    assert arm.compact.model_dump_json() == arm.ordinary.model_dump_json()
 
 
 # --------------------------------------------------------------------------- #
@@ -701,27 +813,3 @@ def test_private_attribute_state_is_initialized_as_validation_would_have() -> No
     ordinary = Meter(id=1, reading=5)
     assert cast("Any", compact)._seen == cast("Any", ordinary)._seen == 3
     assert compact.warmed == ordinary.warmed == 6
-
-
-# --------------------------------------------------------------------------- #
-# The two options a published value cannot answer, pinned rather than omitted
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.parametrize("option", ["round_trip", "exclude_computed_fields"])
-def test_neither_backing_answers_the_two_computed_field_skipping_options(option: str) -> None:
-    # The residual, stated rather than discovered. pydantic-core skips computed
-    # fields for both of these, on the ground that a computed field cannot be
-    # validated back — and the framework's serialization restates every declared
-    # field as a computed one, so neither option reaches a member. It reaches
-    # neither backing, which is what keeps the two identical to each other; where
-    # they both diverge is from a plain twin, and that is what this pins.
-    kwargs: dict[str, Any] = {option: True}
-    for value in (
-        published(Parcel, id=1, weight=2.5, label="x"),
-        Parcel(id=1, weight=2.5, label="x"),
-        published(Meter, id=1, reading=5),
-        Meter(id=1, reading=5),
-    ):
-        assert value.model_dump(**kwargs) == {}
-    assert PlainParcel(id=1, weight=2.5, label="x").model_dump(**kwargs) != {}
