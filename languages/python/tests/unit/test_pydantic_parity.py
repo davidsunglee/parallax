@@ -754,7 +754,7 @@ def test_iteration_exposes_no_relationship_sentinel_or_lifecycle_state() -> None
     other = published(Bay, id=2)
     compact = published(Bay, {"peer": other}, id=1, peer_id=2)
     ordinary = Bay(id=1, peer_id=2)
-    object.__setattr__(ordinary, "peer", other)
+    attach_instance_state(ordinary, "peer", other)
     attach_instance_state(ordinary, LIFECYCLE_STATE_SLOT, object())
     assert dict(compact) == {"id": 1, "peer_id": 2}
     assert dict(ordinary) == {"id": 1, "peer_id": 2}

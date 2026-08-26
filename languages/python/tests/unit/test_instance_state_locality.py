@@ -123,24 +123,25 @@ INSTANCE_STATE_SITES_REACHING_PRESENCE: dict[str, frozenset[str]] = {
 
 # What would have to learn the backing again if `_instance_state` were deleted.
 #
-# Six sites, each taking exactly what it takes. `_declaration` builds every
+# Seven sites, each taking exactly what it takes. `_declaration` builds every
 # class's plan and hands each descriptor its ordinal; `_members` addresses the
 # row from those ordinals; both frontends extend the root that answers Pydantic
 # for a value's state, and derive edited copies through it; `_edit` partitions a
 # value's named state; `_row_codec` selects by presence and reads the provenance
-# slot. Delete the Module and the tuple, the bitmap, and the ordinal arithmetic
-# reappear at all six.
-#
-# The publication writer is deliberately absent, and is the one site that would
-# otherwise belong: it writes ordinary Pydantic state one member at a time, so it
-# takes nothing from the Module and learns nothing about the backing.
+# slot; `_graph_construction` allocates a shell, attaches one whole row to it,
+# reads a relationship position back, and checks the class's own plan against the
+# model's layout. Delete the Module and the tuple, the bitmap, and the ordinal
+# arithmetic reappear at all seven.
 INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
     "parallax.core.entity._declaration": frozenset({"PublicationPlan", "install"}),
     "parallax.core.entity._edit": frozenset({"named_state"}),
     "parallax.core.entity._entity": frozenset(
         {"BackedModel", "carry_slots_beside_state", "named_state", "restated"}
     ),
-    "parallax.core.entity._members": frozenset({"COMPACT_STATE_SLOT", "is_published", "plan_of"}),
+    "parallax.core.entity._graph_construction": frozenset(
+        {"PublicationPlan", "allocate", "plan_of", "publish", "relationship"}
+    ),
+    "parallax.core.entity._members": frozenset({"COMPACT_STATE_SLOT", "plan_of"}),
     "parallax.core.entity._row_codec": frozenset({"is_present", "named_state", "plan_of"}),
     "parallax.core.entity._value_object": frozenset(
         {
@@ -323,13 +324,13 @@ def test_that_inventory_names_a_second_function_reaching_the_same_state() -> Non
 # --------------------------------------------------------------------------- #
 
 
-def test_the_sites_backing_logic_would_return_to_are_exactly_these_six() -> None:
+def test_the_sites_backing_logic_would_return_to_are_exactly_these_seven() -> None:
     # Read over every shipped distribution rather than over the package alone,
     # which is what makes this the Module's whole consumer set rather than the
     # part of it that happens to live nearby.
     consumers = _consumers(production_sources())
     assert consumers == {importer: names for importer, names in INSTANCE_STATE_CONSUMERS.items()}
-    assert len(consumers) == 6
+    assert len(consumers) == 7
     assert _naming_the_module_as_text(production_sources()) == []
 
 

@@ -7,14 +7,15 @@ aggregate, because a total in bytes is machine- and interpreter-relative. What
 has been read off it, and under what conditions, is
 ``docs/instance-state-baseline.md``.
 
-**What it does grade is its own reproducibility.** The arm it measures is a
-FIXTURE — ``_instance_state_support.legacy_publication``, which builds one node
-the way Entity Graph Construction builds one today. A frozen reading taken over
-an arm that has stopped standing for the real path describes nothing, so before
-any child starts, every scenario's fixture is compared against the real
-publication path and a disagreement exits non-zero without measuring anything.
-That check has a stated life: it holds while a legacy publication path exists to
-compare against, and retires with the flip that replaces it.
+**The arm it measures is a FIXTURE** —
+``_instance_state_support.legacy_publication``, which builds one node the way
+Entity Graph Construction built one before publication became compact: a
+zero-argument ``model_construct`` filled one member at a time. It reproduced the
+real path exactly while that path existed, and every scenario's fixture was
+compared against it before any reading was taken. Publication no longer builds a
+node that way, so there is nothing left to compare against and the reading this
+fixture takes is what carries the comparison forward — the "before" a later
+aggregate divides into.
 
 **What is measured, per scenario.** Bytes reachable at the seam's innermost point
 while one published node is held that were not reachable before the window
@@ -95,7 +96,7 @@ for _module, _expected in (
 from _instance_state_support import (  # noqa: E402
     SCENARIOS,
     Scenario,
-    disagreements,
+    legacy_publication,
     scenario_named,
 )
 from memory_instruments import (  # noqa: E402
@@ -152,7 +153,7 @@ def held(scenario: Scenario, *, lifecycle: bool) -> Seam:
 
     def run(sample: Callable[[], None]) -> None:
         state = scenario.state() if lifecycle else None
-        node = scenario.legacy(scenario, state)
+        node = legacy_publication(scenario, state)
         sample()
         assert node is not None
 
@@ -178,12 +179,12 @@ def measure(scenario: Scenario) -> Reading:
     read against a floor the interpreter decides, so two arms compared across two
     processes would be compared across two floors.
     """
-    node = cast("BaseModel", scenario.legacy(scenario, scenario.state()))
+    node = cast("BaseModel", legacy_publication(scenario, scenario.state()))
     field_names = tuple(type(node).__pydantic_fields__)
     entries = len(instance_state(node))
 
     def construct() -> None:
-        scenario.legacy(scenario, scenario.state())
+        legacy_publication(scenario, scenario.state())
 
     def read_fields() -> None:
         for name in field_names:
@@ -299,17 +300,11 @@ def _detail(readings: list[Reading]) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def findings(scenarios: tuple[Scenario, ...]) -> list[str]:
-    """Every way a scenario's fixture has stopped reproducing publication."""
-    return [finding for scenario in scenarios for finding in disagreements(scenario)]
-
-
 def main(argv: list[str]) -> int:
     """Measure and print; never judge a number.
 
-    Exit codes: 0 — the measurement ran; 1 — a fixture no longer reproduces the
-    real publication path, so no reading was taken; 2 — usage error. There is no
-    exit code for a number that is too large, deliberately.
+    Exit codes: 0 — the measurement ran; 2 — usage error. There is no exit code
+    for a number that is too large, deliberately.
     """
     if len(argv) > 1:
         print("usage: python tools/instance_state_overhead.py [scenario]", file=sys.stderr)
@@ -317,16 +312,6 @@ def main(argv: list[str]) -> int:
     if argv:
         print(json.dumps(measure(scenario_named(argv[0]))._asdict()))
         return 0
-
-    broken = findings(SCENARIOS)
-    if broken:
-        print(
-            "the legacy arm no longer reproduces publication, so no reading was taken:",
-            file=sys.stderr,
-        )
-        for finding in broken:
-            print(f"  {finding}", file=sys.stderr)
-        return 1
 
     readings = [in_a_child(scenario) for scenario in SCENARIOS]
     lines = ["parallax published instance state — legacy publication arm", ""]

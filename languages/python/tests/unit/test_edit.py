@@ -43,7 +43,12 @@ from parallax.core.entity import (
 )
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._declaration import FRAMEWORK_NAME_PREFIX, LIFECYCLE_STATE_SLOT
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT, WireNames, wire_names_of
+from parallax.core.entity._entity import (
+    CHANGE_RECORD_SLOT,
+    WireNames,
+    lifecycle_state,
+    wire_names_of,
+)
 from parallax.core.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
     COMPACT_STATE_SLOT,
@@ -565,7 +570,13 @@ def test_an_edit_carries_a_slot_no_declaration_and_no_lifecycle_names(
 ) -> None:
     # The proof that the carry is by COMPLEMENT: this slot belongs to no kind
     # either `edit` or a lifecycle knows, and it travels anyway.
-    node = _materialized_order()
+    #
+    # Stated over an edited copy rather than over the node it came from, because
+    # a published node has no storage for such a name to be in: its whole state
+    # is its row, its loaded tails, and its author-owned slot, and the complement
+    # is over what the backing NAMES rather than over a dictionary. An edited copy
+    # is ordinary, so the complement there is a dictionary again.
+    node = _materialized_order().edit()
     marker = object()
     object.__setattr__(node, "__parallax_unnamed__", marker)
     assert node.edit(**changes).__dict__["__parallax_unnamed__"] is marker
@@ -602,6 +613,15 @@ make a write to the copy a write to its source; the copy gets its own outer
 mapping of each instead.
 """
 
+_CARRIED_BY_IDENTITY: Final = frozenset({LIFECYCLE_STATE_SLOT})
+"""The one slot a copy takes as it stands, rather than deriving or copying.
+
+Its payload is whatever a lifecycle's state factory returned and is opaque to
+Entity, so there is nothing to copy shallowly and nothing to rebuild: the copy
+either carries the record of the read that published its source or it does not,
+and `test_an_edit_preserves_the_lifecycle_state` is where it does.
+"""
+
 
 def test_the_framework_lays_out_exactly_the_slots_the_carry_classifies() -> None:
     # Both halves of the carry — which slots it derives rather than takes, and
@@ -610,18 +630,21 @@ def test_the_framework_lays_out_exactly_the_slots_the_carry_classifies() -> None
     # exactly. A Pydantic release adding a slot of its own would fall into the
     # carried complement and silently take the shallow copy above; this equality
     # fails there instead, where a new slot's semantics have to be classified.
-    assert set(BaseModel.__slots__) | {COMPACT_STATE_SLOT, AUXILIARY_STATE_SLOT} == (
-        _REBUILT_SLOTS | _COPIED_CONTAINER_SLOTS
-    )
+    assert set(BaseModel.__slots__) | {
+        COMPACT_STATE_SLOT,
+        AUXILIARY_STATE_SLOT,
+        LIFECYCLE_STATE_SLOT,
+    } == (_REBUILT_SLOTS | _COPIED_CONTAINER_SLOTS | _CARRIED_BY_IDENTITY)
 
 
 def test_a_declared_class_lays_out_no_slot_of_its_own() -> None:
     # What makes the carry above a complement over a FIXED layout: a declaration
     # may not extend a foreign base and may not declare `__slots__`, so the
-    # layout a concrete declared class gives its instances is the shared root's,
-    # and the classification has no seventh slot to have missed. Reopening either
-    # route puts a slot in a concrete class's layout that this equality does not
-    # allow.
+    # layout a concrete declared class gives its instances is the framework
+    # roots' own — the shared backing root's, plus the lifecycle slot only an
+    # Entity is ever handed state for — and the classification has no further
+    # slot to have missed. Reopening either route puts a slot in a concrete
+    # class's layout that this equality does not allow.
     with pytest.raises(EntityDefinitionError) as caught:
 
         class _Slotted(Entity, table="slotted", namespace="parallax.compatibility"):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
@@ -630,7 +653,7 @@ def test_a_declared_class_lays_out_no_slot_of_its_own() -> None:
             id: Attr[int] = attr(primary_key=True)
 
     assert caught.value.code == "entity-reserved-member-name"
-    assert set(layout_slots(_Marked)) == set(layout_slots(BackedModel))
+    assert set(layout_slots(_Marked)) == set(layout_slots(BackedModel)) | {LIFECYCLE_STATE_SLOT}
 
 
 @pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
@@ -648,7 +671,9 @@ def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
     marked = _Marked(id=1, label="a")
     cast("Any", marked)._mark = 9
     carried = {
-        name: slot for name, slot in layout_slots(_Marked).items() if name not in _REBUILT_SLOTS
+        name: slot
+        for name, slot in layout_slots(_Marked).items()
+        if name not in _REBUILT_SLOTS | _CARRIED_BY_IDENTITY
     }
     assert set(carried) == _COPIED_CONTAINER_SLOTS
     copied = marked.edit(**changes)
@@ -762,9 +787,14 @@ def test_an_edit_of_a_plainly_constructed_value_adds_no_lifecycle_state_or_view(
 
 # The kinds of instance state a materialized node's edited copy carries, named
 # by hand rather than read off the code that installs them, so a kind added on
-# either side fails here instead of agreeing with itself. A fifth kind lands in
+# either side fails here instead of agreeing with itself. A sixth kind lands in
 # no bucket, and answering this failure is where its author decides whether an
 # edit carries it.
+#
+# Lifecycle state is the one kind that is not under a name in the copy's
+# dictionary: it rides a slot of the Entity root's own layout, which is what lets
+# a published node hold it while holding no dictionary at all, so it is counted
+# where it lives rather than where the other five do.
 _STATE_KINDS = frozenset(
     {
         "declared attribute",
@@ -777,8 +807,6 @@ _STATE_KINDS = frozenset(
 
 
 def _state_kind(py_name: str, names: WireNames) -> str | None:
-    if py_name == "__parallax_lifecycle__":
-        return "lifecycle state"
     if py_name == "__parallax_changes__":
         return "change record"
     if py_name in names.relationship_identities:
@@ -798,4 +826,6 @@ def test_every_kind_of_state_an_edited_node_carries_is_one_of_the_five_named() -
             kind = _state_kind(py_name, names)
             assert kind is not None, py_name
             observed.add(kind)
+        assert lifecycle_state(node) is not None
+        observed.add("lifecycle state")
     assert observed == _STATE_KINDS

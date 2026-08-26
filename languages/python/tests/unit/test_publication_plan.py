@@ -184,9 +184,15 @@ def test_class_metadata_does_not_grow_with_published_instance_count() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_publication_carries_every_required_member_or_is_refused() -> None:
-    with pytest.raises(ValueError, match="required id, name"):
-        published(Cat, spot=None)
+def test_a_required_member_publication_carried_no_value_for_reads_its_position() -> None:
+    # Publication refuses no row for what it does not carry. A required member has
+    # no declared default, so its position holds `None` — not a value the member
+    # admits, and not one publication invented either: a read is entitled to carry
+    # nothing there, and the presence bit beside it is what keeps that
+    # distinguishable from a carried null.
+    value = published(Cat, spot=None)
+    assert (value.id, value.name) == (None, None)
+    assert value.model_fields_set == {"spot"}
 
 
 def test_a_member_no_class_declares_is_refused() -> None:
@@ -208,8 +214,8 @@ def test_a_published_value_is_attached_exactly_once() -> None:
 
 def test_a_refused_publication_leaves_the_shell_unattached() -> None:
     shell = allocate(Cat)
-    with pytest.raises(ValueError, match="required"):
-        publish(shell, {"id": 1})
+    with pytest.raises(ValueError, match="declares no member 'nope'"):
+        publish(shell, {"id": 1, "nope": 2})
     assert not hasattr(shell, COMPACT_STATE_SLOT)
 
 

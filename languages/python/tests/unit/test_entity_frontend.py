@@ -38,7 +38,6 @@ from parallax.core import (
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.base import Float32, Int32, Int64, String, Timestamp
 from parallax.core.entity import (
-    UNLOADED,
     AttributeExpr,
     Predicate,
     RelationshipPath,
@@ -603,7 +602,6 @@ def test_instance_access_returns_the_member_value_and_relationships_stay_closed_
     order = _order()
     assert order.qty == 2
     assert order.coupon_id is None
-    object.__setattr__(order, "customer", UNLOADED)
     with pytest.raises(UnloadedRelationshipError):
         _ = order.customer
 

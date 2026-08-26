@@ -29,7 +29,7 @@ from parallax.core.entity._expressions import (
     RelationshipPath,
     RelationshipRef,
 )
-from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, is_published, plan_of
+from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, plan_of
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -617,19 +617,23 @@ class Rel[T]:
         return value
 
     def __set__(self, obj: object, value: object) -> None:
-        """Write the relationship into ordinary storage, or refuse.
+        """Refused: a relationship position is written where the rest of a value's
+        state is, and nowhere else.
 
         A published value's whole state is attached once, so a later write has
-        nowhere truthful to land: the presentation it would reach is built per
+        nowhere truthful to land — the presentation it would reach is built per
         read and discarded with it, and the tail the next read consults would
-        still hold the sentinel. So it is refused rather than absorbed.
+        still hold the sentinel. Ordinary backing is reached the same way it is
+        for every other name a value holds, by writing its storage; nothing in
+        the framework assigns one member at a time through this descriptor. So
+        this is a refusal rather than a branch, and a caller that means to build
+        a value builds it whole.
         """
-        if is_published(obj):
-            raise AttributeError(
-                f"{type(obj).__name__}.{self._py_name}: a published value's relationships are "
-                "attached once, with the rest of its state"
-            )
-        obj.__dict__[self._py_name] = value
+        del value
+        raise AttributeError(
+            f"{type(obj).__name__}.{self._py_name}: a value's relationships are attached "
+            "once, with the rest of its state"
+        )
 
 
 def _access_source(owner: type | None) -> str | None:

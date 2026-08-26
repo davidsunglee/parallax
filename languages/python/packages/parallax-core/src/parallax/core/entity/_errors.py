@@ -164,6 +164,7 @@ GRAPH_CONSTRUCTION_CODES: Final[frozenset[str]] = frozenset(
         "entity-graph-node-unpopulated",
         "entity-graph-invalid-root",
         "entity-graph-invalid-value",
+        "entity-graph-layout-mismatch",
     }
 )
 """The complete Entity Graph Construction misuse vocabulary. Every code names a

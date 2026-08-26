@@ -572,6 +572,15 @@ def test_a_null_many_cardinality_document_column_constructs_an_empty_tuple() -> 
 # row of the right width can express. The refusal is therefore the declared    #
 # type's own: a decoded member row stands where a `str` is declared, and no    #
 # `str` is what the writer says.                                               #
+#                                                                              #
+# The seam's own guarantee against a kind disagreement is a different one and  #
+# is graded elsewhere: the construction compares the model it derives its      #
+# layouts from against the classes it publishes, once per pair, and refuses    #
+# with `entity-graph-layout-mismatch`                                          #
+# (`test_publication_attachment.py`). It cannot reach this case, and correctly #
+# so — the model that laid this row out is the merge's, not the one the        #
+# construction resolved its classes under, so the two facts the check compares #
+# agree here and the row is what disagrees with both.                          #
 # --------------------------------------------------------------------------- #
 class _MergeScalarProfile(
     Entity, table="merge_scalar_profile", name="MergeScalarProfile", namespace=_NAMESPACE

@@ -188,29 +188,27 @@ managed slice's entirely different record — travels under one name Entity
 exposes nowhere and interprets never. One slot rather than a per-fact family is
 what keeps Entity free of every lifecycle's vocabulary.
 
-The value is written into the instance's own storage, alongside field values but
-outside the Pydantic field set, so it is invisible to canonical serialization,
-equality, and ``repr``. Pickling is the one conversion it does not merely
-disappear from: a pickle carries whatever the value ANSWERS for the name its
-instance state is presented under, and a lifecycle's private record of a live
-read has no truthful form on the other side of a process boundary, so a value
-carrying state here is refused at the pickle entry point rather than quietly
-emptied of it.
+It is a real slot on the ``Entity`` root rather than an entry in the instance
+storage, which is what lets a published node have no storage at all; Value
+Objects have no lifecycle and are given no such slot. Being a slot also keeps it
+outside everything Pydantic reads — the field set, canonical serialization,
+equality, and ``repr`` all reach a value's declared state and none of them reach
+here — and outside every mapping a copy is derived from, so an edit carries it
+across explicitly rather than by riding along.
 
-That refusal is the one thing Entity reads this slot for, and it asks the value's
-own backing whether the slot holds anything but ``None``: a factory returning
-``None`` leaves a node every reader of a lifecycle sees nothing on, and a pickle
-of it can claim nothing untrue. That is a different read from
-``lifecycle_state_of``, which resolves the name through the class, so a class
-body binding ``__getattr__``, ``__getattribute__``, or a descriptor at this very
-name can make the two disagree. Every write the framework makes — a read's
-attachment and an edit's carry-forward alike — goes to the backing, so what such
-a class buys is blinding its own lifecycle's readers rather than a pickle of a
-node a read published: the state is opaque here, and the lifecycle that would
-grant anything for it authenticates what it attached itself.
-
-Emptying is what remains for the conversions that reach ``Entity.__getstate__``
-without passing that entry point, and it drops the slot however it is filled."""
+Pickling is the one conversion it does not merely disappear from: a lifecycle's
+private record of a live read has no truthful form on the other side of a process
+boundary, so a value carrying state here is refused at the pickle entry point.
+That refusal is the one thing Entity reads this slot for, and it reads the slot's
+own descriptor: a factory returning ``None`` leaves a node every reader of a
+lifecycle sees nothing on, and a pickle of it can claim nothing untrue. That is a
+different read from ``lifecycle_state_of``, which resolves the name through the
+class, so a class body binding ``__getattr__``, ``__getattribute__``, or a class
+attribute at this very name can make the two disagree. Every write the framework
+makes — a read's attachment and an edit's carry-forward alike — goes to the slot,
+so what such a class buys is blinding its own lifecycle's readers rather than a
+pickle of a node a read published: the state is opaque here, and the lifecycle
+that would grant anything for it authenticates what it attached itself."""
 
 _ATTR_TEXT = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
 _REL_TEXT = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)

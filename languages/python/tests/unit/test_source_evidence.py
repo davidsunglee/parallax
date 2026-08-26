@@ -20,11 +20,7 @@ from decimal import Decimal
 from typing import Any, ClassVar, Final, cast
 
 import pytest
-from _authored_storage_support import (
-    answering_for_instance_state,
-    forge_into_storage,
-    stored_state,
-)
+from _authored_storage_support import answering_for_instance_state, stored_state
 from _transact_support import (
     BALANCE,
     PERSON,
@@ -47,6 +43,7 @@ from parallax.core.entity import (
     graph_construction_of,
 )
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
+from parallax.core.entity._entity import lifecycle_state
 from parallax.core.entity._model import DomainModel
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
@@ -213,7 +210,7 @@ class _InventedDict(Entity, table="invented_dict", namespace="parallax.compatibi
 
 
 class _ForgeableDict(Entity, table="forging_dict", namespace="parallax.compatibility"):
-    """An Entity whose values a caller forges the lifecycle slot into."""
+    """An Entity whose values a caller forges lifecycle state into."""
 
     id: Attr[int] = attr(primary_key=True)
 
@@ -387,9 +384,16 @@ def test_a_class_body_hiding_the_lifecycle_slot_is_refused_all_the_same() -> Non
     # The same fact read from the other side. The state is attached exactly as
     # Entity Graph Construction attaches it, and a class body that denies the
     # slot exists does not buy a pickle of a materialized node.
+    #
+    # The denial no longer even reaches an ordinary reader: the state rides a real
+    # slot of the Entity root's layout, so a `__getattribute__` raising for the
+    # name sends the lookup on to Pydantic's own `__getattr__`, which answers from
+    # the class's descriptor. What the refusal reads is that descriptor directly,
+    # which is why it is indifferent to either.
     value = _HidingAttributes(id=7)
-    object.__setattr__(value, LIFECYCLE_STATE_SLOT, object())
-    assert getattr(value, LIFECYCLE_STATE_SLOT, None) is None
+    state = object()
+    object.__setattr__(value, LIFECYCLE_STATE_SLOT, state)
+    assert lifecycle_state(value) is state
 
     with pytest.raises(pickle.PicklingError):
         pickle.dumps(value)
@@ -421,18 +425,21 @@ def test_a_class_body_inventing_the_slot_leaves_an_ordinary_value_pickleable() -
     assert snapshot_state_of(restored) is None
 
 
-def test_a_slot_forged_into_a_value_s_own_storage_refuses_that_value() -> None:
+def test_a_state_forged_into_a_value_s_own_slot_refuses_that_value() -> None:
     # The invented slot above is an answer the refusal reads past; this one is
-    # written into the storage the refusal reads, by a caller holding the value —
-    # the residual no in-process design closes. What it buys is the refusal, on a
-    # plainly constructed value: the state is opaque to Entity, so no reader here
-    # can tell a forged one from a real one, and the readers that grant anything
-    # for carrying it do not ask Entity — a lifecycle authenticates its own state
+    # written into the slot the refusal reads, by a caller holding the value —
+    # the residual no in-process design closes, now narrowed to that one write:
+    # forging the name into the value's storage buys nothing at all, because the
+    # state does not live there. What it buys is the refusal, on a plainly
+    # constructed value: the state is opaque to Entity, so no reader here can
+    # tell a forged one from a real one, and the readers that grant anything for
+    # carrying it do not ask Entity — a lifecycle authenticates its own state
     # (`snapshot_state_of`), which is what a class body answering for the slot's
     # name through `__getattr__` has always run into.
     value = _ForgeableDict(id=7)
-    forge_into_storage(value, LIFECYCLE_STATE_SLOT, _INVENTED_STATE)
-    assert stored_state(value)[LIFECYCLE_STATE_SLOT] is _INVENTED_STATE
+    object.__setattr__(value, LIFECYCLE_STATE_SLOT, _INVENTED_STATE)
+    assert lifecycle_state(value) is _INVENTED_STATE
+    assert LIFECYCLE_STATE_SLOT not in stored_state(value)
     assert snapshot_state_of(value) is None
 
     with pytest.raises(pickle.PicklingError):
@@ -489,7 +496,8 @@ def test_a_class_diverting_the_lifecycle_slot_is_refused_all_the_same() -> None:
     (root,) = graph_construction_of(_DIVERTED_MODEL).construct(
         build, state_factory=lambda _view, _handle: state
     )
-    assert stored_state(cast("_DivertedSlotNode", root))[LIFECYCLE_STATE_SLOT] is state
+    assert lifecycle_state(cast("_DivertedSlotNode", root)) is state
+    assert stored_state(cast("_DivertedSlotNode", root)).get(_DIVERTED_TO) is None
 
     with pytest.raises(pickle.PicklingError):
         pickle.dumps(root)

@@ -33,9 +33,9 @@ storage itself, and an ordinary attribute read is a plain model's. That is a
 settled trade rather than an unfinished one — :class:`_DeclaredState` states why
 the cache that would flatten it is forbidden.
 
-Only a few questions vary by backing — what a declared member holds, whether the
-read carried it, and, once a caller reads a published relationship tail, what a
-relationship position holds. Everything else needs declared values and, at most,
+Only three questions vary by backing — what a declared member holds, whether the
+read carried it (:func:`is_present`), and what a relationship position holds
+(:func:`relationship`). Everything else needs declared values and, at most,
 presence, so it is written once over both.
 
 Which way a question is asked is part of that. A caller reading one member's
@@ -107,6 +107,7 @@ __all__ = [
     "named_state",
     "plan_of",
     "publish",
+    "relationship",
     "restated",
 ]
 
@@ -155,10 +156,15 @@ class PublicationPlan:
     template: tuple[object, ...]
     """A prebuilt row — bitmap zero, each member's declared default, an all-unloaded
     relationship tail — copied per published value, so an absent position costs the
-    walk nothing."""
-    required_mask: int
-    """One comparison against the assembled bitmap rejects a row missing a required
-    member, in place of a check on every read."""
+    walk nothing.
+
+    A member the class declares required has no declared default to hold, and its
+    position holds ``None``. That is not a value the member admits; it is what a
+    position a read did not carry reads back as, with its presence bit clear, so
+    ``model_fields_set`` and ``exclude_unset`` still tell the two apart. A read is
+    entitled to carry no value there — a required position the stored data left
+    absent is a recorded finding on the projection rather than a refusal — so
+    publication invents nothing for it and refuses nothing over it."""
     bits: Mapping[str, int]
     """Each declared member's presence bit."""
     indexes: Mapping[str, int]
@@ -221,19 +227,13 @@ def install(
         )
     bits = {py_name: bit for bit, py_name in enumerate(members)}
     indexes = {py_name: bit + 1 for py_name, bit in bits.items()}
-    required_mask = 0
     row: list[object] = [0]
     for py_name in members:
         field = fields[py_name]
-        if field.is_required():
-            required_mask |= 1 << bits[py_name]
-            row.append(None)
-        else:
-            row.append(field.get_default(call_default_factory=True))
+        row.append(None if field.is_required() else field.get_default(call_default_factory=True))
     row.extend(UNLOADED for _ in relationships)
     plan = PublicationPlan(
         template=tuple(row),
-        required_mask=required_mask,
         bits=MappingProxyType(bits),
         indexes=MappingProxyType(indexes),
         py_names=members,
@@ -869,18 +869,45 @@ def restated[M: BaseModel](value: M, state: dict[str, object]) -> M:
     return copied
 
 
+def relationship(value: BaseModel, py_name: str) -> object:
+    """``value``'s raw position for the relationship ``py_name``, sentinel included.
+
+    The one read that distinguishes unloaded from loaded-null without raising,
+    and one of the three questions the two backings answer differently: a
+    published value holds every declared direction in its row's tail, and an
+    ordinary one holds only the loaded ones under their own names in storage, so
+    a name that was never written is unloaded there exactly as the sentinel is
+    here. A reader arriving with only an instance resolves the position off the
+    class's plan, as every such reader does.
+    """
+    row = _compact(value)
+    if row is None:
+        return instance_state(value).get(py_name, UNLOADED)
+    return row[plan_of(type(value)).relationships[py_name]]
+
+
 def publish(
     instance: BaseModel,
     values: Mapping[str, object],
     relationships: Mapping[str, object] = MappingProxyType({}),
+    *,
+    shared_bitmaps: dict[int, int] | None = None,
 ) -> None:
     """Assemble ``instance``'s complete compact row and attach it, once.
 
     Attachment is the atomic act of populating the value: the row is built in
     local state and every refusal happens before anything is written, so no
     partially published value exists at any point. A member ``values`` does not
-    name keeps its declared default and leaves its presence bit clear; a required
-    member it does not name is one mask comparison, not a check on every read.
+    name keeps whatever :attr:`PublicationPlan.template` holds at its position
+    and leaves its presence bit clear.
+
+    ``shared_bitmaps`` is one caller's own memo of the presence masks it has
+    already assembled, and its life is that caller's. CPython interns small
+    integers, so a mask through ``0b11111111`` is a shared singleton already and
+    a wider one allocates; every node of one class in one materialization comes
+    from one projection and so repeats one pattern, which the memo turns into one
+    shared integer per distinct pattern. Nothing process-wide holds it, so no
+    mask outlives the graph whose publication assembled it.
     """
     plan = plan_of(type(instance))
     if _compact(instance) is not None:
@@ -898,23 +925,13 @@ def publish(
             raise ValueError(f"{type(instance).__name__} declares no member {py_name!r}")
         row[index] = member
         bitmap |= 1 << bits[py_name]
-    if bitmap & plan.required_mask != plan.required_mask:
-        missing = sorted(
-            py_name
-            for py_name, bit in bits.items()
-            if plan.required_mask >> bit & 1 and not bitmap >> bit & 1
-        )
-        raise ValueError(
-            f"{type(instance).__name__}: publication carries no value for required "
-            f"{', '.join(missing)}"
-        )
     tail = plan.relationships
     for py_name, related in relationships.items():
         index = tail.get(py_name)
         if index is None:
             raise ValueError(f"{type(instance).__name__} declares no relationship {py_name!r}")
         row[index] = related
-    row[0] = bitmap
+    row[0] = bitmap if shared_bitmaps is None else shared_bitmaps.setdefault(bitmap, bitmap)
     _CompactState.__set__(instance, tuple(row))
 
 
