@@ -688,14 +688,20 @@ def test_an_asymmetric_child_grant_becomes_one_named_exception() -> None:
 
 
 def test_a_child_granted_its_own_sibling_needs_no_exception() -> None:
-    # `parallax.core.entity._row` is granted two scopes its parent's row does not
-    # name — but both sit inside that parent's own package, which a row can
-    # neither forbid nor except. An entry for either would be an ignored import
-    # matching nothing, which `unmatched_ignore_imports_alerting` rejects, so the
-    # asymmetry test has to read containment rather than the grant table alone.
+    # `parallax.core.entity._instance_state` is granted two scopes its parent's
+    # row does not name — but both sit inside that parent's own package, which a
+    # row can neither forbid nor except. An entry for either would be an ignored
+    # import matching nothing, which `unmatched_ignore_imports_alerting` rejects,
+    # so the asymmetry test has to read containment rather than the grant table
+    # alone.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    siblings = frozenset({"parallax.core.entity._layout", "parallax.core.entity._graph_input"})
-    assert siblings <= dag.SUPPORT_SCOPE_DEPS["parallax.core.entity._row"]
+    siblings = frozenset(
+        {
+            "parallax.core.entity._construction_input",
+            "parallax.core.entity._pydantic_storage",
+        }
+    )
+    assert siblings <= dag.SUPPORT_SCOPE_DEPS["parallax.core.entity._instance_state"]
     assert not siblings & adjacency["parallax.core.entity"]
     assert all(dag.scope_ancestors(one) == frozenset({"parallax.core.entity"}) for one in siblings)
     assert dag.child_grant_exceptions(adjacency, "parallax.core.entity") == []
@@ -703,7 +709,7 @@ def test_a_child_granted_its_own_sibling_needs_no_exception() -> None:
     # means the row permits every module of that package, so the scope is
     # declared SEALED and `tools/check_scope_ownership.py` refuses the imports
     # this contract cannot — the two halves are what make the grant complete.
-    assert "parallax.core.entity._row" in dag.SEALED_CHILD_SCOPES
+    assert "parallax.core.entity._instance_state" in dag.SEALED_CHILD_SCOPES
 
 
 def test_check_child_scopes_rejects_a_sealed_scope_that_is_not_a_child(

@@ -151,14 +151,14 @@ per-cell carriers per projection across **six** types. Two of them,
 `SnapshotNodeRef` and `SnapshotRelationshipViewInput`, were deleted outright with
 the rest of the graph-input representation. The other four —
 `EntityAttributeInput`, `ValueObjectRecord`, `ValueObjectAttributeInput`, and
-`ValueObjectOccurrenceInput` — still exist in `parallax.core.entity`, and a
-typed read still composes them: `member_carriers` translates a merged row into
-them at Entity Graph Construction's door. What changed is that they are no longer
-part of what a graph *retains*. They are built from the row when an Entity
-instance is constructed and die with the frame that constructed it, where before
-the cutover the graph held one per cell for the life of the read. The survivor
-census after the cutover names no Parallax type at all whose count grows with the
-graph.
+`ValueObjectOccurrenceInput` — survived the cutover in `parallax.core.entity`,
+composed per node at Entity Graph Construction's door and dropped with the frame
+that composed them, so they were no longer part of what a graph *retained* even
+then. They have since been deleted as well: `populate` takes the merge's own
+positional member row by reference, so a node is constructed from the row rather
+than from anything built out of it. The survivor census after the cutover already
+named no Parallax type whose count grows with the graph, and the four deletions
+take the per-node term to zero too.
 
 ## Conditions
 
@@ -285,8 +285,9 @@ Not one type after the cutover has a marginal cost per projection above zero
 except `tuple`, and every `tuple` in that count is a member row, a Value Object
 record, a view row, or a to-many arm — a position rather than a wrapper. Nothing
 carrier-shaped survives at all: the two Snapshot-specific carrier types no longer
-exist, and the four core ones the previous section names are composed and dropped
-inside a construction rather than retained.
+exist, and the four core ones the previous section names were composed and
+dropped inside a construction rather than retained — and have since been deleted
+with the identity-keyed algebra that spelled them.
 
 The tracked-tuple count is the one figure that is not flat per projection across
 the grid (5.79 at 8 cells against 3.38 at 64). That is the collector rather than

@@ -14,10 +14,10 @@ fan-back names a view and the builder resolves the slot, and no key travels
 beside a value.
 
 Absence stops being spelled by omission, because a positional row has no way to
-omit. :data:`~parallax.core.entity._row.ABSENT` carries it — the one sentinel the
-common runtime owns beside the member layouts a row is read against, re-exported
-here because this is where the Snapshot's absence algebra is stated — and the
-four spellings stay mutually distinct at every depth:
+omit. :data:`~parallax.core.entity._construction_input.ABSENT` carries it — the one
+sentinel the common runtime owns beside the member layouts a row is read
+against, re-exported here because this is where the Snapshot's absence algebra
+is stated — and the four spellings stay mutually distinct at every depth:
 
 ===============================  =========================================
 ``ABSENT``                       absent or unloaded, and what an
@@ -51,8 +51,8 @@ from dataclasses import dataclass
 from typing import Final, Literal, cast
 
 from parallax.core.document_codec import DocumentPathSegment
+from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
-from parallax.core.entity._row import ABSENT
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,

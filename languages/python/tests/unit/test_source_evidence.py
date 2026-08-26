@@ -41,7 +41,6 @@ from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
 from parallax.core import Attr, Entity, attr
 from parallax.core.entity import (
-    EntityAttributeInput,
     EntityDefinitionError,
     EntityGraphWriter,
     NodeHandle,
@@ -49,7 +48,6 @@ from parallax.core.entity import (
 )
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
 from parallax.core.entity._model import DomainModel
-from parallax.core.metamodel import AttributeIdentity
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     VersionedStateKey,
@@ -485,7 +483,7 @@ def test_a_class_diverting_the_lifecycle_slot_is_refused_all_the_same() -> None:
 
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         node = writer.allocate(identity)
-        writer.populate(node, (EntityAttributeInput(AttributeIdentity(identity, "id"), 7),), (), ())
+        writer.populate(node, (7,), ())
         return (node,)
 
     (root,) = graph_construction_of(_DIVERTED_MODEL).construct(

@@ -34,13 +34,12 @@ projection merge that produce and consume it.
   the same root classification, so both publish the same verdicts.
 
 Nothing here constructs an Entity: this scope is granted the exact-model member
-layouts (``parallax.core.entity._layout``) and the positional row scope
-(``parallax.core.entity._row``) and nothing else of the Entity frontend, so the
-layering between a materialized row and graph construction is structurally
-enforced rather than asserted. A row reaches this scope already laid out and
-leaves it as one; of the row scope this one takes the absence sentinel alone,
-and the writer's own carriers are synthesized above it, one node at a time,
-through the translation that scope owns. Its consumers —
+layouts (``parallax.core.entity._layout``) and the construction-input sentinels
+(``parallax.core.entity._construction_input``) and nothing else of the Entity
+frontend, so the layering between a materialized row and graph construction is
+structurally enforced rather than asserted. A row reaches this scope already
+laid out and leaves it as one, and of the sentinel scope this one takes the
+absence sentinel alone. Its consumers —
 ``parallax.snapshot.handle._materializer`` and the wire materializer above —
 each compose it with what their own result form needs.
 

@@ -24,7 +24,10 @@ Two rules live here rather than at the callers that would otherwise restate
 them: :meth:`EntityLayout.key_of` owns the single-versus-composite spelling of a
 logical key, and :meth:`EntityLayout.ordered` owns the canonical view order.
 Positions stay public because the hot paths iterate members in order; it is the
-rules that are hidden, not the indexing.
+rules that are hidden, not the indexing. The canonical broad-relationship order
+is public for that reason too — a full-width relationship row is written at
+those positions, and a producer that derived them again would fix a second
+order.
 
 A model defect found while deriving a layout is a raised :class:`ValueError`,
 never a stored-data classification: a row cannot contradict a position that the
@@ -117,6 +120,14 @@ class EntityLayout:
     temporal bound. The declaring family owns its as-of axes, so which of a
     concrete's Attributes close an interval is family-wide and fixed here rather
     than re-resolved through the inheritance facet once per stored value.
+
+    ``relationships`` is the canonical broad-relationship row: every navigable
+    direction under the identity that declares it, in accepted declaration
+    order, ancestry first. ``relationship_index`` locates one by name, and an
+    undeclared name is absent from it. That order is the one rule two callers
+    share — the canonical view slot order :meth:`ordered` sorts into, and the
+    positions a full-width broad-relationship row is written at — so both read it
+    here rather than each deriving it.
     """
 
     concrete: EntityIdentity
@@ -128,8 +139,9 @@ class EntityLayout:
     occurrences: tuple[ValueObjectMetadata, ...]
     value_objects: tuple[ValueObjectLayout, ...]
     temporal_ends: frozenset[AttributeIdentity]
+    relationships: tuple[RelationshipIdentity, ...]
+    relationship_index: Mapping[str, int]
     _primary_key: tuple[int, ...]
-    _relationship_order: Mapping[str, int]
 
     def key_of(self, row: tuple[object, ...]) -> object:
         """``row``'s logical key: the raw scalar for a single-column primary key,
@@ -150,9 +162,7 @@ class EntityLayout:
         return tuple(sorted(views, key=self._rank))
 
     def _rank(self, view: NarrowableView) -> tuple[int, int, str]:
-        position = self._relationship_order.get(
-            view.relationship.name, len(self._relationship_order)
-        )
+        position = self.relationship_index.get(view.relationship.name, len(self.relationship_index))
         return position, int(view.narrowed_view is not None), view.narrowed_view or ""
 
 
@@ -211,6 +221,7 @@ class LayoutCatalog:
             *(occurrence.identity for occurrence in occurrences),
         )
         index_of: Mapping[MemberIdentity, int] = _positions(members, identity.canonical)
+        relationships = _navigable_relationships(self._model, position.ancestry)
         return EntityLayout(
             concrete=identity,
             family=(
@@ -225,8 +236,11 @@ class LayoutCatalog:
             occurrences=occurrences,
             value_objects=tuple(_occurrence_layout(occurrence) for occurrence in occurrences),
             temporal_ends=self._temporal_ends(position.root),
+            relationships=relationships,
+            relationship_index=MappingProxyType(
+                {direction.name: position for position, direction in enumerate(relationships)}
+            ),
             _primary_key=self._key_positions(identity, position.root, index_of),
-            _relationship_order=_relationship_order(self._model, position.ancestry),
         )
 
     def _temporal_ends(self, root: EntityIdentity) -> frozenset[AttributeIdentity]:
@@ -341,9 +355,10 @@ def _spelling(identity: ValueObjectIdentity) -> str:
     return ".".join((identity.entity.canonical, *identity.path))
 
 
-def _relationship_order(model: Metamodel, ancestry: Sequence[EntityIdentity]) -> Mapping[str, int]:
-    """Each navigable relationship name's position in accepted declaration order,
-    ancestry first.
+def _navigable_relationships(
+    model: Metamodel, ancestry: Sequence[EntityIdentity]
+) -> tuple[RelationshipIdentity, ...]:
+    """Every navigable direction in accepted declaration order, ancestry first.
 
     A relationship declared on an inheritance ancestor is reached by every
     concrete descendant under the ancestor's own identity and is never
@@ -351,8 +366,8 @@ def _relationship_order(model: Metamodel, ancestry: Sequence[EntityIdentity]) ->
     name taken from the nearest declaration.
     """
     facet = relationship_view(model)
-    order: dict[str, int] = {}
+    order: dict[str, RelationshipIdentity] = {}
     for ancestor in ancestry:
         for direction in facet.relationships(ancestor) or ():
-            order.setdefault(direction.identity.name, len(order))
-    return MappingProxyType(order)
+            order.setdefault(direction.identity.name, direction.identity)
+    return tuple(order.values())

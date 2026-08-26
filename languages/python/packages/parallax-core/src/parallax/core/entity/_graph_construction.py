@@ -4,12 +4,16 @@ Exposed from ``parallax.core.entity`` and deliberately **not** from top-level
 ``parallax.core``: it is the seam a lifecycle package builds a graph of frozen
 Entity instances through, not developer surface.
 
-The immutable carriers it is stated in live in the sibling
-:mod:`parallax.core.entity._graph_input` scope, so a lifecycle package
-materializing Entities can be granted that algebra without being granted this
-collaboration.
+A node crosses its door as two positional rows: its full-width member row, laid
+out against its exact Entity's member layout
+(:mod:`parallax.core.entity._layout`), and a full-width broad-relationship row
+in that layout's canonical order. The sentinels those rows spell absence and
+unloadedness with, and the handle a relationship position names a node by, live
+in the sibling :mod:`parallax.core.entity._construction_input` scope, so a
+lifecycle package materializing Entities can be granted the vocabulary without
+being granted this collaboration.
 
-The collaboration owns everything about turning those carriers into Entity
+The collaboration owns everything about turning those rows into Entity
 and Value Object instances — concrete class selection, canonical-to-Python member
 mapping, recursive Value Object construction, Pydantic's ``model_construct`` plus
 the ``object.__setattr__`` backdoor, broad relationship-slot installation, the one
@@ -55,14 +59,14 @@ Entity unreachable and lifecycle-state-free.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Container, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 from pydantic import BaseModel
 
 from parallax.core.base import INFINITY, NeutralType, Timestamp, matches_neutral_type
-from parallax.core.entity._construction_input import UNLOADED
+from parallax.core.entity._construction_input import ABSENT, UNLOADED, NodeHandle
 from parallax.core.entity._declaration import (
     LIFECYCLE_STATE_SLOT,
     ValueObjectShape,
@@ -70,19 +74,6 @@ from parallax.core.entity._declaration import (
 )
 from parallax.core.entity._entity import wire_names_of
 from parallax.core.entity._errors import GraphConstructionError
-from parallax.core.entity._graph_input import (
-    UNLOADED_VIEW,
-    EntityAttributeInput,
-    EntityRelationshipInput,
-    LoadedMany,
-    LoadedNull,
-    LoadedOne,
-    NodeHandle,
-    Unloaded,
-    ValueObjectAttributeInput,
-    ValueObjectOccurrenceInput,
-    ValueObjectRecord,
-)
 from parallax.core.entity._model import ClassIndex, DomainModel, class_index, model_of
 from parallax.core.entity._pydantic_storage import attach_instance_state
 from parallax.core.inheritance import view as inheritance_view
@@ -117,26 +108,61 @@ __all__ = [
 
 
 @dataclass(frozen=True, slots=True)
+class _AttributeFacts:
+    """One Attribute as the writer reads it at its own member-row position.
+
+    ``open_ended`` names a temporal interval's end Attribute, resolved once here
+    rather than tested against a family-wide set per stored value.
+    """
+
+    declared: AttributeMetadata
+    py_name: str | None
+    open_ended: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _OccurrenceFacts:
+    """One top-level Value Object occurrence at its own member-row position."""
+
+    declared: ValueObjectMetadata
+    py_name: str | None
+    vo_class: type | None
+
+
+@dataclass(frozen=True, slots=True)
+class _RelationshipFacts:
+    """One navigable direction at its own broad-relationship-row position."""
+
+    identity: RelationshipIdentity
+    py_name: str | None
+    many: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _EntityFacts:
     """Everything one Entity's construction needs, derived once from the accepted
     model and the Entity Class composed under it.
 
     Family-effective throughout: an inherited Attribute, Value Object, or
     relationship reaches a concrete subtype under its own declaring identity, so
-    each map is keyed by that identity rather than by the concrete's.
+    each run is stated under those declaring identities rather than the
+    concrete's.
+
+    The three runs are what a positional row is read against, each in the
+    exact-model member layout's own order: applicable Attributes ancestry-first,
+    then applicable top-level Value Object occurrences, and separately every
+    navigable direction. Their lengths are what a row's width has to be.
+
+    A ``py_name`` of ``None`` is a member the accepted model declares for this
+    family and this concrete's own MRO does not carry: the position exists
+    because the row is model-fixed, and there is no slot to install at it.
     """
 
     identity: EntityIdentity
     cls: type
-    attributes: tuple[AttributeMetadata, ...]
-    attribute_py: Mapping[AttributeIdentity, str]
-    attribute_meta: Mapping[AttributeIdentity, AttributeMetadata]
-    open_ended: frozenset[AttributeIdentity]
-    value_objects: tuple[ValueObjectMetadata, ...]
-    value_object_py: Mapping[ValueObjectIdentity, str]
-    value_object_class: Mapping[ValueObjectIdentity, type]
-    relationship_py: Mapping[RelationshipIdentity, str]
-    relationship_many: Mapping[RelationshipIdentity, bool]
+    attributes: tuple[_AttributeFacts, ...]
+    value_objects: tuple[_OccurrenceFacts, ...]
+    relationships: tuple[_RelationshipFacts, ...]
 
 
 def _entity_facts(model: Metamodel, classes: ClassIndex, identity: EntityIdentity) -> _EntityFacts:
@@ -162,44 +188,37 @@ def _entity_facts(model: Metamodel, classes: ClassIndex, identity: EntityIdentit
         else tuple(position.applicable_value_objects)
     )
     names = wire_names_of(cls)
-    attribute_py: dict[AttributeIdentity, str] = {}
-    attribute_meta: dict[AttributeIdentity, AttributeMetadata] = {}
-    for attribute in attributes:
-        py_name = names.name_to_py.get(attribute.identity.name)
-        if py_name is None:  # pragma: no cover - a composed class carries every family member
-            continue
-        attribute_py[attribute.identity] = py_name
-        attribute_meta[attribute.identity] = attribute
-    value_object_py: dict[ValueObjectIdentity, str] = {}
-    value_object_class: dict[ValueObjectIdentity, type] = {}
-    for occurrence in value_objects:
-        py_name = names.name_to_py.get(occurrence.identity.path[-1])
-        nested = None if py_name is None else names.vo_classes.get(py_name)
-        if py_name is None or nested is None:  # pragma: no cover - as above
-            continue
-        value_object_py[occurrence.identity] = py_name
-        value_object_class[occurrence.identity] = nested
-    relationship_py: dict[RelationshipIdentity, str] = {}
-    relationship_many: dict[RelationshipIdentity, bool] = {}
-    for direction in _navigable_relationships(model, identity):
-        py_name = names.relationship_py.get(direction.identity.name)
-        # A sibling branch's relationship is navigable in the family namespace but
-        # absent from this concrete's own MRO; it names no slot to install.
-        if py_name is not None:  # pragma: no branch
-            relationship_py[direction.identity] = py_name
-        relationship_many[direction.identity] = direction.cardinality.target is Multiplicity.MANY
+    open_ended = _open_ended_attributes(model, identity)
+    occurrence_py = [
+        names.name_to_py.get(occurrence.identity.path[-1]) for occurrence in value_objects
+    ]
     return _EntityFacts(
         identity=identity,
         cls=cls,
-        attributes=attributes,
-        attribute_py=attribute_py,
-        attribute_meta=attribute_meta,
-        open_ended=_open_ended_attributes(model, identity),
-        value_objects=value_objects,
-        value_object_py=value_object_py,
-        value_object_class=value_object_class,
-        relationship_py=relationship_py,
-        relationship_many=relationship_many,
+        attributes=tuple(
+            _AttributeFacts(
+                declared=attribute,
+                py_name=names.name_to_py.get(attribute.identity.name),
+                open_ended=attribute.identity in open_ended,
+            )
+            for attribute in attributes
+        ),
+        value_objects=tuple(
+            _OccurrenceFacts(
+                declared=occurrence,
+                py_name=py_name,
+                vo_class=None if py_name is None else names.vo_classes.get(py_name),
+            )
+            for occurrence, py_name in zip(value_objects, occurrence_py, strict=True)
+        ),
+        relationships=tuple(
+            _RelationshipFacts(
+                identity=direction.identity,
+                py_name=names.relationship_py.get(direction.identity.name),
+                many=direction.cardinality.target is Multiplicity.MANY,
+            )
+            for direction in _navigable_relationships(model, identity)
+        ),
     )
 
 
@@ -343,15 +362,22 @@ class EntityGraphWriter:
     def populate(
         self,
         handle: NodeHandle,
-        attributes: tuple[EntityAttributeInput, ...],
-        value_objects: tuple[ValueObjectOccurrenceInput, ...],
-        relationships: tuple[EntityRelationshipInput, ...],
+        members: tuple[object, ...],
+        relationships: tuple[object, ...],
     ) -> None:
         """Fill one allocated node exactly once, closing allocation permanently.
 
-        Every navigable relationship slot is installed here — a view no entry
-        names becomes the private unloaded sentinel, which is what makes the
-        closed world a structural fact rather than a convention.
+        ``members`` is the node's full-width member row in its exact Entity's
+        member layout order — every applicable Attribute, then every applicable
+        top-level Value Object occurrence — with ``ABSENT`` at a position the read
+        carried nothing for and a nested member row, or a tuple of them, at an
+        occurrence's. ``relationships`` is one position per navigable direction in
+        that layout's canonical order, each holding ``UNLOADED``, ``None``, one
+        :class:`NodeHandle`, or an exact tuple of them.
+
+        Every navigable relationship slot is installed here — a position holding
+        the unloaded sentinel installs it, which is what makes the closed world a
+        structural fact rather than a convention.
         """
         self._require_open()
         self._allocation_closed = True
@@ -363,7 +389,7 @@ class EntityGraphWriter:
                 index=index,
                 identity=self._scope.facts[index].identity,
             )
-        _populate(self._scope, index, attributes, value_objects, relationships)
+        _populate(self._scope, index, members, relationships)
         self._scope.populated[index] = True
 
     def close(self) -> None:
@@ -609,134 +635,138 @@ def _factory_results(
 def _populate(
     scope: _CallScope,
     index: int,
-    attributes: tuple[EntityAttributeInput, ...],
-    value_objects: tuple[ValueObjectOccurrenceInput, ...],
-    relationships: tuple[EntityRelationshipInput, ...],
+    members: tuple[object, ...],
+    relationships: tuple[object, ...],
 ) -> None:
     facts = scope.facts[index]
     instance = scope.instances[index]
-    entries = _indexed(
-        attributes,
-        EntityAttributeInput,
+    _require_row(
+        members,
+        width=len(facts.attributes) + len(facts.value_objects),
         index=index,
         identity=facts.identity,
-        kind="Attribute",
-        known=facts.attribute_meta,
+        kind="member",
     )
-    occurrences = _indexed(
-        value_objects,
-        ValueObjectOccurrenceInput,
-        index=index,
-        identity=facts.identity,
-        kind="Value Object occurrence",
-        known=facts.value_object_py,
-    )
-    views = _indexed(
+    _require_row(
         relationships,
-        EntityRelationshipInput,
+        width=len(facts.relationships),
         index=index,
         identity=facts.identity,
-        kind="relationship",
-        known=facts.relationship_many,
+        kind="broad-relationship",
     )
 
-    for attribute in facts.attributes:
-        entry = entries.get(attribute.identity)
-        if entry is None:
+    for position, attribute in enumerate(facts.attributes):
+        value = members[position]
+        if value is ABSENT:
             continue
+        if attribute.py_name is None:  # pragma: no cover - a composed class carries its family
+            raise _unbound_member(facts, attribute.declared.identity, index=index, kind="Attribute")
+        declared = attribute.declared
         _check_value(
-            entry.value,
-            declared=attribute.type,
-            nullable=attribute.nullable,
+            value,
+            declared=declared.type,
+            nullable=declared.nullable,
             index=index,
-            identity=attribute.identity,
-            label=f"{facts.identity.canonical}.{attribute.identity.name}",
-            open_ended=attribute.identity in facts.open_ended,
+            identity=declared.identity,
+            label=f"{facts.identity.canonical}.{declared.identity.name}",
+            open_ended=attribute.open_ended,
         )
-        object.__setattr__(
-            instance,
-            facts.attribute_py[attribute.identity],
-            entry.value,
-        )
+        object.__setattr__(instance, attribute.py_name, value)
 
-    for occurrence in facts.value_objects:
-        entry = occurrences.get(occurrence.identity)
-        if entry is None:
+    for position, occurrence in enumerate(facts.value_objects, start=len(facts.attributes)):
+        value = members[position]
+        if value is ABSENT:
             continue
+        if (  # pragma: no cover - a composed class carries its family
+            occurrence.py_name is None or occurrence.vo_class is None
+        ):
+            raise _unbound_member(
+                facts, occurrence.declared.identity, index=index, kind="Value Object occurrence"
+            )
         built = _build_occurrence(
-            entry.value,
-            declared=occurrence,
-            vo_class=facts.value_object_class[occurrence.identity],
+            value,
+            declared=occurrence.declared,
+            vo_class=occurrence.vo_class,
             index=index,
             entity=facts.identity,
         )
-        object.__setattr__(instance, facts.value_object_py[occurrence.identity], built)
+        object.__setattr__(instance, occurrence.py_name, built)
 
-    for identity, py_name in facts.relationship_py.items():
-        entry = views.get(identity)
-        arm = UNLOADED_VIEW if entry is None else entry.value
+    for position, direction in enumerate(facts.relationships):
+        if direction.py_name is None:  # pragma: no cover - a composed class carries its family
+            if relationships[position] is not UNLOADED:
+                raise _unbound_member(facts, direction.identity, index=index, kind="relationship")
+            continue
         object.__setattr__(
             instance,
-            py_name,
+            direction.py_name,
             _relationship_value(
-                arm,
+                relationships[position],
                 scope=scope,
-                many=facts.relationship_many[identity],
+                many=direction.many,
                 index=index,
-                identity=identity,
+                identity=direction.identity,
             ),
         )
 
 
-class _Identified(Protocol):
-    @property
-    def identity(self) -> object: ...
-
-
-def _indexed[T: _Identified](
-    entries: tuple[T, ...],
-    expected: type[T],
+def _unbound_member(  # pragma: no cover - a composed class carries its family
+    facts: _EntityFacts,
+    member: AttributeIdentity | ValueObjectIdentity | RelationshipIdentity,
     *,
     index: int,
-    identity: EntityIdentity,
     kind: str,
-    known: Container[object],
-) -> dict[object, T]:
-    """``entries`` keyed by structured identity, rejecting a wrong carrier, an
-    undeclared member, and a duplicate within this node."""
-    if type(cast("object", entries)) is not tuple:
+) -> GraphConstructionError:
+    """The refusal for a position the accepted model lays out and the composed
+    class carries no member for.
+
+    A Domain Model compiles its Metamodel from the classes it composed, so the
+    two never disagree about which members exist and every caller of this is
+    marked unreachable. It exists rather than a skip because the alternative to
+    refusing is dropping a member the row carried, silently.
+
+    Reached only when the row carries something at the position: one the read
+    left absent names nothing, so a member the class cannot hold and the row does
+    not fill is no disagreement at all.
+    """
+    return GraphConstructionError(
+        code="entity-graph-invalid-member",
+        message=(
+            f"the class composed for {facts.identity.canonical} declares no {kind} "
+            f"{member!r}, and its row carries one"
+        ),
+        index=index,
+        identity=member,
+    )
+
+
+def _require_row(
+    row: object, *, width: int, index: int, identity: EntityIdentity, kind: str
+) -> None:
+    """Refuse anything but an exact built-in tuple of the model-fixed width.
+
+    Width is the whole membership check a positional row needs: every declared
+    member has a position, so a row of the right width names each of them exactly
+    once and a row of any other width names a member the Entity does not
+    declare — the two rejections the identity-keyed algebra needed separately.
+    """
+    if type(row) is not tuple:
         raise GraphConstructionError(
             code="entity-graph-invalid-member",
-            message=f"{kind} entries arrive as an exact tuple, not {type(entries).__name__}",
+            message=f"a {kind} row arrives as an exact tuple, not {type(row).__name__}",
             index=index,
             identity=identity,
         )
-    found: dict[object, T] = {}
-    for entry in cast("tuple[object, ...]", entries):
-        if not isinstance(entry, expected):
-            raise GraphConstructionError(
-                code="entity-graph-invalid-member",
-                message=f"a {kind} entry is a {type(entry).__name__}, not {expected.__name__}",
-                index=index,
-                identity=identity,
-            )
-        entry_identity = entry.identity
-        if entry_identity not in known:
-            raise GraphConstructionError(
-                code="entity-graph-invalid-member",
-                message=f"{identity.canonical} declares no {kind} {entry_identity!r}",
-                index=index,
-                identity=cast("AttributeIdentity", entry_identity),
-            )
-        if entry_identity in found:
-            raise GraphConstructionError(
-                code="entity-graph-invalid-member",
-                message=f"{identity.canonical} carries two entries for one {kind}",
-                index=index,
-                identity=cast("AttributeIdentity", entry_identity),
-            )
-        found[entry_identity] = entry
-    return found
+    if len(cast("tuple[object, ...]", row)) != width:
+        raise GraphConstructionError(
+            code="entity-graph-invalid-member",
+            message=(
+                f"{identity.canonical} lays out {width} {kind} positions, "
+                f"and this row carries {len(cast('tuple[object, ...]', row))}"
+            ),
+            index=index,
+            identity=identity,
+        )
 
 
 def _check_value(
@@ -801,10 +831,18 @@ def _relationship_value(
     identity: RelationshipIdentity,
 ) -> object:
     """One relationship slot's installed value: the unloaded sentinel, ``None``,
-    a related instance, or an exact tuple of them."""
-    if isinstance(arm, Unloaded):
+    a related instance, or an exact tuple of them.
+
+    The position's own value names its arm — the sentinel is unloaded, ``None``
+    is loaded-null, an exact tuple is loaded-many with ``()`` its empty case, and
+    a handle is loaded-one — so the declared cardinality is the only thing that
+    decides whether that arm is admissible. Anything else at the position is no
+    arm at all, which is what a caller-defined tuple subtype and a mutable
+    sequence both are.
+    """
+    if arm is UNLOADED:
         return UNLOADED
-    if isinstance(arm, LoadedMany):
+    if type(arm) is tuple:
         if not many:
             raise GraphConstructionError(
                 code="entity-graph-invalid-value",
@@ -812,20 +850,9 @@ def _relationship_value(
                 index=index,
                 identity=identity,
             )
-        nodes = cast("object", arm.nodes)
-        if type(nodes) is not tuple:
-            raise GraphConstructionError(
-                code="entity-graph-invalid-value",
-                message=(
-                    f"{identity.name} takes a loaded-many arm of an exact tuple of node "
-                    f"handles, not {type(nodes).__name__}"
-                ),
-                index=index,
-                identity=identity,
-            )
         return tuple(
             scope.instances[_index_of(scope, node, operation="populate")]
-            for node in cast("tuple[object, ...]", nodes)
+            for node in cast("tuple[object, ...]", arm)
         )
     if many:
         raise GraphConstructionError(
@@ -834,10 +861,10 @@ def _relationship_value(
             index=index,
             identity=identity,
         )
-    if isinstance(arm, LoadedNull):
+    if arm is None:
         return None
-    if isinstance(arm, LoadedOne):
-        return scope.instances[_index_of(scope, arm.node, operation="populate")]
+    if isinstance(arm, NodeHandle):
+        return scope.instances[_index_of(scope, arm, operation="populate")]
     raise GraphConstructionError(
         code="entity-graph-invalid-value",
         message=f"{identity.name} received {type(arm).__name__}, which is no relationship arm",
@@ -857,8 +884,10 @@ def _build_occurrence(
     """One Value Object occurrence as frozen instances, checked for container
     shape first.
 
-    A Many occurrence has no absent state at all: it takes an exact tuple, empty
-    for its zero-element value.
+    The declared multiplicity decides the shape rather than the value does: a One
+    slot's member row and a Many slot's tuple of them are both tuples, and only
+    the declaration distinguishes them. A Many occurrence has no absent state at
+    all: it takes an exact tuple, empty for its zero-element value.
     """
     identity = declared.identity
     label = f"{entity.canonical}.{'.'.join(identity.path)}"
@@ -866,13 +895,13 @@ def _build_occurrence(
         if type(value) is not tuple:
             raise GraphConstructionError(
                 code="entity-graph-invalid-value",
-                message=f"{label} is a Many occurrence and takes an exact tuple of records",
+                message=f"{label} is a Many occurrence and takes an exact tuple of member rows",
                 index=index,
                 identity=identity,
             )
         return tuple(
-            _build_record(record, declared=declared, vo_class=vo_class, index=index, entity=entity)
-            for record in cast("tuple[object, ...]", value)
+            _build_record(row, declared=declared, vo_class=vo_class, index=index, entity=entity)
+            for row in cast("tuple[object, ...]", value)
         )
     if value is None:
         # A One occurrence absent from the document, stored as JSON null, or
@@ -885,81 +914,76 @@ def _build_occurrence(
 
 
 def _build_record(
-    record: object,
+    row: object,
     *,
     declared: ValueObjectMetadata | NestedValueObjectMetadata,
     vo_class: type,
     index: int,
     entity: EntityIdentity,
 ) -> object:
-    """One :class:`ValueObjectRecord` as a frozen Value Object instance.
+    """One positional member row as a frozen Value Object instance, at every depth.
 
-    Field presence is preserved rather than flattened: an omitted entry reads as
-    ``None`` (or ``()``) and stays outside ``model_fields_set``, while an entry
-    present as ``None`` reads the same and is inside it — which is what keeps
-    canonical document serialization able to omit the former and emit the latter
-    as an explicit null.
+    The row is that occurrence's own leaves in declaration order, then its nested
+    occurrences in theirs, with ``ABSENT`` at a position the read carried nothing
+    for. Field presence is preserved rather than flattened: an absent position
+    reads as ``None`` (or ``()``) and stays outside ``model_fields_set``, while a
+    position carrying ``None`` reads the same and is inside it — which is what
+    keeps canonical document serialization able to omit the former and emit the
+    latter as an explicit null.
     """
     identity = declared.identity
-    if not isinstance(record, ValueObjectRecord):
+    label = f"{entity.canonical}.{'.'.join(identity.path)}"
+    leaf_count = len(declared.attributes)
+    if type(row) is not tuple:
+        raise GraphConstructionError(
+            code="entity-graph-invalid-value",
+            message=f"{label} takes a member row as an exact tuple, not {type(row).__name__}",
+            index=index,
+            identity=identity,
+        )
+    cells = cast("tuple[object, ...]", row)
+    if len(cells) != leaf_count + len(declared.value_objects):
         raise GraphConstructionError(
             code="entity-graph-invalid-value",
             message=(
-                f"{entity.canonical}.{'.'.join(identity.path)} takes a ValueObjectRecord, "
-                f"not {type(record).__name__}"
+                f"{label} lays out {leaf_count + len(declared.value_objects)} member positions, "
+                f"and this row carries {len(cells)}"
             ),
             index=index,
             identity=identity,
         )
     shape = shape_of(vo_class)
-    leaves = _indexed(
-        record.attributes,
-        ValueObjectAttributeInput,
-        index=index,
-        identity=entity,
-        kind="Value Object Attribute",
-        known={leaf.identity: leaf for leaf in declared.attributes},
-    )
-    nested = _indexed(
-        record.value_objects,
-        ValueObjectOccurrenceInput,
-        index=index,
-        identity=entity,
-        kind="nested Value Object occurrence",
-        known={occurrence.identity: occurrence for occurrence in declared.value_objects},
-    )
     values: dict[str, object] = {}
     present: set[str] = set()
-    for leaf in declared.attributes:
+    for position, leaf in enumerate(declared.attributes):
         py_name = _member_py(shape, leaf.identity.name)
-        entry = leaves.get(leaf.identity)
-        label = (
-            f"{entity.canonical}.{'.'.join(leaf.identity.value_object.path)}.{leaf.identity.name}"
-        )
-        if entry is None:
+        value = cells[position]
+        if value is ABSENT:
             values[py_name] = None
             continue
         _check_value(
-            entry.value,
+            value,
             declared=leaf.type,
             nullable=leaf.nullable,
             index=index,
             identity=leaf.identity,
-            label=label,
+            label=(
+                f"{entity.canonical}.{'.'.join(leaf.identity.value_object.path)}"
+                f".{leaf.identity.name}"
+            ),
             collapsed=True,
         )
         present.add(py_name)
-        values[py_name] = entry.value
-    for occurrence in declared.value_objects:
+        values[py_name] = value
+    for position, occurrence in enumerate(declared.value_objects, start=leaf_count):
         py_name = _member_py(shape, occurrence.identity.path[-1])
-        many = py_name in shape.many_py
-        entry = nested.get(occurrence.identity)
-        if entry is None:
-            values[py_name] = () if many else None
+        value = cells[position]
+        if value is ABSENT:
+            values[py_name] = () if py_name in shape.many_py else None
             continue
         present.add(py_name)
         values[py_name] = _build_occurrence(
-            entry.value,
+            value,
             declared=occurrence,
             vo_class=shape.nested_classes[py_name],
             index=index,

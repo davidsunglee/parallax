@@ -565,6 +565,13 @@ def test_a_null_many_cardinality_document_column_constructs_an_empty_tuple() -> 
 # composed class maps it as a scalar has no Value Object class to construct,   #
 # and construction must say so rather than hand back a decoded record typed as #
 # the declared member (spec §3's instances-only contract).                     #
+#                                                                              #
+# The row the graph carries is laid out against the AUTHORED model and the     #
+# writer reads it against the COMPOSED one, so what the two disagree about is  #
+# which kind of member position 1 is — not which members exist, which is all a #
+# row of the right width can express. The refusal is therefore the declared    #
+# type's own: a decoded member row stands where a `str` is declared, and no    #
+# `str` is what the writer says.                                               #
 # --------------------------------------------------------------------------- #
 class _MergeScalarProfile(
     Entity, table="merge_scalar_profile", name="MergeScalarProfile", namespace=_NAMESPACE
@@ -604,7 +611,8 @@ def test_a_value_object_member_with_no_bound_class_is_refused() -> None:
     node = fixture.node("MergeScalarProfile", {"id": 1, "profile": {"note": "x"}})
     with pytest.raises(GraphConstructionError) as refusal:
         fixture.materialize(node)
-    assert refusal.value.code == "entity-graph-invalid-member"
+    assert refusal.value.code == "entity-graph-invalid-value"
+    assert refusal.value.identity == AttributeIdentity(_MergeScalarProfile.identity, "profile")
 
 
 # --------------------------------------------------------------------------- #

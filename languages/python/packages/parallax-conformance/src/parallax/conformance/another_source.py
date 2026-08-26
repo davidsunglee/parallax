@@ -37,6 +37,7 @@ from typing import Any, cast
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import (
+    UNLOADED,
     DomainModel,
     EntityGraphWriter,
     NodeHandle,
@@ -44,7 +45,6 @@ from parallax.core.entity import (
     lifecycle_state_of,
 )
 from parallax.core.entity._model import cataloged_model
-from parallax.core.entity._row import member_carriers
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle import find as execute_read
 from parallax.snapshot.materialize import (
@@ -120,15 +120,16 @@ class AnotherSource:
     def _materialize(self, graph: SnapshotGraph) -> tuple[object, ...]:
         """``graph``'s roots as instances carrying this source's own state.
 
-        Every relationship slot is left to the writer's unloaded sentinel: a
-        level-free read carries no merged view to install, which :meth:`find`
-        guarantees by refusing a deep fetch.
+        Every relationship position carries the unloaded sentinel: a level-free
+        read carries no merged view to install, which :meth:`find` guarantees by
+        refusing a deep fetch. The row is still the model's full width, because a
+        positional row cannot omit a direction a read did not load.
 
         What makes a second source second is that it merges and constructs for
-        itself rather than driving the Snapshot materializer's own. The
-        row-to-carrier translation is neither: it is a function of the
-        model-owned layout and the carrier algebra, so this source reads a row
-        the one way the common runtime reads one.
+        itself rather than driving the Snapshot materializer's own. The member
+        row is neither: the merge laid it out against the same model-owned member
+        layout the writer reads it against, so this source hands a row over the
+        one way the common runtime hands one over.
         """
         merge = merge_graph_input(graph)
         require_publishable(merge)
@@ -137,7 +138,9 @@ class AnotherSource:
             handles = [writer.allocate(identity) for identity in merge.order]
             for index, handle in enumerate(handles):
                 writer.populate(
-                    handle, *member_carriers(merge.layout(index), merge.member_values(index)), ()
+                    handle,
+                    merge.member_values(index),
+                    (UNLOADED,) * len(merge.layout(index).relationships),
                 )
             return tuple(handles[index] for index in merge.roots if index is not None)
 

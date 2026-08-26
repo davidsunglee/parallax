@@ -373,13 +373,13 @@ def test_first_party_reaches_keep_a_package_form_import_whole() -> None:
     # weighing the import against a rule reads it at whichever candidate the rule
     # covers. A star import binds no name that could be a submodule, so it
     # reaches its own module alone.
-    assert own.first_party_reaches(source, "parallax.core.entity._row") == frozenset(
+    assert own.first_party_reaches(source, "parallax.core.entity._probe") == frozenset(
         {
             ("parallax.core.base",),
             ("parallax.core.entity._layout", "parallax.core.entity"),
             ("parallax.core.entity._layout.EntityLayout", "parallax.core.entity._layout"),
-            ("parallax.core.entity._row.sibling", "parallax.core.entity._row"),
-            ("parallax.core.entity._row.star",),
+            ("parallax.core.entity._probe.sibling", "parallax.core.entity._probe"),
+            ("parallax.core.entity._probe.star",),
         }
     )
 
@@ -474,16 +474,16 @@ def test_the_isolated_scope_may_import_its_own_parent(
 # --------------------------------------------------------------------------
 # Canary 5: a sealed scope reaching its own parent package.
 # --------------------------------------------------------------------------
-_ROW = "parallax.core.entity._row"
-_ROW_FILE = "parallax-core/src/parallax/core/entity/_row.py"
+_BACKING = "parallax.core.entity._instance_state"
+_BACKING_FILE = "parallax-core/src/parallax/core/entity/_instance_state.py"
 
 
 def _without_sibling_grants(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Withdraw the two sibling grants the row scope's imports stand on."""
+    """Withdraw the two sibling grants the instance-state scope's imports stand on."""
     monkeypatch.setattr(
         dag,
         "SUPPORT_SCOPE_DEPS",
-        {**dag.SUPPORT_SCOPE_DEPS, _ROW: frozenset({"parallax.core.metamodel"})},
+        {**dag.SUPPORT_SCOPE_DEPS, _BACKING: frozenset[str]()},
     )
 
 
@@ -492,17 +492,22 @@ def test_a_sealed_scope_reaching_its_parent_package_fails(
 ) -> None:
     # The mirror image of canary 4: a row sourced at the child overlaps its own
     # parent package, so import-linter can neither forbid a module of that
-    # package nor except one. Withdrawing the two grants the row scope's imports
-    # stand on states an undeclared intra-package reach without editing
-    # production source, and both are refused — one finding per import, not one
-    # per file.
+    # package nor except one. Withdrawing the two grants the instance-state
+    # scope's imports stand on states an undeclared intra-package reach without
+    # editing production source, and both are refused — one finding per import,
+    # not one per file.
     assert own.imports_escaping_a_sealed_child_row(own.production_files()) == []
     _without_sibling_grants(monkeypatch)
     assert own.main([]) == 1
     err = capsys.readouterr().err
     assert "imports of its own parent package a sealed scope's contract cannot reject" in err
-    assert f"{_ROW_FILE} (imports parallax.core.entity._graph_input, which {_ROW}" in err
-    assert f"{_ROW_FILE} (imports parallax.core.entity._layout, which {_ROW}" in err
+    assert (
+        f"{_BACKING_FILE} (imports parallax.core.entity._construction_input, which {_BACKING}"
+        in err
+    )
+    assert (
+        f"{_BACKING_FILE} (imports parallax.core.entity._pydantic_storage, which {_BACKING}" in err
+    )
 
 
 _PROBE = PY_ROOT / "packages/parallax-core/src/parallax/core/entity/_probe.py"

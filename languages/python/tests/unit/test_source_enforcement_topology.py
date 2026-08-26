@@ -69,12 +69,13 @@ from parallax.core.unit_work import WritePlanner
 # so a fourth module importing an already-accepted name is a new reach and a new
 # §7 decision, not a use of an existing one.
 #
-# `_layout` and `_row` are the entries here that are DECLARED scopes rather than
-# private modules of the frontend: §7 gives each a row of its own so a runtime
-# materializing values from stored rows can take the member layouts, the absence
-# sentinel, and the row-to-carrier walk without the frontend's closure. They
-# still appear below because the inventory reads source text, and every reach
-# into an underscored module of this package is a decision worth spelling.
+# `_layout` and `_construction_input` are the entries here that are DECLARED
+# scopes rather than private modules of the frontend: §7 gives each a row of its
+# own so a runtime materializing values from stored rows can take the member
+# layouts and the absence sentinel a positional row spells without the frontend's
+# closure. They still appear below because the inventory reads source text, and
+# every reach into an underscored module of this package is a decision worth
+# spelling.
 ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot._inspection", "_declaration"): frozenset(
         {"declaration_of", "is_entity_class", "members_of"}
@@ -82,7 +83,6 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.handle._database", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._database", "_model"): frozenset({"cataloged_model", "class_index"}),
     ("parallax.snapshot.handle._predicate_writes", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.snapshot.handle._materializer", "_row"): frozenset({"member_carriers"}),
     ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._transaction", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._write_inputs", "_declaration"): frozenset({"declaration_of"}),
@@ -90,8 +90,8 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.handle._wire_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.materialize._classify", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._convert", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.snapshot.materialize._graph", "_construction_input"): frozenset({"ABSENT"}),
     ("parallax.snapshot.materialize._graph", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.snapshot.materialize._graph", "_row"): frozenset({"ABSENT"}),
     ("parallax.snapshot.materialize._merge", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._views", "_layout"): frozenset({"EntityLayout"}),
 }
@@ -133,7 +133,7 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
                     "parallax.snapshot.materialize._new": (
                         "from parallax.core.entity._model import model_of\n"
                         "import parallax.core.entity._declaration\n"
-                        "from ...core.entity._graph_input import ValueObjectRecord\n"
+                        "from ...core.entity._construction_input import UNLOADED\n"
                     ),
                     "parallax.snapshot.handle._resembling": (
                         "from parallax.core.entity import model_of, row_codec_of\n"
@@ -148,7 +148,7 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
     )
     assert _private_entity_reaches(imported) == {
         ("parallax.snapshot.materialize._new", "_model"): {"model_of"},
-        ("parallax.snapshot.materialize._new", "_graph_input"): {"ValueObjectRecord"},
+        ("parallax.snapshot.materialize._new", "_construction_input"): {"UNLOADED"},
     }
     assert _entity_package_imports(imported) == [
         synthetic_site("parallax.snapshot.materialize._new", 2)
@@ -182,22 +182,17 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
 # rather than reading either half separately or building a second catalog beside
 # it.
 #
-# `member_carriers` is the other. That fixture is a SECOND managed value
-# lifecycle, so it merges and constructs for itself rather than driving the
-# Snapshot materializer's own private drive — but the walk from a compact member
-# row to the writer's carriers is neither of those: it is a function of the
-# model-owned layout and the carrier algebra, so §7 scopes it where both are and
-# production's own typed materializer reaches it there too. The alternatives are
-# a second copy of one rule, or a lifecycle-private name in a second lifecycle's
-# hands.
+# That fixture is a SECOND managed value lifecycle, so it merges and constructs
+# for itself rather than driving the Snapshot materializer's own private drive.
+# It reaches no row walk of its own, because there is none to reach: the merge
+# laid each node's member row out against the model-owned member layout the
+# writer reads it against, so the row crosses `populate` by reference and the
+# fixture names only the public door it goes through.
 #
 # Keyed by REACHING module for the same reason the snapshot inventory is.
 ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.another_source", "parallax.core.entity._model"): frozenset(
         {"cataloged_model"}
-    ),
-    ("parallax.conformance.another_source", "parallax.core.entity._row"): frozenset(
-        {"member_carriers"}
     ),
     ("parallax.conformance.another_source", "parallax.core.object_query._fluent"): frozenset(
         {"ObjectQuery", "object_query_node"}
