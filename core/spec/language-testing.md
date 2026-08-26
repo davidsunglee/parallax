@@ -69,10 +69,24 @@ syntactically.
 An operation is **blocking** when its purpose is a verdict: `check`, `test`,
 `coverage`, `lint`, `typecheck`, `format-check`, `build`, and `audit` each fail
 when what they examine is wrong. `format`, `report`, and `show` are
-**non-blocking**: they rewrite, describe, or display, and pass no judgement.
+**non-blocking**: they rewrite, describe, or display, and pass no judgement
+**about the subject they examine**.
+
+Passing no judgement is a rule about the subject, not about the exit code. A
+non-blocking command MAY fail when it cannot produce the output it exists to
+produce — a source it cannot rewrite, a matrix cell it has no reading for, a
+graph it cannot resolve — because such an exit says *there is nothing here to
+read*, which is the one thing a diagnostic command must be able to say. What it
+MUST NOT do is exit on what its output says: a number too large, a comparison it
+dislikes, a shape it would have refused. A non-blocking command that grades its
+subject is a gate under another name, and MUST be spelled as one.
+
 Only blocking commands are gates. An aggregate's verdict is its blocking
 dependencies', so it may depend on a non-blocking command for that command's
-output without acquiring a second verdict.
+output without acquiring a second verdict. The consequence of the rule above is
+that such a dependency can still fail the aggregate, by failing to produce that
+output at all — the aggregate losing a part of what it prints, never a second
+verdict about what it validated.
 
 ## 3. Primary semantic surfaces
 
@@ -303,7 +317,9 @@ Every composition rule above quantifies over blocking commands
 repository that exposes one reachable from nothing is conforming. An aggregate
 MAY nonetheless depend on a non-blocking command for its output — a success
 summary as a terminal dependency, say — which makes that command neither a gate
-nor a second verdict.
+nor a second verdict. It can still fail the aggregate by failing to produce that
+output, which [§2](#2-operation-vocabulary) permits and which is not a verdict
+about anything the aggregate validated.
 
 An ordering constraint between two commands MUST be expressed as a dependency,
 never as adjacency inside one body. A constraint that exists only as line order
