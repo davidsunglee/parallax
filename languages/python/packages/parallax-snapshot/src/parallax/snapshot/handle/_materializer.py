@@ -51,6 +51,7 @@ from parallax.core.entity import (
     UNLOADED,
     EntityGraphConstruction,
     EntityGraphWriter,
+    GraphConstructionError,
     NodeHandle,
     ResolutionView,
 )
@@ -59,6 +60,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    RelationshipIdentity,
 )
 from parallax.core.temporal_read import Edge, milestone_edge_of
 from parallax.core.unit_work import SourceHint
@@ -173,15 +175,26 @@ class _Materialization:
         sentinel the row starts every position at.
 
         Positions come from the same member layout the merge laid the node out
-        against, so the row is the model's own width by construction and a
-        direction the layout does not declare is a planning defect rather than
-        caller input.
+        against, so the row is the model's own width by construction. A view
+        schema may still lay out a slot for a direction this concrete does not
+        declare — an unguarded level attaches its slot to every concrete it can
+        reach, and the canonical view order ranks an undeclared name last rather
+        than refusing it — so laying the slot out is tolerated and WRITING one is
+        the disagreement. Translating a name to a position is where that becomes
+        visible, so the refusal is stated here in the construction vocabulary,
+        because a position dropped instead would lose a view the read loaded.
         """
         layout = self._merge.layout(index)
         row: list[object] = [UNLOADED] * len(layout.relationships)
         for slot, key in enumerate(self._merge.view_layout(index).slots):
-            if key.narrowed_view is None and (value := self._merge.view(index, slot)) is not ABSENT:
-                row[layout.relationship_index[key.relationship.name]] = self._arm(value)
+            if key.narrowed_view is not None or (value := self._merge.view(index, slot)) is ABSENT:
+                continue
+            position = layout.relationship_index.get(key.relationship.name)
+            if position is None:
+                raise _undeclared_direction(
+                    layout.concrete, key.relationship, self._scope.index(index)
+                )
+            row[position] = self._arm(value)
         return tuple(row)
 
     def _published(
@@ -259,6 +272,27 @@ class _Materialization:
                 if values[position] is not ABSENT
             },
         )
+
+
+def _undeclared_direction(
+    entity: EntityIdentity, relationship: RelationshipIdentity, index: int
+) -> GraphConstructionError:
+    """The refusal for a loaded view naming a direction ``entity`` does not declare.
+
+    A positional row is written at declared positions, so the name a view carries
+    is checked where it becomes one — and in the writer's own vocabulary, because
+    what the caller sees is one graph construction failing, not two error surfaces
+    depending on which side of the translation noticed.
+    """
+    return GraphConstructionError(
+        code="entity-graph-invalid-member",
+        message=(
+            f"{entity.canonical} declares no relationship {relationship!r}, "
+            "and a loaded view carries one"
+        ),
+        index=index,
+        identity=relationship,
+    )
 
 
 def _record(root: ClassifiedRoot, instances: Iterator[object]) -> InvalidData[object]:
