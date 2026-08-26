@@ -264,7 +264,7 @@ python-test-db:
 [metadata("runtime:slow", "scheduling:cost")]
 [doc("Every Python test reading the whole interpreter, each in one of its own.")]
 python-test-cost:
-    cd {{python}} && uv run pytest -m cost
+    cd {{python}} && uv run pytest -m cost -n 2
 
 # The six semantic surfaces are focused selectors for iteration, and deliberately
 # no gate's dependencies: each cuts across the scheduling partition, so an
