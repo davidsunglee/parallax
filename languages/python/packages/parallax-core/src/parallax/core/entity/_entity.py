@@ -48,12 +48,13 @@ from parallax.core.entity._expressions import (
     member_location,
     serialize_member,
 )
-from parallax.core.entity._instance_state import BackedModel, named_state
-from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
-from parallax.core.entity._pydantic_storage import (
-    attach_instance_state,
+from parallax.core.entity._instance_state import (
+    BackedModel,
     carry_slots_beside_state,
+    named_state,
 )
+from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
+from parallax.core.entity._pydantic_storage import attach_instance_state
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,

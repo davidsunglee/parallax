@@ -567,7 +567,8 @@ of 1000 distinct published instances of one all-optional-member declared class �
   Pydantic fields name different sets. The same argument covers the sibling zips
   in `declared` and `named_state`, which were not priced.
 - **Replace `plan_of`'s MRO `getattr` with a type-keyed dict lookup** — 66.5 ns
-  to 17.2 ns, a further **1.08x**, no behavior change. The caveat to decide
+  to 17.2 ns, a further **1.08x**. No lookup answers differently and no domain
+  value changes; what does change is observable elsewhere. The caveat to decide
   rather than absorb: a `dict[type, PublicationPlan]` pins every published class
   for the life of the process, and a `WeakKeyDictionary` costs more than the
   `getattr` it replaces. Nothing pins one today. No registry holds a declared
@@ -643,9 +644,12 @@ Python-level override; a template `.copy()` plus `update(zip(...))` measures
 
 **The order a pass should take.** The `strict=True` drop first: no behavior change,
 no new hazard, nothing to decide. The `plan_of` dictionary next — 1.18x with it,
-and no behavior change either, but not before the class-lifetime question on it is
-answered, because a strong dictionary pins every published class for the life of
-the process. Then the memo behind its `has_auxiliary` gate, with the identity and
+and no lookup or domain value changes with it either, but not before the
+class-lifetime question on it is answered, because a strong dictionary pins every
+published class for the life of the process, and a declared class that is
+collectable today — its weak references clearing, its finalizers running — would
+stop being collectable at all. That is observable behavior a caller can write a
+test against rather than an implementation cost. Then the memo behind its `has_auxiliary` gate, with the identity and
 residue hazards stated and a free-threaded run taken; and the plain-`dict` question
 only behind an explicit decision on silent evaporation.
 

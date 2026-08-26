@@ -26,7 +26,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from _compact_support import published, raw_row, real_storage
+from _compact_support import layout_slots, published, raw_row, real_storage
 from pydantic import BaseModel, ConfigDict, PrivateAttr, TypeAdapter, ValidationError
 
 from parallax.core.entity import (
@@ -40,7 +40,11 @@ from parallax.core.entity import (
     rel,
 )
 from parallax.core.entity._errors import EditError, EntityDefinitionError
-from parallax.core.entity._instance_state import auxiliary
+from parallax.core.entity._instance_state import (
+    AUXILIARY_STATE_SLOT,
+    COMPACT_STATE_SLOT,
+    auxiliary,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,6 +53,8 @@ _NS = "writepaths"
 
 
 class Crate(Entity, table="crate", namespace=_NS):
+    __slots__ = ("token",)
+
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str | None]
     peer_id: Attr[int | None]
@@ -504,16 +510,29 @@ def test_that_named_state_carries_author_owned_state_the_way_ordinary_backing_do
 
 
 def test_that_a_published_value_edits_out_of_the_same_object_layout_too() -> None:
-    # `named_state` answers what a value holds under a NAME, and Pydantic keeps a
-    # `PrivateAttr` in a slot of its own instead — so the row a published value
-    # publishes cannot be the whole of what its edit carries either. `allocate`
-    # gives a shell that slot at the declared defaults, and the edit has to carry
-    # what the value holds there rather than restore those defaults.
+    # `named_state` answers what a value holds under a NAME, and the layout holds
+    # slots no name of it reaches — `PrivateAttr` state, and whatever the class
+    # lays out for itself — so the row a published value publishes cannot be the
+    # whole of what its edit carries either. `allocate` gives a shell the private
+    # slot at the declared defaults, and the edit has to carry what the value
+    # holds there rather than restore those defaults. What it must NOT carry is
+    # the compact backing's own two slots: the copy is built ordinary, so its row
+    # is its instance dictionary and its author-owned state is in there by name.
     value = _crate()
     cast("Any", value)._mark = 9
-    edited = value.edit(label="y")
-    assert cast("Any", edited)._mark == 9
-    assert cast("Any", value.edit())._mark == 9
+    object.__setattr__(value, "token", ["t"])
+    carried = {
+        name
+        for name in layout_slots(Crate)
+        if name not in {"__dict__", "__pydantic_fields_set__", COMPACT_STATE_SLOT}
+    }
+    assert {"token", "__pydantic_private__", AUXILIARY_STATE_SLOT} <= carried
+    for edited in (value.edit(label="y"), value.edit()):
+        assert cast("Any", edited)._mark == 9
+        assert cast("Any", edited).token == ["t"]
+        assert raw_row(edited) is None
+        with pytest.raises(AttributeError, match=AUXILIARY_STATE_SLOT):
+            object.__getattribute__(edited, AUXILIARY_STATE_SLOT)
     # The private slot is a mapping the object layout gives every value of a class
     # declaring one, and it is the only mapping this one holds.
     assert _dict_referents(value) == [{"_mark": 9}]

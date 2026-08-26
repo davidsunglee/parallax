@@ -19,7 +19,8 @@ from functools import cached_property
 from typing import Any, Final, cast
 
 import pytest
-from pydantic import BaseModel, PrivateAttr, ValidationError
+from _compact_support import layout_slots
+from pydantic import PrivateAttr, ValidationError
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
@@ -49,6 +50,7 @@ from parallax.core.entity import (
 )
 from parallax.core.entity._declaration import FRAMEWORK_NAME_PREFIX, LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, WireNames, wire_names_of
+from parallax.core.entity._instance_state import AUXILIARY_STATE_SLOT, COMPACT_STATE_SLOT
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeLocation,
@@ -608,40 +610,70 @@ def test_an_edit_carries_a_slot_no_declaration_and_no_lifecycle_names(
 
 class _Marked(Entity, table="marked", namespace="parallax.compatibility"):
     """One private attribute, which Pydantic keeps in a slot of the object layout
-    rather than in the instance dictionary an edit rebuilds."""
+    rather than in the instance dictionary an edit rebuilds, and one slot the
+    class lays out itself, which no base of it has ever heard of."""
+
+    __slots__ = ("token",)
 
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str] = attr(max_length=16)
 
     _mark = PrivateAttr(default=3)
+    _trail = PrivateAttr(default_factory=list)
 
 
-_REBUILT_SLOTS: Final = frozenset({"__dict__", "__pydantic_fields_set__"})
-"""The two slots an edit fills from semantic state rather than carries."""
+_REBUILT_SLOTS: Final = frozenset(
+    {"__dict__", "__pydantic_fields_set__", COMPACT_STATE_SLOT, AUXILIARY_STATE_SLOT}
+)
+"""The four slots of the layout an edit fills from semantic state rather than
+carrying.
+
+Two are Pydantic's, and the copy's hold the declared members and populated set
+the edit derived. Two are the compact backing's, and the copy holds neither: it
+is built ordinary, and the author-owned state a published source keeps in the
+auxiliary slot reaches the copy's instance dictionary under its own names.
+"""
 
 
 @pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
 def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
     changes: dict[str, object],
 ) -> None:
-    # Completeness graded over the OBJECT LAYOUT rather than over the instance
-    # dictionary, which is one slot of it. Every other carry test here reads a
-    # name out of that dictionary and so can only see state stored under one, and
-    # `PrivateAttr` state is not: a copy built from a name-keyed mapping alone
-    # resets it to the declared default with nothing failing. The slot list is
-    # read off `BaseModel.__slots__`, so a kind of state a Pydantic release adds
-    # beside the storage fails here rather than being silently dropped.
+    # Completeness graded over the layout THIS CLASS actually has, walked across
+    # its whole MRO, rather than over the instance dictionary — one slot of that
+    # layout — or over any single base's `__slots__`. Every other carry test here
+    # reads a name out of that dictionary and so can only see state stored under
+    # one. Two kinds are not: `PrivateAttr` state, which Pydantic lays out beside
+    # the dictionary, and a slot the declaring class lays out for itself, which
+    # only the concrete class knows about. A copy assembled from a name-keyed
+    # mapping alone resets both with nothing failing, and a carry that enumerates
+    # a known base's layout drops the second one alone.
     marked = _Marked(id=1, label="a")
     cast("Any", marked)._mark = 9
-    carried = [name for name in BaseModel.__slots__ if name not in _REBUILT_SLOTS]
-    assert carried
+    object.__setattr__(marked, "token", ["t"])
+    carried = {
+        name: slot for name, slot in layout_slots(_Marked).items() if name not in _REBUILT_SLOTS
+    }
+    assert {"token", "__pydantic_private__"} <= set(carried)
     copied = marked.edit(**changes)
-    for name in carried:
-        held = getattr(marked, name)
-        assert getattr(copied, name) == held
+    for slot in carried.values():
+        held = slot.__get__(marked)
+        assert slot.__get__(copied) == held
         if held is not None:
-            assert getattr(copied, name) is not held
+            assert slot.__get__(copied) is not held
     assert cast("Any", copied)._mark == 9
+    assert cast("Any", copied).token == ["t"]
+
+
+@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
+def test_an_edit_leaves_a_slot_the_source_never_held_unheld(changes: dict[str, object]) -> None:
+    # A layout travels with the absences in it. A slot a class lays out holds
+    # nothing until its owner assigns one, so a copy that invented a value for one
+    # the source never assigned would misdescribe the source exactly as a copy
+    # dropping what it did assign does.
+    copied = _Marked(id=1, label="a").edit(**changes)
+    with pytest.raises(AttributeError, match="token"):
+        cast("Any", copied).token  # noqa: B018 - the access itself is the assertion
 
 
 def test_a_carried_slot_is_the_copy_s_own_state_rather_than_the_source_s() -> None:
@@ -650,6 +682,18 @@ def test_a_carried_slot_is_the_copy_s_own_state_rather_than_the_source_s() -> No
     copied = cast("Any", marked.edit(label="b"))
     copied._mark = 11
     assert cast("Any", marked)._mark == 9
+
+
+def test_a_carried_slot_is_shallow_so_what_it_holds_stays_shared() -> None:
+    # Shallow exactly as Pydantic's own model copy is, and the contract claims no
+    # more than that: the copy's private-attribute mapping is its own, so the
+    # rebinding above is private to it, while the object under a key is still the
+    # source's and an in-place mutation reaches both.
+    marked = _Marked(id=1, label="a")
+    cast("Any", marked)._trail.append("a")
+    copied = cast("Any", marked.edit(label="b"))
+    copied._trail.append("b")
+    assert cast("Any", marked)._trail == ["a", "b"]
 
 
 class _Tag(Entity, table="tag", namespace="parallax.compatibility"):

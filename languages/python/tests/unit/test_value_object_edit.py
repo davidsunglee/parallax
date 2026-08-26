@@ -27,12 +27,14 @@ from functools import cached_property
 from typing import Any, cast
 
 import pytest
-from pydantic import BaseModel, PrivateAttr
+from _compact_support import layout_slots
+from pydantic import PrivateAttr
 
 from _support import value_object_models as vm
 from parallax.core import Attr, Rel, ValueObject, attr
 from parallax.core.entity import EDIT_CODES, EditError, EntityDefinitionError
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
+from parallax.core.entity._instance_state import AUXILIARY_STATE_SLOT, COMPACT_STATE_SLOT
 from parallax.core.metamodel import MODEL_ROOT
 
 _UNREACHABLE_FROM_A_VALUE_OBJECT = frozenset(
@@ -133,36 +135,54 @@ def test_an_edit_never_carries_a_derived_cache(changes: dict[str, object]) -> No
 
 class _Marked(ValueObject):
     """One private attribute on a Value Object, which Pydantic keeps in a slot of
-    the object layout rather than in the instance dictionary an edit rebuilds."""
+    the object layout rather than in the instance dictionary an edit rebuilds, and
+    one slot the class lays out itself, which no base of it has ever heard of."""
+
+    __slots__ = ("token",)
 
     label: Attr[str]
 
     _mark = PrivateAttr(default=3)
 
 
-_REBUILT_SLOTS = frozenset({"__dict__", "__pydantic_fields_set__"})
-"""The two slots an edit fills from semantic state rather than carries."""
+_REBUILT_SLOTS = frozenset(
+    {"__dict__", "__pydantic_fields_set__", COMPACT_STATE_SLOT, AUXILIARY_STATE_SLOT}
+)
+"""The four slots an edit fills from semantic state rather than carrying, as the
+Entity half states them."""
 
 
 @pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=["authored", "change-free"])
 def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
     changes: dict[str, object],
 ) -> None:
-    # Completeness graded over the OBJECT LAYOUT rather than over the instance
-    # dictionary, which is one slot of it, exactly as the Entity half grades it:
-    # every other carry test reads a name out of that dictionary, and `PrivateAttr`
-    # state is not stored under one.
+    # Completeness graded over the layout THIS CLASS actually has, walked across
+    # its whole MRO, exactly as the Entity half grades it: every other carry test
+    # reads a name out of the instance dictionary, and neither `PrivateAttr` state
+    # nor a slot the declaring class lays out for itself is stored under one.
     marked = _Marked(label="a")
     cast("Any", marked)._mark = 9
-    carried = [name for name in BaseModel.__slots__ if name not in _REBUILT_SLOTS]
-    assert carried
+    object.__setattr__(marked, "token", ["t"])
+    carried = {
+        name: slot for name, slot in layout_slots(_Marked).items() if name not in _REBUILT_SLOTS
+    }
+    assert {"token", "__pydantic_private__"} <= set(carried)
     copied = marked.edit(**changes)
-    for name in carried:
-        held = getattr(marked, name)
-        assert getattr(copied, name) == held
+    for slot in carried.values():
+        held = slot.__get__(marked)
+        assert slot.__get__(copied) == held
         if held is not None:
-            assert getattr(copied, name) is not held
+            assert slot.__get__(copied) is not held
     assert cast("Any", copied)._mark == 9
+    assert cast("Any", copied).token == ["t"]
+
+
+@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=["authored", "change-free"])
+def test_an_edit_leaves_a_slot_the_source_never_held_unheld(changes: dict[str, object]) -> None:
+    # A layout travels with the absences in it, on this surface too.
+    copied = _Marked(label="a").edit(**changes)
+    with pytest.raises(AttributeError, match="token"):
+        cast("Any", copied).token  # noqa: B018 - the access itself is the assertion
 
 
 @pytest.mark.parametrize("changes", [{"city": "Bergen"}, {}], ids=["authored", "change-free"])
