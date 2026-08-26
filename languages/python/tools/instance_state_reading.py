@@ -164,16 +164,16 @@ def _construction_ns(scenario: Scenario, arm: Arm) -> tuple[float, float]:
     return marginal(_elapsed_ns(one), _elapsed_ns(many))
 
 
-def _callback_ns(scenario: Scenario, arm: Arm, count: int) -> float:
-    """Mean nanoseconds one ``count``-node call of ``arm`` spends inside its own
-    callbacks, over :data:`REPETITIONS` calls.
+def _common_work_ns(scenario: Scenario, arm: Arm, count: int) -> float:
+    """Mean nanoseconds one ``count``-node call of ``arm`` spends on work the
+    legacy fixture also does, over :data:`REPETITIONS` calls.
 
     Summed per call rather than read off one window, because the quantity is a
-    span inside each call rather than the call itself. Every clock read is inside
-    the measured call and none is inside the call :func:`_construction_ns` times,
-    so the timing this feeds cannot move the timing it corrects.
+    set of spans inside each call rather than the call itself. Every clock read is
+    inside the measured call and none is inside the call :func:`_construction_ns`
+    times, so the timing this feeds cannot move the timing it corrects.
     """
-    measured = arm.callbacks_ns
+    measured = arm.common_work_ns
     assert measured is not None, arm.name
     with untraced():
         for _ in range(WARMUP):
@@ -185,22 +185,25 @@ def _callback_ns(scenario: Scenario, arm: Arm, count: int) -> float:
 
 
 def _scaffolding_ns(scenario: Scenario, arm: Arm, construct_ns: float) -> float:
-    """What one more node of ``arm``'s call costs OUTSIDE the callbacks the arm
-    supplies — the per-node work the legacy fixture never reproduces.
+    """What one more node of ``arm``'s call costs BEYOND the work the legacy
+    fixture also does — the per-node work that fixture never reproduces.
 
-    Zero for an arm whose call is a loop over its own node builder: there is
-    nothing outside that builder to spend time in, so the figure is a fact about
-    the arm rather than a measurement it declined to take.
+    Zero for an arm whose call is a loop over its own node builder: every
+    nanosecond such a call spends is spent in that builder, so the figure is a
+    fact about the arm rather than a measurement it declined to take.
 
     Split the same way ``construct_ns`` was, so the call's fixed cost cancels
-    from both and what is left is per-node on both sides.
+    from both and what is left is per-node on both sides. A subtraction, so the
+    direction of the subtrahend's error decides this figure's: the common-work
+    spans price high by construction, which leaves this remainder at most what
+    the fixture failed to reproduce and never more.
     """
-    if arm.callbacks_ns is None:
+    if arm.common_work_ns is None:
         return 0.0
-    inside_per_node, _ = marginal(
-        _callback_ns(scenario, arm, 1), _callback_ns(scenario, arm, MARGINAL_NODES)
+    common_per_node, _ = marginal(
+        _common_work_ns(scenario, arm, 1), _common_work_ns(scenario, arm, MARGINAL_NODES)
     )
-    return construct_ns - inside_per_node
+    return construct_ns - common_per_node
 
 
 def measure_arm(scenario: Scenario, arm: Arm, field_names: tuple[str, ...]) -> ArmReading:

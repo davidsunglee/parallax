@@ -49,7 +49,7 @@ from _instance_state_support import (
     SCENARIOS,
     WARMED_AUXILIARY,
     Scenario,
-    compact_callback_ns,
+    compact_common_work_ns,
 )
 from pydantic import BaseModel
 
@@ -272,17 +272,37 @@ def test_the_correction_is_summed_over_the_mix_rather_than_averaged() -> None:
     assert report.like_for_like_ratio(readings, construction) != pytest.approx(mean)
 
 
+def test_a_correction_that_measured_below_zero_corrects_by_nothing() -> None:
+    """The residue is one marginal timing subtracted from another and the quantity
+    is small, so a scenario's difference can land below zero. Carrying that onto
+    the legacy side would price the pre-flip path under the fixture standing for
+    it and lower the ratio on noise alone, so the floor is zero and the corrected
+    ratio stays at or under the arm-against-arm one."""
+    reading = _reading(
+        "shallow",
+        legacy_ns=(1_000.0, 20.0, 500.0),
+        compact_ns=(1_300.0, 20.0, 500.0),
+        scaffolding_ns=-400.0,
+    )
+    construction = report.OPERATIONS[0]
+    assert reading.compact.unreproduced_ns == 0.0
+    assert report.before_ns(reading, construction) == pytest.approx(1_000.0)
+    assert report.like_for_like_ratio([reading], construction) == pytest.approx(
+        report.mix_ratio([reading], construction)
+    )
+
+
 def test_only_the_arm_whose_call_does_more_than_build_nodes_reports_scaffolding() -> None:
-    assert (ORDINARY.callbacks_ns, LEGACY.callbacks_ns) == (None, None)
-    assert COMPACT.callbacks_ns is compact_callback_ns
-    assert COMPACT.graph is not compact_callback_ns
+    assert (ORDINARY.common_work_ns, LEGACY.common_work_ns) == (None, None)
+    assert COMPACT.common_work_ns is compact_common_work_ns
+    assert COMPACT.graph is not compact_common_work_ns
 
 
-def test_the_compact_arm_times_its_own_callbacks_and_leaves_the_call_a_remainder() -> None:
+def test_the_compact_arm_times_the_common_work_and_leaves_the_call_a_remainder() -> None:
     scenario = SCENARIOS[0]
-    compact_callback_ns(scenario, report.MARGINAL_NODES)
+    compact_common_work_ns(scenario, report.MARGINAL_NODES)
     start = perf_counter()
-    inside = compact_callback_ns(scenario, report.MARGINAL_NODES)
+    inside = compact_common_work_ns(scenario, report.MARGINAL_NODES)
     whole = (perf_counter() - start) * 1e9
     assert 0.0 < inside < whole
 
@@ -290,13 +310,14 @@ def test_the_compact_arm_times_its_own_callbacks_and_leaves_the_call_a_remainder
 def test_the_compact_arm_prices_every_attach_the_legacy_fixture_also_pays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The residue is added to the LEGACY side, so common work inside it lands
-    there twice and flatters the compact arm. The lifecycle attach is the case no
-    callback can reach — ``construct`` performs it in its own loop — so the arm
-    repeats it once per node inside its timed span, which is what keeps it out."""
+    """The residue is added to the LEGACY side, so common work left inside it
+    lands there twice and flatters the compact arm. The lifecycle attach is the
+    case no callback can reach — ``construct`` performs it in its own loop — so
+    the arm repeats it once per node inside its timed span, which is what keeps
+    it out."""
     scenario = SCENARIOS[0]
     attached = _counted_attaches(monkeypatch)
-    compact_callback_ns(scenario, report.MARGINAL_NODES)
+    compact_common_work_ns(scenario, report.MARGINAL_NODES)
     assert len(attached) == report.MARGINAL_NODES
     attached.clear()
     LEGACY.graph(scenario, report.MARGINAL_NODES)
@@ -553,6 +574,7 @@ def test_construction_is_printed_both_ways_and_the_scope_block_says_which_rules(
     )
     assert raw > corrected
     assert "THE 20% RULE IS STATED OVER THE LIKE-FOR-LIKE FIGURE," in printed
+    assert "BOTH ARE UPPER BOUNDS" in printed
 
 
 def test_the_escalation_block_reaches_what_the_report_prints() -> None:
@@ -631,7 +653,7 @@ def _reading(
     compact. The ordinary arm is a third number rather than a member of either,
     which is the shape of the thing being graded. ``scaffolding_ns`` is the
     compact arm's alone, because it is the only arm whose call does per-node work
-    outside its own callbacks.
+    beyond what the legacy fixture also does.
     """
     return report.Reading(
         scenario=scenario,

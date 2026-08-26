@@ -47,16 +47,19 @@ two, so what the report prints as construction is the cost of one MORE node unde
 each arm — the quantity the arms hold in common — with the per-call remainder
 printed beside it.
 
-**Why the compact arm also reports what its own callbacks cost.** That split
+**Why the compact arm also reports what the two arms have in common.** That split
 cancels a call's FIXED cost and not its per-NODE one, and a ``construct`` call
-does per-node work outside the callbacks its caller supplies. The pre-flip path
-paid exactly that work through the same call; the legacy fixture reproduces the
-node BUILDING alone and pays none of it, so the two arms' ``node µs`` are still
-not the same scope. :func:`compact_callback_ns` measures the difference by timing
-one call's own callbacks from inside them, which lets the report state a
-like-for-like construction ratio it derives rather than a correction in prose.
-Only the compact arm carries one: an arm whose call IS a loop over its node
-builder has nothing outside that builder to separate.
+does per-node work of its own around the node building it is asked for. The
+pre-flip path paid exactly that work through the same call; the legacy fixture
+reproduces the node building and its lifecycle state and pays none of the rest,
+so the two arms' ``node µs`` are still not the same scope.
+:func:`compact_common_work_ns` measures the difference by timing, inside one
+call, each thing the fixture also does — which lets the report derive the
+correction rather than state it in prose. Only the compact arm carries one: an
+arm whose call IS a loop over its node builder spends every nanosecond in that
+builder and has nothing to separate. Every span there prices its term high, so
+the correction can only under-state what the pre-flip path paid and the corrected
+ratio is an upper bound rather than a point estimate.
 
 **What a scenario carries.** One positional member row, ``ABSENT``-spelled and
 aligned to the exact Entity's ``EntityLayout`` — the same row a compiled read
@@ -131,7 +134,7 @@ __all__ = [
     "Arm",
     "LegacyPlan",
     "Scenario",
-    "compact_callback_ns",
+    "compact_common_work_ns",
     "scenario_named",
     "state_cells",
 ]
@@ -623,35 +626,67 @@ def compact_graph(scenario: Scenario, count: int) -> tuple[object, ...]:
 def _published_graph(scenario: Scenario, roots: tuple[object, ...]) -> tuple[object, ...]:
     """``roots`` warmed, and collected the way this arm's graph answers them.
 
-    Shared by :func:`compact_graph` and by the span :func:`compact_callback_ns`
-    times rather than spelled in both: the residue is one subtracted from the
-    other, so work the two spell differently would land in it and be added to a
-    legacy side that pays its own result tuple already.
+    Shared by :func:`compact_graph` and by the span
+    :func:`compact_common_work_ns` times rather than spelled in both: the residue
+    is one subtracted from the other, so work the two spell differently would
+    land in it and be added to a legacy side that pays its own result tuple
+    already.
     """
     return tuple(_warmed(scenario, root) for root in roots)
 
 
-def compact_callback_ns(scenario: Scenario, count: int) -> float:
-    """Nanoseconds one :func:`compact_graph` call spends inside its OWN work.
+def _released_graph(scenario: Scenario, roots: tuple[object, ...]) -> None:
+    """This arm's result tuple, built and released again when this frame ends.
 
-    The same call, built the same way, with everything :func:`legacy_publication`
-    also does timed from inside it: the build callback, which is the node building
-    the fixture reproduces; each state-factory invocation, which is the lifecycle
-    state the fixture also creates; the result tuple this arm's graph returns,
-    which the legacy arm's graph builds too; and the lifecycle attach, which the
-    fixture performs as its own construction's final phase. What is left outside
-    is the per-node work ``construct`` itself does and no fixture reproduces — the
-    populated check, root validation, the resolution view each factory invocation
-    gets, the factory buffering, and ``construct``'s own root tuple — which is
-    what the pre-flip path paid through the same call.
+    A tuple is not only built. :func:`compact_graph` hands its tuple to a caller
+    that discards it inside the same window the call is timed in, so a span that
+    built one and held it past its own clock read would leave the release in the
+    residue — and be added to a legacy side whose graph builds and discards a
+    tuple of its own. Owning it in a frame that ends inside the span is what
+    makes the two lifetimes the same without either spelling one.
+    """
+    _ = _published_graph(scenario, roots)
 
-    The attach is timed by REPEATING it here rather than from inside
-    ``construct``'s loop, which is no callback and cannot be entered: the same
-    function writing the same slot of the same published node, once per node, is
-    what that loop costs. Repeating it lands on a slot that already holds a value
-    and so releases one, which the first write does not, making this stand-in a
-    shade dearer than the write it prices — an error in the direction that leaves
-    the residue smaller and the corrected ratio higher.
+
+def compact_common_work_ns(scenario: Scenario, count: int) -> float:
+    """Nanoseconds one :func:`compact_graph` call spends on work the legacy
+    fixture also does, per call.
+
+    The same call, built the same way, with one timed span for each thing the
+    fixture does. **That list is closed because the fixture is closed**: the
+    legacy arm's per-node work is the statements of :func:`_one_at_a_time` and
+    :func:`legacy_publication` and nothing else, four between them, and each has
+    exactly one span here.
+
+    - ``scenario.state()`` — the state factory, timed from inside it.
+    - ``model_construct`` and one ``object.__setattr__`` per member — the build
+      callback, timed from inside it, where this arm spells the same node as
+      ``allocate`` and ``populate``.
+    - ``attach_lifecycle_state`` — repeated once per node inside the span, since
+      ``construct`` performs its own in a loop that is no callback and cannot be
+      entered.
+    - :func:`_warmed` into the tuple the graph answers — :func:`_released_graph`,
+      built and released inside the span as this arm's own caller releases it.
+
+    What is left outside is the per-node work ``construct`` does and the fixture
+    reproduces none of: the populated check, root validation, the resolution view
+    each factory invocation gets, the factory buffering, and ``construct``'s own
+    root tuple. The pre-flip path paid all of it through the same call, which is
+    why the report adds it to the legacy side rather than removing it from this
+    one.
+
+    **Every span prices its term high and none prices one low, which is what the
+    corrected ratio rests on.** The repeated attach writes a slot that already
+    holds a value and so releases the state it displaces, where ``construct``'s
+    own write finds that slot empty; each span also carries the clock reads that
+    bound it, and a call runs ``count`` state-factory spans. So this figure is at
+    least what the call really spends on common work, the residue subtracted from
+    it is at most the work the fixture never reproduced, the legacy side it is
+    added to is at most what the pre-flip path paid — and the corrected
+    construction ratio is therefore an UPPER BOUND on the like-for-like cost
+    rather than a point estimate of it. Under the 20% limit it proves the true
+    figure is under the limit as well, which is the direction a rule that
+    surfaces regressions needs its error to run in.
 
     A SEPARATE call from the one :func:`compact_graph` answers, so no timer runs
     inside the call the report's own construction figure is taken over: reading
@@ -685,7 +720,7 @@ def compact_callback_ns(scenario: Scenario, count: int) -> float:
     roots = construction.construct(build, state_factory=state_factory)
     reattached = scenario.state()
     start = perf_counter()
-    _ = _published_graph(scenario, roots)
+    _released_graph(scenario, roots)
     for root in roots:
         attach_lifecycle_state(cast("BaseModel", root), reattached)
     inside += perf_counter() - start
@@ -716,15 +751,16 @@ class Arm:
     (`spec/python.md` §3), so the reading must not attach one: an arm asked for
     a comparand a caller cannot hold answers about no instance that exists.
     """
-    callbacks_ns: Callable[[Scenario, int], float] | None = None
-    """Nanoseconds one call of this arm spends inside its own callbacks, or
-    ``None`` for an arm whose call IS its node builder.
+    common_work_ns: Callable[[Scenario, int], float] | None = None
+    """Nanoseconds one call of this arm spends on work the legacy fixture also
+    does, or ``None`` for an arm whose call IS its node builder.
 
-    ``None`` is the honest answer for the ordinary and legacy arms rather than a missing
-    measurement: their graph is a loop over the node builder, so there is nothing
-    outside that builder for a call to spend time in and nothing to separate. The
-    compact arm's call runs per-node work of its own around the callbacks it is
-    given, and this is what measures it."""
+    ``None`` is the honest answer for the ordinary and legacy arms rather than a
+    missing measurement: their graph is a loop over the node builder, so every
+    nanosecond a call spends is spent on that builder and there is nothing to
+    separate. The compact arm's call runs per-node work of its own around the
+    common work, and this is what measures the common half so the report can
+    subtract it."""
 
 
 ORDINARY: Final = Arm(
@@ -737,7 +773,11 @@ LEGACY: Final = Arm(
     "legacy", legacy_publication, _one_at_a_time(legacy_publication, lifecycle=True), lifecycle=True
 )
 COMPACT: Final = Arm(
-    "compact", compact_publication, compact_graph, lifecycle=True, callbacks_ns=compact_callback_ns
+    "compact",
+    compact_publication,
+    compact_graph,
+    lifecycle=True,
+    common_work_ns=compact_common_work_ns,
 )
 
 ARMS: Final[tuple[Arm, ...]] = (ORDINARY, LEGACY, COMPACT)
