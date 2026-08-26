@@ -23,6 +23,7 @@ database then holds, runs against real Postgres in
 from __future__ import annotations
 
 import copy as copy_module
+import threading
 from functools import cached_property
 from typing import Any, cast
 
@@ -151,6 +152,10 @@ _REBUILT_SLOTS = frozenset(
 """The four slots an edit fills from semantic state rather than carrying, as the
 Entity half states them."""
 
+_COPIED_CONTAINER_SLOTS = frozenset({"__pydantic_extra__", "__pydantic_private__"})
+"""The carried slots the copy gets its own outer mapping of, as the Entity half
+states them."""
+
 
 @pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=["authored", "change-free"])
 def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
@@ -159,7 +164,9 @@ def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
     # Completeness graded over the layout THIS CLASS actually has, walked across
     # its whole MRO, exactly as the Entity half grades it: every other carry test
     # reads a name out of the instance dictionary, and neither `PrivateAttr` state
-    # nor a slot the declaring class lays out for itself is stored under one.
+    # nor a slot the declaring class lays out for itself is stored under one. How
+    # each travels is graded too — the framework's own mappings are the copy's
+    # own, everything else is the very object the source held.
     marked = _Marked(label="a")
     cast("Any", marked)._mark = 9
     object.__setattr__(marked, "token", ["t"])
@@ -168,13 +175,25 @@ def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
     }
     assert {"token", "__pydantic_private__"} <= set(carried)
     copied = marked.edit(**changes)
-    for slot in carried.values():
+    for name, slot in carried.items():
         held = slot.__get__(marked)
         assert slot.__get__(copied) == held
-        if held is not None:
+        if name in _COPIED_CONTAINER_SLOTS and held is not None:
             assert slot.__get__(copied) is not held
+        else:
+            assert slot.__get__(copied) is held
     assert cast("Any", copied)._mark == 9
-    assert cast("Any", copied).token == ["t"]
+
+
+@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=["authored", "change-free"])
+def test_an_edit_carries_an_authored_slot_s_payload_itself(changes: dict[str, object]) -> None:
+    # Unchanged means the object itself on this surface too, so an edit neither
+    # loses the source's view of a mutation made through the copy nor refuses a
+    # payload no copy protocol can reproduce.
+    marked = _Marked(label="a")
+    guard = threading.Lock()
+    object.__setattr__(marked, "token", guard)
+    assert cast("Any", marked.edit(**changes)).token is guard
 
 
 @pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=["authored", "change-free"])

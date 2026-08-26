@@ -382,18 +382,36 @@ def _value_object_annotating_a_framework_name() -> type:
     return Bad
 
 
-# Both ways a class body reaches a name — bound and annotated, which separate
-# checks answer — for each declaration kind, keyed by the kind itself so a third
-# kind added to the enum leaves an entry missing here rather than quietly
-# escaping the reservation below.
+def _entity_slotting_a_framework_name() -> type:
+    class Bad(Entity, table="bad"):
+        __slots__ = ("__parallax_marker__",)
+
+    return Bad
+
+
+def _value_object_slotting_a_framework_name() -> type:
+    class Bad(ValueObject):
+        __slots__ = ("__parallax_marker__",)
+
+    return Bad
+
+
+# All three ways a class body reaches a name — bound, annotated, and listed in
+# `__slots__`, which separate checks answer — for each declaration kind, keyed by
+# the kind itself so a third kind added to the enum leaves an entry missing here
+# rather than quietly escaping the reservation below. The slotted spelling is no
+# key of the namespace at all, and class creation still turns it into a
+# class-level descriptor that takes the name.
 _PREFIX_PROBES: dict[DeclarationKind, tuple[Callable[[], type], ...]] = {
     DeclarationKind.ENTITY: (
         _entity_binding_a_framework_name,
         _entity_annotating_a_framework_name,
+        _entity_slotting_a_framework_name,
     ),
     DeclarationKind.VALUE_OBJECT: (
         _value_object_binding_a_framework_name,
         _value_object_annotating_a_framework_name,
+        _value_object_slotting_a_framework_name,
     ),
 }
 
@@ -412,6 +430,22 @@ def test_the_framework_name_prefix_is_reserved_from_every_declaration_kind(
         with pytest.raises(EntityDefinitionError) as caught:
             declare()
         assert caught.value.code == "entity-reserved-member-name"
+
+
+def _entity_slotting_a_framework_name_unwrapped() -> type:
+    class Bad(Entity, table="bad"):
+        __slots__ = "__parallax_marker__"
+
+    return Bad
+
+
+def test_a_single_slot_spelled_bare_reaches_the_same_reservation() -> None:
+    # `__slots__` accepts one name unwrapped, and that spelling lays out exactly
+    # the descriptor a one-element tuple lays out, so reading the entries has to
+    # answer for a string as well as for a sequence of them.
+    with pytest.raises(EntityDefinitionError) as caught:
+        _entity_slotting_a_framework_name_unwrapped()
+    assert caught.value.code == "entity-reserved-member-name"
 
 
 def test_a_framework_root_declares_nothing_and_is_never_a_candidate() -> None:
