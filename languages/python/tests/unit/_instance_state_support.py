@@ -1,22 +1,23 @@
 """The canonical scenarios published-instance state is measured over, and the
-fixture that builds one node the way publication builds it today.
+fixture that builds one node the way publication built one before the flip.
 
 Six scenarios — shallow, wide, nested, nullable, partial, polymorphic — carry
 retained bytes on both sides of a representation change. The "before" side has a
 problem the "after" side does not: once publication attaches a compact tuple
 there is no legacy path left to measure, so a comparison taken later would have
 nothing to compare against. This module is that half, held as a fixture rather
-than as a number: :data:`SCENARIOS` names the shapes, :func:`legacy_publication`
-builds one node the way Entity Graph Construction builds one today, and
-:func:`disagreements` compares the fixture against the real path so the fixture
-cannot quietly stop standing for it.
+than as a number: :data:`SCENARIOS` names the shapes and
+:func:`legacy_publication` builds one node the way Entity Graph Construction
+built one while that path existed. It was compared against the real path every
+time it was measured, up to and including the reading taken immediately before
+the flip; the flip deleted the path, and with it the comparison.
 
-**Why the fixture is not ordinary construction.** A materialized node is
+**Why the fixture is not ordinary construction.** A materialized node WAS
 ``cls.model_construct()`` with no arguments followed by one
 ``object.__setattr__`` per member, which leaves ``__pydantic_fields_set__``
-permanently empty — the sharpest part of what publication currently retains, and
-the part ordinary construction would not reproduce. A Value Object is different
-and is reproduced differently: ``vo_class.model_construct(present, **values)``,
+permanently empty — the sharpest part of what publication retained then, and the
+part ordinary construction would not reproduce. A Value Object was different and
+is reproduced differently: ``vo_class.model_construct(present, **values)``,
 where ``present`` is exactly the members the row carried.
 
 **What a scenario carries.** One positional member row, ``ABSENT``-spelled and
@@ -350,14 +351,17 @@ class Scenario:
 
 
 def legacy_publication(scenario: Scenario, state: object | None) -> object:
-    """``scenario``'s node built the way publication builds one today.
+    """``scenario``'s node built the way publication built one before the flip.
 
     Zero-argument ``model_construct`` and one ``object.__setattr__`` per member,
-    so the empty fields-set a materialized node carries is reproduced rather than
-    approximated; every declared relationship slot written, since publication
-    installs the unloaded sentinel where a read loaded nothing; and the lifecycle
-    state written straight into the node's storage last, as the construction
-    call's own final phase does.
+    so the empty fields-set a materialized node carried then is reproduced rather
+    than approximated; every declared relationship slot written, since
+    publication installed the unloaded sentinel where a read loaded nothing; and
+    the lifecycle state written last, as the construction call's own final phase
+    still does. That write reaches the ``Entity`` root's real slot today and
+    reached the node's storage while this fixture stood for the shipping path —
+    the difference the frozen and current layout rows in
+    ``docs/instance-state-baseline.md`` account for.
     """
     plan = scenario.plan
     values = scenario.values

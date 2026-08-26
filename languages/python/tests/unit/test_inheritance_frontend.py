@@ -367,9 +367,10 @@ def test_class_access_to_an_inherited_member_still_seeds_a_predicate() -> None:
 
 
 def test_hydrating_a_descendant_fills_every_uncarried_inherited_member() -> None:
-    # The validation-free path publication builds through: a member no read
-    # carried takes its declared default rather than whatever class access to
-    # that member answers.
+    # A member no read carried takes its declared default rather than whatever
+    # class access to that member answers. Graded through the validation-free
+    # constructor, which is where a declared default is applied at all: it is the
+    # same default publication's own template row is prebuilt from.
     hydrated = _Glider.model_construct()
     assert hydrated.fleet_id is None
     assert hydrated.badge is None

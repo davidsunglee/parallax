@@ -739,9 +739,11 @@ def test_a_framework_owned_member_is_omitted_rather_than_required() -> None:
 
 
 def test_a_hydrated_framework_owned_value_is_readable_and_survives_an_edit() -> None:
-    # Hydration builds through the validation-free path, so the stored value
-    # reaches the instance; an edit then carries it forward untouched rather
-    # than resubmitting it to the constructor that refuses authored ones.
+    # A framework-owned member's stored value reaches the instance without ever
+    # meeting the validating constructor; an edit then carries it forward
+    # untouched rather than resubmitting it to the constructor that refuses
+    # authored ones. Stood in for here by the validation-free constructor, which
+    # is the door an ordinary value of that shape is built through.
     hydrated = Reading.model_construct(
         id=1, celsius=1.0, tx_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
     )

@@ -71,8 +71,8 @@ def _account(balance: str = "100.00") -> mm.Account:
 
 
 def _fetched_account(balance: str = "100.00", version: int = 1) -> mm.Account:
-    """One versioned Account as a read hands it back: the framework-owned version
-    arrives through the validation-free path a caller cannot author through."""
+    """One versioned Account standing in for what a read hands back: the
+    framework-owned version is present without a caller having authored it."""
     return mm.Account.model_construct(id=1, owner="Ada", balance=Decimal(balance), version=version)
 
 

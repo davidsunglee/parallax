@@ -336,11 +336,11 @@ python-report-snapshot-graph-overhead:
 
 # A `report` for the same reason as its neighbour above: a total in bytes is
 # machine- and interpreter-relative, so what it prints is evidence rather than a
-# verdict, and it belongs to no aggregate. What it DOES refuse is measuring at
-# all once the fixture it measures has stopped reproducing the real publication
-# path, which is a fact about the fixture rather than about a number — that
-# comparison is graded in `tests/unit/test_instance_state_baseline.py`, which
-# `python-test-dbfree` owns, and it exits non-zero here before any child starts.
+# verdict, and it belongs to no aggregate. The arm it measures is the fixture
+# that reproduced publication before the flip; the path it reproduced is gone, so
+# the reproduction check retired with it and the only exit codes left are 0 and a
+# usage 2. What still grades the fixture is
+# `tests/unit/test_instance_state_baseline.py`, which `python-test-dbfree` owns.
 # What has been read off this, and under what conditions, is
 # `languages/python/docs/instance-state-baseline.md`.
 [metadata("runtime:medium")]

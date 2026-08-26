@@ -2,7 +2,8 @@
 (``parallax.core.entity._graph_construction``): the two positional rows that
 cross its door, the three-phase barrier, handle and scope rules, the
 deterministic allocation index every rejection reads back, and the all-or-none
-publication that makes a failed construction leave nothing reachable.
+lifecycle-state attachment that makes a failed construction return no root and
+attach no state to any node.
 
 Driven directly rather than through Snapshot, because the contract is the roots a
 caller gives and what is reachable from them — never "the query result".

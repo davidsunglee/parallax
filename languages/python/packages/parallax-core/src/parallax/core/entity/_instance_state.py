@@ -442,8 +442,8 @@ class _DeclaredState:
     the instance dictionary every Pydantic implementation over that dictionary
     believes it is reading. Ordinary backing answers with the storage ITSELF
     rather than a copy of it, because a caller that writes through it — a
-    relationship slot, a lifecycle slot, a ``cached_property`` — has to reach the
-    value.
+    relationship an ordinary read loaded, a Change Record, a ``cached_property``
+    — has to reach the value.
 
     A published value's presentation is built per read and MUST NOT be memoized
     on the value. Caching it is the obvious way to pay the build once rather than
@@ -560,7 +560,10 @@ else:
         An Entity Class and a Value Object Class each extend a framework root
         that extends this, so one pair of descriptors decides what Pydantic reads
         of every declared value — and one pair of slots gives both kinds the same
-        object layout, so no read has to ask what shape a value is.
+        backing, so no read has to ask what shape a value is. A framework root
+        below this one may add a slot of its own for state only its kind can hold
+        (``Entity`` does, for lifecycle state); what this root fixes is the
+        backing every declared value shares, not the whole object layout.
 
         Nothing else belongs here. What a declared class IS remains its own
         root's; this is the one place a value's physical state is answered for.
@@ -669,10 +672,12 @@ def declared(value: BaseModel) -> dict[str, object]:
 def named_state(value: BaseModel) -> Mapping[str, object]:
     """Everything ``value`` holds under a name, reached without creating storage.
 
-    An ordinary value keeps its declared members and every framework slot beside
+    An ordinary value keeps its declared members and every framework name beside
     them in one instance dictionary, and that dictionary itself is the answer: a
-    caller partitioning it, or reading one slot out of it, is reading the value.
-    A published value keeps its declared members in its row and holds no instance
+    caller partitioning it, or reading one name out of it, is reading the value.
+    State a framework root holds in a real slot is not under a name and so is not
+    here — the lifecycle slot is carried by its own owner, not by a caller of
+    this. A published value keeps its declared members in its row and holds no instance
     dictionary at all, so the answer is derived from the row — asking the storage
     would CREATE the dictionary publication exists to do without, permanently,
     on a path that only meant to read. A relationship the read loaded is named
@@ -788,12 +793,21 @@ copy sharing the source's mapping would write the source's state — each is
 therefore carried as the copy's own shallow copy, exactly as Pydantic's own copy
 of a model gives it one, while what a container holds under a key stays shared.
 
-Resolved once off the shared root rather than per concrete class, because that
-root's layout IS every declared class's: a declaration may not extend a foreign
-base (``entity-base-invalid``) and may not declare ``__slots__`` of its own
-(``entity-reserved-member-name``), so nothing between a concrete class and this
-root can add a slot. That is what makes the classification exact by construction
-rather than by enumeration — there is no seventh slot to have missed.
+Resolved once off the shared backing root rather than per concrete class, and so
+it reaches exactly the slots that root's own layout declares. A declaration may
+not extend a foreign base (``entity-base-invalid``) and may not declare
+``__slots__`` of its own (``entity-reserved-member-name``), so no CONCRETE class
+adds a slot; what can is a framework root between a concrete class and this one.
+``Entity`` does, for its lifecycle state, which is why that slot is carried by
+``_entity.carry_lifecycle_state`` rather than here — its payload is opaque and
+would be wrong to shallow-copy, so it is classified rather than swept up.
+
+This is therefore a complement over a FIXED root layout rather than over the
+layout a value really has, and a framework slot added below this root would go
+uncarried. What holds the classification exact is graded rather than argued:
+``test_a_declared_class_lays_out_no_slot_of_its_own`` and
+``test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild`` walk a
+concrete class's whole MRO and fail on a slot neither bucket names.
 
 It is a complement rather than those two names so that a slot a Pydantic release
 adds is carried rather than silently dropped. Such a release would take the
@@ -804,10 +818,12 @@ there, where the classification is stated.
 
 
 def carry_slots_beside_state(source: BaseModel, target: BaseModel) -> None:
-    """Give ``target`` its own of every container ``source``'s layout holds.
+    """Give ``target`` its own of every container the shared backing root holds.
 
     A copy derived from a value rebuilds the four slots above out of semantic
-    state, and :data:`_CARRIED_SLOTS` is the rest of the layout. Private
+    state, and :data:`_CARRIED_SLOTS` is the rest of that root's layout — not the
+    rest of the layout a concrete value has, which a framework root below it may
+    have added to. Private
     attributes are the state that reaches: Pydantic keeps a ``PrivateAttr`` in a
     slot of its own rather than in the instance dictionary, so a copy assembled
     out of a name-keyed mapping alone silently resets every one of them to the
@@ -858,9 +874,11 @@ def restated[M: BaseModel](value: M, state: dict[str, object]) -> M:
     lands in the copy's own storage through Pydantic's own slot descriptor, so no
     name a class body binds decides what the copy ends up holding.
     :func:`carry_presence` gives it the source's presence and
-    :func:`carry_slots_beside_state` the rest of the source's layout, without
-    which every ``PrivateAttr`` would silently reset to a fresh instance's
-    default.
+    :func:`carry_slots_beside_state` the rest of the shared backing root's
+    layout, without which every ``PrivateAttr`` would silently reset to a fresh
+    instance's default. A slot a framework root below that one declares is its
+    owner's to carry: the caller pairs this with
+    :func:`~parallax.core.entity._entity.carry_lifecycle_state`.
     """
     copied = cast("M", cast("Any", type(value)).model_construct())
     replace_instance_state(copied, state)

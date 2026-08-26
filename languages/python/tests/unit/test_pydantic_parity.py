@@ -742,8 +742,14 @@ def test_iteration_exposes_declared_fields_and_nothing_else(shape: str) -> None:
 
 
 def test_iteration_exposes_no_relationship_sentinel_or_lifecycle_state() -> None:
+    # Lifecycle state is attached through the `Entity` root's own slot on both
+    # arms, which is the only place it lives: a dictionary entry of the same name
+    # is not lifecycle state and would prove nothing about the slot. Both arms
+    # carry it, because the two exclusions have different mechanisms — a slot is
+    # not in an ordinary value's storage, and a published value's presentation is
+    # derived from its row.
     from parallax.core.entity import MANY_TO_ONE, Rel, rel
-    from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
+    from parallax.core.entity._entity import attach_lifecycle_state, lifecycle_state
     from parallax.core.entity._pydantic_storage import attach_instance_state
 
     class Bay(Entity, table="bay", namespace=_NS):
@@ -755,7 +761,10 @@ def test_iteration_exposes_no_relationship_sentinel_or_lifecycle_state() -> None
     compact = published(Bay, {"peer": other}, id=1, peer_id=2)
     ordinary = Bay(id=1, peer_id=2)
     attach_instance_state(ordinary, "peer", other)
-    attach_instance_state(ordinary, LIFECYCLE_STATE_SLOT, object())
+    state = object()
+    for value in (compact, ordinary):
+        attach_lifecycle_state(value, state)
+        assert lifecycle_state(value) is state
     assert dict(compact) == {"id": 1, "peer_id": 2}
     assert dict(ordinary) == {"id": 1, "peer_id": 2}
     assert compact.peer is other

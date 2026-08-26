@@ -1978,7 +1978,7 @@ def _install_fields(
     A framework-owned member is defaulted because the caller never supplies its
     value and is refused for trying, so requiring one at construction would make
     the Entity unconstructible; the value the framework supplies arrives by
-    hydration, which builds through Pydantic's validation-free path.
+    hydration, which enters no Pydantic constructor at all.
     """
     for py_name, shape in shapes.items():
         annotations[py_name] = _field_annotation(shape)
