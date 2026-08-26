@@ -336,15 +336,18 @@ python-report-snapshot-graph-overhead:
 
 # A `report` for the same reason as its neighbour above: a total in bytes is
 # machine- and interpreter-relative, so what it prints is evidence rather than a
-# verdict, and it belongs to no aggregate. The arm it measures is the fixture
-# that reproduced publication before the flip; the path it reproduced is gone, so
-# the reproduction check retired with it and the only exit codes left are 0 and a
-# usage 2. What still grades the fixture is
-# `tests/unit/test_instance_state_baseline.py`, which `python-test-dbfree` owns.
-# What has been read off this, and under what conditions, is
+# verdict, and it belongs to no aggregate. It measures two arms — the fixture
+# that reproduced publication before the flip, and the shipping publication path
+# — over every supported CPython minor, running a child of its own for each, so
+# it costs more than its neighbours and still gates nothing: the aggregate and
+# the regression verdicts it computes are printed as an escalation block, and the
+# only thing it exits non-zero on is a matrix cell it has no reading for. What
+# grades those verdicts is `tests/unit/test_instance_state_baseline.py`, which
+# `python-test-dbfree` owns and which feeds them doctored readings. What has been
+# read off this, and under what conditions, is
 # `languages/python/docs/instance-state-baseline.md`.
 [metadata("runtime:medium")]
-[doc("Retained published Entity state over the canonical mix, and what building one costs.")]
+[doc("Retained published Entity state under both backings over the canonical mix, on every supported minor.")]
 python-report-instance-state:
     cd {{python}} && uv run python tools/instance_state_overhead.py
 
