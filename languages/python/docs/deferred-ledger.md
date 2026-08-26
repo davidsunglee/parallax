@@ -549,17 +549,23 @@ of 1000 distinct published instances of one all-optional-member declared class �
 1557 µs published today against 585 µs for the same class ordinarily backed:
 
 - **Drop `strict=True` from the `zip`** that builds the presentation — −50 ns per
-  read, **1.09x**, no behavior change. It is a redundant assertion:
-  `PublicationPlan.field_values` is an `itemgetter` built from exactly
-  `plan.fields`, and `install` already refuses a plan whose members and the
-  class's collected Pydantic fields name different sets. The same argument covers
-  the sibling zips in `declared` and `named_state`, which were not priced.
+  read, **1.09x**, no behavior change. It is a redundant assertion, because the
+  widths cannot disagree: `PublicationPlan.field_values` is built from one index
+  per name in `plan.fields` and answers a tuple of exactly that width at each of
+  the three widths `_permutation` spells it at — `operator.itemgetter` at two or
+  more, and the lambdas that answer `()` and a one-tuple at the degenerate two —
+  while `install` already refuses a plan whose members and the class's collected
+  Pydantic fields name different sets. The same argument covers the sibling zips
+  in `declared` and `named_state`, which were not priced.
 - **Replace `plan_of`'s MRO `getattr` with a type-keyed dict lookup** — 66.5 ns
   to 17.2 ns, a further **1.08x**, no behavior change. The caveat to decide
   rather than absorb: a `dict[type, PublicationPlan]` pins every published class
   for the life of the process, and a `WeakKeyDictionary` costs more than the
-  `getattr` it replaces. A domain model's classes are process-lifetime anyway,
-  which is an argument for the strong dict and not a reason to skip the choice.
+  `getattr` it replaces. Nothing pins one today. No registry holds a declared
+  class, so an Entity declared inside a function and composed into a Domain Model
+  is collected once that model and every reference to the class are dropped — a
+  weak reference to it clears on the next `gc.collect()`. The strong dict is
+  therefore a real change in class lifetime rather than a cost already paid.
 - **A one-slot, one-shot, `has_auxiliary`-gated memo on the presentation** — hit
   returns the mapping and clears the slot, miss builds and stores, and a class
   whose `PublicationPlan.has_auxiliary` is true never memoizes at all. The hit
@@ -606,10 +612,13 @@ sentence to this memo unless it is restated as the per-node rule it means.
 **A fourth ingredient that is not free, and is a decision rather than an
 optimization.** Returning a plain `dict` instead of `_PresentedState` for
 `has_auxiliary=False` classes buys another **1.09x**, and makes an unknown-key
-write to `v.__dict__` on such a class **silently evaporate** where today it lands
-in the auxiliary slot and seeds the next presentation. The rule that every write
-path ends as a documented demotion or a loud refusal, and that silently inert
-survives nowhere, is what makes this a decision — it may only be taken explicitly.
+write to `v.__dict__` on such a class **silently evaporate** where today it
+refuses loudly: nothing seeds a presentation of such a class from the auxiliary
+slot, so `_PresentedState` answers that write with a `TypeError` naming the class
+fact rather than absorbing it into a slot no read consults. The rule that every
+write path ends as a documented demotion or a loud refusal, and that silently
+inert survives nowhere, is what makes this a decision — it may only be taken
+explicitly.
 
 **What is already closed, so no later pass re-explores it.** A
 `@model_serializer(mode="wrap")` bracket does bracket both reads at every depth,

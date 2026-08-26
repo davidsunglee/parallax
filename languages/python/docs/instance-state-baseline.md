@@ -151,12 +151,14 @@ nested scenario is the closest match, at 2.8 KB with lifecycle against 1.9 KB
 without it. Read the earlier figures as direction and these as the frozen
 comparison basis.
 
-## Two object layouts, and the rule for dividing them
+## Three object layouts, and the rule for dividing them
 
-This document carries figures from two different object layouts. Every summed
-number below belongs to exactly one of them, and an aggregate that mixes them is
-wrong in a way no reader can see from the number alone. So the layouts are named
-first and the rule for using them is stated after.
+This document carries figures from three different object layouts — the tree
+before COR-111, the intermediate one the seam's first take produced, and the
+current tree. Every summed number below belongs to exactly one of them, and an
+aggregate that mixes them is wrong in a way no reader can see from the number
+alone. So the layouts are named first and the rule for using them is stated
+after.
 
 The tables above are the **frozen reading**, taken over a tree carrying no
 publication machinery at all — an instance of a declared class was a Pydantic
