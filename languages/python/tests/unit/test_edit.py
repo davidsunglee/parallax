@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import copy as copy_module
 import datetime as dt
-import threading
 from decimal import Decimal
 from functools import cached_property
 from typing import Any, Final, cast
@@ -51,7 +50,11 @@ from parallax.core.entity import (
 )
 from parallax.core.entity._declaration import FRAMEWORK_NAME_PREFIX, LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, WireNames, wire_names_of
-from parallax.core.entity._instance_state import AUXILIARY_STATE_SLOT, COMPACT_STATE_SLOT
+from parallax.core.entity._instance_state import (
+    AUXILIARY_STATE_SLOT,
+    COMPACT_STATE_SLOT,
+    BackedModel,
+)
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeLocation,
@@ -611,10 +614,7 @@ def test_an_edit_carries_a_slot_no_declaration_and_no_lifecycle_names(
 
 class _Marked(Entity, table="marked", namespace="parallax.compatibility"):
     """One private attribute, which Pydantic keeps in a slot of the object layout
-    rather than in the instance dictionary an edit rebuilds, and one slot the
-    class lays out itself, which no base of it has ever heard of."""
-
-    __slots__ = ("token",)
+    rather than in the instance dictionary an edit rebuilds."""
 
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str] = attr(max_length=16)
@@ -656,61 +656,49 @@ def test_the_framework_lays_out_exactly_the_slots_the_carry_classifies() -> None
     )
 
 
+def test_a_declared_class_lays_out_no_slot_of_its_own() -> None:
+    # What makes the carry above a complement over a FIXED layout: a declaration
+    # may not extend a foreign base and may not declare `__slots__`, so the
+    # layout a concrete declared class gives its instances is the shared root's,
+    # and the classification has no seventh slot to have missed. Reopening either
+    # route puts a slot in a concrete class's layout that this equality does not
+    # allow.
+    with pytest.raises(EntityDefinitionError) as caught:
+
+        class _Slotted(Entity, table="slotted", namespace="parallax.compatibility"):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
+            __slots__ = ("token",)
+
+            id: Attr[int] = attr(primary_key=True)
+
+    assert caught.value.code == "entity-reserved-member-name"
+    assert set(layout_slots(_Marked)) == set(layout_slots(BackedModel))
+
+
 @pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
 def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
     changes: dict[str, object],
 ) -> None:
     # Completeness graded over the layout THIS CLASS actually has, walked across
     # its whole MRO, rather than over the instance dictionary — one slot of that
-    # layout — or over any single base's `__slots__`. Every other carry test here
-    # reads a name out of that dictionary and so can only see state stored under
-    # one. Two kinds are not: `PrivateAttr` state, which Pydantic lays out beside
-    # the dictionary, and a slot the declaring class lays out for itself, which
-    # only the concrete class knows about. A copy assembled from a name-keyed
-    # mapping alone resets both with nothing failing, and a carry that enumerates
-    # a known base's layout drops the second one alone. Each is graded for HOW it
-    # travels as well as that it does: the framework's own mappings are the copy's
-    # own, everything else is the very object the source held.
+    # layout. Every other carry test here reads a name out of that dictionary and
+    # so can only see state stored under one; `PrivateAttr` state is not, because
+    # Pydantic lays it out beside the dictionary, and a copy assembled from a
+    # name-keyed mapping alone resets it with nothing failing. How each carried
+    # slot travels is graded too: both are mappings the framework keeps writing
+    # into, so the copy's is its own and is shallow.
     marked = _Marked(id=1, label="a")
     cast("Any", marked)._mark = 9
-    object.__setattr__(marked, "token", ["t"])
     carried = {
         name: slot for name, slot in layout_slots(_Marked).items() if name not in _REBUILT_SLOTS
     }
-    assert {"token", "__pydantic_private__"} <= set(carried)
+    assert set(carried) == _COPIED_CONTAINER_SLOTS
     copied = marked.edit(**changes)
-    for name, slot in carried.items():
+    for slot in carried.values():
         held = slot.__get__(marked)
         assert slot.__get__(copied) == held
-        if name in _COPIED_CONTAINER_SLOTS and held is not None:
+        if held is not None:
             assert slot.__get__(copied) is not held
-        else:
-            assert slot.__get__(copied) is held
     assert cast("Any", copied)._mark == 9
-
-
-@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
-def test_an_edit_carries_an_authored_slot_s_payload_itself(changes: dict[str, object]) -> None:
-    # What a class lays out a slot of its own for is state whose meaning only its
-    # author knows, so carrying it forward unchanged is the object itself rather
-    # than anything derived from it. Copying instead breaks it twice: a mutation
-    # made through the copy stops reaching the source, and a payload no copy
-    # protocol can reproduce turns every edit of the value into a refusal.
-    marked = _Marked(id=1, label="a")
-    guard = threading.Lock()
-    object.__setattr__(marked, "token", guard)
-    assert cast("Any", marked.edit(**changes)).token is guard
-
-
-@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
-def test_an_edit_leaves_a_slot_the_source_never_held_unheld(changes: dict[str, object]) -> None:
-    # A layout travels with the absences in it. A slot a class lays out holds
-    # nothing until its owner assigns one, so a copy that invented a value for one
-    # the source never assigned would misdescribe the source exactly as a copy
-    # dropping what it did assign does.
-    copied = _Marked(id=1, label="a").edit(**changes)
-    with pytest.raises(AttributeError, match="token"):
-        cast("Any", copied).token  # noqa: B018 - the access itself is the assertion
 
 
 def test_a_carried_slot_is_the_copy_s_own_state_rather_than_the_source_s() -> None:

@@ -23,7 +23,6 @@ database then holds, runs against real Postgres in
 from __future__ import annotations
 
 import copy as copy_module
-import threading
 from functools import cached_property
 from typing import Any, cast
 
@@ -35,7 +34,11 @@ from _support import value_object_models as vm
 from parallax.core import Attr, Rel, ValueObject, attr
 from parallax.core.entity import EDIT_CODES, EditError, EntityDefinitionError
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
-from parallax.core.entity._instance_state import AUXILIARY_STATE_SLOT, COMPACT_STATE_SLOT
+from parallax.core.entity._instance_state import (
+    AUXILIARY_STATE_SLOT,
+    COMPACT_STATE_SLOT,
+    BackedModel,
+)
 from parallax.core.metamodel import MODEL_ROOT
 
 _UNREACHABLE_FROM_A_VALUE_OBJECT = frozenset(
@@ -136,10 +139,7 @@ def test_an_edit_never_carries_a_derived_cache(changes: dict[str, object]) -> No
 
 class _Marked(ValueObject):
     """One private attribute on a Value Object, which Pydantic keeps in a slot of
-    the object layout rather than in the instance dictionary an edit rebuilds, and
-    one slot the class lays out itself, which no base of it has ever heard of."""
-
-    __slots__ = ("token",)
+    the object layout rather than in the instance dictionary an edit rebuilds."""
 
     label: Attr[str]
 
@@ -157,51 +157,44 @@ _COPIED_CONTAINER_SLOTS = frozenset({"__pydantic_extra__", "__pydantic_private__
 states them."""
 
 
+def test_a_declared_class_lays_out_no_slot_of_its_own() -> None:
+    # The Value Object half of what makes the carry a complement over a FIXED
+    # layout: this kind may not declare `__slots__` either, so a concrete Value
+    # Object Class gives its instances the shared root's layout and nothing more.
+    with pytest.raises(EntityDefinitionError) as caught:
+
+        class _Slotted(ValueObject):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
+            __slots__ = ("token",)
+
+            label: Attr[str]
+
+    assert caught.value.code == "entity-reserved-member-name"
+    assert set(layout_slots(_Marked)) == set(layout_slots(BackedModel))
+
+
 @pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=["authored", "change-free"])
 def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
     changes: dict[str, object],
 ) -> None:
     # Completeness graded over the layout THIS CLASS actually has, walked across
     # its whole MRO, exactly as the Entity half grades it: every other carry test
-    # reads a name out of the instance dictionary, and neither `PrivateAttr` state
-    # nor a slot the declaring class lays out for itself is stored under one. How
-    # each travels is graded too — the framework's own mappings are the copy's
-    # own, everything else is the very object the source held.
+    # reads a name out of the instance dictionary, and `PrivateAttr` state is not
+    # stored under one. How each carried slot travels is graded too — both are
+    # mappings the framework keeps writing into, so the copy's is its own and is
+    # shallow.
     marked = _Marked(label="a")
     cast("Any", marked)._mark = 9
-    object.__setattr__(marked, "token", ["t"])
     carried = {
         name: slot for name, slot in layout_slots(_Marked).items() if name not in _REBUILT_SLOTS
     }
-    assert {"token", "__pydantic_private__"} <= set(carried)
+    assert set(carried) == _COPIED_CONTAINER_SLOTS
     copied = marked.edit(**changes)
-    for name, slot in carried.items():
+    for slot in carried.values():
         held = slot.__get__(marked)
         assert slot.__get__(copied) == held
-        if name in _COPIED_CONTAINER_SLOTS and held is not None:
+        if held is not None:
             assert slot.__get__(copied) is not held
-        else:
-            assert slot.__get__(copied) is held
     assert cast("Any", copied)._mark == 9
-
-
-@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=["authored", "change-free"])
-def test_an_edit_carries_an_authored_slot_s_payload_itself(changes: dict[str, object]) -> None:
-    # Unchanged means the object itself on this surface too, so an edit neither
-    # loses the source's view of a mutation made through the copy nor refuses a
-    # payload no copy protocol can reproduce.
-    marked = _Marked(label="a")
-    guard = threading.Lock()
-    object.__setattr__(marked, "token", guard)
-    assert cast("Any", marked.edit(**changes)).token is guard
-
-
-@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=["authored", "change-free"])
-def test_an_edit_leaves_a_slot_the_source_never_held_unheld(changes: dict[str, object]) -> None:
-    # A layout travels with the absences in it, on this surface too.
-    copied = _Marked(label="a").edit(**changes)
-    with pytest.raises(AttributeError, match="token"):
-        cast("Any", copied).token  # noqa: B018 - the access itself is the assertion
 
 
 @pytest.mark.parametrize("changes", [{"city": "Bergen"}, {}], ids=["authored", "change-free"])

@@ -20,7 +20,6 @@ import decimal as _decimal
 import enum
 import re
 import sys
-from collections.abc import Iterable
 from dataclasses import dataclass
 from types import NoneType, UnionType
 from typing import Any, ClassVar, Final, ForwardRef, Never, Union, cast, get_args, get_origin
@@ -276,6 +275,41 @@ integrity rests on this reservation, which is why it is stated rather than
 assumed.
 
 It holds on either kind, for the reason the schema seam above does.
+"""
+
+_STATE_CONTAINER_NAMES: Final[frozenset[str]] = frozenset(
+    {"__pydantic_extra__", "__pydantic_private__"}
+)
+"""The two mutable containers Pydantic lays out beside a value's instance state.
+
+Pydantic keys on these names rather than on the descriptors behind them: every
+extra field and every ``PrivateAttr`` is read and written under one of them, and
+deriving a copy gives the copy its own outer mapping of each so that a write
+through the copy is not a write to its source. A class body binding either name
+therefore replaces the container itself for its own instances, and a private
+attribute read, a Pydantic model copy, and an edit all reach whatever was bound
+in place of a mapping.
+
+It holds on either kind, because both kinds are Pydantic models and a copy of
+either is derived the same way.
+"""
+
+_INSTANCE_LAYOUT_NAME: Final = "__slots__"
+"""The class-body name that decides a value's object layout, which the framework
+owns whole on either kind.
+
+Every slot a declared value carries is one the framework laid out and can
+therefore classify — the four a derived copy rebuilds from semantic state and
+the two containers above — and that is true *by construction* only while no
+class body adds a seventh: a body may not extend a foreign base
+(``entity-base-invalid``), so its own ``__slots__`` is the one remaining route
+to a slot nothing classifies, and a slot taking one of the framework's own names
+is that framework container for its instances rather than state beside it.
+
+Reserving the name rather than reading it is what makes the refusal
+spelling-proof: ``__slots__`` accepts a bare name, any iterable, a one-shot
+iterator, and an object offering the sequence protocol alone, and what is
+checked here is that the body carries the key at all.
 """
 
 _PICKLE_ENTRY_NAME: Final = "__reduce_ex__"
@@ -542,7 +576,7 @@ def build_class(
         # binds a reserved ``model_*`` name: the rejection is about what the
         # class body authored. Only a framework root is exempt, because the
         # framework's own markers and slots are what the reservation protects.
-        _reject_shadowed_class_names(cls_name, ns, _materialize_slots(ns), kind)
+        _reject_shadowed_class_names(cls_name, ns, kind)
     frontend_types = ignored_types if mint is not None else ()
     ns["model_config"] = ConfigDict(frozen=True, ignored_types=frontend_types)
     if mint is not None:
@@ -1648,7 +1682,7 @@ def _reject_reserved(where: str, py_name: str, kind: DeclarationKind) -> None:
 
 
 def _reject_shadowed_class_names(
-    cls_name: str, ns: dict[str, object], slots: frozenset[str], kind: DeclarationKind
+    cls_name: str, ns: dict[str, object], kind: DeclarationKind
 ) -> None:
     """Reject a class-body name that would take a reserved class-level name.
 
@@ -1666,51 +1700,19 @@ def _reject_shadowed_class_names(
     framework's own prefix be reserved against the body while the engine keeps
     binding markers under it.
 
-    ``slots`` is checked alongside the keys, because class creation turns each
-    entry into a class-level descriptor just as a binding does while it is no key
-    of the namespace: without this, ``__slots__ =
-    ('__parallax_carried_slots__',)`` takes a framework marker the engine reads
-    off ``cls.__dict__``, and ``__slots__ = ('edit',)`` shadows the copy verb
-    itself. The declaration surface is the class object, so what took a reserved
-    name there is what matters, not how the body spelled the taking.
+    ``__slots__`` needs no reading of its own: the name is reserved
+    (:data:`_INSTANCE_LAYOUT_NAME`), so a body carrying it is refused here before
+    class creation could turn any entry of it into a class-level descriptor. That
+    is why the loop below can be over the namespace's keys alone — the one way a
+    body reaches a class-level name without binding a key is the one way it may
+    not take.
     """
-    for name in sorted(set(ns) | slots):
+    for name in sorted(ns):
         reason = _reserved_name_reason(name, kind)
         if reason is not None:
             raise EntityDefinitionError(
                 code="entity-reserved-member-name", message=f"{cls_name}.{name}: {reason}"
             )
-
-
-def _materialize_slots(ns: dict[str, object]) -> frozenset[str]:
-    """The instance slots a class body asked for, fixed in ``ns`` as it is read.
-
-    ``__slots__`` accepts a bare name and otherwise anything class creation can
-    turn into a sequence — including a one-shot iterator, and an object offering
-    the sequence protocol without registering as ``Iterable``. Reading such a
-    value twice is not reading the same thing twice: an iterator scanned here is
-    exhausted by the time class creation reads it and lays out nothing, and a
-    stateful sequence can answer differently each time. The body's spelling is
-    therefore replaced by the tuple that was read, so the names checked against
-    the reservations are exactly the ones the class ends up laying out.
-
-    A value class creation cannot turn into a sequence at all is left as authored
-    and contributes no names: what refuses it is Python's own class creation,
-    whose ``TypeError`` says more about the spelling than a check here could.
-    Entries that are not strings are kept in that tuple for the same reason.
-    """
-    if "__slots__" not in ns:
-        return frozenset()
-    spelling = ns["__slots__"]
-    if isinstance(spelling, str):
-        entries: tuple[object, ...] = (spelling,)
-    else:
-        try:
-            entries = tuple(cast("Iterable[object]", spelling))
-        except TypeError:
-            return frozenset()
-    ns["__slots__"] = entries
-    return frozenset(entry for entry in entries if isinstance(entry, str))
 
 
 def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
@@ -1723,8 +1725,11 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
     the copy verb, because both kinds install one; the schema seam, because an
     authored one would redefine what publication means for its own instances; the
     two names a value's instance state is presented under, because the framework
-    binds both; and the pickle entry point, because it is the name ``pickle``'s
-    own dispatch asks either kind for. Only the Entity surface names follow.
+    binds both; the two containers Pydantic lays out beside that state, because
+    the framework decides what a copy of each is; the object layout itself,
+    because every slot of a declared value's is one the framework classifies; and
+    the pickle entry point, because it is the name ``pickle``'s own dispatch asks
+    either kind for. Only the Entity surface names follow.
     """
     if py_name.startswith(FRAMEWORK_NAME_PREFIX):
         return (
@@ -1754,6 +1759,23 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
             "presented to Pydantic under — the framework binds both, and an authored one "
             "decides what Pydantic reads of every instance of this class, including a "
             "published one that holds no instance dictionary at all"
+        )
+    if py_name in _STATE_CONTAINER_NAMES:
+        return (
+            f"reuses `{py_name}`, one of the two containers Pydantic lays out beside a "
+            "value's instance state — Pydantic keys extra fields and every private "
+            "attribute on the name rather than on what is bound under it, so an authored "
+            "one is what every read of them, and every copy derived from this class's "
+            "values, would reach in place of a mapping"
+        )
+    if py_name == _INSTANCE_LAYOUT_NAME:
+        return (
+            f"declares `{_INSTANCE_LAYOUT_NAME}`, and a declared class's object layout is "
+            "the framework's alone — every slot of it is one the framework lays out and a "
+            "derived copy therefore knows how to carry, which a body laying out slots of "
+            "its own would no longer be true of; hold non-field per-instance state in a "
+            "`PrivateAttr` instead, which an edit carries and which costs a value no slot "
+            "of its own"
         )
     if py_name == _PICKLE_ENTRY_NAME:
         return (

@@ -14,7 +14,6 @@ compile to one declaration on both.
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterable
-from types import MemberDescriptorType
 
 import pytest
 from _compact_support import published
@@ -383,36 +382,19 @@ def _value_object_annotating_a_framework_name() -> type:
     return Bad
 
 
-def _entity_slotting_a_framework_name() -> type:
-    class Bad(Entity, table="bad"):
-        __slots__ = ("__parallax_marker__",)
-
-    return Bad
-
-
-def _value_object_slotting_a_framework_name() -> type:
-    class Bad(ValueObject):
-        __slots__ = ("__parallax_marker__",)
-
-    return Bad
-
-
-# All three ways a class body reaches a name — bound, annotated, and listed in
-# `__slots__`, which separate checks answer — for each declaration kind, keyed by
-# the kind itself so a third kind added to the enum leaves an entry missing here
-# rather than quietly escaping the reservation below. The slotted spelling is no
-# key of the namespace at all, and class creation still turns it into a
-# class-level descriptor that takes the name.
+# Both ways a class body reaches a name — bound and annotated — for each
+# declaration kind, keyed by the kind itself so a third kind added to the enum
+# leaves an entry missing here rather than quietly escaping the reservation
+# below. There is no third way: a body may not declare `__slots__` at all, which
+# is the one route to a class-level name that binds no key of the namespace.
 _PREFIX_PROBES: dict[DeclarationKind, tuple[Callable[[], type], ...]] = {
     DeclarationKind.ENTITY: (
         _entity_binding_a_framework_name,
         _entity_annotating_a_framework_name,
-        _entity_slotting_a_framework_name,
     ),
     DeclarationKind.VALUE_OBJECT: (
         _value_object_binding_a_framework_name,
         _value_object_annotating_a_framework_name,
-        _value_object_slotting_a_framework_name,
     ),
 }
 
@@ -433,22 +415,6 @@ def test_the_framework_name_prefix_is_reserved_from_every_declaration_kind(
         assert caught.value.code == "entity-reserved-member-name"
 
 
-def _entity_slotting_a_framework_name_unwrapped() -> type:
-    class Bad(Entity, table="bad"):
-        __slots__ = "__parallax_marker__"
-
-    return Bad
-
-
-def test_a_single_slot_spelled_bare_reaches_the_same_reservation() -> None:
-    # `__slots__` accepts one name unwrapped, and that spelling lays out exactly
-    # the descriptor a one-element tuple lays out, so reading the entries has to
-    # answer for a string as well as for a sequence of them.
-    with pytest.raises(EntityDefinitionError) as caught:
-        _entity_slotting_a_framework_name_unwrapped()
-    assert caught.value.code == "entity-reserved-member-name"
-
-
 class _SequenceSlots:
     """A ``__slots__`` value class creation accepts and ``isinstance(...,
     Iterable)`` denies: the sequence protocol alone, with no ``__iter__``."""
@@ -460,57 +426,89 @@ class _SequenceSlots:
         return self._names[index]
 
 
-def _entity_slotting_a_framework_name_by_sequence() -> type:
+def _one_shot_slots() -> Generator[str]:
+    yield "token"
+
+
+# Every shape `__slots__` accepts, plus one it does not: a bare name, a tuple, an
+# object offering the sequence protocol without registering as `Iterable`, a
+# one-shot iterator, and a value naming nothing at all. What each would have laid
+# out differs; that none of them reaches a layout is what the reservation buys.
+_SLOTS_SPELLINGS: dict[str, object] = {
+    "bare": "token",
+    "tuple": ("token",),
+    "sequence-protocol": _SequenceSlots("token"),
+    "one-shot": _one_shot_slots(),
+    "names-nothing": 5,
+}
+
+
+def _entity_slotting(spelling: object) -> type:
     class Bad(Entity, table="bad"):
-        __slots__ = _SequenceSlots("__parallax_marker__")
+        __slots__ = spelling
 
     return Bad
 
 
-def test_a_slots_spelling_outside_the_iterable_protocol_reaches_the_reservation() -> None:
-    # Class creation turns `__slots__` into a sequence rather than asking whether
-    # it is `Iterable`, so a `__getitem__`-only object lays out descriptors while
-    # registering as no iterable at all. Reading the entries the way class
-    # creation reads them is what makes the two agree about the layout.
+def _value_object_slotting(spelling: object) -> type:
+    class Bad(ValueObject):
+        __slots__ = spelling
+
+    return Bad
+
+
+@pytest.mark.parametrize("spelling", list(_SLOTS_SPELLINGS.values()), ids=list(_SLOTS_SPELLINGS))
+@pytest.mark.parametrize(
+    "declare", [_entity_slotting, _value_object_slotting], ids=["entity", "value-object"]
+)
+def test_no_declaration_may_lay_out_slots_of_its_own(
+    declare: Callable[[object], type], spelling: object
+) -> None:
+    # A declared value's object layout is the framework's whole: every slot of it
+    # is one the framework lays out, and an edit therefore knows how to carry each
+    # without asking whose it is. A body laying out its own would break that by
+    # construction, so the reservation is on the NAME and the value is never read
+    # — which is what makes it spelling-proof. Read instead, these five spellings
+    # disagree about the layout in five different ways: `isinstance(...,
+    # Iterable)` denies the sequence-protocol object while class creation accepts
+    # it, and scanning the one-shot iterator exhausts it before class creation
+    # sees it.
     assert not isinstance(_SequenceSlots("x"), Iterable)
     with pytest.raises(EntityDefinitionError) as caught:
-        _entity_slotting_a_framework_name_by_sequence()
+        declare(spelling)
     assert caught.value.code == "entity-reserved-member-name"
+    assert "PrivateAttr" in caught.value.message
 
 
-def test_a_one_shot_slots_spelling_still_lays_out_the_slot_it_names() -> None:
-    # A generator is read once. Scanning it for reserved names and then handing
-    # the same exhausted object to class creation lays out nothing, so the class
-    # silently loses a slot its body asked for; the entries are fixed as they are
-    # read instead, and the reservation and the layout see one tuple.
-    def spelling() -> Generator[str]:
-        yield "token"
-
-    class Held(Entity, table="held"):
-        __slots__ = spelling()
-
-        id: Attr[int] = attr(primary_key=True)
-
-    assert isinstance(Held.__dict__["token"], MemberDescriptorType)
-
-
-def _entity_slotting_a_value_that_names_nothing() -> type:
+def _entity_binding_a_private_container() -> type:
     class Bad(Entity, table="bad"):
-        __slots__ = 5
-
-        id: Attr[int] = attr(primary_key=True)
+        __pydantic_private__ = {}  # noqa: RUF012 - the binding itself is the rejection
 
     return Bad
 
 
-def test_a_slots_value_that_names_nothing_is_refused_by_class_creation() -> None:
-    # A `__slots__` that is no sequence at all names no slot to reserve against,
-    # and the engine leaves the refusal to class creation rather than restating
-    # it: Python's own `TypeError` says what is wrong with the spelling, and an
-    # `EntityDefinitionError` here would claim the declaration grammar rejected
-    # something that is not about the declaration grammar.
-    with pytest.raises(TypeError, match="not iterable"):
-        _entity_slotting_a_value_that_names_nothing()
+def _value_object_binding_an_extra_container() -> type:
+    class Bad(ValueObject):
+        __pydantic_extra__ = {}  # noqa: RUF012 - the binding itself is the rejection
+
+    return Bad
+
+
+@pytest.mark.parametrize(
+    "declare",
+    [_entity_binding_a_private_container, _value_object_binding_an_extra_container],
+    ids=["entity-private", "value-object-extra"],
+)
+def test_neither_kind_may_bind_a_container_pydantic_keys_on(declare: Callable[[], type]) -> None:
+    # Pydantic keys every private attribute and every extra field on these two
+    # names rather than on what is bound under them, so a body binding one hands
+    # its own instances something that is not a mapping where a mapping is read
+    # and written — a private-attribute read, a Pydantic model copy, and an edit
+    # all reach it. The layout reservation above closes the slotted spelling; this
+    # is the plain binding, which is a different route to the same collision.
+    with pytest.raises(EntityDefinitionError) as caught:
+        declare()
+    assert caught.value.code == "entity-reserved-member-name"
 
 
 def test_a_framework_root_declares_nothing_and_is_never_a_candidate() -> None:

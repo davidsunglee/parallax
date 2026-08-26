@@ -53,8 +53,6 @@ _NS = "writepaths"
 
 
 class Crate(Entity, table="crate", namespace=_NS):
-    __slots__ = ("token",)
-
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str | None]
     peer_id: Attr[int | None]
@@ -511,26 +509,23 @@ def test_that_named_state_carries_author_owned_state_the_way_ordinary_backing_do
 
 def test_that_a_published_value_edits_out_of_the_same_object_layout_too() -> None:
     # `named_state` answers what a value holds under a NAME, and the layout holds
-    # slots no name of it reaches — `PrivateAttr` state, and whatever the class
-    # lays out for itself — so the row a published value publishes cannot be the
-    # whole of what its edit carries either. `allocate` gives a shell the private
-    # slot at the declared defaults, and the edit has to carry what the value
-    # holds there rather than restore those defaults. What it must NOT carry is
-    # the compact backing's own two slots: the copy is built ordinary, so its row
-    # is its instance dictionary and its author-owned state is in there by name.
+    # a slot no name of it reaches — `PrivateAttr` state — so the row a published
+    # value publishes cannot be the whole of what its edit carries either.
+    # `allocate` gives a shell the private slot at the declared defaults, and the
+    # edit has to carry what the value holds there rather than restore those
+    # defaults. What it must NOT carry is the compact backing's own two slots: the
+    # copy is built ordinary, so its row is its instance dictionary and its
+    # author-owned state is in there by name.
     value = _crate()
     cast("Any", value)._mark = 9
-    token = ["t"]
-    object.__setattr__(value, "token", token)
     carried = {
         name
         for name in layout_slots(Crate)
         if name not in {"__dict__", "__pydantic_fields_set__", COMPACT_STATE_SLOT}
     }
-    assert {"token", "__pydantic_private__", AUXILIARY_STATE_SLOT} <= carried
+    assert {"__pydantic_private__", AUXILIARY_STATE_SLOT} <= carried
     for edited in (value.edit(label="y"), value.edit()):
         assert cast("Any", edited)._mark == 9
-        assert cast("Any", edited).token is token
         assert raw_row(edited) is None
         with pytest.raises(AttributeError, match=AUXILIARY_STATE_SLOT):
             object.__getattribute__(edited, AUXILIARY_STATE_SLOT)
