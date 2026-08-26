@@ -2409,8 +2409,9 @@ or descriptor authoring form and performs no audit stamping.
   roots atomically. The first factory failure stops invocation, discards every
   buffered result, and leaves every allocated Entity lifecycle-state-free;
   `construct(...)` delivers no root at all rather than a partial tuple, so no
-  node reaches the caller as a result of the call. What it does not do is take
-  back what it already handed a callback.
+  node appears in the call's ordered result. What it does not do is take back
+  what it already handed a callback, or keep a node the call reached out of
+  caller-owned state a factory put it in.
   A factory that keeps the instance its resolution view answered still holds
   that instance after the call fails — fully populated, and
   lifecycle-state-free like every other. Rows attach as nodes are populated and
