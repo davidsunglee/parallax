@@ -123,11 +123,14 @@ class EntityLayout:
 
     ``relationships`` is the canonical broad-relationship row: every navigable
     direction under the identity that declares it, in accepted declaration
-    order, ancestry first. ``relationship_index`` locates one by name, and an
-    undeclared name is absent from it. That order is the one rule two callers
-    share — the canonical view slot order :meth:`ordered` sorts into, and the
-    positions a full-width broad-relationship row is written at — so both read it
-    here rather than each deriving it.
+    order, ancestry first. ``relationship_index`` locates one by that whole
+    identity, so a direction this concrete does not navigate is absent from it
+    however it is spelled — including one whose local name a declared direction
+    also carries, which a name-keyed index would answer a position for. That
+    order is the one rule two callers share — the canonical view slot order
+    :meth:`ordered` sorts into, and the positions a full-width
+    broad-relationship row is written at — so both read it here rather than each
+    deriving it.
     """
 
     concrete: EntityIdentity
@@ -140,7 +143,7 @@ class EntityLayout:
     value_objects: tuple[ValueObjectLayout, ...]
     temporal_ends: frozenset[AttributeIdentity]
     relationships: tuple[RelationshipIdentity, ...]
-    relationship_index: Mapping[str, int]
+    relationship_index: Mapping[RelationshipIdentity, int]
     _primary_key: tuple[int, ...]
 
     def key_of(self, row: tuple[object, ...]) -> object:
@@ -157,12 +160,13 @@ class EntityLayout:
 
     def ordered[V: NarrowableView](self, views: Iterable[V]) -> tuple[V, ...]:
         """``views`` in canonical slot order: each relationship's own declaration
-        position with an undeclared one last, the broad view before that
-        relationship's narrowed ones, and narrowed views by their derived key."""
+        position with a direction this concrete does not navigate last, the
+        broad view before that relationship's narrowed ones, and narrowed views
+        by their derived key."""
         return tuple(sorted(views, key=self._rank))
 
     def _rank(self, view: NarrowableView) -> tuple[int, int, str]:
-        position = self.relationship_index.get(view.relationship.name, len(self.relationship_index))
+        position = self.relationship_index.get(view.relationship, len(self.relationship_index))
         return position, int(view.narrowed_view is not None), view.narrowed_view or ""
 
 
@@ -238,7 +242,7 @@ class LayoutCatalog:
             temporal_ends=self._temporal_ends(position.root),
             relationships=relationships,
             relationship_index=MappingProxyType(
-                {direction.name: position for position, direction in enumerate(relationships)}
+                {direction: position for position, direction in enumerate(relationships)}
             ),
             _primary_key=self._key_positions(identity, position.root, index_of),
         )

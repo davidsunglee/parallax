@@ -178,18 +178,21 @@ class _Materialization:
         against, so the row is the model's own width by construction. A view
         schema may still lay out a slot for a direction this concrete does not
         declare — an unguarded level attaches its slot to every concrete it can
-        reach, and the canonical view order ranks an undeclared name last rather
+        reach, and the canonical view order ranks such a direction last rather
         than refusing it — so laying the slot out is tolerated and WRITING one is
-        the disagreement. Translating a name to a position is where that becomes
-        visible, so the refusal is stated here in the construction vocabulary,
-        because a position dropped instead would lose a view the read loaded.
+        the disagreement. Translating the view's direction to a position is where
+        that becomes visible, so the refusal is stated here in the construction
+        vocabulary, because a position dropped instead would lose a view the read
+        loaded. The whole Relationship Identity is what locates the position: two
+        Entities may declare one local name, and matching on the name alone would
+        write a foreign direction's arm at the declared one's position.
         """
         layout = self._merge.layout(index)
         row: list[object] = [UNLOADED] * len(layout.relationships)
         for slot, key in enumerate(self._merge.view_layout(index).slots):
             if key.narrowed_view is not None or (value := self._merge.view(index, slot)) is ABSENT:
                 continue
-            position = layout.relationship_index.get(key.relationship.name)
+            position = layout.relationship_index.get(key.relationship)
             if position is None:
                 raise _undeclared_direction(
                     layout.concrete, key.relationship, self._scope.index(index)

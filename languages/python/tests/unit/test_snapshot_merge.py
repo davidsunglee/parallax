@@ -762,6 +762,23 @@ def test_a_loaded_view_naming_a_direction_the_concrete_lacks_is_refused() -> Non
     assert refusal.value.identity == RelationshipIdentity(_ORDER_IDENTITY, "zzz")
 
 
+def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refused() -> None:
+    # `statuses` is declared by SnapOrder and, separately, by SnapOrderItem, so a
+    # view carrying the item's direction names a position the order has under a
+    # direction it does not navigate. The whole Relationship Identity is what
+    # locates a position, so this is the same refusal an unknown name takes
+    # rather than a silent write of the foreign arm at the declared one's index.
+    foreign = RelationshipIdentity(EntityIdentity(_NAMESPACE, "SnapOrderItem"), "statuses")
+    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrderItem.statuses")
+    order = fixture.node("SnapOrder", _ORDER_ROW)
+    fixture.attach(order, "parallax.compatibility.SnapOrderItem.statuses", ())
+    with pytest.raises(GraphConstructionError) as refusal:
+        fixture.materialize(order)
+    assert refusal.value.code == "entity-graph-invalid-member"
+    assert refusal.value.index == 0
+    assert refusal.value.identity == foreign
+
+
 def test_a_root_outside_the_graph_is_refused_at_sealing() -> None:
     builder, _ = _one_projection()
     with pytest.raises(ValueError, match="a root names projection 3"):

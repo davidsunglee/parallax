@@ -373,6 +373,18 @@ def test_ordered_reaches_a_relationship_an_inheritance_ancestor_declared() -> No
     assert layout.ordered((undeclared, owner)) == (owner, undeclared)
 
 
+def test_ordered_places_another_entitys_direction_of_the_same_name_last() -> None:
+    # `statuses` is declared by Order and, separately, by OrderItem. Order
+    # navigates only its own, so the item's direction is not a position of this
+    # layout at all and sorts with the undeclared ones — which is what keeps the
+    # canonical order a statement about identities rather than about names.
+    layout = LayoutCatalog(corpus_model("orders")).entity(_identity("Order"))
+    statuses = _key("Order", "statuses")
+    foreign = _key("OrderItem", "statuses")
+    items = _key("Order", "items")
+    assert layout.ordered((foreign, statuses, items)) == (items, statuses, foreign)
+
+
 def test_ordered_answers_an_empty_selection_and_a_single_view_unchanged() -> None:
     layout = LayoutCatalog(corpus_model("orders")).entity(_identity("Order"))
     items = _key("Order", "items")
