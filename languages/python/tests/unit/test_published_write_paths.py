@@ -147,6 +147,45 @@ def test_assigning_a_relationship_on_a_published_value_is_refused() -> None:
     assert raw_row(value) == (0b011, 1, "x", None, UNLOADED)
 
 
+def test_writing_a_relationship_position_through_that_mapping_is_refused_too() -> None:
+    # The row holds a relationship position that the presentation does not carry,
+    # so a write of one is a key the mapping has never heard of and a position
+    # the row already owns. Taking it as author-owned state would leave the tail
+    # answering unloaded while everything reading the value's named state saw the
+    # shadow — the split the refusal below exists to prevent.
+    value = _crate()
+    peer = published(Crate, id=2, label="z")
+    state = cast("dict[str, Any]", value.__dict__)
+    with pytest.raises(TypeError, match="attached once"):
+        state["peer"] = peer
+    with pytest.raises(TypeError, match="attached once"):
+        state.setdefault("peer", peer)
+    with pytest.raises(TypeError, match="attached once"):
+        del state["peer"]
+    assert raw_row(value) == (0b011, 1, "x", None, UNLOADED)
+    assert auxiliary(value) == {}
+
+
+def test_a_class_declaring_no_author_owned_state_refuses_the_write_it_cannot_keep() -> None:
+    # A presentation is seeded from the auxiliary slot only where the class
+    # declares state that could be there, so on a class declaring none the slot
+    # is read by nothing: a write into it would be answered by the next
+    # presentation as though it had never happened. Refusing is what keeps the
+    # class fact a contract rather than a prediction.
+    value = published(Bare, id=1, label="x", peer_id=None)
+    state = cast("dict[str, Any]", value.__dict__)
+    with pytest.raises(TypeError, match="declares no"):
+        state["memo"] = 7
+    with pytest.raises(TypeError, match="declares no"):
+        state.setdefault("memo", 7)
+    with pytest.raises(TypeError, match="declares no"):
+        state.update(memo=7)
+    with pytest.raises(TypeError, match="declares no"):
+        state |= {"memo": 7}
+    assert cast("dict[str, Any]", value.__dict__) == {"id": 1, "label": "x", "peer_id": None}
+    assert auxiliary(value) == {}
+
+
 _COPY_DOORS: tuple[Callable[[Any], object], ...] = (
     copy.copy,
     copy.deepcopy,
@@ -213,6 +252,33 @@ def test_every_other_mutation_of_that_mapping_reaches_the_same_slot() -> None:
     assert cast("dict[str, Any]", value.__dict__)["third"] == 3
     assert raw_row(value) == (0b011, 1, "x", None, UNLOADED)
     assert real_storage(value) == {}
+
+
+def test_re_initializing_that_mapping_is_the_update_dict_makes_of_it() -> None:
+    # `dict.__init__` on a mapping that already holds items updates it in place
+    # rather than replacing it, which makes it a mutator like the ones above and
+    # one an inherited implementation would run against the temporary. A caller
+    # reaching it is rare; leaving it the one silent write would still leave one.
+    value = _crate()
+    state = cast("dict[str, Any]", value.__dict__)
+    state.__init__({"first": 1}, second=2)
+    assert auxiliary(value) == {"first": 1, "second": 2}
+    assert cast("dict[str, Any]", value.__dict__)["first"] == 1
+    with pytest.raises(TypeError, match="attached once"):
+        state.__init__(label="y")
+    assert raw_row(value) == (0b011, 1, "x", None, UNLOADED)
+
+
+def test_an_answered_mutator_keeps_the_arity_dict_gives_it() -> None:
+    # `dict.pop` takes at most one default and rejects a second as a caller
+    # error. An answered mutator that accepted one would make the presentation
+    # honour a call the mapping it presents refuses, which is a different mapping
+    # rather than a stricter one.
+    state = cast("Any", _crate().__dict__)
+    with pytest.raises(TypeError, match="at most 2 arguments"):
+        state.pop("missing", 1, 2)
+    with pytest.raises(TypeError, match="at most 2 arguments"):
+        cast("Any", {}).pop("missing", 1, 2)
 
 
 _ROW_MUTATIONS: tuple[Callable[[dict[str, Any]], object], ...] = (
@@ -388,6 +454,26 @@ def test_nor_does_a_framework_read_that_wants_the_whole_of_a_value_s_named_state
     assert pickle.loads(pickle.dumps(value)) == value
     assert not _dict_referents(value)
     assert real_storage(value) == {}
+
+
+def test_that_named_state_carries_author_owned_state_the_way_ordinary_backing_does() -> None:
+    # An edit preserves everything it neither replaces nor invalidates (§3), and
+    # a published value keeps author-owned state in a slot of its own rather than
+    # beside its declared members. A reader that stopped at the row would drop
+    # exactly what the same edit of an ordinary value carries forward. The
+    # `cached_property` result is the one thing both drop, because the class
+    # declares that slot derived from state the edit may have replaced.
+    value = _crate()
+    cast("dict[str, Any]", value.__dict__)["third_party_cache"] = 7
+    assert value.warmed == 10
+    edited = value.edit(label="y")
+    assert real_storage(edited)["third_party_cache"] == 7
+    assert "warmed" not in real_storage(edited)
+
+    ordinary = Crate.model_construct(id=1, label="x", peer_id=None)
+    cast("dict[str, Any]", ordinary.__dict__)["third_party_cache"] = 7
+    assert ordinary.warmed == 10
+    assert real_storage(ordinary.edit(label="y")) == real_storage(edited)
 
 
 def test_a_published_value_object_edits_out_of_its_row_the_same_way() -> None:
