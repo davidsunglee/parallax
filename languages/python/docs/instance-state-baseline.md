@@ -54,33 +54,35 @@ their difference. `cells` is what the backing holds — for the legacy arm the
 entries of its instance storage, and for the compact arm the positions of its one
 row, which is the presence bitmap plus every declared member plus every declared
 relationship. `read ns` is per declared field read, averaged over every field of
-the node. `peak B` is the high-water mark one construction reaches: the state the
-node keeps plus what the construction allocated and freed on the way to it.
+the node. `peak B` is the high-water mark one construction reaches, read against
+the collected floor it starts from, and `transient B` is what it allocated and
+freed again on the way there — that mark less what the node keeps, so neither
+column counts the node twice and neither leaves it out.
 
 ### CPython 3.14.7
 
 | scenario | fields | arm | cells | retained B | bare B | lifecycle B | build µs | read ns | dump µs | transient B | peak B |
 |---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| shallow | 4 | legacy | 5 | 720 | 584 | 136 | 2.80 | 28.5 | 0.72 | 506 | 1,226 |
-| | | compact | 6 | 416 | 280 | 136 | 5.50 | 92.1 | 1.43 | 2,056 | 2,472 |
+| shallow | 4 | legacy | 5 | 720 | 584 | 136 | 2.83 | 29.1 | 0.76 | 650 | 1,370 |
+| | | compact | 6 | 416 | 280 | 136 | 5.56 | 92.7 | 1.43 | 3,608 | 4,024 |
 | | | **reduction** | | **42.2%** | **52.1%** | | | | | | |
-| wide | 16 | legacy | 17 | 1,000 | 864 | 136 | 7.56 | 25.8 | 1.22 | 968 | 1,968 |
-| | | compact | 18 | 544 | 408 | 136 | 9.62 | 82.0 | 2.46 | 2,056 | 2,600 |
+| wide | 16 | legacy | 17 | 1,000 | 864 | 136 | 7.59 | 25.1 | 1.24 | 832 | 1,832 |
+| | | compact | 18 | 544 | 408 | 136 | 9.52 | 80.2 | 2.42 | 3,288 | 3,832 |
 | | | **reduction** | | **45.6%** | **52.8%** | | | | | | |
-| nested | 5 | legacy | 6 | 2,920 | 2,784 | 136 | 9.68 | 27.0 | 2.52 | 2,616 | 5,536 |
-| | | compact | 7 | 1,232 | 1,096 | 136 | 15.03 | 85.6 | 6.02 | 3,057 | 4,289 |
+| nested | 5 | legacy | 6 | 2,920 | 2,784 | 136 | 9.66 | 29.5 | 2.64 | 2,264 | 5,184 |
+| | | compact | 7 | 1,232 | 1,096 | 136 | 15.40 | 84.2 | 6.12 | 4,553 | 5,785 |
 | | | **reduction** | | **57.8%** | **60.6%** | | | | | | |
-| nullable | 10 | legacy | 11 | 1,000 | 864 | 136 | 5.18 | 22.8 | 0.89 | 1,016 | 2,016 |
-| | | compact | 12 | 496 | 360 | 136 | 5.90 | 77.5 | 1.83 | 2,056 | 2,552 |
+| nullable | 10 | legacy | 11 | 1,000 | 864 | 136 | 5.38 | 23.5 | 0.93 | 832 | 1,832 |
+| | | compact | 12 | 496 | 360 | 136 | 6.00 | 78.9 | 1.86 | 3,288 | 3,784 |
 | | | **reduction** | | **50.4%** | **58.3%** | | | | | | |
-| partial | 10 | legacy | 11 | 1,000 | 864 | 136 | 4.93 | 24.3 | 0.91 | 1,016 | 2,016 |
-| | | compact | 12 | 464 | 328 | 136 | 4.85 | 77.4 | 1.87 | 2,056 | 2,520 |
+| partial | 10 | legacy | 11 | 1,000 | 864 | 136 | 5.03 | 24.4 | 0.94 | 832 | 1,832 |
+| | | compact | 12 | 464 | 328 | 136 | 4.85 | 78.4 | 1.85 | 3,344 | 3,808 |
 | | | **reduction** | | **53.6%** | **62.0%** | | | | | | |
-| polymorphic | 7 | legacy | 8 | 808 | 672 | 136 | 3.94 | 25.1 | 0.81 | 616 | 1,424 |
-| | | compact | 9 | 440 | 304 | 136 | 5.96 | 82.4 | 1.64 | 2,056 | 2,496 |
+| polymorphic | 7 | legacy | 8 | 808 | 672 | 136 | 4.03 | 25.6 | 0.83 | 624 | 1,432 |
+| | | compact | 9 | 440 | 304 | 136 | 6.36 | 88.0 | 1.76 | 3,224 | 3,664 |
 | | | **reduction** | | **45.5%** | **54.8%** | | | | | | |
-| *warmed* | 4 | legacy | 6 | 1,046 | 910 | 136 | 3.83 | 28.3 | 0.76 | 670 | 1,716 |
-| | | compact | 6 | 838 | 702 | 136 | 7.93 | 94.4 | 1.77 | 1,992 | 2,830 |
+| *warmed* | 4 | legacy | 6 | 1,046 | 910 | 136 | 3.82 | 29.0 | 0.75 | 624 | 1,670 |
+| | | compact | 6 | 838 | 702 | 136 | 7.90 | 92.4 | 1.81 | 3,370 | 4,208 |
 | | | *reduction* | | *19.9%* | *22.9%* | | | | | | |
 
 | aggregate | before | after | reduction |
@@ -90,34 +92,34 @@ node keeps plus what the construction allocated and freed on the way to it.
 
 | operation, over the mix | ratio |
 |---|---:|
-| construction | 1.37x |
-| attribute read | 3.24x |
-| serialization | 2.16x |
+| construction | 1.38x |
+| attribute read | 3.19x |
+| serialization | 2.11x |
 
 ### CPython 3.13.15
 
 | scenario | fields | arm | cells | retained B | bare B | lifecycle B | build µs | read ns | dump µs | transient B | peak B |
 |---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| shallow | 4 | legacy | 5 | 696 | 560 | 136 | 2.72 | 26.2 | 0.71 | 538 | 1,234 |
-| | | compact | 6 | 384 | 248 | 136 | 5.23 | 90.3 | 1.36 | 1,912 | 2,296 |
+| shallow | 4 | legacy | 5 | 696 | 560 | 136 | 2.79 | 26.9 | 0.74 | 506 | 1,202 |
+| | | compact | 6 | 384 | 248 | 136 | 5.46 | 99.6 | 1.41 | 3,368 | 3,752 |
 | | | **reduction** | | **44.8%** | **55.7%** | | | | | | |
-| wide | 16 | legacy | 17 | 976 | 840 | 136 | 7.80 | 22.8 | 1.23 | 1,000 | 1,976 |
-| | | compact | 18 | 512 | 376 | 136 | 9.32 | 80.9 | 2.47 | 1,944 | 2,456 |
+| wide | 16 | legacy | 17 | 976 | 840 | 136 | 7.81 | 23.6 | 1.18 | 688 | 1,664 |
+| | | compact | 18 | 512 | 376 | 136 | 9.45 | 81.6 | 2.51 | 3,112 | 3,624 |
 | | | **reduction** | | **47.5%** | **55.2%** | | | | | | |
-| nested | 5 | legacy | 6 | 2,792 | 2,656 | 136 | 9.14 | 26.1 | 2.40 | 2,672 | 5,464 |
-| | | compact | 7 | 1,064 | 928 | 136 | 14.53 | 82.8 | 5.71 | 2,873 | 3,937 |
+| nested | 5 | legacy | 6 | 2,792 | 2,656 | 136 | 9.57 | 26.6 | 2.44 | 2,168 | 4,960 |
+| | | compact | 7 | 1,064 | 928 | 136 | 14.56 | 85.6 | 5.74 | 4,449 | 5,513 |
 | | | **reduction** | | **61.9%** | **65.1%** | | | | | | |
-| nullable | 10 | legacy | 11 | 976 | 840 | 136 | 5.34 | 21.6 | 0.87 | 1,040 | 2,016 |
-| | | compact | 12 | 464 | 328 | 136 | 5.65 | 75.7 | 1.85 | 1,944 | 2,408 |
+| nullable | 10 | legacy | 11 | 976 | 840 | 136 | 5.38 | 23.1 | 0.89 | 728 | 1,704 |
+| | | compact | 12 | 464 | 328 | 136 | 5.75 | 77.3 | 1.87 | 3,112 | 3,576 |
 | | | **reduction** | | **52.5%** | **61.0%** | | | | | | |
-| partial | 10 | legacy | 11 | 976 | 840 | 136 | 5.23 | 21.7 | 0.89 | 1,040 | 2,016 |
-| | | compact | 12 | 432 | 296 | 136 | 4.61 | 78.2 | 1.81 | 1,912 | 2,344 |
+| partial | 10 | legacy | 11 | 976 | 840 | 136 | 5.05 | 23.1 | 0.88 | 728 | 1,704 |
+| | | compact | 12 | 432 | 296 | 136 | 4.72 | 74.8 | 1.82 | 3,232 | 3,664 |
 | | | **reduction** | | **55.7%** | **64.8%** | | | | | | |
-| polymorphic | 7 | legacy | 8 | 784 | 648 | 136 | 4.01 | 24.1 | 0.80 | 640 | 1,424 |
-| | | compact | 9 | 408 | 272 | 136 | 5.79 | 80.1 | 1.62 | 1,912 | 2,320 |
+| polymorphic | 7 | legacy | 8 | 784 | 648 | 136 | 3.97 | 23.7 | 0.81 | 520 | 1,304 |
+| | | compact | 9 | 408 | 272 | 136 | 5.88 | 82.2 | 1.65 | 3,112 | 3,520 |
 | | | **reduction** | | **48.0%** | **58.0%** | | | | | | |
-| *warmed* | 4 | legacy | 6 | 1,022 | 886 | 136 | 3.70 | 26.6 | 0.73 | 646 | 1,668 |
-| | | compact | 6 | 806 | 670 | 136 | 7.47 | 91.3 | 1.74 | 1,856 | 2,662 |
+| *warmed* | 4 | legacy | 6 | 1,022 | 886 | 136 | 3.69 | 27.3 | 0.75 | 472 | 1,494 |
+| | | compact | 6 | 806 | 670 | 136 | 7.62 | 92.1 | 1.74 | 3,130 | 3,936 |
 | | | *reduction* | | *21.1%* | *24.4%* | | | | | | |
 
 | aggregate | before | after | reduction |
@@ -127,9 +129,9 @@ node keeps plus what the construction allocated and freed on the way to it.
 
 | operation, over the mix | ratio |
 |---|---:|
-| construction | 1.32x |
-| attribute read | 3.43x |
-| serialization | 2.15x |
+| construction | 1.33x |
+| attribute read | 3.41x |
+| serialization | 2.17x |
 
 The aggregate is `1 - sum(after) / sum(before)` over the summed columns, **never
 the mean of the per-scenario percentages**, which would weight a four-field node
@@ -150,15 +152,15 @@ on 3.14 and 54.7% on 3.13, against a 33% minimum; the secondary is 58.1% and
 
 **Three representative operations moved past the 20% review threshold, on both
 runtimes**, and the report names each with its worst scenario. The figures below
-are one run's; across three runs the ratios move by up to three percent while the
-byte readings do not move at all, and none of the three comes near the threshold
-from either side:
+are one run's; across three runs the ratios move by a few percent while the byte
+readings do not move at all, and none of the three comes near the threshold from
+either side:
 
 | operation | 3.14 | 3.13 | what it is |
 |---|---:|---:|---|
-| serialization | 2.16x | 2.15x | already accepted as an Interface fact — see below |
-| attribute read | 3.24x | 3.43x | a published node has no instance dictionary |
-| construction | 1.37x | 1.32x | not like for like — see below |
+| serialization | 2.11x | 2.17x | already accepted as an Interface fact — see below |
+| attribute read | 3.19x | 3.41x | a published node has no instance dictionary |
+| construction | 1.38x | 1.33x | not like for like — see below |
 
 **Serialization is a settled trade rather than a new finding.** A published
 value's `model_dump` running roughly twice an ordinary value's is stated at the
@@ -237,7 +239,7 @@ of author-owned state added to both arms.
 | Isolation | one fresh child interpreter per complete scenario, both arms inside that child |
 | Warm-up | 200 unsampled runs before every window |
 | Timing samples | mean of 2,000 repetitions, taken with the line tracer uninstalled |
-| Repeatability | three independent whole-matrix runs returned byte-identical readings on both interpreters; only the wall clock moved, and the escalation block's ratios with it — construction 1.31–1.38x, attribute read 3.19–3.43x, serialization 2.12–2.17x across the three |
+| Repeatability | three independent whole-matrix runs returned byte-identical readings on both interpreters — every retained, transient and peak figure above is the same in all three; only the wall clock moved, and the escalation block's ratios with it — construction 1.31–1.38x, attribute read 3.19–3.43x, serialization 2.11–2.18x across the three |
 
 The matrix is 3.14 and 3.13. The ticket names 3.12 as well, but commit `226db9d3`
 — already in this branch — set `requires-python = ">=3.13"` across all five
@@ -346,6 +348,16 @@ two-arm reading above, for the reason the accounting rule gives.
 tree, which is the fields plus its one relationship slot plus its lifecycle entry.
 It is the same figure the two-arm tables print as `cells` for the legacy arm,
 which is one lower now that the lifecycle state rides a slot.
+
+Its `transient B` column is **not** the column of the same name above, and cannot
+be compared with it. It was read as the high-water mark less the total measured
+the moment the construction returned, which for a node the collector has not yet
+reached is the mark less most of the node — so it understates both what the
+construction reached and what it freed again. The two-arm tables read the mark
+against the collected floor the run started from and subtract what the node keeps.
+There is no `peak B` column here for the same reason: the frozen reading never
+recorded one, and one derived from a figure that means something else would not
+be a reading of anything.
 
 The `dump µs` column moved twice over COR-111 and by more than any other, because
 the serialization seam changed shape: on this machine the six scenarios read

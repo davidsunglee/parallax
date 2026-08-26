@@ -22,8 +22,10 @@ serializer, and every documented serialization option, including the ones no
 reimplementation of the model schema can reach.
 
 **What the seam costs is part of what it offers.** A published value retains
-roughly a fifth of what an ordinary one does — one tuple and two pointers
-against a dictionary and a name-keyed set — and pays for that every time
+materially less than an ordinary one — one tuple and two pointers against a
+dictionary and a name-keyed set, with `spec/python.md` §2 stating the contract
+and `docs/instance-state-baseline.md` recording what it measures to — and pays
+for that every time
 Pydantic reads its state. The compiled serializer reaches ``__dict__`` twice per
 instance per dump and each read builds a mapping, so serializing a published
 value runs about twice an ordinary one and about three times a plain

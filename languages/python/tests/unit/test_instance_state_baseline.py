@@ -12,11 +12,11 @@ instead of thinning the table.
 
 Every one of those is fed DOCTORED readings, built here with numbers chosen for
 what they prove. That is what lets this suite grade a verdict without taking a
-measurement — and nothing here measures, deliberately: every reading the report
-takes reads the whole interpreter and belongs in a child of its own, which is what
-the report's own `in_a_child` is for. A test taking one beside the rest of the
-suite would be classified `dbfree` while needing an interpreter no other test
-shares.
+measurement — and nothing here CAN measure: a reading reads the whole interpreter
+and belongs in a child of its own, so it lives in `tools/instance_state_reading.py`
+and the module imported here neither binds an instrument nor reaches one. A test
+taking a reading beside the rest of the suite would be classified `dbfree` while
+needing an interpreter no other test shares.
 
 The arm the report compares against is a fixture: ``legacy_publication`` builds
 one node the way Entity Graph Construction built one before the flip, with a
@@ -28,6 +28,7 @@ path and that check retired with it.
 
 from __future__ import annotations
 
+import pathlib
 import tomllib
 from typing import cast
 
@@ -48,10 +49,10 @@ def test_the_canonical_mix_is_the_six_scenarios_the_measurement_contract_names()
     )
 
 
-def test_the_report_refuses_more_than_one_scenario_argument(
+def test_the_report_takes_no_arguments_because_it_measures_nothing_itself(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert report.main(["shallow", "wide"]) == 2
+    assert report.main(["shallow"]) == 2
     assert "usage:" in capsys.readouterr().err
 
 
@@ -75,9 +76,27 @@ def test_the_matrix_is_every_python_minor_the_workspace_declares_support_for() -
     declared = tomllib.loads((report.WORKSPACE / "pyproject.toml").read_text())["project"][
         "requires-python"
     ]
-    assert minors[0] == declared.removeprefix(">=").strip()
-    assert minors[-1] == report.CURRENT_MINOR
-    assert len(minors) == len(set(minors))
+    assert declared == f">={minors[0]}"
+    assert len(minors) == report.SUPPORTED_MINORS
+    major, floor = (int(part) for part in minors[0].split("."))
+    assert minors == tuple(f"{major}.{floor + above}" for above in range(len(minors)))
+
+
+def test_the_matrix_is_the_declared_range_whichever_interpreter_takes_the_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    declared = report.supported_minors()
+    monkeypatch.setattr(report, "CURRENT_MINOR", "3.0")
+    assert report.supported_minors() == declared
+
+
+def test_a_requires_python_this_report_cannot_read_a_range_off_is_refused(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nrequires-python = "~=3.13"\n')
+    monkeypatch.setattr(report, "WORKSPACE", tmp_path)
+    with pytest.raises(SystemExit, match="supported range"):
+        report.supported_minors()
 
 
 # --------------------------------------------------------------------------- #
@@ -102,6 +121,12 @@ def test_each_scenario_carries_its_own_percentage_as_a_diagnostic() -> None:
     reading = _reading("small", retained=(1_000, 250), bare=(800, 400))
     assert reading.reduction == pytest.approx(0.75)
     assert reading.bare_reduction == pytest.approx(0.5)
+
+
+def test_what_a_construction_freed_again_is_its_high_water_mark_less_what_it_kept() -> None:
+    arm = _arm(retained=400, bare=300, timings=(1.0, 1.0, 1.0))._replace(peak_bytes=1_800)
+    assert arm.transient_bytes == 1_400
+    assert arm.lifecycle_bytes == 100
 
 
 # --------------------------------------------------------------------------- #
@@ -167,12 +192,17 @@ def test_a_matrix_cell_with_no_reading_is_named_with_its_reason() -> None:
     matrix = _matrix()
     matrix["3.14"]["nested"] = "the child exited 1"
     del matrix["3.14"]["wide"]
-    absent = report.missing_cells(matrix, REPORTED)
+    absent = report.missing_cells(matrix, ("3.14",), REPORTED)
     assert absent == [
         "CPython 3.14, wide: no child was run",
         "CPython 3.14, nested: the child exited 1",
     ]
-    assert not report.missing_cells(_matrix(), REPORTED)
+    assert not report.missing_cells(_matrix(), ("3.14",), REPORTED)
+
+
+def test_a_runtime_the_matrix_never_ran_is_missing_rather_than_absent_from_the_question() -> None:
+    absent = report.missing_cells(_matrix(), ("3.13", "3.14"), REPORTED)
+    assert absent == [f"CPython 3.13, {scenario.name}: no child was run" for scenario in REPORTED]
 
 
 def test_a_missing_cell_is_a_non_zero_exit_rather_than_a_silent_omission(
@@ -203,10 +233,23 @@ def test_every_scenario_both_aggregates_and_every_timing_appear_for_every_runtim
         assert printed.count(column) == 2
 
 
+def test_the_escalation_block_reaches_what_the_report_prints() -> None:
+    matrix = {"3.14": {scenario.name: _reading(scenario.name) for scenario in REPORTED}}
+    matrix["3.14"]["shallow"] = _reading(
+        "shallow",
+        retained=(1_000, 700),
+        bare=(900, 600),
+        compact_ns=(1_100.0, 80.0, 505.0),
+    )
+    printed = "\n".join(report.render(cast("report.Matrix", matrix)))
+    for line in report.escalation_block(cast("report.Matrix", matrix)):
+        assert line in printed
+
+
 def test_a_child_answers_one_scenario_as_a_line_the_matrix_decodes(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    line = report._payload(_reading("shallow"))  # pyright: ignore[reportPrivateUsage] - the child protocol
+    line = report.payload(_reading("shallow"))
     print(line)
     decoded = report._decoded(capsys.readouterr().out)  # pyright: ignore[reportPrivateUsage] - the child protocol
     assert decoded == _reading("shallow")
@@ -235,7 +278,7 @@ def _arm(retained: int, bare: int, timings: tuple[float, float, float]) -> repor
         cells=6,
         retained_bytes=retained,
         bare_bytes=bare,
-        transient_bytes=512,
+        peak_bytes=retained + 512,
         construct_ns=construct_ns,
         read_ns=read_ns,
         dump_ns=dump_ns,
