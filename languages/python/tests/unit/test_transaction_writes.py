@@ -49,13 +49,11 @@ from parallax.core.base import InstantError
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
-    EntityAttributeInput,
     EntityGraphWriter,
     EntityRowError,
     NodeHandle,
     graph_construction_of,
 )
-from parallax.core.metamodel import AttributeIdentity
 from parallax.core.unit_work import (
     FixedClock,
     ObjectKey,
@@ -1338,19 +1336,9 @@ def _foreign_lifecycle_account() -> mm.Account:
 
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         handle = writer.allocate(mm.Account.identity)
-        writer.populate(
-            handle,
-            (
-                EntityAttributeInput(AttributeIdentity(mm.Account.identity, "id"), 1),
-                EntityAttributeInput(AttributeIdentity(mm.Account.identity, "owner"), "Ada"),
-                EntityAttributeInput(
-                    AttributeIdentity(mm.Account.identity, "balance"), Decimal("100.00")
-                ),
-                EntityAttributeInput(AttributeIdentity(mm.Account.identity, "version"), 1),
-            ),
-            (),
-            (),
-        )
+        # `Account`'s member row: id, owner, balance, version — and no
+        # relationship of its own to carry a position for.
+        writer.populate(handle, (1, "Ada", Decimal("100.00"), 1), ())
         return (handle,)
 
     (node,) = graph_construction_of(ACCOUNT).construct(

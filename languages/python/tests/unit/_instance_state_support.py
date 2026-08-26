@@ -66,13 +66,13 @@ from parallax.core.entity import (
     ResolutionView,
     graph_construction_of,
 )
+from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT, shape_of
 from parallax.core.entity._entity import wire_names_of
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.entity._model import DomainModel as ModelType
 from parallax.core.entity._model import cataloged_model, class_index
 from parallax.core.entity._pydantic_storage import instance_state
-from parallax.core.entity._row import ABSENT, member_carriers
 from parallax.core.metamodel import (
     EntityIdentity,
     Multiplicity,
@@ -371,16 +371,17 @@ class Scenario:
 def published(scenario: Scenario, state: object | None) -> object:
     """``scenario``'s node through the real Entity Graph Construction path.
 
-    The production route in full: the positional row translated by
-    ``member_carriers`` — what the Snapshot materializer calls at the same door —
-    handed to ``populate``, with the lifecycle state attached by a factory the way
-    a materialization attaches one.
+    The production route in full: the positional member row handed to
+    ``populate`` by reference — what the Snapshot materializer does at the same
+    door — beside a full-width broad-relationship row of unloaded positions, with
+    the lifecycle state attached by a factory the way a materialization attaches
+    one.
     """
-    attributes, occurrences = member_carriers(scenario.layout, scenario.values)
+    unloaded = (UNLOADED,) * len(scenario.layout.relationships)
 
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         handle = writer.allocate(scenario.entity)
-        writer.populate(handle, attributes, occurrences, ())
+        writer.populate(handle, scenario.values, unloaded)
         return (handle,)
 
     def factory(_view: ResolutionView, _handle: NodeHandle) -> object:

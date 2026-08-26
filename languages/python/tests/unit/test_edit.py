@@ -33,21 +33,15 @@ from parallax.core.entity import (
     UNLOADED,
     EditError,
     EditViolation,
-    EntityAttributeInput,
     EntityDefinitionError,
     EntityGraphWriter,
-    EntityRelationshipInput,
-    LoadedMany,
-    LoadedOne,
     NodeHandle,
     UnloadedRelationshipError,
-    ValueObjectAttributeInput,
-    ValueObjectOccurrenceInput,
-    ValueObjectRecord,
     graph_construction_of,
     lifecycle_state_of,
     relationship_value_of,
 )
+from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._declaration import FRAMEWORK_NAME_PREFIX, LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, WireNames, wire_names_of
 from parallax.core.entity._instance_state import (
@@ -63,7 +57,6 @@ from parallax.core.metamodel import (
     EntityLocation,
     RelationshipIdentity,
     RelationshipLocation,
-    ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
 
@@ -491,28 +484,13 @@ _ITEM = sm.SnapOrderItem.identity
 _STATUS = sm.SnapOrderStatus.identity
 _PRIMARY_TAG = ValueObjectIdentity(_STATUS, ("primaryTag",))
 
-_ORDER_SCALARS: tuple[EntityAttributeInput, ...] = (
-    EntityAttributeInput(AttributeIdentity(_ORDER, "id"), 1),
-    EntityAttributeInput(AttributeIdentity(_ORDER, "name"), "Ada"),
-    EntityAttributeInput(AttributeIdentity(_ORDER, "sku"), None),
-    EntityAttributeInput(AttributeIdentity(_ORDER, "qty"), 1),
-    EntityAttributeInput(AttributeIdentity(_ORDER, "price"), Decimal("1.00")),
-    EntityAttributeInput(AttributeIdentity(_ORDER, "active"), True),
-    EntityAttributeInput(AttributeIdentity(_ORDER, "orderedOn"), dt.date(2024, 1, 1)),
-)
-_ITEM_SCALARS: tuple[EntityAttributeInput, ...] = (
-    EntityAttributeInput(AttributeIdentity(_ITEM, "id"), 11),
-    EntityAttributeInput(AttributeIdentity(_ITEM, "orderId"), 1),
-    EntityAttributeInput(AttributeIdentity(_ITEM, "sku"), "x"),
-    EntityAttributeInput(AttributeIdentity(_ITEM, "quantity"), 1),
-    EntityAttributeInput(AttributeIdentity(_ITEM, "shippedOn"), None),
-)
-_STATUS_SCALARS: tuple[EntityAttributeInput, ...] = (
-    EntityAttributeInput(AttributeIdentity(_STATUS, "id"), 21),
-    EntityAttributeInput(AttributeIdentity(_STATUS, "orderId"), 1),
-    EntityAttributeInput(AttributeIdentity(_STATUS, "orderItemId"), None),
-    EntityAttributeInput(AttributeIdentity(_STATUS, "code"), "SHIPPED"),
-)
+# Member rows against each exact Entity's own layout: `SnapOrder` is id, name,
+# sku, qty, price, active, orderedOn; `SnapOrderItem` is id, orderId, sku,
+# quantity, shippedOn; `SnapOrderStatus` is id, orderId, orderItemId, code, then
+# its primaryTag and tags occurrences, and a `Tag` row is label, detail, details.
+_ORDER_MEMBERS: tuple[object, ...] = (1, "Ada", None, 1, Decimal("1.00"), True, dt.date(2024, 1, 1))
+_ITEM_MEMBERS: tuple[object, ...] = (11, 1, "x", 1, None)
+_STATUS_MEMBERS: tuple[object, ...] = (21, 1, None, "SHIPPED", ("urgent", ABSENT, ABSENT), ABSENT)
 
 # The kinds of state an edit is asked to carry are the parameters, not the
 # assertions: both branches answer the same, which is the invariant one shared
@@ -528,18 +506,8 @@ def _materialized_order(state: object = "one lifecycle's own state") -> sm.SnapO
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         order = writer.allocate(_ORDER)
         item = writer.allocate(_ITEM)
-        writer.populate(
-            order,
-            _ORDER_SCALARS,
-            (),
-            (EntityRelationshipInput(RelationshipIdentity(_ORDER, "items"), LoadedMany((item,))),),
-        )
-        writer.populate(
-            item,
-            _ITEM_SCALARS,
-            (),
-            (EntityRelationshipInput(RelationshipIdentity(_ITEM, "order"), LoadedOne(order)),),
-        )
+        writer.populate(order, _ORDER_MEMBERS, ((item,), UNLOADED))
+        writer.populate(item, _ITEM_MEMBERS, (order, UNLOADED))
         return (order,)
 
     (root,) = graph_construction_of(sm.SNAP_ORDERS_MODEL).construct(
@@ -551,19 +519,10 @@ def _materialized_order(state: object = "one lifecycle's own state") -> sm.SnapO
 def _materialized_status() -> sm.SnapOrderStatus:
     """One `SnapOrderStatus` carrying a Value Object occurrence — the declared
     kind `SnapOrder` has none of."""
-    tag = ValueObjectRecord(
-        attributes=(
-            ValueObjectAttributeInput(
-                ValueObjectAttributeIdentity(_PRIMARY_TAG, "label"), "urgent"
-            ),
-        )
-    )
 
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         status = writer.allocate(_STATUS)
-        writer.populate(
-            status, _STATUS_SCALARS, (ValueObjectOccurrenceInput(_PRIMARY_TAG, tag),), ()
-        )
+        writer.populate(status, _STATUS_MEMBERS, ())
         return (status,)
 
     (root,) = graph_construction_of(sm.SNAP_ORDERS_MODEL).construct(

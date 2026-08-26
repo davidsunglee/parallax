@@ -189,38 +189,20 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.entity._pydantic_storage",
         }
     ),
-    # The sentinels a positional construction input spells are read by the layout
-    # side, by the writer, by the descriptors that answer a member read, and by the
-    # backing above — scopes that deliberately cannot reach one another. Housing
-    # them in a scope granted nothing is what lets every one of them reach the same
-    # sentinel without reaching through a peer.
+    # The sentinels a positional construction input spells, and the opaque handle a
+    # relationship position names a node by, are read by the layout side, by a
+    # runtime that lays a stored row out against one, by the writer, by the
+    # descriptors that answer a member read, and by the backing above — scopes that
+    # deliberately cannot reach one another. Housing them in a scope granted nothing
+    # is what lets every one of them reach the same value without reaching through a
+    # peer, and what keeps a row's producer unable to reach the writer, `construct`,
+    # or model formation.
     "parallax.core.entity._construction_input": frozenset(),
     # A value's own attribute storage, reached past every name a class body can
     # bind. What it reaches is Pydantic's own slot descriptor and nothing else, so
     # a first-party import of any kind would mean it had grown a second job — which
     # is what a grant row of nothing states and enforces.
     "parallax.core.entity._pydantic_storage": frozenset(),
-    # A materializing runtime and Entity Graph Construction share one exact
-    # recursive immutable algebra, so the carriers are scoped apart from the
-    # collaboration that consumes them. Granting the carriers alone is what keeps a
-    # carrier producer structurally unable to reach the writer, `construct`, or
-    # model formation — the layering rule stays enforced rather than merely asserted.
-    "parallax.core.entity._graph_input": frozenset({"parallax.core.metamodel"}),
-    # A positional member row is read against a layout and handed on as carriers,
-    # so the walk between the two is scoped where both are and belongs to no
-    # materializing runtime. Its grants are the two ends and nothing else: a
-    # carrier producer that reached the writer, `construct`, or model formation
-    # would make the layering a convention again. Outside the frontend's package
-    # this row refuses that outright; inside it, where all three of those live, a
-    # row can only refuse what leaves its own closure again, so the scope is
-    # declared in `SEALED_CHILD_SCOPES` as well.
-    "parallax.core.entity._row": frozenset(
-        {
-            "parallax.core.metamodel",
-            "parallax.core.entity._layout",
-            "parallax.core.entity._graph_input",
-        }
-    ),
     # The exact-model member layouts are a pure function of the accepted
     # Metamodel, so they are scoped apart from the frontend that owns them and
     # granted only the facets a layout is derived from. Granting them narrowly is
@@ -320,7 +302,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # be forbidden them.
     "parallax.snapshot.materialize": frozenset(
         {
-            "parallax.core.entity._row",
+            "parallax.core.entity._construction_input",
             "parallax.core.entity._layout",
             "parallax.core.deep_fetch",
             "parallax.core.document_codec",
@@ -401,11 +383,9 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.core.entity._expressions": "parallax.core.entity",
     "parallax.core.object_query._fluent": "parallax.core.object_query",
     "parallax.core.entity._construction_input": "parallax.core.entity",
-    "parallax.core.entity._graph_input": "parallax.core.entity",
     "parallax.core.entity._instance_state": "parallax.core.entity",
     "parallax.core.entity._layout": "parallax.core.entity",
     "parallax.core.entity._pydantic_storage": "parallax.core.entity",
-    "parallax.core.entity._row": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._materializer": "parallax.snapshot.handle",
     "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
@@ -444,22 +424,19 @@ ISOLATED_CHILD_SCOPES: frozenset[str] = frozenset({"parallax.core.execution_life
 # rest over the files: the same division of labour `ISOLATED_CHILD_SCOPES` runs
 # the other way round.
 #
-# The six publication-side children of the Entity frontend are sealed because
+# The four publication-side children of the Entity frontend are sealed because
 # their whole reason to exist is what they cannot reach: a layout is a pure
-# function of accepted metadata, the carriers are an algebra over it, the row walk
-# between them must reach neither the writer, `construct`, nor model formation,
-# the backing beneath a published value must reach neither the declaration engine
-# nor the writer, the sentinels it reads must reach nothing at all, and a value's
-# own attribute storage must reach nothing either — every one of which sits in the
-# parent package beside them.
+# function of accepted metadata, the backing beneath a published value must reach
+# neither the declaration engine nor the writer, the construction-input
+# vocabulary both a row's producer and its reader are stated in must reach
+# nothing at all, and a value's own attribute storage must reach nothing either —
+# every one of which sits in the parent package beside them.
 SEALED_CHILD_SCOPES: frozenset[str] = frozenset(
     {
         "parallax.core.entity._construction_input",
-        "parallax.core.entity._graph_input",
         "parallax.core.entity._instance_state",
         "parallax.core.entity._layout",
         "parallax.core.entity._pydantic_storage",
-        "parallax.core.entity._row",
     }
 )
 

@@ -4,7 +4,7 @@ Private handle implementation, never re-exported: ``_read`` is its only caller,
 and the frozen graphs it builds reach callers as :class:`~parallax.snapshot.handle.Snapshot`
 roots.
 
-It owns nothing about carriers, identity, merging, or root classification —
+It owns nothing about row layout, identity, merging, or root classification —
 :mod:`parallax.snapshot.materialize` settles all four before this module runs —
 and nothing about Pydantic, cycle
 closure, or the private lifecycle slot, which
@@ -24,20 +24,17 @@ root's ``data``.
 
 A merged view's shape carries its own arm: a tuple is loaded-many (empty included),
 ``None`` is loaded-null, and a lone allocation index is loaded-one. A slot reading
-``ABSENT`` names nothing, and the writer installs the private unloaded sentinel —
-which is what makes the closed world structural rather than a convention this
-module has to restate.
+``ABSENT`` names nothing, so its relationship position keeps the unloaded
+sentinel — which is what makes the closed world structural rather than a
+convention this module has to restate.
 
-The writer takes an entry per member, so each node's carriers are synthesized
-immediately before its ``populate`` call and are dead as soon as it returns:
-``populate`` folds them into local dicts and writes their values into the
-instance, retaining none of them. Peak carrier cost is therefore one node's
-worth whatever the graph's size, and nothing here is retained by Snapshot or the
-merge. Only the relationship arms are synthesized here — a compact row's
-Attributes and Value Object occurrences become carriers through
-:func:`~parallax.core.entity._row.member_carriers`, which is a function of the
-model-owned layout and the carrier algebra and so belongs to neither this
-lifecycle nor any other.
+The writer takes two positional rows, and only one of them is built here. A
+node's member row crosses ``populate`` **by reference**: the merge already laid
+it out against that node's exact Entity member layout, which is the same layout
+the writer reads it against, so no node pays a copy and nothing translates. The
+broad-relationship row is built here, one position per direction in the layout's
+canonical order, and dies with the ``populate`` call it is handed to. Nothing
+here is retained by Snapshot or the merge.
 
 Hashability is conditional, exactly per spec §3: nothing here makes a node hashable
 or guards against one — a back-reference closing a cycle makes the derived hash
@@ -50,18 +47,13 @@ from collections.abc import Callable, Iterator, Mapping
 from types import MappingProxyType
 from typing import cast
 
-from parallax.core.entity import LOADED_NULL as _LOADED_NULL
 from parallax.core.entity import (
+    UNLOADED,
     EntityGraphConstruction,
     EntityGraphWriter,
-    EntityRelationshipInput,
-    LoadedMany,
-    LoadedOne,
     NodeHandle,
-    RelationshipInput,
     ResolutionView,
 )
-from parallax.core.entity._row import member_carriers
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -120,9 +112,10 @@ class _Materialization:
     callbacks over them.
 
     Between the two callbacks it retains the allocation handles and nothing else.
-    A node's own writer carriers are synthesized from the merge at the callback
-    that needs them and die with it, so no payload is accumulated into a second
-    graph-sized structure beside the sealed graph and the merge itself.
+    A node's own broad-relationship row is built from the merge at the callback
+    that needs it and dies with it, and its member row is the merge's own, so no
+    payload is accumulated into a second graph-sized structure beside the sealed
+    graph and the merge itself.
     """
 
     __slots__ = (
@@ -163,27 +156,33 @@ class _Materialization:
         for index in self._scope:
             writer.populate(
                 self._handles[index],
-                *member_carriers(self._merge.layout(index), self._merge.member_values(index)),
+                self._merge.member_values(index),
                 self._broad_arms(index),
             )
         return tuple(
             self._handles[root.node] for root in self._classification.roots if root.node is not None
         )
 
-    def _broad_arms(self, index: int) -> tuple[EntityRelationshipInput, ...]:
-        """One node's loaded BROAD views as writer arms.
+    def _broad_arms(self, index: int) -> tuple[object, ...]:
+        """One node's full-width broad-relationship row.
 
         A narrowed view is a read-time presentation of a direction the broad view
-        already carries, so only the broad slot becomes a relationship the writer
-        installs; the narrowed ones are resolved into instances in
-        :meth:`state`. A slot reading ``ABSENT`` names nothing, so the writer
-        installs its own unloaded sentinel there.
+        already carries, so only the broad slot reaches a relationship position;
+        the narrowed ones are resolved into instances in :meth:`state`. A slot
+        reading ``ABSENT`` names nothing, so its position keeps the unloaded
+        sentinel the row starts every position at.
+
+        Positions come from the same member layout the merge laid the node out
+        against, so the row is the model's own width by construction and a
+        direction the layout does not declare is a planning defect rather than
+        caller input.
         """
-        return tuple(
-            EntityRelationshipInput(key.relationship, self._arm(value))
-            for slot, key in enumerate(self._merge.view_layout(index).slots)
-            if key.narrowed_view is None and (value := self._merge.view(index, slot)) is not ABSENT
-        )
+        layout = self._merge.layout(index)
+        row: list[object] = [UNLOADED] * len(layout.relationships)
+        for slot, key in enumerate(self._merge.view_layout(index).slots):
+            if key.narrowed_view is None and (value := self._merge.view(index, slot)) is not ABSENT:
+                row[layout.relationship_index[key.relationship.name]] = self._arm(value)
+        return tuple(row)
 
     def _published(
         self, constructed: tuple[object, ...]
@@ -224,12 +223,12 @@ class _Materialization:
             source=self._sources.get(index),
         )
 
-    def _arm(self, value: object) -> RelationshipInput:
+    def _arm(self, value: object) -> object:
         return _by_arm(
             value,
-            null=_LOADED_NULL,
-            one=lambda index: LoadedOne(self._handles[index]),
-            many=lambda indices: LoadedMany(tuple(self._handles[index] for index in indices)),
+            null=None,
+            one=lambda index: self._handles[index],
+            many=lambda indices: tuple(self._handles[index] for index in indices),
         )
 
     def _resolved(self, view: ResolutionView, value: object) -> object:

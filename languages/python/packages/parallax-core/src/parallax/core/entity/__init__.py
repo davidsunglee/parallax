@@ -9,8 +9,9 @@ its closed error-code sets, and the Object Query surface it re-exports from
 behind these names are implementation detail rather than caller seams.
 
 It additionally exposes the **advanced Entity Graph Construction collaboration**
-— ``graph_construction_of``, ``EntityGraphConstruction``, its writer, handles,
-and immutable carriers, plus the two operations a lifecycle reads back
+— ``graph_construction_of``, ``EntityGraphConstruction``, its writer, the opaque
+``NodeHandle`` its positional rows name a node by, and the ``UNLOADED`` sentinel
+a relationship position spells, plus the two operations a lifecycle reads back
 (``relationship_value_of``, ``lifecycle_state_of``) — and the **Entity Row
 Codec** a write path derives rows through, reached by ``row_codec_of``. The two
 are this scope's named model-bound capability seams, and there is no composite
@@ -25,7 +26,7 @@ imports no descriptor interchange code at all.
 
 from __future__ import annotations
 
-from parallax.core.entity._construction_input import UNLOADED
+from parallax.core.entity._construction_input import UNLOADED, NodeHandle
 from parallax.core.entity._declaration import EntityDeclaration, shape_of, snake_to_camel
 from parallax.core.entity._entity import Bitemporal, Entity, TxTemporal
 from parallax.core.entity._errors import (
@@ -62,21 +63,6 @@ from parallax.core.entity._graph_construction import (
     graph_construction_of,
     lifecycle_state_of,
     relationship_value_of,
-)
-from parallax.core.entity._graph_input import (
-    LOADED_NULL,
-    UNLOADED_VIEW,
-    EntityAttributeInput,
-    EntityRelationshipInput,
-    LoadedMany,
-    LoadedNull,
-    LoadedOne,
-    NodeHandle,
-    RelationshipInput,
-    Unloaded,
-    ValueObjectAttributeInput,
-    ValueObjectOccurrenceInput,
-    ValueObjectRecord,
 )
 from parallax.core.entity._members import (
     MANY_TO_ONE,
@@ -117,7 +103,6 @@ __all__ = [
     "ENTITY_DEFINITION_CODES",
     "ENTITY_ROW_CODES",
     "GRAPH_CONSTRUCTION_CODES",
-    "LOADED_NULL",
     "MANY_TO_ONE",
     "MAX",
     "METAMODEL_DEFINITION_CODES",
@@ -128,7 +113,6 @@ __all__ = [
     "READ_WRITE",
     "TABLE_PER_CONCRETE_SUBTYPE",
     "UNLOADED",
-    "UNLOADED_VIEW",
     "AbstractRoot",
     "AbstractSubtype",
     "AllPredicate",
@@ -146,21 +130,16 @@ __all__ = [
     "EditViolation",
     "ElementAttributeExpr",
     "Entity",
-    "EntityAttributeInput",
     "EntityDeclaration",
     "EntityDefinitionError",
     "EntityGraphConstruction",
     "EntityGraphWriter",
-    "EntityRelationshipInput",
     "EntityRowCodec",
     "EntityRowError",
     "Float32",
     "GraphConstructionError",
     "IndexSpec",
     "Int32",
-    "LoadedMany",
-    "LoadedNull",
-    "LoadedOne",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
     "NodeHandle",
@@ -168,7 +147,6 @@ __all__ = [
     "OrderTerm",
     "Predicate",
     "Rel",
-    "RelationshipInput",
     "RelationshipPath",
     "RelationshipRef",
     "ResolutionView",
@@ -177,12 +155,8 @@ __all__ = [
     "SortKey",
     "TablePerHierarchy",
     "TxTemporal",
-    "Unloaded",
     "UnloadedRelationshipError",
     "ValueObject",
-    "ValueObjectAttributeInput",
-    "ValueObjectOccurrenceInput",
-    "ValueObjectRecord",
     "asc",
     "attr",
     "desc",
