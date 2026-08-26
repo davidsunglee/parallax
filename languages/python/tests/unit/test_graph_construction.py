@@ -155,14 +155,12 @@ def test_roots_are_published_in_the_order_the_build_callback_answers() -> None:
 def test_an_absent_member_position_leaves_its_declared_default_in_place() -> None:
     # A positional row cannot omit, so absence is a value at the position. What it
     # buys is what omitting an entry bought: the member is never written, so it
-    # reads back as its declared default.
+    # reads back as its declared default and its presence bit stays clear.
     #
-    # A published Entity records no member presence at all — the shell is filled
-    # from every declared default and each carried member is written past the
-    # populated set — so an absent position and a carried one are indistinguishable
-    # in `model_fields_set`. A Value Object records presence per member; an Entity
-    # does not. Pinned so that gaining a presence bitmap here is a deliberate
-    # change rather than a quiet one.
+    # A published Entity now records presence per member, exactly as a published
+    # Value Object does: the bitmap its row carries is what `model_fields_set`
+    # answers from, so an absent position and a carried one are distinguishable
+    # where publication once left them identical.
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         handle = writer.allocate(_ORDER)
         writer.populate(handle, (1, "Ada", ABSENT, ABSENT, ABSENT, ABSENT, ABSENT), _ORDER_UNLOADED)
@@ -172,7 +170,7 @@ def test_an_absent_member_position_leaves_its_declared_default_in_place() -> Non
     order = cast("sm.SnapOrder", root)
     assert (order.id, order.name) == (1, "Ada")
     assert order.sku is None
-    assert order.model_fields_set == set()
+    assert order.model_fields_set == {"id", "name"}
 
 
 # --------------------------------------------------------------------------- #
@@ -844,7 +842,7 @@ def test_one_construction_is_reused_for_one_domain_model() -> None:
 # --------------------------------------------------------------------------- #
 
 
-# The nine codes Python spec §3 declares under "Entity Graph Construction
+# The ten codes Python spec §3 declares under "Entity Graph Construction
 # surface". Restated here rather than imported so a code added, renamed, or
 # dropped on either side fails instead of agreeing with itself.
 _SPEC_CODES = frozenset(
@@ -858,13 +856,14 @@ _SPEC_CODES = frozenset(
         "entity-graph-node-unpopulated",
         "entity-graph-invalid-root",
         "entity-graph-foreign-handle",
+        "entity-graph-layout-mismatch",
     }
 )
 
 
 def test_the_code_set_is_closed_against_an_unlisted_code() -> None:
     assert GRAPH_CONSTRUCTION_CODES == _SPEC_CODES
-    assert len(GRAPH_CONSTRUCTION_CODES) == 9
+    assert len(GRAPH_CONSTRUCTION_CODES) == 10
     with pytest.raises(ValueError, match="not a graph construction code"):
         GraphConstructionError(code="entity-graph-nosuch", message="invented")
 

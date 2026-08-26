@@ -36,13 +36,10 @@ declaration engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly, as
 ``tests/_support/snapshot_models.py`` does for the same reason.
 """
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from functools import cached_property
 from typing import Any, Final, cast
-
-from pydantic import BaseModel
 
 from parallax.core import (
     MANY_TO_ONE,
@@ -61,18 +58,14 @@ from parallax.core import (
 )
 from parallax.core.entity import (
     UNLOADED,
-    EntityGraphWriter,
-    NodeHandle,
-    ResolutionView,
-    graph_construction_of,
 )
 from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT, shape_of
-from parallax.core.entity._entity import wire_names_of
+from parallax.core.entity._declaration import shape_of
+from parallax.core.entity._entity import attach_lifecycle_state, wire_names_of
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.entity._model import DomainModel as ModelType
 from parallax.core.entity._model import cataloged_model, class_index
-from parallax.core.entity._pydantic_storage import instance_state
+from parallax.core.entity._pydantic_storage import attach_instance_state
 from parallax.core.metamodel import (
     EntityIdentity,
     Multiplicity,
@@ -83,13 +76,9 @@ from parallax.snapshot._inspection import SnapshotNodeState
 
 __all__ = [
     "SCENARIOS",
-    "LegacyArm",
     "LegacyPlan",
     "Scenario",
-    "disagreements",
-    "fingerprint",
     "legacy_publication",
-    "published",
     "scenario_named",
 ]
 
@@ -279,13 +268,6 @@ _CAR_ROW: Final[tuple[object, ...]] = (7, None, "estate", 1420.0, 2, 5, False)
 # The two arms.                                                                #
 # --------------------------------------------------------------------------- #
 
-type LegacyArm = Callable[["Scenario", object | None], object]
-"""How a scenario builds its legacy-shaped node, given its lifecycle state.
-
-A field on the scenario rather than a module-level function so a test can hand
-one arm a fixture that has stopped reproducing publication, which is what proves
-:func:`disagreements` has teeth."""
-
 
 @dataclass(frozen=True, slots=True)
 class LegacyPlan:
@@ -309,14 +291,13 @@ class LegacyPlan:
 
 @dataclass(frozen=True)
 class Scenario:
-    """One canonical shape, its input row, and the two arms that build it."""
+    """One canonical shape and the input row its arms are built from."""
 
     name: str
     summary: str
     model: ModelType
     entity: EntityIdentity
     values: tuple[object, ...]
-    legacy: LegacyArm = field(default=lambda scenario, state: legacy_publication(scenario, state))
 
     @cached_property
     def layout(self) -> EntityLayout:
@@ -368,30 +349,6 @@ class Scenario:
         return SnapshotNodeState(entity=self.entity, views={})
 
 
-def published(scenario: Scenario, state: object | None) -> object:
-    """``scenario``'s node through the real Entity Graph Construction path.
-
-    The production route in full: the positional member row handed to
-    ``populate`` by reference — what the Snapshot materializer does at the same
-    door — beside a full-width broad-relationship row of unloaded positions, with
-    the lifecycle state attached by a factory the way a materialization attaches
-    one.
-    """
-    unloaded = (UNLOADED,) * len(scenario.layout.relationships)
-
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(scenario.entity)
-        writer.populate(handle, scenario.values, unloaded)
-        return (handle,)
-
-    def factory(_view: ResolutionView, _handle: NodeHandle) -> object:
-        return state
-
-    construction = graph_construction_of(scenario.model)
-    (root,) = construction.construct(build, state_factory=None if state is None else factory)
-    return root
-
-
 def legacy_publication(scenario: Scenario, state: object | None) -> object:
     """``scenario``'s node built the way publication builds one today.
 
@@ -414,9 +371,9 @@ def legacy_publication(scenario: Scenario, state: object | None) -> object:
         if value is not ABSENT:
             object.__setattr__(instance, py_name, _legacy_occurrence(value, occurrence, vo_class))
     for py_name in plan.relationships:
-        object.__setattr__(instance, py_name, UNLOADED)
+        attach_instance_state(instance, py_name, UNLOADED)
     if state is not None:
-        object.__setattr__(instance, LIFECYCLE_STATE_SLOT, state)
+        attach_lifecycle_state(instance, state)
     return instance
 
 
@@ -459,68 +416,6 @@ def _legacy_record(row: tuple[object, ...], declared: _VoContainer, vo_class: ty
         present.add(py_name)
         values[py_name] = _legacy_occurrence(value, nested, shape.nested_classes[py_name])
     return cast("Any", vo_class).model_construct(present, **values)
-
-
-# --------------------------------------------------------------------------- #
-# The reproduction check.                                                      #
-# --------------------------------------------------------------------------- #
-
-
-def fingerprint(value: object) -> object:
-    """``value``'s whole physical state, as something two arms can be compared by.
-
-    Every structure a reading prices and nothing a reading does not: the exact
-    class, the instance storage reached past whatever the class binds, the
-    Pydantic field set, and the extra and private slots — recursively, so a Value
-    Object occurrence is compared the same way at every containment depth. Storage
-    is compared as a mapping rather than as a sequence, because insertion order
-    costs a published node nothing.
-    """
-    if isinstance(value, BaseModel):
-        return (
-            "model",
-            f"{type(value).__module__}.{type(value).__qualname__}",
-            _mapping(instance_state(value)),
-            tuple(sorted(value.__pydantic_fields_set__)),
-            fingerprint(value.__pydantic_extra__),
-            fingerprint(value.__pydantic_private__),
-        )
-    if type(value) is tuple:
-        return ("tuple", tuple(fingerprint(item) for item in cast("tuple[object, ...]", value)))
-    if type(value) is dict:
-        return ("dict", _mapping(cast("Mapping[str, object]", value)))
-    return ("leaf", f"{type(value).__module__}.{type(value).__qualname__}", repr(value))
-
-
-def _mapping(items: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
-    return tuple(
-        sorted(
-            ((str(name), fingerprint(item)) for name, item in items.items()),
-            key=lambda pair: pair[0],
-        )
-    )
-
-
-def disagreements(scenario: Scenario) -> tuple[str, ...]:
-    """Where ``scenario``'s legacy arm and the real publication path differ.
-
-    Empty while the fixture still stands for publication, which is the whole of
-    what the frozen reading is worth: a number taken over an arm that has stopped
-    reproducing the path it was taken to stand for describes nothing.
-
-    Both lifecycle states are compared, because attaching one is a separate phase
-    of a construction call and a fixture could reproduce either half alone.
-    """
-    findings: list[str] = []
-    for carrying, state in (("with lifecycle state", scenario.state()), ("bare", None)):
-        real = fingerprint(published(scenario, state))
-        fixture = fingerprint(scenario.legacy(scenario, state))
-        if real != fixture:
-            findings.append(
-                f"{scenario.name} ({carrying}): the legacy arm no longer reproduces "
-                f"publication\n    published: {real}\n    fixture:   {fixture}"
-            )
-    return tuple(findings)
 
 
 # --------------------------------------------------------------------------- #

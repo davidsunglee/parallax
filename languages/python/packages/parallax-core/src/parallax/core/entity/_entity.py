@@ -472,6 +472,7 @@ def _restate[E: Entity](
 ) -> E:
     """A fresh value holding exactly ``value``'s state under ``record``."""
     copied = restated(value, declared_state | carried)
+    carry_lifecycle_state(value, copied)
     attach_instance_state(copied, CHANGE_RECORD_SLOT, record)
     return copied
 
@@ -496,9 +497,15 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     down, by :class:`~parallax.core.entity._instance_state.BackedModel` — which
     is what leaves Pydantic's own equality, hashing, repr, and compiled
     serializer in place over both backings rather than restated here.
+
+    The one thing this root adds to that layout is the lifecycle slot, because
+    only an Entity is ever materialized by a lifecycle. A published node holds no
+    instance storage at all, so state produced after its row is attached has
+    nowhere else to go; a Value Object pays no pointer for a slot it could never
+    fill.
     """
 
-    __slots__ = ()
+    __slots__ = (LIFECYCLE_STATE_SLOT,)
 
     if TYPE_CHECKING:
         # Declared for type checkers alone, and bound by nobody: Pydantic installs
@@ -654,6 +661,7 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         for py_name, member in carried.items():
             attach_instance_state(validated, py_name, member)
         carry_slots_beside_state(self, validated)
+        carry_lifecycle_state(self, validated)
         for py_name in changes:
             if py_name not in record:
                 record[py_name] = getattr(self, py_name)
@@ -722,19 +730,20 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         reducer through ``copyreg``, a ``Pickler.dispatch_table``, or
         ``reducer_override``, and one authoring ``__getattribute__``, which the
         attribute lookup for this entry point goes through. None of those enters
-        here, and what :meth:`__getstate__`'s strip holds for is a reduction that
-        reaches it: ``object.__reduce_ex__`` calls an authored ``__reduce__`` in
-        place of its own reduction and resolves ``__getstate__`` by attribute
-        lookup, so either hook — both deliberately left authorable — can answer
-        with state carrying the slot.
+        here. None of them can carry the state either: it rides a slot of its own
+        rather than the instance state a reduction collects, so a reduction that
+        reaches ``object.__reduce_ex__`` without passing this guard — an authored
+        ``__reduce__``, an authored ``__getstate__``, a supplied reducer — answers
+        with the value's declared domain data and nothing of the read that
+        published it.
 
-        The slot is read through the value's own backing rather than through any
-        name lookup, which is also where a read attaches it and an edit carries it
-        forward, so no authored ``__getattr__``, ``__getattribute__``, or
-        descriptor at the slot's own name makes a lifecycle-free value answer as a
+        The slot is read through its own descriptor rather than through any name
+        lookup, which is also how a read attaches it and an edit carries it
+        forward, so no authored ``__getattr__``, ``__getattribute__``, or class
+        attribute at the slot's own name makes a lifecycle-free value answer as a
         materialized one or hides the state of one that is.
         """
-        if named_state(self).get(LIFECYCLE_STATE_SLOT) is not None:
+        if lifecycle_state(self) is not None:
             raise pickle.PicklingError(
                 f"{type(self).__name__} carries the lifecycle state of the read that published "
                 "it, which describes a live read in a live process and cannot be reconstructed "
@@ -743,52 +752,44 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
             )
         return super().__reduce_ex__(protocol)
 
-    def __getstate__(self) -> dict[Any, Any]:
-        """Serialize as ordinary domain data: declared member values, and no
-        lifecycle state.
 
-        The entry-point guard above refuses a lifecycle-bearing value before this
-        runs, so wherever that guard is entered the filter has nothing left to
-        do. What remains for it is the conversions the guard never sees: one
-        reaching this method directly, which asks for the value's state rather
-        than for a value that can be reconstituted elsewhere, and one whose
-        pickle answered for the entry-point name itself — a supplied reducer, or
-        an authored ``__getattribute__`` — and then delegated to
-        ``object.__reduce_ex__``. Each is answered with the ordinary domain data
-        the value is, carrying no keyed-source status. Of that second kind only
-        the reductions that arrive here are: an authored ``__reduce__`` answers
-        the delegation in place of the reduction that would consult this method,
-        and an authored ``__getstate__`` answers in place of this one, so what
-        either hands back is its own.
+_LifecycleState: Final = cast("Any", Entity).__dict__[LIFECYCLE_STATE_SLOT]
+"""The lifecycle slot's own descriptor, so the framework's reads and writes of a
+value's private state reach the slot itself rather than a name a class answers
+for."""
 
-        Which domain data that is comes from ``BaseModel.__getstate__``, which
-        collects the instance dictionary by reading ``self.__dict__``. No class body
-        binds that name, because the framework presents instance state under it, so
-        the answer is the value's own storage where Pydantic backs it and a mapping
-        derived from the row where it is published — which is why a published value
-        crosses as an ordinary one — unless an authored ``__getattribute__``, which
-        reservation does not reach, answers the read in place of both. The filter below applies to
-        whichever mapping arrives, so no lifecycle state under the slot's name
-        survives this either way, and the read the entry-point guard makes of the
-        value's backing is a separate read from this one.
 
-        The Change Record is never filtered here: it is authored state, written
-        by :meth:`edit` from values the caller supplied, and it earns a write
-        nothing, because provenance is the lifecycle state this drops. So it
-        travels exactly when the mapping that arrives carries it, which is
-        whenever the value holds one and nothing answered for that read in the
-        value's place.
-        """
-        state = super().__getstate__()
-        instance = cast("dict[str, Any]", state.get("__dict__", {}))
-        if LIFECYCLE_STATE_SLOT not in instance:
-            return state
-        return {
-            **state,
-            "__dict__": {
-                name: value for name, value in instance.items() if name != LIFECYCLE_STATE_SLOT
-            },
-        }
+def attach_lifecycle_state(value: BaseModel, state: object) -> None:
+    """Attach the opaque lifecycle state a construction's factory produced.
+
+    The one write of that slot there is, made after every factory in a
+    construction has succeeded, so a node either carries the state its whole
+    graph earned or carries none.
+    """
+    _LifecycleState.__set__(value, state)
+
+
+def lifecycle_state(value: BaseModel) -> object | None:
+    """The opaque lifecycle state ``value`` holds, or ``None`` while it holds none."""
+    try:
+        return cast("object", _LifecycleState.__get__(value))
+    except AttributeError:
+        return None
+
+
+def carry_lifecycle_state(source: BaseModel, target: BaseModel) -> None:
+    """Give ``target`` the lifecycle state ``source`` carries, if any.
+
+    An edit derives a copy from a value's declared state and everything it holds
+    under a name, and the lifecycle slot is neither: a copy assembled out of
+    those alone would silently lose the record of the read that published its
+    source, and with it the copy's own as-of pin and inspection surface. Carried
+    by identity, because the state is opaque — what it means belongs entirely to
+    the lifecycle that produced it.
+    """
+    state = lifecycle_state(source)
+    if state is not None:
+        _LifecycleState.__set__(target, state)
 
 
 class TxTemporal(Entity, _mint=FRAMEWORK_MINT, _axes=(TemporalDimension.TRANSACTION_TIME,)):

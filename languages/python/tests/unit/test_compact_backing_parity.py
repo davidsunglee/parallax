@@ -53,8 +53,12 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import row_codec_of, to_document
-from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
+from parallax.core.entity._entity import (
+    CHANGE_RECORD_SLOT,
+    ChangeRecord,
+    attach_lifecycle_state,
+    lifecycle_state,
+)
 from parallax.core.entity._instance_state import is_published
 from parallax.core.entity._pydantic_storage import attach_instance_state
 
@@ -147,11 +151,14 @@ def _ordinary[M](
     The validation-free constructor, because publication validates nothing
     either: what makes this a twin of the published arm is that both populate the
     named members, leave every other declared field at its declared default, and
-    report exactly the named members as populated.
+    report exactly the named members as populated. A loaded relationship goes into
+    the storage under its own name, which is where ordinary backing keeps one and
+    where every reader of one looks: a value's relationships are attached with the
+    rest of its state, so no descriptor takes one a member at a time.
     """
     value = cast("Any", cls).model_construct(**members)
     for py_name, related in (relationships or {}).items():
-        object.__setattr__(value, py_name, related)
+        attach_instance_state(value, py_name, related)
     return cast("M", value)
 
 
@@ -470,23 +477,30 @@ def test_a_value_object_of_either_backing_pickles_to_an_ordinary_one(build: Buil
 # --------------------------------------------------------------------------- #
 
 
-def test_publication_refuses_a_required_member_it_was_carried_no_value_for() -> None:
-    # The bound on the corpus's premise, and it is a refusal rather than a
-    # divergence. `model_construct` leaves a required member it was handed no
-    # value for unset, so reading it raises; a row has a position for that member
-    # whatever happens, so publication refuses to attach one rather than filling
-    # the position with a default the member does not have.
+def test_a_required_member_no_value_was_carried_for_reads_as_its_position_holds() -> None:
+    # The one place the two arms are not twins, and neither invents a value.
+    # `model_construct` leaves a required member it was handed nothing for unset,
+    # so reading it raises; a row has a position for that member whatever
+    # happens, so a published value reads `None` there — which is not a value the
+    # member admits, and is why the presence bit beside it is what tells a
+    # carried null from a position no read filled.
+    #
+    # Publication refuses neither. A required position a read did not carry is a
+    # recorded finding on the projection (spec §5) rather than a row this seam may
+    # reject, and refusing one here would refuse a document collapse the read
+    # specification defines.
     with pytest.raises(AttributeError, match="city"):
         _ = _ordinary(Site, zip_code=None).city
-    with pytest.raises(ValueError, match="carries no value for required city"):
-        published(Site, zip_code=None)
+    absent = published(Site, zip_code=None)
+    assert absent.city is None
+    assert absent.model_fields_set == {"zip_code"}
 
 
-def test_an_edit_carries_lifecycle_state_forward_on_the_backing_that_can_hold_it() -> None:
-    # Lifecycle state rides in the instance dictionary, which a published value
-    # does not have, so this is the one edit behavior with an ordinary arm
-    # alone.
-    value = _ordinary(Depot, id=1, label="north")
-    attach_instance_state(value, LIFECYCLE_STATE_SLOT, "pinned")
-    assert real_storage(value.edit(label="south"))[LIFECYCLE_STATE_SLOT] == "pinned"
-    assert getattr(published(Depot, id=1, label="north"), LIFECYCLE_STATE_SLOT, None) is None
+def test_an_edit_carries_lifecycle_state_forward_on_either_backing() -> None:
+    # Lifecycle state rides a slot of the Entity root's own layout rather than the
+    # instance dictionary, so a published node carries it exactly as an ordinary
+    # one does and an edit carries it across from either.
+    for value in (_ordinary(Depot, id=1, label="north"), published(Depot, id=1, label="north")):
+        attach_lifecycle_state(cast("Any", value), "pinned")
+        assert lifecycle_state(cast("Any", value).edit(label="south")) == "pinned"
+    assert lifecycle_state(published(Depot, id=1, label="north")) is None

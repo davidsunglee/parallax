@@ -151,11 +151,11 @@ nested scenario is the closest match, at 2.8 KB with lifecycle against 1.9 KB
 without it. Read the earlier figures as direction and these as the frozen
 comparison basis.
 
-## Three object layouts, and the rule for dividing them
+## Four object layouts, and the rule for dividing them
 
-This document carries figures from three different object layouts — the tree
-before COR-111, the intermediate one the seam's first take produced, and the
-current tree. Every summed number below belongs to exactly one of them, and an
+This document carries figures from four different object layouts — the tree
+before COR-111, the intermediate one the seam's first take produced, the one the
+instance-state presentation added to it, and the current tree. Every summed number below belongs to exactly one of them, and an
 aggregate that mixes them is wrong in a way no reader can see from the number
 alone. So the layouts are named first and the rule for using them is stated
 after.
@@ -177,24 +177,30 @@ too:
 |---|---|---|
 | `__parallax_compact__` | a published value's whole row, or `None` on an ordinary value | the compact representation |
 | `__parallax_auxiliary__` | a published value's `cached_property` results, allocated on the first such write | the instance-state presentation that replaced the schema seam |
+| `__parallax_lifecycle__` | a materialized Entity's opaque lifecycle state, on the Entity root alone | the publication flip, which leaves a published node no storage to hold it in |
 
 | layout | tree | summed retained B, lifecycle included | excluded |
 |---|---|---:|---:|
 | no framework slots | the frozen tables above | 7,328 | 6,424 |
 | `__parallax_compact__` only | the first take of the compact seam | 7,408 | 6,504 |
-| both slots | the current tree, and what `just python-report-instance-state` prints today | 7,488 | 6,584 |
+| both instance-state slots | the tree the presentation landed on | 7,488 | 6,584 |
+| all three | the current tree, and what `just python-report-instance-state` prints today | 7,448 | 6,632 |
 
-`slots`, `fields`, `lifecycle B`, and the scenario shapes are unchanged across
-all three: the storage each node holds is the same mapping with the same
-entries, and what grew is the object in front of it.
+`fields` and the scenario shapes are unchanged across all four. `slots` and the
+sums are not, from the third row to the fourth, and both moved for one reason:
+the lifecycle slot is the third pointer every Entity instance now carries, and
+what a legacy arm attaches to it no longer lands in the storage mapping — so
+each node's storage lost an entry while its layout gained a slot. `lifecycle B`
+falls from 224/136 to a uniform 136 with it, because `shallow` no longer crosses
+a dictionary growth boundary when its lifecycle state is attached.
 
 **The accounting rule.** The aggregate is `1 - sum(after) / sum(before)` over the
 two summed columns, and **both sums must come from the same layout row above**.
 An "after" measured on the current tree therefore divides the current tree's
-legacy arm — 7,488 / 6,584 — and not the frozen 7,328 / 6,424. Restating the
+legacy arm — 7,448 / 6,632 — and not the frozen 7,328 / 6,424. Restating the
 frozen sums as the "before" of a current "after" understates the reduction,
-because it charges the compact arm for two slots the arm it is compared against
-does not carry. A reading that departs from the rule anyway is not wrong for
+because it charges the compact arm for slots the arm it is compared against does
+not carry. A reading that departs from the rule anyway is not wrong for
 departing; it is wrong for not saying which two readings it took.
 
 The `dump µs` column moved the other way and by more, because the serialization
@@ -211,7 +217,12 @@ and still above the tree that had none.
 Not repaired here — this reading exists to record the tree as it stands — and it
 bears on how a later comparison is read.
 
-**Publication records no member presence at all today.** `nullable` and `partial`
+**Publication records no member presence at all on the tree these tables were
+frozen over**, which is no longer true of the current tree: a published node's
+bitmap records exactly what its row carried, so `nullable` and `partial` are now
+distinguishable where the frozen reading found them identical. What follows is
+the frozen tree's fact, kept because it is what the frozen sums are a reading of.
+`nullable` and `partial`
 differ only in which positions the row carried, and their published nodes are
 physically identical in shape: the same storage keys, the same declared-field
 count, and an empty `__pydantic_fields_set__` on both. Pydantic's zero-argument

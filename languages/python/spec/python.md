@@ -2354,15 +2354,33 @@ or descriptor authoring form and performs no audit stamping.
   Misuse raises `GraphConstructionError(RuntimeError)` carrying `code`,
   `message`, the applicable zero-based allocation `index`, the structured
   `identity` at fault, and an optional conversion `cause`. Its complete code set
-  is these nine:
+  is these ten:
 
   ```text
   entity-graph-invalid-entity          entity-graph-node-already-populated
   entity-graph-invalid-member          entity-graph-node-unpopulated
   entity-graph-invalid-value           entity-graph-invalid-root
   entity-graph-allocation-closed       entity-graph-foreign-handle
-  entity-graph-scope-closed
+  entity-graph-scope-closed            entity-graph-layout-mismatch
   ```
+
+- **Layout correspondence, checked once per class and model.** A node's rows are
+  written against the accepted model's member layout and read back through the
+  publication plan its class carries, and those two orders are derived from
+  different material — the model's from the inheritance ancestry and each
+  contributor's declared members, the class's from the Python MRO and each class
+  body's own declarations, at class creation, knowing no model. So the first time
+  a model publishes a class the two are compared, and
+  `entity-graph-layout-mismatch` refuses the pair when they disagree about the
+  member row, about which positions are Value Object occurrences and which Value
+  Object Class each takes, about the broad-relationship tail, or about any
+  occurrence's own path layout at any containment depth. The comparison is per
+  `(class, model)` and is made where the per-Entity facts are derived, so it is
+  made once and no member read ever pays for it. It is the mechanism rather than
+  a backstop: a positional row of the model's own width says how many members
+  there are and nothing about which kind each position is, so a model and a class
+  that disagree about a member's kind are unrepresentable at the door and
+  detectable only here.
 
 - **Construction is whole-graph per call.** One `construct(...)` allocates,
   populates, and publishes every node the call reaches, and there is no partial,
@@ -2916,8 +2934,9 @@ or descriptor authoring form and performs no audit stamping.
     the Entity Row Codec's `full_row` and `edited_row` (§5), never an error.
     Refusing it would make a stored row unreadable, and emitting it would
     launder stored state into an assignment the caller never made.
-    Materialization is safe by construction: it builds through Pydantic's
-    validation-free path and never reaches the validating constructor.
+    Materialization is safe by construction: it enters no Pydantic constructor
+    at all — a published node's whole state is assembled and attached once — so
+    the validating constructor that refuses an authored value is never reached.
 
   A framework-owned member is therefore **never required at construction**,
   whatever its declared nullability: a caller who cannot supply a value cannot

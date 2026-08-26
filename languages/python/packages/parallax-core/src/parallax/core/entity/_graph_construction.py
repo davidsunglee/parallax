@@ -72,15 +72,29 @@ from parallax.core.entity._declaration import (
     ValueObjectShape,
     shape_of,
 )
-from parallax.core.entity._entity import wire_names_of
+from parallax.core.entity._entity import attach_lifecycle_state, wire_names_of
 from parallax.core.entity._errors import GraphConstructionError
-from parallax.core.entity._model import ClassIndex, DomainModel, class_index, model_of
-from parallax.core.entity._pydantic_storage import attach_instance_state
+from parallax.core.entity._instance_state import (
+    PublicationPlan,
+    allocate,
+    plan_of,
+    publish,
+)
+from parallax.core.entity._instance_state import relationship as relationship_state
+from parallax.core.entity._layout import EntityLayout, LayoutCatalog, ValueObjectLayout
+from parallax.core.entity._model import (
+    ClassIndex,
+    DomainModel,
+    cataloged_model,
+    class_index,
+    model_of,
+)
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
+    MemberIdentity,
     Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
@@ -165,7 +179,9 @@ class _EntityFacts:
     relationships: tuple[_RelationshipFacts, ...]
 
 
-def _entity_facts(model: Metamodel, classes: ClassIndex, identity: EntityIdentity) -> _EntityFacts:
+def _entity_facts(
+    model: Metamodel, classes: ClassIndex, layouts: LayoutCatalog, identity: EntityIdentity
+) -> _EntityFacts:
     metadata = model.entity(identity)
     cls = classes.class_of(identity)
     if metadata is None or cls is None:
@@ -192,7 +208,7 @@ def _entity_facts(model: Metamodel, classes: ClassIndex, identity: EntityIdentit
     occurrence_py = [
         names.name_to_py.get(occurrence.identity.path[-1]) for occurrence in value_objects
     ]
-    return _EntityFacts(
+    facts = _EntityFacts(
         identity=identity,
         cls=cls,
         attributes=tuple(
@@ -219,6 +235,173 @@ def _entity_facts(model: Metamodel, classes: ClassIndex, identity: EntityIdentit
             )
             for direction in _navigable_relationships(model, identity)
         ),
+    )
+    _require_correspondence(layouts.entity(identity), facts)
+    return facts
+
+
+def _require_correspondence(layout: EntityLayout, facts: _EntityFacts) -> None:
+    """Refuse unless the model lays this Entity out the way its class is laid out.
+
+    Two derivations reach one order from different material and neither is
+    derived from the other. The model side walks the accepted metadata — the
+    inheritance ancestry and each contributor's declared members — into an
+    :class:`~parallax.core.entity._layout.EntityLayout`. The class side walks the
+    Python MRO and each class body's own declarations into a publication plan,
+    at class creation, knowing no model at all. A positional row is written
+    against the first and read back through the second, so a disagreement
+    between them installs every member after it at the wrong position, and a
+    row of the right width cannot express one: width is a count.
+
+    Compared once per (class, model) — this runs where the per-Entity facts are
+    derived, and those are memoized — so it fires on the actual pair a process
+    publishes rather than on whichever pair a fixture named, and no field read
+    ever pays for the question. What can genuinely diverge is which contributors
+    there are and what each declared, which is why factoring the shared tail into
+    one rule both sides call would protect the half that cannot diverge and
+    leave this half unchecked.
+    """
+    plan = plan_of(facts.cls)
+    model_members = tuple(
+        (
+            *(attribute.declared.identity for attribute in facts.attributes),
+            *(occurrence.declared.identity for occurrence in facts.value_objects),
+        )
+    )
+    if layout.members != model_members or layout.relationships != tuple(
+        direction.identity for direction in facts.relationships
+    ):
+        raise _correspondence_refusal(
+            facts,
+            f"the member layout lays out {layout.members} with relationships "
+            f"{layout.relationships}, and this collaboration reads {model_members} with "
+            f"{tuple(direction.identity for direction in facts.relationships)}",
+        )
+    _require_member_correspondence(facts, plan)
+    _require_relationship_correspondence(facts, plan)
+    for occurrence, occurrence_layout in zip(
+        facts.value_objects, layout.value_objects, strict=True
+    ):
+        _require_occurrence_correspondence(
+            facts,
+            occurrence_layout,
+            # Not `None`: the check above refuses an occurrence position the class
+            # binds no Value Object Class at, so one reaching here has one.
+            cast("type", occurrence.vo_class),
+            path=f"{facts.identity.canonical}.{'.'.join(occurrence.declared.identity.path)}",
+        )
+
+
+def _require_member_correspondence(facts: _EntityFacts, plan: PublicationPlan) -> None:
+    """Refuse unless the class carries the model's member row in the model's order,
+    each position of the kind the model gives it.
+
+    Kind is checked as well as name because it is what a positional row lost: the
+    identity-keyed algebra this door replaced named the member a carrier filled
+    and so knew which kind that identity was, while a row of the right width says
+    only how many positions there are. A model calling position ``i`` a Value
+    Object occurrence where the composed class maps it as a scalar therefore
+    reaches here rather than reaching the declared type's own check further down.
+    """
+    row = tuple(
+        (
+            *(attribute.py_name for attribute in facts.attributes),
+            *(occurrence.py_name for occurrence in facts.value_objects),
+        )
+    )
+    if row != plan.py_names:
+        raise _correspondence_refusal(
+            facts,
+            f"the model lays out members {row} and the class is laid out as {plan.py_names}",
+        )
+    for position, occurrence in enumerate(facts.value_objects, start=len(facts.attributes)):
+        bound = plan.occurrences.get(position + 1)
+        if bound is None or bound is not occurrence.vo_class:
+            raise _correspondence_refusal(
+                facts,
+                f"the model calls member {position} ({occurrence.py_name!r}) a Value Object "
+                f"occurrence, and the class holds {bound} at that position",
+                identity=occurrence.declared.identity,
+            )
+
+
+def _require_relationship_correspondence(facts: _EntityFacts, plan: PublicationPlan) -> None:
+    """Refuse unless the class's relationship tail is the model's canonical order.
+
+    The tail carries no presence bit and no name once a row is written, so a
+    direction installed at another direction's position is a loaded arm answered
+    for the wrong relationship — silently, and for the life of the graph.
+    """
+    tail = tuple(direction.py_name for direction in facts.relationships)
+    laid_out = tuple(
+        py_name for py_name, _ in sorted(plan.relationships.items(), key=lambda pair: pair[1])
+    )
+    if tail != laid_out:
+        raise _correspondence_refusal(
+            facts,
+            f"the model lays out relationships {tail} and the class is laid out as {laid_out}",
+        )
+
+
+def _require_occurrence_correspondence(
+    facts: _EntityFacts,
+    layout: ValueObjectLayout,
+    vo_class: type,
+    *,
+    path: str,
+) -> None:
+    """Refuse unless one occurrence's own path layout is its Value Object class's
+    own laid-out order, at every containment depth.
+
+    A Value Object layout is keyed to a containment PATH and a publication plan
+    to a CLASS, so the two are checked against each other here rather than
+    conflated: one class bound at two paths is laid out once and must correspond
+    at both.
+    """
+    plan = plan_of(vo_class)
+    shape = shape_of(vo_class)
+    row = tuple(
+        shape.name_to_py.get(
+            member.name if isinstance(member, ValueObjectAttributeIdentity) else member.path[-1]
+        )
+        for member in layout.members
+    )
+    if row != plan.py_names:
+        raise _correspondence_refusal(
+            facts,
+            f"{path} lays out members {row} and {vo_class.__name__} is laid out as {plan.py_names}",
+            identity=layout.identity,
+        )
+    for position, nested in enumerate(layout.nested):
+        if nested is None:
+            continue
+        py_name = cast("str", row[position])
+        nested_class = shape.nested_classes.get(py_name)
+        if plan.occurrences.get(position + 1) is not nested_class or nested_class is None:
+            raise _correspondence_refusal(
+                facts,
+                f"{path} calls member {position} ({py_name!r}) a nested occurrence of "
+                f"{nested_class}, and {vo_class.__name__} holds "
+                f"{plan.occurrences.get(position + 1)} there",
+                identity=nested.identity,
+            )
+        _require_occurrence_correspondence(facts, nested, nested_class, path=f"{path}.{py_name}")
+
+
+def _correspondence_refusal(
+    facts: _EntityFacts,
+    detail: str,
+    *,
+    identity: EntityIdentity | MemberIdentity | None = None,
+) -> GraphConstructionError:
+    """The one refusal every correspondence disagreement earns, naming both sides."""
+    return GraphConstructionError(
+        code="entity-graph-layout-mismatch",
+        message=(
+            f"the class composed for {facts.identity.canonical} is not laid out the way this "
+            f"model lays it out, so no positional row addresses it: {detail}"
+        ),
+        identity=facts.identity if identity is None else identity,
     )
 
 
@@ -280,15 +463,22 @@ class _CallScope:
     comparison there: a handle names a node exactly when this scope issued it,
     which is what makes a foreign handle and a value that is no handle at all one
     and the same miss.
+
+    ``bitmaps`` is this call's own memo of the presence masks its nodes have
+    assembled, and it dies with the call. Every node of one class in one
+    materialization comes from one projection and so repeats one pattern, which
+    the memo turns into one shared integer per distinct pattern rather than one
+    per node; nothing process-wide holds it, so no mask outlives the graph.
     """
 
-    __slots__ = ("_indices", "facts", "handles", "instances", "populated")
+    __slots__ = ("_indices", "bitmaps", "facts", "handles", "instances", "populated")
 
     def __init__(self) -> None:
         self.facts: list[_EntityFacts] = []
         self.handles: list[NodeHandle] = []
         self.instances: list[object] = []
         self.populated: list[bool] = []
+        self.bitmaps: dict[int, int] = {}
         self._indices: dict[int, int] = {}
 
     def issue(self) -> NodeHandle:
@@ -445,11 +635,12 @@ class EntityGraphConstruction:
     one.
     """
 
-    __slots__ = ("_cache", "_classes", "_model")
+    __slots__ = ("_cache", "_classes", "_layouts", "_model")
 
     def __init__(self, model: DomainModel) -> None:
         self._model = model_of(model)
         self._classes = class_index(model)
+        self._layouts = cataloged_model(model).layouts
         self._cache: dict[EntityIdentity, _EntityFacts] = {}
 
     def construct(
@@ -480,9 +671,7 @@ class EntityGraphConstruction:
         published = _validated_roots(scope, roots)
         states = _factory_results(scope, state_factory)
         for index, state in enumerate(states):
-            attach_instance_state(
-                cast(BaseModel, scope.instances[index]), LIFECYCLE_STATE_SLOT, state
-            )
+            attach_lifecycle_state(cast("BaseModel", scope.instances[index]), state)
         return tuple(scope.instances[index] for index in published)
 
     def facts_for(self, entity: EntityIdentity) -> _EntityFacts:
@@ -499,7 +688,7 @@ class EntityGraphConstruction:
                 ),
                 identity=entity,
             )
-        facts = _entity_facts(self._model, self._classes, entity)
+        facts = _entity_facts(self._model, self._classes, self._layouts, entity)
         self._cache[entity] = facts
         return facts
 
@@ -529,6 +718,11 @@ def relationship_value_of(instance: object, relationship: RelationshipIdentity) 
     The raw read the advanced seam exposes so a lifecycle package can distinguish
     unloaded from loaded-null without the raising descriptor access a developer
     gets. It is one of exactly two operations a lifecycle reads back here.
+
+    Where the position lives is the backing's own question — a published node
+    holds every declared direction in its row's tail and an ordinary value holds
+    the loaded ones in its storage — so the read goes through the backing rather
+    than through a mapping this module picks.
     """
     py_name = wire_names_of(type(instance)).relationship_py.get(relationship.name)
     if py_name is None:
@@ -540,7 +734,7 @@ def relationship_value_of(instance: object, relationship: RelationshipIdentity) 
             ),
             identity=relationship,
         )
-    return instance.__dict__.get(py_name, UNLOADED)
+    return relationship_state(cast("BaseModel", instance), py_name)
 
 
 def lifecycle_state_of(instance: object) -> object | None:
@@ -560,11 +754,14 @@ def lifecycle_state_of(instance: object) -> object | None:
 def _shell(facts: _EntityFacts) -> object:
     """One unfilled frozen Entity instance.
 
-    ``model_construct`` with no arguments skips validation entirely and fills
-    every defaulted field from its default; population overwrites those and
-    leaves an undefaulted field the input omits genuinely absent.
+    Neither constructor is entered — not the validating one, and not
+    ``model_construct`` — because a shell holds no declared state at all: it
+    exists so a relationship can name it before it holds anything, and
+    publication attaches its whole row at once. What it is given is the Pydantic
+    storage no value can be missing, which is
+    :func:`~parallax.core.entity._instance_state.allocate`'s own contract.
     """
-    return cast("Any", facts.cls).model_construct()
+    return allocate(cast("type[Any]", facts.cls))
 
 
 def _require_populated(scope: _CallScope) -> None:
@@ -638,8 +835,15 @@ def _populate(
     members: tuple[object, ...],
     relationships: tuple[object, ...],
 ) -> None:
+    """Read both rows, then attach one node's whole state in a single write.
+
+    Every refusal happens while the two mappings are still local, so a row this
+    collaboration rejects leaves its shell exactly as allocation left it: no
+    partially populated node exists at any point, and a node whose relationship
+    row fails carries none of the members the same call already read.
+    """
     facts = scope.facts[index]
-    instance = scope.instances[index]
+    instance = cast("BaseModel", scope.instances[index])
     _require_row(
         members,
         width=len(facts.attributes) + len(facts.value_objects),
@@ -655,6 +859,7 @@ def _populate(
         kind="broad-relationship",
     )
 
+    values: dict[str, object] = {}
     for position, attribute in enumerate(facts.attributes):
         value = members[position]
         if value is ABSENT:
@@ -671,7 +876,7 @@ def _populate(
             label=f"{facts.identity.canonical}.{declared.identity.name}",
             open_ended=attribute.open_ended,
         )
-        object.__setattr__(instance, attribute.py_name, value)
+        values[attribute.py_name] = value
 
     for position, occurrence in enumerate(facts.value_objects, start=len(facts.attributes)):
         value = members[position]
@@ -683,31 +888,30 @@ def _populate(
             raise _unbound_member(
                 facts, occurrence.declared.identity, index=index, kind="Value Object occurrence"
             )
-        built = _build_occurrence(
+        values[occurrence.py_name] = _build_occurrence(
             value,
             declared=occurrence.declared,
             vo_class=occurrence.vo_class,
             index=index,
             entity=facts.identity,
+            bitmaps=scope.bitmaps,
         )
-        object.__setattr__(instance, occurrence.py_name, built)
 
+    related: dict[str, object] = {}
     for position, direction in enumerate(facts.relationships):
         if direction.py_name is None:  # pragma: no cover - a composed class carries its family
             if relationships[position] is not UNLOADED:
                 raise _unbound_member(facts, direction.identity, index=index, kind="relationship")
             continue
-        object.__setattr__(
-            instance,
-            direction.py_name,
-            _relationship_value(
-                relationships[position],
-                scope=scope,
-                many=direction.many,
-                index=index,
-                identity=direction.identity,
-            ),
+        related[direction.py_name] = _relationship_value(
+            relationships[position],
+            scope=scope,
+            many=direction.many,
+            index=index,
+            identity=direction.identity,
         )
+
+    publish(instance, values, related, shared_bitmaps=scope.bitmaps)
 
 
 def _unbound_member(  # pragma: no cover - a composed class carries its family
@@ -883,6 +1087,7 @@ def _build_occurrence(
     vo_class: type,
     index: int,
     entity: EntityIdentity,
+    bitmaps: dict[int, int],
 ) -> object:
     """One Value Object occurrence as frozen instances, checked for container
     shape first.
@@ -903,7 +1108,14 @@ def _build_occurrence(
                 identity=identity,
             )
         return tuple(
-            _build_record(row, declared=declared, vo_class=vo_class, index=index, entity=entity)
+            _build_record(
+                row,
+                declared=declared,
+                vo_class=vo_class,
+                index=index,
+                entity=entity,
+                bitmaps=bitmaps,
+            )
             for row in cast("tuple[object, ...]", value)
         )
     if value is None:
@@ -913,7 +1125,9 @@ def _build_occurrence(
         # composite being not present rather than a nullability verdict to
         # re-derive against a collapse that already happened.
         return None
-    return _build_record(value, declared=declared, vo_class=vo_class, index=index, entity=entity)
+    return _build_record(
+        value, declared=declared, vo_class=vo_class, index=index, entity=entity, bitmaps=bitmaps
+    )
 
 
 def _build_record(
@@ -923,6 +1137,7 @@ def _build_record(
     vo_class: type,
     index: int,
     entity: EntityIdentity,
+    bitmaps: dict[int, int],
 ) -> object:
     """One positional member row as a frozen Value Object instance, at every depth.
 
@@ -957,12 +1172,10 @@ def _build_record(
         )
     shape = shape_of(vo_class)
     values: dict[str, object] = {}
-    present: set[str] = set()
     for position, leaf in enumerate(declared.attributes):
         py_name = _member_py(shape, leaf.identity.name)
         value = cells[position]
         if value is ABSENT:
-            values[py_name] = None
             continue
         _check_value(
             value,
@@ -976,23 +1189,23 @@ def _build_record(
             ),
             collapsed=True,
         )
-        present.add(py_name)
         values[py_name] = value
     for position, occurrence in enumerate(declared.value_objects, start=leaf_count):
         py_name = _member_py(shape, occurrence.identity.path[-1])
         value = cells[position]
         if value is ABSENT:
-            values[py_name] = () if py_name in shape.many_py else None
             continue
-        present.add(py_name)
         values[py_name] = _build_occurrence(
             value,
             declared=occurrence,
             vo_class=shape.nested_classes[py_name],
             index=index,
             entity=entity,
+            bitmaps=bitmaps,
         )
-    return cast("Any", vo_class).model_construct(present, **values)
+    record = allocate(cast("type[Any]", vo_class))
+    publish(record, values, shared_bitmaps=bitmaps)
+    return record
 
 
 def _member_py(shape: ValueObjectShape, canonical: str) -> str:
