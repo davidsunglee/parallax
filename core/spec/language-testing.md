@@ -72,14 +72,18 @@ when what they examine is wrong. `format`, `report`, and `show` are
 **non-blocking**: they rewrite, describe, or display, and pass no judgement
 **about the subject they examine**.
 
-Passing no judgement is a rule about the subject, not about the exit code. A
-non-blocking command MAY fail when it cannot produce the output it exists to
-produce — a source it cannot rewrite, a matrix cell it has no reading for, a
-graph it cannot resolve — because such an exit says *there is nothing here to
-read*, which is the one thing a diagnostic command must be able to say. What it
-MUST NOT do is exit on what its output says: a number too large, a comparison it
-dislikes, a shape it would have refused. A non-blocking command that grades its
-subject is a gate under another name, and MUST be spelled as one.
+Passing no judgement is a rule about what a command DECIDES, not about what it
+prints. A non-blocking command MAY fail when it cannot produce the output it
+exists to produce — a source it cannot rewrite, a matrix cell it has no reading
+for, a graph it cannot resolve — because such an exit says *there is nothing here
+to read*, which is the one thing a diagnostic command must be able to say. It MAY
+also display a measurement beside the limit stated for it and say which side of
+that limit the measurement fell on: that hands a reader a comparison to act on,
+where withholding it would leave the same judgement to whoever happened to notice
+the number. What a non-blocking command MUST NOT do is decide anything on what
+its output says — exit on a number too large, a comparison it dislikes, or a
+shape it would have refused. One whose own outcome turns on a comparison it makes
+about its subject is a gate under another name, and MUST be spelled as one.
 
 Only blocking commands are gates. An aggregate's verdict is its blocking
 dependencies', so it may depend on a non-blocking command for that command's
