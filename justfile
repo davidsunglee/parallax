@@ -343,15 +343,14 @@ python-report-snapshot-graph-overhead:
 # that reproduced publication before the flip, the shipping publication path, and
 # ordinary validating construction — over every supported CPython minor, running
 # a child of its own for each, so it costs more than its neighbours and still
-# gates nothing: the aggregate and the regression verdicts it computes are
-# printed as an escalation block, and the only thing it exits non-zero on is a
-# matrix cell it has no reading for. The aggregates divide the first two arms;
-# the third states what a published node retains against one a caller built, and
-# enters neither. What
-# grades those verdicts is `tests/unit/test_instance_state_baseline.py`, which
-# `python-test-dbfree` owns and which feeds them doctored readings. What has been
-# read off this, and under what conditions, is
-# `languages/python/docs/instance-state-baseline.md`.
+# gates nothing: the two comparisons the measurement contract names are DISPLAYED
+# as an escalation block and reach no exit code, and the only thing it exits
+# non-zero on is a matrix cell it has no reading for. The aggregates divide the
+# first two arms; the third states what a published node costs against one a
+# caller built, and enters neither. What grades those comparisons is
+# `tests/unit/test_instance_state_baseline.py`, which `python-test-dbfree` owns
+# and which feeds them doctored readings. What has been read off this, and under
+# what conditions, is `languages/python/docs/instance-state-baseline.md`.
 [metadata("runtime:medium")]
 [doc("Retained published Entity state under each backing over the canonical mix, on every supported minor.")]
 python-report-instance-state:

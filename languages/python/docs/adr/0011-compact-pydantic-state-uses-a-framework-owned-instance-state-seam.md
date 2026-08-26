@@ -65,18 +65,21 @@ loudly in the gate rather than silently in production.
 
 **What the seam costs is part of its Interface, and is stated rather than left to
 be discovered.** Measured over the six canonical scenarios of
-`docs/instance-state-baseline.md`, a published node retains about two fifths of
-what an ordinary one does — 39.8% on CPython 3.14 and 37.2% on 3.13, against an
-ordinary arm built by the validating constructor. The claim's own target is
-stated over a different pair, the publication path before and after this change,
-and that reduction is 51.8% on 3.14 and 54.7% on 3.13 against the 33% the claim
-accepts. It pays for both at two reads. A
+`docs/instance-state-baseline.md`, a published node retains a little over two
+fifths of what an ordinary one does — 43.8% on CPython 3.14 and 41.0% on 3.13,
+against an ordinary arm built by the validating constructor, which carries no
+lifecycle state because a plainly constructed instance has none. The claim's own
+target is stated over a different pair, the publication path before and after
+this change, and that reduction is 51.8% on 3.14 and 54.7% on 3.13 against the
+33% the claim accepts. It pays for both at two reads, and at construction. A
 published value's `model_dump` runs about 2.2x an ordinary value's, because
 pydantic-core reads `__dict__` twice per instance per dump and each read builds a
 presentation; `docs/deferred-ledger.md` D-82 is the optimization path and what is
 known about taking it. A published value's declared-member read runs about 3.2x
-an ordinary one's, because a published node has no instance dictionary and the
-read resolves through the member descriptor instead of a C-level dictionary hit;
-D-83 carries that one. Both are confined to published values: an ordinary value's
+an ordinary one's on 3.14 and 3.4x on 3.13, because a published node has no
+instance dictionary and the read resolves through the member descriptor instead
+of a C-level dictionary hit; D-83 carries that one. Publishing one node also
+costs about 3.6x validating an ordinary one, which is the construction call a
+caller pays for a graph and never pays for a constructor. Both are confined to published values: an ordinary value's
 member read is a plain Pydantic model's, unchanged, which is the trade the claim
 forbids making silently and therefore makes explicitly.

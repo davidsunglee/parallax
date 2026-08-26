@@ -691,8 +691,11 @@ the slot descriptor's own __get__ plus a subscript   28.4 ns
 object.__getattribute__(value, slot) plus a subscript 30.4 ns
 ```
 
-Over the whole canonical mix the report reads 3.33x on CPython 3.14 and 3.46x on
-3.13, against readings taken with one shared harness on both arms.
+Over the whole canonical mix, and against the *ordinary* arm this entry's subject
+is — a published node's member read divided by an ordinary node's — the report
+reads 3.22x on CPython 3.14 and 3.37x on 3.13. The same operation against the
+*legacy* publication fixture, which is the pair the regression rule grades, reads
+3.26x and 3.43x. All four are taken with one shared harness on every arm.
 
 **The floor is the frame, and it is not reachable from Python.** Roughly a third
 of the 77 ns is entering a Python-level `__get__` at all — the third line above is
@@ -716,7 +719,8 @@ wrong by an order of magnitude.
 
 **What it buys, and who pays it.** The frame is what makes the row the whole of a
 published node's state: 51.8% fewer retained bytes on 3.14 and 54.7% on 3.13 over
-the canonical mix. It is confined to published values — an ordinary value's member
+the canonical mix against the legacy publication fixture, and 56.2% and 59.0%
+against an ordinary instance. It is confined to published values — an ordinary value's member
 read is a plain Pydantic model's, unchanged and equal to a hand-written twin's,
 which is the trade the claim forbids making silently and therefore makes
 explicitly. The seam is also what keeps the frame from spreading: giving `Attr` a

@@ -1960,10 +1960,11 @@ or descriptor authoring form and performs no audit stamping.
   `BaseModel` of the same fields. The **cost is part of the contract**, not an
   implementation detail, because a caller can measure it. Over the canonical mix
   `languages/python/docs/instance-state-baseline.md` records, a published
-  instance retains **about two fifths** of what an ordinary one does — 39.8% on
-  CPython 3.14 and 37.2% on 3.13, summed over that mix and measured against an
-  ordinary arm built by the validating constructor — and pays for that at
-  two reads: `model_dump` of a published instance runs roughly twice an ordinary
+  instance retains **a little over two fifths** of what an ordinary one does —
+  43.8% on CPython 3.14 and 41.0% on 3.13, summed over that mix and measured
+  against an ordinary arm built by the validating constructor, which carries no
+  lifecycle state because a plainly constructed instance has none (§3) where a
+  published node always does — and pays for that at two reads: `model_dump` of a published instance runs roughly twice an ordinary
   instance's and roughly three times a plain Pydantic model's, because the
   presentation is built per read, with equality comparable; and a declared-member
   read of a published instance runs roughly three times an ordinary instance's,
@@ -5106,12 +5107,14 @@ rows receive the transaction's shared lock.
   interpreter-relative, and every CI job runs a floating runner label, so a
   threshold over either would fail for reasons unrelated to the change under it.
   What is gated instead is the SHAPE of what is retained, in the `cost` class
-  above. The two verdicts the measurement contract does name — an aggregate
-  reduction short of its target, and a representative operation regressing past
-  its threshold — are computed by the report itself and printed as an escalation
-  block, so each returns to a human decision by being emitted rather than by
-  being noticed. The report exits non-zero on exactly one thing, which is a
-  matrix cell it has no reading for.
+  above. The two comparisons the measurement contract does name — an aggregate
+  reduction against its target, and a representative operation against its
+  threshold — are computed by the report and DISPLAYED as an escalation block, so
+  each returns to a human decision by being emitted rather than by being noticed.
+  Neither reaches the report's exit code, which is what keeps it non-blocking
+  under `core/spec/language-testing.md` §2: it exits non-zero on exactly one
+  thing, a matrix cell it has no reading for, which says there is nothing to read
+  rather than that what was read is wrong.
 - **Complete verification command.** `just python-check` — all three class
   aggregates, ending with a summary block listing every check as run, failed, or
   skipped-with-reason.

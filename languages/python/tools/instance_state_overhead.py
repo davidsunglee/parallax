@@ -11,21 +11,21 @@ beside them and excluded from it, because that state is the author's rather than
 the representation's.
 
 **Two different comparisons are printed, and each says which it is.** The
-aggregates are legacy against compact: the representation change this measurement
-was taken for, and the ticket's own before and after. The ordinary arm enters
-neither, and answers the other question a caller asks — what a published instance
-retains against one they built themselves — which is the comparison
-``spec/python.md`` §2 states its Interface figure over.
+aggregates are legacy against compact: the representation change, which is the
+before and after the measurement contract states its target over. The ordinary
+arm enters neither, and answers the other question a caller asks — what a
+published instance costs against one they built themselves — which is the
+comparison ``spec/python.md`` §2 states every Interface figure over.
 
-It is a `report`: no number it computes can change its exit code, because a total
-in bytes is machine- and interpreter-relative. What it does compute is the two
-verdicts the measurement contract names — the aggregate reduction against its
-target, and any representative operation regressing past its limit — and prints
-them as an escalation block, so a missed target is detected here rather than
-noticed by whoever reads the table. The one thing it exits non-zero on is
-COMPLETENESS: a matrix cell that has no reading is named and refused, since that
-is a statement about whether the measurement ran rather than about how large a
-number is.
+It is a `report` and it passes no judgement on what it measures. It computes the
+two comparisons the measurement contract names — the aggregate reduction beside
+its target, and each representative operation beside its limit — and DISPLAYS
+them as an escalation block, so a missed target is read here rather than noticed
+by whoever re-adds the table. No comparison it displays reaches its exit code:
+`core/spec/language-testing.md` §2 reserves exiting on what output SAYS to
+blocking operations, and the one thing this exits non-zero on is COMPLETENESS —
+a matrix cell that has no reading is named and refused, which says there is
+nothing here to read rather than that what is here is wrong.
 
 **Every arm is read over one object layout**, which is what makes a ratio between
 two of them the representation's. Every framework slot a declared class carries
@@ -54,25 +54,36 @@ what an ordinary declared-field read costs, what ``model_dump()`` costs, and the
 high-water mark one construction reaches, from which what it allocated and freed
 again is the difference.
 
-**Construction is timed at the one scope the arms have in common.** A compact
-node arrives from an ``EntityGraphConstruction.construct`` call that also pays a
-scope, a writer, root validation and factory buffering, where the fixture arms
-build a node and nothing else — so a per-CALL construction figure compares two
-different amounts of work and reads as a regression the arms do not have. Each
-arm is therefore timed building one node and building
-:data:`MARGINAL_NODES`, and :func:`marginal` splits the two into the cost of one
-more node — which is what the report prints as construction, and what the
-regression rule grades — and the per-call remainder, printed beside it.
+**Construction is timed per node, and the legacy ratio is an upper bound.** A
+compact node arrives from an ``EntityGraphConstruction.construct`` call that also
+pays a call scope, a writer, root validation and factory buffering, where the
+fixture arms build a node and nothing else — so a per-CALL construction figure
+compares two different amounts of work. Each arm is therefore timed building one
+node and building :data:`MARGINAL_NODES`, and :func:`marginal` splits the two
+into the cost of one more node — what the report prints as construction and what
+the regression rule grades — and the per-call remainder, printed beside it.
 
-**Where a reading is taken, and where it is not.** Nothing in this module reads
-the whole interpreter. Every reading is taken in a child, by
+That split removes the FIXED per-call cost and not the per-NODE one. A
+``construct`` call's populated check, root validation, state-factory invocation
+and buffered attachment all scale with node count, so they stay inside the
+compact arm's ``node µs``; the pre-flip path paid the same per-node work through
+the same call, and the legacy FIXTURE reproduces only the node building inside
+it. The legacy construction ratio is therefore biased against the compact arm and
+reads as an upper bound on what the representation change cost — see
+``docs/instance-state-baseline.md``. The ordinary ratio beside it has no such
+bias: a caller building an ordinary instance genuinely pays no construction call,
+so what that ratio compares is what each caller pays.
+
+**Where a reading is taken, and where it is not.** This module IMPORTS no
+instrument, so there is no name in it that reaches one — not bare, not through a
+module attribute, and not through an alias. Every reading is taken in a child, by
 ``tools/instance_state_reading.py``, which is the script a child runs and the one
-place the instruments are reached from; this module spawns the children, decodes
-what they answer, and judges only whether the matrix is complete. That split is
-structural rather than tidy: a `dbfree` suite grades the verdicts below by
-importing this module, and it must not be able to take a whole-interpreter
-reading through anything it finds here
-(`core/spec/language-testing.md` §5).
+place ``memory_instruments`` is reached from; this module spawns the children,
+decodes what they answer, and judges only whether the matrix is complete. That is
+what `core/spec/language-testing.md` §5 asks of it structurally rather than by
+inspection: the `dbfree` suite that grades what this computes imports this module
+whole, and a guard reading call spellings can only ever catch the routes it was
+taught, where an import that does not exist has no route to teach.
 
 **How decoded payload leaves are excluded — structurally, not by filtering.**
 Every scenario's input row and every leaf in it is allocated at import time,
@@ -85,7 +96,8 @@ sample is compared against.
 **What it is measured with.** ``memory_instruments``, the one definition the gated
 suites read the same claims through: a collection before every sample so a reading
 answers what is still REACHABLE, warm-up passes before every window, and the line
-tracer uninstalled for the window.
+tracer uninstalled for the window. Each reading carries the warm-up count its own
+child ran, so the printed condition is the range's rather than this process's.
 
 Run it through `just python-report-instance-state`.
 """
@@ -121,33 +133,28 @@ once, here, and nothing under `tests/` knows this file exists.
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "instance_state_reading.py"
 """The script one child runs: the half of this report that takes a reading."""
 
-INSTRUMENT_MODULE: Final = INSTRUMENTS / "memory_instruments.py"
 SUPPORT_MODULE: Final = INSTRUMENTS / "_instance_state_support.py"
-"""The exact files the reading is taken through and over.
+"""The exact file the scenarios are read off.
 
-Both are generic names on a path this process does not own, so prepending the
-directory is only half of what makes the import deterministic: a module of either
-name already in :data:`sys.modules` wins before any path entry is consulted. The
-report therefore states which files it means and refuses to measure through any
-other, because the alternative failure is silent — a different sampling recipe or
-a different scenario mix would still produce numbers, and they would not be the
-numbers the recorded baseline is stated over.
+A generic name on a path this process does not own, so prepending the directory
+is only half of what makes the import deterministic: a module of that name
+already in :data:`sys.modules` wins before any path entry is consulted. The
+report therefore states which file it means and refuses to run against any other,
+because the alternative failure is silent — a different scenario mix would still
+produce numbers, and they would not be the numbers the recorded baseline is
+stated over. The reading script states the same about ``memory_instruments``,
+which is the module this one deliberately does not import.
 """
 
 sys.path.insert(0, str(INSTRUMENTS))
 
 import _instance_state_support  # noqa: E402
-import memory_instruments  # noqa: E402
 
-for _module, _expected in (
-    (memory_instruments, INSTRUMENT_MODULE),
-    (_instance_state_support, SUPPORT_MODULE),
-):
-    if Path(_module.__file__ or "").resolve() != _expected:
-        raise ImportError(
-            f"this report measures through {_expected}, but "
-            f"{_module.__name__!r} resolved to {_module.__file__}"
-        )
+if Path(_instance_state_support.__file__ or "").resolve() != SUPPORT_MODULE:
+    raise ImportError(
+        f"this report measures over {SUPPORT_MODULE}, but "
+        f"'_instance_state_support' resolved to {_instance_state_support.__file__}"
+    )
 
 from _instance_state_support import (  # noqa: E402
     REPORTED,
@@ -243,6 +250,10 @@ class Reading(NamedTuple):
     scenario: str
     summary: str
     fields: int
+    warmup: int
+    """Unsampled runs the child took before every window, as its own instruments
+    declare — a condition of this reading rather than of the process printing
+    it, since a child of another minor resolves its own."""
     ordinary: ArmReading
     legacy: ArmReading
     compact: ArmReading
@@ -263,12 +274,16 @@ class Reading(NamedTuple):
     def ordinary_reduction(self) -> float:
         """This scenario's percentage against the ORDINARY arm — a different
         comparison from :attr:`reduction`, and the one §2's Interface statement
-        is made over. It enters no aggregate."""
+        is made over. It enters no aggregate.
+
+        What each side holds rather than a matched pair: the published node
+        carries its lifecycle state and the ordinary one has none to carry."""
         return 1 - self.compact.retained_bytes / self.ordinary.retained_bytes
 
     @property
     def ordinary_bare_reduction(self) -> float:
-        """The same, over the readings that carry no lifecycle state."""
+        """The same with the published node's lifecycle state removed too, which
+        is publication state alone against ordinary storage."""
         return 1 - self.compact.bare_bytes / self.ordinary.bare_bytes
 
 
@@ -419,6 +434,7 @@ def _decoded(output: str) -> Cell:
             scenario=cast("str", decoded["scenario"]),
             summary=cast("str", decoded["summary"]),
             fields=cast("int", decoded["fields"]),
+            warmup=cast("int", decoded["warmup"]),
             ordinary=ArmReading(**cast("dict[str, Any]", decoded["ordinary"])),
             legacy=ArmReading(**cast("dict[str, Any]", decoded["legacy"])),
             compact=ArmReading(**cast("dict[str, Any]", decoded["compact"])),
@@ -531,10 +547,17 @@ def against_ordinary(readings: Sequence[Reading]) -> Aggregate:
     mix, lifecycle state included.
 
     A DIFFERENT comparison from :func:`aggregates` and deliberately not one of
-    them: the contract's target is stated over the representation change, so
-    folding a third arm into that verdict would grade the claim against something
-    the ticket never asked about. This is the figure ``spec/python.md`` §2 states
-    instead, and it is reported beside the aggregates rather than inside them.
+    them: the measurement contract's 33% target is stated over the representation
+    change, so folding a third arm into that comparison would state the result
+    over a pair the target was never set against. This is the figure
+    ``spec/python.md`` §2 states instead, and it is reported beside the aggregates
+    rather than inside them.
+
+    Lifecycle state is included on the compact side and absent from the ordinary
+    one because that is what each holds: a published node carries state under
+    either backing and a plainly constructed instance has none to carry
+    (``spec/python.md`` §3). :attr:`Reading.ordinary_bare_reduction` is the same
+    comparison with the compact side's state removed as well.
     """
     return Aggregate(
         label="published vs ordinary (lifecycle included)",
@@ -548,13 +571,28 @@ def mix_ratio(readings: Sequence[Reading], operation: Operation) -> float:
     the whole mix — summed, for the same reason an aggregate is.
 
     The legacy arm, like the aggregates, because the regression rule grades the
-    representation change. Every operation it reads is like for like:
-    construction is each arm's marginal per-node cost (:func:`marginal`), so no
-    ratio here compares two different amounts of work.
+    representation change. Reading and serialization are like for like at this
+    scope; construction is not quite, and the module docstring says which way it
+    is biased and by what.
     """
     before = sum(operation.nanoseconds(reading.legacy) for reading in readings)
     after = sum(operation.nanoseconds(reading.compact) for reading in readings)
     return after / before
+
+
+def ordinary_ratio(readings: Sequence[Reading], operation: Operation) -> float:
+    """How far ``operation`` stands from an ordinary instance to a published one
+    over the whole mix — summed, and in no escalation.
+
+    A DIFFERENT comparison from :func:`mix_ratio` for the same reason
+    :func:`against_ordinary` is a different one from :func:`aggregates`: this is
+    what a caller pays against what they would have paid building the value
+    themselves, which is the comparison ``spec/python.md`` §2 states every
+    Interface cost over, and it is not a regression from anything.
+    """
+    ordinary = sum(operation.nanoseconds(reading.ordinary) for reading in readings)
+    compact = sum(operation.nanoseconds(reading.compact) for reading in readings)
+    return compact / ordinary
 
 
 def escalations(runtime: str, readings: Sequence[Reading]) -> list[str]:
@@ -562,8 +600,9 @@ def escalations(runtime: str, readings: Sequence[Reading]) -> list[str]:
 
     Two rules, both the measurement contract's: an aggregate short of its target
     returns the measured result to the user for a decision, and a representative
-    operation past its limit is surfaced for human review. Neither changes what
-    this report exits with.
+    operation past its limit is surfaced for human review. Both decide what is
+    DISPLAYED and neither reaches the exit code, which is what keeps a `report`
+    one (`core/spec/language-testing.md` §2).
     """
     lines: list[str] = []
     primary, _ = aggregates(readings)
@@ -610,11 +649,12 @@ def escalation_block(matrix: Matrix) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def _conditions(runtimes: Sequence[str]) -> list[tuple[str, str]]:
+def _conditions(runtimes: Sequence[str], warmups: Sequence[int]) -> list[tuple[str, str]]:
+    stated = ", ".join(str(count) for count in sorted(set(warmups)))
     return [
         ("Runtimes", f"CPython {', '.join(runtimes)} (this one is {platform.python_version()})"),
         ("Platform", f"{sys.platform}/{platform.machine()}"),
-        ("Warm-up", f"{memory_instruments.WARMUP} unsampled runs before every window"),
+        ("Warm-up", f"{stated} unsampled runs before every window"),
         ("Timings", f"mean of {REPETITIONS} repetitions, taken untraced"),
         ("Build", f"one node against {MARGINAL_NODES}, split into per-node and per-call"),
         ("Isolation", "one fresh child interpreter per complete scenario"),
@@ -690,6 +730,10 @@ def _runtime_section(runtime: str, cells: Mapping[str, Cell]) -> list[str]:
     lines.append(
         f"    {'a published node retains':<42} {ordinary.retention:>28.1%} of an ordinary one"
     )
+    for operation in OPERATIONS:
+        lines.append(
+            f"    {operation.name:<42} {ordinary_ratio(readings, operation):>21.2f}x over the mix"
+        )
     return lines
 
 
@@ -708,15 +752,24 @@ def _scope() -> list[str]:
         "",
         "  The aggregates and the regression rule divide LEGACY into compact: that pair is",
         "  the representation change this measurement was taken for. The ordinary arm is in",
-        "  neither, and answers the other question — what a published node retains against",
-        "  one a caller built — which is the figure spec/python.md §2 states.",
+        "  neither, and answers the other question — what a published node costs against one",
+        "  a caller built — which is the comparison spec/python.md §2 states every figure",
+        "  over, so its bytes and its three ratios are printed beside the aggregates.",
         "",
-        "  Every timing is like for like. `node us` is what one MORE node of that arm costs,",
-        "  measured by timing a 1-node build against an 11-node one, and `call us` is what",
-        "  one call costs besides its nodes. That split is what makes construction",
-        "  comparable at all: a compact node arrives from a construct call that also pays a",
-        "  scope, a writer, root validation and factory buffering, where a fixture arm builds",
-        "  a node and nothing else. The construction ratio grades `node us`.",
+        "  `node us` is what one MORE node of that arm costs, measured by timing a 1-node",
+        "  build against an 11-node one, and `call us` is what one call costs besides its",
+        "  nodes. That split is what makes construction comparable at all: a compact node",
+        "  arrives from a construct call that also pays a scope, a writer, root validation",
+        "  and factory buffering, where a fixture arm builds a node and nothing else.",
+        "",
+        "  The LEGACY construction ratio is an upper bound rather than a like-for-like",
+        "  before and after. A construct call's populated check, root validation, state",
+        "  factory and buffered attach scale with node count, so they stay in the compact",
+        "  arm's `node us`; the pre-flip path paid the same per-node work through the same",
+        "  call, and the fixture reproduces only the node building inside it. The bias runs",
+        "  against compact, so the printed ratio overstates what the flip cost. The ordinary",
+        "  construction ratio carries no such bias — a caller building an ordinary instance",
+        "  pays no construct call at all — and is what each side actually costs.",
     ]
 
 
@@ -737,7 +790,13 @@ def _detail() -> list[str]:
 def render(matrix: Matrix) -> list[str]:
     """The whole report, given a complete matrix."""
     lines = ["parallax published instance state — ordinary, legacy and compact arms", ""]
-    lines += [f"  {name:<10}{value}" for name, value in _conditions(tuple(matrix))]
+    warmups = [
+        cell.warmup
+        for cells in matrix.values()
+        for cell in cells.values()
+        if isinstance(cell, Reading)
+    ]
+    lines += [f"  {name:<10}{value}" for name, value in _conditions(tuple(matrix), warmups)]
     for runtime, cells in matrix.items():
         lines += ["", *_runtime_section(runtime, cells)]
     return [*lines, "", *escalation_block(matrix), "", *_scope(), "", *_detail()]
@@ -753,8 +812,10 @@ def main(argv: list[str]) -> int:
     measurement is complete.
 
     Exit codes: 0 — the measurement ran; 2 — usage error; 3 — a matrix cell has
-    no reading. There is no exit code for a number that is too large,
-    deliberately: the escalation block is what a number earns.
+    no reading. Every one of them is a statement about whether there is output to
+    read, never about what the output says, which is what
+    `core/spec/language-testing.md` §2 leaves a non-blocking operation: a number
+    over its target changes what the escalation block DISPLAYS and nothing else.
 
     Takes no arguments, which is what leaves the reading itself outside this
     module: one scenario's reading is `tools/instance_state_reading.py`, run as a

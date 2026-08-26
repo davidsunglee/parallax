@@ -1,4 +1,4 @@
-"""What the instance-state report is asked for, and every verdict it computes.
+"""What the instance-state report is asked for, and every comparison it computes.
 
 ``docs/instance-state-baseline.md`` records what a published Entity retains under
 each backing, and `just python-report-instance-state` re-derives it. Neither
@@ -12,8 +12,8 @@ missed target and a regression past the limit, and a matrix cell with no reading
 ending the run instead of thinning the table.
 
 Every one of those is fed DOCTORED readings, built here with numbers chosen for
-what they prove. That is what lets this suite grade a verdict without taking a
-measurement — and nothing here CAN measure: a reading reads the whole interpreter
+what they prove. That is what lets this suite grade what the report computes
+without taking a measurement — and nothing here CAN measure: a reading reads the whole interpreter
 and belongs in a child of its own, so it lives in `tools/instance_state_reading.py`
 and the module imported here neither binds an instrument nor reaches one. A test
 taking a reading beside the rest of the suite would be classified `dbfree` while
@@ -48,6 +48,7 @@ from _instance_state_support import (
 )
 
 import instance_state_overhead as report
+from parallax.core.entity import lifecycle_state_of
 
 
 def test_the_canonical_mix_is_the_six_scenarios_the_measurement_contract_names() -> None:
@@ -220,6 +221,30 @@ def test_two_arms_whose_calls_cost_differently_still_compare_at_the_node() -> No
     assert "construction" not in "\n".join(report.escalation_block({"3.14": {"shallow": reading}}))
 
 
+def test_each_operation_is_reported_against_the_ordinary_arm_as_well() -> None:
+    reading = _reading(
+        "shallow",
+        legacy_ns=(1_000.0, 20.0, 500.0),
+        compact_ns=(1_500.0, 60.0, 1_000.0),
+    )._replace(ordinary=_arm(2_000, 1_800, (500.0, 30.0, 250.0)))
+    assert report.ordinary_ratio([reading], report.OPERATIONS[0]) == pytest.approx(3.0)
+    assert report.ordinary_ratio([reading], report.OPERATIONS[1]) == pytest.approx(2.0)
+    assert report.ordinary_ratio([reading], report.OPERATIONS[2]) == pytest.approx(4.0)
+    assert report.mix_ratio([reading], report.OPERATIONS[1]) == pytest.approx(3.0)
+
+
+def test_no_ordinary_ratio_can_reach_the_escalation_block() -> None:
+    reading = _reading(
+        "shallow",
+        retained=(1_000, 100),
+        bare=(900, 90),
+        legacy_ns=(1_000.0, 20.0, 500.0),
+        compact_ns=(1_100.0, 22.0, 505.0),
+    )._replace(ordinary=_arm(2_000, 1_800, (1.0, 1.0, 1.0)))
+    block = report.escalation_block({"3.14": {"shallow": reading}})
+    assert block[0].startswith("no escalation")
+
+
 def test_every_arm_pairs_its_node_builder_with_its_own_graph_builder() -> None:
     assert ARMS == (ORDINARY, LEGACY, COMPACT)
     assert [arm.name for arm in ARMS] == ["ordinary", "legacy", "compact"]
@@ -228,7 +253,25 @@ def test_every_arm_pairs_its_node_builder_with_its_own_graph_builder() -> None:
         graph = arm.graph(scenario, report.MARGINAL_NODES)
         assert len(graph) == report.MARGINAL_NODES
         assert all(type(node) is type(graph[0]) for node in graph)
-        assert type(graph[0]) is type(arm.node(scenario, scenario.state()))
+        state = scenario.state() if arm.lifecycle else None
+        assert type(graph[0]) is type(arm.node(scenario, state))
+
+
+def test_an_ordinary_instance_has_no_lifecycle_state_and_the_arm_refuses_one() -> None:
+    scenario = SCENARIOS[0]
+    assert (ORDINARY.lifecycle, LEGACY.lifecycle, COMPACT.lifecycle) == (False, True, True)
+    assert lifecycle_state_of(ORDINARY.node(scenario, None)) is None
+    for node in ORDINARY.graph(scenario, 3):
+        assert lifecycle_state_of(node) is None
+    with pytest.raises(ValueError, match="no lifecycle state to carry"):
+        ORDINARY.node(scenario, scenario.state())
+
+
+def test_a_published_node_is_compared_against_what_an_ordinary_one_actually_holds() -> None:
+    scenario = SCENARIOS[0]
+    published = COMPACT.node(scenario, scenario.state())
+    assert lifecycle_state_of(published) is not None
+    assert lifecycle_state_of(ORDINARY.node(scenario, None)) is None
 
 
 def test_each_scenario_carries_its_own_percentage_as_a_diagnostic() -> None:
@@ -298,7 +341,7 @@ def test_one_runtime_missing_its_target_escalates_for_that_runtime_alone() -> No
 
 
 # --------------------------------------------------------------------------- #
-# Completeness, which is the one verdict this report exits on.                 #
+# Completeness, which is the one thing this report exits on.                   #
 # --------------------------------------------------------------------------- #
 
 
@@ -441,6 +484,7 @@ def _reading(
         scenario=scenario,
         summary=f"the {scenario} scenario",
         fields=4,
+        warmup=200,
         ordinary=_arm(ordinary_retained, ordinary_bare, legacy_ns),
         legacy=_arm(retained[0], bare[0], legacy_ns),
         compact=_arm(retained[1], bare[1], compact_ns),

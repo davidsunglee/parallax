@@ -503,7 +503,17 @@ def ordinary_publication(scenario: Scenario, state: object | None) -> object:
     It is not publication and stands for none: it is the comparand
     ``spec/python.md`` §2's Interface statement is made against, which is a
     different question from the before-and-after the aggregates divide.
+
+    It carries no lifecycle state and refuses one, because ``spec/python.md`` §3
+    says a plainly constructed instance has none to carry. Attaching one anyway
+    would put 136 bytes into the denominator of the §2 figure that no caller's
+    instance holds, which flatters the published side by about four points.
     """
+    if state is not None:
+        raise ValueError(
+            "an ordinary instance has no lifecycle state to carry (spec/python.md §3), "
+            "so the ordinary arm may not be given one"
+        )
     plan = scenario.plan
     values = scenario.values
     members: dict[str, object] = {}
@@ -515,10 +525,7 @@ def ordinary_publication(scenario: Scenario, state: object | None) -> object:
         value = values[position]
         if value is not ABSENT:
             members[py_name] = _ordinary_occurrence(value, occurrence, vo_class)
-    instance = cast("Any", plan.cls)(**members)
-    if state is not None:
-        attach_lifecycle_state(instance, state)
-    return _warmed(scenario, instance)
+    return _warmed(scenario, cast("Any", plan.cls)(**members))
 
 
 def _ordinary_occurrence(value: object, declared: _VoContainer, vo_class: type) -> object:
@@ -559,16 +566,21 @@ def _ordinary_record(row: tuple[object, ...], declared: _VoContainer, vo_class: 
 
 def _one_at_a_time(
     node: Callable[[Scenario, object | None], object],
+    *,
+    lifecycle: bool,
 ) -> Callable[[Scenario, int], tuple[object, ...]]:
     """``count`` nodes from an arm that builds one node per call.
 
-    Both fixture arms build a node and nothing else, so their graph IS the loop —
-    which is what makes their per-call remainder measure as the zero it should
-    be, rather than as an allowance the comparison would have to grant them.
+    Both non-compact arms build a node and nothing else, so their graph IS the
+    loop — which is what makes their per-call remainder measure as the zero it
+    should be, rather than as an allowance the comparison would have to grant
+    them. ``lifecycle`` says whether that arm's node carries state at all, which
+    is a fact about the arm rather than about the reading: a published node has
+    state under either backing and an ordinary one has none.
     """
 
     def graph(scenario: Scenario, count: int) -> tuple[object, ...]:
-        return tuple(node(scenario, scenario.state()) for _ in range(count))
+        return tuple(node(scenario, scenario.state() if lifecycle else None) for _ in range(count))
 
     return graph
 
@@ -599,10 +611,10 @@ def compact_graph(scenario: Scenario, count: int) -> tuple[object, ...]:
 class Arm:
     """One way of building ``scenario``'s node, at both scopes a reading needs.
 
-    The two are paired here rather than at the reading, so a graph builder cannot
-    be measured against another arm's node builder — which would silently make
-    the construction figure a difference between two arms rather than a cost of
-    one.
+    The two builders are paired here rather than at the reading, so a graph
+    builder cannot be measured against another arm's node builder — which would
+    silently make the construction figure a difference between two arms rather
+    than a cost of one.
     """
 
     name: str
@@ -610,11 +622,27 @@ class Arm:
     """One node, held at the sample: what the byte readings are taken over."""
     graph: Callable[[Scenario, int], tuple[object, ...]]
     """``count`` nodes, so the cost of one more is separable from the call's."""
+    lifecycle: bool
+    """Whether a node of this arm carries lifecycle state at all.
+
+    A published node does under either backing, so the reading takes it twice —
+    once carrying state and once without — and the pair is what the primary and
+    secondary aggregates divide. An ordinary node never does
+    (`spec/python.md` §3), so the reading must not attach one: an arm asked for
+    a comparand a caller cannot hold answers about no instance that exists.
+    """
 
 
-ORDINARY: Final = Arm("ordinary", ordinary_publication, _one_at_a_time(ordinary_publication))
-LEGACY: Final = Arm("legacy", legacy_publication, _one_at_a_time(legacy_publication))
-COMPACT: Final = Arm("compact", compact_publication, compact_graph)
+ORDINARY: Final = Arm(
+    "ordinary",
+    ordinary_publication,
+    _one_at_a_time(ordinary_publication, lifecycle=False),
+    lifecycle=False,
+)
+LEGACY: Final = Arm(
+    "legacy", legacy_publication, _one_at_a_time(legacy_publication, lifecycle=True), lifecycle=True
+)
+COMPACT: Final = Arm("compact", compact_publication, compact_graph, lifecycle=True)
 
 ARMS: Final[tuple[Arm, ...]] = (ORDINARY, LEGACY, COMPACT)
 """Every arm a reading is taken under, in the order the tables print them."""

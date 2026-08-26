@@ -12,11 +12,18 @@ The rule is reachability, not a call site, and not a spelling either. A test
 reaching a reader through its own helpers requires the resource exactly as much
 as one calling it directly, and the suites here wrap every reading in helpers; a
 test reaching one through a module it imported requires it exactly as much again,
-whether it names the reader bare or as an attribute of whatever it imported. So
-reachability is resolved over the test module's functions AND over those of every
-first-party module it imports, and a call is matched by the name it spells at
-either end of a dot. Module-level code is outside the rule: the ``__main__``
-block runs only in a child that the boundary itself started.
+whether it names the reader bare or as an attribute of whatever it imported, and
+whether or not it renamed it on the way. So reachability is resolved over the test
+module's functions AND over those of every first-party module it imports, a call
+is matched by the name it spells at either end of a dot, and a name bound to
+another name — by ``import ... as`` or by assignment — is resolved back to the one
+it stands for. Module-level code is outside the rule: the ``__main__`` block runs
+only in a child that the boundary itself started.
+
+A spelling rule catches only the routes it was taught, so the modules a suite may
+import are also kept free of readers structurally: `tools/instance_state_overhead`
+imports no instrument at all and the reading it drives lives in a script nothing
+imports.
 
 Three structural facts are checked with it, because the rule is vacuous without
 them: every declared reader must still name a callable the instruments export,
@@ -37,7 +44,7 @@ from __future__ import annotations
 import argparse
 import ast
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -111,25 +118,65 @@ def _decorated(function: ast.FunctionDef) -> bool:
     )
 
 
-def _called_names(node: ast.AST) -> set[str]:
-    """Every name *node* calls, whether spelled bare or after a dot.
+def _renamings(tree: ast.Module) -> dict[str, str]:
+    """Every local name in *tree* that stands for another name.
 
-    ``report.retained(...)`` and ``retained(...)`` reach the same reading, and
-    which one a test writes is a consequence of how it imported rather than of
-    what it requires."""
-    return {
+    ``from memory_instruments import retained as size`` and ``size = retained``
+    both leave a reader reachable under a name the reader does not have, which is
+    the one way a call-spelling rule fails silently: the call still reads the
+    whole interpreter and the guard sees a name it has never heard of. Both
+    spellings are therefore resolved back, transitively, so a chain of renames
+    answers the reader at the end of it.
+
+    Import renames are collected from anywhere in the module and assignments from
+    anywhere in it too, because a local rebinding inside a helper hides a reader
+    exactly as well as a module-level one.
+    """
+    direct: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            for alias in node.names:
+                if alias.asname:
+                    direct[alias.asname] = alias.name.rsplit(".", maxsplit=1)[-1]
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Name):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    direct[target.id] = node.value.id
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Attribute):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    direct[target.id] = node.value.attr
+
+    def resolved(name: str, walking: frozenset[str]) -> str:
+        stands_for = direct.get(name)
+        if stands_for is None or name in walking:
+            return name
+        return resolved(stands_for, walking | {name})
+
+    return {name: resolved(name, frozenset()) for name in direct}
+
+
+def _called_names(node: ast.AST, renamings: Mapping[str, str]) -> set[str]:
+    """Every name *node* calls, whether spelled bare, after a dot, or renamed.
+
+    ``report.retained(...)``, ``retained(...)`` and ``size(...)`` after
+    ``import retained as size`` all reach the same reading, and which one a test
+    writes is a consequence of how it imported rather than of what it requires."""
+    spelled = {
         call.func.id if isinstance(call.func, ast.Name) else call.func.attr
         for call in ast.walk(node)
         if isinstance(call, ast.Call) and isinstance(call.func, ast.Name | ast.Attribute)
     }
+    return {renamings.get(name, name) for name in spelled}
 
 
 def _imported_files(tree: ast.Module, seen: set[Path]) -> list[Path]:
     """Every first-party module *tree* imports, transitively, as its own file.
 
-    Resolved by bare module name under :data:`FIRST_PARTY_ROOTS`, which is how
-    these modules are imported at run time; a dotted name is a package and
-    belongs to no root here.
+    Resolved under :data:`FIRST_PARTY_ROOTS` — by bare module name, which is how
+    these modules are imported at run time, and by dotted path, so a module
+    reached as ``unit.memory_instruments`` is the same file as one reached bare
+    and neither spelling is a way past the rule.
     """
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -139,15 +186,18 @@ def _imported_files(tree: ast.Module, seen: set[Path]) -> list[Path]:
             names.add(node.module)
     found: list[Path] = []
     for name in sorted(names):
-        if "." in name:
-            continue
+        candidates: list[Path] = []
         for root in FIRST_PARTY_ROOTS:
-            for path in sorted(root.rglob(f"{name}.py")):
-                if path in seen:
-                    continue
-                seen.add(path)
-                imported = ast.parse(path.read_text())
-                found += [path, *_imported_files(imported, seen)]
+            if "." in name:
+                dotted = root.joinpath(*name.split(".")).with_suffix(".py")
+                candidates += [dotted] if dotted.is_file() else []
+            else:
+                candidates += sorted(root.rglob(f"{name}.py"))
+        for path in candidates:
+            if path in seen:
+                continue
+            seen.add(path)
+            found += [path, *_imported_files(ast.parse(path.read_text()), seen)]
     return found
 
 
@@ -161,14 +211,21 @@ def _reaching_tests(
     helper that calls a reader requires the resource as much as one calling the
     reader itself, and the helper is as often a function inside an imported
     module as one beside the test.
+
+    Two functions sharing a name are one entry whose calls are the UNION of
+    theirs, because a bare name is all a call site gives: picking one of them
+    would let a same-named function in another module hide a reader, and a guard
+    that misses is worse than one that over-reports a helper nobody wrote.
+    Renamings are resolved per module, since which name stands for a reader is a
+    fact about the file that spells it.
     """
-    functions = {
-        node.name: node
-        for module in (tree, *reached)
-        for node in ast.walk(module)
-        if isinstance(node, ast.FunctionDef)
-    }
-    calls = {name: _called_names(node) for name, node in functions.items()}
+    calls: dict[str, set[str]] = {}
+    for module in (tree, *reached):
+        renamings = _renamings(module)
+        for node in ast.walk(module):
+            if isinstance(node, ast.FunctionDef):
+                calls.setdefault(node.name, set()).update(_called_names(node, renamings))
+    functions = frozenset(calls)
     resolved: dict[str, frozenset[str]] = {}
 
     def reaches(name: str, walking: frozenset[str]) -> frozenset[str]:
@@ -184,11 +241,15 @@ def _reaching_tests(
         resolved[name] = answer
         return answer
 
-    own = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    own = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+    ]
     return [
-        (node, reaches(name, frozenset()))
-        for name, node in sorted(functions.items())
-        if name in own and name.startswith("test_") and reaches(name, frozenset())
+        (node, reaches(node.name, frozenset()))
+        for node in sorted(own, key=lambda node: node.name)
+        if reaches(node.name, frozenset())
     ]
 
 
@@ -240,11 +301,7 @@ def _check_tree() -> list[Finding]:
                 )
             )
         if reaching and any(_decorated(node) for node, _ in reaching):
-            served = any(
-                isinstance(call.func, ast.Name) and call.func.id == SERVER
-                for call in ast.walk(tree)
-                if isinstance(call, ast.Call)
-            )
+            served = SERVER in _called_names(tree, _renamings(tree))
             if not served:
                 findings.append(
                     Finding(
