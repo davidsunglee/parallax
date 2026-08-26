@@ -808,6 +808,54 @@ def test_a_root_declaring_a_slot_another_class_lays_out_opaque_is_refused() -> N
         _Reached(id=1, label="a").edit(label="b")
 
 
+def test_a_root_declaring_a_rebound_ancestor_slot_opaque_is_refused() -> None:
+    # The refusal a bound name cannot decide: this body binds the ANCESTOR's own
+    # slot descriptor under the ancestor's own name, so a check asking only
+    # whether something slot-shaped answers to the name accepts it. Nothing here
+    # lays out storage, and accepting the declaration would reclassify a slot
+    # `_Sidecar` still shallow-copies for its own copies into one taken by
+    # identity — a payload shared between a value and its edit, with every test
+    # of a correct declaration still passing.
+    class _Reclaiming(_Sidecar, _mint=FRAMEWORK_MINT):
+        __parallax_sidecar__ = _SIDECAR
+        __parallax_opaque_slots__ = ("__parallax_sidecar__",)
+
+    class _Reclaimed(_Reclaiming, table="reclaimed", namespace="parallax.compatibility"):
+        id: Attr[int] = attr(primary_key=True)
+        label: Attr[str] = attr(max_length=16)
+
+    with pytest.raises(ValueError, match="__parallax_sidecar__"):
+        _Reclaimed(id=1, label="a").edit(label="b")
+
+
+class _Lending(Entity, _mint=FRAMEWORK_MINT):
+    """A framework root whose slot a sibling root's body rebinds by name."""
+
+    __slots__ = ("__parallax_lent__",)
+
+
+class _Borrowing(Entity, _mint=FRAMEWORK_MINT):
+    __parallax_lent__ = cast("Any", _Lending).__dict__["__parallax_lent__"]
+
+
+class _Borrowed(_Borrowing, table="borrowed", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
+
+
+def test_an_edit_ignores_a_slot_descriptor_a_root_only_rebound() -> None:
+    # A descriptor addresses an offset in the layout of the class that laid it
+    # out, so applying `_Lending`'s to a `_Borrowed` reads no unset slot — it
+    # raises `TypeError` outright. A carry that took every slot-shaped binding it
+    # walked past would therefore make EVERY edit of this class raise, on a
+    # binding that gives its instances no storage at all. The layout the carry
+    # walks is the storage the value really has.
+    value = _Borrowed(id=1, label="a")
+    copied = value.edit(label="b")
+    assert copied.label == "b"
+    assert "__parallax_lent__" not in layout_slots(_Borrowed)
+
+
 class _Rolling(
     Entity,
     table="rolling",
