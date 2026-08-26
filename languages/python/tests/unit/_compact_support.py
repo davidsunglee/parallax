@@ -1,4 +1,5 @@
-"""Building a compactly backed Entity or Value Object without a database.
+"""Building a compactly backed Entity or Value Object without a database, and
+reading what one physically holds.
 
 Nothing in production publishes compact backing yet — Entity Graph Construction
 still writes ordinary Pydantic state — so the suites that grade the second
@@ -9,6 +10,7 @@ whole row is assembled, and the row is attached once.
 
 from __future__ import annotations
 
+from types import MemberDescriptorType
 from typing import TYPE_CHECKING, Any, cast
 
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, allocate, publish
@@ -19,7 +21,7 @@ if TYPE_CHECKING:
 
     from pydantic import BaseModel
 
-__all__ = ["published", "raw_row", "real_storage"]
+__all__ = ["layout_slots", "published", "raw_row", "real_storage"]
 
 
 def published[M](
@@ -54,3 +56,19 @@ def real_storage(value: BaseModel) -> dict[str, Any]:
     belongs last in a test that also grades whether one was ever created.
     """
     return instance_state(value)
+
+
+def layout_slots(cls: type) -> dict[str, MemberDescriptorType]:
+    """Every slot ``cls``'s object layout actually gives its instances, by name.
+
+    Walked over the concrete class's whole MRO and off each ancestor's own
+    namespace, so a suite grading what a derived copy carries inspects the layout
+    the value really has — an authoring class's own ``__slots__`` included —
+    rather than the shorter one any single base declares.
+    """
+    return {
+        name: descriptor
+        for ancestor in reversed(cls.__mro__)
+        for name, descriptor in vars(ancestor).items()
+        if isinstance(descriptor, MemberDescriptorType)
+    }

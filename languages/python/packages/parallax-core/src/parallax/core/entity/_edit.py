@@ -15,11 +15,8 @@ import functools
 from typing import TYPE_CHECKING, Final
 
 from parallax.core.entity._errors import EditError, EditViolation
-from parallax.core.entity._instance_state import named_state
-from parallax.core.entity._pydantic_storage import (
-    carry_slots_beside_state,
-    replace_instance_state,
-)
+from parallax.core.entity._instance_state import carry_slots_beside_state, named_state
+from parallax.core.entity._pydantic_storage import replace_instance_state
 
 if TYPE_CHECKING:
     from collections.abc import Container
@@ -69,9 +66,10 @@ def partition_declared(
 
     That complement reaches what a value holds under a NAME and nothing else, so
     it is half of what an edit carries: Pydantic's object layout keeps private
-    attributes in a slot beside the storage, where no key of this mapping names
-    them, and :func:`~parallax.core.entity._pydantic_storage.carry_slots_beside_state`
-    is the other half every branch pairs with this one.
+    attributes in a slot beside the storage and a declaring class may lay out
+    slots of its own, and no key of this mapping names either, so
+    :func:`~parallax.core.entity._instance_state.carry_slots_beside_state` is the
+    other half every branch pairs with this one.
 
     A derived cache is the one thing that complement drops: a slot the class
     declares a ``functools.cached_property`` (:func:`_is_derived_cache`) holds an
@@ -114,11 +112,14 @@ def restate[M: BaseModel](value: M, state: dict[str, object]) -> M:
     through Pydantic's own slot descriptor, so no name a class body binds decides
     what the copy ends up holding.
 
-    Storage and the populated-member set are the two slots ``state`` is worth,
-    and :func:`~parallax.core.entity._pydantic_storage.carry_slots_beside_state`
-    carries the rest of the source's layout onto the copy, which is what stops a
-    kind of instance state Pydantic keeps outside the storage from being reset to
-    a fresh instance's defaults.
+    ``state`` is worth the copy's storage and its populated-member set, and it is
+    worth the compact backing's two slots as well: it already carries everything a
+    published source's row and auxiliary slot named, so the copy is built ordinary
+    and holds neither. Every remaining slot of the source's layout is carried by
+    :func:`~parallax.core.entity._instance_state.carry_slots_beside_state`, which
+    is what stops the instance state kept outside the storage — Pydantic's private
+    attributes, and whatever a class lays out slots of its own for — from being
+    reset to a fresh instance's defaults.
     """
     restated = type(value).model_construct()
     replace_instance_state(restated, state)

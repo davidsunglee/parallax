@@ -44,8 +44,7 @@ from parallax.core.entity._edit import (
 )
 from parallax.core.entity._errors import EditError, EditViolation, EntityDefinitionError
 from parallax.core.entity._expressions import judged_edit_violation, serialize_member
-from parallax.core.entity._instance_state import BackedModel
-from parallax.core.entity._pydantic_storage import carry_slots_beside_state
+from parallax.core.entity._instance_state import BackedModel, carry_slots_beside_state
 from parallax.core.metamodel import (
     MODEL_ROOT,
     AttributeIdentity,

@@ -58,10 +58,12 @@ to address the backing and nothing about how it is laid out.
 
 from __future__ import annotations
 
+import contextlib
+import copy
 import functools
 import operator
 from dataclasses import dataclass
-from types import MappingProxyType
+from types import MappingProxyType, MemberDescriptorType
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from pydantic import BaseModel
@@ -87,6 +89,7 @@ __all__ = [
     "PublicationPlan",
     "allocate",
     "auxiliary",
+    "carry_slots_beside_state",
     "declared",
     "install",
     "is_present",
@@ -734,6 +737,82 @@ def _private_state(cls: type[Any]) -> dict[str, Any] | None:
         if default is not PydanticUndefined:
             state[py_name] = default
     return state
+
+
+_CARRIED_SLOTS_ATTRIBUTE: Final = "__parallax_carried_slots__"
+"""Where a class caches the slots of its layout a derived copy has to carry."""
+
+_STATE_SLOTS: Final = frozenset(
+    {"__dict__", "__pydantic_fields_set__", COMPACT_STATE_SLOT, AUXILIARY_STATE_SLOT}
+)
+"""The four slots of the layout that hold a value's state, in one backing or the
+other, and so are the ones a copy derived from semantic state rebuilds.
+
+Two are Pydantic's own, and a copy fills them with the declared members and the
+populated-member set it was derived from. Two are this Module's, and a copy fills
+neither: it is built ordinary, so the compact row a published source holds is not
+its to inherit — carrying it would leave a value claiming both backings at once —
+and the author-owned state that source keeps in the auxiliary slot has already
+been read out under its own names by :func:`named_state` and lands in the copy's
+instance dictionary beside everything else it carries.
+"""
+
+
+def _slots_beside_state(cls: type[BaseModel]) -> tuple[MemberDescriptorType, ...]:
+    """Every slot of ``cls``'s object layout that is not one of those four.
+
+    Walked over the whole MRO and off each ancestor's own namespace, so the
+    inventory is what the concrete class actually lays out rather than what any
+    one base declares: an authoring class's own ``__slots__`` are in it, and so is
+    a slot a Pydantic release adds beside the ones named above. Enumerating a
+    known base's layout instead is how a copy comes to reproduce the slots someone
+    remembered and reset the rest to a fresh instance's defaults.
+
+    Cached in the class's own namespace rather than through the MRO, because a
+    subclass laying out slots of its own must not read its base's shorter answer.
+    """
+    carried: tuple[MemberDescriptorType, ...] | None = cls.__dict__.get(_CARRIED_SLOTS_ATTRIBUTE)
+    if carried is None:
+        carried = tuple(
+            descriptor
+            for ancestor in cls.__mro__
+            for name, descriptor in vars(ancestor).items()
+            if isinstance(descriptor, MemberDescriptorType) and name not in _STATE_SLOTS
+        )
+        setattr(cls, _CARRIED_SLOTS_ATTRIBUTE, carried)
+    return carried
+
+
+def carry_slots_beside_state(source: BaseModel, target: BaseModel) -> None:
+    """Make ``target``'s layout ``source``'s everywhere state does not decide it.
+
+    A copy derived from a value rebuilds the four slots above out of semantic
+    state and must otherwise BE that value's layout. Private attributes are the
+    state this reaches on any class: Pydantic keeps a ``PrivateAttr`` in a slot of
+    its own rather than in the instance dictionary, so a copy assembled out of a
+    name-keyed mapping alone silently resets every one of them to the declared
+    defaults a fresh instance starts with. A class laying out slots of its own
+    loses whatever it keeps there the same way.
+
+    A slot the source does not hold is carried as one the target does not hold,
+    which is what lets this reach a layout no framework path fills: an authored
+    slot is unset until its owner assigns it, and a copy inventing a value for one
+    the source never assigned would be as wrong as one dropping it.
+
+    Each held slot is shallow-copied, exactly as Pydantic's own copy of a model
+    does, and what that buys reaches exactly one level: the copy holds its own
+    top-level value, so rebinding a private attribute through either value leaves
+    the other's binding alone, while everything inside that value stays shared —
+    appending to a list a ``PrivateAttr`` holds is visible through both.
+    """
+    for slot in _slots_beside_state(type(source)):
+        try:
+            held = slot.__get__(source)
+        except AttributeError:
+            with contextlib.suppress(AttributeError):
+                slot.__delete__(target)
+        else:
+            slot.__set__(target, copy.copy(held))
 
 
 def publish(
