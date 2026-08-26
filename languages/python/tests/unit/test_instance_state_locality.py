@@ -20,7 +20,11 @@ joining it is a decision worth making deliberately.
 
 Every inventory here is a function of the source handed to it and is shown on
 both sides: run over synthetic source carrying the shape it grades, each names
-that source's sites rather than this tree's.
+that source's sites rather than this tree's. Each is exact over the reaches
+source SPELLS — an attribute, a bare name, a string constant, an import — which
+is the whole of what reading source settles; a name a module assembles at run
+time denotes something only an interpreter knows, and the equivalence a value's
+answers are graded by is where such a reach shows up instead.
 """
 
 from __future__ import annotations
@@ -54,7 +58,8 @@ POPULATED_MEMBER_STATE = POPULATED_MEMBER_NAMES | {
 it included, so a site cannot leave the inventory below by spelling the reach
 differently."""
 
-# Which shipped modules spell the populated-member set at all.
+# Which shipped modules reach the populated-member set at all, under ANY of its
+# names.
 #
 # Three, and none of them a reader. `_instance_state` binds the descriptor that
 # answers for the name; `_pydantic_storage` holds Pydantic's own slot descriptor
@@ -63,10 +68,29 @@ differently."""
 # Every OTHER module — the two frontends, edit, the descriptors, row derivation,
 # graph construction — asks `is_present` instead, so no row, document, or
 # relationship operation synthesizes a set for a value it merely reads.
+#
+# Stated over the whole of `POPULATED_MEMBER_STATE` rather than over the two
+# spellings of the set itself, because a module reaching `instance_presence` or
+# the raw slot descriptor synthesizes just as whole a set while naming neither.
 MODULES_NAMING_THE_POPULATED_SET: dict[str, frozenset[str]] = {
     "_declaration": frozenset({"__pydantic_fields_set__"}),
-    "_instance_state": frozenset({"__pydantic_fields_set__"}),
-    "_pydantic_storage": frozenset({"__pydantic_fields_set__"}),
+    "_instance_state": frozenset(
+        {
+            "MODEL_PRESENCE",
+            "_PopulatedState",
+            "__pydantic_fields_set__",
+            "instance_presence",
+            "replace_instance_presence",
+        }
+    ),
+    "_pydantic_storage": frozenset(
+        {
+            "MODEL_PRESENCE",
+            "__pydantic_fields_set__",
+            "instance_presence",
+            "replace_instance_presence",
+        }
+    ),
 }
 
 # Inside the Module, what reaches that state and why each one may.
@@ -107,9 +131,9 @@ INSTANCE_STATE_SITES_REACHING_PRESENCE: dict[str, frozenset[str]] = {
 # slot. Delete the Module and the tuple, the bitmap, and the ordinal arithmetic
 # reappear at all six.
 #
-# The publication writer is deliberately absent and is the seventh: it still
-# writes ordinary Pydantic state one member at a time, and joins this inventory
-# when publication attaches a compact row instead.
+# The publication writer is deliberately absent, and is the one site that would
+# otherwise belong: it writes ordinary Pydantic state one member at a time, so it
+# takes nothing from the Module and learns nothing about the backing.
 INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
     "parallax.core.entity._declaration": frozenset({"PublicationPlan", "install"}),
     "parallax.core.entity._edit": frozenset({"named_state"}),
@@ -134,10 +158,13 @@ _INSTANCE_STATE = f"{ENTITY_PACKAGE}._instance_state"
 
 
 def _spellings(tree: ast.AST, wanted: Iterable[str]) -> set[str]:
-    """Every name in ``wanted`` that ``tree`` spells, however it spells it.
+    """Every name in ``wanted`` that ``tree`` spells: as an attribute, a bare
+    name, a string literal, or an import alias.
 
-    An attribute access, a bare name, and a string literal all reach a name, and
-    a guard reading only one of the three admits the other two.
+    Four, because a guard reading one of them admits the other three. A name a
+    module assembles at run time — concatenated, interpolated, or read out of a
+    variable — is spelled nowhere and lies outside what source shape settles at
+    all; that boundary is the inventories' own, not an omission in them.
     """
     named = set(wanted)
     spelled: set[str] = set()
@@ -198,6 +225,25 @@ def _instance_state_source() -> str:
     return (ENTITY_SRC / "_instance_state.py").read_text(encoding="utf-8")
 
 
+def _naming_the_module_as_text(over: Iterator[tuple[Path, str]]) -> list[str]:
+    """Each module spelling the instance-state Module's own dotted name as a string.
+
+    An import statement is not the only spelling of a reach: a module named to
+    ``importlib.import_module`` or ``__import__`` is a string constant, which the
+    consumer inventory — stated over import statements — does not read. Nothing
+    shipped spells one, so the two together decide every reach the source
+    actually spells.
+    """
+    return [
+        path.stem
+        for path, text in over
+        if any(
+            isinstance(node, ast.Constant) and node.value == _INSTANCE_STATE
+            for node in ast.walk(ast.parse(text))
+        )
+    ]
+
+
 def _consumers(over: Iterator[tuple[Path, str]]) -> dict[str, frozenset[str]]:
     """Each module importing the instance-state Module, and what it imports."""
     taken: dict[str, set[str]] = {}
@@ -215,26 +261,37 @@ def _consumers(over: Iterator[tuple[Path, str]]) -> dict[str, frozenset[str]]:
 
 
 def test_the_populated_member_set_is_named_only_where_the_seam_owns_it() -> None:
-    assert _modules_naming(production_sources(), POPULATED_MEMBER_NAMES) == {
+    assert _modules_naming(production_sources(), POPULATED_MEMBER_STATE) == {
         stem: names for stem, names in MODULES_NAMING_THE_POPULATED_SET.items()
     }
 
 
 def test_that_inventory_names_a_reader_that_asked_for_the_whole_set() -> None:
+    # Both routes to a whole set, and the one operation that is neither: asking
+    # the value for its populated members, and taking the descriptor the seam is
+    # layered on straight out of the storage module.
     named = _modules_naming(
         synthetic_sources(
             {
                 f"{ENTITY_PACKAGE}._new_codec": (
                     "def row(value):\n    return {name for name in value.model_fields_set}\n"
                 ),
+                f"{ENTITY_PACKAGE}._new_storage_reader": (
+                    "from parallax.core.entity._pydantic_storage import instance_presence\n"
+                    "\n"
+                    "def row(value):\n    return {name for name in instance_presence(value)}\n"
+                ),
                 f"{ENTITY_PACKAGE}._new_reader": (
                     "def presence(value, bit):\n    return is_present(value, bit)\n"
                 ),
             }
         ),
-        POPULATED_MEMBER_NAMES,
+        POPULATED_MEMBER_STATE,
     )
-    assert named == {"_new_codec": frozenset({"model_fields_set"})}
+    assert named == {
+        "_new_codec": frozenset({"model_fields_set"}),
+        "_new_storage_reader": frozenset({"instance_presence"}),
+    }
 
 
 def test_only_the_descriptor_synthesizes_a_populated_member_set() -> None:
@@ -273,6 +330,7 @@ def test_the_sites_backing_logic_would_return_to_are_exactly_these_six() -> None
     consumers = _consumers(production_sources())
     assert consumers == {importer: names for importer, names in INSTANCE_STATE_CONSUMERS.items()}
     assert len(consumers) == 6
+    assert _naming_the_module_as_text(production_sources()) == []
 
 
 def test_that_inventory_names_a_new_consumer_and_passes_a_resembling_import() -> None:
@@ -294,3 +352,21 @@ def test_that_inventory_names_a_new_consumer_and_passes_a_resembling_import() ->
         f"{ENTITY_PACKAGE}._new_writer": frozenset({"allocate", "publish"}),
         f"{ENTITY_PACKAGE}._new_bystander": frozenset({"<the module itself>"}),
     }
+
+
+def test_that_inventory_names_a_consumer_that_spelled_the_module_rather_than_imported_it() -> None:
+    assert _naming_the_module_as_text(
+        synthetic_sources(
+            {
+                f"{ENTITY_PACKAGE}._new_loader": (
+                    "import importlib\n"
+                    "\n"
+                    "def door():\n"
+                    '    return importlib.import_module("parallax.core.entity._instance_state")\n'
+                ),
+                f"{ENTITY_PACKAGE}._new_neighbour": (
+                    'MODULE = "parallax.core.entity._instance_state_records"\n'
+                ),
+            }
+        )
+    ) == ["_new_loader"]
