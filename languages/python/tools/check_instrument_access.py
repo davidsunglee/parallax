@@ -14,11 +14,15 @@ as one calling it directly, and the suites here wrap every reading in helpers; a
 test reaching one through a module it imported requires it exactly as much again,
 whether it names the reader bare or as an attribute of whatever it imported, and
 whether or not it renamed it on the way. So reachability is resolved over the test
-module's functions AND over those of every first-party module it imports, a call
-is matched by the name it spells at either end of a dot or by the string it hands
-a ``getattr``, and a name bound to another name — by ``import ... as``, by
-assignment of any shape, or by a walrus — is resolved back to the one it stands
-for.
+module's functions AND over those of every first-party module it imports; a name
+bound to another name — by ``import ... as``, by assignment of any shape, by a
+walrus, or to the string that spells it — is resolved back to the one it stands
+for; and a reader is reached both where it is CALLED, at either end of a dot or
+through the string handed to a ``getattr``, and where it is merely HANDED
+somewhere, since ``partial(retained)`` and ``stack.callback(retained)`` name no
+call site at all. That second half is why a name the surrounding code binds
+itself is excluded from it: the tree holds locals spelled exactly like readers,
+and a rule that cannot tell them apart is one that has to be turned off.
 
 **Import-time code is inside the rule, and cannot be decorated out of it.** A
 test module's module-level statements and a class body's run during collection,
@@ -128,6 +132,13 @@ def _decorated(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     )
 
 
+def _string(node: ast.expr) -> str | None:
+    """The string *node* is, or ``None`` where it is not one."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
 def _renamings(tree: ast.Module) -> dict[str, str]:
     """Every local name in *tree* that stands for another name.
 
@@ -155,6 +166,8 @@ def _renamings(tree: ast.Module) -> dict[str, str]:
             direct[target.id] = value.id
         elif isinstance(target, ast.Name) and isinstance(value, ast.Attribute):
             direct[target.id] = value.attr
+        elif isinstance(target, ast.Name) and (spelled := _string(value)) is not None:
+            direct[target.id] = spelled
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import | ast.ImportFrom):
@@ -179,24 +192,74 @@ def _renamings(tree: ast.Module) -> dict[str, str]:
 def _spelled(node: ast.AST) -> set[str]:
     """Every name *node* itself names as something to reach, ignoring its children.
 
-    A call names its callee, at either end of a dot and through a walrus. A call
-    also names every string it is handed and a subscript the string it is keyed
-    by, because ``getattr(module, "retained")()``, ``globals()["retained"]()`` and
-    ``attrgetter("retained")(module)`` are the spellings a rule over identifiers
-    cannot see — and a guard that misses one is worse than one that over-reports
-    a string nobody meant as a name.
+    **Handing a reader somewhere is reaching it, whoever calls it in the end.**
+    Enumerating the shapes a call comes in is what a spelling rule cannot finish —
+    ``retained(...)`` is one, and ``getattr(module, "retained")()``,
+    ``partial(retained)()``, ``ExitStack().callback(retained)`` and every wrapper
+    not yet written are others — so the rule is not over call shapes. A name in
+    CALLEE position is reached, and so is a name an expression hands to a call,
+    positionally or by keyword, whether that call runs it, stores it or wraps it.
+    What no rule over source can see is a name assembled at run time out of pieces
+    that are not the name, and :func:`_bound_names` is what keeps the widened half
+    from firing on a local that merely shares a reader's spelling.
+
+    A string is a name too where a string is how a name is spelled — handed to a
+    call, or used as a subscript key — because that is what ``getattr`` and
+    ``globals()[...]`` take. The rule over-reports a string nobody meant as a
+    name, which is the direction this guard declares for.
     """
     if isinstance(node, ast.Call):
-        return _callee_names(node.func) | {
-            argument.value
-            for argument in node.args
-            if isinstance(argument, ast.Constant) and isinstance(argument.value, str)
-        }
+        handed = (_string(argument) for argument in _handed(node))
+        return _callee_names(node.func) | {name for name in handed if name is not None}
     if isinstance(node, ast.Subscript):
-        key = node.slice
-        if isinstance(key, ast.Constant) and isinstance(key.value, str):
-            return {key.value}
+        key = _string(node.slice)
+        return {key} if key is not None else set()
     return set()
+
+
+def _handed(node: ast.Call) -> tuple[ast.expr, ...]:
+    """Every expression *node* hands its callee, positionally or by keyword."""
+    return (*node.args, *(keyword.value for keyword in node.keywords))
+
+
+def _passed(node: ast.AST, bound: frozenset[str], renamings: Mapping[str, str]) -> set[str]:
+    """Every name *node* hands to a call and does not bind itself.
+
+    ``bound`` is what makes this half of the rule usable: a name-based rule cannot
+    tell ``retained`` the instrument from ``retained`` the local a test happens to
+    build and pass on, and the tree holds both. A name the code itself binds is
+    not the reader of that name — unless the binding is exactly what makes it one,
+    which is what ``renamings`` holds, so ``name = "retained"`` followed by
+    ``getattr(module, name)`` still resolves.
+    """
+    if not isinstance(node, ast.Call):
+        return set()
+    return {
+        argument.id
+        for argument in _handed(node)
+        if isinstance(argument, ast.Name) and (argument.id not in bound or argument.id in renamings)
+    }
+
+
+def _bound_names(node: ast.AST) -> frozenset[str]:
+    """Every name *node* binds itself, which is therefore its own rather than the
+    module-level reader spelled the same way.
+
+    Imports are deliberately absent: an import is how a reader's name ARRIVES in a
+    module, not how it is shadowed, so treating one as a binding would shadow
+    every reader from itself.
+    """
+    bound: set[str] = set()
+    for each in ast.walk(node):
+        if isinstance(each, ast.Name) and isinstance(each.ctx, ast.Store):
+            bound.add(each.id)
+        elif isinstance(each, ast.arg):
+            bound.add(each.arg)
+        elif isinstance(each, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            bound.add(each.name)
+        elif isinstance(each, ast.ExceptHandler):
+            bound |= {each.name} if each.name is not None else set()
+    return frozenset(bound)
 
 
 def _callee_names(func: ast.expr) -> set[str]:
@@ -216,9 +279,10 @@ def _called_names(node: ast.AST, renamings: Mapping[str, str]) -> set[str]:
     ``report.retained(...)``, ``retained(...)`` and ``size(...)`` after
     ``import retained as size`` all reach the same reading, and which one a test
     writes is a consequence of how it imported rather than of what it requires."""
+    bound = _bound_names(node)
     spelled: set[str] = set()
     for each in ast.walk(node):
-        spelled |= _spelled(each)
+        spelled |= _spelled(each) | _passed(each, bound, renamings)
     return {renamings.get(name, name) for name in spelled}
 
 
@@ -327,35 +391,69 @@ def _reaching_tests(
 
 
 def _main_guard(node: ast.AST) -> bool:
-    """Whether *node* is the ``if __name__ == "__main__":`` block."""
+    """Whether *node* is the ``if __name__ == "__main__":`` block, exactly.
+
+    Exactly, because this is the one exclusion from the import-time rule and
+    every other test on ``__name__`` runs during collection: ``!=`` runs the
+    branch in every process but the child, and a comparison against another
+    string runs it in none. Anything but the one spelling is import-time code and
+    is read as such.
+    """
     if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
         return False
-    left = node.test.left
-    return isinstance(left, ast.Name) and left.id == "__name__"
+    test = node.test
+    if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+        return False
+    left, right = test.left, test.comparators[0]
+    named = isinstance(left, ast.Name) and left.id == "__name__"
+    return named and isinstance(right, ast.Constant) and right.value == "__main__"
 
 
 def _import_time(node: ast.AST) -> Iterator[ast.AST]:
     """Every node under *node* that runs when its module is imported.
 
     A function's body is not import-time code — it runs when something calls it,
-    which the call graph answers — but its decorator expressions are, and so is
-    every statement of a class body. The ``__main__`` block is excluded because
-    it runs only in a child the boundary itself started.
+    which the call graph answers — but everything a ``def`` evaluates to make the
+    function is: its decorators, its parameter defaults and annotations, its
+    return annotation and its type parameters. A lambda is the same shape with no
+    body to exclude by name, so its defaults are read and its body is not. Every
+    statement of a class body runs at import too. The ``__main__`` block is the
+    one exclusion, because it runs only in a child the boundary itself started.
     """
     for child in ast.iter_child_nodes(node):
         if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
-            for evaluated in (*child.decorator_list, child.args):
-                yield evaluated
-                yield from _import_time(evaluated)
+            evaluated = (*child.decorator_list, child.args, *child.type_params)
+            yield from _each(*evaluated, *((child.returns,) if child.returns else ()))
             continue
-        if isinstance(child, ast.Lambda) or _main_guard(child):
+        if isinstance(child, ast.Lambda):
+            yield from _each(child.args)
+            continue
+        if _main_guard(child):
             continue
         yield child
         yield from _import_time(child)
 
 
+def _each(*nodes: ast.AST) -> Iterator[ast.AST]:
+    """*nodes* and everything under them that runs when their module is imported."""
+    for node in nodes:
+        yield node
+        yield from _import_time(node)
+
+
+def _reported(path: Path, root: Path) -> str:
+    """*path* as an editor jumps to it, from whichever root it sits under."""
+    for base in (root.parent, TESTS_ROOT.parent):
+        if path.is_relative_to(base):
+            return str(path.relative_to(base))
+    return str(path)
+
+
 def _reading_at_import(
-    path: Path, tree: ast.Module, readers: Callable[[Iterable[str]], frozenset[str]]
+    path: Path,
+    tree: ast.Module,
+    readers: Callable[[Iterable[str]], frozenset[str]],
+    root: Path,
 ) -> list[Finding]:
     """Every import-time statement of *path* that reaches a reader.
 
@@ -365,14 +463,15 @@ def _reading_at_import(
     move is the finding.
     """
     renamings = _renamings(tree)
+    bound = _bound_names(tree)
     findings: list[Finding] = []
     for node in _import_time(tree):
-        reached = readers(_shallow(node, renamings))
+        reached = readers(_shallow(node, bound, renamings))
         if not reached:
             continue
         findings.append(
             Finding(
-                str(path.relative_to(TESTS_ROOT.parent)),
+                _reported(path, root),
                 getattr(node, "lineno", 1),
                 f"this runs when the module is imported and reaches "
                 f"{', '.join(sorted(reached))}, so it reads the whole interpreter during "
@@ -383,9 +482,10 @@ def _reading_at_import(
     return findings
 
 
-def _shallow(node: ast.AST, renamings: Mapping[str, str]) -> set[str]:
+def _shallow(node: ast.AST, bound: frozenset[str], renamings: Mapping[str, str]) -> set[str]:
     """What *node* itself spells, without descending into anything under it."""
-    return {renamings.get(name, name) for name in _spelled(node)}
+    spelled = _spelled(node) | _passed(node, bound, renamings)
+    return {renamings.get(name, name) for name in spelled}
 
 
 def _check_structure() -> list[Finding]:
@@ -421,17 +521,25 @@ def _check_structure() -> list[Finding]:
     return findings
 
 
-def _check_tree() -> list[Finding]:
+def audit(root: Path) -> list[Finding]:
+    """Every finding the reachability rule raises over the test modules under
+    *root*.
+
+    Parameterized by root so the rule can be exercised over a scratch tree that
+    holds the routes it is meant to catch. A guard nothing plants against is a
+    guard whose next widening is checked by hand, which is how each of the last
+    three left a hole behind it.
+    """
     findings: list[Finding] = []
     at_import: dict[Path, list[Finding]] = {}
-    for path in sorted(TESTS_ROOT.rglob("test_*.py")):
+    for path in sorted(root.rglob("test_*.py")):
         tree = ast.parse(path.read_text())
-        relative = str(path.relative_to(TESTS_ROOT.parent))
+        relative = _reported(path, root)
         files = _imported_files(tree, {path.resolve()})
         imported = [ast.parse(each.read_text()) for each in files]
         readers = _readers_through(_call_graph(tree, imported))
         for each, each_tree in zip((path, *files), (tree, *imported), strict=True):
-            at_import.setdefault(each, _reading_at_import(each, each_tree, readers))
+            at_import.setdefault(each, _reading_at_import(each, each_tree, readers, root))
         reaching = _reaching_tests(tree, imported)
         undecorated = [(node, readers) for node, readers in reaching if not _decorated(node)]
         for node, readers in undecorated:
@@ -464,7 +572,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="check (the only mode)")
     parser.parse_args(argv)
-    findings = _check_structure() + _check_tree()
+    findings = _check_structure() + audit(TESTS_ROOT)
     for finding in findings:
         print(finding, file=sys.stderr)
     if findings:
