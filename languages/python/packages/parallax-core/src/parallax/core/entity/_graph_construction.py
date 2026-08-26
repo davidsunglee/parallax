@@ -15,12 +15,15 @@ being granted this collaboration.
 
 The collaboration owns everything about turning those rows into Entity
 and Value Object instances — concrete class selection, canonical-to-Python member
-mapping, recursive Value Object construction, Pydantic's ``model_construct`` plus
-the ``object.__setattr__`` backdoor, broad relationship-slot installation, the one
-opaque lifecycle-state slot written straight to instance storage, and all-or-none
-publication. It owns nothing about
-any lifecycle: it registers no callback, interprets no state value, and imports
-no lifecycle package. A caller passes one build function and one optional state
+mapping, the correspondence between the model's member layout and the class's
+own, recursive Value Object construction, declared-type enforcement in Pydantic
+validation's place, broad relationship-slot filling, the one opaque
+lifecycle-state slot, and all-or-none publication. What it does NOT own is how a
+value physically holds any of that: it hands the instance-state Module semantic
+inputs and the Module attaches one row, so nothing here knows the tuple or the
+bitmap. It owns nothing about
+any lifecycle either: it registers no callback, interprets no state value, and
+imports no lifecycle package. A caller passes one build function and one optional state
 factory per call, so two lifecycles coexist without either knowing the other.
 
 Three non-overlapping phases, and the order is the contract rather than an
@@ -39,13 +42,14 @@ implementation detail:
    populated, and the roots validate, do the per-node state factories run — in
    allocation order, each with a fresh single-use resolution view. A factory
    therefore sees every final instance fully wired, including cycles, and sees no
-   attached state and no published root. What a factory returns is written into
-   the node's own storage rather than assigned by name, so whatever the node's
-   class binds, it lands where the two consumers that go to the storage find it:
-   the pickle refusal (spec §3) and an edit's carry-forward of the state a node
-   carries. ``lifecycle_state_of`` is not one of them — it resolves the slot
-   through the class, so a class binding that name blinds its own lifecycle's
-   readers without moving what those two see.
+   attached state and no published root. What a factory returns is written
+   through the lifecycle slot's own descriptor rather than assigned by name, so
+   whatever the node's class binds, it lands where the two consumers that reach
+   the slot directly find it: the pickle refusal (spec §3) and an edit's
+   carry-forward of the state a node carries. ``lifecycle_state_of`` is not one
+   of them — it resolves the slot through the class, so a class answering for
+   that name blinds its own lifecycle's readers without moving what those two
+   see.
 
 Failure precedence follows the same fixed order. Writer-operation failures are
 eager. A build-callback exception propagates unchanged and suppresses completion,

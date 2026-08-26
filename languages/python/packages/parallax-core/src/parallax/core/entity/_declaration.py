@@ -2012,8 +2012,8 @@ def _framework_owned_validator(py_name: str) -> Any:
     several steps later when a row is derived. It raises ``ValueError`` so
     Pydantic reports it as an ordinary ``ValidationError`` alongside every other
     rejection of that call — construction is not an edit, so it is deliberately
-    not the edit family's refusal. Hydration is unaffected: it builds through
-    ``model_construct`` and never reaches the validating constructor.
+    not the edit family's refusal. Hydration is unaffected: it enters no Pydantic
+    constructor at all, so it never reaches this validator.
 
     A defaulted member skips its validators, so omitting the member is how a
     caller legitimately constructs one.

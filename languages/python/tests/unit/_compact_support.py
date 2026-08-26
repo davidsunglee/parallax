@@ -1,11 +1,10 @@
 """Building a compactly backed Entity or Value Object without a database, and
 reading what one physically holds.
 
-Nothing in production publishes compact backing yet — Entity Graph Construction
-still writes ordinary Pydantic state — so the suites that grade the second
-backing build one by driving the instance-state Module's own door directly. That
-is deliberately the SAME door construction will drive: a shell is allocated, its
-whole row is assembled, and the row is attached once.
+Publication drives this door itself, and reaching it needs a Domain Model, a
+graph, and a build callback. A suite grading what the second backing IS rather
+than how a read reaches it drives the instance-state Module's own door directly
+instead: the same shell, the same whole row, attached the same once.
 """
 
 from __future__ import annotations
