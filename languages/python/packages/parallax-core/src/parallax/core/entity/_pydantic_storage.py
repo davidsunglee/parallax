@@ -7,9 +7,11 @@ it by name would put a class body between the framework and its own state:
 ``getattr``, ``object.__getattribute__``, and ``object.__setattr__`` all resolve
 a name through the type, so an authored ``__getattr__``, ``__getattribute__``,
 or a data descriptor bound under a slot's own name decides what the framework
-reads back and where its writes land. (The two names instance state is presented
-under are not on that list: the declaration engine reserves both from every
-class body, so no class answers for them.) These read and write the storage
+reads back and where its writes land. (Reservation shortens that list for the two
+names instance state is presented under without emptying it: the declaration
+engine keeps every class body from binding either one, so no descriptor of a
+class's own stands under them — while ``__getattribute__`` remains authorable and
+answers a read of any name, those two included.) These read and write the storage
 itself, so a class body can neither hide the state a value carries from them,
 nor offer them state it never carried, nor divert what they attach somewhere
 they do not look.
@@ -38,10 +40,16 @@ Reaching past a binding is each caller's own decision, and the framework reads
 that do not are deliberate. ``lifecycle_state_of`` resolves the slot through the
 class because the read it offers is the class's own surface, and
 ``BaseModel.__getstate__`` reads ``self.__dict__`` the ordinary way, so what a
-pickle carries is what the value answers for that name rather than the storage
-underneath it — the storage itself where Pydantic backs the value, and a mapping
-derived from the row where it is published, which is what makes a pickle of a
-published value cross as an ordinary one.
+pickle carries is what the value ANSWERS for that name rather than the storage
+underneath it: the storage itself where Pydantic backs the value and a mapping
+derived from the row where it is published — which is what makes a pickle of a
+published value cross as an ordinary one — or, on a class that authors
+``__getattribute__``, whatever that hook hands back in place of either.
+
+The slots beside those two are a different question, and
+:func:`carry_slots_beside_state` is the whole of it: a value's private-attribute
+state lives in Pydantic's object layout rather than in the storage, so a caller
+deriving a copy out of semantic state has to carry that layout across or reset it.
 
 Declared member access is deliberately not routed here: that surface is the
 class's own, and validation, descriptors, and refusals belong on it.
@@ -49,6 +57,7 @@ class's own, and validation, descriptors, and refusals belong on it.
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Final, cast
 
 from pydantic import BaseModel
@@ -57,6 +66,7 @@ __all__ = [
     "MODEL_PRESENCE",
     "MODEL_STORAGE",
     "attach_instance_state",
+    "carry_slots_beside_state",
     "instance_presence",
     "instance_state",
     "replace_instance_presence",
@@ -73,6 +83,41 @@ process, where the extra call the functions cost is measurable.
 
 MODEL_PRESENCE: Final = BaseModel.__dict__["__pydantic_fields_set__"]
 """Pydantic's own slot descriptor for the populated-member set beside it."""
+
+_SLOTS_BESIDE_STATE: Final = tuple(
+    BaseModel.__dict__[name]
+    for name in BaseModel.__slots__
+    if name not in {"__dict__", "__pydantic_fields_set__"}
+)
+"""Every other slot Pydantic's own object layout gives a model.
+
+Derived from that layout rather than listed, so a kind of instance state a
+release adds is carried by the function below without this module learning its
+name — the complement rule an edit already applies to what one mapping holds,
+applied one level up to the layout that mapping is a single slot of. Listing
+them is how a copy comes to reproduce the slots someone remembered and reset the
+rest to a fresh instance's defaults.
+"""
+
+
+def carry_slots_beside_state(source: BaseModel, target: BaseModel) -> None:
+    """Give ``target`` every slot ``source`` holds outside those two.
+
+    A copy derived from a value rebuilds its storage and its populated-member set
+    from semantic state and must otherwise BE that value's layout. Private
+    attributes are the state this reaches: Pydantic keeps a ``PrivateAttr`` in a
+    slot of its own rather than in the instance storage, so a copy assembled out
+    of a name-keyed mapping alone silently resets every one of them to the
+    declared defaults a fresh instance starts with.
+
+    Each slot is shallow-copied, exactly as Pydantic's own copy of a model does,
+    so a later mutation through either value is invisible to the other. Each is
+    also read unguarded: every path that produces a value fills the whole layout,
+    so a source missing one raises here rather than handing back a copy quietly
+    holding a fresh instance's defaults.
+    """
+    for slot in _SLOTS_BESIDE_STATE:
+        slot.__set__(target, copy.copy(slot.__get__(source)))
 
 
 def instance_state(value: BaseModel) -> dict[str, Any]:

@@ -16,10 +16,10 @@ import copy as copy_module
 import datetime as dt
 from decimal import Decimal
 from functools import cached_property
-from typing import cast
+from typing import Any, Final, cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, PrivateAttr, ValidationError
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
@@ -604,6 +604,52 @@ def test_an_edit_carries_a_slot_no_declaration_and_no_lifecycle_names(
     marker = object()
     object.__setattr__(node, "__parallax_unnamed__", marker)
     assert node.edit(**changes).__dict__["__parallax_unnamed__"] is marker
+
+
+class _Marked(Entity, table="marked", namespace="parallax.compatibility"):
+    """One private attribute, which Pydantic keeps in a slot of the object layout
+    rather than in the instance dictionary an edit rebuilds."""
+
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
+
+    _mark = PrivateAttr(default=3)
+
+
+_REBUILT_SLOTS: Final = frozenset({"__dict__", "__pydantic_fields_set__"})
+"""The two slots an edit fills from semantic state rather than carries."""
+
+
+@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
+def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
+    changes: dict[str, object],
+) -> None:
+    # Completeness graded over the OBJECT LAYOUT rather than over the instance
+    # dictionary, which is one slot of it. Every other carry test here reads a
+    # name out of that dictionary and so can only see state stored under one, and
+    # `PrivateAttr` state is not: a copy built from a name-keyed mapping alone
+    # resets it to the declared default with nothing failing. The slot list is
+    # read off `BaseModel.__slots__`, so a kind of state a Pydantic release adds
+    # beside the storage fails here rather than being silently dropped.
+    marked = _Marked(id=1, label="a")
+    cast("Any", marked)._mark = 9
+    carried = [name for name in BaseModel.__slots__ if name not in _REBUILT_SLOTS]
+    assert carried
+    copied = marked.edit(**changes)
+    for name in carried:
+        held = getattr(marked, name)
+        assert getattr(copied, name) == held
+        if held is not None:
+            assert getattr(copied, name) is not held
+    assert cast("Any", copied)._mark == 9
+
+
+def test_a_carried_slot_is_the_copy_s_own_state_rather_than_the_source_s() -> None:
+    marked = _Marked(id=1, label="a")
+    cast("Any", marked)._mark = 9
+    copied = cast("Any", marked.edit(label="b"))
+    copied._mark = 11
+    assert cast("Any", marked)._mark == 9
 
 
 class _Tag(Entity, table="tag", namespace="parallax.compatibility"):

@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import copy as copy_module
 from functools import cached_property
+from typing import Any, cast
 
 import pytest
+from pydantic import BaseModel, PrivateAttr
 
 from _support import value_object_models as vm
 from parallax.core import Attr, Rel, ValueObject, attr
@@ -127,6 +129,40 @@ def test_an_edit_never_carries_a_derived_cache(changes: dict[str, object]) -> No
     tagged = _Tagged(label="a")
     assert tagged.shouted == "A"
     assert "shouted" not in tagged.edit(**changes).__dict__
+
+
+class _Marked(ValueObject):
+    """One private attribute on a Value Object, which Pydantic keeps in a slot of
+    the object layout rather than in the instance dictionary an edit rebuilds."""
+
+    label: Attr[str]
+
+    _mark = PrivateAttr(default=3)
+
+
+_REBUILT_SLOTS = frozenset({"__dict__", "__pydantic_fields_set__"})
+"""The two slots an edit fills from semantic state rather than carries."""
+
+
+@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=["authored", "change-free"])
+def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
+    changes: dict[str, object],
+) -> None:
+    # Completeness graded over the OBJECT LAYOUT rather than over the instance
+    # dictionary, which is one slot of it, exactly as the Entity half grades it:
+    # every other carry test reads a name out of that dictionary, and `PrivateAttr`
+    # state is not stored under one.
+    marked = _Marked(label="a")
+    cast("Any", marked)._mark = 9
+    carried = [name for name in BaseModel.__slots__ if name not in _REBUILT_SLOTS]
+    assert carried
+    copied = marked.edit(**changes)
+    for name in carried:
+        held = getattr(marked, name)
+        assert getattr(copied, name) == held
+        if held is not None:
+            assert getattr(copied, name) is not held
+    assert cast("Any", copied)._mark == 9
 
 
 @pytest.mark.parametrize("changes", [{"city": "Bergen"}, {}], ids=["authored", "change-free"])

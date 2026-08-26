@@ -538,6 +538,15 @@ the installed binary, proving the first read's value is discarded and the second
 is the cast; and a union differential, where a plain union makes `SerCheck`
 `Strict`/`Lax`, answers by type, and drops the count to exactly one.
 
+**When these were read, and against what.** Every nanosecond and every factor in
+this entry — the retained-memory readings and the template-copy comparison aside —
+was taken against a presentation build that reached the auxiliary slot through a
+helper function and let `_PresentedState` inherit `dict`'s own initializer. That
+build has since been inlined into `_DeclaredState.__get__` and the class has been
+given an initializer of its own, so the per-read cost these figures divide has
+moved. They stand as readings of that earlier build rather than of the tree today,
+and a pass taking this entry re-baselines them before claiming any one of them.
+
 **The pair is structurally adjacent, and that is the load-bearing result.** No
 Python executes between the two reads, at any depth and inside any container. The
 scope that needs covering is therefore the pair rather than the run, and a pair
@@ -546,7 +555,7 @@ makes every bracketing mechanism below unnecessary rather than merely expensive.
 
 **What it buys.** Three ingredients, measured over a `TypeAdapter(list[…])` dump
 of 1000 distinct published instances of one all-optional-member declared class —
-1557 µs published today against 585 µs for the same class ordinarily backed:
+1557 µs published against 585 µs for the same class ordinarily backed:
 
 - **Drop `strict=True` from the `zip`** that builds the presentation — −50 ns per
   read, **1.09x**, no behavior change. It is a redundant assertion, because the
@@ -632,11 +641,13 @@ reach problem. No lazier or cheaper mapping type helps, because
 Python-level override; a template `.copy()` plus `update(zip(...))` measures
 300 ns against `dict(zip(...))`'s 299.
 
-**The order a pass should take.** The two no-behavior-change ingredients first
-(1.18x together, no new hazard, nothing to decide); then the memo behind its
-`has_auxiliary` gate, with the identity and residue hazards stated and a
-free-threaded run taken; and the plain-`dict` question only behind an explicit
-decision on silent evaporation.
+**The order a pass should take.** The `strict=True` drop first: no behavior change,
+no new hazard, nothing to decide. The `plan_of` dictionary next — 1.18x with it,
+and no behavior change either, but not before the class-lifetime question on it is
+answered, because a strong dictionary pins every published class for the life of
+the process. Then the memo behind its `has_auxiliary` gate, with the identity and
+residue hazards stated and a free-threaded run taken; and the plain-`dict` question
+only behind an explicit decision on silent evaporation.
 
 **Why it is deferred rather than fixed.** The cost it removes is stated at the
 seam as a settled trade, so taking it is a revision of the Interface's own

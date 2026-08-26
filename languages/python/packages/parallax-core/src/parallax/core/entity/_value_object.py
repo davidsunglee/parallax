@@ -45,6 +45,7 @@ from parallax.core.entity._edit import (
 from parallax.core.entity._errors import EditError, EditViolation, EntityDefinitionError
 from parallax.core.entity._expressions import judged_edit_violation, serialize_member
 from parallax.core.entity._instance_state import BackedModel
+from parallax.core.entity._pydantic_storage import carry_slots_beside_state
 from parallax.core.metamodel import (
     MODEL_ROOT,
     AttributeIdentity,
@@ -175,6 +176,7 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         object.__setattr__(
             validated, "__pydantic_fields_set__", set(self.model_fields_set) | set(changes)
         )
+        carry_slots_beside_state(self, validated)
         return validated
 
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
