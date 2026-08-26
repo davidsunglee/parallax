@@ -27,9 +27,11 @@ None of them is restated here.
 `just check` is the merge gate, not the complete one. It omits the `cost` class —
 the memory measurements, which read a whole interpreter each and are the slowest
 thing here by a wide margin. `just check-all` adds them, and CI runs them on
-every change, so nothing that `just check` skips goes ungated. Run `check-all`
-locally when you have touched what those measurements grade; otherwise let CI
-own it.
+every change, so nothing that `just check` skips goes ungated. `check-all` and
+`check-cost` are CI's, not a local step. While you are changing what that class
+grades — the memory instruments themselves, or a suite that reads a whole
+interpreter — `just python-check-cost` is the one command that owns the gate, and
+running it is focused iteration rather than a second aggregate.
 
 Rerun a command that already passed only when it did not run to completion, when
 relevant repository state changed afterwards, or when you are explicitly asked

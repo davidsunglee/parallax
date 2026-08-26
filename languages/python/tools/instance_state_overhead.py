@@ -41,7 +41,18 @@ the window opened — read twice, once with the node's lifecycle state attached 
 once without, so the aggregate that includes unchanged lifecycle state and the
 one that isolates publication state are both available. Beside them: what
 constructing one node costs, what an ordinary declared-field read costs, what
-``model_dump()`` costs, and what one construction allocates and frees again.
+``model_dump()`` costs, and the high-water mark one construction reaches, from
+which what it allocated and freed again is the difference.
+
+**Where a reading is taken, and where it is not.** Nothing in this module reads
+the whole interpreter. Every reading is taken in a child, by
+``tools/instance_state_reading.py``, which is the script a child runs and the one
+place the instruments are reached from; this module spawns the children, decodes
+what they answer, and judges only whether the matrix is complete. That split is
+structural rather than tidy: a `dbfree` suite grades the verdicts below by
+importing this module, and it must not be able to take a whole-interpreter
+reading through anything it finds here
+(`core/spec/language-testing.md` §5).
 
 **How decoded payload leaves are excluded — structurally, not by filtering.**
 Every scenario's input row and every leaf in it is allocated at import time,
@@ -68,10 +79,8 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-import tracemalloc
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from time import perf_counter
 from typing import Any, Final, NamedTuple, cast
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
@@ -88,6 +97,9 @@ inside its surface — a report is no surface of its own, so picking them up her
 does not move them. The reach stays deliberate and one-way: the path is spelled
 once, here, and nothing under `tests/` knows this file exists.
 """
+
+READING_SCRIPT: Final = Path(__file__).resolve().parent / "instance_state_reading.py"
+"""The script one child runs: the half of this report that takes a reading."""
 
 INSTRUMENT_MODULE: Final = INSTRUMENTS / "memory_instruments.py"
 SUPPORT_MODULE: Final = INSTRUMENTS / "_instance_state_support.py"
@@ -122,17 +134,6 @@ from _instance_state_support import (  # noqa: E402
     SCENARIOS,
     WARMED_AUXILIARY,
     Scenario,
-    compact_publication,
-    legacy_publication,
-    scenario_named,
-    state_cells,
-)
-from memory_instruments import (  # noqa: E402
-    WARMUP,
-    Seam,
-    allocation,
-    retained,
-    untraced,
 )
 
 REPETITIONS: Final = 2_000
@@ -150,6 +151,11 @@ never what the report exits with."""
 
 CURRENT_MINOR: Final = f"{sys.version_info.major}.{sys.version_info.minor}"
 
+SUPPORTED_MINORS: Final = 2
+"""How many CPython minors are supported at once — `spec/python.md` §10's policy
+is "the latest minor + one prior minor", which makes the declared
+``requires-python`` floor the prior one and fixes the range's width above it."""
+
 
 class ArmReading(NamedTuple):
     """One arm's whole reading of one scenario."""
@@ -157,7 +163,7 @@ class ArmReading(NamedTuple):
     cells: int
     retained_bytes: int
     bare_bytes: int
-    transient_bytes: int
+    peak_bytes: int
     construct_ns: float
     read_ns: float
     dump_ns: float
@@ -170,10 +176,14 @@ class ArmReading(NamedTuple):
         return self.retained_bytes - self.bare_bytes
 
     @property
-    def peak_bytes(self) -> int:
-        """The high-water mark one construction reaches: the state the node keeps
-        plus what the construction allocated and freed on the way to it."""
-        return self.retained_bytes + self.transient_bytes
+    def transient_bytes(self) -> int:
+        """What one construction allocated and freed again on the way to the node
+        it kept: the high-water mark less the state that survives it.
+
+        Derived rather than measured, because the two are one reading taken from
+        both ends — measuring each against its own floor would let a construction
+        be charged for its own product twice, or for none of it."""
+        return self.peak_bytes - self.retained_bytes
 
 
 class Reading(NamedTuple):
@@ -235,99 +245,6 @@ OPERATIONS: Final = (
 
 
 # --------------------------------------------------------------------------- #
-# The seams, and one scenario's reading. Taken in a child interpreter.          #
-# --------------------------------------------------------------------------- #
-
-
-def held(
-    scenario: Scenario,
-    arm: Callable[[Scenario, object | None], object],
-    *,
-    lifecycle: bool,
-) -> Seam:
-    """One node of ``arm``, built inside the window and held at the sample.
-
-    The lifecycle state is built inside the window too, so the reading that
-    carries it counts it: an object allocated before the window would be borrowed
-    rather than retained, and the difference between the two readings would be
-    zero for the wrong reason.
-    """
-
-    def run(sample: Callable[[], None]) -> None:
-        state = scenario.state() if lifecycle else None
-        node = arm(scenario, state)
-        sample()
-        assert node is not None
-
-    return run
-
-
-def _elapsed_ns(work: Callable[[], None], *, per: int = 1) -> float:
-    """Mean nanoseconds one ``work`` takes, over :data:`REPETITIONS` runs."""
-    with untraced():
-        for _ in range(WARMUP):
-            work()
-        start = perf_counter()
-        for _ in range(REPETITIONS):
-            work()
-        elapsed = perf_counter() - start
-    return elapsed * 1e9 / (REPETITIONS * per)
-
-
-def measure_arm(
-    scenario: Scenario,
-    arm: Callable[[Scenario, object | None], object],
-    field_names: tuple[str, ...],
-) -> ArmReading:
-    """``arm``'s reading of ``scenario``, taken in this interpreter."""
-    node = arm(scenario, scenario.state())
-
-    def construct() -> None:
-        arm(scenario, scenario.state())
-
-    def read_fields() -> None:
-        for name in field_names:
-            getattr(node, name)
-
-    def dump() -> None:
-        cast("Any", node).model_dump()
-
-    tracemalloc.start()
-    try:
-        retained_bytes = retained(held(scenario, arm, lifecycle=True))
-        bare_bytes = retained(held(scenario, arm, lifecycle=False))
-        _, transient_bytes = allocation(held(scenario, arm, lifecycle=True))
-    finally:
-        tracemalloc.stop()
-    return ArmReading(
-        cells=state_cells(node),
-        retained_bytes=retained_bytes,
-        bare_bytes=bare_bytes,
-        transient_bytes=transient_bytes,
-        construct_ns=_elapsed_ns(construct),
-        read_ns=_elapsed_ns(read_fields, per=len(field_names)),
-        dump_ns=_elapsed_ns(dump),
-    )
-
-
-def measure(scenario: Scenario) -> Reading:
-    """``scenario``'s reading under both arms, taken in this interpreter.
-
-    Both arms in one process, which is what the child is for: a byte reading is
-    read against a floor the interpreter decides, so two arms compared across two
-    processes would be compared across two floors.
-    """
-    field_names = tuple(cast("Any", scenario.cls).__pydantic_fields__)
-    return Reading(
-        scenario=scenario.name,
-        summary=scenario.summary,
-        fields=len(field_names),
-        legacy=measure_arm(scenario, legacy_publication, field_names),
-        compact=measure_arm(scenario, compact_publication, field_names),
-    )
-
-
-# --------------------------------------------------------------------------- #
 # The matrix: one child per complete scenario, one runtime at a time.           #
 # --------------------------------------------------------------------------- #
 
@@ -335,24 +252,32 @@ def measure(scenario: Scenario) -> Reading:
 def supported_minors() -> tuple[str, ...]:
     """Every CPython minor the workspace declares support for, oldest first.
 
-    Derived from ``requires-python`` rather than authored here, so the matrix is
-    the supported range by construction: the floor is the range's own lower bound
-    and the ceiling is the interpreter taking the reading, which the support
-    policy makes the latest supported minor.
+    Derived from ``requires-python`` and from the support policy
+    (`spec/python.md` §10, "the latest minor + one prior minor"), and from
+    nothing about the interpreter taking the reading. The declared floor is the
+    prior minor, so :data:`SUPPORTED_MINORS` closes the range above it.
+
+    Closing it at ``sys.version_info`` instead is the one thing this must not do:
+    run on any minor but the latest, the range would silently lose its top row —
+    and a matrix short by a whole runtime looks COMPLETE to a check that walks
+    the runtimes the matrix has. The range is therefore what the workspace
+    declares, and which interpreter spawns the children decides nothing.
     """
     declared = cast(
         "str",
         tomllib.loads((WORKSPACE / "pyproject.toml").read_text())["project"]["requires-python"],
     )
     floor = declared.removeprefix(">=").strip()
-    major, minor = (int(part) for part in floor.split(".")[:2])
-    if major != sys.version_info.major or minor > sys.version_info.minor:
+    parts = floor.split(".")
+    readable = declared.startswith(">=") and len(parts) == 2 and all(p.isdigit() for p in parts)
+    if not readable:
         raise SystemExit(
-            f"the declared floor is CPython {floor} and this interpreter is {CURRENT_MINOR}: "
-            "the matrix runs from the floor up to the interpreter taking the reading, which has "
-            "to be the later of the two and in the same major series"
+            f"the workspace declares requires-python {declared!r}: this report reads the "
+            "supported range off a bare '>=<major>.<minor>' floor, and any other legal "
+            "specifier is a range it would have to guess at"
         )
-    return tuple(f"{major}.{each}" for each in range(minor, sys.version_info.minor + 1))
+    major, minor = (int(part) for part in parts)
+    return tuple(f"{major}.{minor + above}" for above in range(SUPPORTED_MINORS))
 
 
 def _child_environment(runtime: str) -> dict[str, str]:
@@ -381,10 +306,10 @@ def _child_environment(runtime: str) -> dict[str, str]:
 
 def _child_command(runtime: str, scenario: Scenario) -> list[str]:
     """What starts one scenario's child on ``runtime``."""
-    here = str(Path(__file__).resolve())
+    script = str(READING_SCRIPT)
     if runtime == CURRENT_MINOR:
-        return [sys.executable, here, scenario.name]
-    return ["uv", "run", "--frozen", "--python", runtime, "python", here, scenario.name]
+        return [sys.executable, script, scenario.name]
+    return ["uv", "run", "--frozen", "--python", runtime, "python", script, scenario.name]
 
 
 def in_a_child(runtime: str, scenario: Scenario) -> Cell:
@@ -424,35 +349,44 @@ def _decoded(output: str) -> Cell:
     if not lines:
         return "the child printed nothing"
     try:
-        payload = cast("dict[str, Any]", json.loads(lines[-1]))
+        decoded = cast("dict[str, Any]", json.loads(lines[-1]))
         return Reading(
-            scenario=cast("str", payload["scenario"]),
-            summary=cast("str", payload["summary"]),
-            fields=cast("int", payload["fields"]),
-            legacy=ArmReading(**cast("dict[str, Any]", payload["legacy"])),
-            compact=ArmReading(**cast("dict[str, Any]", payload["compact"])),
+            scenario=cast("str", decoded["scenario"]),
+            summary=cast("str", decoded["summary"]),
+            fields=cast("int", decoded["fields"]),
+            legacy=ArmReading(**cast("dict[str, Any]", decoded["legacy"])),
+            compact=ArmReading(**cast("dict[str, Any]", decoded["compact"])),
         )
     except (ValueError, KeyError, TypeError) as error:
         return f"the child's reading did not decode: {error}"
 
 
-def _payload(reading: Reading) -> str:
-    """One reading as the line a child answers with."""
+def payload(reading: Reading) -> str:
+    """One reading as the line a child answers with.
+
+    The encoding half of the child protocol, spelled here beside its decoder so
+    the two cannot drift, and imported by the script the child runs.
+    """
     return json.dumps(
         reading._asdict()
         | {"legacy": reading.legacy._asdict(), "compact": reading.compact._asdict()}
     )
 
 
-def missing_cells(matrix: Matrix, scenarios: Sequence[Scenario]) -> list[str]:
-    """Every matrix position that carries no reading, each with its reason.
+def missing_cells(
+    matrix: Matrix, runtimes: Sequence[str], scenarios: Sequence[Scenario]
+) -> list[str]:
+    """Every position of ``runtimes`` by ``scenarios`` that carries no reading,
+    each with its reason.
 
-    Named rather than skipped: a runtime whose interpreter is unavailable, or a
-    scenario whose child died, would otherwise leave a matrix that looks complete
-    to a reader who does not know which cells to expect.
+    Walked over the runtimes the caller ASKED for rather than the ones the matrix
+    holds: a scenario whose child died leaves a cell behind to notice, and a
+    runtime nothing was ever run for leaves nothing at all, so a check reading the
+    matrix's own keys would call the second one complete.
     """
     absent: list[str] = []
-    for runtime, cells in matrix.items():
+    for runtime in runtimes:
+        cells = matrix.get(runtime, {})
         for scenario in scenarios:
             cell = cells.get(scenario.name, "no child was run")
             if isinstance(cell, str):
@@ -578,7 +512,7 @@ def _conditions(runtimes: Sequence[str]) -> list[tuple[str, str]]:
     return [
         ("Runtimes", f"CPython {', '.join(runtimes)} (this one is {platform.python_version()})"),
         ("Platform", f"{sys.platform}/{platform.machine()}"),
-        ("Warm-up", f"{WARMUP} unsampled runs before every window"),
+        ("Warm-up", f"{memory_instruments.WARMUP} unsampled runs before every window"),
         ("Timings", f"mean of {REPETITIONS} repetitions, taken untraced"),
         ("Isolation", "one fresh child interpreter per complete scenario"),
     ]
@@ -680,24 +614,27 @@ def render(matrix: Matrix) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    """Measure and print; judge only whether the measurement is complete.
+    """Spawn the children, print what they answer; judge only whether the
+    measurement is complete.
 
     Exit codes: 0 — the measurement ran; 2 — usage error; 3 — a matrix cell has
     no reading. There is no exit code for a number that is too large,
     deliberately: the escalation block is what a number earns.
-    """
-    if len(argv) > 1:
-        print("usage: python tools/instance_state_overhead.py [scenario]", file=sys.stderr)
-        return 2
-    if argv:
-        print(_payload(measure(scenario_named(argv[0]))))
-        return 0
 
+    Takes no arguments, which is what leaves the reading itself outside this
+    module: one scenario's reading is `tools/instance_state_reading.py`, run as a
+    script by :func:`in_a_child`.
+    """
+    if argv:
+        print("usage: python tools/instance_state_overhead.py", file=sys.stderr)
+        return 2
+
+    runtimes = supported_minors()
     matrix: Matrix = {
         runtime: {scenario.name: in_a_child(runtime, scenario) for scenario in REPORTED}
-        for runtime in supported_minors()
+        for runtime in runtimes
     }
-    absent = missing_cells(matrix, REPORTED)
+    absent = missing_cells(matrix, runtimes, REPORTED)
     if absent:
         print(
             "\n".join(["the matrix is incomplete, so no aggregate is reported:", *absent]),

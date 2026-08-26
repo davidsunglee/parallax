@@ -691,7 +691,7 @@ the slot descriptor's own __get__ plus a subscript   28.4 ns
 object.__getattribute__(value, slot) plus a subscript 30.4 ns
 ```
 
-Over the whole canonical mix the report reads 3.24x on CPython 3.14 and 3.43x on
+Over the whole canonical mix the report reads 3.19x on CPython 3.14 and 3.41x on
 3.13, against readings taken with one shared harness on both arms.
 
 **The floor is the frame, and it is not reachable from Python.** Roughly a third
@@ -734,8 +734,9 @@ per-instance fast path — reintroduces exactly the per-node retained slope
 `_instance_state._DeclaredState` forbids and D-82 records the prohibition for.
 
 **Why it is deferred rather than fixed.** It is not unfinished work: it is a
-measured, stated consequence of the representation, accepted with the aggregate it
-buys. The entry exists so that a later pass reading "3.24x" in the report finds the
+measured consequence of the representation, surfaced for the human review the
+measurement contract requires and open until that review returns a decision on it.
+The entry exists so that a later pass reading the ratio in the report finds the
 decomposition, the two real repairs, and the reason the obvious third one is
 forbidden, rather than rediscovering all three.
 

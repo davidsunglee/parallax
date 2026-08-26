@@ -8,11 +8,15 @@ and still passes, taken against a heap the rest of the suite decided the size of
 and a floor that moves with it, so ``dbfree`` stops being true of what it selects
 and the reading stops being a property of its own subject.
 
-The rule is reachability, not a call site. A test reaching a reader through its
-own helpers requires the resource exactly as much as one calling it directly, and
-the suites here wrap every reading in helpers. Module-level code is outside the
-rule: the ``__main__`` block runs only in a child that the boundary itself
-started.
+The rule is reachability, not a call site, and not a spelling either. A test
+reaching a reader through its own helpers requires the resource exactly as much
+as one calling it directly, and the suites here wrap every reading in helpers; a
+test reaching one through a module it imported requires it exactly as much again,
+whether it names the reader bare or as an attribute of whatever it imported. So
+reachability is resolved over the test module's functions AND over those of every
+first-party module it imports, and a call is matched by the name it spells at
+either end of a dot. Module-level code is outside the rule: the ``__main__``
+block runs only in a child that the boundary itself started.
 
 Three structural facts are checked with it, because the rule is vacuous without
 them: every declared reader must still name a callable the instruments export,
@@ -33,13 +37,23 @@ from __future__ import annotations
 import argparse
 import ast
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 _TOOL = "tools/check_instrument_access.py"
 TESTS_ROOT = Path(__file__).resolve().parents[1] / "tests"
+TOOLS_ROOT = Path(__file__).resolve().parent
 INSTRUMENTS = TESTS_ROOT / "unit" / "memory_instruments.py"
 CONFTEST = TESTS_ROOT / "conftest.py"
+
+FIRST_PARTY_ROOTS = (TESTS_ROOT, TOOLS_ROOT)
+"""Where a module a test imports by bare name can be resolved to a file.
+
+Both, because the two are one import namespace at run time: a suite reaches the
+instruments and their support code by putting ``tests/unit`` on the path, and a
+report under ``tools/`` does the same, so a test importing that report imports
+whatever it holds."""
 
 BOUNDARY = "in_a_child_interpreter"
 """The decorator that acquires an interpreter of its own for one measurement."""
@@ -97,22 +111,64 @@ def _decorated(function: ast.FunctionDef) -> bool:
     )
 
 
-def _reaching_tests(tree: ast.Module) -> list[tuple[ast.FunctionDef, frozenset[str]]]:
+def _called_names(node: ast.AST) -> set[str]:
+    """Every name *node* calls, whether spelled bare or after a dot.
+
+    ``report.retained(...)`` and ``retained(...)`` reach the same reading, and
+    which one a test writes is a consequence of how it imported rather than of
+    what it requires."""
+    return {
+        call.func.id if isinstance(call.func, ast.Name) else call.func.attr
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name | ast.Attribute)
+    }
+
+
+def _imported_files(tree: ast.Module, seen: set[Path]) -> list[Path]:
+    """Every first-party module *tree* imports, transitively, as its own file.
+
+    Resolved by bare module name under :data:`FIRST_PARTY_ROOTS`, which is how
+    these modules are imported at run time; a dotted name is a package and
+    belongs to no root here.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names.add(node.module)
+    found: list[Path] = []
+    for name in sorted(names):
+        if "." in name:
+            continue
+        for root in FIRST_PARTY_ROOTS:
+            for path in sorted(root.rglob(f"{name}.py")):
+                if path in seen:
+                    continue
+                seen.add(path)
+                imported = ast.parse(path.read_text())
+                found += [path, *_imported_files(imported, seen)]
+    return found
+
+
+def _reaching_tests(
+    tree: ast.Module, reached: Sequence[ast.Module]
+) -> list[tuple[ast.FunctionDef, frozenset[str]]]:
     """Each ``test_*`` in *tree* that reaches a reader, and which ones it reaches.
 
-    Reachability is resolved over the module's own functions, which is where its
-    helpers live: a test calling a helper that calls a reader requires the
-    resource as much as one calling the reader itself.
+    Reachability is resolved over the module's own functions and over those of
+    every module in *reached*, which is where its helpers live: a test calling a
+    helper that calls a reader requires the resource as much as one calling the
+    reader itself, and the helper is as often a function inside an imported
+    module as one beside the test.
     """
-    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
-    calls = {
-        name: {
-            call.func.id
-            for call in ast.walk(node)
-            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-        }
-        for name, node in functions.items()
+    functions = {
+        node.name: node
+        for module in (tree, *reached)
+        for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef)
     }
+    calls = {name: _called_names(node) for name, node in functions.items()}
     resolved: dict[str, frozenset[str]] = {}
 
     def reaches(name: str, walking: frozenset[str]) -> frozenset[str]:
@@ -128,10 +184,11 @@ def _reaching_tests(tree: ast.Module) -> list[tuple[ast.FunctionDef, frozenset[s
         resolved[name] = answer
         return answer
 
+    own = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
     return [
         (node, reaches(name, frozenset()))
         for name, node in sorted(functions.items())
-        if name.startswith("test_") and reaches(name, frozenset())
+        if name in own and name.startswith("test_") and reaches(name, frozenset())
     ]
 
 
@@ -169,7 +226,8 @@ def _check_tree() -> list[Finding]:
     for path in sorted(TESTS_ROOT.rglob("test_*.py")):
         tree = ast.parse(path.read_text())
         relative = str(path.relative_to(TESTS_ROOT.parent))
-        reaching = _reaching_tests(tree)
+        imported = [ast.parse(each.read_text()) for each in _imported_files(tree, {path.resolve()})]
+        reaching = _reaching_tests(tree, imported)
         undecorated = [(node, readers) for node, readers in reaching if not _decorated(node)]
         for node, readers in undecorated:
             findings.append(
