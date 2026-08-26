@@ -98,10 +98,17 @@ def layout_slots(cls: type) -> dict[str, MemberDescriptorType]:
     lay out ``__slots__``, so a concrete class's layout is the shared backing
     root's plus whatever a framework root below it declares — for an Entity, the
     lifecycle slot, and for a Value Object, nothing.
+
+    Each descriptor is credited to the ancestor that laid it out, under the name
+    it was laid out under, so a body that rebinds another class's slot descriptor
+    adds no storage here: that descriptor addresses an offset these instances do
+    not have.
     """
     return {
         name: descriptor
         for ancestor in reversed(cls.__mro__)
         for name, descriptor in vars(ancestor).items()
         if isinstance(descriptor, MemberDescriptorType)
+        and descriptor.__objclass__ is ancestor
+        and descriptor.__name__ == name
     }

@@ -2388,8 +2388,9 @@ or descriptor authoring form and performs no audit stamping.
   incremental, or resumable form. That follows from two contracts already stated
   above rather than from an unfinished optimization: cycle closure requires every
   participant to exist as a shell before any of them is populated, and atomic
-  publication requires every state factory to succeed before any root becomes
-  reachable. Neither is satisfiable across two calls. What one call covers is
+  publication requires every state factory to succeed before any lifecycle state
+  attaches and before any root is delivered as the call's ordered result. Neither
+  is satisfiable across two calls. What one call covers is
   **the roots it is given plus what is reachable from them** — never "the query
   result". A caller holding a result in several parts may construct each part in
   its own call; the parts share no graph-local identity, exactly as two `find`
@@ -2407,8 +2408,9 @@ or descriptor authoring form and performs no audit stamping.
   every factory succeeds does it attach all results and publish the ordered
   roots atomically. The first factory failure stops invocation, discards every
   buffered result, and leaves every allocated Entity lifecycle-state-free;
-  `construct(...)` returns no root, so the call hands back no way to reach any
-  of them. What it does not do is take back what it already handed a callback.
+  `construct(...)` delivers no root at all rather than a partial tuple, so no
+  node reaches the caller as a result of the call. What it does not do is take
+  back what it already handed a callback.
   A factory that keeps the instance its resolution view answered still holds
   that instance after the call fails — fully populated, and
   lifecycle-state-free like every other. Rows attach as nodes are populated and

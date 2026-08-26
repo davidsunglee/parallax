@@ -792,9 +792,11 @@ one travel.
 
 Read off each ancestor's own namespace rather than through an attribute lookup,
 so a root below another adds to what that one declared instead of replacing it.
-A root may name only slots of its own body: a name that is not a slot descriptor
-in the same namespace is refused rather than ignored, because ignoring it would
-leave the slot the root meant to protect shallow-copied with nothing failing.
+A root may name only slots its own body lays out, which is decided by asking each
+descriptor who laid it out rather than by finding one bound under the name: a
+misspelling and an alias of somebody else's slot are refused alike, because
+ignoring either would leave the slot the root meant to protect shallow-copied
+with nothing failing.
 """
 
 CARRIED_LAYOUT_ATTRIBUTE: Final = "__parallax_carried_slots__"
@@ -822,14 +824,38 @@ class _CarriedLayout:
     taken: tuple[MemberDescriptorType, ...]
 
 
-def _declared_opaque(ancestor: type, namespace: Mapping[str, Any]) -> tuple[str, ...]:
+def _laid_out_slots(
+    ancestor: type, namespace: Mapping[str, Any]
+) -> dict[str, MemberDescriptorType]:
+    """The slots ``ancestor`` itself lays out, under the names it lays them out under.
+
+    A slot descriptor answers who laid it out and what it is called there, and
+    only one answering with ``ancestor`` and the name it is bound under is a slot
+    of this class. Anything else bound in the namespace is an alias of storage
+    laid out elsewhere, which addresses an offset these instances do not have:
+    applying it to one raises ``TypeError`` rather than reading anything, so it
+    belongs to no layout walked from here.
+    """
+    return {
+        name: value
+        for name, value in namespace.items()
+        if isinstance(value, MemberDescriptorType)
+        and value.__objclass__ is ancestor
+        and value.__name__ == name
+    }
+
+
+def _declared_opaque(
+    ancestor: type, namespace: Mapping[str, Any], laid_out: Mapping[str, MemberDescriptorType]
+) -> tuple[str, ...]:
     """The slots ``ancestor`` declares opaque in its own body, checked against it."""
     names = cast("tuple[str, ...]", namespace.get(OPAQUE_SLOTS_ATTRIBUTE, ()))
     for name in names:
-        if not isinstance(namespace.get(name), MemberDescriptorType):
+        if name not in laid_out:
             raise ValueError(
                 f"{ancestor.__name__} names {name!r} in {OPAQUE_SLOTS_ATTRIBUTE} but lays out "
-                "no such slot: a root declares opaque only slots of its own __slots__"
+                "no such slot: a root declares opaque only slots of its own __slots__, never a "
+                "name bound to a slot some other class laid out"
             )
     return names
 
@@ -844,8 +870,10 @@ def classify_slots(cls: type) -> _CarriedLayout:
     :data:`OPAQUE_SLOTS_ATTRIBUTE`. Nothing here names any particular slot, which
     is what keeps the classification exact as roots are added.
 
-    A more derived descriptor wins, exactly as an attribute lookup resolves one,
-    so the slot a copy reads and writes is the slot the value answers for.
+    Each ancestor contributes the slots it laid out itself, so a descriptor a
+    body merely rebound is not mistaken for storage the value has. A more derived
+    descriptor wins, exactly as an attribute lookup resolves one, so the slot a
+    copy reads and writes is the slot the value answers for.
 
     Raises ``ValueError`` when a root's opaque declaration names anything but a
     slot of that root's own body. Silently ignoring such a name would classify
@@ -856,9 +884,10 @@ def classify_slots(cls: type) -> _CarriedLayout:
     descriptors: dict[str, MemberDescriptorType] = {}
     for ancestor in reversed(cls.__mro__):
         namespace = vars(ancestor)
-        opaque.update(_declared_opaque(ancestor, namespace))
-        for name, descriptor in namespace.items():
-            if isinstance(descriptor, MemberDescriptorType) and name not in _REBUILT_STATE_SLOTS:
+        laid_out = _laid_out_slots(ancestor, namespace)
+        opaque.update(_declared_opaque(ancestor, namespace, laid_out))
+        for name, descriptor in laid_out.items():
+            if name not in _REBUILT_STATE_SLOTS:
                 descriptors[name] = descriptor
     return _CarriedLayout(
         copied=tuple(slot for name, slot in descriptors.items() if name not in opaque),
