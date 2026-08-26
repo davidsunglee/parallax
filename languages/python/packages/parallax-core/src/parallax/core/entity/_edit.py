@@ -63,13 +63,13 @@ def partition_declared(
     learning its name.
 
     That complement reaches what a value holds under a NAME and nothing else, so
-    it is one of the three parts an edit carries. The object layout holds the
-    other two: Pydantic keeps private attributes and extra fields in container
-    slots beside the storage, which
-    :func:`~parallax.core.entity._instance_state.carry_slots_beside_state` gives
-    the copy its own of, and a materialized Entity's lifecycle state is a slot of
-    the Entity root's, which that root carries across itself. No key of this
-    mapping names either.
+    it is one of the two parts an edit carries. The object layout holds the
+    other, and
+    :func:`~parallax.core.entity._instance_state.carry_slots_beside_state` is
+    where every slot of it travels: the container slots Pydantic keeps private
+    attributes and extra fields in, and the lifecycle slot a materialized Entity
+    holds the record of its own read in. No key of this mapping names any of
+    them.
 
     A derived cache is the one thing that complement drops: a slot the class
     declares a ``functools.cached_property`` (:func:`_is_derived_cache`) holds an

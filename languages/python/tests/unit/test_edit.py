@@ -20,7 +20,7 @@ from typing import Any, Final, cast
 
 import pytest
 from _compact_support import layout_slots
-from pydantic import BaseModel, PrivateAttr, ValidationError
+from pydantic import PrivateAttr, ValidationError
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
@@ -42,7 +42,11 @@ from parallax.core.entity import (
     relationship_value_of,
 )
 from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._declaration import FRAMEWORK_NAME_PREFIX, LIFECYCLE_STATE_SLOT
+from parallax.core.entity._declaration import (
+    FRAMEWORK_MINT,
+    FRAMEWORK_NAME_PREFIX,
+    LIFECYCLE_STATE_SLOT,
+)
 from parallax.core.entity._entity import (
     CHANGE_RECORD_SLOT,
     WireNames,
@@ -52,6 +56,7 @@ from parallax.core.entity._entity import (
 from parallax.core.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
     COMPACT_STATE_SLOT,
+    OPAQUE_SLOTS_ATTRIBUTE,
     BackedModel,
 )
 from parallax.core.metamodel import (
@@ -624,27 +629,28 @@ and `test_an_edit_preserves_the_lifecycle_state` is where it does.
 
 
 def test_the_framework_lays_out_exactly_the_slots_the_carry_classifies() -> None:
-    # Both halves of the carry — which slots it derives rather than takes, and
-    # which it gives the copy its own mapping of — are statements about the slots
-    # the FRAMEWORK lays out, and between them they account for that layout
-    # exactly. A Pydantic release adding a slot of its own would fall into the
-    # carried complement and silently take the shallow copy above; this equality
-    # fails there instead, where a new slot's semantics have to be classified.
-    assert set(BaseModel.__slots__) | {
-        COMPACT_STATE_SLOT,
-        AUXILIARY_STATE_SLOT,
-        LIFECYCLE_STATE_SLOT,
-    } == (_REBUILT_SLOTS | _COPIED_CONTAINER_SLOTS | _CARRIED_BY_IDENTITY)
+    # The three buckets account for the layout a concrete class ACTUALLY has,
+    # walked across its own MRO — which is the layout the carry itself resolves
+    # its complement off, so neither side is a hand-list of the roots this suite
+    # happens to know. A slot a Pydantic release or a framework root below the
+    # shared backing adds therefore travels by default, and this equality is
+    # where the treatment it takes is stated rather than absorbed silently.
+    assert set(layout_slots(_Marked)) - _REBUILT_SLOTS == (
+        _COPIED_CONTAINER_SLOTS | _CARRIED_BY_IDENTITY
+    )
+    # The identity bucket is production's own declaration rather than this
+    # suite's opinion of it: a root names the slots a copy must take as they
+    # stand in its own body, beside the `__slots__` that lays them out.
+    assert set(cast("Any", Entity).__dict__[OPAQUE_SLOTS_ATTRIBUTE]) == _CARRIED_BY_IDENTITY
 
 
 def test_a_declared_class_lays_out_no_slot_of_its_own() -> None:
-    # What makes the carry above a complement over a FIXED layout: a declaration
-    # may not extend a foreign base and may not declare `__slots__`, so the
-    # layout a concrete declared class gives its instances is the framework
-    # roots' own — the shared backing root's, plus the lifecycle slot only an
-    # Entity is ever handed state for — and the classification has no further
-    # slot to have missed. Reopening either route puts a slot in a concrete
-    # class's layout that this equality does not allow.
+    # What bounds the walk the carry makes over a value's own class: a
+    # declaration may not extend a foreign base and may not declare `__slots__`,
+    # so every slot that walk can reach is one a framework root laid out — the
+    # shared backing root's, plus the lifecycle slot only an Entity is ever
+    # handed state for. Reopening either route puts author-owned state in the
+    # layout the carry sweeps, which is the reason both are refused.
     with pytest.raises(EntityDefinitionError) as caught:
 
         class _Slotted(Entity, table="slotted", namespace="parallax.compatibility"):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
@@ -703,6 +709,52 @@ def test_a_carried_slot_is_shallow_so_what_it_holds_stays_shared() -> None:
     copied = cast("Any", marked.edit(label="b"))
     copied._trail.append("b")
     assert cast("Any", marked)._trail == ["a", "b"]
+
+
+class _Sidecar(Entity, _mint=FRAMEWORK_MINT):
+    """A framework root below the shared backing that lays out a slot of its own.
+
+    The shape the carry has to survive without being taught: nothing in
+    production names this slot, no bucket classifies it, and the only reason it
+    reaches a copy is that the carry walks the layout the value's own class has.
+    """
+
+    __slots__ = ("__parallax_sidecar__",)
+
+
+class _Riding(_Sidecar, table="riding", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
+
+
+_SIDECAR: Final = cast("Any", _Sidecar).__dict__["__parallax_sidecar__"]
+
+
+@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
+def test_an_edit_carries_a_framework_slot_below_the_shared_root(
+    changes: dict[str, object],
+) -> None:
+    # The case a complement resolved off the shared backing root could not pass:
+    # this slot is laid out beneath that root, so such a complement never saw it
+    # and the copy came back without it. It travels here because no code names
+    # it — the carry reads the layout `_Riding` actually has — and it travels the
+    # default way, as its own shallow copy, because its root asked for nothing
+    # else.
+    value = _Riding(id=1, label="a")
+    held = ["a"]
+    _SIDECAR.__set__(value, held)
+    copied = value.edit(**changes)
+    assert _SIDECAR.__get__(copied) == held
+    assert _SIDECAR.__get__(copied) is not held
+
+
+def test_an_edit_leaves_a_framework_slot_the_source_never_held_unheld() -> None:
+    # A slot its owner fills only sometimes — a lifecycle slot before a read
+    # attaches anything is the live one — has no value for a copy to take, and
+    # the copy is left holding none rather than the edit raising on the read.
+    copied = _Riding(id=1, label="a").edit(label="b")
+    with pytest.raises(AttributeError):
+        _SIDECAR.__get__(copied)
 
 
 class _Tag(Entity, table="tag", namespace="parallax.compatibility"):

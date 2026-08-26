@@ -472,7 +472,6 @@ def _restate[E: Entity](
 ) -> E:
     """A fresh value holding exactly ``value``'s state under ``record``."""
     copied = restated(value, declared_state | carried)
-    carry_lifecycle_state(value, copied)
     attach_instance_state(copied, CHANGE_RECORD_SLOT, record)
     return copied
 
@@ -502,10 +501,13 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     only an Entity is ever materialized by a lifecycle. A published node holds no
     instance storage at all, so state produced after its row is attached has
     nowhere else to go; a Value Object pays no pointer for a slot it could never
-    fill.
+    fill. Declaring it opaque is what has a derived copy take the state as it
+    stands rather than shallow-copy it: what that state means belongs entirely to
+    the lifecycle that produced it, so a copy of it is not it.
     """
 
     __slots__ = (LIFECYCLE_STATE_SLOT,)
+    __parallax_opaque_slots__ = (LIFECYCLE_STATE_SLOT,)
 
     if TYPE_CHECKING:
         # Declared for type checkers alone, and bound by nobody: Pydantic installs
@@ -661,7 +663,6 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         for py_name, member in carried.items():
             attach_instance_state(validated, py_name, member)
         carry_slots_beside_state(self, validated)
-        carry_lifecycle_state(self, validated)
         for py_name in changes:
             if py_name not in record:
                 record[py_name] = getattr(self, py_name)
@@ -775,21 +776,6 @@ def lifecycle_state(value: BaseModel) -> object | None:
         return cast("object", _LifecycleState.__get__(value))
     except AttributeError:
         return None
-
-
-def carry_lifecycle_state(source: BaseModel, target: BaseModel) -> None:
-    """Give ``target`` the lifecycle state ``source`` carries, if any.
-
-    An edit derives a copy from a value's declared state and everything it holds
-    under a name, and the lifecycle slot is neither: a copy assembled out of
-    those alone would silently lose the record of the read that published its
-    source, and with it the copy's own as-of pin and inspection surface. Carried
-    by identity, because the state is opaque — what it means belongs entirely to
-    the lifecycle that produced it.
-    """
-    state = lifecycle_state(source)
-    if state is not None:
-        _LifecycleState.__set__(target, state)
 
 
 class TxTemporal(Entity, _mint=FRAMEWORK_MINT, _axes=(TemporalDimension.TRANSACTION_TIME,)):
