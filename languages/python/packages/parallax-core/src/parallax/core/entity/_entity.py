@@ -359,11 +359,10 @@ class ChangeRecord(dict[str, object]):
     Being this type is what makes a mapping a Change Record. :meth:`Entity.edit`
     is the only site that constructs one and both readers accept nothing else, so
     a value's slot holds provenance exactly when the framework put it there —
-    whatever a class body binds, and whichever door built the value. Pydantic
-    fills a fresh instance by assigning ``__dict__`` under that name, so a class
-    answering for that name decides what a new value's storage starts out
-    holding; what it can put under the slot is a mapping of the right shape, and
-    a Change Record is not a shape.
+    whichever door built the value, and whatever reached its state afterwards.
+    The slot's own name is reserved from every class body, so what a caller
+    reaching the storage underneath can leave there is a mapping of the right
+    shape, and a Change Record is not a shape.
     """
 
     __slots__ = ()
@@ -758,19 +757,21 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         either hands back is its own.
 
         Which domain data that is comes from ``BaseModel.__getstate__``, which
-        collects the instance dictionary by reading ``self.__dict__`` — a name a
-        class body can bind like any other. On a class that leaves it alone the
-        answer is the value's own storage; a class that binds it decides which
-        declared values its own pickle carries and may add values it never held.
-        The filter below applies to whichever dictionary arrives, so no lifecycle
-        state under the slot's name survives this either way, and the storage the
-        entry-point guard reads is a separate read from this one.
+        collects the instance dictionary by reading ``self.__dict__`` — a name no
+        class body can bind, because the framework presents instance state under
+        it. So the answer is the value's own storage where Pydantic backs it, and
+        a mapping derived from the row where it is published, which is why a
+        published value crosses as an ordinary one. The filter below applies to
+        whichever mapping arrives, so no lifecycle state under the slot's name
+        survives this either way, and the read the entry-point guard makes of the
+        value's backing is a separate read from this one.
 
         The Change Record is never filtered here: it is authored state, written
         by :meth:`edit` from values the caller supplied, and it earns a write
         nothing, because provenance is the lifecycle state this drops. So it
-        travels exactly when the dictionary that arrives carries it — on a class
-        that leaves ``__dict__`` alone, whenever the value holds one.
+        travels exactly when the mapping that arrives carries it, which is
+        whenever the value holds one and nothing answered for that read in the
+        value's place.
         """
         state = super().__getstate__()
         instance = cast("dict[str, Any]", state.get("__dict__", {}))

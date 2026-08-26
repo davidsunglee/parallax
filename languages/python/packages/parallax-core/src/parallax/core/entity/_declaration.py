@@ -191,27 +191,22 @@ what keeps Entity free of every lifecycle's vocabulary.
 The value is written into the instance's own storage, alongside field values but
 outside the Pydantic field set, so it is invisible to canonical serialization,
 equality, and ``repr``. Pickling is the one conversion it does not merely
-disappear from: a pickle carries the instance dictionary, which is that storage
-on every class that leaves ``__dict__`` alone, and a lifecycle's private record
-of a live read has no truthful form on the other side of a process boundary, so
-a value carrying state here is refused at the pickle entry point rather than
-quietly emptied of it.
+disappear from: a pickle carries what the value holds under a name, and a
+lifecycle's private record of a live read has no truthful form on the other side
+of a process boundary, so a value carrying state here is refused at the pickle
+entry point rather than quietly emptied of it.
 
-That refusal is the one thing Entity reads this slot for, and it asks the storage
-directly whether the slot holds anything but ``None``: a factory returning
+That refusal is the one thing Entity reads this slot for, and it asks the value's
+own backing whether the slot holds anything but ``None``: a factory returning
 ``None`` leaves a node every reader of a lifecycle sees nothing on, and a pickle
-of it can claim nothing untrue. Reading the storage is a different read from
+of it can claim nothing untrue. That is a different read from
 ``lifecycle_state_of``, which resolves the name through the class, so a class
-body binding ``__getattr__``, ``__getattribute__``, ``__dict__``, or a descriptor
-at this very name can make the two disagree. Every write the framework makes — a
-read's attachment and an edit's carry-forward alike — goes to the storage, so
-what such a class buys is blinding its own lifecycle's readers rather than a
-pickle of a node a read published. A class deciding what a fresh instance's
-storage starts out holding — Pydantic fills one by assigning ``__dict__`` under
-that name — runs the same trade the other way: it denies its own plainly
-constructed values a pickle, and buys no read's evidence, because the state is
-opaque here and the lifecycle that would grant anything for it authenticates
-what it attached itself.
+body binding ``__getattr__``, ``__getattribute__``, or a descriptor at this very
+name can make the two disagree. Every write the framework makes — a read's
+attachment and an edit's carry-forward alike — goes to the backing, so what such
+a class buys is blinding its own lifecycle's readers rather than a pickle of a
+node a read published: the state is opaque here, and the lifecycle that would
+grant anything for it authenticates what it attached itself.
 
 Emptying is what remains for the conversions that reach ``Entity.__getstate__``
 without passing that entry point, and it drops the slot however it is filled."""
