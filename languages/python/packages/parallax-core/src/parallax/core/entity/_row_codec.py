@@ -55,7 +55,7 @@ from parallax.core.entity._errors import (
     EntityRowError,
 )
 from parallax.core.entity._expressions import serialize_member
-from parallax.core.entity._instance_state import named_state
+from parallax.core.entity._instance_state import is_present, named_state, plan_of
 from parallax.core.entity._model import DomainModel, model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -117,16 +117,25 @@ class EntityRowCodec:
     def full_row(self, value: object) -> dict[str, object]:
         """Every member ``value`` populated, keyed by canonical name.
 
-        The selection is what ``model_fields_set`` reports as populated, so a
-        member the caller never set is omitted and the narrower insert is
-        emitted. A framework-owned member is omitted rather than refused: a
-        hydrated value carries stored state there, and emitting it would launder
-        that state into a caller assignment.
+        The selection is the members the read or the caller actually carried, so
+        one the caller never set is omitted and the narrower insert is emitted. A
+        framework-owned member is omitted rather than refused: a hydrated value
+        carries stored state there, and emitting it would launder that state into
+        a caller assignment.
+
+        Presence is asked of the backing one member at a time
+        (:func:`~parallax.core.entity._instance_state.is_present`): this walk
+        visits every declared correspondence anyway, so a per-member predicate is
+        proportional to what it already does and allocates nothing, where asking
+        a published value for its populated set would synthesize one out of its
+        bitmap on every row derived from it.
         """
         facts, names = self._resolved(value)
-        populated = cast("Entity", value).model_fields_set
+        bits = plan_of(type(value)).bits
         selected = frozenset(
-            canonical for py_name, canonical in names.py_to_name.items() if py_name in populated
+            canonical
+            for py_name, canonical in names.py_to_name.items()
+            if is_present(cast("Entity", value), bits[py_name])
         )
         self._require_declared(facts, selected, "full_row")
         return self._serialized(facts, names, value, selected, "full_row")

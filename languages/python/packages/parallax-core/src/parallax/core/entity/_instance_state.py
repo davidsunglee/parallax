@@ -38,6 +38,15 @@ read carried it, and, once a caller reads a published relationship tail, what a
 relationship position holds. Everything else needs declared values and, at most,
 presence, so it is written once over both.
 
+Which way a question is asked is part of that. A caller reading one member's
+presence asks :func:`is_present`, which tests one bit and allocates nothing; the
+populated-member set a published value has no room for is synthesized only where
+a caller asks the value itself for it, and by :func:`carry_presence`, whose
+product is ordinary backing and has nowhere else to keep presence. Deriving a
+copy is likewise the backing's own question, because the answer is always the
+same one (:func:`restated`): a copy built out of semantic state is ordinary,
+whichever backing it came from.
+
 The scope is sealed and granted two siblings: the sentinels a construction input
 spells, and the seam that reaches a value's real storage past every name a class
 body can bind. It therefore reaches neither the declaration engine that builds a
@@ -79,7 +88,7 @@ from parallax.core.entity._pydantic_storage import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Mapping
+    from collections.abc import Callable, Generator, Iterable, Mapping
 
 __all__ = [
     "AUXILIARY_STATE_SLOT",
@@ -88,6 +97,7 @@ __all__ = [
     "PublicationPlan",
     "allocate",
     "auxiliary",
+    "carry_presence",
     "carry_slots_beside_state",
     "declared",
     "install",
@@ -97,6 +107,7 @@ __all__ = [
     "named_state",
     "plan_of",
     "publish",
+    "restated",
 ]
 
 COMPACT_STATE_SLOT: Final = "__parallax_compact__"
@@ -585,6 +596,11 @@ _CompactState: Final = cast("Any", BackedModel).__dict__[COMPACT_STATE_SLOT]
 _AuxiliaryState: Final = cast("Any", BackedModel).__dict__[AUXILIARY_STATE_SLOT]
 """The auxiliary slot's own descriptor, likewise."""
 
+_PopulatedState: Final = cast("Any", BackedModel).__dict__["__pydantic_fields_set__"]
+"""The populated-member descriptor itself, so a framework read of a value's
+presence reaches the same answer Pydantic does without resolving the name through
+a class that may answer for it."""
+
 
 # --------------------------------------------------------------------------- #
 # The two Adapters, and the three questions that vary
@@ -804,6 +820,53 @@ def carry_slots_beside_state(source: BaseModel, target: BaseModel) -> None:
     """
     for slot in _CARRIED_SLOTS:
         slot.__set__(target, copy.copy(slot.__get__(source)))
+
+
+def carry_presence(source: BaseModel, target: BaseModel, authored: Iterable[str] = ()) -> None:
+    """Give ``target`` the members ``source`` reports populated, plus ``authored``.
+
+    A value derived from another carries the source's presence forward exactly —
+    a member the source never populated stays unpopulated on the copy, which is
+    what keeps it absent from a document and out of a narrow insert rather than
+    becoming an explicit null. Where the source keeps that fact differs by
+    backing, and both answers are read here: an ordinary value holds a
+    ``set[str]``, a published one holds the bitmap the set is synthesized from.
+
+    This is the ONE caller that needs the whole set, and it needs it because what
+    it builds is ordinary backing, which has nowhere else to keep presence. Every
+    internal question about whether a member was carried is :func:`is_present`,
+    one member at a time and allocation-free, so no read path synthesizes a set
+    to answer one.
+    """
+    replace_instance_presence(target, set(_PopulatedState.__get__(source)) | set(authored))
+
+
+def restated[M: BaseModel](value: M, state: dict[str, object]) -> M:
+    """A fresh ordinary value of ``value``'s class holding exactly ``state``.
+
+    A copy derived from semantic state rather than from a backing, which is why
+    it lives here: it is the one operation that decides what backing a derived
+    value ends up with, and the answer is always ordinary. A published source's
+    row is not the copy's to inherit — carrying it would leave a value claiming
+    both backings at once — and ``state`` already carries everything that row and
+    the source's auxiliary slot named, so the copy holds neither of this Module's
+    two slots.
+
+    It builds through the validation-free construction path, which is what an
+    edit that authored nothing has to use: nothing was authored, so there is
+    nothing to validate, and every inherited copy door is refused. ``state``
+    lands in the copy's own storage through Pydantic's own slot descriptor, so no
+    name a class body binds decides what the copy ends up holding.
+    :func:`carry_presence` gives it the source's presence and
+    :func:`carry_slots_beside_state` the rest of the source's layout, without
+    which every ``PrivateAttr`` would silently reset to a fresh instance's
+    default.
+    """
+    copied = cast("M", cast("Any", type(value)).model_construct())
+    replace_instance_state(copied, state)
+    carry_presence(value, copied)
+    carry_slots_beside_state(value, copied)
+    return copied
 
 
 def publish(
