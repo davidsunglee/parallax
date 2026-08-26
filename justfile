@@ -59,7 +59,10 @@ default:
 
 # The success summary is a terminal dependency rather than a command body: an
 # aggregate carrying a body cannot be composed without re-running it, and a
-# `report` passes no judgement, so it adds output and no second verdict.
+# `report` passes no judgement about what this file validated, so it adds output
+# and no second verdict. It could still fail this aggregate by failing to print
+# its line at all, which the contract permits of a non-blocking command and which
+# says nothing about any gate above it.
 [doc("Merge gate: every blocking check a merge waits on.")]
 check: check-gates check-dbfree check-db report-check-summary
 
@@ -336,18 +339,21 @@ python-report-snapshot-graph-overhead:
 
 # A `report` for the same reason as its neighbour above: a total in bytes is
 # machine- and interpreter-relative, so what it prints is evidence rather than a
-# verdict, and it belongs to no aggregate. It measures two arms — the fixture
-# that reproduced publication before the flip, and the shipping publication path
-# — over every supported CPython minor, running a child of its own for each, so
-# it costs more than its neighbours and still gates nothing: the aggregate and
-# the regression verdicts it computes are printed as an escalation block, and the
-# only thing it exits non-zero on is a matrix cell it has no reading for. What
+# verdict, and it belongs to no aggregate. It measures three arms — the fixture
+# that reproduced publication before the flip, the shipping publication path, and
+# ordinary validating construction — over every supported CPython minor, running
+# a child of its own for each, so it costs more than its neighbours and still
+# gates nothing: the aggregate and the regression verdicts it computes are
+# printed as an escalation block, and the only thing it exits non-zero on is a
+# matrix cell it has no reading for. The aggregates divide the first two arms;
+# the third states what a published node retains against one a caller built, and
+# enters neither. What
 # grades those verdicts is `tests/unit/test_instance_state_baseline.py`, which
 # `python-test-dbfree` owns and which feeds them doctored readings. What has been
 # read off this, and under what conditions, is
 # `languages/python/docs/instance-state-baseline.md`.
 [metadata("runtime:medium")]
-[doc("Retained published Entity state under both backings over the canonical mix, on every supported minor.")]
+[doc("Retained published Entity state under each backing over the canonical mix, on every supported minor.")]
 python-report-instance-state:
     cd {{python}} && uv run python tools/instance_state_overhead.py
 
