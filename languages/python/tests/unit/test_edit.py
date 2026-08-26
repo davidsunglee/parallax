@@ -26,7 +26,14 @@ from _support import mirrored_models as mm
 from _support import snapshot_models as sm
 from _support import value_object_models as vm
 from parallax.conformance.read_models import Dog
-from parallax.core import Attr, Entity, attr
+from parallax.core import (
+    AbstractRoot,
+    Attr,
+    ConcreteSubtype,
+    Entity,
+    TablePerHierarchy,
+    attr,
+)
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
     EDIT_CODES,
@@ -41,6 +48,7 @@ from parallax.core.entity import (
     lifecycle_state_of,
     relationship_value_of,
 )
+from parallax.core.entity import _instance_state as instance_state
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
@@ -55,6 +63,7 @@ from parallax.core.entity._entity import (
 )
 from parallax.core.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
+    CARRIED_LAYOUT_ATTRIBUTE,
     COMPACT_STATE_SLOT,
     OPAQUE_SLOTS_ATTRIBUTE,
     BackedModel,
@@ -635,6 +644,14 @@ def test_the_framework_lays_out_exactly_the_slots_the_carry_classifies() -> None
     # happens to know. A slot a Pydantic release or a framework root below the
     # shared backing adds therefore travels by default, and this equality is
     # where the treatment it takes is stated rather than absorbed silently.
+    # Checked to BE in that layout rather than assumed, because a name that is
+    # not there subtracts nothing and the equality below would still hold with
+    # one misspelled or retired. The instance dictionary is the one exception,
+    # and pinning it is what keeps the check honest: Pydantic gives it a
+    # `getset_descriptor` rather than a slot, so it is in no layout either side
+    # walks and is named only to say a copy fills it from semantic state.
+    assert _REBUILT_SLOTS - {"__dict__"} <= set(layout_slots(_Marked))
+    assert "__dict__" not in layout_slots(_Marked)
     assert set(layout_slots(_Marked)) - _REBUILT_SLOTS == (
         _COPIED_CONTAINER_SLOTS | _CARRIED_BY_IDENTITY
     )
@@ -755,6 +772,108 @@ def test_an_edit_leaves_a_framework_slot_the_source_never_held_unheld() -> None:
     copied = _Riding(id=1, label="a").edit(label="b")
     with pytest.raises(AttributeError):
         _SIDECAR.__get__(copied)
+
+
+def test_a_root_declaring_a_slot_it_does_not_lay_out_opaque_is_refused() -> None:
+    # What a declaration nobody checks costs: the misspelling below leaves
+    # `__parallax_cargo__` classified for shallow copying, so a copy would hold a
+    # copy of a payload its owner said must travel as it stands, and every test
+    # of the CORRECT declaration still passes. Refusing the declaration is what
+    # makes the convention gradeable rather than a comment.
+    class _Misdeclared(Entity, _mint=FRAMEWORK_MINT):
+        __slots__ = ("__parallax_cargo__",)
+        __parallax_opaque_slots__ = ("__parallax_cargoe__",)
+
+    class _Hauling(_Misdeclared, table="hauling", namespace="parallax.compatibility"):
+        id: Attr[int] = attr(primary_key=True)
+        label: Attr[str] = attr(max_length=16)
+
+    with pytest.raises(ValueError, match="__parallax_cargoe__"):
+        _Hauling(id=1, label="a").edit(label="b")
+
+
+def test_a_root_declaring_a_slot_another_class_lays_out_opaque_is_refused() -> None:
+    # The same refusal for a name that IS a slot, but of somebody else's body: a
+    # root may speak for the layout it declares and no further, so an ancestor's
+    # slot cannot be reclassified from below where the ancestor's own copies
+    # would still shallow-copy it.
+    class _Reaching(Entity, _mint=FRAMEWORK_MINT):
+        __parallax_opaque_slots__ = (LIFECYCLE_STATE_SLOT,)
+
+    class _Reached(_Reaching, table="reached", namespace="parallax.compatibility"):
+        id: Attr[int] = attr(primary_key=True)
+        label: Attr[str] = attr(max_length=16)
+
+    with pytest.raises(ValueError, match=LIFECYCLE_STATE_SLOT):
+        _Reached(id=1, label="a").edit(label="b")
+
+
+class _Rolling(
+    Entity,
+    table="rolling",
+    namespace="parallax.compatibility",
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
+
+
+class _Tanker(
+    _Rolling, namespace="parallax.compatibility", inheritance=ConcreteSubtype(tag_value="tanker")
+):
+    capacity: Attr[int | None]
+
+
+def test_the_carried_layout_is_classified_once_per_class_and_again_per_subclass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The walk costs a whole edit, so classifying once per class is load-bearing
+    # for what an edit costs rather than tidiness — and every other test here
+    # would pass just as well against an edit that recomputed it every time.
+    # Counted rather than timed: two edits of one class classify once, and the
+    # subclass classifies again rather than answering with what its ancestor
+    # already worked out.
+    classified: list[type] = []
+    real = instance_state.classify_slots
+
+    def counting(cls: type) -> Any:
+        classified.append(cls)
+        return real(cls)
+
+    monkeypatch.setattr(instance_state, "classify_slots", counting)
+    _Rolling(id=1, label="a").edit(label="b")
+    _Rolling(id=2, label="b").edit(label="c")
+    _Tanker(id=3, label="c", capacity=4).edit(label="d")
+    _Tanker(id=4, label="d", capacity=5).edit(label="e")
+
+    assert classified == [_Rolling, _Tanker]
+    assert vars(_Rolling)[CARRIED_LAYOUT_ATTRIBUTE] is not vars(_Tanker)[CARRIED_LAYOUT_ATTRIBUTE]
+
+
+def test_a_subclass_does_not_borrow_an_ancestor_s_shorter_carried_layout() -> None:
+    # Why the memo is read out of `cls.__dict__` rather than through the MRO,
+    # graded by planting the shorter answer where an inherited lookup would find
+    # it. What is planted is a REAL classification — `Entity`'s own, made above
+    # the ballast slot — so borrowing it would return a copy silently missing
+    # that state rather than raising. The slot travels because the subclass
+    # classifies the layout it actually has.
+    class _Ballast(Entity, _mint=FRAMEWORK_MINT):
+        __slots__ = ("__parallax_ballast__",)
+
+    class _Barge(_Ballast, table="barge", namespace="parallax.compatibility"):
+        id: Attr[int] = attr(primary_key=True)
+        label: Attr[str] = attr(max_length=16)
+
+    slot = cast("Any", _Ballast).__dict__["__parallax_ballast__"]
+    setattr(_Ballast, CARRIED_LAYOUT_ATTRIBUTE, instance_state.classify_slots(Entity))
+    value = _Barge(id=1, label="a")
+    held = ["a"]
+    slot.__set__(value, held)
+
+    copied = value.edit(label="b")
+
+    assert slot.__get__(copied) == held
+    assert CARRIED_LAYOUT_ATTRIBUTE in vars(_Barge)
 
 
 class _Tag(Entity, table="tag", namespace="parallax.compatibility"):
