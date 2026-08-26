@@ -636,21 +636,21 @@ auxiliary slot reaches the copy's instance dictionary under its own names.
 """
 
 _COPIED_CONTAINER_SLOTS: Final = frozenset({"__pydantic_extra__", "__pydantic_private__"})
-"""The carried slots the copy gets its own outer mapping of rather than sharing.
+"""The whole carried complement: Pydantic's two name-keyed mappings.
 
 The framework keeps writing into both after the copy exists, so sharing one would
-make a write to the copy a write to its source. Every other carried slot holds
-whatever its author put there and travels as that object itself.
+make a write to the copy a write to its source; the copy gets its own outer
+mapping of each instead.
 """
 
 
 def test_the_framework_lays_out_exactly_the_slots_the_carry_classifies() -> None:
     # Both halves of the carry — which slots it derives rather than takes, and
     # which it gives the copy its own mapping of — are statements about the slots
-    # the FRAMEWORK lays out. Everything else in a layout belongs to the class
-    # that declared it and travels as the very object the source held, so a
-    # Pydantic release adding a slot of its own would silently take that default.
-    # It fails here instead, where the classification is stated.
+    # the FRAMEWORK lays out, and between them they account for that layout
+    # exactly. A Pydantic release adding a slot of its own would fall into the
+    # carried complement and silently take the shallow copy above; this equality
+    # fails there instead, where a new slot's semantics have to be classified.
     assert set(BaseModel.__slots__) | {COMPACT_STATE_SLOT, AUXILIARY_STATE_SLOT} == (
         _REBUILT_SLOTS | _COPIED_CONTAINER_SLOTS
     )
