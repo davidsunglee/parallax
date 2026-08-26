@@ -22,9 +22,11 @@ Nothing here gates. `just python-report-instance-state` is a `report`: no number
 it computes changes its exit code, because a total in bytes is machine- and
 interpreter-relative — `tracemalloc` figures move with CPython, and every CI job
 runs the floating `ubuntu-latest` label. What the report does compute is the two
-verdicts the contract names, and it prints them as an escalation block so a
-missed target is detected rather than noticed. The one thing it exits non-zero on
-is completeness: a matrix cell with no reading is named and refused.
+comparisons the contract names, and it DISPLAYS them as an escalation block so a
+missed target is read rather than noticed. Neither reaches the exit code — that is
+what keeps a `report` non-blocking under `core/spec/language-testing.md` §2 — and
+the one thing it exits non-zero on is completeness: a matrix cell with no reading
+is named and refused, which says there is nothing here to read.
 
 ## The three arms
 
@@ -37,12 +39,23 @@ in step with it.
 members the row carried passed by keyword and the absent ones left to their
 declared defaults, and its occurrences built the same way. It stands for no
 publication path and enters no aggregate. It is here because §2 states what a
-published instance retains against an *ordinary* one, which is neither of the two
+published instance costs against an *ordinary* one, which is neither of the two
 arms the aggregates divide, and because a claim about a comparison nobody
 measured is a claim about nothing. Note that an ordinary node records the
 presence a caller stated, where the legacy fixture recorded none — which is why
 `partial`, the one scenario whose caller omits most members, retains *less*
 ordinary than as a legacy fixture.
+
+**It carries no lifecycle state, and the arm refuses one.** `spec/python.md` §3
+says a plainly constructed instance has no views and no lifecycle state to carry,
+so its `lifecycle B` is zero on every scenario and its `retained B` and `bare B`
+are the same reading. This is the one place where the three arms are deliberately
+*not* given identical treatment, and it is what makes the ordinary comparison a
+comparison of things that exist: attaching a synthetic `SnapshotNodeState` to an
+ordinary node instead — as an earlier take on this reading did — puts 136 bytes
+per scenario into a denominator no caller's instance holds, and flatters the
+published side by about four points (43.8% would read 39.8% on 3.14, and 41.0%
+would read 37.2% on 3.13).
 
 **The legacy arm is a fixture, and has to be.**
 `tests/unit/_instance_state_support.legacy_publication` builds one node the way
@@ -62,15 +75,19 @@ retired with it.
 is what makes a ratio between two of them the representation's and not an
 accounting artifact. Every framework slot a declared class carries is carried by
 all three — an ordinary value holds the compact and auxiliary pointers exactly as
-a published one does, and an Entity of any backing holds the lifecycle slot. See
-*Four object layouts* below for why that sentence is load-bearing.
+a published one does, and an Entity of any backing holds the lifecycle *slot*.
+What differs is what is attached to that slot, which is a fact about the value
+rather than about its layout: publication attaches state under either backing and
+ordinary construction attaches none. See *Four object layouts* below for why the
+layout sentence is load-bearing.
 
 ## The figures
 
 Bytes reachable at the seam's innermost point while one node of that arm is held
 that were not reachable before the window opened. `retained B` carries the node's
-lifecycle state; `bare B` is the same node with none attached; `lifecycle B` is
-their difference. `cells` is what the backing holds — for the two fixture arms
+lifecycle state where that arm's node has one; `bare B` is the same node with none
+attached; `lifecycle B` is their difference, and zero on the ordinary arm, which
+has none to attach. `cells` is what the backing holds — for the two fixture arms
 the entries of its instance storage, and for the compact arm the positions of its
 one row, which is the presence bitmap plus every declared member plus every
 declared relationship. `read ns` is per declared field read, averaged over every
@@ -95,41 +112,41 @@ the compact one is divided into.
 
 | scenario | fields | arm | cells | retained B | bare B | lifecycle B | node µs | call µs | read ns | dump µs | transient B | peak B |
 |---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| shallow | 4 | ordinary | 4 | 720 | 584 | 136 | 1.22 | 0.23 | 28.9 | 0.77 | 1,000 | 1,720 |
-| | | legacy | 5 | 720 | 584 | 136 | 2.74 | 0.20 | 26.5 | 0.75 | 602 | 1,322 |
-| | | compact | 6 | 416 | 280 | 136 | 4.28 | 1.59 | 93.4 | 1.44 | 3,608 | 4,024 |
+| shallow | 4 | ordinary | 4 | 584 | 584 | 0 | 0.82 | 0.20 | 27.7 | 0.74 | 936 | 1,520 |
+|  |  | legacy | 5 | 720 | 584 | 136 | 2.73 | 0.23 | 29.0 | 0.73 | 602 | 1,322 |
+|  |  | compact | 6 | 416 | 280 | 136 | 4.26 | 1.57 | 89.0 | 1.40 | 3,608 | 4,024 |
 | | | **vs legacy** | | **42.2%** | **52.1%** | | | | | | | |
-| | | *vs ordinary* | | *42.2%* | *52.1%* | | | | | | | |
-| wide | 16 | ordinary | 16 | 1,512 | 1,376 | 136 | 2.14 | 0.24 | 25.0 | 1.15 | 2,152 | 3,664 |
-| | | legacy | 17 | 1,000 | 864 | 136 | 7.53 | 0.19 | 24.8 | 1.23 | 784 | 1,784 |
-| | | compact | 18 | 544 | 408 | 136 | 8.19 | 1.68 | 83.3 | 2.48 | 3,288 | 3,832 |
+| | | *vs ordinary* | | *28.8%* | *52.1%* | | | | | | | |
+| wide | 16 | ordinary | 16 | 1,376 | 1,376 | 0 | 1.71 | 0.21 | 24.6 | 1.14 | 2,088 | 3,464 |
+|  |  | legacy | 17 | 1,000 | 864 | 136 | 7.60 | 0.20 | 23.9 | 1.22 | 784 | 1,784 |
+|  |  | compact | 18 | 544 | 408 | 136 | 8.28 | 1.70 | 82.8 | 2.41 | 3,288 | 3,832 |
 | | | **vs legacy** | | **45.6%** | **52.8%** | | | | | | | |
-| | | *vs ordinary* | | *64.0%* | *70.3%* | | | | | | | |
-| nested | 5 | ordinary | 5 | 3,344 | 3,208 | 136 | 5.75 | 0.20 | 26.6 | 2.60 | 1,536 | 4,880 |
-| | | legacy | 6 | 2,920 | 2,784 | 136 | 9.56 | 0.26 | 26.9 | 2.56 | 2,264 | 5,184 |
-| | | compact | 7 | 1,232 | 1,096 | 136 | 13.78 | 1.75 | 88.2 | 6.17 | 4,553 | 5,785 |
+| | | *vs ordinary* | | *60.5%* | *70.3%* | | | | | | | |
+| nested | 5 | ordinary | 5 | 3,208 | 3,208 | 0 | 5.30 | 0.24 | 27.0 | 2.53 | 1,536 | 4,744 |
+|  |  | legacy | 6 | 2,920 | 2,784 | 136 | 9.61 | 0.22 | 28.3 | 2.51 | 2,264 | 5,184 |
+|  |  | compact | 7 | 1,232 | 1,096 | 136 | 13.81 | 1.85 | 88.1 | 6.08 | 4,553 | 5,785 |
 | | | **vs legacy** | | **57.8%** | **60.6%** | | | | | | | |
-| | | *vs ordinary* | | *63.2%* | *65.8%* | | | | | | | |
-| nullable | 10 | ordinary | 10 | 1,320 | 1,184 | 136 | 1.69 | 0.19 | 25.4 | 0.92 | 1,480 | 2,800 |
-| | | legacy | 11 | 1,000 | 864 | 136 | 5.11 | 0.15 | 23.2 | 0.91 | 832 | 1,832 |
-| | | compact | 12 | 496 | 360 | 136 | 4.61 | 1.49 | 79.2 | 1.83 | 3,288 | 3,784 |
+| | | *vs ordinary* | | *61.6%* | *65.8%* | | | | | | | |
+| nullable | 10 | ordinary | 10 | 1,184 | 1,184 | 0 | 1.25 | 0.21 | 24.0 | 0.88 | 1,416 | 2,600 |
+|  |  | legacy | 11 | 1,000 | 864 | 136 | 5.15 | 0.26 | 22.8 | 0.90 | 832 | 1,832 |
+|  |  | compact | 12 | 496 | 360 | 136 | 4.66 | 1.59 | 76.3 | 1.83 | 3,288 | 3,784 |
 | | | **vs legacy** | | **50.4%** | **58.3%** | | | | | | | |
-| | | *vs ordinary* | | *62.4%* | *69.6%* | | | | | | | |
-| partial | 10 | ordinary | 10 | 808 | 672 | 136 | 1.39 | 0.23 | 23.7 | 0.89 | 1,104 | 1,912 |
-| | | legacy | 11 | 1,000 | 864 | 136 | 4.87 | 0.23 | 23.5 | 0.90 | 832 | 1,832 |
-| | | compact | 12 | 464 | 328 | 136 | 3.66 | 1.52 | 78.7 | 1.82 | 3,344 | 3,808 |
+| | | *vs ordinary* | | *58.1%* | *69.6%* | | | | | | | |
+| partial | 10 | ordinary | 10 | 672 | 672 | 0 | 0.97 | 0.19 | 26.6 | 0.91 | 1,040 | 1,712 |
+|  |  | legacy | 11 | 1,000 | 864 | 136 | 4.97 | 0.11 | 23.4 | 0.94 | 832 | 1,832 |
+|  |  | compact | 12 | 464 | 328 | 136 | 3.63 | 1.61 | 77.9 | 1.81 | 3,344 | 3,808 |
 | | | **vs legacy** | | **53.6%** | **62.0%** | | | | | | | |
-| | | *vs ordinary* | | *42.6%* | *51.2%* | | | | | | | |
-| polymorphic | 7 | ordinary | 7 | 1,320 | 1,184 | 136 | 1.51 | 0.17 | 26.7 | 0.83 | 1,432 | 2,752 |
-| | | legacy | 8 | 808 | 672 | 136 | 4.06 | 0.18 | 26.4 | 0.86 | 624 | 1,432 |
-| | | compact | 9 | 440 | 304 | 136 | 4.76 | 1.51 | 81.5 | 1.71 | 3,224 | 3,664 |
+| | | *vs ordinary* | | *31.0%* | *51.2%* | | | | | | | |
+| polymorphic | 7 | ordinary | 7 | 1,184 | 1,184 | 0 | 1.08 | 0.20 | 25.1 | 0.83 | 1,368 | 2,552 |
+|  |  | legacy | 8 | 808 | 672 | 136 | 4.06 | 0.16 | 25.6 | 0.84 | 624 | 1,432 |
+|  |  | compact | 9 | 440 | 304 | 136 | 4.80 | 1.60 | 85.1 | 1.72 | 3,224 | 3,664 |
 | | | **vs legacy** | | **45.5%** | **54.8%** | | | | | | | |
-| | | *vs ordinary* | | *66.7%* | *74.3%* | | | | | | | |
-| *warmed* | 4 | ordinary | 5 | 958 | 822 | 136 | 2.23 | 0.16 | 31.0 | 0.76 | 1,114 | 2,072 |
-| | | legacy | 6 | 1,046 | 910 | 136 | 3.89 | 0.16 | 30.7 | 0.75 | 624 | 1,670 |
-| | | compact | 6 | 838 | 702 | 136 | 6.45 | 1.76 | 89.7 | 1.79 | 3,370 | 4,208 |
+| | | *vs ordinary* | | *62.8%* | *74.3%* | | | | | | | |
+| *warmed* | 4 | ordinary | 5 | 822 | 822 | 0 | 1.87 | 0.14 | 28.5 | 0.77 | 1,050 | 1,872 |
+|  |  | legacy | 6 | 1,046 | 910 | 136 | 3.80 | 0.17 | 28.6 | 0.74 | 624 | 1,670 |
+|  |  | compact | 6 | 838 | 702 | 136 | 6.49 | 1.86 | 91.2 | 1.82 | 3,370 | 4,208 |
 | | | *vs legacy* | | *19.9%* | *22.9%* | | | | | | | |
-| | | *vs ordinary* | | *12.5%* | *14.6%* | | | | | | | |
+| | | *vs ordinary* | | *-1.9%* | *14.6%* | | | | | | | |
 
 The representation change — the legacy arm divided into the compact one, which is
 what the ticket's target is stated over:
@@ -141,8 +158,8 @@ what the ticket's target is stated over:
 
 | operation, over the mix | ratio |
 |---|---:|
-| construction (per node) | 1.16x |
-| attribute read | 3.33x |
+| construction (per node) | 1.15x |
+| attribute read | 3.26x |
 | serialization | 2.14x |
 
 Stated separately, in no aggregate — the ordinary arm divided into the compact
@@ -150,48 +167,54 @@ one, which is the comparison §2 states:
 
 | comparison | ordinary | compact | |
 |---|---:|---:|---:|
-| published against ordinary (lifecycle included) | 9,024 | 3,592 | **60.2%** less |
-| what a published node retains | | | **39.8%** of an ordinary one |
+| published against ordinary (lifecycle where each holds it) | 8,208 | 3,592 | **56.2%** less |
+| what a published node retains | | | **43.8%** of an ordinary one |
+
+| operation, over the mix | ratio |
+|---|---:|
+| construction (per node) | 3.55x |
+| attribute read | 3.22x |
+| serialization | 2.17x |
 
 ### CPython 3.13.15
 
 | scenario | fields | arm | cells | retained B | bare B | lifecycle B | node µs | call µs | read ns | dump µs | transient B | peak B |
 |---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| shallow | 4 | ordinary | 4 | 696 | 560 | 136 | 1.19 | 0.21 | 25.6 | 0.72 | 912 | 1,608 |
-| | | legacy | 5 | 696 | 560 | 136 | 2.67 | 0.18 | 25.8 | 0.70 | 506 | 1,202 |
-| | | compact | 6 | 384 | 248 | 136 | 4.16 | 1.41 | 88.7 | 1.36 | 3,368 | 3,752 |
+| shallow | 4 | ordinary | 4 | 560 | 560 | 0 | 0.80 | 0.18 | 27.2 | 0.70 | 856 | 1,416 |
+|  |  | legacy | 5 | 696 | 560 | 136 | 2.74 | 0.19 | 27.0 | 0.70 | 506 | 1,202 |
+|  |  | compact | 6 | 384 | 248 | 136 | 4.15 | 1.52 | 88.5 | 1.43 | 3,368 | 3,752 |
 | | | **vs legacy** | | **44.8%** | **55.7%** | | | | | | | |
-| | | *vs ordinary* | | *44.8%* | *55.7%* | | | | | | | |
-| wide | 16 | ordinary | 16 | 1,488 | 1,352 | 136 | 2.15 | 0.23 | 23.2 | 1.12 | 2,064 | 3,552 |
-| | | legacy | 17 | 976 | 840 | 136 | 7.85 | 0.11 | 23.8 | 1.15 | 688 | 1,664 |
-| | | compact | 18 | 512 | 376 | 136 | 8.18 | 1.43 | 78.0 | 2.38 | 3,112 | 3,624 |
+| | | *vs ordinary* | | *31.4%* | *55.7%* | | | | | | | |
+| wide | 16 | ordinary | 16 | 1,352 | 1,352 | 0 | 1.71 | 0.23 | 23.2 | 1.13 | 2,008 | 3,360 |
+|  |  | legacy | 17 | 976 | 840 | 136 | 7.72 | 0.26 | 22.8 | 1.19 | 688 | 1,664 |
+|  |  | compact | 18 | 512 | 376 | 136 | 8.13 | 1.74 | 79.3 | 2.42 | 3,112 | 3,624 |
 | | | **vs legacy** | | **47.5%** | **55.2%** | | | | | | | |
-| | | *vs ordinary* | | *65.6%* | *72.2%* | | | | | | | |
-| nested | 5 | ordinary | 5 | 3,216 | 3,080 | 136 | 5.55 | 0.23 | 25.4 | 2.38 | 1,336 | 4,552 |
-| | | legacy | 6 | 2,792 | 2,656 | 136 | 9.05 | 0.19 | 25.6 | 2.39 | 2,168 | 4,960 |
-| | | compact | 7 | 1,064 | 928 | 136 | 13.32 | 1.56 | 83.5 | 5.72 | 4,449 | 5,513 |
+| | | *vs ordinary* | | *62.1%* | *72.2%* | | | | | | | |
+| nested | 5 | ordinary | 5 | 3,080 | 3,080 | 0 | 5.03 | 0.34 | 25.6 | 2.41 | 1,336 | 4,416 |
+|  |  | legacy | 6 | 2,792 | 2,656 | 136 | 9.25 | 0.06 | 26.5 | 2.40 | 2,168 | 4,960 |
+|  |  | compact | 7 | 1,064 | 928 | 136 | 13.46 | 1.64 | 81.8 | 5.71 | 4,449 | 5,513 |
 | | | **vs legacy** | | **61.9%** | **65.1%** | | | | | | | |
-| | | *vs ordinary* | | *66.9%* | *69.9%* | | | | | | | |
-| nullable | 10 | ordinary | 10 | 1,296 | 1,160 | 136 | 1.63 | 0.25 | 22.5 | 0.90 | 1,392 | 2,688 |
-| | | legacy | 11 | 976 | 840 | 136 | 5.16 | 0.36 | 20.9 | 0.88 | 728 | 1,704 |
-| | | compact | 12 | 464 | 328 | 136 | 4.64 | 1.39 | 78.3 | 1.82 | 3,112 | 3,576 |
+| | | *vs ordinary* | | *65.5%* | *69.9%* | | | | | | | |
+| nullable | 10 | ordinary | 10 | 1,160 | 1,160 | 0 | 1.24 | 0.21 | 23.6 | 0.87 | 1,336 | 2,496 |
+|  |  | legacy | 11 | 976 | 840 | 136 | 5.36 | 0.15 | 21.5 | 0.90 | 728 | 1,704 |
+|  |  | compact | 12 | 464 | 328 | 136 | 4.65 | 1.65 | 76.2 | 1.88 | 3,112 | 3,576 |
 | | | **vs legacy** | | **52.5%** | **61.0%** | | | | | | | |
-| | | *vs ordinary* | | *64.2%* | *71.7%* | | | | | | | |
-| partial | 10 | ordinary | 10 | 784 | 648 | 136 | 1.35 | 0.25 | 21.8 | 0.86 | 1,016 | 1,800 |
-| | | legacy | 11 | 976 | 840 | 136 | 4.88 | 0.21 | 20.8 | 0.87 | 728 | 1,704 |
-| | | compact | 12 | 432 | 296 | 136 | 3.58 | 1.36 | 76.0 | 1.78 | 3,232 | 3,664 |
+| | | *vs ordinary* | | *60.0%* | *71.7%* | | | | | | | |
+| partial | 10 | ordinary | 10 | 648 | 648 | 0 | 0.94 | 0.20 | 21.6 | 0.87 | 960 | 1,608 |
+|  |  | legacy | 11 | 976 | 840 | 136 | 4.94 | 0.10 | 21.1 | 0.89 | 728 | 1,704 |
+|  |  | compact | 12 | 432 | 296 | 136 | 3.59 | 1.38 | 78.2 | 1.83 | 3,232 | 3,664 |
 | | | **vs legacy** | | **55.7%** | **64.8%** | | | | | | | |
-| | | *vs ordinary* | | *44.9%* | *54.3%* | | | | | | | |
-| polymorphic | 7 | ordinary | 7 | 1,296 | 1,160 | 136 | 1.47 | 0.20 | 21.9 | 0.80 | 1,344 | 2,640 |
-| | | legacy | 8 | 784 | 648 | 136 | 4.02 | 0.22 | 22.9 | 0.81 | 520 | 1,304 |
-| | | compact | 9 | 408 | 272 | 136 | 4.67 | 1.54 | 79.6 | 1.65 | 3,112 | 3,520 |
+| | | *vs ordinary* | | *33.3%* | *54.3%* | | | | | | | |
+| polymorphic | 7 | ordinary | 7 | 1,160 | 1,160 | 0 | 1.05 | 0.22 | 23.2 | 0.78 | 1,288 | 2,448 |
+|  |  | legacy | 8 | 784 | 648 | 136 | 4.03 | 0.25 | 23.0 | 0.81 | 520 | 1,304 |
+|  |  | compact | 9 | 408 | 272 | 136 | 4.73 | 1.46 | 82.3 | 1.67 | 3,112 | 3,520 |
 | | | **vs legacy** | | **48.0%** | **58.0%** | | | | | | | |
-| | | *vs ordinary* | | *68.5%* | *76.6%* | | | | | | | |
-| *warmed* | 4 | ordinary | 5 | 934 | 798 | 136 | 2.13 | 0.20 | 25.6 | 0.71 | 1,020 | 1,954 |
-| | | legacy | 6 | 1,022 | 886 | 136 | 3.72 | 0.18 | 25.8 | 0.72 | 472 | 1,494 |
-| | | compact | 6 | 806 | 670 | 136 | 6.20 | 1.70 | 87.2 | 1.70 | 3,130 | 3,936 |
+| | | *vs ordinary* | | *64.8%* | *76.6%* | | | | | | | |
+| *warmed* | 4 | ordinary | 5 | 798 | 798 | 0 | 1.76 | 0.19 | 25.2 | 0.71 | 964 | 1,762 |
+|  |  | legacy | 6 | 1,022 | 886 | 136 | 3.70 | 0.24 | 24.7 | 0.72 | 472 | 1,494 |
+|  |  | compact | 6 | 806 | 670 | 136 | 6.27 | 1.62 | 89.2 | 1.70 | 3,130 | 3,936 |
 | | | *vs legacy* | | *21.1%* | *24.4%* | | | | | | | |
-| | | *vs ordinary* | | *13.7%* | *16.0%* | | | | | | | |
+| | | *vs ordinary* | | *-1.0%* | *16.0%* | | | | | | | |
 
 | aggregate | before | after | reduction |
 |---|---:|---:|---:|
@@ -200,22 +223,30 @@ one, which is the comparison §2 states:
 
 | operation, over the mix | ratio |
 |---|---:|
-| construction (per node) | 1.15x |
-| attribute read | 3.46x |
-| serialization | 2.16x |
+| construction (per node) | 1.14x |
+| attribute read | 3.43x |
+| serialization | 2.17x |
 
 | comparison | ordinary | compact | |
 |---|---:|---:|---:|
-| published against ordinary (lifecycle included) | 8,776 | 3,264 | **62.8%** less |
-| what a published node retains | | | **37.2%** of an ordinary one |
+| published against ordinary (lifecycle where each holds it) | 7,960 | 3,264 | **59.0%** less |
+| what a published node retains | | | **41.0%** of an ordinary one |
+
+| operation, over the mix | ratio |
+|---|---:|
+| construction (per node) | 3.59x |
+| attribute read | 3.37x |
+| serialization | 2.21x |
 
 The aggregate is `1 - sum(after) / sum(before)` over the summed columns, **never
 the mean of the per-scenario percentages**, which would weight a four-field node
 like a nested one. Each scenario's own percentage is printed as a diagnostic and
 enters no aggregate. The matrix is 3.14 and 3.13, derived from `requires-python`
-rather than authored: the floor is the range's lower bound and the ceiling is the
-interpreter taking the reading, which the support policy makes the latest
-supported minor.
+and the support policy rather than authored: the declared floor is the range's
+lower bound and "the latest minor + one prior minor" fixes its width above it.
+Which interpreter takes the reading decides nothing — closing the range at
+`sys.version_info` instead would silently drop the top row whenever the report
+ran on anything but the latest minor.
 
 ## What the escalation block said
 
@@ -234,22 +265,42 @@ either side:
 
 | operation | 3.14 | 3.13 | what it is |
 |---|---:|---:|---|
-| serialization | 2.14x | 2.16x | already accepted as an Interface fact — see below |
-| attribute read | 3.33x | 3.46x | a published node has no instance dictionary |
+| serialization | 2.14x | 2.17x | already accepted as an Interface fact — see below |
+| attribute read | 3.26x | 3.43x | a published node has no instance dictionary |
 
-**Construction is not among them, and the threshold did not move.** It was
-recorded here at 1.38x and 1.33x, and it is now 1.16x and 1.15x, because the
-figure the report prints was corrected to measure what its label claims. The
-earlier figure divided *one `construct` call* by *one fixture build*: the call
-also pays a call scope, a writer, root validation and factory buffering — about
-1.4–1.9 µs of work no node costs — which the fixture arms never pay, so the ratio
-charged the compact arm for a difference in scope and reported it as a difference
-in cost. The arms are now both timed at the one scope they share, the cost of one
-more node, and at that scope the compact arm is 1.11–1.18x across four runs on
-both runtimes — inside the 20% limit, and inside it by a narrow enough margin that
-a future change could put it back out. Two of the six scenarios (`partial` and
-`nullable`) are *faster* compact per node. The limit is 1.20x as it always was;
-what changed is the measurement.
+**Construction is not among them, and the 1.20x limit is the one it always was.**
+The figure was recorded here at 1.38x and 1.33x and now reads 1.15x and 1.14x; the
+limit never moved and the measurement is what changed. The earlier figure divided
+*one `construct` call* by *one fixture build*: the call also pays a call scope, a
+writer, root validation and factory buffering — about 1.4–1.9 µs of work no node
+costs — which the fixture arms never pay, so the ratio charged the compact arm for
+a difference in scope. Both arms are now timed per node, and at that scope the
+compact arm is 1.12–1.16x across the four runs recorded here. Two of the six scenarios
+(`partial` and `nullable`) are *faster* compact per node.
+
+**That figure is an upper bound rather than a like-for-like before and after, and
+the bias runs against the compact arm.** The per-node split cancels the *fixed*
+cost of a `construct` call and not its per-node one: the populated check, root
+validation, state-factory invocation and buffered attachment all scale with node
+count, so they stay inside the compact arm's `node µs`. The pre-flip path paid the
+same per-node work through the same call — that half of `EntityGraphConstruction`
+is unchanged either side of the flip — but the legacy arm is a fixture of the node
+*building* alone, so it pays none of it. Measured on 3.14 by timing a `construct`
+call's build callback against the whole call, that residue is about 0.2 µs per
+node after deducting the state creation and attach the fixture does pay, which
+puts the like-for-like node-building ratio near **1.12x** against the 1.15x
+printed. Closing the gap properly would mean a fixture reproducing a deleted
+construction call around live private production code, and that choice is open —
+see the report's own *what the arms are* block, which states the bias where a
+reader meets the number.
+
+**The ordinary construction ratio has no such bias, and is 3.55x and 3.59x.** A
+caller building an ordinary instance pays no construction call at all, so what
+that ratio compares is what each side actually costs: publishing one node is
+about three and a half times the cost of validating one. It is not a regression
+from anything — publication has always paid a call the constructor does not — and
+no ordinary ratio can reach the escalation block, which grades the representation
+change alone.
 
 **Serialization is a settled trade rather than a new finding.** A published
 value's `model_dump` running roughly twice an ordinary value's is stated at the
@@ -271,14 +322,29 @@ ordinary value's field read is a plain Pydantic model's, unchanged.
 comparison, and is now measured rather than asserted.** The aggregates above
 divide the legacy arm, which is the representation change. §2 and ADR 0011 state
 the figure against an *ordinary* instance, which the ordinary arm supplies:
-summed over the mix, **9,024 → 3,592 B on 3.14 and 8,776 → 3,264 B on 3.13** — a
-published node retains **39.8%** and **37.2%** of an ordinary one, a 60.2% and
-62.8% reduction. It runs slightly ahead of the legacy comparison because an
-ordinary node records the presence its caller stated where the legacy fixture
-recorded none, and it goes both ways per scenario: `partial`'s ordinary node is
-808 B against the fixture's 1,000, so its reduction against ordinary is 42.6%
-where its reduction against legacy is 53.6%. Neither figure enters the other's
-aggregate, and every table above says which comparison it makes.
+summed over the mix, **8,208 → 3,592 B on 3.14 and 7,960 → 3,264 B on 3.13** — a
+published node retains **43.8%** and **41.0%** of an ordinary one, a 56.2% and
+59.0% reduction. Each side carries what it holds: the published node its lifecycle
+state, the ordinary node none, because it has none. Compare the two backings alone
+and the figure is 33.8% and 30.8% — that is `bare B` against `bare B`, and it is
+what the row-versus-storage difference costs before the state either kind of node
+carries.
+
+The ordinary comparison goes both ways per scenario, because an ordinary node
+records the presence its caller stated where the legacy fixture recorded none:
+`partial`'s ordinary node is 672 B against the fixture's 1,000, so its reduction
+against ordinary is 31.0% where its reduction against legacy is 53.6%. Neither
+figure enters the other's aggregate, and every table above says which comparison
+it makes.
+
+**The excluded `warmed` scenario retains more published than ordinary**, by 16 B
+on 3.14 and 8 B on 3.13 — the only negative reduction anywhere in the reading. A
+`cached_property` result that lands in an ordinary node's instance dictionary
+lands in a published node's auxiliary slot, which is a fresh mapping rather than
+storage that already exists, so author-owned state is where the compact
+representation has nothing to save. This is the scenario the measurement contract
+holds outside every aggregate, and the direction of its result is why the
+disclosure matters rather than only the exclusion.
 
 ## What the scenarios are
 
@@ -327,10 +393,10 @@ of author-owned state added to every arm.
 | Pydantic | 2.13.4 / pydantic-core 2.46.4 on both |
 | Command | `just python-report-instance-state` |
 | Isolation | one fresh child interpreter per complete scenario, every arm inside that child |
-| Warm-up | 200 unsampled runs before every window |
+| Warm-up | 200 unsampled runs before every window, as each child's own instruments declare |
 | Timing samples | mean of 2,000 repetitions, taken with the line tracer uninstalled |
 | Construction scope | a 1-node build against an 11-node one under each arm, split into the per-node cost and the per-call remainder |
-| Repeatability | four independent whole-matrix runs returned byte-identical readings on both interpreters — every retained, bare, lifecycle, `cells`, transient and peak figure above is the same in all four, under all three arms; only the wall clock moved, and the escalation block's ratios with it — construction 1.11–1.18x, attribute read 3.27–3.46x, serialization 2.13–2.16x across the four |
+| Repeatability | four independent whole-matrix runs returned byte-identical readings on both interpreters — every retained, bare, lifecycle, `cells`, transient and peak figure above is the same in all four, under all three arms; only the wall clock moved, and the ratios with it — against the legacy arm, construction 1.12–1.16x, attribute read 3.22–3.54x, serialization 2.08–2.19x; against the ordinary arm, construction 3.54–3.60x, attribute read 3.16–3.45x, serialization 2.13–2.21x |
 
 The matrix is 3.14 and 3.13. The ticket names 3.12 as well, but commit `226db9d3`
 — already in this branch — set `requires-python = ">=3.13"` across all five
@@ -352,9 +418,10 @@ plan are already in the baseline the sample is compared against.
 **The lifecycle state is not excluded, and is measured as a difference.** It is
 built inside the window, so the reading that carries it counts it; `lifecycle B`
 is the difference between the two readings rather than a measurement of the state
-object alone. It is a uniform 136 bytes on every scenario and every arm, because
-the state rides a real slot on the `Entity` root under any backing and attaching
-it therefore resizes nothing.
+object alone. It is a uniform 136 bytes on every scenario under both publication
+arms, because the state rides a real slot on the `Entity` root under any backing
+and attaching it therefore resizes nothing — and zero under the ordinary arm,
+which has none.
 
 ## Four object layouts, and the rule for dividing them
 
@@ -438,7 +505,7 @@ three-arm reading above, for the reason the accounting rule gives.
 
 `slots` is the number of entries the node's instance storage held over the frozen
 tree, which is the fields plus its one relationship slot plus its lifecycle entry.
-It is the same figure the two-arm tables print as `cells` for the legacy arm,
+It is the same figure the three-arm tables print as `cells` for the legacy arm,
 which is one lower now that the lifecycle state rides a slot.
 
 Its `build µs` column is **not** the `node µs` column above and cannot be
@@ -452,7 +519,7 @@ Its `transient B` column is **not** the column of the same name above, and canno
 be compared with it. It was read as the high-water mark less the total measured
 the moment the construction returned, which for a node the collector has not yet
 reached is the mark less most of the node — so it understates both what the
-construction reached and what it freed again. The two-arm tables read the mark
+construction reached and what it freed again. The three-arm tables read the mark
 against the collected floor the run started from and subtract what the node keeps.
 There is no `peak B` column here for the same reason: the frozen reading never
 recorded one, and one derived from a figure that means something else would not
@@ -479,7 +546,7 @@ which the earlier figures appear to have included. Read the earlier figures as
 direction and these as the measured result. The measured aggregate is 51.8% where
 the directional estimate was 66%, and the difference is the same exclusion: the
 estimate's "before" carried payload the reading's does not, so the estimate divides
-a larger denominator. Against the ordinary arm the measured figure is 60.2%,
+a larger denominator. Against the ordinary arm the measured figure is 56.2%,
 which is nearer the estimate — some of that gap was the comparand rather than the
 payload — and it is still the exclusion that accounts for most of what is left.
 
@@ -520,6 +587,7 @@ which is the reading working as its subject requires: the polymorphic scenario
 carries every position, so each deep copy was overwritten and discarded rather
 than retained.
 
-The consequence for the two-arm comparison is that there is none left to make:
+The consequence for the legacy-against-compact comparison is that there is none
+left to make:
 the polymorphic scenario's construction time is a property of the backing being
 measured rather than partly a defect no longer being paid.

@@ -9,11 +9,19 @@ a byte reading is read against a floor the interpreter decides, so two arms
 compared across two processes would be compared across two floors.
 
 Keeping it out of the report's own module is structural. The `dbfree` suite that
-grades the report's verdicts imports that module whole, and
+grades what the report computes imports that module whole, and
 `core/spec/language-testing.md` §5 requires a whole-interpreter reading to be
 reachable only through an entry point that acquires an interpreter of its own. So
-nothing the suite imports binds a reader or reaches one: the reading lives here,
-and the only thing that runs it is a child.
+the report imports no instrument at all — the reading lives here, this file is
+imported by nothing, and the only thing that runs it is a child. A guard over
+call spellings can only catch the routes it was taught; an import that is not
+there has no route to teach.
+
+This file therefore also owns the module-identity refusal for the instruments.
+``memory_instruments`` is a generic name on a path this process does not own, and
+a module of that name already in ``sys.modules`` wins before any path entry is
+consulted, so a different sampling recipe would still produce numbers and they
+would not be the numbers the recorded baseline is stated over.
 
 The answer crosses back as one line of JSON on stdout, encoded by the report's
 own :func:`~instance_state_overhead.payload` so the encoder and the decoder stay
@@ -31,8 +39,18 @@ from time import perf_counter
 from typing import Any, Final, cast
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
+INSTRUMENTS: Final = WORKSPACE / "tests" / "unit"
+INSTRUMENT_MODULE: Final = INSTRUMENTS / "memory_instruments.py"
 
-sys.path.insert(0, str(WORKSPACE / "tests" / "unit"))
+sys.path.insert(0, str(INSTRUMENTS))
+
+import memory_instruments  # noqa: E402
+
+if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
+    raise ImportError(
+        f"this reading is taken through {INSTRUMENT_MODULE}, but "
+        f"'memory_instruments' resolved to {memory_instruments.__file__}"
+    )
 
 from _instance_state_support import (  # noqa: E402
     COMPACT,
@@ -60,23 +78,23 @@ from instance_state_overhead import (  # noqa: E402
 )
 
 
-def held(
-    scenario: Scenario,
-    arm: Callable[[Scenario, object | None], object],
-    *,
-    lifecycle: bool,
-) -> Seam:
+def held(scenario: Scenario, arm: Arm, *, lifecycle: bool) -> Seam:
     """One node of ``arm``, built inside the window and held at the sample.
 
     The lifecycle state is built inside the window too, so the reading that
     carries it counts it: an object allocated before the window would be borrowed
     rather than retained, and the difference between the two readings would be
     zero for the wrong reason.
+
+    ``lifecycle`` asks for the reading that carries state; whether the arm has
+    any to carry is the arm's own (:attr:`~_instance_state_support.Arm.lifecycle`),
+    so an ordinary node is read the same way twice rather than given state it
+    cannot hold.
     """
 
     def run(sample: Callable[[], None]) -> None:
-        state = scenario.state() if lifecycle else None
-        node = arm(scenario, state)
+        state = scenario.state() if lifecycle and arm.lifecycle else None
+        node = arm.node(scenario, state)
         sample()
         assert node is not None
 
@@ -148,7 +166,7 @@ def _construction_ns(scenario: Scenario, arm: Arm) -> tuple[float, float]:
 
 def measure_arm(scenario: Scenario, arm: Arm, field_names: tuple[str, ...]) -> ArmReading:
     """``arm``'s reading of ``scenario``, taken in this interpreter."""
-    node = arm.node(scenario, scenario.state())
+    node = arm.node(scenario, scenario.state() if arm.lifecycle else None)
 
     def read_fields() -> None:
         for name in field_names:
@@ -159,9 +177,9 @@ def measure_arm(scenario: Scenario, arm: Arm, field_names: tuple[str, ...]) -> A
 
     tracemalloc.start()
     try:
-        retained_bytes = retained(held(scenario, arm.node, lifecycle=True))
-        bare_bytes = retained(held(scenario, arm.node, lifecycle=False))
-        peak_bytes = peak(held(scenario, arm.node, lifecycle=True))
+        retained_bytes = retained(held(scenario, arm, lifecycle=True))
+        bare_bytes = retained(held(scenario, arm, lifecycle=False))
+        peak_bytes = peak(held(scenario, arm, lifecycle=True))
     finally:
         tracemalloc.stop()
     construct_ns, call_ns = _construction_ns(scenario, arm)
@@ -184,6 +202,7 @@ def measure(scenario: Scenario) -> Reading:
         scenario=scenario.name,
         summary=scenario.summary,
         fields=len(field_names),
+        warmup=WARMUP,
         ordinary=measure_arm(scenario, ORDINARY, field_names),
         legacy=measure_arm(scenario, LEGACY, field_names),
         compact=measure_arm(scenario, COMPACT, field_names),
