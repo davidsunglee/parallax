@@ -358,9 +358,11 @@ def test_a_build_callback_exception_propagates_unchanged() -> None:
     ],
 )
 def test_a_member_row_of_the_wrong_width_is_refused(members: Any) -> None:
-    # Width is the whole membership check a positional row needs: an undeclared
-    # member and a duplicate entry — the two rejections the identity-keyed algebra
-    # made separately — are both a row that is not the model's own width.
+    # Width is the whole membership check a positional row needs. A position
+    # names one declared member and nothing else, so an undeclared member has no
+    # position to occupy and a duplicate has one position to occupy — the two
+    # rejections the identity-keyed algebra made separately are unrepresentable
+    # rather than checked. What is left to refuse is a row of any other width.
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         order = writer.allocate(_ORDER)
         writer.populate(order, members, _ORDER_UNLOADED)
