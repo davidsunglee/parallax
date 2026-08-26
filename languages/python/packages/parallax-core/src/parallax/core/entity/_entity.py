@@ -50,7 +50,10 @@ from parallax.core.entity._expressions import (
 )
 from parallax.core.entity._instance_state import BackedModel, named_state
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
-from parallax.core.entity._pydantic_storage import attach_instance_state
+from parallax.core.entity._pydantic_storage import (
+    attach_instance_state,
+    carry_slots_beside_state,
+)
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -649,6 +652,7 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
             object.__setattr__(validated, py_name, value)
         for py_name, member in carried.items():
             attach_instance_state(validated, py_name, member)
+        carry_slots_beside_state(self, validated)
         for py_name in changes:
             if py_name not in record:
                 record[py_name] = getattr(self, py_name)
@@ -757,11 +761,12 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         either hands back is its own.
 
         Which domain data that is comes from ``BaseModel.__getstate__``, which
-        collects the instance dictionary by reading ``self.__dict__`` — a name no
-        class body can bind, because the framework presents instance state under
-        it. So the answer is the value's own storage where Pydantic backs it, and
-        a mapping derived from the row where it is published, which is why a
-        published value crosses as an ordinary one. The filter below applies to
+        collects the instance dictionary by reading ``self.__dict__``. No class body
+        binds that name, because the framework presents instance state under it, so
+        the answer is the value's own storage where Pydantic backs it and a mapping
+        derived from the row where it is published — which is why a published value
+        crosses as an ordinary one — unless an authored ``__getattribute__``, which
+        reservation does not reach, answers the read in place of both. The filter below applies to
         whichever mapping arrives, so no lifecycle state under the slot's name
         survives this either way, and the read the entry-point guard makes of the
         value's backing is a separate read from this one.

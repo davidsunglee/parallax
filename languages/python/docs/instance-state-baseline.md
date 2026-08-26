@@ -76,7 +76,7 @@ every field of the node. Timings are recorded for direction only.
 
 The aggregate COR-111 accepts against is `1 - sum(after) / sum(before)` over the
 two summed columns, never the mean of per-scenario percentages, and over two
-readings taken on the same object layout (*Two object layouts*, below — these
+readings taken on the same object layout (*Three object layouts*, below — these
 sums are the layout that carries no framework slots). The sums are recorded here
 and the arithmetic is deliberately not performed: there is no "after" yet.
 

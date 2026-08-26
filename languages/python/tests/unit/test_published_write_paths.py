@@ -281,6 +281,33 @@ def test_an_answered_mutator_keeps_the_arity_dict_gives_it() -> None:
         cast("Any", {}).pop("missing", 1, 2)
 
 
+_KEYWORD_REFUSALS: tuple[Callable[[Any], object], ...] = (
+    lambda state: state.__ior__(state={"memo": 1}),
+    lambda state: state.popitem(self=1),
+    lambda state: state.clear(self=1),
+)
+
+
+def test_an_answered_mutator_binds_no_keyword_to_a_parameter_of_its_own() -> None:
+    # Every parameter of `dict`'s own methods is positional-only, because they are
+    # C functions — so a keyword reaching one is data or an error and is never a
+    # parameter name. An answered mutator spelling a parameter keyword-bindable
+    # refuses a call `dict` honours by colliding with the data key of the same
+    # spelling, which is a different mapping rather than a stricter one.
+    value = _crate()
+    state = cast("Any", value.__dict__)
+    state.__init__(self=7, state=8)
+    assert auxiliary(value) == {"self": 7, "state": 8}
+    plain: Any = {}
+    plain.__init__(self=7, state=8)
+    assert plain == {"self": 7, "state": 8}
+    for refuse in _KEYWORD_REFUSALS:
+        with pytest.raises(TypeError):
+            refuse(cast("Any", _crate().__dict__))
+        with pytest.raises(TypeError):
+            refuse(cast("Any", {"memo": 1}))
+
+
 _ROW_MUTATIONS: tuple[Callable[[dict[str, Any]], object], ...] = (
     lambda state: state.__setitem__("label", "y"),
     lambda state: state.update(label="y"),
@@ -474,6 +501,23 @@ def test_that_named_state_carries_author_owned_state_the_way_ordinary_backing_do
     cast("dict[str, Any]", ordinary.__dict__)["third_party_cache"] = 7
     assert ordinary.warmed == 10
     assert real_storage(ordinary.edit(label="y")) == real_storage(edited)
+
+
+def test_that_a_published_value_edits_out_of_the_same_object_layout_too() -> None:
+    # `named_state` answers what a value holds under a NAME, and Pydantic keeps a
+    # `PrivateAttr` in a slot of its own instead — so the row a published value
+    # publishes cannot be the whole of what its edit carries either. `allocate`
+    # gives a shell that slot at the declared defaults, and the edit has to carry
+    # what the value holds there rather than restore those defaults.
+    value = _crate()
+    cast("Any", value)._mark = 9
+    edited = value.edit(label="y")
+    assert cast("Any", edited)._mark == 9
+    assert cast("Any", value.edit())._mark == 9
+    # The private slot is a mapping the object layout gives every value of a class
+    # declaring one, and it is the only mapping this one holds.
+    assert _dict_referents(value) == [{"_mark": 9}]
+    assert real_storage(value) == {}
 
 
 def test_a_published_value_object_edits_out_of_its_row_the_same_way() -> None:

@@ -16,7 +16,10 @@ from typing import TYPE_CHECKING, Final
 
 from parallax.core.entity._errors import EditError, EditViolation
 from parallax.core.entity._instance_state import named_state
-from parallax.core.entity._pydantic_storage import replace_instance_state
+from parallax.core.entity._pydantic_storage import (
+    carry_slots_beside_state,
+    replace_instance_state,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Container
@@ -61,8 +64,14 @@ def partition_declared(
     An edit replaces the first half and preserves the second unchanged, which is
     what keeps a materialized node's relationship views and lifecycle state
     readable on the copy it derives. The second half is a complement rather than
-    an enumerated slot list, so a new kind of instance state travels correctly
+    an enumerated key list, so a new kind of instance state travels correctly
     without either caller learning its name.
+
+    That complement reaches what a value holds under a NAME and nothing else, so
+    it is half of what an edit carries: Pydantic's object layout keeps private
+    attributes in a slot beside the storage, where no key of this mapping names
+    them, and :func:`~parallax.core.entity._pydantic_storage.carry_slots_beside_state`
+    is the other half every branch pairs with this one.
 
     A derived cache is the one thing that complement drops: a slot the class
     declares a ``functools.cached_property`` (:func:`_is_derived_cache`) holds an
@@ -104,10 +113,17 @@ def restate[M: BaseModel](value: M, state: dict[str, object]) -> M:
     inherited copy door is refused. ``state`` lands in the copy's own storage
     through Pydantic's own slot descriptor, so no name a class body binds decides
     what the copy ends up holding.
+
+    Storage and the populated-member set are the two slots ``state`` is worth,
+    and :func:`~parallax.core.entity._pydantic_storage.carry_slots_beside_state`
+    carries the rest of the source's layout onto the copy, which is what stops a
+    kind of instance state Pydantic keeps outside the storage from being reset to
+    a fresh instance's defaults.
     """
     restated = type(value).model_construct()
     replace_instance_state(restated, state)
     object.__setattr__(restated, "__pydantic_fields_set__", set(value.__pydantic_fields_set__))
+    carry_slots_beside_state(value, restated)
     return restated
 
 

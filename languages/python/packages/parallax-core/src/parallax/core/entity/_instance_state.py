@@ -308,11 +308,18 @@ class _PresentedState(dict[str, Any]):
     state builds one of these, so what a build costs is ``dict``'s own
     initializer and one slot write rather than a Python frame. That bypass is
     what leaves the initializer free to answer a caller rather than a build.
+
+    Every parameter answered here is positional-only, because the C methods these
+    stand in for have no other kind: a keyword reaching one of them is a data key
+    or an error, never a parameter name. Spelling one keyword-bindable would make
+    the presentation refuse ``state.__init__(self=7)``, which ``dict`` stores, or
+    accept ``state |= ...`` spelled with a keyword, which ``dict`` rejects — a
+    different mapping either way rather than a stricter one.
     """
 
     __slots__ = ("_value",)
 
-    def __init__(self, *state: Any, **members: Any) -> None:
+    def __init__(self, /, *state: Any, **members: Any) -> None:
         self.update(*state, **members)
 
     def __setitem__(self, key: str, item: Any, /) -> None:
@@ -333,7 +340,7 @@ class _PresentedState(dict[str, Any]):
         for key, item in dict(*state, **members).items():
             self[key] = item
 
-    def __ior__(self, state: Any) -> _PresentedState:
+    def __ior__(self, state: Any, /) -> _PresentedState:
         self.update(state)
         return self
 
@@ -350,7 +357,7 @@ class _PresentedState(dict[str, Any]):
         del self[key]
         return item
 
-    def popitem(self) -> tuple[str, Any]:
+    def popitem(self, /) -> tuple[str, Any]:
         if not self:
             return super().popitem()
         key = next(reversed(self))
@@ -358,7 +365,7 @@ class _PresentedState(dict[str, Any]):
         del self[key]
         return key, item
 
-    def clear(self) -> None:
+    def clear(self, /) -> None:
         for key in self:
             self._warmed(key)
         warmed = _auxiliary(self._value)
