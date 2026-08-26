@@ -9,7 +9,7 @@ matrix being the supported minors, an aggregate dividing sums rather than
 averaging percentages, the ordinary arm staying out of both, construction being
 split into a per-node cost and a per-call one, the construction ratio being
 corrected by the per-node work the legacy fixture never reproduced and the
-regression rule grading that corrected figure, the escalation block naming a
+regression rule being stated over that corrected figure, the escalation block naming a
 missed target and a regression past the limit, and a matrix cell with no reading
 ending the run instead of thinning the table.
 
@@ -38,6 +38,7 @@ import tomllib
 from time import perf_counter
 from typing import cast
 
+import _instance_state_support as support
 import pytest
 from _instance_state_support import (
     ARMS,
@@ -50,6 +51,7 @@ from _instance_state_support import (
     Scenario,
     compact_callback_ns,
 )
+from pydantic import BaseModel
 
 import instance_state_overhead as report
 from parallax.core.entity import lifecycle_state_of
@@ -285,6 +287,35 @@ def test_the_compact_arm_times_its_own_callbacks_and_leaves_the_call_a_remainder
     assert 0.0 < inside < whole
 
 
+def test_the_compact_arm_prices_every_attach_the_legacy_fixture_also_pays(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The residue is added to the LEGACY side, so common work inside it lands
+    there twice and flatters the compact arm. The lifecycle attach is the case no
+    callback can reach — ``construct`` performs it in its own loop — so the arm
+    repeats it once per node inside its timed span, which is what keeps it out."""
+    scenario = SCENARIOS[0]
+    attached = _counted_attaches(monkeypatch)
+    compact_callback_ns(scenario, report.MARGINAL_NODES)
+    assert len(attached) == report.MARGINAL_NODES
+    attached.clear()
+    LEGACY.graph(scenario, report.MARGINAL_NODES)
+    assert len(attached) == report.MARGINAL_NODES
+
+
+def _counted_attaches(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Every lifecycle attach the support module makes itself, as it makes it."""
+    attached: list[object] = []
+    attach = support.attach_lifecycle_state
+
+    def counted(value: BaseModel, state: object) -> None:
+        attached.append(value)
+        attach(value, state)
+
+    monkeypatch.setattr(support, "attach_lifecycle_state", counted)
+    return attached
+
+
 def test_each_operation_is_reported_against_the_ordinary_arm_as_well() -> None:
     reading = _reading(
         "shallow",
@@ -380,7 +411,7 @@ def test_the_escalation_block_names_a_representative_operation_past_its_limit() 
     assert "serialization" not in raised
 
 
-def test_the_regression_rule_grades_the_like_for_like_figure_and_not_the_raw_one() -> None:
+def test_the_regression_rule_is_stated_over_the_like_for_like_figure_not_the_raw_one() -> None:
     corrected = _reading(
         "shallow",
         retained=(1_000, 100),
@@ -471,7 +502,7 @@ def test_every_scenario_both_aggregates_and_every_timing_appear_for_every_runtim
         assert printed.count(scenario.name) >= 2
     assert printed.count("primary (lifecycle included)") == 2
     assert printed.count("secondary (lifecycle excluded)") == 2
-    assert printed.count("published vs ordinary (lifecycle included)") == 2
+    assert printed.count("published vs ordinary (lifecycle where each holds it)") == 2
     headers = [line for line in printed.splitlines() if line.startswith("scenario ")]
     assert len(headers) == 2
     for column in (
@@ -505,7 +536,7 @@ def test_each_printed_reduction_names_the_arm_it_divides() -> None:
     assert "stated separately, in no aggregate — ordinary arm against compact" in printed
 
 
-def test_construction_is_printed_both_ways_and_the_scope_block_says_which_is_graded() -> None:
+def test_construction_is_printed_both_ways_and_the_scope_block_says_which_rules() -> None:
     matrix = _matrix()
     matrix["3.14"]["shallow"] = _reading(
         "shallow", compact_ns=(1_300.0, 20.0, 500.0), scaffolding_ns=300.0
@@ -521,7 +552,7 @@ def test_construction_is_printed_both_ways_and_the_scope_block_says_which_is_gra
         report.like_for_like_ratio(readings, report.OPERATIONS[0]), abs=5e-3
     )
     assert raw > corrected
-    assert "THE 20% RULE GRADES THE LIKE-FOR-LIKE FIGURE," in printed
+    assert "THE 20% RULE IS STATED OVER THE LIKE-FOR-LIKE FIGURE," in printed
 
 
 def test_the_escalation_block_reaches_what_the_report_prints() -> None:
