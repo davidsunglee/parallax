@@ -164,6 +164,45 @@ def _construction_ns(scenario: Scenario, arm: Arm) -> tuple[float, float]:
     return marginal(_elapsed_ns(one), _elapsed_ns(many))
 
 
+def _callback_ns(scenario: Scenario, arm: Arm, count: int) -> float:
+    """Mean nanoseconds one ``count``-node call of ``arm`` spends inside its own
+    callbacks, over :data:`REPETITIONS` calls.
+
+    Summed per call rather than read off one window, because the quantity is a
+    span inside each call rather than the call itself. Every clock read is inside
+    the measured call and none is inside the call :func:`_construction_ns` times,
+    so the timing this feeds cannot move the timing it corrects.
+    """
+    measured = arm.callbacks_ns
+    assert measured is not None, arm.name
+    with untraced():
+        for _ in range(WARMUP):
+            measured(scenario, count)
+        total = 0.0
+        for _ in range(REPETITIONS):
+            total += measured(scenario, count)
+    return total / REPETITIONS
+
+
+def _scaffolding_ns(scenario: Scenario, arm: Arm, construct_ns: float) -> float:
+    """What one more node of ``arm``'s call costs OUTSIDE the callbacks the arm
+    supplies — the per-node work the legacy fixture never reproduces.
+
+    Zero for an arm whose call is a loop over its own node builder: there is
+    nothing outside that builder to spend time in, so the figure is a fact about
+    the arm rather than a measurement it declined to take.
+
+    Split the same way ``construct_ns`` was, so the call's fixed cost cancels
+    from both and what is left is per-node on both sides.
+    """
+    if arm.callbacks_ns is None:
+        return 0.0
+    inside_per_node, _ = marginal(
+        _callback_ns(scenario, arm, 1), _callback_ns(scenario, arm, MARGINAL_NODES)
+    )
+    return construct_ns - inside_per_node
+
+
 def measure_arm(scenario: Scenario, arm: Arm, field_names: tuple[str, ...]) -> ArmReading:
     """``arm``'s reading of ``scenario``, taken in this interpreter."""
     node = arm.node(scenario, scenario.state() if arm.lifecycle else None)
@@ -190,6 +229,7 @@ def measure_arm(scenario: Scenario, arm: Arm, field_names: tuple[str, ...]) -> A
         peak_bytes=peak_bytes,
         construct_ns=construct_ns,
         call_ns=call_ns,
+        scaffolding_ns=_scaffolding_ns(scenario, arm, construct_ns),
         read_ns=_elapsed_ns(read_fields, per=len(field_names)),
         dump_ns=_elapsed_ns(dump),
     )

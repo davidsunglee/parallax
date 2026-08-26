@@ -18,6 +18,14 @@ what a published node retains against one a caller made. That is the comparison
 `spec/python.md` §2's Interface statement is made over, and this reading is what
 measures it.
 
+**Not every timing is like for like, and the one that is not is corrected by a
+number the report derives.** Retained bytes and the two read timings compare one
+node against one node under each arm. Construction does not: a compact node
+arrives from a call that does per-node work the legacy fixture reproduces none of,
+so the report measures that work as `outside µs` and prints the construction ratio
+twice — once arm against arm, once with the difference added to the legacy side.
+The second is the before and after, and it is the one the 20% rule grades.
+
 Nothing here gates. `just python-report-instance-state` is a `report`: no number
 it computes changes its exit code, because a total in bytes is machine- and
 interpreter-relative — `tracemalloc` figures move with CPython, and every CI job
@@ -96,57 +104,76 @@ against the collected floor it starts from, and `transient B` is what it
 allocated and freed again on the way there — that mark less what the node keeps,
 so neither column counts the node twice and neither leaves it out.
 
-**Construction is two columns, because the arms' calls are not the same size.**
+**Construction is three columns, because the arms' calls are not the same size.**
 `node µs` is what one MORE node of that arm costs and `call µs` is what one call
 costs besides the nodes it builds, separated by timing a one-node build against
-an eleven-node one under each arm. The split is what makes construction
+an eleven-node one under each arm. That split is what makes construction
 comparable at all: a compact node arrives from a `construct` call that also pays
 a call scope, a writer, root validation and factory buffering, where a fixture
-arm builds a node and nothing else — so `call µs` is about 1.4–1.9 µs under the
+arm builds a node and nothing else — so `call µs` is about 1.3–2.0 µs under the
 compact arm and indistinguishable from zero under the other two, and a per-call
-figure would charge the compact arm for work no *node* costs. Every ratio below
-is over `node µs`. Two reduction rows follow each scenario, each naming the arm
-the compact one is divided into.
+figure would charge the compact arm for work no *node* costs.
+
+`outside µs` is the third column, and it is what that split does **not** remove.
+A `construct` call's populated check, root validation, per-node resolution view,
+buffered attach and root tuple all scale with node count, so they stay inside the
+compact arm's `node µs` — and the legacy fixture, which reproduces the node
+*building* alone, pays none of them although the pre-flip path paid all of them
+through the same call. The compact arm's call is therefore measured a second time
+with its own build callback and state factory timed from inside them, and what is
+left over is this column: **0.25–0.47 µs per node** across five whole-matrix runs
+on both interpreters. It is exactly zero for the two fixture arms, whose call
+*is* a loop over their node builder, and it is taken in a separate call so that no
+clock runs inside the one `node µs` is measured over.
+
+**So every ratio below is printed twice, and the 20% rule grades the right-hand
+one.** *Arm against arm* divides the two `node µs` columns as each was timed.
+*Like for like* adds the compact arm's `outside µs` to the legacy side, which is
+what the pre-flip path paid; that is the before and after the rule is stated over.
+For attribute read and serialization the two columns are equal by construction —
+one call against one call on one node — which is what shows which operation needed
+a correction rather than asserting it. Two reduction rows follow each scenario,
+each naming the arm the compact one is divided into.
 
 ### CPython 3.14.7
 
-| scenario | fields | arm | cells | retained B | bare B | lifecycle B | node µs | call µs | read ns | dump µs | transient B | peak B |
-|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| shallow | 4 | ordinary | 4 | 584 | 584 | 0 | 0.82 | 0.20 | 27.7 | 0.74 | 936 | 1,520 |
-|  |  | legacy | 5 | 720 | 584 | 136 | 2.73 | 0.23 | 29.0 | 0.73 | 602 | 1,322 |
-|  |  | compact | 6 | 416 | 280 | 136 | 4.26 | 1.57 | 89.0 | 1.40 | 3,608 | 4,024 |
-| | | **vs legacy** | | **42.2%** | **52.1%** | | | | | | | |
-| | | *vs ordinary* | | *28.8%* | *52.1%* | | | | | | | |
-| wide | 16 | ordinary | 16 | 1,376 | 1,376 | 0 | 1.71 | 0.21 | 24.6 | 1.14 | 2,088 | 3,464 |
-|  |  | legacy | 17 | 1,000 | 864 | 136 | 7.60 | 0.20 | 23.9 | 1.22 | 784 | 1,784 |
-|  |  | compact | 18 | 544 | 408 | 136 | 8.28 | 1.70 | 82.8 | 2.41 | 3,288 | 3,832 |
-| | | **vs legacy** | | **45.6%** | **52.8%** | | | | | | | |
-| | | *vs ordinary* | | *60.5%* | *70.3%* | | | | | | | |
-| nested | 5 | ordinary | 5 | 3,208 | 3,208 | 0 | 5.30 | 0.24 | 27.0 | 2.53 | 1,536 | 4,744 |
-|  |  | legacy | 6 | 2,920 | 2,784 | 136 | 9.61 | 0.22 | 28.3 | 2.51 | 2,264 | 5,184 |
-|  |  | compact | 7 | 1,232 | 1,096 | 136 | 13.81 | 1.85 | 88.1 | 6.08 | 4,553 | 5,785 |
-| | | **vs legacy** | | **57.8%** | **60.6%** | | | | | | | |
-| | | *vs ordinary* | | *61.6%* | *65.8%* | | | | | | | |
-| nullable | 10 | ordinary | 10 | 1,184 | 1,184 | 0 | 1.25 | 0.21 | 24.0 | 0.88 | 1,416 | 2,600 |
-|  |  | legacy | 11 | 1,000 | 864 | 136 | 5.15 | 0.26 | 22.8 | 0.90 | 832 | 1,832 |
-|  |  | compact | 12 | 496 | 360 | 136 | 4.66 | 1.59 | 76.3 | 1.83 | 3,288 | 3,784 |
-| | | **vs legacy** | | **50.4%** | **58.3%** | | | | | | | |
-| | | *vs ordinary* | | *58.1%* | *69.6%* | | | | | | | |
-| partial | 10 | ordinary | 10 | 672 | 672 | 0 | 0.97 | 0.19 | 26.6 | 0.91 | 1,040 | 1,712 |
-|  |  | legacy | 11 | 1,000 | 864 | 136 | 4.97 | 0.11 | 23.4 | 0.94 | 832 | 1,832 |
-|  |  | compact | 12 | 464 | 328 | 136 | 3.63 | 1.61 | 77.9 | 1.81 | 3,344 | 3,808 |
-| | | **vs legacy** | | **53.6%** | **62.0%** | | | | | | | |
-| | | *vs ordinary* | | *31.0%* | *51.2%* | | | | | | | |
-| polymorphic | 7 | ordinary | 7 | 1,184 | 1,184 | 0 | 1.08 | 0.20 | 25.1 | 0.83 | 1,368 | 2,552 |
-|  |  | legacy | 8 | 808 | 672 | 136 | 4.06 | 0.16 | 25.6 | 0.84 | 624 | 1,432 |
-|  |  | compact | 9 | 440 | 304 | 136 | 4.80 | 1.60 | 85.1 | 1.72 | 3,224 | 3,664 |
-| | | **vs legacy** | | **45.5%** | **54.8%** | | | | | | | |
-| | | *vs ordinary* | | *62.8%* | *74.3%* | | | | | | | |
-| *warmed* | 4 | ordinary | 5 | 822 | 822 | 0 | 1.87 | 0.14 | 28.5 | 0.77 | 1,050 | 1,872 |
-|  |  | legacy | 6 | 1,046 | 910 | 136 | 3.80 | 0.17 | 28.6 | 0.74 | 624 | 1,670 |
-|  |  | compact | 6 | 838 | 702 | 136 | 6.49 | 1.86 | 91.2 | 1.82 | 3,370 | 4,208 |
-| | | *vs legacy* | | *19.9%* | *22.9%* | | | | | | | |
-| | | *vs ordinary* | | *-1.9%* | *14.6%* | | | | | | | |
+| scenario | fields | arm | cells | retained B | bare B | lifecycle B | node µs | call µs | outside µs | read ns | dump µs | transient B | peak B |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| shallow | 4 | ordinary | 4 | 584 | 584 | 0 | 0.81 | 0.19 | 0.00 | 28.6 | 0.73 | 936 | 1,520 |
+|  |  | legacy | 5 | 720 | 584 | 136 | 2.87 | 0.13 | 0.00 | 27.8 | 0.75 | 602 | 1,322 |
+|  |  | compact | 6 | 416 | 280 | 136 | 4.33 | 1.54 | 0.27 | 106.4 | 1.47 | 3,608 | 4,024 |
+| | | **vs legacy** | | **42.2%** | **52.1%** | | | | | | | | |
+| | | *vs ordinary* | | *28.8%* | *52.1%* | | | | | | | | |
+| wide | 16 | ordinary | 16 | 1,376 | 1,376 | 0 | 1.78 | 0.19 | 0.00 | 24.8 | 1.18 | 2,088 | 3,464 |
+|  |  | legacy | 17 | 1,000 | 864 | 136 | 7.66 | 0.25 | 0.00 | 24.9 | 1.25 | 784 | 1,784 |
+|  |  | compact | 18 | 544 | 408 | 136 | 8.26 | 1.80 | 0.29 | 84.3 | 2.51 | 3,288 | 3,832 |
+| | | **vs legacy** | | **45.6%** | **52.8%** | | | | | | | | |
+| | | *vs ordinary* | | *60.5%* | *70.3%* | | | | | | | | |
+| nested | 5 | ordinary | 5 | 3,208 | 3,208 | 0 | 5.23 | 0.49 | 0.00 | 26.6 | 2.54 | 1,536 | 4,744 |
+|  |  | legacy | 6 | 2,920 | 2,784 | 136 | 9.73 | 0.15 | 0.00 | 26.8 | 2.51 | 2,264 | 5,184 |
+|  |  | compact | 7 | 1,232 | 1,096 | 136 | 13.71 | 1.95 | 0.26 | 86.9 | 5.98 | 4,553 | 5,785 |
+| | | **vs legacy** | | **57.8%** | **60.6%** | | | | | | | | |
+| | | *vs ordinary* | | *61.6%* | *65.8%* | | | | | | | | |
+| nullable | 10 | ordinary | 10 | 1,184 | 1,184 | 0 | 1.24 | 0.25 | 0.00 | 23.4 | 0.91 | 1,416 | 2,600 |
+|  |  | legacy | 11 | 1,000 | 864 | 136 | 5.26 | 0.12 | 0.00 | 23.8 | 0.91 | 832 | 1,832 |
+|  |  | compact | 12 | 496 | 360 | 136 | 4.68 | 1.64 | 0.27 | 82.0 | 1.86 | 3,288 | 3,784 |
+| | | **vs legacy** | | **50.4%** | **58.3%** | | | | | | | | |
+| | | *vs ordinary* | | *58.1%* | *69.6%* | | | | | | | | |
+| partial | 10 | ordinary | 10 | 672 | 672 | 0 | 0.98 | 0.20 | 0.00 | 25.9 | 0.89 | 1,040 | 1,712 |
+|  |  | legacy | 11 | 1,000 | 864 | 136 | 5.02 | 0.12 | 0.00 | 26.4 | 0.89 | 832 | 1,832 |
+|  |  | compact | 12 | 464 | 328 | 136 | 3.73 | 1.54 | 0.32 | 82.7 | 1.83 | 3,344 | 3,808 |
+| | | **vs legacy** | | **53.6%** | **62.0%** | | | | | | | | |
+| | | *vs ordinary* | | *31.0%* | *51.2%* | | | | | | | | |
+| polymorphic | 7 | ordinary | 7 | 1,184 | 1,184 | 0 | 1.10 | 0.18 | 0.00 | 26.7 | 0.81 | 1,368 | 2,552 |
+|  |  | legacy | 8 | 808 | 672 | 136 | 4.11 | 0.12 | 0.00 | 26.2 | 0.85 | 624 | 1,432 |
+|  |  | compact | 9 | 440 | 304 | 136 | 4.81 | 1.51 | 0.34 | 85.5 | 1.66 | 3,224 | 3,664 |
+| | | **vs legacy** | | **45.5%** | **54.8%** | | | | | | | | |
+| | | *vs ordinary* | | *62.8%* | *74.3%* | | | | | | | | |
+| *warmed* | 4 | ordinary | 5 | 822 | 822 | 0 | 1.77 | 0.24 | 0.00 | 29.3 | 0.77 | 1,050 | 1,872 |
+|  |  | legacy | 6 | 1,046 | 910 | 136 | 4.02 | 0.06 | 0.00 | 29.1 | 0.78 | 624 | 1,670 |
+|  |  | compact | 6 | 838 | 702 | 136 | 6.59 | 1.87 | 0.40 | 90.4 | 1.85 | 3,370 | 4,208 |
+| | | *vs legacy* | | *19.9%* | *22.9%* | | | | | | | | |
+| | | *vs ordinary* | | *-1.9%* | *14.6%* | | | | | | | | |
 
 The representation change — the legacy arm divided into the compact one, which is
 what the ticket's target is stated over:
@@ -156,11 +183,11 @@ what the ticket's target is stated over:
 | **primary** (lifecycle included) | 7,448 | 3,592 | **51.8%** |
 | **secondary** (lifecycle excluded) | 6,632 | 2,776 | **58.1%** |
 
-| operation, over the mix | ratio |
-|---|---:|
-| construction (per node) | 1.15x |
-| attribute read | 3.26x |
-| serialization | 2.14x |
+| operation, over the mix | arm against arm | like for like |
+|---|---:|---:|
+| construction (per node) | 1.14x | **1.09x** |
+| attribute read | 3.39x | **3.39x** |
+| serialization | 2.14x | **2.14x** |
 
 Stated separately, in no aggregate — the ordinary arm divided into the compact
 one, which is the comparison §2 states:
@@ -173,59 +200,59 @@ one, which is the comparison §2 states:
 | operation, over the mix | ratio |
 |---|---:|
 | construction (per node) | 3.55x |
-| attribute read | 3.22x |
+| attribute read | 3.39x |
 | serialization | 2.17x |
 
 ### CPython 3.13.15
 
-| scenario | fields | arm | cells | retained B | bare B | lifecycle B | node µs | call µs | read ns | dump µs | transient B | peak B |
-|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| shallow | 4 | ordinary | 4 | 560 | 560 | 0 | 0.80 | 0.18 | 27.2 | 0.70 | 856 | 1,416 |
-|  |  | legacy | 5 | 696 | 560 | 136 | 2.74 | 0.19 | 27.0 | 0.70 | 506 | 1,202 |
-|  |  | compact | 6 | 384 | 248 | 136 | 4.15 | 1.52 | 88.5 | 1.43 | 3,368 | 3,752 |
-| | | **vs legacy** | | **44.8%** | **55.7%** | | | | | | | |
-| | | *vs ordinary* | | *31.4%* | *55.7%* | | | | | | | |
-| wide | 16 | ordinary | 16 | 1,352 | 1,352 | 0 | 1.71 | 0.23 | 23.2 | 1.13 | 2,008 | 3,360 |
-|  |  | legacy | 17 | 976 | 840 | 136 | 7.72 | 0.26 | 22.8 | 1.19 | 688 | 1,664 |
-|  |  | compact | 18 | 512 | 376 | 136 | 8.13 | 1.74 | 79.3 | 2.42 | 3,112 | 3,624 |
-| | | **vs legacy** | | **47.5%** | **55.2%** | | | | | | | |
-| | | *vs ordinary* | | *62.1%* | *72.2%* | | | | | | | |
-| nested | 5 | ordinary | 5 | 3,080 | 3,080 | 0 | 5.03 | 0.34 | 25.6 | 2.41 | 1,336 | 4,416 |
-|  |  | legacy | 6 | 2,792 | 2,656 | 136 | 9.25 | 0.06 | 26.5 | 2.40 | 2,168 | 4,960 |
-|  |  | compact | 7 | 1,064 | 928 | 136 | 13.46 | 1.64 | 81.8 | 5.71 | 4,449 | 5,513 |
-| | | **vs legacy** | | **61.9%** | **65.1%** | | | | | | | |
-| | | *vs ordinary* | | *65.5%* | *69.9%* | | | | | | | |
-| nullable | 10 | ordinary | 10 | 1,160 | 1,160 | 0 | 1.24 | 0.21 | 23.6 | 0.87 | 1,336 | 2,496 |
-|  |  | legacy | 11 | 976 | 840 | 136 | 5.36 | 0.15 | 21.5 | 0.90 | 728 | 1,704 |
-|  |  | compact | 12 | 464 | 328 | 136 | 4.65 | 1.65 | 76.2 | 1.88 | 3,112 | 3,576 |
-| | | **vs legacy** | | **52.5%** | **61.0%** | | | | | | | |
-| | | *vs ordinary* | | *60.0%* | *71.7%* | | | | | | | |
-| partial | 10 | ordinary | 10 | 648 | 648 | 0 | 0.94 | 0.20 | 21.6 | 0.87 | 960 | 1,608 |
-|  |  | legacy | 11 | 976 | 840 | 136 | 4.94 | 0.10 | 21.1 | 0.89 | 728 | 1,704 |
-|  |  | compact | 12 | 432 | 296 | 136 | 3.59 | 1.38 | 78.2 | 1.83 | 3,232 | 3,664 |
-| | | **vs legacy** | | **55.7%** | **64.8%** | | | | | | | |
-| | | *vs ordinary* | | *33.3%* | *54.3%* | | | | | | | |
-| polymorphic | 7 | ordinary | 7 | 1,160 | 1,160 | 0 | 1.05 | 0.22 | 23.2 | 0.78 | 1,288 | 2,448 |
-|  |  | legacy | 8 | 784 | 648 | 136 | 4.03 | 0.25 | 23.0 | 0.81 | 520 | 1,304 |
-|  |  | compact | 9 | 408 | 272 | 136 | 4.73 | 1.46 | 82.3 | 1.67 | 3,112 | 3,520 |
-| | | **vs legacy** | | **48.0%** | **58.0%** | | | | | | | |
-| | | *vs ordinary* | | *64.8%* | *76.6%* | | | | | | | |
-| *warmed* | 4 | ordinary | 5 | 798 | 798 | 0 | 1.76 | 0.19 | 25.2 | 0.71 | 964 | 1,762 |
-|  |  | legacy | 6 | 1,022 | 886 | 136 | 3.70 | 0.24 | 24.7 | 0.72 | 472 | 1,494 |
-|  |  | compact | 6 | 806 | 670 | 136 | 6.27 | 1.62 | 89.2 | 1.70 | 3,130 | 3,936 |
-| | | *vs legacy* | | *21.1%* | *24.4%* | | | | | | | |
-| | | *vs ordinary* | | *-1.0%* | *16.0%* | | | | | | | |
+| scenario | fields | arm | cells | retained B | bare B | lifecycle B | node µs | call µs | outside µs | read ns | dump µs | transient B | peak B |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| shallow | 4 | ordinary | 4 | 560 | 560 | 0 | 0.80 | 0.22 | 0.00 | 26.1 | 0.72 | 856 | 1,416 |
+|  |  | legacy | 5 | 696 | 560 | 136 | 2.71 | 0.20 | 0.00 | 26.2 | 0.70 | 506 | 1,202 |
+|  |  | compact | 6 | 384 | 248 | 136 | 4.14 | 1.51 | 0.28 | 88.4 | 1.36 | 3,368 | 3,752 |
+| | | **vs legacy** | | **44.8%** | **55.7%** | | | | | | | | |
+| | | *vs ordinary* | | *31.4%* | *55.7%* | | | | | | | | |
+| wide | 16 | ordinary | 16 | 1,352 | 1,352 | 0 | 1.70 | 0.22 | 0.00 | 22.4 | 1.12 | 2,008 | 3,360 |
+|  |  | legacy | 17 | 976 | 840 | 136 | 7.81 | 0.19 | 0.00 | 22.3 | 1.20 | 688 | 1,664 |
+|  |  | compact | 18 | 512 | 376 | 136 | 8.20 | 1.50 | 0.29 | 81.6 | 2.39 | 3,112 | 3,624 |
+| | | **vs legacy** | | **47.5%** | **55.2%** | | | | | | | | |
+| | | *vs ordinary* | | *62.1%* | *72.2%* | | | | | | | | |
+| nested | 5 | ordinary | 5 | 3,080 | 3,080 | 0 | 5.02 | 0.26 | 0.00 | 26.8 | 2.41 | 1,336 | 4,416 |
+|  |  | legacy | 6 | 2,792 | 2,656 | 136 | 9.16 | 0.21 | 0.00 | 24.2 | 2.45 | 2,168 | 4,960 |
+|  |  | compact | 7 | 1,064 | 928 | 136 | 13.26 | 1.80 | 0.29 | 85.4 | 5.80 | 4,449 | 5,513 |
+| | | **vs legacy** | | **61.9%** | **65.1%** | | | | | | | | |
+| | | *vs ordinary* | | *65.5%* | *69.9%* | | | | | | | | |
+| nullable | 10 | ordinary | 10 | 1,160 | 1,160 | 0 | 1.20 | 0.24 | 0.00 | 24.1 | 0.93 | 1,336 | 2,496 |
+|  |  | legacy | 11 | 976 | 840 | 136 | 5.32 | 0.22 | 0.00 | 22.5 | 0.92 | 728 | 1,704 |
+|  |  | compact | 12 | 464 | 328 | 136 | 4.60 | 1.44 | 0.27 | 77.5 | 1.83 | 3,112 | 3,576 |
+| | | **vs legacy** | | **52.5%** | **61.0%** | | | | | | | | |
+| | | *vs ordinary* | | *60.0%* | *71.7%* | | | | | | | | |
+| partial | 10 | ordinary | 10 | 648 | 648 | 0 | 0.97 | 0.19 | 0.00 | 22.1 | 0.87 | 960 | 1,608 |
+|  |  | legacy | 11 | 976 | 840 | 136 | 4.89 | 0.26 | 0.00 | 20.7 | 0.86 | 728 | 1,704 |
+|  |  | compact | 12 | 432 | 296 | 136 | 3.64 | 1.32 | 0.36 | 74.8 | 1.79 | 3,232 | 3,664 |
+| | | **vs legacy** | | **55.7%** | **64.8%** | | | | | | | | |
+| | | *vs ordinary* | | *33.3%* | *54.3%* | | | | | | | | |
+| polymorphic | 7 | ordinary | 7 | 1,160 | 1,160 | 0 | 1.04 | 0.23 | 0.00 | 23.3 | 0.79 | 1,288 | 2,448 |
+|  |  | legacy | 8 | 784 | 648 | 136 | 4.07 | 0.17 | 0.00 | 22.9 | 0.80 | 520 | 1,304 |
+|  |  | compact | 9 | 408 | 272 | 136 | 4.69 | 1.56 | 0.25 | 87.7 | 1.66 | 3,112 | 3,520 |
+| | | **vs legacy** | | **48.0%** | **58.0%** | | | | | | | | |
+| | | *vs ordinary* | | *64.8%* | *76.6%* | | | | | | | | |
+| *warmed* | 4 | ordinary | 5 | 798 | 798 | 0 | 1.67 | 0.23 | 0.00 | 25.9 | 0.72 | 964 | 1,762 |
+|  |  | legacy | 6 | 1,022 | 886 | 136 | 3.72 | 0.14 | 0.00 | 26.2 | 0.74 | 472 | 1,494 |
+|  |  | compact | 6 | 806 | 670 | 136 | 6.27 | 1.63 | 0.28 | 91.9 | 1.71 | 3,130 | 3,936 |
+| | | *vs legacy* | | *21.1%* | *24.4%* | | | | | | | | |
+| | | *vs ordinary* | | *-1.0%* | *16.0%* | | | | | | | | |
 
 | aggregate | before | after | reduction |
 |---|---:|---:|---:|
 | **primary** (lifecycle included) | 7,200 | 3,264 | **54.7%** |
 | **secondary** (lifecycle excluded) | 6,384 | 2,448 | **61.7%** |
 
-| operation, over the mix | ratio |
-|---|---:|
-| construction (per node) | 1.14x |
-| attribute read | 3.43x |
-| serialization | 2.17x |
+| operation, over the mix | arm against arm | like for like |
+|---|---:|---:|
+| construction (per node) | 1.13x | **1.08x** |
+| attribute read | 3.57x | **3.57x** |
+| serialization | 2.14x | **2.14x** |
 
 | comparison | ordinary | compact | |
 |---|---:|---:|---:|
@@ -235,8 +262,8 @@ one, which is the comparison §2 states:
 | operation, over the mix | ratio |
 |---|---:|
 | construction (per node) | 3.59x |
-| attribute read | 3.37x |
-| serialization | 2.21x |
+| attribute read | 3.42x |
+| serialization | 2.17x |
 
 The aggregate is `1 - sum(after) / sum(before)` over the summed columns, **never
 the mean of the per-scenario percentages**, which would weight a four-field node
@@ -258,43 +285,57 @@ on 3.14 and 54.7% on 3.13, against a 33% minimum; the secondary is 58.1% and
 61.7%. No aggregate line appears in the block.
 
 **Two representative operations moved past the 20% review threshold, on both
-runtimes**, and the report names each with its worst scenario. The figures below
-are one run's; across four runs the ratios move by a few percent while the byte
+runtimes**, and the report names each with its worst scenario. The rule grades the
+*like-for-like* column, and for these two that column is the arm-against-arm one:
+a member read and a `model_dump()` are one call against one call on one node, so
+there is no scope to correct. The figures below
+are one run's; across five runs the ratios move by a few percent while the byte
 readings do not move at all, and neither of the two comes near the threshold from
 either side:
 
 | operation | 3.14 | 3.13 | what it is |
 |---|---:|---:|---|
-| serialization | 2.14x | 2.17x | already accepted as an Interface fact — see below |
-| attribute read | 3.26x | 3.43x | a published node has no instance dictionary |
+| serialization | 2.14x | 2.14x | already accepted as an Interface fact — see below |
+| attribute read | 3.39x | 3.57x | a published node has no instance dictionary |
 
 **Construction is not among them, and the 1.20x limit is the one it always was.**
-The figure was recorded here at 1.38x and 1.33x and now reads 1.15x and 1.14x; the
-limit never moved and the measurement is what changed. The earlier figure divided
-*one `construct` call* by *one fixture build*: the call also pays a call scope, a
-writer, root validation and factory buffering — about 1.4–1.9 µs of work no node
-costs — which the fixture arms never pay, so the ratio charged the compact arm for
-a difference in scope. Both arms are now timed per node, and at that scope the
-compact arm is 1.12–1.16x across the four runs recorded here. Two of the six scenarios
-(`partial` and `nullable`) are *faster* compact per node.
+The figure was recorded here at 1.38x and 1.33x before either correction, and the
+limit never moved: what changed both times is the measurement. Correcting the
+*call* scope came first — the earlier figure divided one whole `construct` call by
+one fixture build, charging the compact arm for a call scope, a writer, root
+validation and factory buffering that no node costs — and both arms are now timed
+per node, which brought the arm-against-arm figure to **1.13–1.15x** across the
+five runs recorded here. Two of the six scenarios (`partial` and `nullable`) are
+*faster* compact per node.
 
-**That figure is an upper bound rather than a like-for-like before and after, and
-the bias runs against the compact arm.** The per-node split cancels the *fixed*
-cost of a `construct` call and not its per-node one: the populated check, root
-validation, state-factory invocation and buffered attachment all scale with node
-count, so they stay inside the compact arm's `node µs`. The pre-flip path paid the
-same per-node work through the same call — that half of `EntityGraphConstruction`
-is unchanged either side of the flip — but the legacy arm is a fixture of the node
-*building* alone, so it pays none of it. Measured on 3.14 by timing a `construct`
-call's build callback against the whole call, that residue is about 0.2 µs per
-node after deducting the state creation and attach the fixture does pay, which
-puts the like-for-like node-building ratio near **1.12x** against the 1.15x
-printed. Closing the gap properly would mean a fixture reproducing a deleted
-construction call around live private production code, and that choice is open —
-see the report's own *what the arms are* block, which states the bias where a
-reader meets the number.
+**Correcting the per-node scope came second, and it is now the report's own
+arithmetic rather than a note beside it.** The per-node split cancels a `construct`
+call's *fixed* cost and not its per-node one: the populated check, root validation,
+a resolution view per node, the buffered attach and the root tuple all scale with
+node count, so they stay inside the compact arm's `node µs`. The pre-flip path paid
+that work through the same call — that half of `EntityGraphConstruction` is
+unchanged either side of the flip — but the legacy arm is a fixture of the node
+*building* alone and pays none of it. The report measures the difference as
+`outside µs` and prints a second ratio with it added to the legacy side:
+**like for like, construction is 1.09x on 3.14 and 1.08x on 3.13**, and that is the
+figure the 20% rule grades. Both columns are printed, so the correction is visible
+rather than asserted.
 
-**The ordinary construction ratio has no such bias, and is 3.55x and 3.59x.** A
+**What each of the two columns is still biased by, and by how much.** The
+arm-against-arm column carries the whole `outside µs` against the compact arm —
+0.25–0.47 µs per node, about five points of ratio. The like-for-like column
+carries one quantity the *other* way: the per-node lifecycle attach, a single slot
+write of about 0.07 µs, happens in `construct`'s own loop rather than in a callback
+the arm can time, so it stays in `outside µs` although the fixture pays one too and
+lands on the legacy side twice — worth about one point. The construction cost the
+flip actually paid is therefore between the two printed columns and near the
+right-hand one: about **1.10x on 3.14 and 1.09x on 3.13**. An earlier hand
+measurement of the same residue put it at 0.23 µs per node and the ratio at 1.12x;
+net of the attach the report measures 0.18–0.40 µs, so the two agree on the residue
+and differ on the ratio by the arm-against-arm figure's own run-to-run movement.
+
+**The ordinary construction ratio needs no correction and gets none, and is 3.55x
+and 3.59x.** A
 caller building an ordinary instance pays no construction call at all, so what
 that ratio compares is what each side actually costs: publishing one node is
 about three and a half times the cost of validating one. It is not a regression
@@ -396,7 +437,9 @@ of author-owned state added to every arm.
 | Warm-up | 200 unsampled runs before every window, as each child's own instruments declare |
 | Timing samples | mean of 2,000 repetitions, taken with the line tracer uninstalled |
 | Construction scope | a 1-node build against an 11-node one under each arm, split into the per-node cost and the per-call remainder |
-| Repeatability | four independent whole-matrix runs returned byte-identical readings on both interpreters — every retained, bare, lifecycle, `cells`, transient and peak figure above is the same in all four, under all three arms; only the wall clock moved, and the ratios with it — against the legacy arm, construction 1.12–1.16x, attribute read 3.22–3.54x, serialization 2.08–2.19x; against the ordinary arm, construction 3.54–3.60x, attribute read 3.16–3.45x, serialization 2.13–2.21x |
+| Callback scope | the compact call measured a second time with its own build callback and state factory timed from inside them, which is what `outside µs` is the remainder of |
+| Repeatability | five independent whole-matrix runs returned byte-identical readings on both interpreters — every retained, bare, lifecycle, `cells`, transient and peak figure above is the same in all five, under all three arms; only the wall clock moved, and the ratios with it — against the legacy arm, construction 1.13–1.15x arm against arm and 1.07–1.09x like for like, attribute read 3.22–3.57x, serialization 2.12–2.22x; against the ordinary arm, construction 3.52–3.59x, attribute read 3.08–3.48x, serialization 2.09–2.21x; `outside µs` 0.25–0.47 per node |
+| Elapsed | about 12.5 s for the whole matrix, of which roughly 2.5 s is the compact arm's callback timing |
 
 The matrix is 3.14 and 3.13. The ticket names 3.12 as well, but commit `226db9d3`
 — already in this branch — set `requires-python = ">=3.13"` across all five

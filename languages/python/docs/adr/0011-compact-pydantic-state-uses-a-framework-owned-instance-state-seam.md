@@ -80,6 +80,10 @@ an ordinary one's on 3.14 and 3.4x on 3.13, because a published node has no
 instance dictionary and the read resolves through the member descriptor instead
 of a C-level dictionary hit; D-83 carries that one. Publishing one node also
 costs about 3.6x validating an ordinary one, which is the construction call a
-caller pays for a graph and never pays for a constructor. Both are confined to published values: an ordinary value's
+caller pays for a graph and never pays for a constructor. Against the publication
+path this change replaced — the other of the two comparisons, and the one the 33%
+target is stated over — construction moved by about a tenth: 1.09x on 3.14 and
+1.08x on 3.13 measured like for like, inside the 20% the claim reviews at, with
+the recorded document stating what each of those two comparisons divides. Both are confined to published values: an ordinary value's
 member read is a plain Pydantic model's, unchanged, which is the trade the claim
 forbids making silently and therefore makes explicitly.
