@@ -617,30 +617,48 @@ def compact_graph(scenario: Scenario, count: int) -> tuple[object, ...]:
         return handles
 
     roots = construction.construct(build, state_factory=lambda _view, _handle: scenario.state())
+    return _published_graph(scenario, roots)
+
+
+def _published_graph(scenario: Scenario, roots: tuple[object, ...]) -> tuple[object, ...]:
+    """``roots`` warmed, and collected the way this arm's graph answers them.
+
+    Shared by :func:`compact_graph` and by the span :func:`compact_callback_ns`
+    times rather than spelled in both: the residue is one subtracted from the
+    other, so work the two spell differently would land in it and be added to a
+    legacy side that pays its own result tuple already.
+    """
     return tuple(_warmed(scenario, root) for root in roots)
 
 
 def compact_callback_ns(scenario: Scenario, count: int) -> float:
     """Nanoseconds one :func:`compact_graph` call spends inside its OWN work.
 
-    The same call, built the same way, with the arm's two callbacks and its
-    warming loop timed from inside them: the build callback, which is the node
-    building the legacy fixture reproduces; each state-factory invocation, which
-    is the lifecycle state the fixture also creates; and the warming loop, which
-    is author-owned state both arms pay per node. What is left outside is the
-    per-node work ``construct`` itself does — the populated check, root
-    validation, the resolution view each factory invocation gets, the buffered
-    attach, and the root tuple — which is what the pre-flip path paid through the
-    same call and the fixture does not reproduce.
+    The same call, built the same way, with everything :func:`legacy_publication`
+    also does timed from inside it: the build callback, which is the node building
+    the fixture reproduces; each state-factory invocation, which is the lifecycle
+    state the fixture also creates; the result tuple this arm's graph returns,
+    which the legacy arm's graph builds too; and the lifecycle attach, which the
+    fixture performs as its own construction's final phase. What is left outside
+    is the per-node work ``construct`` itself does and no fixture reproduces — the
+    populated check, root validation, the resolution view each factory invocation
+    gets, the factory buffering, and ``construct``'s own root tuple — which is
+    what the pre-flip path paid through the same call.
+
+    The attach is timed by REPEATING it here rather than from inside
+    ``construct``'s loop, which is no callback and cannot be entered: the same
+    function writing the same slot of the same published node, once per node, is
+    what that loop costs. Repeating it lands on a slot that already holds a value
+    and so releases one, which the first write does not, making this stand-in a
+    shade dearer than the write it prices — an error in the direction that leaves
+    the residue smaller and the corrected ratio higher.
 
     A SEPARATE call from the one :func:`compact_graph` answers, so no timer runs
     inside the call the report's own construction figure is taken over: reading
     the clock twelve times inside an eleven-node build would move the number this
-    correction is applied to.
-
-    The lifecycle ATTACH stays outside — it is one slot write per node inside
-    ``construct``'s own loop, and the fixture pays one too — so the residue this
-    leaves is generous to the compact arm by that much.
+    correction is applied to. Nothing untimed here reaches the residue either —
+    the residue is this figure subtracted from a timing of :func:`compact_graph`,
+    so only what is counted INTO it can move the correction.
     """
     construction = graph_construction_of(scenario.model)
     entity = scenario.entity
@@ -665,9 +683,11 @@ def compact_callback_ns(scenario: Scenario, count: int) -> float:
         return state
 
     roots = construction.construct(build, state_factory=state_factory)
+    reattached = scenario.state()
     start = perf_counter()
+    _ = _published_graph(scenario, roots)
     for root in roots:
-        _warmed(scenario, root)
+        attach_lifecycle_state(cast("BaseModel", root), reattached)
     inside += perf_counter() - start
     return inside * 1e9
 
@@ -700,7 +720,7 @@ class Arm:
     """Nanoseconds one call of this arm spends inside its own callbacks, or
     ``None`` for an arm whose call IS its node builder.
 
-    ``None`` is the honest answer for the two fixture arms rather than a missing
+    ``None`` is the honest answer for the ordinary and legacy arms rather than a missing
     measurement: their graph is a loop over the node builder, so there is nothing
     outside that builder for a call to spend time in and nothing to separate. The
     compact arm's call runs per-node work of its own around the callbacks it is

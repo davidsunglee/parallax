@@ -693,9 +693,9 @@ object.__getattribute__(value, slot) plus a subscript 30.4 ns
 
 Over the whole canonical mix, and against the *ordinary* arm this entry's subject
 is — a published node's member read divided by an ordinary node's — the report
-reads 3.22x on CPython 3.14 and 3.37x on 3.13. The same operation against the
-*legacy* publication fixture, which is the pair the regression rule grades, reads
-3.26x and 3.43x. All four are taken with one shared harness on every arm.
+reads 3.22x on CPython 3.14 and 3.45x on 3.13. The same operation against the
+*legacy* publication fixture, which is the pair the regression rule is stated
+over, reads 3.26x and 3.46x. All four are taken with one shared harness on every arm.
 
 **The floor is the frame, and it is not reachable from Python.** Roughly a third
 of the 77 ns is entering a Python-level `__get__` at all — the third line above is
