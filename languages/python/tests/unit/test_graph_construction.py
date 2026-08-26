@@ -3,7 +3,8 @@
 cross its door, the three-phase barrier, handle and scope rules, the
 deterministic allocation index every rejection reads back, and the all-or-none
 lifecycle-state attachment that makes a failed construction return no root and
-attach no state to any node.
+attach no state to any node — which is the whole of that atomicity, since a
+factory that keeps the instance its view resolved keeps it.
 
 Driven directly rather than through Snapshot, because the contract is the roots a
 caller gives and what is reachable from them — never "the query result".
@@ -450,8 +451,8 @@ def test_a_to_one_direction_refuses_a_loaded_many_arm() -> None:
 def test_a_node_handle_publishes_nothing_a_build_callback_could_read() -> None:
     # The handle is the whole of what a callback holds between allocation and
     # publication, so a public attribute on it would hand that callback the
-    # partially built instances a failed construction must leave unreachable, and
-    # an allocation index the writer alone owns.
+    # part-built instances the build phase has no reason to expose, and an
+    # allocation index the writer alone owns.
     captured: list[NodeHandle] = []
 
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
@@ -819,6 +820,36 @@ def test_a_failed_factory_publishes_no_state_on_any_node() -> None:
     # The first factory succeeded, but its result was only buffered: nothing
     # attaches unless every factory does.
     assert [lifecycle_state_of(node) for node in captured] == [None, None]
+
+
+def test_a_node_a_failed_factory_kept_is_still_populated_and_still_state_free() -> None:
+    # The input that breaks the obvious summary of the atomicity, so the summary
+    # is not what this suite grades. A factory is handed the FINAL instance —
+    # that is the phase barrier's own contract — so a factory that keeps what its
+    # view resolved still holds that node after the call fails, fully populated
+    # and no less reachable for the failure. Nothing here can take it back, and
+    # rolling the rows back would break the earlier atomicity instead: a row is
+    # attached once, as its node is populated.
+    #
+    # What the failure does guarantee is graded in its place: the call returns no
+    # root at all, and no node carries lifecycle state — not even the one whose
+    # own factory already returned a value for it.
+    kept: list[object] = []
+
+    def factory(view: ResolutionView, handle: NodeHandle) -> object:
+        kept.append(view.resolve(handle))
+        if len(kept) == 2:
+            raise RuntimeError("the second factory fails")
+        return "state"
+
+    with pytest.raises(RuntimeError, match="the second factory fails"):
+        _construct(_two_nodes, state_factory=factory)
+
+    order, item = (cast("Any", node) for node in kept)
+    assert (order.name, order.qty) == ("Ada", 1)
+    assert (item.id, item.sku) == (11, "x")
+    assert relationship_value_of(order, _rel(_ORDER, "items")) == (item,)
+    assert [lifecycle_state_of(node) for node in kept] == [None, None]
 
 
 def test_construction_without_a_state_factory_attaches_no_state() -> None:

@@ -58,15 +58,24 @@ allocation index fails first; only then are roots validated left to right; only
 then do factories run, the first factory exception propagating unchanged and
 stopping later ones. State attachment and root delivery happen last and together,
 so a failure anywhere attaches no lifecycle state to any node and returns no
-root, leaving every allocated Entity unreachable through this call.
+root.
+
+What that guarantee covers, stated precisely because the obvious summary of it is
+false. The call withholds every root and every lifecycle state; it does not take
+back what it already handed a callback. A state factory is given the final
+instance by :class:`ResolutionView`, so a factory that keeps one and then raises
+still holds it — fully populated, lifecycle-state-free, and no less reachable for
+the failure. Nothing here can prevent that: handing the factory the real instance
+is the phase barrier's own contract, and an object a caller retains cannot be
+made unreachable. What the failure guarantees about that instance is that no
+lifecycle state was attached to it and that it was never delivered as a root.
 
 Attaching a node's row is a separate atomicity, and an earlier one. Each node's
 row is assembled in local state and attached in one write as that node is
 populated, so no half-written row exists and a node whose population is refused
 is left exactly as allocation left it. It is not deferred to the end: a node
 populated before a later failure keeps the row it was populated with, and so does
-a Value Object record built during the walk. What the call withholds on a failure
-is every root and every lifecycle state, not the rows already attached.
+a Value Object record built during the walk. Rows are never rolled back.
 """
 
 from __future__ import annotations
@@ -825,9 +834,12 @@ def _factory_results(
 ) -> tuple[object, ...]:
     """Every node's lifecycle state, in allocation order, or nothing at all.
 
-    Results buffer here and attach only after the last factory succeeds: the
-    first failure discards every buffered result and leaves the whole graph
-    unreachable and state-free.
+    Results buffer here and attach only after the last factory succeeds, so the
+    first failure discards every buffered result and leaves every node
+    lifecycle-state-free — including the nodes whose own factory already
+    returned. It leaves them populated, and it leaves a factory that kept what
+    its view resolved holding that node; withholding the roots is the whole of
+    what this discards on the caller's behalf.
     """
     if state_factory is None:
         return ()
