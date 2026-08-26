@@ -58,13 +58,12 @@ to address the backing and nothing about how it is laid out.
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import functools
 import operator
 from dataclasses import dataclass
 from types import MappingProxyType, MemberDescriptorType
-from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
@@ -739,17 +738,14 @@ def _private_state(cls: type[Any]) -> dict[str, Any] | None:
     return state
 
 
-_CARRIED_SLOTS_ATTRIBUTE: Final = "__parallax_carried_slots__"
-"""Where a class caches the slots of its layout a derived copy has to carry."""
-
 _REBUILT_STATE_SLOTS: Final = frozenset(
     {"__dict__", "__pydantic_fields_set__", COMPACT_STATE_SLOT, AUXILIARY_STATE_SLOT}
 )
 """The four slots a copy derived from semantic state rebuilds instead of carrying.
 
 They are not the slots that hold a value's state — the private-attribute mapping
-and whatever a class lays out slots of its own for hold state too. They are the
-four whose content a copy derives rather than takes.
+holds state too. They are the four whose content a copy derives rather than
+takes.
 
 Two are Pydantic's own, and a copy fills them with the declared members and the
 populated-member set it was derived from. Two are this Module's, and a copy fills
@@ -760,90 +756,54 @@ been read out under its own names by :func:`named_state` and lands in the copy's
 instance dictionary beside everything else it carries.
 """
 
-_FRAMEWORK_CONTAINER_SLOTS: Final = frozenset({"__pydantic_extra__", "__pydantic_private__"})
-"""The carried slots holding a mutable container the framework keeps writing into.
+_CARRIED_SLOTS: Final[tuple[MemberDescriptorType, ...]] = tuple(
+    descriptor
+    for ancestor in BackedModel.__mro__
+    for name, descriptor in vars(ancestor).items()
+    if isinstance(descriptor, MemberDescriptorType) and name not in _REBUILT_STATE_SLOTS
+)
+"""Every other slot of a declared value's layout, which a copy carries.
 
-Both are name-keyed mappings Pydantic lays out beside the instance dictionary,
-and both stay live once a copy exists: assigning a private attribute or an extra
+Today that is ``__pydantic_extra__`` and ``__pydantic_private__``: the two
+name-keyed mappings Pydantic lays out beside the instance dictionary, both of
+which stay live once a copy exists. Assigning a private attribute or an extra
 field on the copy writes into whichever mapping the copy's slot points at, so a
-copy sharing the source's mapping would write the source's state. Each therefore
-gets its own outer container, exactly as Pydantic's own copy of a model gives it
-one, while what the container holds under a key stays shared.
+copy sharing the source's mapping would write the source's state — each is
+therefore carried as the copy's own shallow copy, exactly as Pydantic's own copy
+of a model gives it one, while what a container holds under a key stays shared.
 
-Nothing else in a layout is the framework's to reinterpret, so nothing else is
-copied: what a class lays out slots of its own for is state whose meaning only
-its author knows, and an edit carries it by binding the copy's slot to the very
-object the source's slot holds.
+Resolved once off the shared root rather than per concrete class, because that
+root's layout IS every declared class's: a declaration may not extend a foreign
+base (``entity-base-invalid``) and may not declare ``__slots__`` of its own
+(``entity-reserved-member-name``), so nothing between a concrete class and this
+root can add a slot. That is what makes the classification exact by construction
+rather than by enumeration — there is no seventh slot to have missed.
+
+It is a complement rather than those two names so that a slot a Pydantic release
+adds is carried rather than silently dropped. Such a release would take the
+shallow copy above without having said it wants one;
+``test_the_framework_lays_out_exactly_the_slots_the_carry_classifies`` fails
+there, where the classification is stated.
 """
 
 
-class _CarriedSlot(NamedTuple):
-    """One slot of a layout an edit carries, and how carrying it is spelled."""
-
-    descriptor: MemberDescriptorType
-    container: bool
-
-
-def _slots_beside_state(cls: type[BaseModel]) -> tuple[_CarriedSlot, ...]:
-    """Every slot of ``cls``'s object layout that is not one of those four.
-
-    Walked over the whole MRO and off each ancestor's own namespace, so the
-    inventory is what the concrete class actually lays out rather than what any
-    one base declares: an authoring class's own ``__slots__`` are in it, and so is
-    a slot a Pydantic release adds beside the ones named above. Enumerating a
-    known base's layout instead is how a copy comes to reproduce the slots someone
-    remembered and reset the rest to a fresh instance's defaults.
-
-    Cached in the class's own namespace rather than through the MRO, because a
-    subclass laying out slots of its own must not read its base's shorter answer.
-    """
-    carried: tuple[_CarriedSlot, ...] | None = cls.__dict__.get(_CARRIED_SLOTS_ATTRIBUTE)
-    if carried is None:
-        carried = tuple(
-            _CarriedSlot(descriptor, name in _FRAMEWORK_CONTAINER_SLOTS)
-            for ancestor in cls.__mro__
-            for name, descriptor in vars(ancestor).items()
-            if isinstance(descriptor, MemberDescriptorType) and name not in _REBUILT_STATE_SLOTS
-        )
-        setattr(cls, _CARRIED_SLOTS_ATTRIBUTE, carried)
-    return carried
-
-
 def carry_slots_beside_state(source: BaseModel, target: BaseModel) -> None:
-    """Make ``target``'s layout ``source``'s everywhere state does not decide it.
+    """Give ``target`` its own of every container ``source``'s layout holds.
 
     A copy derived from a value rebuilds the four slots above out of semantic
-    state and must otherwise BE that value's layout. Private attributes are the
-    state this reaches on any class: Pydantic keeps a ``PrivateAttr`` in a slot of
-    its own rather than in the instance dictionary, so a copy assembled out of a
-    name-keyed mapping alone silently resets every one of them to the declared
-    defaults a fresh instance starts with. A class laying out slots of its own
-    loses whatever it keeps there the same way.
+    state, and :data:`_CARRIED_SLOTS` is the rest of the layout. Private
+    attributes are the state that reaches: Pydantic keeps a ``PrivateAttr`` in a
+    slot of its own rather than in the instance dictionary, so a copy assembled
+    out of a name-keyed mapping alone silently resets every one of them to the
+    declared defaults a fresh instance starts with.
 
-    A slot the source does not hold is carried as one the target does not hold,
-    which is what lets this reach a layout no framework path fills: an authored
-    slot is unset until its owner assigns it, and a copy inventing a value for one
-    the source never assigned would be as wrong as one dropping it.
-
-    Carrying a slot forward *unchanged* is binding the copy's slot to the object
-    the source's slot holds: the two slots are already independent bindings, so
-    assigning through either leaves the other's alone without anything being
-    duplicated, and a payload no copy protocol can reproduce — a lock, a live
-    connection — travels rather than raising. The exception is the framework's own
-    container slots (:data:`_FRAMEWORK_CONTAINER_SLOTS`), whose outer mapping the
-    copy needs its own of and gets shallowly, so rebinding a private attribute
-    through either value leaves the other's binding alone while everything inside
-    that mapping stays shared — appending to a list a ``PrivateAttr`` holds is
-    visible through both.
+    The copy's mapping is its own and is shallow, so rebinding a private
+    attribute through either value leaves the other's binding alone while
+    everything inside that mapping stays shared — appending to a list a
+    ``PrivateAttr`` holds is visible through both.
     """
-    for slot, container in _slots_beside_state(type(source)):
-        try:
-            held = slot.__get__(source)
-        except AttributeError:
-            with contextlib.suppress(AttributeError):
-                slot.__delete__(target)
-        else:
-            slot.__set__(target, copy.copy(held) if container else held)
+    for slot in _CARRIED_SLOTS:
+        slot.__set__(target, copy.copy(slot.__get__(source)))
 
 
 def publish(
