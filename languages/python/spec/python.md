@@ -1137,19 +1137,18 @@ supported import path.
 
 **Reserved member names.** A member name may not collide with a name the class
 object already carries, because class-level access is where the typed expression
-surface lives and the class-level name would win. Nine families are reserved,
-and a collision fails at class creation (`entity-reserved-member-name`). All
-three ways a body reaches a name are covered — a binding, an annotation, and an
-entry in the body's `__slots__`, which is no binding at all and which class
-creation still turns into a class-level descriptor. Six of them — the `model_*`
-namespace, the `__parallax_` prefix, the copy verb `edit`, the pickle entry
-point `__reduce_ex__`, the schema seam `__get_pydantic_core_schema__`, and the
-instance-state presentation `__dict__` / `__pydantic_fields_set__` — hold over
-every declared class body, an Entity Class and a Value Object Class alike,
-because both kinds carry what they protect. The other three are the Entity
-surface itself and hold on an Entity Class only: a Value Object has no query
-root, no declaration protocol, and no temporal member, so those spellings are
-ordinary Value Object members.
+surface lives and the class-level name would win. Ten families are reserved,
+and a collision fails at class creation (`entity-reserved-member-name`). A body
+reaches a class-level name in exactly two ways — a binding and an annotation —
+because the third, an entry in the body's `__slots__`, is closed by reserving
+`__slots__` itself. Seven of them — the `model_*` namespace, the `__parallax_`
+prefix, the copy verb `edit`, the pickle entry point `__reduce_ex__`, the schema
+seam `__get_pydantic_core_schema__`, the instance-state names Pydantic keys on,
+and the object layout `__slots__` — hold over every declared class body, an
+Entity Class and a Value Object Class alike, because both kinds carry what they
+protect. The other three are the Entity surface itself and hold on an Entity
+Class only: a Value Object has no query root, no declaration protocol, and no
+temporal member, so those spellings are ordinary Value Object members.
 
 - the query-root and introspection classmethods — `where`, `narrow`, `include`,
   `as_of`, `as_of_range`, `history`, `meta`, `descriptor`;
@@ -1173,14 +1172,28 @@ ordinary Value Object members.
   `__get_pydantic_json_schema__` all still run, and the last of those is
   deliberately NOT reserved — the framework installs none, so an authored one
   composes with Pydantic's own;
-- the instance-state presentation `__dict__` and `__pydantic_fields_set__`, on
-  either kind, because the framework binds both. Pydantic reads what a model
-  physically holds by these two names rather than through the interpreter's own
-  struct pointer, so what is bound under them decides what its equality, hashing,
-  repr, compiled serializer, and validation all see. A published value holds no
+- the instance-state names Pydantic keys on, on either kind, because the
+  framework decides what each answers. Two of them are the presentation
+  `__dict__` and `__pydantic_fields_set__`: Pydantic reads what a model
+  physically holds by name rather than through the interpreter's own struct
+  pointer, so what is bound under them decides what its equality, hashing, repr,
+  compiled serializer, and validation all see. A published value holds no
   instance dictionary and no populated-member set at all, and answers both from
   its compact row; a class body binding either name would answer for its own
-  instances instead;
+  instances instead. The other two are the containers `__pydantic_extra__` and
+  `__pydantic_private__`: Pydantic keys every extra field and every private
+  attribute on those names, and deriving a copy gives the copy its own mapping
+  under each, so a body binding one hands its own instances something other than
+  a mapping wherever those are read and written;
+- the object layout `__slots__`, on either kind. A declared value's layout is
+  the framework's whole — every slot of it is one the framework laid out, which
+  is what lets a derived copy carry each without asking whose it is — and a body
+  laying out slots of its own is the one remaining route to a slot nothing
+  classifies, since a declaration may not extend a foreign base either
+  (`entity-base-invalid`). The reservation is on the name, so no spelling
+  `__slots__` accepts reaches a layout; non-field per-instance state is held in
+  a Pydantic `PrivateAttr`, which an edit carries and which costs a value no
+  slot of its own;
 - the `model_*` namespace Pydantic reserves, on either kind, since both are
   Pydantic models;
 - the framework temporal members, on a class whose family extends `TxTemporal`
@@ -1412,7 +1425,7 @@ set is:
 | `entity-member-value-invalid` | class creation | the assignment slot holds a bare value, an `attr(...)` under `Rel[...]`, or a `rel(...)` under `Attr[...]` |
 | `entity-option-invalid-value` | factory call | an intrinsically invalid argument value: an ill-typed or out-of-range `attr(...)`, `rel(...)`, `index(...)`, or `Sequence(...)` argument |
 | `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list, a `MAX`/`Sequence(...)` generation on a non-integer member |
-| `entity-reserved-member-name` | class creation | a reserved query-root, introspection, or edit-verb name, the pickle entry point `__reduce_ex__`, the schema seam `__get_pydantic_core_schema__`, the instance-state presentation `__dict__` or `__pydantic_fields_set__`, a `model_*` name, a `__parallax_` framework name, a framework-temporal member name, or one of the ten declaration member names |
+| `entity-reserved-member-name` | class creation | a reserved query-root, introspection, or edit-verb name, the pickle entry point `__reduce_ex__`, the schema seam `__get_pydantic_core_schema__`, an instance-state name Pydantic keys on (`__dict__`, `__pydantic_fields_set__`, `__pydantic_extra__`, `__pydantic_private__`), the object layout `__slots__`, a `model_*` name, a `__parallax_` framework name, a framework-temporal member name, or one of the ten declaration member names |
 | `entity-canonical-name-collision` | class creation | two members converting to one canonical name |
 | `entity-relationship-annotation-mismatch` | Domain Model construction (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
 
