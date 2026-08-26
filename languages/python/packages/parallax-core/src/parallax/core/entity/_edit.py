@@ -75,11 +75,12 @@ def partition_declared(
 
     Both halves are read through the backing
     (:func:`~parallax.core.entity._instance_state.named_state`) rather than
-    through ``__dict__``, so a class body answering for that name can neither
-    drop the lifecycle state a copy must carry forward nor invent a Change Record
-    the value never earned — and a published value is partitioned out of its row,
-    so editing one neither loses the members the row holds nor creates the
-    instance dictionary it exists without.
+    through an attribute lookup for ``__dict__``, so a class body answering that
+    lookup with ``__getattribute__`` can neither drop the lifecycle state a copy
+    must carry forward nor invent a Change Record the value never earned — and a
+    published value is partitioned out of its row, its loaded relationship tails,
+    and its author-owned state, so editing one neither loses what those hold nor
+    creates the instance dictionary it exists without.
 
     Every branch of both edit surfaces partitions here, so none of them can hold
     its own opinion of the boundary.
@@ -100,9 +101,9 @@ def restate[M: BaseModel](value: M, state: dict[str, object]) -> M:
     An edit that authors nothing validates nothing, so it builds through the
     validation-free construction path materialization already uses rather than
     through the constructor — which is also the only path left once every
-    inherited copy door is refused. ``state`` lands in the copy's own storage,
-    so what a class body binds ``__dict__`` to cannot decide what the copy ends
-    up holding.
+    inherited copy door is refused. ``state`` lands in the copy's own storage
+    through Pydantic's own slot descriptor, so no name a class body binds decides
+    what the copy ends up holding.
     """
     restated = type(value).model_construct()
     replace_instance_state(restated, state)

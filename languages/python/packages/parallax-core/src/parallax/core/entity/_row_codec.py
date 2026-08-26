@@ -399,11 +399,10 @@ def _change_record(facts: _RowFacts, value: object) -> Mapping[str, object]:
 
     Read through the value's own backing, which is where :meth:`Entity.edit`
     wrote it, and accepted on the carrier's type rather than its shape: only that
-    edit constructs a :class:`~parallax.core.entity._entity.ChangeRecord`, so what
-    a row claims a caller authored is decided neither by a class body answering
-    for the slot's own name, nor by one writing a well-shaped mapping into the
-    storage a fresh value starts out holding. Which names the
-    accepted record holds is the member rule's question, judged beside the
+    edit constructs a :class:`~parallax.core.entity._entity.ChangeRecord`, so a
+    caller reaching the value's state some other way can leave a well-shaped
+    mapping under the slot without a row claiming it was authored. Which names
+    the accepted record holds is the member rule's question, judged beside the
     primary key as one selection; deciding it here would report corruption for a
     member a selection merely cannot emit.
     """
