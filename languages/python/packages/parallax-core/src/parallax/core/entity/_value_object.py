@@ -38,13 +38,19 @@ from parallax.core.entity._declaration import (
 )
 from parallax.core.entity._edit import (
     partition_declared,
-    restate,
     unresolved_member_violation,
     use_edit,
 )
 from parallax.core.entity._errors import EditError, EditViolation, EntityDefinitionError
 from parallax.core.entity._expressions import judged_edit_violation, serialize_member
-from parallax.core.entity._instance_state import BackedModel, carry_slots_beside_state
+from parallax.core.entity._instance_state import (
+    BackedModel,
+    carry_presence,
+    carry_slots_beside_state,
+    is_present,
+    plan_of,
+    restated,
+)
 from parallax.core.metamodel import (
     MODEL_ROOT,
     AttributeIdentity,
@@ -163,7 +169,7 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         shape = shape_of(type(self))
         declared_state, carried = partition_declared(self, set(shape.py_to_name))
         if not changes:
-            return restate(self, declared_state | carried)
+            return restated(self, declared_state | carried)
         violations = _edit_violations(type(self), shape, changes)
         if violations:
             raise EditError(violations) from None
@@ -172,9 +178,7 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         validated = type(self)(**declared_state)
         for py_name, member in carried.items():
             object.__setattr__(validated, py_name, member)
-        object.__setattr__(
-            validated, "__pydantic_fields_set__", set(self.model_fields_set) | set(changes)
-        )
+        carry_presence(self, validated, changes)
         carry_slots_beside_state(self, validated)
         return validated
 
@@ -321,10 +325,10 @@ def _member_metadata(
 def to_document(value: ValueObject | None) -> dict[str, object] | None:
     """Serialize a Value Object to its canonical nested document.
 
-    ``None`` passes through unchanged (an absent occurrence). Filtered by
-    Pydantic's ``model_fields_set``: a member the caller never populated is
-    omitted rather than bound as an explicit null, which is the same
-    explicit-versus-defaulted distinction a write row draws. A Many occurrence is
+    ``None`` passes through unchanged (an absent occurrence). Filtered by member
+    presence: a member the caller never populated is omitted rather than bound as
+    an explicit null, which is the same explicit-versus-defaulted distinction a
+    write row draws. A Many occurrence is
     the one exception — it is never nullable, and its empty default serializes as
     the empty array, the sole zero-element representation. Whether an omitted
     required member is a defect belongs to write validation, not to this
@@ -347,6 +351,13 @@ def _document(value: ValueObject) -> dict[str, object]:
 def _presences(value: ValueObject, shape: DocumentShape) -> dict[str, Presence]:
     """One presence per populated member, keyed by canonical name.
 
+    Presence is asked of the backing one member at a time
+    (:func:`~parallax.core.entity._instance_state.is_present`), because this walk
+    iterates the declaration anyway: a per-member predicate is proportional to
+    what it already visits and allocates nothing, where asking for the populated
+    set would synthesize one out of a published value's bitmap on every document
+    it renders.
+
     An unpopulated member contributes no entry at all, so the codec classifies it
     ``Missing`` — which is what omits an unset optional inner member rather than
     writing an explicit null for it. A ``many`` occurrence is always contributed,
@@ -359,10 +370,10 @@ def _presences(value: ValueObject, shape: DocumentShape) -> dict[str, Presence]:
     codec spells.
     """
     declared = shape_of(type(value))
-    fields_set = value.model_fields_set
+    bits = plan_of(type(value)).bits
     presences: dict[str, Presence] = {}
     for py_name, canonical in declared.py_to_name.items():
-        if py_name not in fields_set and py_name not in declared.many_py:
+        if py_name not in declared.many_py and not is_present(value, bits[py_name]):
             continue
         raw = getattr(value, py_name)
         member = shape.member(canonical)

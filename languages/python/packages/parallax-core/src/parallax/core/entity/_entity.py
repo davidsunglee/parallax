@@ -35,7 +35,6 @@ from parallax.core.entity._declaration import (
 )
 from parallax.core.entity._edit import (
     partition_declared,
-    restate,
     unresolved_member_violation,
     use_edit,
 )
@@ -52,6 +51,7 @@ from parallax.core.entity._instance_state import (
     BackedModel,
     carry_slots_beside_state,
     named_state,
+    restated,
 )
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
 from parallax.core.entity._pydantic_storage import attach_instance_state
@@ -471,9 +471,9 @@ def _restate[E: Entity](
     record: ChangeRecord,
 ) -> E:
     """A fresh value holding exactly ``value``'s state under ``record``."""
-    restated = restate(value, declared_state | carried)
-    attach_instance_state(restated, CHANGE_RECORD_SLOT, record)
-    return restated
+    copied = restated(value, declared_state | carried)
+    attach_instance_state(copied, CHANGE_RECORD_SLOT, record)
+    return copied
 
 
 def _use_edit(cls: type, door: str) -> EditError:

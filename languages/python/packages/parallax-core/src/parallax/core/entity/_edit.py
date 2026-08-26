@@ -15,8 +15,7 @@ import functools
 from typing import TYPE_CHECKING, Final
 
 from parallax.core.entity._errors import EditError, EditViolation
-from parallax.core.entity._instance_state import carry_slots_beside_state, named_state
-from parallax.core.entity._pydantic_storage import replace_instance_state
+from parallax.core.entity._instance_state import named_state
 
 if TYPE_CHECKING:
     from collections.abc import Container
@@ -27,7 +26,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "partition_declared",
-    "restate",
     "unresolved_member_violation",
     "use_edit",
 ]
@@ -100,31 +98,6 @@ def partition_declared(
         elif not _is_derived_cache(type(value), key):
             carried[key] = member
     return declared_state, carried
-
-
-def restate[M: BaseModel](value: M, state: dict[str, object]) -> M:
-    """A fresh value holding exactly ``state`` under ``value``'s populated set.
-
-    An edit that authors nothing validates nothing, so it builds through the
-    validation-free construction path materialization already uses rather than
-    through the constructor — which is also the only path left once every
-    inherited copy door is refused. ``state`` lands in the copy's own storage
-    through Pydantic's own slot descriptor, so no name a class body binds decides
-    what the copy ends up holding.
-
-    ``state`` is worth the copy's storage and its populated-member set, and it is
-    worth the compact backing's two slots as well: it already carries everything a
-    published source's row and auxiliary slot named, so the copy is built ordinary
-    and holds neither. Every remaining slot of the source's layout is carried by
-    :func:`~parallax.core.entity._instance_state.carry_slots_beside_state`, which
-    is what stops the instance state kept outside the storage — Pydantic's private
-    attributes among it — from being reset to a fresh instance's defaults.
-    """
-    restated = type(value).model_construct()
-    replace_instance_state(restated, state)
-    object.__setattr__(restated, "__pydantic_fields_set__", set(value.__pydantic_fields_set__))
-    carry_slots_beside_state(value, restated)
-    return restated
 
 
 def unresolved_member_violation(
