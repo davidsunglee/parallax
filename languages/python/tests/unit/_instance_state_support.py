@@ -1,16 +1,24 @@
-"""The canonical scenarios published-instance state is measured over, and the
-fixture that builds one node the way publication built one before the flip.
+"""The canonical scenarios published-instance state is measured over, and the two
+arms every reading takes over them.
 
 Six scenarios — shallow, wide, nested, nullable, partial, polymorphic — carry
-retained bytes on both sides of a representation change. The "before" side has a
-problem the "after" side does not: once publication attaches a compact tuple
-there is no legacy path left to measure, so a comparison taken later would have
-nothing to compare against. This module is that half, held as a fixture rather
-than as a number: :data:`SCENARIOS` names the shapes and
-:func:`legacy_publication` builds one node the way Entity Graph Construction
-built one while that path existed. It was compared against the real path every
-time it was measured, up to and including the reading taken immediately before
-the flip; the flip deleted the path, and with it the comparison.
+retained bytes on both sides of a representation change, and
+:data:`WARMED_AUXILIARY` carries the seventh the measurement contract reports
+beside them and excludes from every aggregate. :func:`compact_publication` is the
+"after": the shipping publication path in full, which needs no fixture because it
+is production. :func:`legacy_publication` is the "before", and it is a fixture
+because it has to be — once publication attaches a compact tuple there is no
+legacy path left to measure, so a comparison taken later would have nothing to
+compare against. It was compared against the real path every time it was
+measured, up to and including the reading taken immediately before the flip; the
+flip deleted the path, and with it the comparison.
+
+**Both arms are measured on one tree, which is what makes their difference the
+representation's.** Every framework slot a declared class carries is carried by
+both — an ordinary value holds the compact and auxiliary pointers exactly as a
+published one does, and an Entity of either backing holds the lifecycle slot — so
+an aggregate over the two divides two readings taken over one object layout, as
+``docs/instance-state-baseline.md``'s accounting rule requires.
 
 **Why the fixture is not ordinary construction.** A materialized node WAS
 ``cls.model_construct()`` with no arguments followed by one
@@ -42,6 +50,8 @@ from decimal import Decimal
 from functools import cached_property
 from typing import Any, Final, cast
 
+from pydantic import BaseModel, PrivateAttr
+
 from parallax.core import (
     MANY_TO_ONE,
     AbstractRoot,
@@ -60,13 +70,15 @@ from parallax.core import (
 from parallax.core.entity import (
     UNLOADED,
 )
-from parallax.core.entity._construction_input import ABSENT
+from parallax.core.entity._construction_input import ABSENT, NodeHandle
 from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._entity import attach_lifecycle_state, wire_names_of
+from parallax.core.entity._graph_construction import EntityGraphWriter, graph_construction_of
+from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.entity._model import DomainModel as ModelType
 from parallax.core.entity._model import cataloged_model, class_index
-from parallax.core.entity._pydantic_storage import attach_instance_state
+from parallax.core.entity._pydantic_storage import attach_instance_state, instance_state
 from parallax.core.metamodel import (
     EntityIdentity,
     Multiplicity,
@@ -76,11 +88,15 @@ from parallax.core.metamodel import (
 from parallax.snapshot._inspection import SnapshotNodeState
 
 __all__ = [
+    "REPORTED",
     "SCENARIOS",
+    "WARMED_AUXILIARY",
     "LegacyPlan",
     "Scenario",
+    "compact_publication",
     "legacy_publication",
     "scenario_named",
+    "state_cells",
 ]
 
 NAMESPACE: Final = "instance.state"
@@ -217,11 +233,36 @@ class Car(Wheeled, namespace=NAMESPACE, inheritance=ConcreteSubtype(tag_value="c
     electric: Attr[bool | None]
 
 
+class Warmed(Entity, table="instance_state_warmed", namespace=NAMESPACE):
+    """The same four Attributes as `shallow`, plus the two kinds of author-owned
+    state that live outside a published row.
+
+    Reported beside the canonical mix and excluded from both aggregates: a
+    ``PrivateAttr``'s value and a ``cached_property``'s result are state the
+    author asked for, so charging a representation change with them would credit
+    or debit it for something neither backing decides.
+    """
+
+    id: Attr[int] = attr(primary_key=True)
+    parent_id: Attr[int | None]
+    name: Attr[str | None] = attr(max_length=32)
+    amount: Attr[Decimal | None] = attr(precision=18, scale=2)
+    parent: Rel["Warmed | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))
+
+    _revision = PrivateAttr(default=0)
+
+    @cached_property
+    def label(self) -> str:
+        """Warmed inside every window, so the memoized result is counted."""
+        return f"{self.name}/{self.id}"
+
+
 SHALLOW_MODEL: Final = DomainModel(Shallow)
 WIDE_MODEL: Final = DomainModel(Wide)
 NESTED_MODEL: Final = DomainModel(Nested)
 OPTIONALS_MODEL: Final = DomainModel(Optionals)
 VEHICLE_MODEL: Final = DomainModel(Vehicle, Wheeled, Car)
+WARMED_MODEL: Final = DomainModel(Warmed)
 
 
 # --------------------------------------------------------------------------- #
@@ -264,6 +305,8 @@ _PARTIAL_ROW: Final[tuple[object, ...]] = (
 
 _CAR_ROW: Final[tuple[object, ...]] = (7, None, "estate", 1420.0, 2, 5, False)
 
+_WARMED_ROW: Final[tuple[object, ...]] = (7, None, "warmed-name", Decimal("12.50"))
+
 
 # --------------------------------------------------------------------------- #
 # The two arms.                                                                #
@@ -299,11 +342,26 @@ class Scenario:
     model: ModelType
     entity: EntityIdentity
     values: tuple[object, ...]
+    warms: bool = False
+    """Whether both arms read this scenario's ``cached_property`` before the
+    sample, so the memoized result is state the reading counts."""
 
     @cached_property
     def layout(self) -> EntityLayout:
         """The exact Entity's member layout — the order ``values`` is read in."""
         return cataloged_model(self.model).layouts.entity(self.entity)
+
+    @cached_property
+    def unloaded(self) -> tuple[object, ...]:
+        """One unloaded position per navigable relationship, which is the
+        relationship row publication takes.
+
+        Derived from the layout rather than spelled per scenario. Every position
+        holds the same sentinel, so a literal row would pin no value — only a
+        width, which is the layout's own and which spelling out again would leave
+        one more thing to keep in step for a reading that grades nothing.
+        """
+        return (UNLOADED,) * len(self.layout.relationships)
 
     @cached_property
     def plan(self) -> LegacyPlan:
@@ -378,7 +436,63 @@ def legacy_publication(scenario: Scenario, state: object | None) -> object:
         attach_instance_state(instance, py_name, UNLOADED)
     if state is not None:
         attach_lifecycle_state(instance, state)
+    return _warmed(scenario, instance)
+
+
+def compact_publication(scenario: Scenario, state: object | None) -> object:
+    """``scenario``'s node built the way publication builds one today.
+
+    The shipping path in full rather than a fixture of it: one Entity Graph
+    Construction call allocating one shell, populating it with the scenario's
+    positional member row and one unloaded position per navigable relationship,
+    and attaching one complete row exactly once. There is nothing here to keep in
+    step with production, because it IS production — which is the half of the
+    comparison the legacy arm cannot be.
+    """
+    construction = graph_construction_of(scenario.model)
+    entity = scenario.entity
+    members = scenario.values
+    relationships = scenario.unloaded
+
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        handle = writer.allocate(entity)
+        writer.populate(handle, members, relationships)
+        return (handle,)
+
+    roots = construction.construct(
+        build,
+        state_factory=None if state is None else lambda _view, _handle: state,
+    )
+    return _warmed(scenario, roots[0])
+
+
+def _warmed(scenario: Scenario, instance: object) -> object:
+    """``instance``, with its author-owned auxiliary state warmed if the scenario
+    asks for it.
+
+    Inside the arm rather than outside it, so the memoized result is allocated
+    within whatever window the arm is measured in and is counted as state the
+    node holds rather than borrowed from before it.
+    """
+    if scenario.warms:
+        _ = cast("Any", instance).label
     return instance
+
+
+def state_cells(instance: object) -> int:
+    """How many positions ``instance``'s backing holds, asked without creating any.
+
+    A published value answers its row's width — the presence bitmap, every
+    declared member, and every declared relationship — and an ordinary one the
+    entries its real storage holds. Reading the row off its slot rather than
+    through the value's presented mapping is what keeps the question about the
+    representation; asking an ordinary value is safe because it has storage
+    already, and asking a published one this way never creates any.
+    """
+    row = object.__getattribute__(instance, COMPACT_STATE_SLOT)
+    if row is not None:
+        return len(cast("tuple[object, ...]", row))
+    return len(instance_state(cast("BaseModel", instance)))
 
 
 def _legacy_occurrence(value: object, declared: _VoContainer, vo_class: type) -> object:
@@ -472,9 +586,34 @@ SCENARIOS: Final[tuple[Scenario, ...]] = (
 )
 
 
+WARMED_AUXILIARY: Final = Scenario(
+    name="warmed",
+    summary="`shallow`'s 4 Attributes plus a PrivateAttr and a warmed cached_property",
+    model=WARMED_MODEL,
+    entity=Warmed.identity,
+    values=_WARMED_ROW,
+    warms=True,
+)
+"""The scenario the measurement contract requires beside the canonical mix and
+outside both aggregates.
+
+Held apart from :data:`SCENARIOS` rather than flagged inside it, so no aggregate
+can pick it up by iterating the mix. What it isolates is state neither backing
+decides: a ``PrivateAttr``'s value and a ``cached_property``'s result are the
+author's, live in ordinary per-instance storage under both backings, and would
+credit or debit a representation change with a cost that is not the
+representation's.
+"""
+
+REPORTED: Final[tuple[Scenario, ...]] = (*SCENARIOS, WARMED_AUXILIARY)
+"""Every scenario a reading is taken over — the canonical mix, then the one
+excluded from the aggregate."""
+
+
 def scenario_named(name: str) -> Scenario:
-    """The canonical scenario ``name`` names, or a loud rejection."""
-    for scenario in SCENARIOS:
+    """The scenario ``name`` names, canonical or reported beside them, or a loud
+    rejection."""
+    for scenario in REPORTED:
         if scenario.name == name:
             return scenario
-    raise KeyError(f"{name!r} is not a canonical scenario: {[s.name for s in SCENARIOS]}")
+    raise KeyError(f"{name!r} is not a measured scenario: {[s.name for s in REPORTED]}")
