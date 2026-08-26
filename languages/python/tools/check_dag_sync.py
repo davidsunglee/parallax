@@ -293,9 +293,10 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot._read_result": frozenset({"parallax.snapshot.materialize"}),
     # The row-to-graph half of `m-snapshot-read`, scoped apart from the read
     # result `parallax.snapshot._read_result` publishes. It holds every
-    # `m-snapshot-read` edge EXCEPT `m-execution-lifecycle`, plus the layout and
-    # row scopes a projection is laid out and read against, neither of which has a
-    # language-neutral module tag either. Withholding the provenance edge here is
+    # `m-snapshot-read` edge EXCEPT `m-execution-lifecycle`, plus the layout a
+    # projection is laid out against and the sentinel scope its absent positions
+    # are spelled with, neither of which has a language-neutral module tag either.
+    # Withholding the provenance edge here is
     # what keeps `m-sql`, `m-db-error`, `m-auto-retry` and `m-dialect` outside this
     # scope's closure — and therefore outside the closure of
     # `parallax.snapshot.handle._materializer`, whose whole reason to exist is to

@@ -745,10 +745,13 @@ def _require_row(
 ) -> None:
     """Refuse anything but an exact built-in tuple of the model-fixed width.
 
-    Width is the whole membership check a positional row needs: every declared
-    member has a position, so a row of the right width names each of them exactly
-    once and a row of any other width names a member the Entity does not
-    declare — the two rejections the identity-keyed algebra needed separately.
+    Width is the whole membership check a positional row needs. Every declared
+    member has a position and a position names nothing else, so a row of the
+    model's own width names each declared member exactly once — which is why the
+    two rejections the identity-keyed algebra made separately do not survive as
+    checks: an undeclared member has no position to occupy, and a member named
+    twice has one position to occupy. What is left is a row that is not the
+    model's membership at all: too many positions, or too few.
     """
     if type(row) is not tuple:
         raise GraphConstructionError(
