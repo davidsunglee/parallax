@@ -1,10 +1,10 @@
-"""One scenario's reading under both arms, taken in a child interpreter.
+"""One scenario's reading under every arm, taken in a child interpreter.
 
 The half of `tools/instance_state_overhead.py` that measures. It is a script
 rather than a function that report calls: every instrument here reads the whole
 process, so a reading is only a property of its own subject when it is taken in
 an interpreter that has loaded nothing else, and the report starts one child per
-complete scenario naming this file. Both arms are measured in that one child —
+complete scenario naming this file. Every arm is measured in that one child —
 a byte reading is read against a floor the interpreter decides, so two arms
 compared across two processes would be compared across two floors.
 
@@ -35,9 +35,11 @@ WORKSPACE: Final = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKSPACE / "tests" / "unit"))
 
 from _instance_state_support import (  # noqa: E402
+    COMPACT,
+    LEGACY,
+    ORDINARY,
+    Arm,
     Scenario,
-    compact_publication,
-    legacy_publication,
     scenario_named,
     state_cells,
 )
@@ -49,9 +51,11 @@ from memory_instruments import (  # noqa: E402
 )
 
 from instance_state_overhead import (  # noqa: E402
+    MARGINAL_NODES,
     REPETITIONS,
     ArmReading,
     Reading,
+    marginal,
     payload,
 )
 
@@ -121,16 +125,30 @@ def _elapsed_ns(work: Callable[[], None], *, per: int = 1) -> float:
     return elapsed * 1e9 / (REPETITIONS * per)
 
 
-def measure_arm(
-    scenario: Scenario,
-    arm: Callable[[Scenario, object | None], object],
-    field_names: tuple[str, ...],
-) -> ArmReading:
-    """``arm``'s reading of ``scenario``, taken in this interpreter."""
-    node = arm(scenario, scenario.state())
+def _construction_ns(scenario: Scenario, arm: Arm) -> tuple[float, float]:
+    """What one more node of ``arm`` costs, and what one call costs besides them.
 
-    def construct() -> None:
-        arm(scenario, scenario.state())
+    Two builds of the same arm, differing only in how many nodes they are asked
+    for, so the per-call cost is common to both and cancels in the difference
+    (:func:`~instance_state_overhead.marginal`). Timing one call and calling it
+    the construction cost is what this replaces: an arm whose call also pays a
+    scope, a writer, root validation and factory buffering would be charged for
+    them against an arm that has none, and the difference would read as a
+    per-node regression that no node pays.
+    """
+
+    def one() -> None:
+        arm.graph(scenario, 1)
+
+    def many() -> None:
+        arm.graph(scenario, MARGINAL_NODES)
+
+    return marginal(_elapsed_ns(one), _elapsed_ns(many))
+
+
+def measure_arm(scenario: Scenario, arm: Arm, field_names: tuple[str, ...]) -> ArmReading:
+    """``arm``'s reading of ``scenario``, taken in this interpreter."""
+    node = arm.node(scenario, scenario.state())
 
     def read_fields() -> None:
         for name in field_names:
@@ -141,31 +159,34 @@ def measure_arm(
 
     tracemalloc.start()
     try:
-        retained_bytes = retained(held(scenario, arm, lifecycle=True))
-        bare_bytes = retained(held(scenario, arm, lifecycle=False))
-        peak_bytes = peak(held(scenario, arm, lifecycle=True))
+        retained_bytes = retained(held(scenario, arm.node, lifecycle=True))
+        bare_bytes = retained(held(scenario, arm.node, lifecycle=False))
+        peak_bytes = peak(held(scenario, arm.node, lifecycle=True))
     finally:
         tracemalloc.stop()
+    construct_ns, call_ns = _construction_ns(scenario, arm)
     return ArmReading(
         cells=state_cells(node),
         retained_bytes=retained_bytes,
         bare_bytes=bare_bytes,
         peak_bytes=peak_bytes,
-        construct_ns=_elapsed_ns(construct),
+        construct_ns=construct_ns,
+        call_ns=call_ns,
         read_ns=_elapsed_ns(read_fields, per=len(field_names)),
         dump_ns=_elapsed_ns(dump),
     )
 
 
 def measure(scenario: Scenario) -> Reading:
-    """``scenario``'s reading under both arms, taken in this interpreter."""
+    """``scenario``'s reading under every arm, taken in this interpreter."""
     field_names = tuple(cast("Any", scenario.cls).__pydantic_fields__)
     return Reading(
         scenario=scenario.name,
         summary=scenario.summary,
         fields=len(field_names),
-        legacy=measure_arm(scenario, legacy_publication, field_names),
-        compact=measure_arm(scenario, compact_publication, field_names),
+        ordinary=measure_arm(scenario, ORDINARY, field_names),
+        legacy=measure_arm(scenario, LEGACY, field_names),
+        compact=measure_arm(scenario, COMPACT, field_names),
     )
 
 
