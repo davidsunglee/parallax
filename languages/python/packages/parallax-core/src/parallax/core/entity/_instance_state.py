@@ -172,7 +172,13 @@ class PublicationPlan:
     """Each declared broad relationship's absolute tuple index in the tail."""
     has_auxiliary: bool
     """Whether the class declares a ``cached_property`` or a ``PrivateAttr``, and so
-    whether a published value can carry state outside its tuple at all."""
+    whether a published value can carry state outside its tuple at all.
+
+    A presentation is seeded from the auxiliary slot only where this holds, which
+    is what keeps every other class's presentation one row read and one mapping —
+    so it decides a write as well as a read: author-owned state written through a
+    published value of a class declaring none is refused, because the slot it
+    would land in is one no presentation of that class ever consults."""
 
 
 def install(
@@ -282,38 +288,48 @@ class _PresentedState(dict[str, Any]):
     the one thing that has to outlive the mapping — ``functools.cached_property``
     memoizes by assigning into what it was handed — so EVERY mutating operation
     ``dict`` defines is answered here rather than only item assignment. Left
-    inherited, ``update``, ``setdefault``, ``|=``, ``pop``, ``popitem``, and
-    ``clear`` would each write the temporary at C speed and vanish with it, which
-    is the one outcome this seam may not have.
+    inherited, ``update``, ``setdefault``, ``|=``, ``pop``, ``popitem``,
+    ``clear``, and ``__init__`` — which ``dict`` defines as the update of an
+    existing mapping — would each write the temporary at C speed and vanish with
+    it, which is the one outcome this seam may not have.
 
-    Each ends one of two ways. A key outside the row is author-owned state: it
-    lands in the value's auxiliary slot, which the next presentation is seeded
-    from. A key the row holds is a declared member of a row attached once, which
-    no mapping operation can shadow or remove without splitting the value between
-    what an attribute read answers and what a dump emits — so those refuse.
+    Each ends one of three ways. A key the row holds — a declared member, or a
+    relationship position the presentation does not even carry — is part of a row
+    attached once, which no mapping operation can shadow or remove without
+    splitting the value between what an attribute read answers and what a dump
+    emits, so those refuse. Any other key is author-owned state, and it lands in
+    the value's auxiliary slot, which the next presentation is seeded from — on a
+    class that declares such state. On a class that declares none, no presentation
+    is ever seeded from that slot, so a write there would be exactly the
+    disappearance this seam may not have, and it refuses too.
 
-    It deliberately declares no ``__init__``: every read of a published value's
-    state builds one of these, so ``dict``'s own initializer and one slot write
-    are what it costs rather than a Python frame per read. :func:`_presented` is
-    the one door that builds one, and attaching the owner is the second half of
-    building it.
+    The initializer is answered as the update it is, and :class:`_DeclaredState`
+    builds a presentation without entering it: every read of a published value's
+    state builds one of these, so what a build costs is ``dict``'s own
+    initializer and one slot write rather than a Python frame. That bypass is
+    what leaves the initializer free to answer a caller rather than a build.
     """
 
     __slots__ = ("_value",)
 
-    def __setitem__(self, key: str, item: Any) -> None:
-        if key in self and key not in (_auxiliary(self._value) or ()):
-            raise TypeError(self._row_member(key))
+    def __init__(self, *state: Any, **members: Any) -> None:
+        self.update(*state, **members)
+
+    def __setitem__(self, key: str, item: Any, /) -> None:
+        if self._row_holds(key):
+            raise TypeError(self._row_position(key))
+        if not plan_of(type(self._value)).has_auxiliary:
+            raise TypeError(self._undeclared_state(key))
         auxiliary(self._value)[key] = item
         super().__setitem__(key, item)
 
-    def setdefault(self, key: str, default: Any = None) -> Any:
+    def setdefault(self, key: str, default: Any = None, /) -> Any:
         if key in self:
             return self[key]
         self[key] = default
         return default
 
-    def update(self, *state: Any, **members: Any) -> None:
+    def update(self, /, *state: Any, **members: Any) -> None:
         for key, item in dict(*state, **members).items():
             self[key] = item
 
@@ -321,11 +337,13 @@ class _PresentedState(dict[str, Any]):
         self.update(state)
         return self
 
-    def __delitem__(self, key: str) -> None:
+    def __delitem__(self, key: str, /) -> None:
         del self._warmed(key)[key]
         super().__delitem__(key)
 
     def pop(self, key: str, /, *default: Any) -> Any:
+        if len(default) > 1:
+            raise TypeError(f"pop expected at most 2 arguments, got {1 + len(default)}")
         if default and key not in self:
             return default[0]
         item = self[key]
@@ -353,15 +371,34 @@ class _PresentedState(dict[str, Any]):
         warmed = _auxiliary(self._value)
         if warmed is not None and key in warmed:
             return warmed
-        if key in self:
-            raise TypeError(self._row_member(key))
+        if self._row_holds(key):
+            raise TypeError(self._row_position(key))
         raise KeyError(key)
 
-    def _row_member(self, key: str) -> str:
+    def _row_holds(self, key: str) -> bool:
+        """Whether ``key`` names a position the value's row itself carries.
+
+        A declared member is one and so is a relationship, which the presentation
+        does not carry at all — so this asks the plan rather than the mapping,
+        which is what reaches the tail a presented key set would miss.
+        """
+        plan = plan_of(type(self._value))
+        return key in plan.indexes or key in plan.relationships
+
+    def _row_position(self, key: str) -> str:
         return (
-            f"{type(self._value).__name__}.{key} is a declared member of a published row, "
+            f"{type(self._value).__name__}.{key} is a position in a published row, "
             "which is attached once and cannot be rewritten or dropped through the mapping "
             "presenting it; derive a value that differs with edit(...)"
+        )
+
+    def _undeclared_state(self, key: str) -> str:
+        return (
+            f"{type(self._value).__name__}.{key} is dynamic state a published value of this "
+            "class carries nowhere: the class declares no `functools.cached_property` and no "
+            "`PrivateAttr`, so nothing seeds a presentation of it from the auxiliary slot and "
+            "the write would vanish with the mapping it landed in; declare the slot on the "
+            "class as a `functools.cached_property`, which a presentation is seeded from"
         )
 
     def __reduce__(self) -> tuple[Any, ...]:
@@ -393,7 +430,8 @@ class _DeclaredState:
     twice per dump, and it is forbidden: a mapping held from the first dump
     onward is a per-node retained dictionary, which is the whole of what this
     backing exists to remove, reintroduced on exactly the values that removed it.
-    What may be optimized is the build — it carries no ``__init__``, the
+    What may be optimized is the build — it is spelled here rather than behind a
+    function of its own, it enters no Python frame of the presentation's, the
     auxiliary read is gated on a class fact, and the ordinary branch reaches the
     slot descriptor rather than a function over it.
 
@@ -420,12 +458,15 @@ class _DeclaredState:
         if row is None:
             return MODEL_STORAGE.__get__(value)
         plan = plan_of(type(value))
-        members = zip(plan.fields, plan.field_values(row), strict=True)
+        members: Any = zip(plan.fields, plan.field_values(row), strict=True)
         if plan.has_auxiliary:
             warmed = _auxiliary(value)
             if warmed:
-                return _presented(value, [*members, *warmed.items()])
-        return _presented(value, members)
+                members = [*members, *warmed.items()]
+        presented = _PresentedState.__new__(_PresentedState)
+        _PresentedOwner.__set__(presented, value)
+        _PresentedRow(presented, members)
+        return presented
 
     def __set__(self, value: BaseModel, state: dict[str, Any]) -> None:
         _CompactState.__set__(value, None)
@@ -524,12 +565,9 @@ else:
 _PresentedOwner: Final = _PresentedState.__dict__["_value"]
 """The presentation's own owner slot, written without a Python frame."""
 
-
-def _presented(value: BaseModel, members: Any) -> _PresentedState:
-    """``members`` as the mapping ``value`` presents, built at C speed."""
-    presented = _PresentedState(members)
-    _PresentedOwner.__set__(presented, value)
-    return presented
+_PresentedRow: Final = cast("Callable[[_PresentedState, Any], None]", dict.__dict__["__init__"])
+"""``dict``'s own initializer, which fills a presentation without entering the
+override that answers a caller re-initializing one as the write it is."""
 
 
 _CompactState: Final = cast("Any", BackedModel).__dict__[COMPACT_STATE_SLOT]
@@ -616,7 +654,10 @@ def named_state(value: BaseModel) -> Mapping[str, object]:
     here too, under the name ordinary backing files it in storage under, so a
     copy derived from either backing carries the same loaded tails forward; an
     unloaded position names nothing, exactly as a dictionary that was never
-    written names nothing.
+    written names nothing. The value's author-owned state is named last and for
+    the same reason: a published value holds it in the auxiliary slot rather than
+    beside its declared members, and a caller preserving everything it did not
+    replace has to see it there or drop what ordinary backing would have kept.
 
     So this is what a framework read of a value's whole name-keyed state goes
     through, and :func:`~parallax.core.entity._pydantic_storage.instance_state`
@@ -632,6 +673,9 @@ def named_state(value: BaseModel) -> Mapping[str, object]:
         for py_name, index in plan.relationships.items()
         if (related := row[index]) is not UNLOADED
     )
+    warmed = _auxiliary(value)
+    if warmed:
+        state.update(warmed)
     return state
 
 
