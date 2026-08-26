@@ -47,6 +47,17 @@ two, so what the report prints as construction is the cost of one MORE node unde
 each arm — the quantity the arms hold in common — with the per-call remainder
 printed beside it.
 
+**Why the compact arm also reports what its own callbacks cost.** That split
+cancels a call's FIXED cost and not its per-NODE one, and a ``construct`` call
+does per-node work outside the callbacks its caller supplies. The pre-flip path
+paid exactly that work through the same call; the legacy fixture reproduces the
+node BUILDING alone and pays none of it, so the two arms' ``node µs`` are still
+not the same scope. :func:`compact_callback_ns` measures the difference by timing
+one call's own callbacks from inside them, which lets the report state a
+like-for-like construction ratio it derives rather than a correction in prose.
+Only the compact arm carries one: an arm whose call IS a loop over its node
+builder has nothing outside that builder to separate.
+
 **What a scenario carries.** One positional member row, ``ABSENT``-spelled and
 aligned to the exact Entity's ``EntityLayout`` — the same row a compiled read
 lays out and hands across ``populate``'s door, with nested tuples at every Value
@@ -69,6 +80,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cached_property
+from time import perf_counter
 from typing import Any, Final, cast
 
 from pydantic import BaseModel, PrivateAttr
@@ -119,6 +131,7 @@ __all__ = [
     "Arm",
     "LegacyPlan",
     "Scenario",
+    "compact_callback_ns",
     "scenario_named",
     "state_cells",
 ]
@@ -607,6 +620,58 @@ def compact_graph(scenario: Scenario, count: int) -> tuple[object, ...]:
     return tuple(_warmed(scenario, root) for root in roots)
 
 
+def compact_callback_ns(scenario: Scenario, count: int) -> float:
+    """Nanoseconds one :func:`compact_graph` call spends inside its OWN work.
+
+    The same call, built the same way, with the arm's two callbacks and its
+    warming loop timed from inside them: the build callback, which is the node
+    building the legacy fixture reproduces; each state-factory invocation, which
+    is the lifecycle state the fixture also creates; and the warming loop, which
+    is author-owned state both arms pay per node. What is left outside is the
+    per-node work ``construct`` itself does — the populated check, root
+    validation, the resolution view each factory invocation gets, the buffered
+    attach, and the root tuple — which is what the pre-flip path paid through the
+    same call and the fixture does not reproduce.
+
+    A SEPARATE call from the one :func:`compact_graph` answers, so no timer runs
+    inside the call the report's own construction figure is taken over: reading
+    the clock twelve times inside an eleven-node build would move the number this
+    correction is applied to.
+
+    The lifecycle ATTACH stays outside — it is one slot write per node inside
+    ``construct``'s own loop, and the fixture pays one too — so the residue this
+    leaves is generous to the compact arm by that much.
+    """
+    construction = graph_construction_of(scenario.model)
+    entity = scenario.entity
+    members = scenario.values
+    relationships = scenario.unloaded
+    inside = 0.0
+
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        nonlocal inside
+        start = perf_counter()
+        handles = tuple(writer.allocate(entity) for _ in range(count))
+        for handle in handles:
+            writer.populate(handle, members, relationships)
+        inside += perf_counter() - start
+        return handles
+
+    def state_factory(_view: object, _handle: NodeHandle) -> object:
+        nonlocal inside
+        start = perf_counter()
+        state = scenario.state()
+        inside += perf_counter() - start
+        return state
+
+    roots = construction.construct(build, state_factory=state_factory)
+    start = perf_counter()
+    for root in roots:
+        _warmed(scenario, root)
+    inside += perf_counter() - start
+    return inside * 1e9
+
+
 @dataclass(frozen=True, slots=True)
 class Arm:
     """One way of building ``scenario``'s node, at both scopes a reading needs.
@@ -631,6 +696,15 @@ class Arm:
     (`spec/python.md` §3), so the reading must not attach one: an arm asked for
     a comparand a caller cannot hold answers about no instance that exists.
     """
+    callbacks_ns: Callable[[Scenario, int], float] | None = None
+    """Nanoseconds one call of this arm spends inside its own callbacks, or
+    ``None`` for an arm whose call IS its node builder.
+
+    ``None`` is the honest answer for the two fixture arms rather than a missing
+    measurement: their graph is a loop over the node builder, so there is nothing
+    outside that builder for a call to spend time in and nothing to separate. The
+    compact arm's call runs per-node work of its own around the callbacks it is
+    given, and this is what measures it."""
 
 
 ORDINARY: Final = Arm(
@@ -642,7 +716,9 @@ ORDINARY: Final = Arm(
 LEGACY: Final = Arm(
     "legacy", legacy_publication, _one_at_a_time(legacy_publication, lifecycle=True), lifecycle=True
 )
-COMPACT: Final = Arm("compact", compact_publication, compact_graph, lifecycle=True)
+COMPACT: Final = Arm(
+    "compact", compact_publication, compact_graph, lifecycle=True, callbacks_ns=compact_callback_ns
+)
 
 ARMS: Final[tuple[Arm, ...]] = (ORDINARY, LEGACY, COMPACT)
 """Every arm a reading is taken under, in the order the tables print them."""

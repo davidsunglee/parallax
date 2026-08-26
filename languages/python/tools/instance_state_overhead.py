@@ -50,29 +50,33 @@ the window opened — read twice, once with the node's lifecycle state attached 
 once without, so the aggregate that includes unchanged lifecycle state and the
 one that isolates publication state are both available. Beside them: what one
 MORE node of that arm costs to construct, what one call costs besides its nodes,
-what an ordinary declared-field read costs, what ``model_dump()`` costs, and the
+how much of that per-node cost falls outside the callbacks the arm supplies, what
+an ordinary declared-field read costs, what ``model_dump()`` costs, and the
 high-water mark one construction reaches, from which what it allocated and freed
 again is the difference.
 
-**Construction is timed per node, and the legacy ratio is an upper bound.** A
-compact node arrives from an ``EntityGraphConstruction.construct`` call that also
-pays a call scope, a writer, root validation and factory buffering, where the
-fixture arms build a node and nothing else — so a per-CALL construction figure
-compares two different amounts of work. Each arm is therefore timed building one
-node and building :data:`MARGINAL_NODES`, and :func:`marginal` splits the two
-into the cost of one more node — what the report prints as construction and what
-the regression rule grades — and the per-call remainder, printed beside it.
+**Construction is timed per node, and its ratio is printed twice.** A compact
+node arrives from an ``EntityGraphConstruction.construct`` call that also pays a
+call scope, a writer, root validation and factory buffering, where the fixture
+arms build a node and nothing else — so a per-CALL construction figure compares
+two different amounts of work. Each arm is therefore timed building one node and
+building :data:`MARGINAL_NODES`, and :func:`marginal` splits the two into the cost
+of one more node and the per-call remainder, printed beside it.
 
 That split removes the FIXED per-call cost and not the per-NODE one. A
-``construct`` call's populated check, root validation, state-factory invocation
-and buffered attachment all scale with node count, so they stay inside the
-compact arm's ``node µs``; the pre-flip path paid the same per-node work through
-the same call, and the legacy FIXTURE reproduces only the node building inside
-it. The legacy construction ratio is therefore biased against the compact arm and
-reads as an upper bound on what the representation change cost — see
-``docs/instance-state-baseline.md``. The ordinary ratio beside it has no such
-bias: a caller building an ordinary instance genuinely pays no construction call,
-so what that ratio compares is what each caller pays.
+``construct`` call's populated check, root validation, resolution views and
+buffered attachment all scale with node count, so they stay inside the compact
+arm's ``node µs``; the pre-flip path paid the same per-node work through the same
+call, and the legacy FIXTURE reproduces only the node building inside it. So the
+compact arm's call is measured a second time with its own callbacks timed from
+inside them, and the remainder — ``outside µs`` — is the per-node work the fixture
+does not reproduce. Dividing the two ``node µs`` columns gives the
+``arm against arm`` ratio, an upper bound biased against the compact arm; adding
+``outside µs`` to the legacy side gives the ``like for like`` one, which is the
+before and after and which the regression rule grades. For a member read and a
+``model_dump()`` the two are equal by construction. The ordinary ratio needs no
+correction at all: a caller building an ordinary instance genuinely pays no
+construction call, so what that ratio compares is what each caller pays.
 
 **Where a reading is taken, and where it is not.** This module IMPORTS no
 instrument, so there is no name in it that reaches one — not bare, not through a
@@ -205,6 +209,21 @@ class ArmReading(NamedTuple):
     call_ns: float
     """What one call of this arm costs BESIDES the nodes it builds. Zero within
     noise for an arm that builds a node and nothing else."""
+    scaffolding_ns: float
+    """How much of :attr:`construct_ns` this arm's call spends OUTSIDE the
+    callbacks the arm supplies — per-node work the legacy fixture reproduces none
+    of, although the path it stands for paid all of it through the same call.
+
+    Exactly zero for an arm whose call is a loop over its own node builder, which
+    is a fact about that arm rather than a measurement it declined to take. It is
+    what turns the raw legacy construction ratio into the like-for-like one
+    (:func:`like_for_like_ratio`).
+
+    One quantity inside it the fixture DOES reproduce: the per-node lifecycle
+    attach, about 0.07 µs, which happens in ``construct``'s own loop rather than
+    in a callback the arm can time. So the correction is generous to the compact
+    arm by one slot write per node, where the uncorrected ratio is biased against
+    it by this whole column."""
     read_ns: float
     dump_ns: float
 
@@ -299,10 +318,19 @@ class Operation(NamedTuple):
 
     name: str
     nanoseconds: Callable[[ArmReading], float]
+    unreproduced: Callable[[ArmReading], float]
+    """Given the COMPACT arm's reading, the per-node work inside its call that
+    the legacy fixture does not reproduce and the pre-flip path paid through the
+    same call.
+
+    Zero for an operation whose two arms do the same work on the same object —
+    a member read and a ``model_dump()`` are one call against one call — and the
+    compact arm's measured scaffolding for construction, which is the one
+    operation whose arms are timed at different scopes."""
 
 
-# Three named readers rather than three lambdas, so each one carries the parameter
-# type its Operation declares and the timings stay statically checked.
+# Named readers rather than lambdas, so each one carries the parameter type its
+# Operation declares and the timings stay statically checked.
 
 
 def _construction_ns(arm: ArmReading) -> float:
@@ -317,10 +345,18 @@ def _dump_ns(arm: ArmReading) -> float:
     return arm.dump_ns
 
 
+def _scaffolding_ns(arm: ArmReading) -> float:
+    return arm.scaffolding_ns
+
+
+def _same_scope(_arm: ArmReading) -> float:
+    return 0.0
+
+
 OPERATIONS: Final = (
-    Operation("construction", _construction_ns),
-    Operation("attribute read", _read_ns),
-    Operation("serialization", _dump_ns),
+    Operation("construction", _construction_ns, _scaffolding_ns),
+    Operation("attribute read", _read_ns, _same_scope),
+    Operation("serialization", _dump_ns, _same_scope),
 )
 
 
@@ -567,17 +603,52 @@ def against_ordinary(readings: Sequence[Reading]) -> Aggregate:
 
 
 def mix_ratio(readings: Sequence[Reading], operation: Operation) -> float:
-    """How far ``operation`` moved from the legacy arm to the compact one over
+    """How far ``operation`` moved from the legacy ARM to the compact one over
     the whole mix — summed, for the same reason an aggregate is.
 
-    The legacy arm, like the aggregates, because the regression rule grades the
-    representation change. Reading and serialization are like for like at this
-    scope; construction is not quite, and the module docstring says which way it
-    is biased and by what.
+    Arm against arm, exactly as each was timed. For a member read and a
+    ``model_dump()`` that is already the before and after; for construction it is
+    an upper bound, because the compact arm's timing carries per-node work the
+    legacy fixture reproduces none of. :func:`like_for_like_ratio` is that same
+    comparison with the difference measured out, and it is the one the regression
+    rule grades. Both are printed.
     """
     before = sum(operation.nanoseconds(reading.legacy) for reading in readings)
     after = sum(operation.nanoseconds(reading.compact) for reading in readings)
     return after / before
+
+
+def before_ns(reading: Reading, operation: Operation) -> float:
+    """What the pre-flip path paid for ``operation`` on one of ``reading``'s
+    nodes: the legacy fixture's own timing plus the per-node work that fixture
+    does not reproduce.
+
+    The second term is measured on today's compact call and added to the BEFORE
+    side rather than subtracted from the after, because it is work the pre-flip
+    path paid and still pays — that half of ``EntityGraphConstruction`` is
+    unchanged either side of the flip. Removing it from the compact side would
+    price a node nobody constructs.
+    """
+    return operation.nanoseconds(reading.legacy) + operation.unreproduced(reading.compact)
+
+
+def like_for_like_ratio(readings: Sequence[Reading], operation: Operation) -> float:
+    """:func:`mix_ratio` with the two arms' scopes made the same — the figure the
+    regression rule grades.
+
+    Identical to :func:`mix_ratio` for every operation whose arms already do the
+    same work, so printing the two side by side is what shows WHICH comparison
+    needed a correction rather than asserting it.
+    """
+    before = sum(before_ns(reading, operation) for reading in readings)
+    after = sum(operation.nanoseconds(reading.compact) for reading in readings)
+    return after / before
+
+
+def scenario_ratio(reading: Reading, operation: Operation) -> float:
+    """One scenario's own like-for-like ratio — how the escalation block picks
+    the worst of a mix it is naming a summed figure for."""
+    return operation.nanoseconds(reading.compact) / before_ns(reading, operation)
 
 
 def ordinary_ratio(readings: Sequence[Reading], operation: Operation) -> float:
@@ -603,6 +674,13 @@ def escalations(runtime: str, readings: Sequence[Reading]) -> list[str]:
     operation past its limit is surfaced for human review. Both decide what is
     DISPLAYED and neither reaches the exit code, which is what keeps a `report`
     one (`core/spec/language-testing.md` §2).
+
+    The operation rule grades :func:`like_for_like_ratio` rather than
+    :func:`mix_ratio`, because the limit is stated over what the representation
+    change cost and only the like-for-like figure measures that: the raw ratio
+    would surface a difference in how two arms are timed as though it were a
+    regression. Both are printed, so a reader sees the graded figure beside the
+    arm-against-arm one.
     """
     lines: list[str] = []
     primary, _ = aggregates(readings)
@@ -612,20 +690,14 @@ def escalations(runtime: str, readings: Sequence[Reading]) -> list[str]:
             f"{AGGREGATE_TARGET:.0%} — return the measured result to the user for a decision"
         )
     for operation in OPERATIONS:
-        ratio = mix_ratio(readings, operation)
+        ratio = like_for_like_ratio(readings, operation)
         if ratio <= REGRESSION_LIMIT:
             continue
-        worst = max(
-            readings,
-            key=lambda reading: (
-                operation.nanoseconds(reading.compact) / operation.nanoseconds(reading.legacy)
-            ),
-        )
-        worst_ratio = operation.nanoseconds(worst.compact) / operation.nanoseconds(worst.legacy)
+        worst = max(readings, key=lambda reading: scenario_ratio(reading, operation))
         lines.append(
-            f"CPython {runtime}: {operation.name} {ratio:.2f}x over the mix "
-            f"(> {REGRESSION_LIMIT:.2f}x), worst {worst.scenario} at {worst_ratio:.2f}x "
-            "— surfaced for human review"
+            f"CPython {runtime}: {operation.name} {ratio:.2f}x like for like over the mix "
+            f"(> {REGRESSION_LIMIT:.2f}x), worst {worst.scenario} at "
+            f"{scenario_ratio(worst, operation):.2f}x — surfaced for human review"
         )
     return lines
 
@@ -639,7 +711,7 @@ def escalation_block(matrix: Matrix) -> list[str]:
         return [
             "no escalation: every runtime's primary aggregate reaches "
             f"{AGGREGATE_TARGET:.0%} and no representative operation moved past "
-            f"{REGRESSION_LIMIT:.2f}x"
+            f"{REGRESSION_LIMIT:.2f}x like for like"
         ]
     return ["REVIEW REQUIRED", *(f"  {line}" for line in raised)]
 
@@ -657,14 +729,15 @@ def _conditions(runtimes: Sequence[str], warmups: Sequence[int]) -> list[tuple[s
         ("Warm-up", f"{stated} unsampled runs before every window"),
         ("Timings", f"mean of {REPETITIONS} repetitions, taken untraced"),
         ("Build", f"one node against {MARGINAL_NODES}, split into per-node and per-call"),
+        ("Scope", "the compact call's own callbacks timed inside a separate call of it"),
         ("Isolation", "one fresh child interpreter per complete scenario"),
     ]
 
 
 _HEADER: Final = (
     f"{'scenario':<12} {'fields':>6} {'arm':<9} {'cells':>5} {'retained B':>11} {'bare B':>9} "
-    f"{'lifecycle B':>12} {'node us':>8} {'call us':>8} {'read ns':>8} {'dump us':>8} "
-    f"{'transient B':>12} {'peak B':>9}"
+    f"{'lifecycle B':>12} {'node us':>8} {'call us':>8} {'outside us':>11} {'read ns':>8} "
+    f"{'dump us':>8} {'transient B':>12} {'peak B':>9}"
 )
 
 
@@ -673,7 +746,7 @@ def _arm_line(scenario: str, fields: str, arm: str, reading: ArmReading) -> str:
         f"{scenario:<12} {fields:>6} {arm:<9} {reading.cells:>5} "
         f"{reading.retained_bytes:>11,} {reading.bare_bytes:>9,} "
         f"{reading.lifecycle_bytes:>12,} {reading.construct_ns / 1e3:>8.2f} "
-        f"{reading.call_ns / 1e3:>8.2f} "
+        f"{reading.call_ns / 1e3:>8.2f} {reading.scaffolding_ns / 1e3:>11.2f} "
         f"{reading.read_ns:>8.1f} {reading.dump_ns / 1e3:>8.2f} "
         f"{reading.transient_bytes:>12,} {reading.peak_bytes:>9,}"
     )
@@ -716,9 +789,11 @@ def _runtime_section(runtime: str, cells: Mapping[str, Cell]) -> list[str]:
             f"    {aggregate.label:<42} {aggregate.before:>7,} -> {aggregate.after:>7,} B "
             f"= {aggregate.reduction:>6.1%}"
         )
+    lines.append(f"    {'over the mix':<42} {'arm against arm':>16} {'like for like':>16}")
     for operation in OPERATIONS:
         lines.append(
-            f"    {operation.name:<42} {mix_ratio(readings, operation):>21.2f}x over the mix"
+            f"    {operation.name:<42} {mix_ratio(readings, operation):>15.2f}x "
+            f"{like_for_like_ratio(readings, operation):>15.2f}x"
         )
     lines.append("")
     lines.append("  stated separately, in no aggregate — ordinary arm against compact")
@@ -762,14 +837,32 @@ def _scope() -> list[str]:
         "  arrives from a construct call that also pays a scope, a writer, root validation",
         "  and factory buffering, where a fixture arm builds a node and nothing else.",
         "",
-        "  The LEGACY construction ratio is an upper bound rather than a like-for-like",
-        "  before and after. A construct call's populated check, root validation, state",
-        "  factory and buffered attach scale with node count, so they stay in the compact",
-        "  arm's `node us`; the pre-flip path paid the same per-node work through the same",
-        "  call, and the fixture reproduces only the node building inside it. The bias runs",
-        "  against compact, so the printed ratio overstates what the flip cost. The ordinary",
-        "  construction ratio carries no such bias — a caller building an ordinary instance",
-        "  pays no construct call at all — and is what each side actually costs.",
+        "  `outside us` is how much of `node us` that arm's call spends OUTSIDE the callbacks",
+        "  the arm supplies — measured in a separate call whose build callback and state",
+        "  factory time themselves, so no clock runs inside the call `node us` is taken over.",
+        "  It is exactly zero for the two fixture arms, whose call IS a loop over their node",
+        "  builder, and it is the per-node work the legacy fixture does not reproduce: the",
+        "  populated check, root validation, a resolution view per node, the buffered attach",
+        "  and the root tuple. The pre-flip path paid all of it through the same call.",
+        "",
+        "  So every ratio is printed twice. `arm against arm` divides the two `node us`",
+        "  columns as each was timed, which for construction is an upper bound biased",
+        "  against compact. `like for like` adds the compact arm's `outside us` to the legacy",
+        "  side, which is what the pre-flip path paid, and IS the before and after.",
+        "  THE 20% RULE GRADES THE LIKE-FOR-LIKE FIGURE, because the limit is stated over",
+        "  what the representation change cost. For attribute read and serialization the two",
+        "  columns are equal by construction — one call against one call on one node — which",
+        "  is what shows which operation needed the correction rather than asserting it.",
+        "",
+        "  One thing `outside us` still holds that the fixture also pays: the lifecycle",
+        "  attach, a single slot write inside construct's own loop, about 0.07 us per node.",
+        "  So it lands on the legacy side twice, and the like-for-like column reads a hair",
+        "  LOW where the arm-against-arm one reads high. The construction figure the flip",
+        "  actually cost is between the two columns and near the right-hand one.",
+        "",
+        "  The ordinary construction ratio needs no such correction and gets none: a caller",
+        "  building an ordinary instance pays no construct call at all, so what that ratio",
+        "  compares is what each side actually costs.",
     ]
 
 

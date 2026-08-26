@@ -7,7 +7,9 @@ gradeable here is everything ABOUT a reading rather than any reading: the mix th
 measurement contract names, the warmed scenario held outside every aggregate, the
 matrix being the supported minors, an aggregate dividing sums rather than
 averaging percentages, the ordinary arm staying out of both, construction being
-split into a per-node cost and a per-call one, the escalation block naming a
+split into a per-node cost and a per-call one, the construction ratio being
+corrected by the per-node work the legacy fixture never reproduced and the
+regression rule grading that corrected figure, the escalation block naming a
 missed target and a regression past the limit, and a matrix cell with no reading
 ending the run instead of thinning the table.
 
@@ -33,6 +35,7 @@ from __future__ import annotations
 
 import pathlib
 import tomllib
+from time import perf_counter
 from typing import cast
 
 import pytest
@@ -45,6 +48,7 @@ from _instance_state_support import (
     SCENARIOS,
     WARMED_AUXILIARY,
     Scenario,
+    compact_callback_ns,
 )
 
 import instance_state_overhead as report
@@ -221,6 +225,66 @@ def test_two_arms_whose_calls_cost_differently_still_compare_at_the_node() -> No
     assert "construction" not in "\n".join(report.escalation_block({"3.14": {"shallow": reading}}))
 
 
+def test_the_construction_ratio_is_corrected_by_what_the_fixture_never_reproduced() -> None:
+    reading = _reading(
+        "shallow",
+        legacy_ns=(1_000.0, 20.0, 500.0),
+        compact_ns=(1_300.0, 20.0, 500.0),
+        scaffolding_ns=300.0,
+    )
+    construction = report.OPERATIONS[0]
+    assert report.mix_ratio([reading], construction) == pytest.approx(1.30)
+    assert report.like_for_like_ratio([reading], construction) == pytest.approx(1.00)
+    assert report.before_ns(reading, construction) == pytest.approx(1_300.0)
+    assert report.scenario_ratio(reading, construction) == pytest.approx(1.00)
+
+
+def test_an_operation_whose_arms_do_the_same_work_is_corrected_by_nothing() -> None:
+    reading = _reading(
+        "shallow",
+        legacy_ns=(1_000.0, 20.0, 500.0),
+        compact_ns=(1_300.0, 60.0, 1_000.0),
+        scaffolding_ns=300.0,
+    )
+    for operation in report.OPERATIONS[1:]:
+        assert report.like_for_like_ratio([reading], operation) == pytest.approx(
+            report.mix_ratio([reading], operation)
+        )
+        assert operation.unreproduced(reading.compact) == 0.0
+    assert report.mix_ratio([reading], report.OPERATIONS[1]) == pytest.approx(3.0)
+
+
+def test_the_correction_is_summed_over_the_mix_rather_than_averaged() -> None:
+    readings = [
+        _reading("small", legacy_ns=(100.0, 20.0, 500.0), compact_ns=(400.0, 20.0, 500.0)),
+        _reading(
+            "large",
+            legacy_ns=(4_000.0, 20.0, 500.0),
+            compact_ns=(4_400.0, 20.0, 500.0),
+            scaffolding_ns=300.0,
+        ),
+    ]
+    construction = report.OPERATIONS[0]
+    assert report.like_for_like_ratio(readings, construction) == pytest.approx(4_800 / 4_400)
+    mean = sum(report.scenario_ratio(reading, construction) for reading in readings) / 2
+    assert report.like_for_like_ratio(readings, construction) != pytest.approx(mean)
+
+
+def test_only_the_arm_whose_call_does_more_than_build_nodes_reports_scaffolding() -> None:
+    assert (ORDINARY.callbacks_ns, LEGACY.callbacks_ns) == (None, None)
+    assert COMPACT.callbacks_ns is compact_callback_ns
+    assert COMPACT.graph is not compact_callback_ns
+
+
+def test_the_compact_arm_times_its_own_callbacks_and_leaves_the_call_a_remainder() -> None:
+    scenario = SCENARIOS[0]
+    compact_callback_ns(scenario, report.MARGINAL_NODES)
+    start = perf_counter()
+    inside = compact_callback_ns(scenario, report.MARGINAL_NODES)
+    whole = (perf_counter() - start) * 1e9
+    assert 0.0 < inside < whole
+
+
 def test_each_operation_is_reported_against_the_ordinary_arm_as_well() -> None:
     reading = _reading(
         "shallow",
@@ -310,10 +374,31 @@ def test_the_escalation_block_names_a_representative_operation_past_its_limit() 
     block = report.escalation_block({"3.14": {"shallow": reading}})
     raised = "\n".join(block)
     assert block[0] == "REVIEW REQUIRED"
-    assert "attribute read 4.00x over the mix" in raised
+    assert "attribute read 4.00x like for like over the mix" in raised
     assert "surfaced for human review" in raised
     assert "construction" not in raised
     assert "serialization" not in raised
+
+
+def test_the_regression_rule_grades_the_like_for_like_figure_and_not_the_raw_one() -> None:
+    corrected = _reading(
+        "shallow",
+        retained=(1_000, 100),
+        bare=(900, 90),
+        legacy_ns=(1_000.0, 20.0, 500.0),
+        compact_ns=(1_500.0, 20.0, 500.0),
+        scaffolding_ns=400.0,
+    )
+    construction = report.OPERATIONS[0]
+    assert report.mix_ratio([corrected], construction) == pytest.approx(1.50)
+    assert report.like_for_like_ratio([corrected], construction) == pytest.approx(1.50 / 1.40)
+    assert report.escalation_block({"3.14": {"shallow": corrected}})[0].startswith("no escalation")
+
+    uncorrected = corrected._replace(
+        compact=corrected.compact._replace(construct_ns=1_800.0, scaffolding_ns=0.0)
+    )
+    raised = "\n".join(report.escalation_block({"3.14": {"shallow": uncorrected}}))
+    assert "construction 1.80x like for like over the mix" in raised
 
 
 def test_a_reading_that_meets_both_rules_raises_no_escalation() -> None:
@@ -327,7 +412,7 @@ def test_a_reading_that_meets_both_rules_raises_no_escalation() -> None:
     block = report.escalation_block({"3.14": {"shallow": reading}})
     assert block == [
         "no escalation: every runtime's primary aggregate reaches 33% and no "
-        "representative operation moved past 1.20x"
+        "representative operation moved past 1.20x like for like"
     ]
 
 
@@ -389,7 +474,16 @@ def test_every_scenario_both_aggregates_and_every_timing_appear_for_every_runtim
     assert printed.count("published vs ordinary (lifecycle included)") == 2
     headers = [line for line in printed.splitlines() if line.startswith("scenario ")]
     assert len(headers) == 2
-    for column in ("node us", "call us", "read ns", "dump us", "transient B", "peak B", "cells"):
+    for column in (
+        "node us",
+        "call us",
+        "outside us",
+        "read ns",
+        "dump us",
+        "transient B",
+        "peak B",
+        "cells",
+    ):
         assert all(column in header for header in headers)
     measured = [
         line.split()
@@ -409,6 +503,25 @@ def test_each_printed_reduction_names_the_arm_it_divides() -> None:
     printed = "\n".join(lines)
     assert "the representation change — legacy arm against compact" in printed
     assert "stated separately, in no aggregate — ordinary arm against compact" in printed
+
+
+def test_construction_is_printed_both_ways_and_the_scope_block_says_which_is_graded() -> None:
+    matrix = _matrix()
+    matrix["3.14"]["shallow"] = _reading(
+        "shallow", compact_ns=(1_300.0, 20.0, 500.0), scaffolding_ns=300.0
+    )
+    printed = "\n".join(report.render(matrix))
+    header = next(line for line in printed.splitlines() if "arm against arm" in line)
+    assert "like for like" in header
+    construction = next(line for line in printed.splitlines() if "construction" in line)
+    raw, corrected = (float(field.rstrip("x")) for field in construction.split()[1:3])
+    readings = report.canonical(matrix["3.14"])
+    assert raw == pytest.approx(report.mix_ratio(readings, report.OPERATIONS[0]), abs=5e-3)
+    assert corrected == pytest.approx(
+        report.like_for_like_ratio(readings, report.OPERATIONS[0]), abs=5e-3
+    )
+    assert raw > corrected
+    assert "THE 20% RULE GRADES THE LIKE-FOR-LIKE FIGURE," in printed
 
 
 def test_the_escalation_block_reaches_what_the_report_prints() -> None:
@@ -450,7 +563,12 @@ def test_a_child_that_answers_nothing_usable_is_a_reason_rather_than_a_crash() -
 # --------------------------------------------------------------------------- #
 
 
-def _arm(retained: int, bare: int, timings: tuple[float, float, float]) -> report.ArmReading:
+def _arm(
+    retained: int,
+    bare: int,
+    timings: tuple[float, float, float],
+    scaffolding: float = 0.0,
+) -> report.ArmReading:
     construct_ns, read_ns, dump_ns = timings
     return report.ArmReading(
         cells=6,
@@ -459,6 +577,7 @@ def _arm(retained: int, bare: int, timings: tuple[float, float, float]) -> repor
         peak_bytes=retained + 512,
         construct_ns=construct_ns,
         call_ns=250.0,
+        scaffolding_ns=scaffolding,
         read_ns=read_ns,
         dump_ns=dump_ns,
     )
@@ -473,12 +592,15 @@ def _reading(
     ordinary_bare: int = 1_800,
     legacy_ns: tuple[float, float, float] = (1_000.0, 20.0, 500.0),
     compact_ns: tuple[float, float, float] = (1_000.0, 20.0, 500.0),
+    scaffolding_ns: float = 0.0,
 ) -> report.Reading:
     """One scenario's reading, with every number chosen rather than measured.
 
     ``retained`` and ``bare`` are the pair the aggregates divide — legacy, then
     compact. The ordinary arm is a third number rather than a member of either,
-    which is the shape of the thing being graded.
+    which is the shape of the thing being graded. ``scaffolding_ns`` is the
+    compact arm's alone, because it is the only arm whose call does per-node work
+    outside its own callbacks.
     """
     return report.Reading(
         scenario=scenario,
@@ -487,7 +609,7 @@ def _reading(
         warmup=200,
         ordinary=_arm(ordinary_retained, ordinary_bare, legacy_ns),
         legacy=_arm(retained[0], bare[0], legacy_ns),
-        compact=_arm(retained[1], bare[1], compact_ns),
+        compact=_arm(retained[1], bare[1], compact_ns, scaffolding=scaffolding_ns),
     )
 
 
