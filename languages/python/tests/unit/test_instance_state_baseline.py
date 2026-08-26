@@ -1,14 +1,15 @@
 """What the instance-state report is asked for, and every verdict it computes.
 
 ``docs/instance-state-baseline.md`` records what a published Entity retains under
-both backings, and `just python-report-instance-state` re-derives it. Neither
+each backing, and `just python-report-instance-state` re-derives it. Neither
 grades a byte total — one is machine- and interpreter-relative — so what is
 gradeable here is everything ABOUT a reading rather than any reading: the mix the
 measurement contract names, the warmed scenario held outside every aggregate, the
 matrix being the supported minors, an aggregate dividing sums rather than
-averaging percentages, the escalation block naming a missed target and a
-regression past the limit, and a matrix cell with no reading ending the run
-instead of thinning the table.
+averaging percentages, the ordinary arm staying out of both, construction being
+split into a per-node cost and a per-call one, the escalation block naming a
+missed target and a regression past the limit, and a matrix cell with no reading
+ending the run instead of thinning the table.
 
 Every one of those is fed DOCTORED readings, built here with numbers chosen for
 what they prove. That is what lets this suite grade a verdict without taking a
@@ -18,12 +19,14 @@ and the module imported here neither binds an instrument nor reaches one. A test
 taking a reading beside the rest of the suite would be classified `dbfree` while
 needing an interpreter no other test shares.
 
-The arm the report compares against is a fixture: ``legacy_publication`` builds
-one node the way Entity Graph Construction built one before the flip, with a
-zero-argument ``model_construct`` filled a member at a time. While that path
+The arm the aggregates compare against is a fixture: ``legacy_publication``
+builds one node the way Entity Graph Construction built one before the flip, with
+a zero-argument ``model_construct`` filled a member at a time. While that path
 existed the report compared every scenario's fixture against it before measuring
 anything, and refused to measure a fixture that had drifted; the flip deleted the
-path and that check retired with it.
+path and that check retired with it. The third arm, ordinary validating
+construction, is a different comparison and enters no aggregate — which is itself
+one of the things graded here.
 """
 
 from __future__ import annotations
@@ -33,7 +36,16 @@ import tomllib
 from typing import cast
 
 import pytest
-from _instance_state_support import REPORTED, SCENARIOS, WARMED_AUXILIARY, Scenario
+from _instance_state_support import (
+    ARMS,
+    COMPACT,
+    LEGACY,
+    ORDINARY,
+    REPORTED,
+    SCENARIOS,
+    WARMED_AUXILIARY,
+    Scenario,
+)
 
 import instance_state_overhead as report
 
@@ -100,7 +112,8 @@ def test_a_requires_python_this_report_cannot_read_a_range_off_is_refused(
 
 
 # --------------------------------------------------------------------------- #
-# The two aggregates, summed rather than averaged.                             #
+# The two aggregates, summed rather than averaged, and the third comparison    #
+# reported outside them.                                                       #
 # --------------------------------------------------------------------------- #
 
 
@@ -115,6 +128,107 @@ def test_an_aggregate_divides_sums_rather_than_averaging_percentages() -> None:
     assert secondary.reduction == pytest.approx(1 - 819 / 990)
     mean = sum(reading.reduction for reading in readings) / len(readings)
     assert primary.reduction != pytest.approx(mean)
+
+
+def test_both_aggregates_divide_the_legacy_arm_and_neither_sees_the_ordinary_one() -> None:
+    readings = [
+        _reading(
+            "small",
+            retained=(100, 10),
+            bare=(90, 9),
+            ordinary_retained=400,
+            ordinary_bare=380,
+        )
+    ]
+    primary, secondary = report.aggregates(readings)
+    assert (primary.before, primary.after) == (100, 10)
+    assert (secondary.before, secondary.after) == (90, 9)
+    doubled = [readings[0]._replace(ordinary=readings[0].ordinary._replace(retained_bytes=99_999))]
+    assert report.aggregates(doubled) == report.aggregates(readings)
+
+
+def test_the_ordinary_comparison_is_reported_beside_the_aggregates_and_not_in_them() -> None:
+    readings = [
+        _reading(
+            "small",
+            retained=(100, 40),
+            bare=(90, 36),
+            ordinary_retained=400,
+            ordinary_bare=360,
+        ),
+        _reading(
+            "large",
+            retained=(1_000, 360),
+            bare=(900, 324),
+            ordinary_retained=600,
+            ordinary_bare=540,
+        ),
+    ]
+    ordinary = report.against_ordinary(readings)
+    assert (ordinary.before, ordinary.after) == (1_000, 400)
+    assert ordinary.reduction == pytest.approx(0.6)
+    assert ordinary.retention == pytest.approx(0.4)
+    primary, _ = report.aggregates(readings)
+    assert primary.before == 1_100
+
+
+def test_a_scenario_carries_both_comparisons_and_they_can_disagree() -> None:
+    reading = _reading(
+        "partial",
+        retained=(1_000, 500),
+        bare=(900, 450),
+        ordinary_retained=800,
+        ordinary_bare=720,
+    )
+    assert reading.reduction == pytest.approx(0.5)
+    assert reading.bare_reduction == pytest.approx(0.5)
+    assert reading.ordinary_reduction == pytest.approx(0.375)
+    assert reading.ordinary_bare_reduction == pytest.approx(0.375)
+
+
+# --------------------------------------------------------------------------- #
+# Construction, at the scope the arms have in common.                          #
+# --------------------------------------------------------------------------- #
+
+
+def test_construction_is_the_cost_of_one_more_node_with_the_call_left_beside_it() -> None:
+    per_node, per_call = report.marginal(one_node_ns=1_000.0, many_nodes_ns=1_000.0 + 10 * 400.0)
+    assert per_node == pytest.approx(400.0)
+    assert per_call == pytest.approx(600.0)
+
+
+def test_an_arm_that_builds_a_node_and_nothing_else_reports_no_per_call_cost() -> None:
+    per_node, per_call = report.marginal(one_node_ns=400.0, many_nodes_ns=400.0 * 11)
+    assert per_node == pytest.approx(400.0)
+    assert per_call == pytest.approx(0.0)
+
+
+def test_two_arms_whose_calls_cost_differently_still_compare_at_the_node() -> None:
+    # The defect this scope exists to remove: pricing a whole call would make the
+    # compact arm 3.50x here and escalate it, where one more node of it costs
+    # 1.10x one of the legacy arm's and is inside the limit.
+    legacy_call, compact_call = 400.0, 1_400.0
+    legacy = report.marginal(legacy_call, legacy_call + 10 * 400.0)
+    compact = report.marginal(compact_call, compact_call + 10 * 440.0)
+    assert compact[0] / legacy[0] == pytest.approx(1.10)
+    assert compact_call / legacy_call == pytest.approx(3.50)
+    reading = _reading("shallow")._replace(
+        legacy=_arm(1_000, 900, (legacy[0], 20.0, 500.0)),
+        compact=_arm(100, 90, (compact[0], 20.0, 500.0)),
+    )
+    assert report.mix_ratio([reading], report.OPERATIONS[0]) == pytest.approx(1.10)
+    assert "construction" not in "\n".join(report.escalation_block({"3.14": {"shallow": reading}}))
+
+
+def test_every_arm_pairs_its_node_builder_with_its_own_graph_builder() -> None:
+    assert ARMS == (ORDINARY, LEGACY, COMPACT)
+    assert [arm.name for arm in ARMS] == ["ordinary", "legacy", "compact"]
+    for arm in ARMS:
+        scenario = SCENARIOS[0]
+        graph = arm.graph(scenario, report.MARGINAL_NODES)
+        assert len(graph) == report.MARGINAL_NODES
+        assert all(type(node) is type(graph[0]) for node in graph)
+        assert type(graph[0]) is type(arm.node(scenario, scenario.state()))
 
 
 def test_each_scenario_carries_its_own_percentage_as_a_diagnostic() -> None:
@@ -229,8 +343,29 @@ def test_every_scenario_both_aggregates_and_every_timing_appear_for_every_runtim
         assert printed.count(scenario.name) >= 2
     assert printed.count("primary (lifecycle included)") == 2
     assert printed.count("secondary (lifecycle excluded)") == 2
-    for column in ("build us", "read ns", "dump us", "transient B", "peak B", "cells"):
-        assert printed.count(column) == 2
+    assert printed.count("published vs ordinary (lifecycle included)") == 2
+    headers = [line for line in printed.splitlines() if line.startswith("scenario ")]
+    assert len(headers) == 2
+    for column in ("node us", "call us", "read ns", "dump us", "transient B", "peak B", "cells"):
+        assert all(column in header for header in headers)
+    measured = [
+        line.split()
+        for line in printed.splitlines()
+        if line.split() and line.split()[-1].replace(",", "").isdigit()
+    ]
+    for arm in ARMS:
+        assert sum(arm.name in row for row in measured) == 2 * len(REPORTED)
+
+
+def test_each_printed_reduction_names_the_arm_it_divides() -> None:
+    lines = report.render(_matrix())
+    reductions = [line for line in lines if "reduction" in line]
+    assert [line.split()[0] for line in reductions].count("vs") == 2 * len(REPORTED)
+    assert sum(line.startswith("vs legacy") for line in reductions) == len(REPORTED)
+    assert sum(line.startswith("vs ordinary") for line in reductions) == len(REPORTED)
+    printed = "\n".join(lines)
+    assert "the representation change — legacy arm against compact" in printed
+    assert "stated separately, in no aggregate — ordinary arm against compact" in printed
 
 
 def test_the_escalation_block_reaches_what_the_report_prints() -> None:
@@ -280,6 +415,7 @@ def _arm(retained: int, bare: int, timings: tuple[float, float, float]) -> repor
         bare_bytes=bare,
         peak_bytes=retained + 512,
         construct_ns=construct_ns,
+        call_ns=250.0,
         read_ns=read_ns,
         dump_ns=dump_ns,
     )
@@ -290,14 +426,22 @@ def _reading(
     *,
     retained: tuple[int, int] = (1_000, 100),
     bare: tuple[int, int] = (900, 90),
+    ordinary_retained: int = 2_000,
+    ordinary_bare: int = 1_800,
     legacy_ns: tuple[float, float, float] = (1_000.0, 20.0, 500.0),
     compact_ns: tuple[float, float, float] = (1_000.0, 20.0, 500.0),
 ) -> report.Reading:
-    """One scenario's reading, with every number chosen rather than measured."""
+    """One scenario's reading, with every number chosen rather than measured.
+
+    ``retained`` and ``bare`` are the pair the aggregates divide — legacy, then
+    compact. The ordinary arm is a third number rather than a member of either,
+    which is the shape of the thing being graded.
+    """
     return report.Reading(
         scenario=scenario,
         summary=f"the {scenario} scenario",
         fields=4,
+        ordinary=_arm(ordinary_retained, ordinary_bare, legacy_ns),
         legacy=_arm(retained[0], bare[0], legacy_ns),
         compact=_arm(retained[1], bare[1], compact_ns),
     )

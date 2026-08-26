@@ -1,32 +1,51 @@
-"""The canonical scenarios published-instance state is measured over, and the two
-arms every reading takes over them.
+"""The canonical scenarios published-instance state is measured over, and the
+three arms every reading takes over them.
 
 Six scenarios — shallow, wide, nested, nullable, partial, polymorphic — carry
 retained bytes on both sides of a representation change, and
 :data:`WARMED_AUXILIARY` carries the seventh the measurement contract reports
-beside them and excludes from every aggregate. :func:`compact_publication` is the
-"after": the shipping publication path in full, which needs no fixture because it
-is production. :func:`legacy_publication` is the "before", and it is a fixture
-because it has to be — once publication attaches a compact tuple there is no
-legacy path left to measure, so a comparison taken later would have nothing to
-compare against. It was compared against the real path every time it was
-measured, up to and including the reading taken immediately before the flip; the
-flip deleted the path, and with it the comparison.
+beside them and excludes from every aggregate.
 
-**Both arms are measured on one tree, which is what makes their difference the
+**Three arms, and the two different comparisons they make.**
+
+- :data:`COMPACT` is the "after": the shipping publication path in full, which
+  needs no fixture because it is production.
+- :data:`LEGACY` is the "before" the aggregates divide, and it is a fixture
+  because it has to be — once publication attaches a compact tuple there is no
+  legacy path left to measure, so a comparison taken later would have nothing to
+  compare against. It was compared against the real path every time it was
+  measured, up to and including the reading taken immediately before the flip;
+  the flip deleted the path, and with it the comparison.
+- :data:`ORDINARY` is neither: it is what any caller gets from the validating
+  constructor. It enters no aggregate. It exists because ``spec/python.md`` §2
+  states what a published instance retains against an ORDINARY one, which is a
+  different comparison from the representation change the aggregates measure,
+  and a claim nothing measured until this arm did.
+
+**Every arm is measured on one tree, which is what makes their differences the
 representation's.** Every framework slot a declared class carries is carried by
-both — an ordinary value holds the compact and auxiliary pointers exactly as a
-published one does, and an Entity of either backing holds the lifecycle slot — so
-an aggregate over the two divides two readings taken over one object layout, as
-``docs/instance-state-baseline.md``'s accounting rule requires.
+all three — an ordinary value holds the compact and auxiliary pointers exactly
+as a published one does, and an Entity of any backing holds the lifecycle slot —
+so an aggregate over two of them divides two readings taken over one object
+layout, as ``docs/instance-state-baseline.md``'s accounting rule requires.
 
-**Why the fixture is not ordinary construction.** A materialized node WAS
+**Why the legacy fixture is not the ordinary arm.** A materialized node WAS
 ``cls.model_construct()`` with no arguments followed by one
 ``object.__setattr__`` per member, which leaves ``__pydantic_fields_set__``
 permanently empty — the sharpest part of what publication retained then, and the
-part ordinary construction would not reproduce. A Value Object was different and
-is reproduced differently: ``vo_class.model_construct(present, **values)``,
-where ``present`` is exactly the members the row carried.
+part ordinary construction does not reproduce, since a validating constructor
+records every member it was passed. A Value Object was different and is
+reproduced differently: ``vo_class.model_construct(present, **values)``, where
+``present`` is exactly the members the row carried.
+
+**Why each arm also builds a graph of ``count`` nodes.** Construction is the one
+timing whose per-call scope differs between the arms: a compact node arrives from
+an ``EntityGraphConstruction.construct`` call that also pays a scope, a writer,
+root validation and factory buffering, where the other two arms build a node and
+nothing else. Timing a one-node build against an eleven-node one separates the
+two, so what the report prints as construction is the cost of one MORE node under
+each arm — the quantity the arms hold in common — with the per-call remainder
+printed beside it.
 
 **What a scenario carries.** One positional member row, ``ABSENT``-spelled and
 aligned to the exact Entity's ``EntityLayout`` — the same row a compiled read
@@ -37,14 +56,16 @@ payload it borrows.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a `reportPrivateUsage` error under pyright strict, so privacy is
-carried by this MODULE's underscore. Read by ``test_instance_state_baseline.py``
-and by ``tools/instance_state_overhead.py``; never imported by production code.
+carried by this MODULE's underscore. Read by ``test_instance_state_baseline.py``,
+by ``tools/instance_state_overhead.py`` and by the script one child runs,
+``tools/instance_state_reading.py``; never imported by production code.
 
 This module deliberately avoids ``from __future__ import annotations`` so the
 declaration engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly, as
 ``tests/_support/snapshot_models.py`` does for the same reason.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cached_property
@@ -88,13 +109,16 @@ from parallax.core.metamodel import (
 from parallax.snapshot._inspection import SnapshotNodeState
 
 __all__ = [
+    "ARMS",
+    "COMPACT",
+    "LEGACY",
+    "ORDINARY",
     "REPORTED",
     "SCENARIOS",
     "WARMED_AUXILIARY",
+    "Arm",
     "LegacyPlan",
     "Scenario",
-    "compact_publication",
-    "legacy_publication",
     "scenario_named",
     "state_cells",
 ]
@@ -112,8 +136,9 @@ _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 #                                                                              #
 # Every root declares one self-referential broad relationship, left unloaded.   #
 # Publication writes EVERY declared relationship slot on every node, so a mix   #
-# declaring none would understate both arms; one per scenario keeps that cost   #
-# uniform across the mix and attributable to a single position.                 #
+# declaring none would understate the publication arms; one per scenario keeps  #
+# that cost uniform across the mix and attributable to a single position. The   #
+# ordinary arm writes none, because ordinary construction does not.             #
 # --------------------------------------------------------------------------- #
 
 
@@ -309,7 +334,7 @@ _WARMED_ROW: Final[tuple[object, ...]] = (7, None, "warmed-name", Decimal("12.50
 
 
 # --------------------------------------------------------------------------- #
-# The two arms.                                                                #
+# The three arms.                                                              #
 # --------------------------------------------------------------------------- #
 
 
@@ -343,7 +368,7 @@ class Scenario:
     entity: EntityIdentity
     values: tuple[object, ...]
     warms: bool = False
-    """Whether both arms read this scenario's ``cached_property`` before the
+    """Whether every arm reads this scenario's ``cached_property`` before the
     sample, so the memoized result is state the reading counts."""
 
     @cached_property
@@ -402,8 +427,8 @@ class Scenario:
         The real `SnapshotNodeState` rather than a stand-in, because the primary
         aggregate counts lifecycle state and a stand-in would misreport the half
         of it that does not change. Allocated per call rather than shared: a state
-        object built outside the window would be borrowed by both arms and priced
-        by neither.
+        object built outside the window would be borrowed by every arm and priced
+        by none.
         """
         return SnapshotNodeState(entity=self.entity, views={})
 
@@ -464,6 +489,135 @@ def compact_publication(scenario: Scenario, state: object | None) -> object:
         state_factory=None if state is None else lambda _view, _handle: state,
     )
     return _warmed(scenario, roots[0])
+
+
+def ordinary_publication(scenario: Scenario, state: object | None) -> object:
+    """``scenario``'s node built the way any caller builds one.
+
+    The validating constructor, with the members the row carried passed by
+    keyword and the absent ones left to their declared defaults — so an ordinary
+    node records exactly the presence a caller stated, where the legacy fixture
+    recorded none and a published node records what its row carried. Its
+    occurrences are ordinary Value Objects for the same reason.
+
+    It is not publication and stands for none: it is the comparand
+    ``spec/python.md`` §2's Interface statement is made against, which is a
+    different question from the before-and-after the aggregates divide.
+    """
+    plan = scenario.plan
+    values = scenario.values
+    members: dict[str, object] = {}
+    for position, py_name in plan.attributes:
+        value = values[position]
+        if value is not ABSENT:
+            members[py_name] = value
+    for position, py_name, occurrence, vo_class in plan.occurrences:
+        value = values[position]
+        if value is not ABSENT:
+            members[py_name] = _ordinary_occurrence(value, occurrence, vo_class)
+    instance = cast("Any", plan.cls)(**members)
+    if state is not None:
+        attach_lifecycle_state(instance, state)
+    return _warmed(scenario, instance)
+
+
+def _ordinary_occurrence(value: object, declared: _VoContainer, vo_class: type) -> object:
+    """One occurrence slot as a caller would pass it, the declared multiplicity
+    deciding the shape."""
+    if declared.multiplicity is Multiplicity.MANY:
+        rows = cast("tuple[object, ...]", value) if isinstance(value, tuple) else ()
+        return tuple(
+            _ordinary_record(cast("tuple[object, ...]", row), declared, vo_class) for row in rows
+        )
+    if value is None:
+        return None
+    return _ordinary_record(cast("tuple[object, ...]", value), declared, vo_class)
+
+
+def _ordinary_record(row: tuple[object, ...], declared: _VoContainer, vo_class: type) -> object:
+    """One positional Value Object row as an ordinary instance, at every depth.
+
+    An omitted leaf is omitted rather than passed as ``None``, which is what
+    keeps it outside ``model_fields_set`` while a leaf carried as ``None`` is
+    inside it — the same distinction the legacy fixture spells with an explicit
+    present set.
+    """
+    shape = shape_of(vo_class)
+    values: dict[str, object] = {}
+    for position, leaf in enumerate(declared.attributes):
+        value = row[position]
+        if value is not ABSENT:
+            values[shape.name_to_py[leaf.identity.name]] = value
+    for position, nested in enumerate(declared.value_objects, start=len(declared.attributes)):
+        value = row[position]
+        if value is ABSENT:
+            continue
+        py_name = shape.name_to_py[nested.identity.path[-1]]
+        values[py_name] = _ordinary_occurrence(value, nested, shape.nested_classes[py_name])
+    return cast("Any", vo_class)(**values)
+
+
+def _one_at_a_time(
+    node: Callable[[Scenario, object | None], object],
+) -> Callable[[Scenario, int], tuple[object, ...]]:
+    """``count`` nodes from an arm that builds one node per call.
+
+    Both fixture arms build a node and nothing else, so their graph IS the loop —
+    which is what makes their per-call remainder measure as the zero it should
+    be, rather than as an allowance the comparison would have to grant them.
+    """
+
+    def graph(scenario: Scenario, count: int) -> tuple[object, ...]:
+        return tuple(node(scenario, scenario.state()) for _ in range(count))
+
+    return graph
+
+
+def compact_graph(scenario: Scenario, count: int) -> tuple[object, ...]:
+    """``count`` of ``scenario``'s nodes from ONE Entity Graph Construction call.
+
+    Allocation before any populate, as the writer requires, and one lifecycle
+    state per node, so the only thing that varies with ``count`` is how many
+    nodes one call's scaffolding is spread over.
+    """
+    construction = graph_construction_of(scenario.model)
+    entity = scenario.entity
+    members = scenario.values
+    relationships = scenario.unloaded
+
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        handles = tuple(writer.allocate(entity) for _ in range(count))
+        for handle in handles:
+            writer.populate(handle, members, relationships)
+        return handles
+
+    roots = construction.construct(build, state_factory=lambda _view, _handle: scenario.state())
+    return tuple(_warmed(scenario, root) for root in roots)
+
+
+@dataclass(frozen=True, slots=True)
+class Arm:
+    """One way of building ``scenario``'s node, at both scopes a reading needs.
+
+    The two are paired here rather than at the reading, so a graph builder cannot
+    be measured against another arm's node builder — which would silently make
+    the construction figure a difference between two arms rather than a cost of
+    one.
+    """
+
+    name: str
+    node: Callable[[Scenario, object | None], object]
+    """One node, held at the sample: what the byte readings are taken over."""
+    graph: Callable[[Scenario, int], tuple[object, ...]]
+    """``count`` nodes, so the cost of one more is separable from the call's."""
+
+
+ORDINARY: Final = Arm("ordinary", ordinary_publication, _one_at_a_time(ordinary_publication))
+LEGACY: Final = Arm("legacy", legacy_publication, _one_at_a_time(legacy_publication))
+COMPACT: Final = Arm("compact", compact_publication, compact_graph)
+
+ARMS: Final[tuple[Arm, ...]] = (ORDINARY, LEGACY, COMPACT)
+"""Every arm a reading is taken under, in the order the tables print them."""
 
 
 def _warmed(scenario: Scenario, instance: object) -> object:
@@ -600,7 +754,7 @@ outside both aggregates.
 Held apart from :data:`SCENARIOS` rather than flagged inside it, so no aggregate
 can pick it up by iterating the mix. What it isolates is state neither backing
 decides: a ``PrivateAttr``'s value and a ``cached_property``'s result are the
-author's, live in ordinary per-instance storage under both backings, and would
+author's, live in ordinary per-instance storage under every backing, and would
 credit or debit a representation change with a cost that is not the
 representation's.
 """

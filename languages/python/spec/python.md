@@ -1960,7 +1960,9 @@ or descriptor authoring form and performs no audit stamping.
   `BaseModel` of the same fields. The **cost is part of the contract**, not an
   implementation detail, because a caller can measure it. Over the canonical mix
   `languages/python/docs/instance-state-baseline.md` records, a published
-  instance retains roughly half what an ordinary one does, and pays for that at
+  instance retains **about two fifths** of what an ordinary one does — 39.8% on
+  CPython 3.14 and 37.2% on 3.13, summed over that mix and measured against an
+  ordinary arm built by the validating constructor — and pays for that at
   two reads: `model_dump` of a published instance runs roughly twice an ordinary
   instance's and roughly three times a plain Pydantic model's, because the
   presentation is built per read, with equality comparable; and a declared-member

@@ -1,13 +1,21 @@
-"""What a published Entity retains and costs under both backings, over the six
+"""What a published Entity retains and costs under each backing, over the six
 canonical scenarios and on every supported CPython minor.
 
-Two arms — the legacy publication fixture and the shipping publication path —
-measured side by side in the same fresh child interpreter, one child per complete
-scenario, so no arm pays a process of its own and no ordering contaminates the
-allocator. Six canonical scenarios (shallow, wide, nested, nullable, partial,
-polymorphic) carry the aggregate; a seventh, deliberately warmed with a
-``PrivateAttr`` and a ``cached_property``, is reported beside them and excluded
-from it, because that state is the author's rather than the representation's.
+Three arms — the legacy publication fixture, the shipping publication path, and
+ordinary validating construction — measured side by side in the same fresh child
+interpreter, one child per complete scenario, so no arm pays a process of its own
+and no ordering contaminates the allocator. Six canonical scenarios (shallow,
+wide, nested, nullable, partial, polymorphic) carry the aggregate; a seventh,
+deliberately warmed with a ``PrivateAttr`` and a ``cached_property``, is reported
+beside them and excluded from it, because that state is the author's rather than
+the representation's.
+
+**Two different comparisons are printed, and each says which it is.** The
+aggregates are legacy against compact: the representation change this measurement
+was taken for, and the ticket's own before and after. The ordinary arm enters
+neither, and answers the other question a caller asks — what a published instance
+retains against one they built themselves — which is the comparison
+``spec/python.md`` §2 states its Interface figure over.
 
 It is a `report`: no number it computes can change its exit code, because a total
 in bytes is machine- and interpreter-relative. What it does compute is the two
@@ -19,11 +27,11 @@ COMPLETENESS: a matrix cell that has no reading is named and refused, since that
 is a statement about whether the measurement ran rather than about how large a
 number is.
 
-**Both arms are read over one object layout**, which is what makes their ratio
-the representation's. Every framework slot a declared class carries is carried by
-both — an ordinary value holds the compact and auxiliary pointers exactly as a
-published one does, and an Entity of either backing holds the lifecycle slot — so
-these two sums may be divided, where the frozen sums in
+**Every arm is read over one object layout**, which is what makes a ratio between
+two of them the representation's. Every framework slot a declared class carries
+is carried by all three — an ordinary value holds the compact and auxiliary
+pointers exactly as a published one does, and an Entity of any backing holds the
+lifecycle slot — so these sums may be divided, where the frozen sums in
 ``docs/instance-state-baseline.md`` were taken over a tree that had none and may
 not be the comparand for a reading taken here.
 
@@ -33,16 +41,28 @@ Entity Graph Construction built one before publication became compact: a
 zero-argument ``model_construct`` filled one member at a time. It reproduced the
 real path exactly while that path existed, and every scenario's fixture was
 compared against it before any reading was taken. The compact arm needs no
-fixture: it is ``EntityGraphConstruction.construct`` itself.
+fixture: it is ``EntityGraphConstruction.construct`` itself. The ordinary arm is
+the validating constructor, which needs none either.
 
 **What is measured, per scenario and per arm.** Bytes reachable at the seam's
 innermost point while one node of that arm is held that were not reachable before
 the window opened — read twice, once with the node's lifecycle state attached and
 once without, so the aggregate that includes unchanged lifecycle state and the
-one that isolates publication state are both available. Beside them: what
-constructing one node costs, what an ordinary declared-field read costs, what
-``model_dump()`` costs, and the high-water mark one construction reaches, from
-which what it allocated and freed again is the difference.
+one that isolates publication state are both available. Beside them: what one
+MORE node of that arm costs to construct, what one call costs besides its nodes,
+what an ordinary declared-field read costs, what ``model_dump()`` costs, and the
+high-water mark one construction reaches, from which what it allocated and freed
+again is the difference.
+
+**Construction is timed at the one scope the arms have in common.** A compact
+node arrives from an ``EntityGraphConstruction.construct`` call that also pays a
+scope, a writer, root validation and factory buffering, where the fixture arms
+build a node and nothing else — so a per-CALL construction figure compares two
+different amounts of work and reads as a regression the arms do not have. Each
+arm is therefore timed building one node and building
+:data:`MARGINAL_NODES`, and :func:`marginal` splits the two into the cost of one
+more node — which is what the report prints as construction, and what the
+regression rule grades — and the per-call remainder, printed beside it.
 
 **Where a reading is taken, and where it is not.** Nothing in this module reads
 the whole interpreter. Every reading is taken in a child, by
@@ -140,6 +160,14 @@ REPETITIONS: Final = 2_000
 """Timed repetitions of each operation. Wall clock is recorded for visibility
 alone, so this buys a stable mean rather than a distribution."""
 
+MARGINAL_NODES: Final = 11
+"""How many nodes the larger of the two construction timings builds.
+
+Ten more than the smaller, so the per-node cost is a tenth of the difference and
+one call's fixed cost divides out of it. Large enough that the difference is far
+above the timer's resolution on every arm, small enough that no scenario's graph
+starts costing the allocator something a one-node build does not."""
+
 AGGREGATE_TARGET: Final = 0.33
 """The reduction in summed retained bytes the measurement contract accepts, below
 which the measured result is returned to the user for a decision."""
@@ -165,6 +193,11 @@ class ArmReading(NamedTuple):
     bare_bytes: int
     peak_bytes: int
     construct_ns: float
+    """What one MORE node of this arm costs — the marginal per-node cost
+    :func:`marginal` separates out, not what one call costs."""
+    call_ns: float
+    """What one call of this arm costs BESIDES the nodes it builds. Zero within
+    noise for an arm that builds a node and nothing else."""
     read_ns: float
     dump_ns: float
 
@@ -186,18 +219,38 @@ class ArmReading(NamedTuple):
         return self.peak_bytes - self.retained_bytes
 
 
+def marginal(one_node_ns: float, many_nodes_ns: float) -> tuple[float, float]:
+    """What one more node costs, and what one call costs besides its nodes.
+
+    ``many_nodes_ns`` times a build of :data:`MARGINAL_NODES` and
+    ``one_node_ns`` a build of one, both under the same arm, so their difference
+    holds no per-call cost at all: the per-node cost is that difference over the
+    node count between them, and the remainder of the one-node timing is what the
+    call cost regardless of how many nodes it built.
+
+    Pure arithmetic over two timings, and here rather than beside the timer for
+    the reason the module docstring gives: the suite that grades this report
+    cannot import anything that measures, so the judgement lives where it can be
+    fed numbers and the measurement lives in the child.
+    """
+    per_node = (many_nodes_ns - one_node_ns) / (MARGINAL_NODES - 1)
+    return per_node, one_node_ns - per_node
+
+
 class Reading(NamedTuple):
-    """One scenario's reading under both arms, as a child interpreter answers it."""
+    """One scenario's reading under every arm, as a child interpreter answers it."""
 
     scenario: str
     summary: str
     fields: int
+    ordinary: ArmReading
     legacy: ArmReading
     compact: ArmReading
 
     @property
     def reduction(self) -> float:
-        """This scenario's own percentage, lifecycle state included. Diagnostic:
+        """This scenario's own percentage against the LEGACY arm, lifecycle state
+        included — the representation change the aggregates divide. Diagnostic:
         an aggregate is never the mean of these."""
         return 1 - self.compact.retained_bytes / self.legacy.retained_bytes
 
@@ -205,6 +258,18 @@ class Reading(NamedTuple):
     def bare_reduction(self) -> float:
         """The same, over the readings that carry no lifecycle state."""
         return 1 - self.compact.bare_bytes / self.legacy.bare_bytes
+
+    @property
+    def ordinary_reduction(self) -> float:
+        """This scenario's percentage against the ORDINARY arm — a different
+        comparison from :attr:`reduction`, and the one §2's Interface statement
+        is made over. It enters no aggregate."""
+        return 1 - self.compact.retained_bytes / self.ordinary.retained_bytes
+
+    @property
+    def ordinary_bare_reduction(self) -> float:
+        """The same, over the readings that carry no lifecycle state."""
+        return 1 - self.compact.bare_bytes / self.ordinary.bare_bytes
 
 
 type Cell = Reading | str
@@ -354,6 +419,7 @@ def _decoded(output: str) -> Cell:
             scenario=cast("str", decoded["scenario"]),
             summary=cast("str", decoded["summary"]),
             fields=cast("int", decoded["fields"]),
+            ordinary=ArmReading(**cast("dict[str, Any]", decoded["ordinary"])),
             legacy=ArmReading(**cast("dict[str, Any]", decoded["legacy"])),
             compact=ArmReading(**cast("dict[str, Any]", decoded["compact"])),
         )
@@ -369,7 +435,11 @@ def payload(reading: Reading) -> str:
     """
     return json.dumps(
         reading._asdict()
-        | {"legacy": reading.legacy._asdict(), "compact": reading.compact._asdict()}
+        | {
+            "ordinary": reading.ordinary._asdict(),
+            "legacy": reading.legacy._asdict(),
+            "compact": reading.compact._asdict(),
+        }
     )
 
 
@@ -425,13 +495,22 @@ class Aggregate(NamedTuple):
         per-scenario percentages, which weights a small node like a large one."""
         return 1 - self.after / self.before
 
+    @property
+    def retention(self) -> float:
+        """What is left, as a share of what there was — the same figure the other
+        way up, which is how an Interface statement about what a value RETAINS
+        reads."""
+        return self.after / self.before
+
 
 def aggregates(readings: Sequence[Reading]) -> tuple[Aggregate, Aggregate]:
     """The primary and secondary aggregates over ``readings``.
 
-    Primary includes the unchanged lifecycle state, because a caller retains it;
+    Both divide the LEGACY arm into the compact one: the representation change,
+    which is the before-and-after the measurement contract names. Primary
+    includes the unchanged lifecycle state, because a caller retains it;
     secondary excludes it, which is what isolates the publication state this work
-    changed.
+    changed. The ordinary arm is in neither — see :func:`against_ordinary`.
     """
     return (
         Aggregate(
@@ -447,9 +526,32 @@ def aggregates(readings: Sequence[Reading]) -> tuple[Aggregate, Aggregate]:
     )
 
 
+def against_ordinary(readings: Sequence[Reading]) -> Aggregate:
+    """What a published node retains against one a caller built, summed over the
+    mix, lifecycle state included.
+
+    A DIFFERENT comparison from :func:`aggregates` and deliberately not one of
+    them: the contract's target is stated over the representation change, so
+    folding a third arm into that verdict would grade the claim against something
+    the ticket never asked about. This is the figure ``spec/python.md`` §2 states
+    instead, and it is reported beside the aggregates rather than inside them.
+    """
+    return Aggregate(
+        label="published vs ordinary (lifecycle included)",
+        before=sum(reading.ordinary.retained_bytes for reading in readings),
+        after=sum(reading.compact.retained_bytes for reading in readings),
+    )
+
+
 def mix_ratio(readings: Sequence[Reading], operation: Operation) -> float:
-    """How far ``operation`` moved over the whole mix — summed, for the same
-    reason an aggregate is."""
+    """How far ``operation`` moved from the legacy arm to the compact one over
+    the whole mix — summed, for the same reason an aggregate is.
+
+    The legacy arm, like the aggregates, because the regression rule grades the
+    representation change. Every operation it reads is like for like:
+    construction is each arm's marginal per-node cost (:func:`marginal`), so no
+    ratio here compares two different amounts of work.
+    """
     before = sum(operation.nanoseconds(reading.legacy) for reading in readings)
     after = sum(operation.nanoseconds(reading.compact) for reading in readings)
     return after / before
@@ -514,33 +616,47 @@ def _conditions(runtimes: Sequence[str]) -> list[tuple[str, str]]:
         ("Platform", f"{sys.platform}/{platform.machine()}"),
         ("Warm-up", f"{memory_instruments.WARMUP} unsampled runs before every window"),
         ("Timings", f"mean of {REPETITIONS} repetitions, taken untraced"),
+        ("Build", f"one node against {MARGINAL_NODES}, split into per-node and per-call"),
         ("Isolation", "one fresh child interpreter per complete scenario"),
     ]
 
 
 _HEADER: Final = (
-    f"{'scenario':<12} {'fields':>6} {'arm':<8} {'cells':>5} {'retained B':>11} {'bare B':>9} "
-    f"{'lifecycle B':>12} {'build us':>9} {'read ns':>8} {'dump us':>8} "
+    f"{'scenario':<12} {'fields':>6} {'arm':<9} {'cells':>5} {'retained B':>11} {'bare B':>9} "
+    f"{'lifecycle B':>12} {'node us':>8} {'call us':>8} {'read ns':>8} {'dump us':>8} "
     f"{'transient B':>12} {'peak B':>9}"
 )
 
 
 def _arm_line(scenario: str, fields: str, arm: str, reading: ArmReading) -> str:
     return (
-        f"{scenario:<12} {fields:>6} {arm:<8} {reading.cells:>5} "
+        f"{scenario:<12} {fields:>6} {arm:<9} {reading.cells:>5} "
         f"{reading.retained_bytes:>11,} {reading.bare_bytes:>9,} "
-        f"{reading.lifecycle_bytes:>12,} {reading.construct_ns / 1e3:>9.2f} "
+        f"{reading.lifecycle_bytes:>12,} {reading.construct_ns / 1e3:>8.2f} "
+        f"{reading.call_ns / 1e3:>8.2f} "
         f"{reading.read_ns:>8.1f} {reading.dump_ns / 1e3:>8.2f} "
         f"{reading.transient_bytes:>12,} {reading.peak_bytes:>9,}"
     )
 
 
+def _comparison_line(against: str, retained: float, bare: float) -> str:
+    """One reduction line, naming which arm the compact one is divided into.
+
+    Named on every line rather than in a legend: two comparisons are printed per
+    scenario and only one of them enters an aggregate.
+    """
+    return f"{against:<12} {'':>6} {'reduction':<9} {'':>5} {retained:>10.1%} {bare:>9.1%}"
+
+
 def _reading_lines(reading: Reading) -> list[str]:
     return [
-        _arm_line(reading.scenario, str(reading.fields), "legacy", reading.legacy),
+        _arm_line(reading.scenario, str(reading.fields), "ordinary", reading.ordinary),
+        _arm_line("", "", "legacy", reading.legacy),
         _arm_line("", "", "compact", reading.compact),
-        f"{'':<12} {'':>6} {'reduction':<8} {'':>5} {reading.reduction:>10.1%} "
-        f"{reading.bare_reduction:>9.1%}",
+        _comparison_line("vs legacy", reading.reduction, reading.bare_reduction),
+        _comparison_line(
+            "vs ordinary", reading.ordinary_reduction, reading.ordinary_bare_reduction
+        ),
     ]
 
 
@@ -554,34 +670,53 @@ def _runtime_section(runtime: str, cells: Mapping[str, Cell]) -> list[str]:
         lines += _reading_lines(cell)
     readings = canonical(cells)
     lines.append("")
+    lines.append("  the representation change — legacy arm against compact")
     for aggregate in aggregates(readings):
         lines.append(
-            f"  {aggregate.label:<30} {aggregate.before:>7,} -> {aggregate.after:>7,} B "
+            f"    {aggregate.label:<42} {aggregate.before:>7,} -> {aggregate.after:>7,} B "
             f"= {aggregate.reduction:>6.1%}"
         )
     for operation in OPERATIONS:
         lines.append(
-            f"  {operation.name:<30} {mix_ratio(readings, operation):>21.2f}x over the mix"
+            f"    {operation.name:<42} {mix_ratio(readings, operation):>21.2f}x over the mix"
         )
+    lines.append("")
+    lines.append("  stated separately, in no aggregate — ordinary arm against compact")
+    ordinary = against_ordinary(readings)
+    lines.append(
+        f"    {ordinary.label:<42} {ordinary.before:>7,} -> {ordinary.after:>7,} B "
+        f"= {ordinary.reduction:>6.1%}"
+    )
+    lines.append(
+        f"    {'a published node retains':<42} {ordinary.retention:>28.1%} of an ordinary one"
+    )
     return lines
 
 
 def _scope() -> list[str]:
-    """What the two arms include where they do not include the same thing.
+    """What each arm is, and which comparison each printed number makes.
 
     Stated beside the escalation block rather than in a document, because it is
     what a reader deciding on a surfaced regression needs at the moment of
     reading it.
     """
     return [
-        "what the arms include, where they differ",
-        "  Retained bytes and the read and dump timings are like for like: one node of one",
-        "  backing, held or read the same way. CONSTRUCTION is not. The legacy arm is the",
-        "  node-building the flip replaced, and the compact arm is the whole",
-        "  EntityGraphConstruction.construct call — a scope, a writer, root validation and",
-        "  factory buffering, measured at about 1 us per call, which the legacy path paid too",
-        "  and the fixture standing for it does not. Read the construction ratio with that",
-        "  microsecond subtracted from the compact arm before deciding what it says.",
+        "what the arms are, and what is compared with what",
+        "  ordinary  the validating constructor: what a caller builds for themselves.",
+        "  legacy    the node-building the publication flip replaced, as a fixture.",
+        "  compact   the shipping publication path, EntityGraphConstruction.construct.",
+        "",
+        "  The aggregates and the regression rule divide LEGACY into compact: that pair is",
+        "  the representation change this measurement was taken for. The ordinary arm is in",
+        "  neither, and answers the other question — what a published node retains against",
+        "  one a caller built — which is the figure spec/python.md §2 states.",
+        "",
+        "  Every timing is like for like. `node us` is what one MORE node of that arm costs,",
+        "  measured by timing a 1-node build against an 11-node one, and `call us` is what",
+        "  one call costs besides its nodes. That split is what makes construction",
+        "  comparable at all: a compact node arrives from a construct call that also pays a",
+        "  scope, a writer, root validation and factory buffering, where a fixture arm builds",
+        "  a node and nothing else. The construction ratio grades `node us`.",
     ]
 
 
@@ -592,16 +727,16 @@ def _detail() -> list[str]:
         "",
         "The aggregate is 1 - sum(after) / sum(before) over the summed columns, never the",
         "mean of the per-scenario percentages, and both sums come from one object layout:",
-        "both arms are measured on this tree, in one child, so every framework slot one",
-        "carries the other carries too. The `warmed` scenario is reported and excluded from",
-        "both aggregates — a PrivateAttr's value and a cached_property's result are the",
-        "author's state under either backing.",
+        "every arm is measured on this tree, in one child, so every framework slot one",
+        "carries the others carry too. The `warmed` scenario is reported and excluded from",
+        "every aggregate — a PrivateAttr's value and a cached_property's result are the",
+        "author's state under every backing.",
     ]
 
 
 def render(matrix: Matrix) -> list[str]:
     """The whole report, given a complete matrix."""
-    lines = ["parallax published instance state — legacy and compact arms", ""]
+    lines = ["parallax published instance state — ordinary, legacy and compact arms", ""]
     lines += [f"  {name:<10}{value}" for name, value in _conditions(tuple(matrix))]
     for runtime, cells in matrix.items():
         lines += ["", *_runtime_section(runtime, cells)]

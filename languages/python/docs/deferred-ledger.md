@@ -691,7 +691,7 @@ the slot descriptor's own __get__ plus a subscript   28.4 ns
 object.__getattribute__(value, slot) plus a subscript 30.4 ns
 ```
 
-Over the whole canonical mix the report reads 3.19x on CPython 3.14 and 3.41x on
+Over the whole canonical mix the report reads 3.33x on CPython 3.14 and 3.46x on
 3.13, against readings taken with one shared harness on both arms.
 
 **The floor is the frame, and it is not reachable from Python.** Roughly a third

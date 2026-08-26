@@ -65,9 +65,12 @@ loudly in the gate rather than silently in production.
 
 **What the seam costs is part of its Interface, and is stated rather than left to
 be discovered.** Measured over the six canonical scenarios of
-`docs/instance-state-baseline.md`, a published node retains about half what an
-ordinary one does — a 51.8% aggregate reduction on CPython 3.14 and 54.7% on
-3.13, against the 33% the claim accepts — and pays for it at two reads. A
+`docs/instance-state-baseline.md`, a published node retains about two fifths of
+what an ordinary one does — 39.8% on CPython 3.14 and 37.2% on 3.13, against an
+ordinary arm built by the validating constructor. The claim's own target is
+stated over a different pair, the publication path before and after this change,
+and that reduction is 51.8% on 3.14 and 54.7% on 3.13 against the 33% the claim
+accepts. It pays for both at two reads. A
 published value's `model_dump` runs about 2.2x an ordinary value's, because
 pydantic-core reads `__dict__` twice per instance per dump and each read builds a
 presentation; `docs/deferred-ledger.md` D-82 is the optimization path and what is
