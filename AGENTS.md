@@ -11,8 +11,8 @@
 ## Code Documentation
 
 - Prefer clear names, types, and structure over comments.
-- Document declarations intentionally exported from their defining module, focusing on contracts; re-export lists do not need to repeat the source documentation.
-- Otherwise, document only non-obvious behavior, constraints, or rationale.
+- Document declarations intentionally exported from their defining module only when their signatures and types do not fully express their contracts; re-export lists do not need to repeat the source documentation.
+- Otherwise, document only constraints or rationale that are critical and cannot be expressed in code.
 - Keep comments and docstrings timeless and code-local. Never narrate straightforward code. Never reference planning or execution artifacts like issues, plans, or reviews.
 - Update or remove affected comments and docstrings when behavior changes; stale documentation is a defect.
 - Compatibility cases: start each case with one detailed header comment that explains the scenario, expected observable behavior, and semantic distinction it pins down. The case body must contain no comments.
