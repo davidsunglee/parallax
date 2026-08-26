@@ -542,7 +542,7 @@ def build_class(
         # binds a reserved ``model_*`` name: the rejection is about what the
         # class body authored. Only a framework root is exempt, because the
         # framework's own markers and slots are what the reservation protects.
-        _reject_shadowed_class_names(cls_name, ns, kind)
+        _reject_shadowed_class_names(cls_name, ns, _materialize_slots(ns), kind)
     frontend_types = ignored_types if mint is not None else ()
     ns["model_config"] = ConfigDict(frozen=True, ignored_types=frontend_types)
     if mint is not None:
@@ -1648,7 +1648,7 @@ def _reject_reserved(where: str, py_name: str, kind: DeclarationKind) -> None:
 
 
 def _reject_shadowed_class_names(
-    cls_name: str, ns: dict[str, object], kind: DeclarationKind
+    cls_name: str, ns: dict[str, object], slots: frozenset[str], kind: DeclarationKind
 ) -> None:
     """Reject a class-body name that would take a reserved class-level name.
 
@@ -1666,15 +1666,15 @@ def _reject_shadowed_class_names(
     framework's own prefix be reserved against the body while the engine keeps
     binding markers under it.
 
-    A name listed in the body's ``__slots__`` is checked alongside the keys,
-    because class creation turns it into a class-level descriptor just as a
-    binding does while it is no key of the namespace: without this, ``__slots__ =
+    ``slots`` is checked alongside the keys, because class creation turns each
+    entry into a class-level descriptor just as a binding does while it is no key
+    of the namespace: without this, ``__slots__ =
     ('__parallax_carried_slots__',)`` takes a framework marker the engine reads
     off ``cls.__dict__``, and ``__slots__ = ('edit',)`` shadows the copy verb
     itself. The declaration surface is the class object, so what took a reserved
     name there is what matters, not how the body spelled the taking.
     """
-    for name in sorted(set(ns) | _authored_slot_names(ns)):
+    for name in sorted(set(ns) | slots):
         reason = _reserved_name_reason(name, kind)
         if reason is not None:
             raise EntityDefinitionError(
@@ -1682,14 +1682,35 @@ def _reject_shadowed_class_names(
             )
 
 
-def _authored_slot_names(ns: dict[str, object]) -> set[str]:
-    """The instance slots a class body asked for, however ``__slots__`` spells them."""
-    slots = ns.get("__slots__")
-    if isinstance(slots, str):
-        return {slots}
-    if isinstance(slots, Iterable):
-        return {name for name in cast("Iterable[object]", slots) if isinstance(name, str)}
-    return set()
+def _materialize_slots(ns: dict[str, object]) -> frozenset[str]:
+    """The instance slots a class body asked for, fixed in ``ns`` as it is read.
+
+    ``__slots__`` accepts a bare name and otherwise anything class creation can
+    turn into a sequence — including a one-shot iterator, and an object offering
+    the sequence protocol without registering as ``Iterable``. Reading such a
+    value twice is not reading the same thing twice: an iterator scanned here is
+    exhausted by the time class creation reads it and lays out nothing, and a
+    stateful sequence can answer differently each time. The body's spelling is
+    therefore replaced by the tuple that was read, so the names checked against
+    the reservations are exactly the ones the class ends up laying out.
+
+    A value class creation cannot turn into a sequence at all is left as authored
+    and contributes no names: what refuses it is Python's own class creation,
+    whose ``TypeError`` says more about the spelling than a check here could.
+    Entries that are not strings are kept in that tuple for the same reason.
+    """
+    if "__slots__" not in ns:
+        return frozenset()
+    spelling = ns["__slots__"]
+    if isinstance(spelling, str):
+        entries: tuple[object, ...] = (spelling,)
+    else:
+        try:
+            entries = tuple(cast("Iterable[object]", spelling))
+        except TypeError:
+            return frozenset()
+    ns["__slots__"] = entries
+    return frozenset(entry for entry in entries if isinstance(entry, str))
 
 
 def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:

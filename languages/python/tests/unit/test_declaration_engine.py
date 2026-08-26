@@ -13,7 +13,8 @@ compile to one declaration on both.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator, Iterable
+from types import MemberDescriptorType
 
 import pytest
 from _compact_support import published
@@ -446,6 +447,70 @@ def test_a_single_slot_spelled_bare_reaches_the_same_reservation() -> None:
     with pytest.raises(EntityDefinitionError) as caught:
         _entity_slotting_a_framework_name_unwrapped()
     assert caught.value.code == "entity-reserved-member-name"
+
+
+class _SequenceSlots:
+    """A ``__slots__`` value class creation accepts and ``isinstance(...,
+    Iterable)`` denies: the sequence protocol alone, with no ``__iter__``."""
+
+    def __init__(self, *names: str) -> None:
+        self._names = names
+
+    def __getitem__(self, index: int) -> str:
+        return self._names[index]
+
+
+def _entity_slotting_a_framework_name_by_sequence() -> type:
+    class Bad(Entity, table="bad"):
+        __slots__ = _SequenceSlots("__parallax_marker__")
+
+    return Bad
+
+
+def test_a_slots_spelling_outside_the_iterable_protocol_reaches_the_reservation() -> None:
+    # Class creation turns `__slots__` into a sequence rather than asking whether
+    # it is `Iterable`, so a `__getitem__`-only object lays out descriptors while
+    # registering as no iterable at all. Reading the entries the way class
+    # creation reads them is what makes the two agree about the layout.
+    assert not isinstance(_SequenceSlots("x"), Iterable)
+    with pytest.raises(EntityDefinitionError) as caught:
+        _entity_slotting_a_framework_name_by_sequence()
+    assert caught.value.code == "entity-reserved-member-name"
+
+
+def test_a_one_shot_slots_spelling_still_lays_out_the_slot_it_names() -> None:
+    # A generator is read once. Scanning it for reserved names and then handing
+    # the same exhausted object to class creation lays out nothing, so the class
+    # silently loses a slot its body asked for; the entries are fixed as they are
+    # read instead, and the reservation and the layout see one tuple.
+    def spelling() -> Generator[str]:
+        yield "token"
+
+    class Held(Entity, table="held"):
+        __slots__ = spelling()
+
+        id: Attr[int] = attr(primary_key=True)
+
+    assert isinstance(Held.__dict__["token"], MemberDescriptorType)
+
+
+def _entity_slotting_a_value_that_names_nothing() -> type:
+    class Bad(Entity, table="bad"):
+        __slots__ = 5
+
+        id: Attr[int] = attr(primary_key=True)
+
+    return Bad
+
+
+def test_a_slots_value_that_names_nothing_is_refused_by_class_creation() -> None:
+    # A `__slots__` that is no sequence at all names no slot to reserve against,
+    # and the engine leaves the refusal to class creation rather than restating
+    # it: Python's own `TypeError` says what is wrong with the spelling, and an
+    # `EntityDefinitionError` here would claim the declaration grammar rejected
+    # something that is not about the declaration grammar.
+    with pytest.raises(TypeError, match="not iterable"):
+        _entity_slotting_a_value_that_names_nothing()
 
 
 def test_a_framework_root_declares_nothing_and_is_never_a_candidate() -> None:
