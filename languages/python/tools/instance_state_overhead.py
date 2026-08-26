@@ -54,8 +54,9 @@ unchanged lifecycle state and the one that isolates publication state are both
 available. An ordinary node has none to attach (``spec/python.md`` §3), so its
 two readings are the same reading rather than a pair. Beside them: what one
 MORE node of that arm costs to construct, what one call costs besides its nodes,
-how much of that per-node cost falls outside the callbacks the arm supplies, what
-an ordinary declared-field read costs, what ``model_dump()`` costs, and the
+how much of that per-node cost is left once the work the legacy fixture also does
+is timed out of it, what an ordinary declared-field read costs, what
+``model_dump()`` costs, and the
 high-water mark one construction reaches, from which what it allocated and freed
 again is the difference.
 
@@ -71,14 +72,21 @@ That split removes the FIXED per-call cost and not the per-NODE one. A
 ``construct`` call's populated check, root validation, resolution views and
 buffered attachment all scale with node count, so they stay inside the compact
 arm's ``node µs``; the pre-flip path paid the same per-node work through the same
-call, and the legacy FIXTURE reproduces only the node building inside it. So the
-compact arm's call is measured a second time with its own callbacks timed from
-inside them, and the remainder — ``outside µs`` — is the per-node work the fixture
-does not reproduce. Dividing the two ``node µs`` columns gives the
-``arm against arm`` ratio, an upper bound biased against the compact arm; adding
-``outside µs`` to the legacy side gives the ``like for like`` one, which is the
-before and after and which the regression rule is stated over. For a member read
-and a ``model_dump()`` the two are equal by construction. The ordinary ratio needs no
+call, and the legacy FIXTURE reproduces only the node building and its lifecycle
+state. So the compact arm's call is measured a second time with each thing that
+fixture also does timed from inside it — a closed list, because the fixture is
+four statements — and the remainder, ``outside µs``, is the per-node work the
+fixture does not reproduce.
+
+**Both construction ratios are upper bounds, and the tighter one is graded.**
+Dividing the two ``node µs`` columns gives ``arm against arm``, which charges the
+compact arm for all of that remainder; adding ``outside µs`` to the legacy side
+gives ``like for like``, which the regression rule is stated over. It is a bound
+rather than a point estimate because ``outside µs`` is a remainder, and every span
+subtracted to leave it prices its term high: the corrected figure is at least the
+true one, so an operation under the limit is under it in truth. For a member read
+and a ``model_dump()`` the correction is exactly zero and both figures are exact.
+The ordinary ratio needs no
 correction at all: a caller building an ordinary instance genuinely pays no
 construction call, so both its sides are the same quantity — the marginal cost of
 one additional node, with each arm's per-call cost printed beside it rather than
@@ -216,21 +224,42 @@ class ArmReading(NamedTuple):
     """What one call of this arm costs BESIDES the nodes it builds. Zero within
     noise for an arm that builds a node and nothing else."""
     scaffolding_ns: float
-    """How much of :attr:`construct_ns` this arm's call spends OUTSIDE the
-    callbacks the arm supplies — per-node work the legacy fixture reproduces none
-    of, although the path it stands for paid all of it through the same call.
+    """How much of :attr:`construct_ns` this arm's call spends BEYOND the work the
+    legacy fixture also does — per-node work that fixture reproduces none of,
+    although the path it stands for paid all of it through the same call.
 
     Exactly zero for an arm whose call is a loop over its own node builder, which
     is a fact about that arm rather than a measurement it declined to take. It is
     what turns the raw legacy construction ratio into the like-for-like one
     (:func:`like_for_like_ratio`).
 
-    Every quantity the fixture DOES reproduce is timed out of it rather than
-    described beside it, including the two that are no callback of the arm's — the
-    lifecycle attach and the result tuple — so what this column adds to the legacy
-    side is work that side never did."""
+    Derived by subtracting a measured figure rather than by measuring this one, so
+    what it is worth follows from that subtrahend: every quantity the fixture DOES
+    reproduce is timed out of :attr:`construct_ns` by a span that prices it high,
+    which leaves this remainder at most the work the fixture never did. It cannot
+    over-state what it adds to the legacy side, and may under-state it — far
+    enough, on a scenario where the quantity is near the two timings' noise, to
+    come out below zero. :attr:`unreproduced_ns` is this figure read as the
+    duration it stands for, and is what every consumer uses."""
     read_ns: float
     dump_ns: float
+
+    @property
+    def unreproduced_ns(self) -> float:
+        """:attr:`scaffolding_ns` read as the duration it stands for, which is
+        never negative.
+
+        The raw difference can be, because it is one marginal timing subtracted
+        from another and the quantity it leaves is small enough for the two
+        timings' noise to swamp it. A negative correction is not a measurement of
+        work: subtracting it from the legacy side would make the pre-flip path
+        cost LESS than the fixture that stands for it, which moves the ratio in
+        the compact arm's favour on nothing but noise. Zero is the honest floor —
+        the case where nothing could be separated out — and it keeps the
+        corrected ratio at or under the arm-against-arm one, which is what makes
+        the pair a bound and a tighter bound rather than two unrelated figures.
+        """
+        return max(self.scaffolding_ns, 0.0)
 
     @property
     def lifecycle_bytes(self) -> int:
@@ -324,14 +353,16 @@ class Operation(NamedTuple):
     name: str
     nanoseconds: Callable[[ArmReading], float]
     unreproduced: Callable[[ArmReading], float]
-    """Given the COMPACT arm's reading, the per-node work inside its call that
-    the legacy fixture does not reproduce and the pre-flip path paid through the
-    same call.
+    """Given the COMPACT arm's reading, AT MOST the per-node work inside its call
+    that the legacy fixture does not reproduce and the pre-flip path paid through
+    the same call.
 
     Zero for an operation whose two arms do the same work on the same object —
     a member read and a ``model_dump()`` are one call against one call — and the
     compact arm's measured scaffolding for construction, which is the one
-    operation whose arms are timed at different scopes."""
+    operation whose arms are timed at different scopes. Exact where it is zero,
+    and a floor where it is measured, which is what makes the corrected ratio an
+    upper bound (:func:`like_for_like_ratio`)."""
 
 
 # Named readers rather than lambdas, so each one carries the parameter type its
@@ -351,7 +382,7 @@ def _dump_ns(arm: ArmReading) -> float:
 
 
 def _scaffolding_ns(arm: ArmReading) -> float:
-    return arm.scaffolding_ns
+    return arm.unreproduced_ns
 
 
 def _same_scope(_arm: ArmReading) -> float:
@@ -613,10 +644,11 @@ def mix_ratio(readings: Sequence[Reading], operation: Operation) -> float:
 
     Arm against arm, exactly as each was timed. For a member read and a
     ``model_dump()`` that is already the before and after; for construction it is
-    an upper bound, because the compact arm's timing carries per-node work the
-    legacy fixture reproduces none of. :func:`like_for_like_ratio` is that same
-    comparison with the difference measured out, and it is the one the regression
-    rule is stated over. Both are printed.
+    a LOOSE upper bound, because the compact arm's timing carries per-node work
+    the legacy fixture reproduces none of. :func:`like_for_like_ratio` is that
+    same comparison with as much of the difference as can be measured taken out,
+    which makes it the tighter upper bound and the one the regression rule is
+    stated over. Both are printed.
     """
     before = sum(operation.nanoseconds(reading.legacy) for reading in readings)
     after = sum(operation.nanoseconds(reading.compact) for reading in readings)
@@ -624,26 +656,43 @@ def mix_ratio(readings: Sequence[Reading], operation: Operation) -> float:
 
 
 def before_ns(reading: Reading, operation: Operation) -> float:
-    """What the pre-flip path paid for ``operation`` on one of ``reading``'s
-    nodes: the legacy fixture's own timing plus the per-node work that fixture
-    does not reproduce.
+    """AT MOST what the pre-flip path paid for ``operation`` on one of
+    ``reading``'s nodes: the legacy fixture's own timing plus the per-node work
+    that fixture does not reproduce.
 
     The second term is measured on today's compact call and added to the BEFORE
     side rather than subtracted from the after, because it is work the pre-flip
     path paid and still pays — that half of ``EntityGraphConstruction`` is
     unchanged either side of the flip. Removing it from the compact side would
     price a node nobody constructs.
+
+    At most, and not exactly, because that term is a remainder left by spans that
+    price the common work high (:attr:`ArmReading.scaffolding_ns`). A before side
+    that can only be small makes every ratio taken over it an upper bound, which
+    is the direction a rule that surfaces regressions needs.
     """
     return operation.nanoseconds(reading.legacy) + operation.unreproduced(reading.compact)
 
 
 def like_for_like_ratio(readings: Sequence[Reading], operation: Operation) -> float:
-    """:func:`mix_ratio` with the two arms' scopes made the same — the figure the
-    regression rule is stated over.
+    """:func:`mix_ratio` with as much of the two arms' scope difference measured
+    out as a measurement can take out — the figure the regression rule is stated
+    over, and an UPPER BOUND on what the representation change cost rather than a
+    point estimate of it.
+
+    A bound rather than a point because the correction is a remainder: it is what
+    is left of the compact arm's per-node cost once every quantity the legacy
+    fixture also pays has been timed out of it, and each of those is timed by a
+    span that prices it high (``_instance_state_support.compact_common_work_ns``).
+    The remainder is therefore at most the work the fixture never reproduced, the
+    before side it joins is at most what the pre-flip path paid, and this ratio is
+    at least the true one. Stating the 20% rule over it can surface an operation
+    that did not regress and cannot miss one that did.
 
     Identical to :func:`mix_ratio` for every operation whose arms already do the
-    same work, so printing the two side by side is what shows WHICH comparison
-    needed a correction rather than asserting it.
+    same work, where the correction is exactly zero and the figure is exact, so
+    printing the two side by side is what shows WHICH comparison needed a
+    correction rather than asserting it.
     """
     before = sum(before_ns(reading, operation) for reading in readings)
     after = sum(operation.nanoseconds(reading.compact) for reading in readings)
@@ -686,10 +735,12 @@ def escalations(runtime: str, readings: Sequence[Reading]) -> list[str]:
 
     The operation rule is applied to :func:`like_for_like_ratio` rather than
     :func:`mix_ratio`, because the limit is stated over what the representation
-    change cost and only the like-for-like figure measures that: the raw ratio
-    would surface a difference in how two arms are timed as though it were a
-    regression. Both are printed, so a reader sees the compared figure beside the
-    arm-against-arm one.
+    change cost and only the like-for-like figure bounds that: the raw ratio would
+    surface a difference in how two arms are timed as though it were a regression.
+    Both are printed, so a reader sees the compared figure beside the
+    arm-against-arm one. The figure the rule reads is an upper bound, so an
+    operation it leaves out of the block is one whose true ratio is under the
+    limit too.
     """
     lines: list[str] = []
     primary, _ = aggregates(readings)
@@ -758,7 +809,7 @@ def _arm_line(scenario: str, fields: str, arm: str, reading: ArmReading) -> str:
         f"{scenario:<12} {fields:>6} {arm:<9} {reading.cells:>5} "
         f"{reading.retained_bytes:>11,} {reading.bare_bytes:>9,} "
         f"{reading.lifecycle_bytes:>12,} {reading.construct_ns / 1e3:>8.2f} "
-        f"{reading.call_ns / 1e3:>8.2f} {reading.scaffolding_ns / 1e3:>11.2f} "
+        f"{reading.call_ns / 1e3:>8.2f} {reading.unreproduced_ns / 1e3:>11.2f} "
         f"{reading.read_ns:>8.1f} {reading.dump_ns / 1e3:>8.2f} "
         f"{reading.transient_bytes:>12,} {reading.peak_bytes:>9,}"
     )
@@ -849,31 +900,35 @@ def _scope() -> list[str]:
         "  arrives from a construct call that also pays a scope, a writer, root validation",
         "  and factory buffering, where the other two arms build a node and nothing else.",
         "",
-        "  `outside us` is how much of `node us` that arm's call spends on work the legacy",
-        "  fixture never reproduced — measured in a separate call that times everything the",
-        "  fixture DOES do: its build callback, its state factory, the result tuple its graph",
-        "  returns, and one repeat of the lifecycle attach, which happens in construct's own",
-        "  loop where no callback can reach it and is priced by writing the same slot of the",
-        "  same node again. No clock runs inside the call `node us` is taken over. What is",
-        "  left is the populated check, root validation, a resolution view per node, factory",
-        "  buffering and construct's own root tuple; the pre-flip path paid all of it through",
-        "  the same call. It is exactly zero for the ordinary and legacy arms, whose call IS",
-        "  a loop over their node builder.",
+        "  `outside us` is what is LEFT of `node us` once everything the legacy fixture also",
+        "  does has been timed out of it, in a separate call. That list is closed because the",
+        "  fixture is: it does four things per node, and each has one span. Its state factory",
+        "  is timed; its node building is timed as the build callback; its lifecycle attach is",
+        "  timed by repeating the same write, since construct performs its own in a loop no",
+        "  callback can enter; and the result tuple its graph returns is timed as this arm's,",
+        "  built and released inside the span as this arm's caller releases it. No clock runs",
+        "  inside the call `node us` is taken over. What is left is the populated check, root",
+        "  validation, a resolution view per node, factory buffering and construct's own root",
+        "  tuple; the pre-flip path paid all of it through the same call. It is exactly zero",
+        "  for the ordinary and legacy arms, whose call IS a loop over their node builder.",
         "",
-        "  So every ratio is printed twice. `arm against arm` divides the two `node us`",
-        "  columns as each was timed, which for construction is an upper bound biased",
-        "  against compact. `like for like` adds the compact arm's `outside us` to the legacy",
-        "  side, which is what the pre-flip path paid, and IS the before and after.",
+        "  Every one of those spans prices its term HIGH and none prices one low: the repeated",
+        "  attach releases the state it displaces where construct's own write finds the slot",
+        "  empty, and each span carries the clock reads bounding it. So `outside us` is at",
+        "  most the work the fixture never did, never more — which is what the corrected",
+        "  ratio is worth, and all it is worth.",
+        "",
+        "  So every ratio is printed twice, and for construction BOTH ARE UPPER BOUNDS.",
+        "  `arm against arm` divides the two `node us` columns as each was timed, which",
+        "  charges compact for the whole of what the fixture did not reproduce. `like for",
+        "  like` adds `outside us` to the legacy side instead, which is at most what the",
+        "  pre-flip path paid, so it is the tighter bound and not a point estimate.",
         "  THE 20% RULE IS STATED OVER THE LIKE-FOR-LIKE FIGURE, because the limit is about",
-        "  what the representation change cost. For attribute read and serialization the two",
-        "  columns are equal by construction — one call against one call on one node — which",
-        "  is what shows which operation needed the correction rather than asserting it.",
-        "",
-        "  Nothing the fixture also pays is left in `outside us` to land on the legacy side",
-        "  twice: the two quantities that are no callback of the arm's — the lifecycle attach",
-        "  and the result tuple — are timed out of it rather than named beside it, and the",
-        "  attach's stand-in writes a slot that already holds a value where construct's write",
-        "  finds one empty, which prices it a shade high and the ratio with it.",
+        "  what the representation change cost — and over a bound in the safe direction: an",
+        "  operation under the limit here is under it in truth, and one over it may not be.",
+        "  For attribute read and serialization the two columns are equal by construction —",
+        "  one call against one call on one node — so those two figures are exact rather than",
+        "  bounded, which is what shows which operation needed a correction at all.",
         "",
         "  The ordinary construction ratio needs no such correction and gets none: a caller",
         "  building an ordinary instance pays no construct call at all, so both sides of it",

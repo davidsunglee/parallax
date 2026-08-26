@@ -83,8 +83,10 @@ costs about 3.5x validating one more ordinary instance — the marginal cost of 
 additional node on both sides, with the `construct` call a caller pays for a graph
 and never pays for a constructor outside it and beside it. Against the publication
 path this change replaced — the other of the two comparisons, and the one the 33%
-target is stated over — construction moved by about a tenth: 1.10x on both 3.14
-and 3.13 measured like for like, inside the 20% the claim reviews at, with
+target is stated over — construction moved by at most about a tenth: 1.11x on
+3.14 and 1.09x on 3.13, an upper bound rather than a point estimate because the two
+arms' scopes differ and the correction that closes the difference can only
+under-state it, and inside the 20% the claim reviews at either way, with
 the recorded document stating what each of those two comparisons divides. Both are confined to published values: an ordinary value's
 member read is a plain Pydantic model's, unchanged, which is the trade the claim
 forbids making silently and therefore makes explicitly.
