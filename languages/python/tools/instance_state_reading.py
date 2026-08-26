@@ -13,9 +13,9 @@ grades what the report computes imports that module whole, and
 `core/spec/language-testing.md` §5 requires a whole-interpreter reading to be
 reachable only through an entry point that acquires an interpreter of its own. So
 the report imports no instrument at all — the reading lives here, this file is
-imported by nothing, and the only thing that runs it is a child. A guard over
-call spellings can only catch the routes it was taught; an import that is not
-there has no route to teach.
+imported by nothing, and the only thing that runs it is a child. A guard can only
+answer for the modules it is pointed at; an import that is not there is not a
+route it has to answer for.
 
 This file therefore also owns the module-identity refusal for the instruments.
 ``memory_instruments`` is a generic name on a path this process does not own, and
@@ -195,8 +195,11 @@ def _scaffolding_ns(scenario: Scenario, arm: Arm, construct_ns: float) -> float:
     Split the same way ``construct_ns`` was, so the call's fixed cost cancels
     from both and what is left is per-node on both sides. A subtraction, so the
     direction of the subtrahend's error decides this figure's: the common-work
-    spans price high by construction, which leaves this remainder at most what
-    the fixture failed to reproduce and never more.
+    spans price high by construction, so this remainder EXPECTS to fall short of
+    what the fixture failed to reproduce. Only in expectation — the two marginals
+    come from independent timing loops over a quantity smaller than either one's
+    noise, so a single reading of this can land either side of the truth, which is
+    why the report grades the ratio that does not use it.
     """
     if arm.common_work_ns is None:
         return 0.0

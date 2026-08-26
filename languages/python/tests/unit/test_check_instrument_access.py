@@ -2,10 +2,11 @@
 
 The guard is what makes the derived `cost` classification trustworthy, so what
 matters is not that it fires but that it fires on the routes a reading can
-actually take. Its rule is over spellings, and a spelling rule is only ever worth
-the routes it was taught: every widening of it that was checked by hand left a
-hole behind it. So each route is planted here against a scratch tree, and the
-canary at the end holds the real one.
+actually take. Its rule is that a module holds a reader only where it imported
+one, and that mentioning such a name anywhere reaches it — so the routes worth
+planting are the ones that mention a reader without calling it, and the shapes a
+name-based rule is tempted to exclude. Each is planted here against a scratch
+tree, and the canary at the end holds the real one.
 
 The reader's name is taken from the guard's own declared set rather than written
 out, which keeps this module free of the strings it plants and pins the plants to
@@ -118,12 +119,68 @@ def test_a_reader_named_by_a_variable_holding_its_name_is_reached(tmp_path: Path
     assert len(_findings(tmp_path, source)) == 1
 
 
-def test_a_local_that_merely_shares_a_readers_spelling_is_not_one(tmp_path: Path) -> None:
-    """The widened half of the rule reads names in argument position, where an
-    unrelated local of the same name is common. A name the code binds itself is
-    its own."""
+def test_a_module_that_imported_no_reader_holds_none_whatever_it_spells(
+    tmp_path: Path,
+) -> None:
+    """Reader names are ordinary English words and the suites are full of locals
+    spelled like them. A module that never imported the instruments cannot hold
+    one, which is what lets the rule read every mention in a module that did."""
     source = f"def test_probe():\n    {READER} = Observation()\n    record({READER})\n"
     assert _findings(tmp_path, source) == []
+
+
+def test_a_reader_handed_as_an_attribute_of_the_module_it_lives_in_is_reached(
+    tmp_path: Path,
+) -> None:
+    """``import memory_instruments`` puts every reader one dot away, so the module
+    name itself stands for a reader wherever it is mentioned."""
+    source = (
+        f"import memory_instruments\n\n\ndef test_probe():\n"
+        f"    register(memory_instruments.{READER})\n"
+    )
+    assert len(_findings(tmp_path, source)) == 1
+
+
+def test_a_reader_packed_into_a_container_is_reached(tmp_path: Path) -> None:
+    """The name is in no call position at all: it is an element of a tuple that a
+    call happens to receive."""
+    source = f"{IMPORTED}\n\ndef test_probe():\n    register(({READER},))\n"
+    assert len(_findings(tmp_path, source)) == 1
+
+
+def test_a_reader_returned_by_a_helper_is_reached_by_whoever_calls_it(
+    tmp_path: Path,
+) -> None:
+    """The helper hands the reader back rather than calling it, and the caller
+    calls what it got — so no site names a reader beside a call."""
+    source = (
+        f"{IMPORTED}\n\ndef helper():\n    return {READER}\n\n\n"
+        "def test_probe():\n    helper()(seam)\n"
+    )
+    assert len(_findings(tmp_path, source)) == 1
+
+
+def test_a_nested_binding_does_not_excuse_the_reader_beside_it(tmp_path: Path) -> None:
+    """A parameter of an inner function shadows the reader inside that function
+    and nowhere else, so the outer mention is still a read."""
+    source = (
+        f"{IMPORTED}\n\ndef test_probe():\n"
+        f"    def inner({READER}):\n        return {READER}\n"
+        f"    register(partial({READER}))\n"
+    )
+    assert len(_findings(tmp_path, source)) == 1
+
+
+def test_a_reader_reached_through_an_imported_helper_module_is_a_finding(
+    tmp_path: Path,
+) -> None:
+    """The audited tree resolves its own imports, so a test reaching a reader
+    through a module beside it is planted rather than argued about."""
+    (tmp_path / "probe_helpers.py").write_text(
+        f"{IMPORTED}\n\ndef reading(seam):\n    return {READER}(seam)\n"
+    )
+    source = "from probe_helpers import reading\n\n\ndef test_probe():\n    reading(seam)\n"
+    assert len(_findings(tmp_path, source)) == 1
 
 
 def test_a_test_carrying_the_boundary_reaches_its_reader_legally(tmp_path: Path) -> None:

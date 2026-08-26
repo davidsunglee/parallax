@@ -78,19 +78,27 @@ fixture also does timed from inside it — a closed list, because the fixture is
 four statements — and the remainder, ``outside µs``, is the per-node work the
 fixture does not reproduce.
 
-**Both construction ratios are upper bounds, and the tighter one is graded.**
-Dividing the two ``node µs`` columns gives ``arm against arm``, which charges the
-compact arm for all of that remainder; adding ``outside µs`` to the legacy side
-gives ``like for like``, which the regression rule is stated over. It is a bound
-rather than a point estimate because ``outside µs`` is a remainder, and every span
-subtracted to leave it prices its term high: the corrected figure is at least the
-true one, so an operation under the limit is under it in truth. For a member read
-and a ``model_dump()`` the correction is exactly zero and both figures are exact.
-The ordinary ratio needs no
-correction at all: a caller building an ordinary instance genuinely pays no
-construction call, so both its sides are the same quantity — the marginal cost of
-one additional node, with each arm's per-call cost printed beside it rather than
-inside it.
+**Construction is printed as two ratios, and the rule is stated over the one that
+needs no correction.** Dividing the two ``node µs`` columns gives ``arm against
+arm``, which charges the compact arm for all of that remainder; adding ``outside
+µs`` to the legacy side gives ``like for like``, the closer estimate of what the
+representation change itself cost.
+
+Only the first bounds the truth. The work the fixture never reproduced is work the
+pre-flip path really paid, so the true before side is at least the legacy arm's
+own timing and the true ratio is therefore at most ``arm against arm`` — whatever
+``outside µs`` is worth, and without measuring it. ``like for like`` cannot make
+that claim: it is a remainder of two independently sampled marginal timings, its
+expected error runs against the compact arm but its sampling error runs both ways,
+and a residue sampled high lowers the corrected ratio below the true one. So the
+20% rule reads ``arm against arm``, whose error can only surface an operation that
+did not regress; ``like for like`` is printed beside it as the tighter estimate,
+never as the graded figure. For a member read and a ``model_dump()`` the correction
+is exactly zero and the two columns are the same exact figure. The ordinary ratio
+needs no correction at all: a caller building an ordinary instance genuinely pays
+no construction call, so both its sides are the same quantity — the marginal cost
+of one additional node, with each arm's per-call cost printed beside it rather
+than inside it.
 
 **Where a reading is taken, and where it is not.** This module IMPORTS no
 instrument, so there is no name in it that reaches one — not bare, not through a
@@ -100,8 +108,8 @@ place ``memory_instruments`` is reached from; this module spawns the children,
 decodes what they answer, and judges only whether the matrix is complete. That is
 what `core/spec/language-testing.md` §5 asks of it structurally rather than by
 inspection: the `dbfree` suite that grades what this computes imports this module
-whole, and a guard reading call spellings can only ever catch the routes it was
-taught, where an import that does not exist has no route to teach.
+whole, so an instrument imported here would be one that suite reaches — and an
+import that does not exist is a route no guard has to answer for.
 
 **How decoded payload leaves are excluded — structurally, not by filtering.**
 Every scenario's input row and every leaf in it is allocated at import time,
@@ -233,14 +241,16 @@ class ArmReading(NamedTuple):
     what turns the raw legacy construction ratio into the like-for-like one
     (:func:`like_for_like_ratio`).
 
-    Derived by subtracting a measured figure rather than by measuring this one, so
-    what it is worth follows from that subtrahend: every quantity the fixture DOES
-    reproduce is timed out of :attr:`construct_ns` by a span that prices it high,
-    which leaves this remainder at most the work the fixture never did. It cannot
-    over-state what it adds to the legacy side, and may under-state it — far
-    enough, on a scenario where the quantity is near the two timings' noise, to
-    come out below zero. :attr:`unreproduced_ns` is this figure read as the
-    duration it stands for, and is what every consumer uses."""
+    A REMAINDER of two marginal timings taken in independent loops, which is what
+    decides how much it is worth. Every quantity the fixture does reproduce is
+    timed out of :attr:`construct_ns` by a span that prices it high, so this
+    figure's expected error under-states the work the fixture never did. Its
+    SAMPLING error runs both ways: a common-work marginal that happens to sample
+    low leaves this residue too large. Over the recorded readings it is about
+    0.2 µs against a spread of 0.00 to 1.71, and one reading came out below zero. So
+    it is a correction with a known direction rather than a bound, and no figure a
+    rule is graded on may rest on it. :attr:`unreproduced_ns` is this figure read
+    as the duration it stands for, and is what every consumer uses."""
     read_ns: float
     dump_ns: float
 
@@ -257,7 +267,7 @@ class ArmReading(NamedTuple):
         the compact arm's favour on nothing but noise. Zero is the honest floor —
         the case where nothing could be separated out — and it keeps the
         corrected ratio at or under the arm-against-arm one, which is what makes
-        the pair a bound and a tighter bound rather than two unrelated figures.
+        the graded figure the looser of the two.
         """
         return max(self.scaffolding_ns, 0.0)
 
@@ -353,16 +363,16 @@ class Operation(NamedTuple):
     name: str
     nanoseconds: Callable[[ArmReading], float]
     unreproduced: Callable[[ArmReading], float]
-    """Given the COMPACT arm's reading, AT MOST the per-node work inside its call
-    that the legacy fixture does not reproduce and the pre-flip path paid through
-    the same call.
+    """Given the COMPACT arm's reading, an estimate of the per-node work inside
+    its call that the legacy fixture does not reproduce and the pre-flip path paid
+    through the same call, biased low.
 
     Zero for an operation whose two arms do the same work on the same object —
     a member read and a ``model_dump()`` are one call against one call — and the
     compact arm's measured scaffolding for construction, which is the one
     operation whose arms are timed at different scopes. Exact where it is zero,
-    and a floor where it is measured, which is what makes the corrected ratio an
-    upper bound (:func:`like_for_like_ratio`)."""
+    and a noisy remainder where it is measured, which is why the figure it
+    produces is reported and not graded (:func:`like_for_like_ratio`)."""
 
 
 # Named readers rather than lambdas, so each one carries the parameter type its
@@ -645,10 +655,14 @@ def mix_ratio(readings: Sequence[Reading], operation: Operation) -> float:
     Arm against arm, exactly as each was timed. For a member read and a
     ``model_dump()`` that is already the before and after; for construction it is
     a LOOSE upper bound, because the compact arm's timing carries per-node work
-    the legacy fixture reproduces none of. :func:`like_for_like_ratio` is that
-    same comparison with as much of the difference as can be measured taken out,
-    which makes it the tighter upper bound and the one the regression rule is
-    stated over. Both are printed.
+    the legacy fixture reproduces none of — work the pre-flip path did pay, so the
+    true before side is at least the legacy arm's own timing and the true ratio is
+    at most this one.
+
+    That is why the regression rule is stated over THIS figure and not the tighter
+    :func:`like_for_like_ratio`: this one divides two measured timings and needs no
+    correction, so nothing it rests on can price low and pull it under the limit.
+    Both are printed.
     """
     before = sum(operation.nanoseconds(reading.legacy) for reading in readings)
     after = sum(operation.nanoseconds(reading.compact) for reading in readings)
@@ -656,7 +670,7 @@ def mix_ratio(readings: Sequence[Reading], operation: Operation) -> float:
 
 
 def before_ns(reading: Reading, operation: Operation) -> float:
-    """AT MOST what the pre-flip path paid for ``operation`` on one of
+    """An estimate of what the pre-flip path paid for ``operation`` on one of
     ``reading``'s nodes: the legacy fixture's own timing plus the per-node work
     that fixture does not reproduce.
 
@@ -666,28 +680,32 @@ def before_ns(reading: Reading, operation: Operation) -> float:
     unchanged either side of the flip. Removing it from the compact side would
     price a node nobody constructs.
 
-    At most, and not exactly, because that term is a remainder left by spans that
-    price the common work high (:attr:`ArmReading.scaffolding_ns`). A before side
-    that can only be small makes every ratio taken over it an upper bound, which
-    is the direction a rule that surfaces regressions needs.
+    Biased low in expectation rather than bounded in every sample: the term is a
+    remainder left by spans that price the common work high, so its expected error
+    under-states what it adds, but it is one marginal timing subtracted from
+    another and a low common-work sample makes it too large
+    (:attr:`ArmReading.scaffolding_ns`). A before side that came out too large
+    lowers the ratio taken over it, which is why the figure this feeds is reported
+    and :func:`mix_ratio` is the one graded.
     """
     return operation.nanoseconds(reading.legacy) + operation.unreproduced(reading.compact)
 
 
 def like_for_like_ratio(readings: Sequence[Reading], operation: Operation) -> float:
     """:func:`mix_ratio` with as much of the two arms' scope difference measured
-    out as a measurement can take out — the figure the regression rule is stated
-    over, and an UPPER BOUND on what the representation change cost rather than a
-    point estimate of it.
+    out as a measurement can take out — the closest ESTIMATE of what the
+    representation change itself cost, and the figure printed beside the graded
+    one rather than the graded one.
 
-    A bound rather than a point because the correction is a remainder: it is what
+    An estimate and not a bound, because the correction is a remainder: it is what
     is left of the compact arm's per-node cost once every quantity the legacy
-    fixture also pays has been timed out of it, and each of those is timed by a
-    span that prices it high (``_instance_state_support.compact_common_work_ns``).
-    The remainder is therefore at most the work the fixture never reproduced, the
-    before side it joins is at most what the pre-flip path paid, and this ratio is
-    at least the true one. Stating the 20% rule over it can surface an operation
-    that did not regress and cannot miss one that did.
+    fixture also pays has been timed out of it, in an independent timing loop.
+    Each of those spans prices its term high
+    (``_instance_state_support.compact_common_work_ns``), so the expected error
+    runs against the compact arm — but a common-work marginal that samples low
+    leaves the residue too large, enlarges the before side and puts this ratio
+    UNDER the true one. A rule that must not miss a regression therefore cannot be
+    stated over it, and :func:`escalations` reads :func:`mix_ratio` instead.
 
     Identical to :func:`mix_ratio` for every operation whose arms already do the
     same work, where the correction is exactly zero and the figure is exact, so
@@ -700,9 +718,12 @@ def like_for_like_ratio(readings: Sequence[Reading], operation: Operation) -> fl
 
 
 def scenario_ratio(reading: Reading, operation: Operation) -> float:
-    """One scenario's own like-for-like ratio — how the escalation block picks
-    the worst of a mix it is naming a summed figure for."""
-    return operation.nanoseconds(reading.compact) / before_ns(reading, operation)
+    """One scenario's own arm-against-arm ratio — how the escalation block picks
+    the worst of a mix it is naming a summed figure for.
+
+    The same comparison the block grades, so the scenario it names is the worst of
+    the figure it just quoted rather than of a different one."""
+    return operation.nanoseconds(reading.compact) / operation.nanoseconds(reading.legacy)
 
 
 def ordinary_ratio(readings: Sequence[Reading], operation: Operation) -> float:
@@ -733,14 +754,15 @@ def escalations(runtime: str, readings: Sequence[Reading]) -> list[str]:
     DISPLAYED and neither reaches the exit code, which is what keeps a `report`
     one (`core/spec/language-testing.md` §2).
 
-    The operation rule is applied to :func:`like_for_like_ratio` rather than
-    :func:`mix_ratio`, because the limit is stated over what the representation
-    change cost and only the like-for-like figure bounds that: the raw ratio would
-    surface a difference in how two arms are timed as though it were a regression.
-    Both are printed, so a reader sees the compared figure beside the
-    arm-against-arm one. The figure the rule reads is an upper bound, so an
-    operation it leaves out of the block is one whose true ratio is under the
-    limit too.
+    The operation rule is applied to :func:`mix_ratio` rather than the tighter
+    :func:`like_for_like_ratio`, because a rule that must not MISS a regression has
+    to read a figure nothing can pull under the limit. The arm-against-arm ratio
+    divides two measured timings and needs no correction; the like-for-like one
+    subtracts a noisy remainder that, sampled high, puts the ratio under the true
+    one. So the rule reads the looser of the two, and pays for it by being able to
+    surface an operation whose true ratio is under the limit — a line to read
+    rather than a gate that fails, and the tighter figure is printed beside it so
+    a reader sees how much of the difference is scope.
     """
     lines: list[str] = []
     primary, _ = aggregates(readings)
@@ -750,12 +772,12 @@ def escalations(runtime: str, readings: Sequence[Reading]) -> list[str]:
             f"{AGGREGATE_TARGET:.0%} — return the measured result to the user for a decision"
         )
     for operation in OPERATIONS:
-        ratio = like_for_like_ratio(readings, operation)
+        ratio = mix_ratio(readings, operation)
         if ratio <= REGRESSION_LIMIT:
             continue
         worst = max(readings, key=lambda reading: scenario_ratio(reading, operation))
         lines.append(
-            f"CPython {runtime}: {operation.name} {ratio:.2f}x like for like over the mix "
+            f"CPython {runtime}: {operation.name} {ratio:.2f}x arm against arm over the mix "
             f"(> {REGRESSION_LIMIT:.2f}x), worst {worst.scenario} at "
             f"{scenario_ratio(worst, operation):.2f}x — surfaced for human review"
         )
@@ -771,7 +793,7 @@ def escalation_block(matrix: Matrix) -> list[str]:
         return [
             "no escalation: every runtime's primary aggregate reaches "
             f"{AGGREGATE_TARGET:.0%} and no representative operation moved past "
-            f"{REGRESSION_LIMIT:.2f}x like for like"
+            f"{REGRESSION_LIMIT:.2f}x arm against arm"
         ]
     return ["REVIEW REQUIRED", *(f"  {line}" for line in raised)]
 
@@ -914,21 +936,25 @@ def _scope() -> list[str]:
         "",
         "  Every one of those spans prices its term HIGH and none prices one low: the repeated",
         "  attach releases the state it displaces where construct's own write finds the slot",
-        "  empty, and each span carries the clock reads bounding it. So `outside us` is at",
-        "  most the work the fixture never did, never more — which is what the corrected",
-        "  ratio is worth, and all it is worth.",
+        "  empty, and each span carries the clock reads bounding it. So `outside us` EXPECTS",
+        "  to under-state the work the fixture never did. It is still a remainder of two",
+        "  independently sampled marginal timings, about 0.2 us against a 0.00-1.71 spread,",
+        "  so a single reading of it can be too large as easily as too small.",
         "",
-        "  So every ratio is printed twice, and for construction BOTH ARE UPPER BOUNDS.",
-        "  `arm against arm` divides the two `node us` columns as each was timed, which",
-        "  charges compact for the whole of what the fixture did not reproduce. `like for",
-        "  like` adds `outside us` to the legacy side instead, which is at most what the",
-        "  pre-flip path paid, so it is the tighter bound and not a point estimate.",
-        "  THE 20% RULE IS STATED OVER THE LIKE-FOR-LIKE FIGURE, because the limit is about",
-        "  what the representation change cost — and over a bound in the safe direction: an",
-        "  operation under the limit here is under it in truth, and one over it may not be.",
+        "  So every ratio is printed twice. `arm against arm` divides the two `node us`",
+        "  columns as each was timed, charging compact for the whole of what the fixture did",
+        "  not reproduce. `like for like` adds `outside us` to the legacy side instead, which",
+        "  is the closer estimate of what the representation change itself cost.",
+        "  THE 20% RULE IS STATED OVER `ARM AGAINST ARM`, the figure that needs no correction:",
+        "  the work the fixture never reproduced is work the pre-flip path did pay, so the",
+        "  true before side is at least the legacy `node us` and the true ratio is at most",
+        "  this one — whatever `outside us` is worth. Grading the corrected figure instead",
+        "  would let a residue that sampled high pull the reading under the limit. The price",
+        "  is that this block can surface an operation whose true ratio is under it, which is",
+        "  a line to read rather than a gate that fails.",
         "  For attribute read and serialization the two columns are equal by construction —",
         "  one call against one call on one node — so those two figures are exact rather than",
-        "  bounded, which is what shows which operation needed a correction at all.",
+        "  estimated, which is what shows which operation needed a correction at all.",
         "",
         "  The ordinary construction ratio needs no such correction and gets none: a caller",
         "  building an ordinary instance pays no construct call at all, so both sides of it",
