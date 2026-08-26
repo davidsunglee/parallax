@@ -14,7 +14,7 @@ import gc
 from typing import Any, cast
 
 import pytest
-from _compact_support import published, raw_row
+from _compact_support import carries_instance_storage, published, raw_row
 from pydantic import BaseModel
 
 from parallax.core.entity import (
@@ -241,7 +241,10 @@ def test_two_values_differing_only_in_private_state_are_unequal() -> None:
 def test_a_published_value_keeps_no_name_keyed_presence_state() -> None:
     # Not even a shared empty set: what a published value answers for
     # `__pydantic_fields_set__` is synthesized from the bitmap, so the slot
-    # Pydantic's own storage keeps one in is never written at all.
+    # Pydantic's own storage keeps one in is never written at all. Storage is
+    # asked for by identity, because a dictionary held in a slot of the layout's
+    # own is not storage; the set scan stays layout-blind because that presence
+    # slot is the only place in the layout a set ever reaches.
     value = published(Cat, id=1, name="c")
     row = raw_row(value)
     assert isinstance(row, tuple)
@@ -251,7 +254,8 @@ def test_a_published_value_keeps_no_name_keyed_presence_state() -> None:
         instance_presence(value)
     assert object.__getattribute__(value, "__pydantic_extra__") is None
     assert not any(isinstance(held, dict | set) for held in row)
-    assert not [held for held in gc.get_referents(value) if isinstance(held, dict | set)]
+    assert not carries_instance_storage(value)
+    assert not [held for held in gc.get_referents(value) if isinstance(held, set)]
 
 
 def test_a_shell_awaiting_publication_holds_neither_state_nor_presence() -> None:

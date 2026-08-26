@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import ast
 import datetime as dt
-import gc
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -22,7 +21,7 @@ from _authored_storage_support import (
     forge_into_storage,
     stored_state,
 )
-from _compact_support import published
+from _compact_support import carries_instance_storage, published
 from _snapshot_graph_support import GraphFixture
 from pydantic import TypeAdapter
 
@@ -429,14 +428,14 @@ def test_edited_row_omits_a_touched_member_whose_value_is_unchanged() -> None:
 
 
 def test_edited_row_reads_a_published_value_s_provenance_without_creating_storage() -> None:
-    # A published value keeps its members in a row and no instance dictionary at
-    # all. The provenance slot is absent either way, but reaching for the storage
+    # A published value keeps its members in a row and no instance storage of its
+    # own. The provenance slot is absent either way, but reaching for the storage
     # to learn that would CREATE the dictionary — permanently, per node, on a
     # read the codec makes of every value it weighs.
     value = published(mm.Account, id=1, owner="Ada", balance=Decimal("100.00"), version=1)
     assert _accounts().edited_row(value) is None
     assert _accounts().full_row(value) == {"id": 1, "owner": "Ada", "balance": Decimal("100.00")}
-    assert not [held for held in gc.get_referents(value) if isinstance(held, dict)]
+    assert not carries_instance_storage(value)
 
 
 def test_edited_row_answers_none_for_a_net_zero_edit() -> None:

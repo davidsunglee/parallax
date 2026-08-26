@@ -20,13 +20,18 @@ there is to make no such write of its own, which is what the last section grades
 from __future__ import annotations
 
 import copy
-import gc
 import pickle
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from _compact_support import layout_slots, published, raw_row, real_storage
+from _compact_support import (
+    carries_instance_storage,
+    layout_slots,
+    published,
+    raw_row,
+    real_storage,
+)
 from pydantic import BaseModel, ConfigDict, PrivateAttr, TypeAdapter, ValidationError
 
 from parallax.core.entity import (
@@ -439,15 +444,6 @@ def test_validating_an_already_published_value_returns_that_same_value() -> None
 # --------------------------------------------------------------------------- #
 
 
-def _dict_referents(value: object) -> list[Any]:
-    """Every mapping ``value`` itself holds, without asking it for one.
-
-    Asking is what creates one, so an assertion that reads ``__dict__`` cannot
-    tell a storage that was never created from one created empty by the read.
-    """
-    return [held for held in gc.get_referents(value) if isinstance(held, dict)]
-
-
 def test_no_framework_read_of_a_published_value_writes_its_storage() -> None:
     # `object.__setattr__` resolves no `__setattr__` and reaches a value's
     # storage directly, so no framework can intercept it — the same door the
@@ -466,7 +462,7 @@ def test_no_framework_read_of_a_published_value_writes_its_storage() -> None:
     _ = value.peer
     _ = value.label
     assert value == published(Bare, id=1, label="x", peer_id=None)
-    assert not _dict_referents(value)
+    assert not carries_instance_storage(value)
     # Read last, because reading it is what creates it.
     assert real_storage(value) == {}
 
@@ -483,7 +479,7 @@ def test_nor_does_a_framework_read_that_wants_the_whole_of_a_value_s_named_state
     assert edited.peer is None
     assert value.model_dump() == {"id": 1, "label": "x", "peer_id": None}
     assert pickle.loads(pickle.dumps(value)) == value
-    assert not _dict_referents(value)
+    assert not carries_instance_storage(value)
     assert real_storage(value) == {}
 
 
@@ -530,8 +526,12 @@ def test_that_a_published_value_edits_out_of_the_same_object_layout_too() -> Non
         with pytest.raises(AttributeError, match=AUXILIARY_STATE_SLOT):
             object.__getattribute__(edited, AUXILIARY_STATE_SLOT)
     # The private slot is a mapping the object layout gives every value of a class
-    # declaring one, and it is the only mapping this one holds.
-    assert _dict_referents(value) == [{"_mark": 9}]
+    # declaring one, and it is the only mapping this one holds: the auxiliary slot
+    # is unwritten, and no storage was ever created.
+    assert object.__getattribute__(value, "__pydantic_private__") == {"_mark": 9}
+    with pytest.raises(AttributeError, match=AUXILIARY_STATE_SLOT):
+        object.__getattribute__(value, AUXILIARY_STATE_SLOT)
+    assert not carries_instance_storage(value)
     assert real_storage(value) == {}
 
 
@@ -539,7 +539,7 @@ def test_a_published_value_object_edits_out_of_its_row_the_same_way() -> None:
     value = published(Place, city="Springfield", zip_code="49007")
     edited = value.edit(city="Shelbyville")
     assert edited.model_dump() == {"city": "Shelbyville", "zip_code": "49007"}
-    assert not _dict_referents(value)
+    assert not carries_instance_storage(value)
     assert real_storage(value) == {}
 
 
@@ -549,7 +549,7 @@ def test_an_edit_that_authors_nothing_carries_the_whole_row_forward() -> None:
     value = published(Bare, {"peer": None}, id=1, label="x", peer_id=None)
     assert value.edit() == value
     assert value.edit().model_fields_set == {"id", "label", "peer_id"}
-    assert not _dict_referents(value)
+    assert not carries_instance_storage(value)
     assert real_storage(value) == {}
 
 
