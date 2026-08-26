@@ -2017,9 +2017,10 @@ or descriptor authoring form and performs no audit stamping.
   disagreement, because a read cannot produce one. Relationship Views are the
   only slot two projections legitimately differ on — a path loaded on one and
   not the other — and those are **unioned** rather than won.
-- **Declared-type enforcement on a read is the writer's.** Materialization builds
-  every Entity and Value Object through Pydantic's validation-free construction
-  path, so a declared member's type is enforced by Entity Graph Construction's
+- **Declared-type enforcement on a read is the writer's.** Materialization enters
+  no Pydantic constructor for an Entity or a Value Object — a published node's
+  whole state is assembled and attached once — so a declared member's type is
+  enforced by Entity Graph Construction's
   own Neutral Value validation — which raises
   `GraphConstructionError(entity-graph-invalid-value)` — and never by Pydantic.
   The consequence is stated rather than incidental: an author's
@@ -2728,10 +2729,10 @@ or descriptor authoring form and performs no audit stamping.
   the guard has passed, so they stay authorable and an authored one still runs.
   A node nested anywhere in what is being pickled is asked for that name the
   same way the pickle's root is. What the guard asks is whether the
-  constructing lifecycle's state is attached to the value's own instance
-  storage and holds anything but `None` — that storage read directly, never a
-  name a class can bind, and the same storage a read attaches state to and an
-  edit carries it forward in. So no authored `__getattr__`, `__getattribute__`,
+  constructing lifecycle's state is attached to the value's own lifecycle slot
+  and holds anything but `None` — that slot read through its own descriptor,
+  never a name a class can bind, and the same slot a read attaches state to and
+  an edit carries it forward in. So no authored `__getattr__`, `__getattribute__`,
   `__dict__`, or descriptor bound at the slot's own name makes a lifecycle-free
   value answer as a materialized one, or hides the state of one that is.
 

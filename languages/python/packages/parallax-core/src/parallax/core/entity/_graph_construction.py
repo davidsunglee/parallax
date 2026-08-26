@@ -13,18 +13,18 @@ in the sibling :mod:`parallax.core.entity._construction_input` scope, so a
 lifecycle package materializing Entities can be granted the vocabulary without
 being granted this collaboration.
 
-The collaboration owns everything about turning those rows into Entity
-and Value Object instances — concrete class selection, canonical-to-Python member
-mapping, the correspondence between the model's member layout and the class's
-own, recursive Value Object construction, declared-type enforcement in Pydantic
+The collaboration owns everything about turning those rows into Entity and Value
+Object instances — concrete class selection, canonical-to-Python member mapping,
+the correspondence between the model's member layout and the class's own,
+recursive Value Object construction, declared-type enforcement in Pydantic
 validation's place, broad relationship-slot filling, the one opaque
-lifecycle-state slot, and all-or-none publication. What it does NOT own is how a
-value physically holds any of that: it hands the instance-state Module semantic
-inputs and the Module attaches one row, so nothing here knows the tuple or the
-bitmap. It owns nothing about
-any lifecycle either: it registers no callback, interprets no state value, and
-imports no lifecycle package. A caller passes one build function and one optional state
-factory per call, so two lifecycles coexist without either knowing the other.
+lifecycle-state slot, and all-or-none lifecycle-state attachment. What it does
+NOT own is how a value physically holds any of that: it hands the instance-state
+Module semantic inputs and the Module attaches one row, so nothing here knows the
+tuple or the bitmap. It owns nothing about any lifecycle either: it registers no
+callback, interprets no state value, and imports no lifecycle package. A caller
+passes one build function and one optional state factory per call, so two
+lifecycles coexist without either knowing the other.
 
 Three non-overlapping phases, and the order is the contract rather than an
 implementation detail:
@@ -56,9 +56,17 @@ eager. A build-callback exception propagates unchanged and suppresses completion
 root, and factory work. After a successful callback the lowest unpopulated
 allocation index fails first; only then are roots validated left to right; only
 then do factories run, the first factory exception propagating unchanged and
-stopping later ones. State attachment and root publication happen last and
-together, so a failure anywhere publishes nothing and leaves every allocated
-Entity unreachable and lifecycle-state-free.
+stopping later ones. State attachment and root delivery happen last and together,
+so a failure anywhere attaches no lifecycle state to any node and returns no
+root, leaving every allocated Entity unreachable through this call.
+
+Attaching a node's row is a separate atomicity, and an earlier one. Each node's
+row is assembled in local state and attached in one write as that node is
+populated, so no half-written row exists and a node whose population is refused
+is left exactly as allocation left it. It is not deferred to the end: a node
+populated before a later failure keeps the row it was populated with, and so does
+a Value Object record built during the walk. What the call withholds on a failure
+is every root and every lifecycle state, not the rows already attached.
 """
 
 from __future__ import annotations

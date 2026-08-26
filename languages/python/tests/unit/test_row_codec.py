@@ -151,10 +151,10 @@ def _every_construction_door[E: Entity](cls: type[E], state: dict[str, Any]) -> 
     """One ``cls`` value from each door Pydantic builds one through.
 
     The validating constructor and ``model_construct`` are the two the framework
-    itself uses — the second is what door materialization and an edit build
-    through — and ``model_validate`` and a nested ``TypeAdapter`` validation are
-    the two it never calls but a caller can: the last one builds inside
-    pydantic-core with no framework call site at all.
+    itself uses — the second is the door an edit's restatement builds through, and
+    materialization enters neither — and ``model_validate`` and a nested
+    ``TypeAdapter`` validation are the two it never calls but a caller can: the
+    last one builds inside pydantic-core with no framework call site at all.
     """
     return (
         cls(**state),
@@ -177,8 +177,8 @@ def _account(balance: str = "100.00") -> mm.Account:
 
 
 def _fetched_account(balance: str = "100.00", version: int = 1) -> mm.Account:
-    """One versioned Account as a read hands it back: the framework-owned version
-    arrives through the validation-free path a caller cannot author through."""
+    """One versioned Account standing in for what a read hands back: the
+    framework-owned version is present without a caller having authored it."""
     return mm.Account.model_construct(id=1, owner="Ada", balance=Decimal(balance), version=version)
 
 

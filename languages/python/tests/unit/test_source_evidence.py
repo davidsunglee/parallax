@@ -193,7 +193,7 @@ _INVENTED_STATE: Final = object()
 
 
 class _FilteredDict(Entity, table="filtered_dict", namespace="parallax.compatibility"):
-    """An Entity whose class body denies the lifecycle slot its storage holds."""
+    """An Entity whose class body denies the lifecycle slot the value carries."""
 
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=64)
@@ -202,7 +202,7 @@ class _FilteredDict(Entity, table="filtered_dict", namespace="parallax.compatibi
 
 
 class _InventedDict(Entity, table="invented_dict", namespace="parallax.compatibility"):
-    """An Entity whose class body offers a lifecycle slot its storage never held."""
+    """An Entity whose class body offers lifecycle state the value never carried."""
 
     id: Attr[int] = attr(primary_key=True)
 
@@ -370,9 +370,9 @@ def test_an_authored_getstate_hook_still_runs_on_a_lifecycle_free_value() -> Non
 
 def test_a_class_body_answering_every_name_leaves_an_ordinary_value_pickleable() -> None:
     # What the refusal asks is whether the state is attached, which is a fact
-    # about the instance dictionary rather than about what the value answers: a
-    # class body deriving the slot's name does not make a value a read never
-    # produced into a materialized node.
+    # about the value's own lifecycle slot rather than about what the value
+    # answers: a class body deriving the slot's name does not make a value a read
+    # never produced into a materialized node.
     value = _DerivingAttributes(id=7)
     assert getattr(value, LIFECYCLE_STATE_SLOT, None) is not None
 
@@ -402,9 +402,11 @@ def test_a_class_body_hiding_the_lifecycle_slot_is_refused_all_the_same() -> Non
 def test_a_class_body_filtering_its_instance_dictionary_is_refused_all_the_same() -> None:
     # No class body may bind `__dict__` — the framework presents a published
     # value's state under that name — but `__getattribute__` is authorable and
-    # decides what every reader of the name is told. The refusal reads the
-    # storage itself, so a value whose dictionary denies the state it carries
-    # pickles no more than a plainly materialized node does.
+    # decides what every reader of the name is told. The refusal reads the slot's
+    # own descriptor, which the instance dictionary never held and a class body
+    # answering for that dictionary therefore cannot reach: a value whose
+    # dictionary denies the state it carries pickles no more than a plainly
+    # materialized node does.
     value = _FilteredDict(id=7, name="Ada")
     object.__setattr__(value, LIFECYCLE_STATE_SLOT, object())
     assert LIFECYCLE_STATE_SLOT not in value.__dict__
@@ -414,8 +416,8 @@ def test_a_class_body_filtering_its_instance_dictionary_is_refused_all_the_same(
 
 
 def test_a_class_body_inventing_the_slot_leaves_an_ordinary_value_pickleable() -> None:
-    # The same fact from the other side: a dictionary answering with a slot the
-    # storage never held does not make a value a read never produced into a
+    # The same fact from the other side: a dictionary answering with state the
+    # slot never held does not make a value a read never produced into a
     # materialized node.
     value = _InventedDict(id=7)
     assert value.__dict__[LIFECYCLE_STATE_SLOT] is _INVENTED_STATE
@@ -461,14 +463,14 @@ def test_no_class_body_may_answer_for_the_name_that_presentation_uses() -> None:
 
 
 def test_an_edited_copy_of_a_value_whose_dictionary_denies_the_slot_is_refused_too() -> None:
-    # An edit carries every kind of instance state outside the declared members
-    # forward, so a class that filters its instance state could otherwise launder a
+    # An edit carries every kind of state outside the declared members forward, so
+    # a class that filters its instance state could otherwise launder a
     # materialized node one call deeper than the refusal: derive a copy, and the
-    # state the original's storage holds is dropped on the way. The edit surface
-    # reads and writes that storage itself, so the copy carries the claim the
-    # original transferred to it — through the no-change branch that restates a
-    # value whole and through the branch that rebuilds it around changes alike —
-    # and pickles no more than the node it came from.
+    # state the original's slot holds is dropped on the way. The edit carries that
+    # slot through its own descriptor, so the copy carries the claim the original
+    # transferred to it — through the no-change branch that restates a value whole
+    # and through the branch that rebuilds it around changes alike — and pickles
+    # no more than the node it came from.
     value = _FilteredDict(id=7, name="Ada")
     object.__setattr__(value, LIFECYCLE_STATE_SLOT, object())
 
@@ -482,7 +484,7 @@ def test_a_class_diverting_the_lifecycle_slot_is_refused_all_the_same() -> None:
     # after that judgement and can install a data descriptor there — one
     # `object.__setattr__` would honor, taking the state a read attaches and
     # holding it somewhere of the class's own choosing. Entity Graph Construction
-    # writes that state into the node's own storage instead, so a class can blind
+    # writes through the root's own slot descriptor instead, so a class can blind
     # its own readers of the slot without making a materialized node answer as a
     # value no read produced: the refusal reads what the lifecycle attached.
     state = object()

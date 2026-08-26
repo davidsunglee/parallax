@@ -1,4 +1,5 @@
-"""What one published Entity retains today, over the six canonical scenarios.
+"""What one published Entity retained before the flip, over the six canonical
+scenarios.
 
 Six scenarios — shallow, wide, nested, nullable, partial, polymorphic — each
 measured in a fresh child interpreter of its own, with every arm of that scenario
@@ -18,8 +19,8 @@ fixture takes is what carries the comparison forward — the "before" a later
 aggregate divides into.
 
 **What is measured, per scenario.** Bytes reachable at the seam's innermost point
-while one published node is held that were not reachable before the window
-opened — read twice, once with the node's lifecycle state attached and once
+while one node of the measured arm is held that were not reachable before the
+window opened — read twice, once with the node's lifecycle state attached and once
 without, so the aggregate that includes unchanged lifecycle state and the one that
 isolates publication state are both available. Beside them: what constructing one
 node costs, what an ordinary declared-field read costs, what

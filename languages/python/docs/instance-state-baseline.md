@@ -1,40 +1,39 @@
 # Published instance state — frozen legacy reading
 
-What one published Typed Entity retains today, measured on one machine under
-stated conditions, over COR-111's six canonical scenarios. It is the "before"
-half of that ticket's measurement contract, taken while a legacy publication path
-still exists to take it from.
+What one published Typed Entity retained before publication became compact,
+measured on one machine under stated conditions, over COR-111's six canonical
+scenarios. It is the "before" half of that ticket's measurement contract, taken
+while a legacy publication path still existed to take it from.
 
 Nothing here gates. `just python-report-instance-state` is a `report`: it passes
 no verdict and belongs to no aggregate, because a total in bytes is machine- and
 interpreter-relative — `tracemalloc` figures move with CPython, and every CI job
 runs the floating `ubuntu-latest` label.
 
-What *is* gated is the one thing that could go wrong silently. The arm measured
-here is a **fixture** — `tests/unit/_instance_state_support.legacy_publication`,
-which builds one node the way Entity Graph Construction builds one today — and a
-fixture that has drifted still produces numbers. So the report compares every
-scenario's fixture against the real publication path before it measures anything
-and exits non-zero on any disagreement, and
-`tests/unit/test_instance_state_baseline.py`, owned by `just python-test-dbfree`,
-grades that comparison from both sides: nothing named over the shipping mix, and
-the site named over each of three fixtures that stopped reproducing publication in
-a different way.
+The arm measured here is a **fixture** —
+`tests/unit/_instance_state_support.legacy_publication`, which builds one node the
+way Entity Graph Construction built one then — and a fixture that has drifted
+still produces numbers. So while that path existed the report compared every
+scenario's fixture against it before measuring anything and exited non-zero on any
+disagreement.
 
-That check has a stated life. It holds while a legacy publication path exists to
-compare against; it runs one last time immediately before the flip that replaces
-publication, and retires with it. After that the permanent comparison is the
-two-arm one the same tool takes, which reproduces on any machine at any later
+That check had a stated life. It held while a legacy publication path existed to
+compare against; it ran one last time immediately before the flip that replaced
+publication, and retired with it. `tests/unit/test_instance_state_baseline.py`,
+owned by `just python-test-dbfree`, still grades what the report is asked for and
+the mix the measurement contract names. The permanent comparison is now the
+two-arm one the same tool will take, which reproduces on any machine at any later
 commit — where these totals in bytes are valid only for whoever took them.
 
 ## Why a fixture rather than the path itself
 
-A materialized node is `cls.model_construct()` with **no arguments** followed by
-one `object.__setattr__` per member, which leaves `__pydantic_fields_set__`
-permanently empty. Ordinary keyword construction would get every value right and
-that wrong, and the empty set is a large share of what a published node currently
-retains — so the fixture reproduces the construction call rather than the result.
-A Value Object is different and is reproduced differently:
+A materialized node **was** `cls.model_construct()` with **no arguments**
+followed by one `object.__setattr__` per member, which leaves
+`__pydantic_fields_set__` permanently empty. Ordinary keyword construction would
+get every value right and that wrong, and the empty set is a large share of what a
+published node retained then — so the fixture reproduces the construction call
+rather than the result. A Value Object was different and is reproduced
+differently:
 `vo_class.model_construct(present, **values)`, where `present` is exactly the
 members the row carried.
 
@@ -70,13 +69,14 @@ their difference.
 | **summed** | | | **7,080** | **6,176** | **904** | | | | |
 
 `fields` is the declared Pydantic field count; `slots` is the number of entries
-the node's instance storage holds, which is the fields plus its one relationship
-slot plus the lifecycle slot. `read ns` is per declared field read, averaged over
-every field of the node. Timings are recorded for direction only.
+the node's instance storage held over the frozen tree, which is the fields plus
+its one relationship slot plus its lifecycle entry. `read ns` is per declared
+field read, averaged over every field of the node. Timings are recorded for
+direction only.
 
 The aggregate COR-111 accepts against is `1 - sum(after) / sum(before)` over the
 two summed columns, never the mean of per-scenario percentages, and over two
-readings taken on the same object layout (*Three object layouts*, below — these
+readings taken on the same object layout (*Four object layouts*, below — these
 sums are the layout that carries no framework slots). The sums are recorded here
 and the arithmetic is deliberately not performed: there is no "after" yet.
 
@@ -155,10 +155,10 @@ comparison basis.
 
 This document carries figures from four different object layouts — the tree
 before COR-111, the intermediate one the seam's first take produced, the one the
-instance-state presentation added to it, and the current tree. Every summed number below belongs to exactly one of them, and an
-aggregate that mixes them is wrong in a way no reader can see from the number
-alone. So the layouts are named first and the rule for using them is stated
-after.
+instance-state presentation added to it, and the current tree. Every summed number
+below belongs to exactly one of them, and an aggregate that mixes them is wrong in
+a way no reader can see from the number alone. So the layouts are named first and
+the rule for using them is stated after.
 
 The tables above are the **frozen reading**, taken over a tree carrying no
 publication machinery at all — an instance of a declared class was a Pydantic
@@ -222,16 +222,15 @@ frozen over**, which is no longer true of the current tree: a published node's
 bitmap records exactly what its row carried, so `nullable` and `partial` are now
 distinguishable where the frozen reading found them identical. What follows is
 the frozen tree's fact, kept because it is what the frozen sums are a reading of.
-`nullable` and `partial`
-differ only in which positions the row carried, and their published nodes are
-physically identical in shape: the same storage keys, the same declared-field
-count, and an empty `__pydantic_fields_set__` on both. Pydantic's zero-argument
-`model_construct` fills every absent optional position with its default, and
-`object.__setattr__` adds nothing to the field set, so `exclude_unset` on a
-materialized node drops everything and `full_row`'s presence read
-(`_row_codec.py:110-125`) sees an empty set. The compact representation's presence
-bitmap is therefore new information rather than a re-encoding of information the
-current backing already holds.
+`nullable` and `partial` differ only in which positions the row carried, and their
+published nodes were physically identical in shape: the same storage keys, the
+same declared-field count, and an empty `__pydantic_fields_set__` on both.
+Pydantic's zero-argument `model_construct` fills every absent optional position
+with its default, and `object.__setattr__` adds nothing to the field set, so
+`exclude_unset` on a materialized node dropped everything and `full_row`'s
+presence read saw an empty set. The compact representation's presence bitmap is
+therefore new information rather than a re-encoding of information that backing
+already held.
 
 ## Why the polymorphic scenario's timings were re-frozen
 

@@ -91,6 +91,48 @@ def _one_parcel(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
     return (handle,)
 
 
+class _Pin(ValueObject):
+    code: Attr[str]
+
+
+class _Leg(ValueObject):
+    distance: Attr[int]
+    pin: Attr[_Pin | None]
+
+
+class _Stop(ValueObject):
+    name: Attr[str]
+    pin: Attr[_Pin | None]
+
+
+class _Route(ValueObject):
+    label: Attr[str]
+    leg: Attr[_Leg | None]
+    stops: Attr[tuple[_Stop, ...]]
+
+
+class Shipment(Entity, table="shipment", namespace=_NS):
+    """Every containment shape ``_build_record`` recurses through, in one Entity.
+
+    ``route`` is a top-level occurrence holding both a nested One (``leg``, whose
+    own ``pin`` is a One at depth three) and a Many (``stops``) whose elements
+    each hold a nested occurrence of their own.
+    """
+
+    id: Attr[int] = attr(primary_key=True)
+    route: Attr[_Route | None]
+
+
+SHIPMENTS = DomainModel(Shipment)
+_SHIPMENT = Shipment.identity
+_PIN_ROW: tuple[object, ...] = ("P1",)
+_ROUTE_ROW: tuple[object, ...] = (
+    "north",
+    (12, _PIN_ROW),
+    (("depot", _PIN_ROW), ("dock", ABSENT)),
+)
+
+
 def _published(build: Any = _one_parcel, *, state_factory: Any = None) -> Any:
     (root,) = graph_construction_of(PARCELS).construct(build, state_factory=state_factory)
     return root
@@ -101,21 +143,72 @@ def _published(build: Any = _one_parcel, *, state_factory: Any = None) -> Any:
 # --------------------------------------------------------------------------- #
 
 
-def test_publication_enters_neither_constructor(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Deterministic rather than probabilistic: both doors are replaced with ones
-    # that fail, so entering either is the test failing rather than a shape
-    # someone has to notice. The Entity and its Value Object are both covered,
-    # because an occurrence is published by the same door one level down.
+def _refuse_both_constructors(monkeypatch: pytest.MonkeyPatch, *classes: type) -> None:
+    """Replace both Pydantic doors on each class with one that fails.
+
+    Patched on each concrete declared class rather than on ``BaseModel``, because
+    Pydantic resolves ``model_construct`` as a classmethod through the MRO and a
+    patch on the root would also fire for every framework-internal model a call
+    happens to build. Both doors are covered on every class the recursion can
+    reach, so entering either is this test failing rather than a shape someone
+    has to notice in output.
+    """
+
     def refuse(*_args: object, **_kwargs: object) -> Any:
         raise AssertionError("publication entered a Pydantic constructor")
 
-    for cls in (Parcel, Tag):
+    for cls in classes:
         monkeypatch.setattr(cls, "__init__", refuse)
         monkeypatch.setattr(cls, "model_construct", cast("Any", classmethod(refuse)))
+
+
+def test_publication_enters_neither_constructor(monkeypatch: pytest.MonkeyPatch) -> None:
+    _refuse_both_constructors(monkeypatch, Parcel, Tag)
 
     root = _published()
     assert (root.id, root.label) == (1, "north")
     assert root.tag.label == "red"
+
+
+def test_publication_enters_neither_constructor_at_any_containment_depth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `_build_record` recurses, so a patch that only observes the root and its one
+    # top-level occurrence proves less than this test's name claims. Every class
+    # the recursion reaches is patched: the Entity shell, a top-level Value
+    # Object, a nested One at depth two, an element of a Many, and the nested
+    # occurrence inside that element.
+    _refuse_both_constructors(monkeypatch, Shipment, _Route, _Leg, _Stop, _Pin)
+
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        handle = writer.allocate(_SHIPMENT)
+        writer.populate(handle, (1, _ROUTE_ROW), ())
+        return (handle,)
+
+    (root,) = graph_construction_of(SHIPMENTS).construct(build)
+    shipment = cast("Shipment", root)
+    route = cast("_Route", shipment.route)
+    assert route.leg is not None
+    assert (route.leg.distance, cast("_Pin", route.leg.pin).code) == (12, "P1")
+    assert tuple(stop.name for stop in route.stops) == ("depot", "dock")
+    assert cast("_Pin", route.stops[0].pin).code == "P1"
+    assert route.stops[1].pin is None
+
+
+def test_the_constructor_proof_would_fire_if_a_constructor_were_entered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The negative control the two proofs above rest on. A patch that silently
+    # failed to bind — a name Pydantic resolves elsewhere, a classmethod wrapper
+    # the metaclass replaces — would leave those tests passing on a tree that
+    # still called a constructor. So each door is entered here the way a caller
+    # enters it, on every class the recursion reaches, and each one has to raise.
+    _refuse_both_constructors(monkeypatch, Shipment, _Route, _Leg, _Stop, _Pin)
+    for cls in (Shipment, _Route, _Leg, _Stop, _Pin):
+        with pytest.raises(AssertionError, match="entered a Pydantic constructor"):
+            cast("Any", cls)()
+        with pytest.raises(AssertionError, match="entered a Pydantic constructor"):
+            cast("Any", cls).model_construct()
 
 
 def test_a_published_node_s_row_is_attached_exactly_once() -> None:
