@@ -745,6 +745,23 @@ def test_a_view_this_projections_own_level_never_attaches_is_refused() -> None:
         fixture.attach(order, "parallax.compatibility.SnapOrderItem.order", None)
 
 
+def test_a_loaded_view_naming_a_direction_the_concrete_lacks_is_refused() -> None:
+    # The complement of the check above, and the one a positional row moves. A
+    # view schema lays out a slot for a name the concrete does not declare — the
+    # canonical view order ranks an unknown name last rather than refusing it —
+    # so writing that slot is a disagreement the row can only meet when the name
+    # is translated to a position. It stays a closed construction code there
+    # rather than becoming a `KeyError` out of the index the translation reads.
+    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrder.zzz")
+    order = fixture.node("SnapOrder", _ORDER_ROW)
+    fixture.attach(order, "parallax.compatibility.SnapOrder.zzz", None)
+    with pytest.raises(GraphConstructionError) as refusal:
+        fixture.materialize(order)
+    assert refusal.value.code == "entity-graph-invalid-member"
+    assert refusal.value.index == 0
+    assert refusal.value.identity == RelationshipIdentity(_ORDER_IDENTITY, "zzz")
+
+
 def test_a_root_outside_the_graph_is_refused_at_sealing() -> None:
     builder, _ = _one_projection()
     with pytest.raises(ValueError, match="a root names projection 3"):
