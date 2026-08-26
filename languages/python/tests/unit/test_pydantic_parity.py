@@ -19,7 +19,6 @@ cannot make the diff pass vacuously.
 
 from __future__ import annotations
 
-import gc
 import json
 import re
 import warnings
@@ -28,7 +27,7 @@ from functools import cached_property
 from typing import Annotated, Any, cast
 
 import pytest
-from _compact_support import published, raw_row, real_storage
+from _compact_support import carries_instance_storage, published, raw_row, real_storage
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -50,7 +49,7 @@ from parallax.core.entity import (
     ValueObject,
     attr,
 )
-from parallax.core.entity._instance_state import BackedModel, plan_of
+from parallax.core.entity._instance_state import AUXILIARY_STATE_SLOT, BackedModel, plan_of
 from parallax.core.metamodel import TablePerHierarchy
 
 _NS = "parity"
@@ -649,20 +648,9 @@ def test_serializing_a_compact_value_leaves_its_own_state_untouched() -> None:
         value.model_dump(**kwargs)
         value.model_dump_json(**kwargs)
     assert raw_row(value) == row
-    assert not _dict_referents(value)
+    assert not carries_instance_storage(value)
     # Read last, because reading it is what would create it.
     assert real_storage(value) == {}
-
-
-def _dict_referents(value: object) -> list[Any]:
-    """Every mapping ``value`` itself holds, without asking it for one.
-
-    ``gc.get_referents`` reads the object's own references, so it can tell an
-    instance dictionary that was never created apart from one that was created
-    empty — which asking for ``__dict__`` cannot, because asking is what creates
-    it.
-    """
-    return [held for held in gc.get_referents(value) if isinstance(held, dict)]
 
 
 @pytest.mark.parametrize("shape", sorted(ARMS))
@@ -675,7 +663,7 @@ def test_serialization_never_materializes_a_published_value_s_storage(shape: str
     arm = ARMS[shape]
     if not isinstance(arm.compact, BackedModel):
         pytest.skip("this arm's outer value is a plain model holding a published one")
-    before = _dict_referents(arm.compact)
+    assert not carries_instance_storage(arm.compact)
     for kwargs in OPTIONS.values():
         arm.compact.model_dump(**kwargs)
         arm.compact.model_dump_json(**kwargs)
@@ -684,7 +672,7 @@ def test_serialization_never_materializes_a_published_value_s_storage(shape: str
     dict(arm.compact)
     _ = arm.compact.model_fields_set
     assert arm.compact == arm.ordinary
-    assert _dict_referents(arm.compact) == before
+    assert not carries_instance_storage(arm.compact)
 
 
 def test_a_cached_property_memoizes_without_creating_the_storage_it_writes_to() -> None:
@@ -705,13 +693,13 @@ def test_a_cached_property_memoizes_without_creating_the_storage_it_writes_to() 
             return self.reading + 1
 
     value = published(Gauge, id=1, reading=5)
-    assert not _dict_referents(value)
+    assert not carries_instance_storage(value)
     assert value.warmed == value.warmed == value.warmed == 6
     assert computed == [5]
-    warmed = _dict_referents(value)
-    assert warmed == [{"warmed": 6}]
+    assert object.__getattribute__(value, AUXILIARY_STATE_SLOT) == {"warmed": 6}
     assert value.model_dump() == {"id": 1, "reading": 5}
-    assert _dict_referents(value) == warmed
+    assert object.__getattribute__(value, AUXILIARY_STATE_SLOT) == {"warmed": 6}
+    assert not carries_instance_storage(value)
     # Read last, for the reason above: this is what would have created one.
     assert real_storage(value) == {}
 
