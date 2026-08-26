@@ -792,9 +792,12 @@ one travel.
 
 Read off each ancestor's own namespace rather than through an attribute lookup,
 so a root below another adds to what that one declared instead of replacing it.
+A root may name only slots of its own body: a name that is not a slot descriptor
+in the same namespace is refused rather than ignored, because ignoring it would
+leave the slot the root meant to protect shallow-copied with nothing failing.
 """
 
-_CARRIED_LAYOUT_ATTRIBUTE: Final = "__parallax_carried_slots__"
+CARRIED_LAYOUT_ATTRIBUTE: Final = "__parallax_carried_slots__"
 """Where a class caches the classification of its own layout.
 
 Written into the class's own namespace on first use and read back from there
@@ -819,7 +822,19 @@ class _CarriedLayout:
     taken: tuple[MemberDescriptorType, ...]
 
 
-def _classify_slots(cls: type) -> _CarriedLayout:
+def _declared_opaque(ancestor: type, namespace: Mapping[str, Any]) -> tuple[str, ...]:
+    """The slots ``ancestor`` declares opaque in its own body, checked against it."""
+    names = cast("tuple[str, ...]", namespace.get(OPAQUE_SLOTS_ATTRIBUTE, ()))
+    for name in names:
+        if not isinstance(namespace.get(name), MemberDescriptorType):
+            raise ValueError(
+                f"{ancestor.__name__} names {name!r} in {OPAQUE_SLOTS_ATTRIBUTE} but lays out "
+                "no such slot: a root declares opaque only slots of its own __slots__"
+            )
+    return names
+
+
+def classify_slots(cls: type) -> _CarriedLayout:
     """Classify every slot ``cls`` really lays out, walking its whole MRO.
 
     Over the concrete class rather than over any one root, so a slot a framework
@@ -831,12 +846,17 @@ def _classify_slots(cls: type) -> _CarriedLayout:
 
     A more derived descriptor wins, exactly as an attribute lookup resolves one,
     so the slot a copy reads and writes is the slot the value answers for.
+
+    Raises ``ValueError`` when a root's opaque declaration names anything but a
+    slot of that root's own body. Silently ignoring such a name would classify
+    the slot it was meant to protect for shallow copying, which no test of a
+    correct declaration can see.
     """
     opaque: set[str] = set()
     descriptors: dict[str, MemberDescriptorType] = {}
     for ancestor in reversed(cls.__mro__):
         namespace = vars(ancestor)
-        opaque.update(cast("tuple[str, ...]", namespace.get(OPAQUE_SLOTS_ATTRIBUTE, ())))
+        opaque.update(_declared_opaque(ancestor, namespace))
         for name, descriptor in namespace.items():
             if isinstance(descriptor, MemberDescriptorType) and name not in _REBUILT_STATE_SLOTS:
                 descriptors[name] = descriptor
@@ -872,10 +892,10 @@ def carry_slots_beside_state(source: BaseModel, target: BaseModel) -> None:
     every edit of an unpublished value raise.
     """
     cls = type(source)
-    layout: _CarriedLayout | None = cls.__dict__.get(_CARRIED_LAYOUT_ATTRIBUTE)
+    layout: _CarriedLayout | None = cls.__dict__.get(CARRIED_LAYOUT_ATTRIBUTE)
     if layout is None:
-        layout = _classify_slots(cls)
-        setattr(cls, _CARRIED_LAYOUT_ATTRIBUTE, layout)
+        layout = classify_slots(cls)
+        setattr(cls, CARRIED_LAYOUT_ATTRIBUTE, layout)
     for slot in layout.copied:
         try:
             held = slot.__get__(source)
