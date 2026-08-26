@@ -18,17 +18,20 @@ what a published node retains against one a caller made. That is the comparison
 `spec/python.md` §2's Interface statement is made over, and this reading is what
 measures it.
 
-**Not every timing is like for like, and the one that is not is bounded rather
-than corrected exactly.** Retained bytes and the two read timings compare one node
-against one node under each arm, and are exact. Construction does not: a compact
-node arrives from a call that does per-node work the legacy fixture reproduces
-none of, so the report measures what the fixture DOES do, leaves the rest as
-`outside µs`, and prints the construction ratio twice — once arm against arm, once
-with that remainder added to the legacy side. **Both are upper bounds on what the
-representation change cost, and the second is the tighter one**; it is the one the
-20% rule is stated over, which is the safe direction for a rule that surfaces
-regressions. Neither is a point estimate, and *Construction* below says what the
-bound rests on.
+**Not every timing is like for like, and the one that is not is graded on the
+figure that needs no correction.** Retained bytes and the two read timings compare
+one node against one node under each arm, and are exact. Construction does not: a
+compact node arrives from a call that does per-node work the legacy fixture
+reproduces none of, so the report measures what the fixture DOES do, leaves the
+rest as `outside µs`, and prints the construction ratio twice — once arm against
+arm, once with that remainder added to the legacy side. **The 20% rule is stated
+over the arm-against-arm figure**, because the work the fixture never reproduced
+is work the pre-flip path did pay: the true before side is at least the legacy
+arm's own timing, so the true ratio is at most that figure whatever the remainder
+is worth. The corrected column is the closer *estimate* of what the representation
+change itself cost and is printed beside it, never graded — it is a remainder of
+two independently sampled timings, and one that sampled high would pull the
+reading under the limit. *Construction* below says what each column rests on.
 
 Nothing here gates. `just python-report-instance-state` is a `report`: no number
 it computes changes its exit code, because a total in bytes is machine- and
@@ -139,15 +142,16 @@ tuple its graph returns as this arm's own, built and released inside the span
 because the caller that receives the real one releases it inside the window that
 times it.
 
-**Every one of those spans prices its term high, and that is what the corrected
-figure is worth.** The repeated attach writes a slot that already holds a value
-and so releases the state it displaces, where `construct`'s own write finds that
-slot empty; each span also carries the clock reads that bound it, and a call runs
-one state-factory span per node. So the measured common work is at least the real
-common work, and the remainder below is at most the work the fixture never
-reproduced — which makes the corrected ratio an upper bound on the like-for-like
-cost rather than an estimate of it. What is left over after all of it is this
-column:
+**Every one of those spans prices its term high, and that is the direction the
+corrected figure's error runs in.** The repeated attach writes a slot that already
+holds a value and so releases the state it displaces, where `construct`'s own
+write finds that slot empty; each span also carries the clock reads that bound it,
+and a call runs one state-factory span per node. So the measured common work
+*expects* to exceed the real common work, and the remainder below expects to fall
+short of the work the fixture never reproduced. That is a bias and not a bound:
+the remainder is one marginal timing subtracted from another taken in a separate
+loop, so a single reading of it can land either side of the truth. What is left
+over after all of it is this column:
 about **0.2 µs per node**, and 0.00–1.71 across the six scenarios of five
 whole-matrix runs on both interpreters — a spread that is the column's nature
 rather than the work's, since it is one marginal timing subtracted from another
@@ -159,14 +163,19 @@ arms, whose call *is* a loop over their node builder, and it is taken in a
 separate call so that no clock runs inside the one `node µs` is measured over.
 
 **So every ratio below is printed twice, and the 20% rule is stated over the
-right-hand one.** *Arm against arm* divides the two `node µs` columns as each was
-timed, charging the compact arm for the whole of `outside µs`. *Like for like*
-adds `outside µs` to the legacy side instead, which is at most what the pre-flip
-path paid; that is the tighter of the two bounds and the one the rule is stated
-over. For attribute read and serialization the two columns are equal by
-construction — one call against one call on one node — so those two figures are
-exact rather than bounded, which is what shows which operation needed a correction
-at all. Two reduction rows follow each scenario,
+left-hand one.** *Arm against arm* divides the two `node µs` columns as each was
+timed, charging the compact arm for the whole of `outside µs`. It is the graded
+figure precisely because it uses no remainder: the work the fixture never
+reproduced is work the pre-flip path did pay, so the true before side is at least
+the legacy `node µs` and the true ratio is at most this column. *Like for like*
+adds `outside µs` to the legacy side instead, which is the closer estimate of what
+the representation change itself cost — printed, and not graded, because a
+remainder that sampled high would put it under the limit while the truth is over
+it. Grading the left column instead can surface an operation whose true ratio is
+under the limit, which is a line to read rather than a gate that fails. For
+attribute read and serialization the two columns are equal by construction — one
+call against one call on one node — so those two figures are exact rather than
+estimated, which is what shows which operation needed a correction at all. Two reduction rows follow each scenario,
 each naming the arm the compact one is divided into.
 
 ### CPython 3.14.7
@@ -219,9 +228,9 @@ what the ticket's target is stated over:
 
 | operation, over the mix | arm against arm | like for like |
 |---|---:|---:|
-| construction (per node) | 1.15x | **1.11x** |
-| attribute read | 3.21x | **3.21x** |
-| serialization | 2.11x | **2.11x** |
+| construction (per node) | **1.15x** | 1.11x |
+| attribute read | **3.21x** | 3.21x |
+| serialization | **2.11x** | 2.11x |
 
 Stated separately, in no aggregate — the ordinary arm divided into the compact
 one, which is the comparison §2 states:
@@ -284,9 +293,9 @@ one, which is the comparison §2 states:
 
 | operation, over the mix | arm against arm | like for like |
 |---|---:|---:|
-| construction (per node) | 1.13x | **1.09x** |
-| attribute read | 3.33x | **3.33x** |
-| serialization | 2.19x | **2.19x** |
+| construction (per node) | **1.13x** | 1.09x |
+| attribute read | **3.33x** | 3.33x |
+| serialization | **2.19x** | 2.19x |
 
 | comparison | ordinary | compact | |
 |---|---:|---:|---:|
@@ -320,9 +329,9 @@ on 3.14 and 54.7% on 3.13, against a 33% minimum; the secondary is 58.1% and
 
 **Two representative operations moved past the 20% review threshold, on both
 runtimes**, and the report names each with its worst scenario. The rule is stated
-over the *like-for-like* column, and for these two that column is the
-arm-against-arm one: a member read and a `model_dump()` are one call against one
-call on one node, so there is no scope to correct and both figures are exact. The figures below are the
+over the *arm-against-arm* column, and for these two that column is the
+like-for-like one as well: a member read and a `model_dump()` are one call against
+one call on one node, so there is no scope to correct and both figures are exact. The figures below are the
 recorded run's; across five runs the ratios move by a few percent while the byte
 readings do not move at all, and neither of the two comes near the threshold from
 either side:
@@ -342,18 +351,27 @@ per node, which brought the arm-against-arm figure to **1.13–1.16x** across th
 five runs recorded here. Two of the six scenarios (`partial` and `nullable`) are
 *faster* compact per node.
 
-**Correcting the per-node scope came second, and it is now the report's own
-arithmetic rather than a note beside it.** The per-node split cancels a `construct`
-call's *fixed* cost and not its per-node one: the populated check, root validation,
-a resolution view per node, the factory buffering and the root tuple all scale with
-node count, so they stay inside the compact arm's `node µs`. The pre-flip path paid
-that work through the same call — that half of `EntityGraphConstruction` is
-unchanged either side of the flip — but the legacy arm is a fixture of the node
-*building* alone and pays none of it. The report measures the difference as
-`outside µs` and prints a second ratio with it added to the legacy side:
-**like for like, construction is 1.11x on 3.14 and 1.09x on 3.13**, 1.07–1.11x
-across the five runs, and that is the figure the 20% rule is stated over. Both
-columns are printed, so the correction is visible rather than asserted.
+**The arm-against-arm figure is the graded one, and it is 1.15x on 3.14 and 1.13x
+on 3.13.** It divides the two `node µs` columns exactly as each was timed and uses
+no correction at all, which is why the rule reads it: the per-node work the fixture
+never reproduced is work the pre-flip path did pay, so the true "before" is at
+least the legacy `node µs`, and the true ratio is at most this figure whatever that
+work is worth. Under 1.20x here is therefore under 1.20x in truth. It charges the
+compact arm for the whole of that work, so it is a loose bound — the price of
+grading a figure that nothing can pull downwards.
+
+**A second, tighter reading is printed beside it and is not graded.** The per-node
+split cancels a `construct` call's *fixed* cost and not its per-node one: the
+populated check, root validation, a resolution view per node, the factory buffering
+and the root tuple all scale with node count, so they stay inside the compact arm's
+`node µs`. The pre-flip path paid that work through the same call — that half of
+`EntityGraphConstruction` is unchanged either side of the flip — but the legacy arm
+is a fixture of the node *building* alone and pays none of it. The report measures
+the difference as `outside µs` and prints a second ratio with it added to the
+legacy side: **like for like, construction is 1.11x on 3.14 and 1.09x on 3.13**,
+1.07–1.11x across the five runs. That is the closest estimate of what the
+representation change itself cost, and both columns are printed so the correction
+is visible rather than asserted.
 
 **Nothing the fixture also pays is left on the legacy side twice, and the list of
 what it pays is closed.** A correction that added common work to the "before"
@@ -369,23 +387,27 @@ so the attach is priced by repeating the same write on the published node, and t
 tuple by building this arm's own through the same function the graph uses and
 releasing it inside the span.
 
-**The list being closed is what turns the correction from an estimate into a
-bound.** Each of those four spans prices its term high and none prices one low:
-repeating an attach releases the value the slot already holds where the first
-write finds it empty, and every span carries the clock reads that bound it, one
-state-factory span per node among them. So the measured common work is at least
-the real common work, `outside µs` is at most the work the fixture never
-reproduced, the legacy side it joins is at most what the pre-flip path paid, and
-**1.10x is an upper bound on the like-for-like ratio rather than a point estimate
-of it** — under the 1.20x limit here means under it in truth. The other column is
-bounded the same way and less tightly: *arm against arm* carries the whole of
-`outside µs` against the compact arm, worth about four points. Measuring the tuple
-and the attach out at all cost the compact arm about a point of ratio, from
-1.07–1.09x to 1.09–1.11x, and moved no aggregate. An earlier hand measurement of
-the same residue put it at 0.23 µs per node and the ratio at 1.12x, against the
-0.00–1.71 µs and 1.07–1.11x the report now measures — the two agree on the
-residue's typical value and differ on the ratio by about the arm-against-arm
-figure's own run-to-run movement.
+**The list being closed fixes the direction of the correction's bias, and not its
+noise — which is why the rule is not stated over it.** Each of those four spans
+prices its term high and none prices one low: repeating an attach releases the
+value the slot already holds where the first write finds it empty, and every span
+carries the clock reads that bound it, one state-factory span per node among them.
+So the measured common work *expects* to exceed the real common work and
+`outside µs` expects to fall short of what the fixture never reproduced. But
+`outside µs` is one marginal timing subtracted from another taken in an
+independent loop, worth about 0.2 µs per node against a 0.00–1.71 spread across
+seventy readings: a residue that sampled high enlarges the legacy side it joins and
+puts **1.09–1.11x below the true like-for-like ratio rather than above it**. A rule
+that must not miss a regression cannot rest on that, so it reads the column that
+needs no residue — **1.13–1.16x arm against arm** — and the corrected column is
+reported as the closer estimate. The two differ by about four points, which is what
+`outside µs` is worth. Measuring the tuple and the attach out at all cost the
+compact arm about a point of the corrected figure, from 1.07–1.09x to 1.09–1.11x,
+and moved no aggregate. An earlier hand measurement of the same residue put it at
+0.23 µs per node and the corrected ratio at 1.12x, against the 0.00–1.71 µs and
+1.07–1.11x the report now measures — the two agree on the residue's typical value
+and differ on the ratio by about the arm-against-arm figure's own run-to-run
+movement.
 
 **The ordinary construction ratio needs no correction and gets none, and is 3.56x
 on 3.14 and 3.57x on 3.13.** A caller building an ordinary instance pays no

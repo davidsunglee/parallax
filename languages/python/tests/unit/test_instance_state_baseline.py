@@ -238,7 +238,7 @@ def test_the_construction_ratio_is_corrected_by_what_the_fixture_never_reproduce
     assert report.mix_ratio([reading], construction) == pytest.approx(1.30)
     assert report.like_for_like_ratio([reading], construction) == pytest.approx(1.00)
     assert report.before_ns(reading, construction) == pytest.approx(1_300.0)
-    assert report.scenario_ratio(reading, construction) == pytest.approx(1.00)
+    assert report.scenario_ratio(reading, construction) == pytest.approx(1.30)
 
 
 def test_an_operation_whose_arms_do_the_same_work_is_corrected_by_nothing() -> None:
@@ -268,7 +268,7 @@ def test_the_correction_is_summed_over_the_mix_rather_than_averaged() -> None:
     ]
     construction = report.OPERATIONS[0]
     assert report.like_for_like_ratio(readings, construction) == pytest.approx(4_800 / 4_400)
-    mean = sum(report.scenario_ratio(reading, construction) for reading in readings) / 2
+    mean = sum(report.like_for_like_ratio([reading], construction) for reading in readings) / 2
     assert report.like_for_like_ratio(readings, construction) != pytest.approx(mean)
 
 
@@ -277,7 +277,7 @@ def test_a_correction_that_measured_below_zero_corrects_by_nothing() -> None:
     is small, so a scenario's difference can land below zero. Carrying that onto
     the legacy side would price the pre-flip path under the fixture standing for
     it and lower the ratio on noise alone, so the floor is zero and the corrected
-    ratio stays at or under the arm-against-arm one."""
+    ratio stays at or under the arm-against-arm one the rule reads."""
     reading = _reading(
         "shallow",
         legacy_ns=(1_000.0, 20.0, 500.0),
@@ -426,14 +426,18 @@ def test_the_escalation_block_names_a_representative_operation_past_its_limit() 
     block = report.escalation_block({"3.14": {"shallow": reading}})
     raised = "\n".join(block)
     assert block[0] == "REVIEW REQUIRED"
-    assert "attribute read 4.00x like for like over the mix" in raised
+    assert "attribute read 4.00x arm against arm over the mix" in raised
     assert "surfaced for human review" in raised
     assert "construction" not in raised
     assert "serialization" not in raised
 
 
-def test_the_regression_rule_is_stated_over_the_like_for_like_figure_not_the_raw_one() -> None:
-    corrected = _reading(
+def test_the_regression_rule_is_stated_over_the_figure_that_needs_no_correction() -> None:
+    """The corrected figure is a remainder of two independently sampled timings, so
+    a residue that sampled high would pull it under the limit while the true ratio
+    is over it. The graded figure divides two measured timings and cannot: the
+    correction can only be added to the reading printed beside it."""
+    surfaced = _reading(
         "shallow",
         retained=(1_000, 100),
         bare=(900, 90),
@@ -442,15 +446,15 @@ def test_the_regression_rule_is_stated_over_the_like_for_like_figure_not_the_raw
         scaffolding_ns=400.0,
     )
     construction = report.OPERATIONS[0]
-    assert report.mix_ratio([corrected], construction) == pytest.approx(1.50)
-    assert report.like_for_like_ratio([corrected], construction) == pytest.approx(1.50 / 1.40)
-    assert report.escalation_block({"3.14": {"shallow": corrected}})[0].startswith("no escalation")
+    assert report.mix_ratio([surfaced], construction) == pytest.approx(1.50)
+    assert report.like_for_like_ratio([surfaced], construction) == pytest.approx(1.50 / 1.40)
+    raised = "\n".join(report.escalation_block({"3.14": {"shallow": surfaced}}))
+    assert "construction 1.50x arm against arm over the mix" in raised
 
-    uncorrected = corrected._replace(
-        compact=corrected.compact._replace(construct_ns=1_800.0, scaffolding_ns=0.0)
+    under = surfaced._replace(
+        compact=surfaced.compact._replace(construct_ns=1_100.0, scaffolding_ns=0.0)
     )
-    raised = "\n".join(report.escalation_block({"3.14": {"shallow": uncorrected}}))
-    assert "construction 1.80x like for like over the mix" in raised
+    assert report.escalation_block({"3.14": {"shallow": under}})[0].startswith("no escalation")
 
 
 def test_a_reading_that_meets_both_rules_raises_no_escalation() -> None:
@@ -464,7 +468,7 @@ def test_a_reading_that_meets_both_rules_raises_no_escalation() -> None:
     block = report.escalation_block({"3.14": {"shallow": reading}})
     assert block == [
         "no escalation: every runtime's primary aggregate reaches 33% and no "
-        "representative operation moved past 1.20x like for like"
+        "representative operation moved past 1.20x arm against arm"
     ]
 
 
@@ -573,8 +577,7 @@ def test_construction_is_printed_both_ways_and_the_scope_block_says_which_rules(
         report.like_for_like_ratio(readings, report.OPERATIONS[0]), abs=5e-3
     )
     assert raw > corrected
-    assert "THE 20% RULE IS STATED OVER THE LIKE-FOR-LIKE FIGURE," in printed
-    assert "BOTH ARE UPPER BOUNDS" in printed
+    assert "THE 20% RULE IS STATED OVER `ARM AGAINST ARM`, the figure that needs no" in printed
 
 
 def test_the_escalation_block_reaches_what_the_report_prints() -> None:

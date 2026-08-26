@@ -58,8 +58,9 @@ call, each thing the fixture also does — which lets the report derive the
 correction rather than state it in prose. Only the compact arm carries one: an
 arm whose call IS a loop over its node builder spends every nanosecond in that
 builder and has nothing to separate. Every span there prices its term high, so
-the correction can only under-state what the pre-flip path paid and the corrected
-ratio is an upper bound rather than a point estimate.
+the correction EXPECTS to under-state what the pre-flip path paid; it is still a
+remainder of two independently sampled timings, so the corrected ratio is the
+closer estimate and not a bound, and the report grades the uncorrected one.
 
 **What a scenario carries.** One positional member row, ``ABSENT``-spelled and
 aligned to the exact Entity's ``EntityLayout`` — the same row a compiled read
@@ -675,18 +676,21 @@ def compact_common_work_ns(scenario: Scenario, count: int) -> float:
     why the report adds it to the legacy side rather than removing it from this
     one.
 
-    **Every span prices its term high and none prices one low, which is what the
-    corrected ratio rests on.** The repeated attach writes a slot that already
-    holds a value and so releases the state it displaces, where ``construct``'s
-    own write finds that slot empty; each span also carries the clock reads that
-    bound it, and a call runs ``count`` state-factory spans. So this figure is at
-    least what the call really spends on common work, the residue subtracted from
-    it is at most the work the fixture never reproduced, the legacy side it is
-    added to is at most what the pre-flip path paid — and the corrected
-    construction ratio is therefore an UPPER BOUND on the like-for-like cost
-    rather than a point estimate of it. Under the 20% limit it proves the true
-    figure is under the limit as well, which is the direction a rule that
-    surfaces regressions needs its error to run in.
+    **Every span prices its term high and none prices one low, which is the
+    direction this figure's error runs in and the whole of what it is worth.** The
+    repeated attach writes a slot that already holds a value and so releases the
+    state it displaces, where ``construct``'s own write finds that slot empty; each
+    span also carries the clock reads that bound it, and a call runs ``count``
+    state-factory spans, so one clock pair per node survives the marginal.
+
+    That is a bias, not a bound. The report subtracts this figure's own 1-node and
+    11-node marginal from a construction marginal taken in a SEPARATE timing loop,
+    and a common-work marginal that samples low leaves the residue too large — which
+    enlarges the legacy side it is added to and puts the corrected ratio under the
+    true one. So the corrected ratio is the closer estimate of what the
+    representation change cost, printed for that, and the 20% rule is stated over
+    the uncorrected arm-against-arm ratio, which needs no term measured here at
+    all.
 
     A SEPARATE call from the one :func:`compact_graph` answers, so no timer runs
     inside the call the report's own construction figure is taken over: reading
