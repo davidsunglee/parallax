@@ -63,8 +63,9 @@ def layout_slots(cls: type) -> dict[str, MemberDescriptorType]:
 
     Walked over the concrete class's whole MRO and off each ancestor's own
     namespace, so a suite grading what a derived copy carries inspects the layout
-    the value really has — an authoring class's own ``__slots__`` included —
-    rather than the shorter one any single base declares.
+    the value really has rather than the one any single base declares. That is
+    also what lets a suite grade the claim that the two are the same: no declared
+    class may lay out ``__slots__``, so its layout is the shared root's.
     """
     return {
         name: descriptor

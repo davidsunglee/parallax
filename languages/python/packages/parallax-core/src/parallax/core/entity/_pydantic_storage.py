@@ -48,9 +48,8 @@ published value cross as an ordinary one — or, on a class that authors
 
 The slots beside those two are a different question and not this Module's. A
 value's private-attribute state lives in the object layout rather than in the
-storage, and so does whatever an authoring class declares a slot of its own for,
-so a caller deriving a copy out of semantic state has to carry that layout across
-or reset it. Settling that needs to know which slots of the layout the backing
+storage, so a caller deriving a copy out of semantic state has to carry that
+layout across or reset it. Settling that needs to know which slots of the layout the backing
 already answers for, which is the backing's own fact rather than Pydantic's, so
 the carry lives with it
 (:func:`~parallax.core.entity._instance_state.carry_slots_beside_state`).

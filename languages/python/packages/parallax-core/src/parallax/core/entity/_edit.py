@@ -66,8 +66,8 @@ def partition_declared(
 
     That complement reaches what a value holds under a NAME and nothing else, so
     it is half of what an edit carries: Pydantic's object layout keeps private
-    attributes in a slot beside the storage and a declaring class may lay out
-    slots of its own, and no key of this mapping names either, so
+    attributes in a container slot beside the storage, and no key of this mapping
+    names it, so
     :func:`~parallax.core.entity._instance_state.carry_slots_beside_state` is the
     other half every branch pairs with this one.
 
@@ -118,8 +118,7 @@ def restate[M: BaseModel](value: M, state: dict[str, object]) -> M:
     and holds neither. Every remaining slot of the source's layout is carried by
     :func:`~parallax.core.entity._instance_state.carry_slots_beside_state`, which
     is what stops the instance state kept outside the storage — Pydantic's private
-    attributes, and whatever a class lays out slots of its own for — from being
-    reset to a fresh instance's defaults.
+    attributes among it — from being reset to a fresh instance's defaults.
     """
     restated = type(value).model_construct()
     replace_instance_state(restated, state)
