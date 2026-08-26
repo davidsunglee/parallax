@@ -856,6 +856,46 @@ def test_an_edit_ignores_a_slot_descriptor_a_root_only_rebound() -> None:
     assert "__parallax_lent__" not in layout_slots(_Borrowed)
 
 
+class _Shadowing(Entity, _mint=FRAMEWORK_MINT):
+    """A framework root whose slot name a root below it lays out a second time."""
+
+    __slots__ = ("__parallax_shadow__",)
+
+
+class _Shadowed(_Shadowing, _mint=FRAMEWORK_MINT):
+    __slots__ = ("__parallax_shadow__",)
+
+
+class _Eclipsed(_Shadowed, table="eclipsed", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
+
+
+def test_an_edit_refuses_a_layout_laying_one_slot_name_out_twice() -> None:
+    # The other thing a bound name cannot decide, and the one a name-keyed
+    # classification cannot survive: both roots really lay storage out, so this
+    # instance has TWO `__parallax_shadow__` slots at two offsets, holding
+    # different values at once. Only the derived one answers to the name, which
+    # is what makes the layout a defect rather than a configuration — `_Shadowing`
+    # writing `self.__parallax_shadow__` fills its descendant's slot and its own
+    # is addressable under no name at all. A carry keyed by name would classify
+    # the derived slot and drop the base one, so an edit of a value holding both
+    # would silently return a copy missing state, with every test of a hierarchy
+    # that lays each name out once still passing.
+    value = _Eclipsed(id=1, label="a")
+    base = cast("Any", _Shadowing).__dict__["__parallax_shadow__"]
+    derived = cast("Any", _Shadowed).__dict__["__parallax_shadow__"]
+    base.__set__(value, ["base"])
+    derived.__set__(value, ["derived"])
+    assert base is not derived
+    assert (base.__get__(value), derived.__get__(value)) == (["base"], ["derived"])
+
+    with pytest.raises(ValueError, match="__parallax_shadow__"):
+        value.edit(label="b")
+    with pytest.raises(ValueError, match="twice"):
+        layout_slots(_Eclipsed)
+
+
 class _Rolling(
     Entity,
     table="rolling",

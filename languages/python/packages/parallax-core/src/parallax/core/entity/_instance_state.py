@@ -817,7 +817,9 @@ class _CarriedLayout:
 
     ``copied`` is given the copy's own shallow copy and ``taken`` is given the
     source's own value; between them and :data:`_REBUILT_STATE_SLOTS` they
-    account for the layout exactly.
+    account for the layout exactly, one descriptor per slot the class really
+    lays out, which the duplicate-name refusal in :func:`classify_slots` is what
+    makes a name-keyed classification able to promise.
     """
 
     copied: tuple[MemberDescriptorType, ...]
@@ -831,10 +833,19 @@ def _laid_out_slots(
 
     A slot descriptor answers who laid it out and what it is called there, and
     only one answering with ``ancestor`` and the name it is bound under is a slot
-    of this class. Anything else bound in the namespace is an alias of storage
-    laid out elsewhere, which addresses an offset these instances do not have:
-    applying it to one raises ``TypeError`` rather than reading anything, so it
-    belongs to no layout walked from here.
+    ``ancestor`` added. Both answers are exact for every way a body lays a slot
+    out: a private name is mangled before the descriptor is made, so ``__name__``
+    is the mangled name the namespace binds it under, and ``__objclass__`` is the
+    class whose own body laid the storage out, never one that inherits it.
+
+    Anything else slot-shaped in the namespace is a descriptor laid out
+    elsewhere and rebound here, and refusing it loses no storage either way. An
+    ancestor's own descriptor rebound in a descendant body is the very object
+    that ancestor's namespace already contributed to a walk over this MRO, so
+    crediting it again would count one slot twice rather than find another. A
+    descriptor of a class this one does not descend from addresses an offset
+    these instances do not have at all: applying it to one raises ``TypeError``
+    rather than reading anything.
     """
     return {
         name: value
@@ -871,22 +882,38 @@ def classify_slots(cls: type) -> _CarriedLayout:
     is what keeps the classification exact as roots are added.
 
     Each ancestor contributes the slots it laid out itself, so a descriptor a
-    body merely rebound is not mistaken for storage the value has. A more derived
-    descriptor wins, exactly as an attribute lookup resolves one, so the slot a
-    copy reads and writes is the slot the value answers for.
+    body merely rebound is not mistaken for storage the value has, and no name
+    may be laid out twice along the walk. Two classes of one MRO declaring one
+    name give an instance two separate offsets, and an attribute lookup reaches
+    only the more derived: the ancestor's storage is then addressable under no
+    name at all, and the root that declared it writes its descendant's slot
+    instead. Refusing that layout is what makes a name enough to key this
+    classification — and with it :data:`_REBUILT_STATE_SLOTS` and the opaque
+    declarations — against the layout rather than against a collapse of it.
 
     Raises ``ValueError`` when a root's opaque declaration names anything but a
-    slot of that root's own body. Silently ignoring such a name would classify
-    the slot it was meant to protect for shallow copying, which no test of a
-    correct declaration can see.
+    slot of that root's own body, and when two ancestors lay out one name.
+    Either classifies against a layout the class does not have — the first
+    shallow-copying a slot meant to be taken, the second dropping storage an
+    instance really carries — and no test of a correct hierarchy sees either.
     """
     opaque: set[str] = set()
+    owners: dict[str, type] = {}
     descriptors: dict[str, MemberDescriptorType] = {}
     for ancestor in reversed(cls.__mro__):
         namespace = vars(ancestor)
         laid_out = _laid_out_slots(ancestor, namespace)
         opaque.update(_declared_opaque(ancestor, namespace, laid_out))
         for name, descriptor in laid_out.items():
+            shadowed = owners.get(name)
+            if shadowed is not None:
+                raise ValueError(
+                    f"{ancestor.__name__} lays out {name!r}, which its ancestor "
+                    f"{shadowed.__name__} already lays out: one name laid out twice along an "
+                    "MRO gives an instance two separate slots, the ancestor's reachable under "
+                    "no name at all"
+                )
+            owners[name] = ancestor
             if name not in _REBUILT_STATE_SLOTS:
                 descriptors[name] = descriptor
     return _CarriedLayout(

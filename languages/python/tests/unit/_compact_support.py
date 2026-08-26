@@ -100,15 +100,27 @@ def layout_slots(cls: type) -> dict[str, MemberDescriptorType]:
     lifecycle slot, and for a Value Object, nothing.
 
     Each descriptor is credited to the ancestor that laid it out, under the name
-    it was laid out under, so a body that rebinds another class's slot descriptor
-    adds no storage here: that descriptor addresses an offset these instances do
-    not have.
+    it was laid out under, so a body that rebinds a slot descriptor adds no
+    storage here: an ancestor's own descriptor rebound lower down is the one this
+    walk already credited to that ancestor, and an unrelated class's addresses an
+    offset these instances do not have.
+
+    Keyed by name, and so honest only about a layout that lays each name out
+    once. Two ancestors laying out one name give an instance two separate slots,
+    which this mapping would silently collapse into the more derived — grading a
+    carry against a layout smaller than the real one. It raises instead, so the
+    suite's view of a layout can never be shorter than the layout.
     """
-    return {
-        name: descriptor
-        for ancestor in reversed(cls.__mro__)
-        for name, descriptor in vars(ancestor).items()
-        if isinstance(descriptor, MemberDescriptorType)
-        and descriptor.__objclass__ is ancestor
-        and descriptor.__name__ == name
-    }
+    slots: dict[str, MemberDescriptorType] = {}
+    for ancestor in reversed(cls.__mro__):
+        for name, descriptor in vars(ancestor).items():
+            if (
+                not isinstance(descriptor, MemberDescriptorType)
+                or descriptor.__objclass__ is not ancestor
+                or descriptor.__name__ != name
+            ):
+                continue
+            if name in slots:
+                raise ValueError(f"{cls.__name__} lays out {name!r} twice, at two offsets")
+            slots[name] = descriptor
+    return slots
