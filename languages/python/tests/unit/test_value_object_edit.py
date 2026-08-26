@@ -158,9 +158,10 @@ states them."""
 
 
 def test_a_declared_class_lays_out_no_slot_of_its_own() -> None:
-    # The Value Object half of what makes the carry a complement over a FIXED
-    # layout: this kind may not declare `__slots__` either, so a concrete Value
-    # Object Class gives its instances the shared root's layout and nothing more.
+    # The Value Object half of what bounds the walk the carry makes over a
+    # value's own class: this kind may not declare `__slots__` either, so a
+    # concrete Value Object Class gives its instances the shared root's layout
+    # and nothing more, and no root below that one adds to it.
     with pytest.raises(EntityDefinitionError) as caught:
 
         class _Slotted(ValueObject):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
