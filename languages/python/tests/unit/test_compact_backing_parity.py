@@ -13,7 +13,9 @@ default, which is what ``publish`` does with a bitmap and a template row — so 
 arms differ in representation and in nothing else. Neither arm validates, which
 is also what publication does not do. That premise has one bound, graded at the
 end: a required member carried no value has no declared default to be filled
-with, and publication refuses the value the ordinary constructor leaves unset.
+with, so the ordinary arm leaves it unset and reading it raises, while the
+published arm reads the ``None`` its position holds. Neither invents a value, and
+neither refuses one.
 
 The models are chosen for reach rather than realism, because a corpus grading an
 equivalence is only as wide as the shapes it can express: containment two deep
@@ -23,9 +25,8 @@ beside one never populated, and — on a Value Object and an Entity alike — th
 kinds of state that live outside the members, a ``PrivateAttr`` and a
 ``cached_property``.
 
-Lifecycle state is graded on the ordinary arm alone: it rides in the instance
-dictionary, which a published value does not have, so it is the one piece of a
-value's state with no compact twin.
+Lifecycle state is graded on both arms: it rides a slot of the ``Entity`` root's
+own layout, so a published node carries it exactly as an ordinary value does.
 """
 
 from __future__ import annotations

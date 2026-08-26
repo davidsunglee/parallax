@@ -1,8 +1,8 @@
 """A value's own attribute storage, reached past every binding over it.
 
-A framework slot a value carries outside its declared members — a Change Record,
-the one lifecycle-state slot, a relationship view on a value Pydantic backs —
-lives in the instance storage Pydantic's ``__dict__`` descriptor holds. Reaching
+Some of what a value carries outside its declared members — a Change Record, a
+relationship view on a value Pydantic backs — lives in the instance storage
+Pydantic's ``__dict__`` descriptor holds. Reaching
 it by name would put a class body between the framework and its own state:
 ``getattr``, ``object.__getattribute__``, and ``object.__setattr__`` all resolve
 a name through the type, so an authored ``__getattr__``, ``__getattribute__``,
@@ -46,7 +46,9 @@ derived from the row where it is published — which is what makes a pickle of a
 published value cross as an ordinary one — or, on a class that authors
 ``__getattribute__``, whatever that hook hands back in place of either.
 
-The slots beside those two are a different question and not this Module's. A
+The slots beside those two are a different question and not this Module's — the
+lifecycle state a materialized Entity carries is one of them, and the ``Entity``
+root that lays that slot out is what reads and writes it. A
 value's private-attribute state lives in the object layout rather than in the
 storage, so a caller deriving a copy out of semantic state has to carry that
 layout across or reset it. Settling that needs to know which slots of the layout the backing

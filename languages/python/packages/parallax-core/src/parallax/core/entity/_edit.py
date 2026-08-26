@@ -57,17 +57,19 @@ def partition_declared(
     """``value``'s declared member state and everything an edit carries, split.
 
     An edit replaces the first half and preserves the second unchanged, which is
-    what keeps a materialized node's relationship views and lifecycle state
-    readable on the copy it derives. The second half is a complement rather than
-    an enumerated key list, so a new kind of instance state travels correctly
-    without either caller learning its name.
+    what keeps a materialized node's relationship views readable on the copy it
+    derives. The second half is a complement rather than an enumerated key list,
+    so a new kind of instance state travels correctly without either caller
+    learning its name.
 
     That complement reaches what a value holds under a NAME and nothing else, so
-    it is half of what an edit carries: Pydantic's object layout keeps private
-    attributes in a container slot beside the storage, and no key of this mapping
-    names it, so
-    :func:`~parallax.core.entity._instance_state.carry_slots_beside_state` is the
-    other half every branch pairs with this one.
+    it is one of the three parts an edit carries. The object layout holds the
+    other two: Pydantic keeps private attributes and extra fields in container
+    slots beside the storage, which
+    :func:`~parallax.core.entity._instance_state.carry_slots_beside_state` gives
+    the copy its own of, and a materialized Entity's lifecycle state is a slot of
+    the Entity root's, which that root carries across itself. No key of this
+    mapping names either.
 
     A derived cache is the one thing that complement drops: a slot the class
     declares a ``functools.cached_property`` (:func:`_is_derived_cache`) holds an
@@ -75,14 +77,15 @@ def partition_declared(
     and recomputed on next access rather than carried into a copy whose own
     declared state contradicts it. That reads a declaration, so it reaches only
     names a declaration may author: the framework's own ``__parallax_`` prefix is
-    reserved from every class body, which is what keeps a lifecycle's state and a
-    Change Record outside anything a class can declare derived.
+    reserved from every class body, which is what keeps a Change Record outside
+    anything a class can declare derived.
 
     Both halves are read through the backing
     (:func:`~parallax.core.entity._instance_state.named_state`) rather than
     through an attribute lookup for ``__dict__``, so a class body answering that
-    lookup with ``__getattribute__`` can neither drop the lifecycle state a copy
-    must carry forward nor invent a Change Record the value never earned — and a
+    lookup with ``__getattribute__`` can neither drop the relationship views a
+    copy must carry forward nor invent a Change Record the value never earned —
+    and a
     published value is partitioned out of its row, its loaded relationship tails,
     and its author-owned state, so editing one neither loses what those hold nor
     creates the instance dictionary it exists without.
