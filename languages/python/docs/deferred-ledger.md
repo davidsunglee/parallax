@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-83**.
+Entry numbering is continuous and never reused. The next new number is **D-84**.
 
 ## Entries
 
@@ -661,6 +661,83 @@ published class in a strong dict, and what a one-entry process-lifetime memo may
 hold after a run — and the memo needs an interpreter nobody here has run it on.
 Each of those is cheap to answer and expensive to answer wrongly inside a change
 whose gates are about representation rather than about serialization speed.
+
+### D-83 — A published value's declared-member read costs a Python frame where an ordinary value's costs a dictionary lookup
+
+*Medium — 4.3x on the read itself, structural, and the price of the retained-byte
+reduction rather than a defect in it.* Relates to
+`parallax.core.entity._members.Attr.__get__`,
+`parallax.core.entity._members.ElementAttr.__get__`,
+`parallax.core.entity._instance_state.COMPACT_STATE_SLOT`.
+
+A published value's cost on serialization is stated at the seam and carried by
+D-82. This is the same fact from the other side, on the operation the claim was
+most careful not to make ordinary values pay for, and it is held here so the
+accepted fact and what is known about reducing it cannot drift apart.
+
+**What.** A published node has no instance dictionary at all, so
+`object.__getattribute__` finds nothing at the instance and falls through to the
+non-data member descriptor, which reads the row off its slot and indexes it. An
+ordinary value's storage answers first and the descriptor is never entered.
+Measured on CPython 3.14.7 over the `wide` scenario of
+`docs/instance-state-baseline.md`, 200,000 repetitions, net of an 11.8 ns
+call floor measured the same way:
+
+```text
+ordinary member read                                 17.8 ns
+published member read                                77.0 ns      4.3x
+a Python non-data descriptor returning a constant    26.8 ns
+the slot descriptor's own __get__ plus a subscript   28.4 ns
+object.__getattribute__(value, slot) plus a subscript 30.4 ns
+```
+
+Over the whole canonical mix the report reads 3.24x on CPython 3.14 and 3.43x on
+3.13, against readings taken with one shared harness on both arms.
+
+**The floor is the frame, and it is not reachable from Python.** Roughly a third
+of the 77 ns is entering a Python-level `__get__` at all — the third line above is
+a descriptor whose whole body is `return 1` — and the rest is what the body does,
+which is itself two Python-level calls. The one in-Python saving located is
+holding the slot's member descriptor rather than naming it through
+`object.__getattribute__`, worth about 2 ns of the 77, which is not worth a
+second way to reach the row. Nothing else in the body is removable: the index is
+already resolved at class creation, the row is already a tuple, and there is no
+branch to hoist.
+
+**The ticket foresaw the distinction and measured the wrong half.** COR-111's own
+directional probe reads "about 4.5 ns for a direct tuple read, 8.7 ns with a
+sentinel identity check, 4.7 ns while ignoring a bitmap, and 9.3 ns with a bitmap
+check", and says in the same breath that these are not end-to-end descriptor
+benchmarks. They are not: they price the row access inside the frame, and the
+frame is four fifths of what a caller pays. What the probe was for still holds —
+presence stays off the read, and the bitmap check that would have cost another
+4.6 ns is not made — but a reader taking those figures as the read's cost will be
+wrong by an order of magnitude.
+
+**What it buys, and who pays it.** The frame is what makes the row the whole of a
+published node's state: 51.8% fewer retained bytes on 3.14 and 54.7% on 3.13 over
+the canonical mix. It is confined to published values — an ordinary value's member
+read is a plain Pydantic model's, unchanged and equal to a hand-written twin's,
+which is the trade the claim forbids making silently and therefore makes
+explicitly. The seam is also what keeps the frame from spreading: giving `Attr` a
+`__set__` would turn it into a data descriptor and put this frame on every
+ordinary read too, which is why every published write path is closed some other
+way.
+
+**The two repairs that would actually move it, neither cheap.** A C accelerator
+for the member descriptor removes the frame and nothing else does; it is a build,
+a wheel matrix, and a second implementation of the read to keep in step, against a
+saving that only published values see. Materializing a published node's storage
+removes the frame by removing the representation, which is the whole of what this
+claim did. Anything between the two — caching a mapping on the node, or a
+per-instance fast path — reintroduces exactly the per-node retained slope
+`_instance_state._DeclaredState` forbids and D-82 records the prohibition for.
+
+**Why it is deferred rather than fixed.** It is not unfinished work: it is a
+measured, stated consequence of the representation, accepted with the aggregate it
+buys. The entry exists so that a later pass reading "3.24x" in the report finds the
+decomposition, the two real repairs, and the reason the obvious third one is
+forbidden, rather than rediscovering all three.
 
 ## Forwarding pointers
 
