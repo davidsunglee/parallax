@@ -20,6 +20,7 @@ import decimal as _decimal
 import enum
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from types import NoneType, UnionType
 from typing import Any, ClassVar, Final, ForwardRef, Never, Union, cast, get_args, get_origin
@@ -1664,13 +1665,31 @@ def _reject_shadowed_class_names(
     its own configuration under one of those names — which is also what lets the
     framework's own prefix be reserved against the body while the engine keeps
     binding markers under it.
+
+    A name listed in the body's ``__slots__`` is checked alongside the keys,
+    because class creation turns it into a class-level descriptor just as a
+    binding does while it is no key of the namespace: without this, ``__slots__ =
+    ('__parallax_carried_slots__',)`` takes a framework marker the engine reads
+    off ``cls.__dict__``, and ``__slots__ = ('edit',)`` shadows the copy verb
+    itself. The declaration surface is the class object, so what took a reserved
+    name there is what matters, not how the body spelled the taking.
     """
-    for name in sorted(ns):
+    for name in sorted(set(ns) | _authored_slot_names(ns)):
         reason = _reserved_name_reason(name, kind)
         if reason is not None:
             raise EntityDefinitionError(
                 code="entity-reserved-member-name", message=f"{cls_name}.{name}: {reason}"
             )
+
+
+def _authored_slot_names(ns: dict[str, object]) -> set[str]:
+    """The instance slots a class body asked for, however ``__slots__`` spells them."""
+    slots = ns.get("__slots__")
+    if isinstance(slots, str):
+        return {slots}
+    if isinstance(slots, Iterable):
+        return {name for name in cast("Iterable[object]", slots) if isinstance(name, str)}
+    return set()
 
 
 def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:

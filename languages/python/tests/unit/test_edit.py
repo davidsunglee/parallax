@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import copy as copy_module
 import datetime as dt
+import threading
 from decimal import Decimal
 from functools import cached_property
 from typing import Any, Final, cast
 
 import pytest
 from _compact_support import layout_slots
-from pydantic import PrivateAttr, ValidationError
+from pydantic import BaseModel, PrivateAttr, ValidationError
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
@@ -634,6 +635,26 @@ is built ordinary, and the author-owned state a published source keeps in the
 auxiliary slot reaches the copy's instance dictionary under its own names.
 """
 
+_COPIED_CONTAINER_SLOTS: Final = frozenset({"__pydantic_extra__", "__pydantic_private__"})
+"""The carried slots the copy gets its own outer mapping of rather than sharing.
+
+The framework keeps writing into both after the copy exists, so sharing one would
+make a write to the copy a write to its source. Every other carried slot holds
+whatever its author put there and travels as that object itself.
+"""
+
+
+def test_the_framework_lays_out_exactly_the_slots_the_carry_classifies() -> None:
+    # Both halves of the carry — which slots it derives rather than takes, and
+    # which it gives the copy its own mapping of — are statements about the slots
+    # the FRAMEWORK lays out. Everything else in a layout belongs to the class
+    # that declared it and travels as the very object the source held, so a
+    # Pydantic release adding a slot of its own would silently take that default.
+    # It fails here instead, where the classification is stated.
+    assert set(BaseModel.__slots__) | {COMPACT_STATE_SLOT, AUXILIARY_STATE_SLOT} == (
+        _REBUILT_SLOTS | _COPIED_CONTAINER_SLOTS
+    )
+
 
 @pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
 def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
@@ -647,7 +668,9 @@ def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
     # the dictionary, and a slot the declaring class lays out for itself, which
     # only the concrete class knows about. A copy assembled from a name-keyed
     # mapping alone resets both with nothing failing, and a carry that enumerates
-    # a known base's layout drops the second one alone.
+    # a known base's layout drops the second one alone. Each is graded for HOW it
+    # travels as well as that it does: the framework's own mappings are the copy's
+    # own, everything else is the very object the source held.
     marked = _Marked(id=1, label="a")
     cast("Any", marked)._mark = 9
     object.__setattr__(marked, "token", ["t"])
@@ -656,13 +679,27 @@ def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
     }
     assert {"token", "__pydantic_private__"} <= set(carried)
     copied = marked.edit(**changes)
-    for slot in carried.values():
+    for name, slot in carried.items():
         held = slot.__get__(marked)
         assert slot.__get__(copied) == held
-        if held is not None:
+        if name in _COPIED_CONTAINER_SLOTS and held is not None:
             assert slot.__get__(copied) is not held
+        else:
+            assert slot.__get__(copied) is held
     assert cast("Any", copied)._mark == 9
-    assert cast("Any", copied).token == ["t"]
+
+
+@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
+def test_an_edit_carries_an_authored_slot_s_payload_itself(changes: dict[str, object]) -> None:
+    # What a class lays out a slot of its own for is state whose meaning only its
+    # author knows, so carrying it forward unchanged is the object itself rather
+    # than anything derived from it. Copying instead breaks it twice: a mutation
+    # made through the copy stops reaching the source, and a payload no copy
+    # protocol can reproduce turns every edit of the value into a refusal.
+    marked = _Marked(id=1, label="a")
+    guard = threading.Lock()
+    object.__setattr__(marked, "token", guard)
+    assert cast("Any", marked.edit(**changes)).token is guard
 
 
 @pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))

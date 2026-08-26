@@ -520,7 +520,8 @@ def test_that_a_published_value_edits_out_of_the_same_object_layout_too() -> Non
     # is its instance dictionary and its author-owned state is in there by name.
     value = _crate()
     cast("Any", value)._mark = 9
-    object.__setattr__(value, "token", ["t"])
+    token = ["t"]
+    object.__setattr__(value, "token", token)
     carried = {
         name
         for name in layout_slots(Crate)
@@ -529,7 +530,7 @@ def test_that_a_published_value_edits_out_of_the_same_object_layout_too() -> Non
     assert {"token", "__pydantic_private__", AUXILIARY_STATE_SLOT} <= carried
     for edited in (value.edit(label="y"), value.edit()):
         assert cast("Any", edited)._mark == 9
-        assert cast("Any", edited).token == ["t"]
+        assert cast("Any", edited).token is token
         assert raw_row(edited) is None
         with pytest.raises(AttributeError, match=AUXILIARY_STATE_SLOT):
             object.__getattribute__(edited, AUXILIARY_STATE_SLOT)

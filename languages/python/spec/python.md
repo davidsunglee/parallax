@@ -1138,15 +1138,18 @@ supported import path.
 **Reserved member names.** A member name may not collide with a name the class
 object already carries, because class-level access is where the typed expression
 surface lives and the class-level name would win. Nine families are reserved,
-and a collision fails at class creation (`entity-reserved-member-name`). Six of
-them — the `model_*` namespace, the `__parallax_` prefix, the copy verb `edit`,
-the pickle entry point `__reduce_ex__`, the schema seam
-`__get_pydantic_core_schema__`, and the instance-state presentation `__dict__` /
-`__pydantic_fields_set__` — hold over every declared class body, an Entity Class
-and a Value Object Class alike, because both kinds carry what they protect. The
-other three are the Entity surface itself and hold on an Entity Class only: a
-Value Object has no query root, no declaration protocol, and no temporal member,
-so those spellings are ordinary Value Object members.
+and a collision fails at class creation (`entity-reserved-member-name`). All
+three ways a body reaches a name are covered — a binding, an annotation, and an
+entry in the body's `__slots__`, which is no binding at all and which class
+creation still turns into a class-level descriptor. Six of them — the `model_*`
+namespace, the `__parallax_` prefix, the copy verb `edit`, the pickle entry
+point `__reduce_ex__`, the schema seam `__get_pydantic_core_schema__`, and the
+instance-state presentation `__dict__` / `__pydantic_fields_set__` — hold over
+every declared class body, an Entity Class and a Value Object Class alike,
+because both kinds carry what they protect. The other three are the Entity
+surface itself and hold on an Entity Class only: a Value Object has no query
+root, no declaration protocol, and no temporal member, so those spellings are
+ordinary Value Object members.
 
 - the query-root and introspection classmethods — `where`, `narrow`, `include`,
   `as_of`, `as_of_range`, `history`, `meta`, `descriptor`;
