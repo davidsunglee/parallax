@@ -10,6 +10,7 @@ whole row is assembled, and the row is attached once.
 
 from __future__ import annotations
 
+import gc
 from types import MemberDescriptorType
 from typing import TYPE_CHECKING, Any, cast
 
@@ -21,7 +22,13 @@ if TYPE_CHECKING:
 
     from pydantic import BaseModel
 
-__all__ = ["layout_slots", "published", "raw_row", "real_storage"]
+__all__ = [
+    "carries_instance_storage",
+    "layout_slots",
+    "published",
+    "raw_row",
+    "real_storage",
+]
 
 
 def published[M](
@@ -47,6 +54,30 @@ def raw_row(value: BaseModel) -> tuple[Any, ...] | None:
     is the row.
     """
     return cast("tuple[Any, ...] | None", object.__getattribute__(value, COMPACT_STATE_SLOT))
+
+
+def carries_instance_storage(value: BaseModel) -> bool:
+    """Whether ``value``'s own instance storage exists yet, asked without creating it.
+
+    Every dictionary the value refers to, minus the ones its object layout holds
+    in slots of their own — auxiliary state, private attributes, extra fields.
+    Scanning for a dictionary at all would answer yes for any value whose class
+    declares a ``PrivateAttr`` or whose ``cached_property`` has been read, so a
+    grading of whether STORAGE was created must ask by identity or be restricted
+    to classes that carry neither.
+    """
+    beside: set[int] = set()
+    for slot in layout_slots(type(value)).values():
+        try:
+            held = cast("object", slot.__get__(value))
+        except AttributeError:
+            continue
+        if isinstance(held, dict):
+            beside.add(id(cast("object", held)))
+    return any(
+        isinstance(held, dict) and id(cast("object", held)) not in beside
+        for held in gc.get_referents(value)
+    )
 
 
 def real_storage(value: BaseModel) -> dict[str, Any]:

@@ -1,8 +1,8 @@
 """One behavior, graded twice: over ordinary backing and over a compact row.
 
-Every reader of a value's physical state now asks the instance-state Module
-rather than Pydantic's instance dictionary, and the point of that move is that
-the answers do not depend on which backing the value carries. So each case here
+Every reader of a value's physical state asks the instance-state Module rather
+than Pydantic's instance dictionary, and the point of asking there is that the
+answers do not depend on which backing the value carries. So each case here
 builds the SAME value both ways and asserts one outcome: an edit, the Change
 Record an edit chain composes, the three Row Codec operations, and a Value
 Object's canonical document.
@@ -11,29 +11,43 @@ The two arms are twins by construction. ``model_construct(**members)`` populates
 exactly the named members and fills every other declared field with its declared
 default, which is what ``publish`` does with a bitmap and a template row — so the
 arms differ in representation and in nothing else. Neither arm validates, which
-is also what publication does not do.
+is also what publication does not do. That premise has one bound, graded at the
+end: a required member carried no value has no declared default to be filled
+with, and publication refuses the value the ordinary constructor leaves unset.
 
-Lifecycle state has no compact arm in this phase and is graded on the ordinary
-one alone: it still rides in the instance dictionary a published value does not
-have, and the slot that will carry it arrives with the publication flip.
+The models are chosen for reach rather than realism, because a corpus grading an
+equivalence is only as wide as the shapes it can express: containment two deep
+under both a One and a Many occurrence, a member a concrete inherits rather than
+declares, a required member beside optional ones, a member populated as null
+beside one never populated, and — on a Value Object and an Entity alike — the two
+kinds of state that live outside the members, a ``PrivateAttr`` and a
+``cached_property``.
+
+Lifecycle state is graded on the ordinary arm alone: it rides in the instance
+dictionary, which a published value does not have, so it is the one piece of a
+value's state with no compact twin.
 """
 
 from __future__ import annotations
 
-import gc
 import pickle
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from _compact_support import published, raw_row, real_storage
+from _compact_support import carries_instance_storage, published, raw_row, real_storage
+from pydantic import PrivateAttr
 
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
+    AbstractRoot,
     Attr,
+    ConcreteSubtype,
     DomainModel,
     Entity,
     Rel,
+    TablePerHierarchy,
     ValueObject,
     attr,
     rel,
@@ -52,16 +66,33 @@ if TYPE_CHECKING:
 _NS = "parallax.parity"
 
 
+class Fix(ValueObject):
+    """The corpus's deepest leaf, so an occurrence stands under an occurrence."""
+
+    epoch: Attr[int | None]
+
+
 class Point(ValueObject):
     lat: Attr[float | None]
     lon: Attr[float | None]
+    fix: Attr[Fix | None]
 
 
 class Site(ValueObject):
+    """A Value Object carrying both containment shapes, and both kinds of state
+    that live outside the members: a private attribute, and a derived value a
+    ``cached_property`` writes where the backing keeps it."""
+
     city: Attr[str]
     zip_code: Attr[str | None]
     point: Attr[Point | None]
     tags: Attr[tuple[Point, ...]]
+
+    _revision = PrivateAttr(default=0)
+
+    @cached_property
+    def shouted(self) -> str:
+        return self.city.upper()
 
 
 class Depot(Entity, table="depot", namespace=_NS):
@@ -71,6 +102,12 @@ class Depot(Entity, table="depot", namespace=_NS):
     site: Attr[Site | None]
     crates: Rel[tuple[Crate, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "depot_id"))
 
+    _revision = PrivateAttr(default=0)
+
+    @cached_property
+    def shouted(self) -> str:
+        return self.label.upper()
+
 
 class Crate(Entity, table="crate", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
@@ -78,7 +115,26 @@ class Crate(Entity, table="crate", namespace=_NS):
     depot: Rel[Depot | None] = rel(cardinality=MANY_TO_ONE, join=("depot_id", "id"))
 
 
-DEPOTS = DomainModel(Depot, Crate)
+class Vehicle(
+    Entity,
+    table="vehicle",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    """A family root, so the corpus reaches a member a value inherits rather than
+    declares: both backings address one by the position its own concrete's
+    ancestry-first layout gives it."""
+
+    id: Attr[int] = attr(primary_key=True)
+    plate: Attr[str]
+    site: Attr[Site | None]
+
+
+class Truck(Vehicle, namespace=_NS, inheritance=ConcreteSubtype(tag_value="truck")):
+    payload: Attr[int | None]
+
+
+PARITY_MODEL = DomainModel(Depot, Crate, Vehicle, Truck)
 
 type Builder = Callable[..., Any]
 
@@ -108,8 +164,8 @@ def build(request: pytest.FixtureRequest) -> Builder:
     return cast("Builder", request.param[1])
 
 
-def _depots() -> EntityRowCodec:
-    return row_codec_of(DEPOTS)
+def _codec() -> EntityRowCodec:
+    return row_codec_of(PARITY_MODEL)
 
 
 def _site() -> Site:
@@ -130,6 +186,19 @@ def test_the_two_arms_agree_about_what_the_value_holds_and_what_it_populated() -
     assert ordinary.model_fields_set == compact.model_fields_set == set(members)
     assert ordinary.capacity is compact.capacity is None
     assert dict(ordinary) == dict(compact)
+
+
+def test_the_two_arms_address_an_inherited_member_the_same_way() -> None:
+    # A concrete's row is its family's, ancestry first, so `plate` occupies a
+    # position `Truck` never declared and `payload` one it did. Neither arm reads
+    # a member off the class that declared it, so both answer, populate, and omit
+    # the inherited member exactly as they do the declared one.
+    members: dict[str, object] = {"id": 1, "plate": "AB-12"}
+    ordinary, compact = _ordinary(Truck, **members), published(Truck, **members)
+    assert ordinary == compact
+    assert ordinary.model_fields_set == compact.model_fields_set == set(members)
+    assert ordinary.payload is compact.payload is None
+    assert _codec().full_row(ordinary) == _codec().full_row(compact) == {"id": 1, "plate": "AB-12"}
 
 
 # --------------------------------------------------------------------------- #
@@ -192,16 +261,41 @@ def test_an_edit_that_authors_nothing_carries_the_record_it_was_handed(build: Bu
 
 
 def test_an_edit_of_a_published_value_creates_no_storage_for_it() -> None:
-    # `Depot` declares neither a `cached_property` nor a `PrivateAttr`, so the
-    # whole of what its published values hold is the row — and an edit reaches it
-    # there. Reaching for the source's instance dictionary instead would create
-    # one, permanently, on a path that only meant to copy.
+    # An edit reads what the source holds where the source holds it. Reaching for
+    # the source's instance dictionary instead would create one, permanently, on a
+    # path that only meant to copy — and the value's private attributes and its
+    # read `cached_property` are dictionaries of the layout's own, which is why
+    # this asks whether STORAGE exists rather than whether any dictionary does.
     value = published(Depot, id=1, label="north")
+    assert value.shouted == "NORTH"
     value.edit(label="south")
     value.edit()
-    assert not [held for held in gc.get_referents(value) if isinstance(held, dict)]
+    assert not carries_instance_storage(value)
     # Read last, because reading it is what creates it.
     assert real_storage(value) == {}
+
+
+def test_an_edit_of_either_backing_carries_an_inherited_member_forward(build: Builder) -> None:
+    edited = build(Truck, id=1, plate="AB-12").edit(payload=9)
+    assert edited.plate == "AB-12"
+    assert edited.payload == 9
+    assert real_storage(edited)[CHANGE_RECORD_SLOT] == {"payload": None}
+
+
+def test_an_edit_of_either_backing_carries_private_state_and_derives_again(
+    build: Builder,
+) -> None:
+    # The state that lives outside the members, which the two backings keep in
+    # different places: a private attribute rides a slot of its own on both, and
+    # a read `cached_property` writes into the instance dictionary of an ordinary
+    # value and the auxiliary slot of a published one. An edit carries the first
+    # and derives the second again, from either backing.
+    value: Any = build(Site, city="Springfield")
+    value._revision = 4
+    assert value.shouted == "SPRINGFIELD"
+    edited: Any = value.edit(city="Shelbyville")
+    assert edited._revision == 4
+    assert edited.shouted == "SHELBYVILLE"
 
 
 def test_an_unedited_value_of_either_backing_carries_no_record(build: Builder) -> None:
@@ -215,7 +309,7 @@ def test_an_unedited_value_of_either_backing_carries_no_record(build: Builder) -
 
 
 def test_a_full_row_emits_every_populated_member_of_either_backing(build: Builder) -> None:
-    assert _depots().full_row(build(Depot, id=1, label="north", capacity=12)) == {
+    assert _codec().full_row(build(Depot, id=1, label="north", capacity=12)) == {
         "id": 1,
         "label": "north",
         "capacity": 12,
@@ -228,11 +322,11 @@ def test_a_full_row_omits_a_member_the_value_never_populated(build: Builder) -> 
     # insert is emitted and the column keeps its stored default.
     value = build(Depot, id=1, label="north")
     assert value.capacity is None
-    assert _depots().full_row(value) == {"id": 1, "label": "north"}
+    assert _codec().full_row(value) == {"id": 1, "label": "north"}
 
 
 def test_a_full_row_spells_a_member_populated_as_null(build: Builder) -> None:
-    assert _depots().full_row(build(Depot, id=1, label="north", capacity=None)) == {
+    assert _codec().full_row(build(Depot, id=1, label="north", capacity=None)) == {
         "id": 1,
         "label": "north",
         "capacity": None,
@@ -240,7 +334,7 @@ def test_a_full_row_spells_a_member_populated_as_null(build: Builder) -> None:
 
 
 def test_a_full_row_renders_an_occurrence_as_its_document(build: Builder) -> None:
-    assert _depots().full_row(build(Depot, id=1, label="north", site=_site()))["site"] == {
+    assert _codec().full_row(build(Depot, id=1, label="north", site=_site()))["site"] == {
         "city": "Springfield",
         "point": {"lat": 1.0},
         "tags": [],
@@ -248,22 +342,22 @@ def test_a_full_row_renders_an_occurrence_as_its_document(build: Builder) -> Non
 
 
 def test_an_identity_row_reads_the_primary_key_of_either_backing(build: Builder) -> None:
-    assert _depots().identity_row(build(Depot, id=1, label="north")) == {"id": 1}
+    assert _codec().identity_row(build(Depot, id=1, label="north")) == {"id": 1}
 
 
 def test_an_edited_row_is_the_identity_plus_the_effective_changes(build: Builder) -> None:
     edited = build(Depot, id=1, label="north", capacity=12).edit(label="south")
-    assert _depots().edited_row(edited) == {"id": 1, "label": "south"}
+    assert _codec().edited_row(edited) == {"id": 1, "label": "south"}
 
 
 def test_an_edited_row_answers_none_for_a_value_no_edit_touched(build: Builder) -> None:
-    assert _depots().edited_row(build(Depot, id=1, label="north")) is None
+    assert _codec().edited_row(build(Depot, id=1, label="north")) is None
 
 
 def test_an_edited_row_answers_none_for_a_chain_that_nets_to_zero(build: Builder) -> None:
     value = build(Depot, id=1, label="north")
-    assert _depots().edited_row(value.edit(label="south").edit(label="north")) is None
-    assert _depots().restored_members(value.edit(label="south").edit(label="north")) == {"label"}
+    assert _codec().edited_row(value.edit(label="south").edit(label="north")) is None
+    assert _codec().restored_members(value.edit(label="south").edit(label="north")) == {"label"}
 
 
 def test_a_row_derived_from_a_published_value_creates_no_storage_for_it() -> None:
@@ -272,12 +366,13 @@ def test_a_row_derived_from_a_published_value_creates_no_storage_for_it() -> Non
     # a published value's storage for it would create the dictionary publication
     # exists without — permanently, on a read.
     value = published(Depot, id=1, label="north", capacity=12)
-    codec = _depots()
+    assert value.shouted == "NORTH"
+    codec = _codec()
     codec.full_row(value)
     codec.identity_row(value)
     codec.edited_row(value)
     codec.restored_members(value)
-    assert not [held for held in gc.get_referents(value) if isinstance(held, dict)]
+    assert not carries_instance_storage(value)
     # Read last, because reading it is what creates it.
     assert real_storage(value) == {}
 
@@ -303,25 +398,32 @@ def test_a_document_spells_a_member_populated_as_null(build: Builder) -> None:
 
 
 def test_a_document_renders_nested_occurrences_of_either_backing(build: Builder) -> None:
+    # Containment past one level, in both shapes: an occurrence inside a One
+    # occurrence, and an occurrence inside an element of a Many. Presence is
+    # resolved at every depth against the value standing there, so the arms agree
+    # about a leaf populated at depth two and one left absent there.
     document = to_document(
         build(
             Site,
             city="Springfield",
-            point=build(Point, lat=1.0, lon=2.0),
-            tags=(build(Point, lat=3.0),),
+            point=build(Point, lat=1.0, lon=2.0, fix=build(Fix, epoch=7)),
+            tags=(build(Point, lat=3.0, fix=build(Fix)), build(Point, lat=4.0)),
         )
     )
     assert document == {
         "city": "Springfield",
-        "point": {"lat": 1.0, "lon": 2.0},
-        "tags": [{"lat": 3.0}],
+        "point": {"lat": 1.0, "lon": 2.0, "fix": {"epoch": 7}},
+        "tags": [{"lat": 3.0, "fix": {}}, {"lat": 4.0}],
     }
 
 
 def test_a_document_derived_from_a_published_value_creates_no_storage_for_it() -> None:
     value = published(Site, city="Springfield", point=published(Point, lat=1.0))
+    assert value.shouted == "SPRINGFIELD"
     to_document(value)
-    assert not [held for held in gc.get_referents(value) if isinstance(held, dict)]
+    assert not carries_instance_storage(value)
+    assert not carries_instance_storage(cast("Any", value).point)
+    # Read last, because reading it is what creates it.
     assert real_storage(value) == {}
 
 
@@ -364,14 +466,26 @@ def test_a_value_object_of_either_backing_pickles_to_an_ordinary_one(build: Buil
 
 
 # --------------------------------------------------------------------------- #
-# What has no compact arm yet
+# Where the two arms are not twins
 # --------------------------------------------------------------------------- #
 
 
+def test_publication_refuses_a_required_member_it_was_carried_no_value_for() -> None:
+    # The bound on the corpus's premise, and it is a refusal rather than a
+    # divergence. `model_construct` leaves a required member it was handed no
+    # value for unset, so reading it raises; a row has a position for that member
+    # whatever happens, so publication refuses to attach one rather than filling
+    # the position with a default the member does not have.
+    with pytest.raises(AttributeError, match="city"):
+        _ = _ordinary(Site, zip_code=None).city
+    with pytest.raises(ValueError, match="carries no value for required city"):
+        published(Site, zip_code=None)
+
+
 def test_an_edit_carries_lifecycle_state_forward_on_the_backing_that_can_hold_it() -> None:
-    # Lifecycle state still rides in the instance dictionary, which a published
-    # value does not have, so this is the one edit behavior with an ordinary arm
-    # alone until publication attaches it to a slot of its own.
+    # Lifecycle state rides in the instance dictionary, which a published value
+    # does not have, so this is the one edit behavior with an ordinary arm
+    # alone.
     value = _ordinary(Depot, id=1, label="north")
     attach_instance_state(value, LIFECYCLE_STATE_SLOT, "pinned")
     assert real_storage(value.edit(label="south"))[LIFECYCLE_STATE_SLOT] == "pinned"
