@@ -2406,8 +2406,14 @@ or descriptor authoring form and performs no audit stamping.
   allocation order and attaches none while any factory remains. Only after
   every factory succeeds does it attach all results and publish the ordered
   roots atomically. The first factory failure stops invocation, discards every
-  buffered result, and leaves all allocated Entities unreachable and
-  lifecycle-state-free.
+  buffered result, and leaves every allocated Entity lifecycle-state-free;
+  `construct(...)` returns no root, so the call hands back no way to reach any
+  of them. What it does not do is take back what it already handed a callback.
+  A factory that keeps the instance its resolution view answered still holds
+  that instance after the call fails — fully populated, and
+  lifecycle-state-free like every other. Rows attach as nodes are populated and
+  are never rolled back, so what a failure withholds is every root and every
+  lifecycle state, not the population already attached.
 - **Construction scope closure.** A writer closes when its build callback
   exits, and a resolution view closes when its one factory invocation exits.
   Using either retained closed scope raises
