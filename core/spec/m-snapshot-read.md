@@ -182,16 +182,18 @@ Within **one materialized graph**, one row is **one node**:
   same-node promise, and no node is ever interned beyond its own graph. There is
   no scope wider than the graph in this module.
 - **A result is not necessarily one graph**, so graph-local is narrower than
-  result-wide. An eager read materializes its whole result as one graph; a
-  milestone-set read materializes one graph per milestone; a streamed delivery
-  materializes one graph per root. What every one of them promises is the same
-  sentence above, applied to the graph a node was published from — so a row that
-  two *result roots* both reach is one node only where one graph carries both,
-  which an eager read does and a streamed delivery does not. Neither is promised
-  to: **root-local is the floor every materialization meets and the whole of
-  what any of them promises**, so sharing wider than one root is permitted and
-  never promised. A caller that needs to know two roots reached one row compares
-  their identities.
+  result-wide. A milestone-set read materializes one graph per milestone; a
+  streamed delivery materializes one graph per root, which is the bound that
+  surface exists for; how an **eager** read divides its result is not pinned at
+  all, and materializing the whole result as one graph is conforming. What every
+  one of them promises is the same sentence above, applied to the graph a node
+  was published from — and the only division every one of them shares is a
+  single root's own tree, so **root-local is the floor every materialization
+  meets and the whole of what any of them promises**. A row that two *result
+  roots* both reach is therefore one node wherever one graph carries both, which
+  an eager read materialized as one graph observably does and a streamed
+  delivery does not; that wider sharing is permitted and never promised. A
+  caller that needs to know two roots reached one row compares their identities.
 - A **value object** (`m-value-object`) is not a node: it has no identity, adds
   no relationship hop, and materializes *with* its owning entity as a plain
   nested value carrying the members *What a materialized value carries* fixes
