@@ -13,8 +13,11 @@ import sqlglot
 
 from reference_harness.sql_normalize import (
     NonCanonicalError,
+    WrapFacts,
+    WrapOrderKey,
     is_canonical,
     normalize,
+    sqlglot_dialect,
     wrapped_union_source,
 )
 
@@ -326,21 +329,201 @@ def test_a_wrapped_union_expands_a_document_read_pair_over_its_alias() -> None:
     )
 
 
+def _facts(
+    *,
+    document_aliases: frozenset[str] = frozenset(),
+    order_keys: tuple[WrapOrderKey, ...] = (),
+    limited: bool = False,
+) -> WrapFacts:
+    return WrapFacts(document_aliases=document_aliases, order_keys=order_keys, limited=limited)
+
+
+_DOCUMENT_WRAP = (
+    "select {outer} from "
+    "(select t0.id, t0.payload from publication_book t0 "
+    "union all "
+    "select t0.id, t0.payload from publication_film t0) u order by u.id limit ?"
+)
+
+_ID_KEY = (WrapOrderKey(alias="id", descending=False, nulls_first=False, nullable=False),)
+
+
 def test_a_presence_pair_is_admitted_only_over_a_named_document_alias() -> None:
     # Which alias holds the Document is a model fact no statement carries. A caller
     # that knows names it, and a pair over a scalar — a shape indistinguishable from
     # the read pair in SQL alone — is refused; a caller that does not know gets the
     # widest reading the statement supports.
-    scalar_pair = (
-        "select not u.id is null, u.id, u.payload from "
-        "(select t0.id, t0.payload from publication_book t0 "
-        "union all "
-        "select t0.id, t0.payload from publication_film t0) u order by u.id limit ?"
-    )
+    scalar_pair = _DOCUMENT_WRAP.format(outer="not u.id is null, u.id, u.payload")
     tree = sqlglot.parse_one(scalar_pair, read="postgres")
-    assert wrapped_union_source(tree) is not None
+    assert wrapped_union_source(tree, "postgres") is not None
     with pytest.raises(NonCanonicalError):
-        wrapped_union_source(tree, frozenset({"payload"}))
+        wrapped_union_source(
+            tree,
+            "postgres",
+            _facts(document_aliases=frozenset({"payload"}), order_keys=_ID_KEY, limited=True),
+        )
+
+
+def test_a_named_document_alias_must_carry_its_presence_half() -> None:
+    # A projected Document value the outer select does not precede with
+    # `not u.<alias> is null` is not readable as a Document at all: m-dialect's paired
+    # parser needs both raw cells, so permitting the pair is not enough where the
+    # caller knows which alias holds one.
+    tree = sqlglot.parse_one(_DOCUMENT_WRAP.format(outer="u.id, u.payload"), read="postgres")
+    assert wrapped_union_source(tree, "postgres") is not None
+    with pytest.raises(NonCanonicalError):
+        wrapped_union_source(
+            tree,
+            "postgres",
+            _facts(document_aliases=frozenset({"payload"}), order_keys=_ID_KEY, limited=True),
+        )
+    paired = sqlglot.parse_one(
+        _DOCUMENT_WRAP.format(outer="u.id, not u.payload is null, u.payload"), read="postgres"
+    )
+    assert (
+        wrapped_union_source(
+            paired,
+            "postgres",
+            _facts(document_aliases=frozenset({"payload"}), order_keys=_ID_KEY, limited=True),
+        )
+        is not None
+    )
+
+
+_EXTRACTION_WRAP = (
+    "select u.id, not u.payload is null, u.payload from "
+    "(select t0.id, t0.payload from publication_book t0 "
+    "union all "
+    "select t0.id, t0.payload from publication_film t0) u order by {key} limit ?"
+)
+
+
+def test_a_document_extraction_must_be_the_dialects_own_spelling() -> None:
+    # m-dialect fixes ONE extraction function per dialect. The other dialect's
+    # spelling is a call this statement's own dialect never emits, so a key written
+    # with it names no result alias and the wrap is refused.
+    assert is_canonical(
+        _EXTRACTION_WRAP.format(key="jsonb_extract_path_text(u.payload, ?)"), "postgres"
+    )
+    assert not is_canonical(_EXTRACTION_WRAP.format(key="json_value(u.payload, ?)"), "postgres")
+    assert is_canonical(_EXTRACTION_WRAP.format(key="json_value(u.payload, ?)"), "mariadb")
+    assert not is_canonical(
+        _EXTRACTION_WRAP.format(key="jsonb_extract_path_text(u.payload, ?)"), "mariadb"
+    )
+
+
+_RANK_WRAP = (
+    "select u.id, u.title from "
+    "(select t0.id, t0.title from invoice t0 "
+    "union all "
+    "select t0.id, t0.title from memo t0) u order by {tail}"
+)
+
+
+def test_a_null_placement_rank_term_is_canonical_only_where_the_dialect_needs_one() -> None:
+    # MariaDB has no `NULLS FIRST/LAST` syntax and compensates with a leading boolean
+    # rank term (m-dialect); Postgres spells the same request as a suffix and never
+    # emits a rank term, so one there sorts on a value no Sort Key asks for.
+    for tail in ("u.title is null, u.title asc", "not u.title is null, u.title desc"):
+        assert is_canonical(_RANK_WRAP.format(tail=tail), "mariadb")
+        assert not is_canonical(_RANK_WRAP.format(tail=tail), "postgres")
+    # The rank term ranks the key it precedes and nothing else.
+    assert not is_canonical(_RANK_WRAP.format(tail="u.title is null, u.id asc"), "mariadb")
+    assert not is_canonical(_RANK_WRAP.format(tail="u.title is null"), "mariadb")
+
+
+# The tail is a rendering of the read's own Sort Keys and cap, and the case runner
+# knows both. Grading it against them is what makes an ordering that no authored key
+# asks for a refusal rather than merely a well-formed key.
+
+_TITLE_WRAP = (
+    "select u.id, u.title from "
+    "(select t0.id, t0.title from invoice t0 "
+    "union all "
+    "select t0.id, t0.title from memo t0) u order by {tail}"
+)
+
+
+def _title_key(*, descending: bool, nulls_first: bool, nullable: bool = True) -> WrapOrderKey:
+    return WrapOrderKey(
+        alias="title", descending=descending, nulls_first=nulls_first, nullable=nullable
+    )
+
+
+@pytest.mark.parametrize(
+    ("descending", "nulls_first", "postgres", "mariadb"),
+    [
+        pytest.param(False, False, "u.title asc", "u.title is null, u.title asc", id="asc-last"),
+        pytest.param(True, False, "u.title desc nulls last", "u.title desc", id="desc-last"),
+        pytest.param(False, True, "u.title asc nulls first", "u.title asc", id="asc-first"),
+        pytest.param(
+            True, True, "u.title desc", "not u.title is null, u.title desc", id="desc-first"
+        ),
+    ],
+)
+def test_the_wrap_orders_by_what_the_authored_sort_key_renders_to(
+    descending: bool, nulls_first: bool, postgres: str, mariadb: str
+) -> None:
+    # The m-dialect Null Placement table, applied against the union alias: exactly one
+    # dialect compensates per row, and each compensates in its own syntax.
+    facts = _facts(order_keys=(_title_key(descending=descending, nulls_first=nulls_first),))
+    for dialect, expected in (("postgres", postgres), ("mariadb", mariadb)):
+        tree = sqlglot.parse_one(_TITLE_WRAP.format(tail=expected), read=sqlglot_dialect(dialect))
+        assert wrapped_union_source(tree, dialect, facts) is not None
+    crossed = sqlglot.parse_one(_TITLE_WRAP.format(tail=mariadb), read="postgres")
+    if mariadb != postgres:
+        with pytest.raises(NonCanonicalError):
+            wrapped_union_source(crossed, "postgres", facts)
+
+
+def test_a_non_nullable_sort_key_takes_the_plain_term_under_either_placement() -> None:
+    # Placement is observable only on a nullable key, so both dialects render the
+    # plain directed term and neither compensates (m-dialect).
+    for nulls_first in (False, True):
+        facts = _facts(
+            order_keys=(_title_key(descending=False, nulls_first=nulls_first, nullable=False),)
+        )
+        for dialect in ("postgres", "mariadb"):
+            tree = sqlglot.parse_one(
+                _TITLE_WRAP.format(tail="u.title asc"), read=sqlglot_dialect(dialect)
+            )
+            assert wrapped_union_source(tree, dialect, facts) is not None
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        pytest.param("u.title desc", id="wrong-direction"),
+        pytest.param("u.id asc", id="wrong-alias"),
+        pytest.param("u.title asc, u.id asc", id="extra-key"),
+        pytest.param("jsonb_extract_path_text(u.title, ?)", id="extraction"),
+    ],
+)
+def test_an_ordering_the_read_did_not_author_is_refused(tail: str) -> None:
+    # A term that is a legal ordering key in the abstract still sorts on something
+    # this read never asked for; the caller holding the query is the only one that can
+    # tell the two apart.
+    facts = _facts(order_keys=(_title_key(descending=False, nulls_first=False, nullable=False),))
+    tree = sqlglot.parse_one(_TITLE_WRAP.format(tail=tail), read="postgres")
+    with pytest.raises(NonCanonicalError):
+        wrapped_union_source(tree, "postgres", facts)
+
+
+def test_the_wraps_cap_is_the_one_the_read_authored() -> None:
+    # A cap applies to the union's rows and is the other half of the tail the wrap
+    # carries, so a golden capping a read that declared no `limit` returns a different
+    # result set under a canonical spelling.
+    key = (_title_key(descending=False, nulls_first=False, nullable=False),)
+    ordered = sqlglot.parse_one(_TITLE_WRAP.format(tail="u.title asc"), read="postgres")
+    capped = sqlglot.parse_one(_TITLE_WRAP.format(tail="u.title asc limit ?"), read="postgres")
+    assert wrapped_union_source(ordered, "postgres", _facts(order_keys=key)) is not None
+    assert (
+        wrapped_union_source(capped, "postgres", _facts(order_keys=key, limited=True)) is not None
+    )
+    with pytest.raises(NonCanonicalError):
+        wrapped_union_source(ordered, "postgres", _facts(order_keys=key, limited=True))
+    with pytest.raises(NonCanonicalError):
+        wrapped_union_source(capped, "postgres", _facts(order_keys=key))
 
 
 def test_a_wrapped_union_ordered_by_a_foreign_qualifier_is_not_canonical() -> None:
