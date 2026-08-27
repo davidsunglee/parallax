@@ -8,6 +8,8 @@ of the m-read-lock read-lock suffix, whose lock-clause keywords sqlglot tokenize
 
 from __future__ import annotations
 
+import pytest
+
 from reference_harness.sql_normalize import is_canonical, normalize
 
 
@@ -244,10 +246,10 @@ def test_a_wrapped_union_without_a_result_tail_is_not_canonical() -> None:
 
 
 def test_a_wrapped_union_joined_to_another_table_is_not_canonical() -> None:
-    # The outer scope is table-less ONLY in the canonical wrap. A join gives it a
-    # table of its own, which rule 1 must number from the branches it now shares a
-    # scope with — the locking table-per-hierarchy partitioned read's shape, which
-    # numbers `t0, t1, t2` across the whole statement.
+    # The outer scope is table-less ONLY in the canonical wrap. A read that takes the
+    # union as its sole source and then joins to a table of its own is neither the
+    # wrap nor the locking table-per-hierarchy partitioned read (whose sole source is
+    # a table and whose derived union is the JOINED relation).
     joined = (
         "select u.id, t0.name from "
         "(select t0.id, t0.title from invoice t0 "
@@ -268,6 +270,91 @@ def test_a_wrapped_union_carrying_an_outer_predicate_is_not_canonical() -> None:
 def test_a_wrapped_plain_union_is_not_canonical() -> None:
     # The wrap does not launder the set operation inside it.
     assert not is_canonical(_WRAPPED_UNION.replace("union all", "union"), "postgres")
+
+
+# The outer shape m-sql fixes is the whole of what the wrap buys, so the verifier
+# grades it rather than accepting any named projection. Each refusal below was
+# reproduced as a wrongly-accepted `is_canonical` before the check existed.
+
+
+@pytest.mark.parametrize(
+    "outer",
+    [
+        pytest.param("select u.id, u.id from", id="duplicated"),
+        pytest.param("select u.id from", id="missing"),
+        pytest.param("select u.title, u.id from", id="reordered"),
+        pytest.param("select 1, u.title from", id="computed"),
+        pytest.param("select u.id id, u.title from", id="aliased"),
+        pytest.param("select x.id, u.title from", id="foreign-qualifier"),
+        pytest.param("select u.id, u.title, u.id from", id="extra"),
+    ],
+)
+def test_a_wrapped_union_projecting_anything_but_the_result_aliases_is_not_canonical(
+    outer: str,
+) -> None:
+    # m-sql: the outer select projects the union's OWN result aliases through, each
+    # once and in the union's order. Everything else names cells the union does not
+    # answer, or answers a different result shape under a canonical spelling.
+    assert not is_canonical(_WRAPPED_UNION.replace("select u.id, u.title from", outer, 1))
+
+
+def test_a_wrapped_union_expands_a_document_read_pair_over_its_alias() -> None:
+    # The one exception: a presence cell carries no result alias, so the branch
+    # projects the slot as a single aliased cell and the outer select expands the
+    # pair over it. Both halves must name the same alias, in that order.
+    paired = (
+        "select u.id, not u.payload is null, u.payload from "
+        "(select t0.id, t0.payload from publication_book t0 "
+        "union all "
+        "select t0.id, t0.payload from publication_film t0) u order by u.id limit ?"
+    )
+    assert is_canonical(paired, "postgres")
+    assert not is_canonical(paired.replace("not u.payload is null", "not u.id is null", 1))
+    assert not is_canonical(
+        paired.replace("not u.payload is null, u.payload", "u.payload, not u.payload is null", 1)
+    )
+
+
+def test_a_wrapped_union_ordered_by_a_foreign_qualifier_is_not_canonical() -> None:
+    # An ordering key names the result alias its contributor was allocated above,
+    # taken against the union alias — never a branch's own spelling.
+    assert not is_canonical(_WRAPPED_UNION.replace("order by u.title", "order by t0.title", 1))
+    assert not is_canonical(_WRAPPED_UNION.replace("order by u.title", "order by u.missing", 1))
+
+
+def test_a_wrapped_union_ordered_by_an_extraction_over_the_alias_is_canonical() -> None:
+    # The positive twin: a key over a Structured Column member lowers to the same
+    # extraction a predicate over it does, taken against the union alias.
+    extracted = (
+        "select u.id, u.payload from "
+        "(select t0.id, t0.payload from publication_book t0 "
+        "union all "
+        "select t0.id, t0.payload from publication_film t0) u "
+        "order by jsonb_extract_path_text(u.payload, ?) desc"
+    )
+    assert is_canonical(extracted, "postgres")
+
+
+def test_a_malformed_wrapper_is_refused_rather_than_scored_as_one_select() -> None:
+    # The fallback the wrap recognizer used to leave open: a wrapper the recognizer
+    # declined kept its branches in the outer scope, where a globally numbered
+    # `t0, t1, …` sequence made rule 1 accept the statement outright.
+    globally_numbered = (
+        "select x.id, x.title from "
+        "(select t0.id, t0.title from invoice t0 "
+        "union all "
+        "select t1.id, t1.title from memo t1) x order by x.title desc limit ?"
+    )
+    assert not is_canonical(globally_numbered, "postgres")
+
+
+def test_an_unwrapped_union_carrying_a_result_tail_is_not_canonical() -> None:
+    # The wrap exists BECAUSE a `union all` has no clause tail of its own, so a tail
+    # hung directly on the set operation is the shape the wrap replaces.
+    bare = "select t0.id from invoice t0 union all select t0.id from memo t0"
+    assert is_canonical(bare, "postgres")
+    assert not is_canonical(f"{bare} order by id", "postgres")
+    assert not is_canonical(f"{bare} limit ?", "postgres")
 
 
 # --- only `union all` is a canonical set operation ----------------------------

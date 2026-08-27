@@ -83,6 +83,7 @@ from .predicate_write_validate import (
 )
 from .providers import DatabaseProvider
 from .sql_normalize import (
+    NonCanonicalError,
     _detach_read_lock,
     is_union_all,
     normalize,
@@ -2213,7 +2214,7 @@ def _assert_union_all_only(case: Case, tree: Any) -> None:
             )
 
 
-def _union_all_body(tree: Any) -> Any:
+def _union_all_body(case: Case, tree: Any) -> Any:
     """The `union all` *tree* asserts its branches against.
 
     A `union all` has no clause tail of its own, so an ordered or limited
@@ -2223,13 +2224,20 @@ def _union_all_body(tree: Any) -> Any:
     same either way, so unwrapping here keeps one oracle for both forms rather
     than forking it by whether the read declared a result shape.
 
-    The wrap is recognized by the normalizer's own verifier, so a golden that
-    wraps its union in any other shape is not unwrapped and fails the branch walk
-    below with the one branch its outer select is, rather than being graded as
-    though the wrap were canonical.
+    The wrap is VERIFIED by the normalizer's own verifier rather than merely
+    recognized, so the outer shape this walk does not itself grade — the alias,
+    the tail, each result alias projected through, the ordering keys — is graded
+    there. A golden wrapping its union in any other shape is refused here instead
+    of being unwrapped and graded on its branches alone.
     """
     if isinstance(tree, exp.Select):
-        wrapped = wrapped_union_source(tree)
+        try:
+            wrapped = wrapped_union_source(tree)
+        except NonCanonicalError as error:
+            raise CaseFailure(
+                f"{case.path.name}: table-per-concrete-subtype abstract read does not wrap "
+                f"its `union all` in the canonical derived table: {error}"
+            ) from error
         if wrapped is not None:
             return wrapped
     return tree
@@ -2384,7 +2392,7 @@ def _assert_tpcs_union_shape(
             continue
         tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
         _assert_union_all_only(case, tree)
-        branches = _union_branch_selects(_union_all_body(tree))
+        branches = _union_branch_selects(_union_all_body(case, tree))
         if len(branches) != len(position_branches):
             raise CaseFailure(
                 f"{case.path.name}: table-per-concrete-subtype abstract read lowers to "

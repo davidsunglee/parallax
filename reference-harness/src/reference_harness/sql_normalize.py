@@ -347,6 +347,79 @@ _WRAP_TAIL = ("order", "limit")
 _WRAP_FORBIDDEN = ("joins", "where", "group", "having", "distinct", "locks", "offset")
 
 
+def _wrap_column(node: Expr | None) -> str | None:
+    """The union result alias *node* reads through the wrap alias, else ``None``."""
+    if isinstance(node, exp.Column) and node.table == _WRAP_ALIAS and not node.args.get("db"):
+        return node.name
+    return None
+
+
+def _wrap_presence_cell(node: Expr | None) -> str | None:
+    """The alias a ``Document`` presence cell tests, else ``None``.
+
+    The pair's first half is ``not u.<alias> is null`` — the only outer cell m-sql
+    admits that is not itself a projected result alias.
+    """
+    if isinstance(node, exp.Not) and isinstance(node.this, exp.Is):
+        return _wrap_column(node.this.this) if isinstance(node.this.expression, exp.Null) else None
+    return None
+
+
+def _assert_wrap_projection(select: exp.Select, union: exp.SetOperation) -> None:
+    """Every union result alias projected through the wrap, once, in the union's order.
+
+    m-sql: the outer select projects the union's own result aliases through. The one
+    exception is a ``Document`` slot — a presence cell carries no result alias and so
+    cannot be addressed from outside the derived table, so each branch projects the
+    slot as ONE aliased cell and the outer select expands the read pair
+    ``not u.<alias> is null, u.<alias>`` over it. Walking the aliases and the outer
+    cells together admits exactly those two spellings, which is what makes a
+    duplicated, computed, missing, extra, or foreign-qualified outer cell a refusal
+    rather than merely "not a wildcard".
+    """
+    cells: list[Expr] = list(select.expressions)
+    aliases = union.named_selects
+    position = 0
+    for alias in aliases:
+        cell = cells[position] if position < len(cells) else None
+        if _wrap_presence_cell(cell) == alias:
+            position += 1
+            cell = cells[position] if position < len(cells) else None
+        if _wrap_column(cell) != alias:
+            raise NonCanonicalError(
+                f"wrapped `union all`: outer cell {position} must project the union result "
+                f"alias {alias!r} as `{_WRAP_ALIAS}.{alias}` — optionally preceded by its "
+                f"`not {_WRAP_ALIAS}.{alias} is null` Document presence cell — got "
+                f"{cell.sql() if cell is not None else None!r} (m-sql)"
+            )
+        position += 1
+    if position != len(cells):
+        raise NonCanonicalError(
+            f"wrapped `union all`: the outer select projects {len(cells)} cell(s) over the "
+            f"union's {len(aliases)} result alias(es) {aliases}; only a Document read pair "
+            f"adds a cell, and every alias is projected through exactly once (m-sql)"
+        )
+
+
+def _assert_wrap_tail(select: exp.Select, union: exp.SetOperation) -> None:
+    """Every ordering key names a union result alias, through the wrap alias.
+
+    m-sql: an ``order by`` key names the result alias its contributor was allocated
+    above, never a branch's physical spelling, and a key over a Structured Column
+    member lowers to the same extraction taken against the union alias.
+    """
+    order = select.args.get("order")
+    if order is None:
+        return
+    aliases = set(union.named_selects)
+    for column in order.find_all(exp.Column):
+        if _wrap_column(column) not in aliases:
+            raise NonCanonicalError(
+                f"wrapped `union all`: `order by` key {column.sql()!r} must name one of the "
+                f"union's result aliases {sorted(aliases)} through `{_WRAP_ALIAS}` (m-sql)"
+            )
+
+
 def wrapped_union_source(select: exp.Select) -> exp.SetOperation | None:
     """The set operation *select* wraps as m-sql's derived table ``u``, else ``None``.
 
@@ -356,29 +429,42 @@ def wrapped_union_source(select: exp.Select) -> exp.SetOperation | None:
     wrap is a SCOPE boundary rather than a source of its own: the outer select names
     no table, and each branch keeps restarting its own ``t0, t1, …`` sequence.
 
-    Only that exact shape is recognized, because the scope boundary is what it buys
-    and any other shape has tables of its own in the outer scope. The union must be
-    the sole ``from`` source, aliased ``u``, joined to nothing; the outer select must
-    project named cells rather than a wildcard, carry the tail that is the only reason
-    to wrap, and carry no clause the wrap does not move outward. A union reached any
-    other way — the locking table-per-hierarchy partitioned read JOINS its derived
-    identity relation — is a source among others and deliberately not one, and a wrap
-    in any other shape keeps its branches in the outer scope, where rule 1's alias
-    sequence rejects the statement.
+    ``None`` means *select* does not take a set operation as its sole ``from`` source
+    at all — the locking table-per-hierarchy partitioned read JOINS its derived
+    identity relation, so that union is a source among others and its branches share
+    the outer scope's alias sequence. Anything that DOES take one is judged as the
+    wrap and raises :class:`NonCanonicalError` unless it is the wrap in full: aliased
+    ``u``, joined to nothing, carrying the tail that is the only reason to wrap and no
+    clause the wrap does not move outward, projecting each of the union's result
+    aliases through exactly once, and ordering only by those aliases. Refusing here is
+    what keeps a malformed wrapper from falling through to be scored as an ordinary
+    select whose branch aliases happen to run ``t0, t1, …`` globally.
     """
     source = select.args.get("from_")
     inner = source.this if isinstance(source, exp.From) else None
     if not isinstance(inner, exp.Subquery) or not isinstance(inner.this, exp.SetOperation):
         return None
+    union = inner.this
     if inner.alias != _WRAP_ALIAS:
-        return None
-    if any(select.args.get(clause) for clause in _WRAP_FORBIDDEN):
-        return None
+        raise NonCanonicalError(
+            f"a derived `union all` is the wrap m-sql names {_WRAP_ALIAS!r}, got "
+            f"{inner.alias or None!r}"
+        )
+    forbidden = [clause for clause in _WRAP_FORBIDDEN if select.args.get(clause)]
+    if forbidden:
+        raise NonCanonicalError(
+            f"wrapped `union all`: the wrap moves only the result-shape tail outward, but "
+            f"the outer select carries {forbidden} (m-sql)"
+        )
     if not any(select.args.get(clause) for clause in _WRAP_TAIL):
-        return None
-    if any(projection.is_star for projection in select.expressions):
-        return None
-    return inner.this
+        raise NonCanonicalError(
+            "wrapped `union all`: the result-shape tail is the only reason to wrap, so a "
+            "wrap carrying no `order by` / `limit` is a second spelling of the bare union "
+            "(m-sql)"
+        )
+    _assert_wrap_projection(select, union)
+    _assert_wrap_tail(select, union)
+    return union
 
 
 def _canonical_select_scopes(tree: Expr) -> list[exp.Select]:
@@ -407,6 +493,13 @@ def _canonical_select_scopes(tree: Expr) -> list[exp.Select]:
                 f"m-sql set operation is `union all` (the table-per-concrete-subtype "
                 f"abstract-read lowering) — a plain `union` de-duplicates rows and "
                 f"`intersect` / `except` are not emitted"
+            )
+        tail = [clause for clause in _WRAP_TAIL if tree.args.get(clause)]
+        if tail:
+            raise NonCanonicalError(
+                f"a `union all` carrying {tail} must wrap the whole union as the derived "
+                f"table `{_WRAP_ALIAS}` and apply the result-shape tail against that alias "
+                f"(m-sql); the set operation itself carries no tail"
             )
         scopes: list[exp.Select] = []
         for side in (tree.this, tree.expression):
