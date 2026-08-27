@@ -96,6 +96,7 @@ from .storage_layout import (
     PositionLayoutView,
     RelationalDocument,
     TableLayout,
+    ValueObjectContributor,
     position_projection,
     position_view,
     validate_storage_layout,
@@ -2126,6 +2127,56 @@ def _placeholder_types(
     return [types.get(column.contributor) for column in columns]
 
 
+def _has_document_resident_attribute(case: Case, entity: Entity) -> bool:
+    """Whether the layout placed any of *entity*'s own Attributes inside its
+    Structured Column — the one need that reaches a Relational Document Layout's
+    shared Column from a row-form read (`m-sql` *Read projection*, rule 5)."""
+    resident = {member.column for member in _document_layout_members(case, entity)[1]}
+    return any(attribute["column"] in resident for attribute in entity.attributes)
+
+
+def _is_instance_form(case: Case) -> bool:
+    """Whether a read case's authored result form is the object lane.
+
+    `m-case-format` *Read result form*: a ``then.graph`` / ``then.graphs``
+    observation is instance-form and ``then.rows`` is row-form, which is the same
+    partition the read dispatch below routes on.
+    """
+    return case.expected_graph is not None or case.expected_graphs is not None
+
+
+def _projected_position_ordinals(
+    case: Case, view: PositionLayoutView, position_branches: list[tuple[PositionBranch, str]]
+) -> tuple[int, ...]:
+    """The position-column ordinals a read of *case*'s result form projects.
+
+    Every non-`Document` contributor is projected in both result forms. A
+    `Document` one is not: a top-level Value Object occurrence's own Structured
+    Column reaches only an instance-form read (`m-sql` *Read projection*, rule 3),
+    and a Relational Document Layout's shared Structured Column reaches a row-form
+    read as well, but only to produce a member the layout placed inside it (rule
+    5) — and in a row-form read the members requested are the Attributes alone,
+    rule 3 having already omitted every occurrence. So the superset a `union all`
+    branch aligns to, and the result aliases allocated over it, are form-dependent
+    wherever the position holds a `Document` contributor.
+    """
+    instance_form = _is_instance_form(case)
+    document_resident = any(
+        _has_document_resident_attribute(case, case.model.entity(name))
+        for _branch, name in position_branches
+    )
+    return tuple(
+        ordinal
+        for ordinal, column in enumerate(view.columns)
+        if column.tier is not ColumnTier.DOCUMENT
+        or (
+            instance_form
+            if isinstance(column.contributor, ValueObjectContributor)
+            else instance_form or document_resident
+        )
+    )
+
+
 def _canonical_concrete_order(family: Family, target_name: str, effective: list[str]) -> list[str]:
     """*effective* re-sorted into the family's CANONICAL sibling-set order.
 
@@ -2306,9 +2357,16 @@ def _assert_tpcs_union_shape(
     mapping, not the Postgres one). Parsed from the golden text, so it is
     row-count-independent — a zero-row abstract read still witnesses a mis-ordered
     branch, a dropped superset column, a bare/mis-typed placeholder, or a wrong literal.
+
+    The superset is the position's contributor sequence restricted to what the
+    case's own result form projects (:func:`_projected_position_ordinals`), so a
+    row-form read of a position holding a `Document` slot is graded on omitting it
+    rather than on carrying it.
     """
-    superset = list(view.column_spellings)
-    placeholder_types = _placeholder_types(case.model, view.columns)
+    ordinals = _projected_position_ordinals(case, view, position_branches)
+    superset = [view.column_spellings[ordinal] for ordinal in ordinals]
+    position_types = _placeholder_types(case.model, view.columns)
+    placeholder_types = [position_types[ordinal] for ordinal in ordinals]
     expected_columns = [*_tpcs_result_aliases(superset), _TPCS_VARIANT_COLUMN]
     for dialect in sorted(case.golden_dialects):
         statements = case.golden_statements(dialect)
@@ -2357,7 +2415,7 @@ def _assert_tpcs_union_shape(
                 position,
                 name,
                 superset,
-                position_branch.slots,
+                tuple(position_branch.slots[ordinal] for ordinal in ordinals),
                 placeholder_types,
                 dialect,
             )
@@ -2394,10 +2452,14 @@ def _materialize_tpcs_family_variant(
         )
     position_branches = _tpcs_position_branches(case, family, ordered, view)
     _assert_tpcs_union_shape(case, view, position_branches)
-    superset = list(view.column_spellings)
+    ordinals = _projected_position_ordinals(case, view, position_branches)
+    superset = [view.column_spellings[ordinal] for ordinal in ordinals]
     result_aliases = _tpcs_result_aliases(superset)
     column_counts = {column: superset.count(column) for column in set(superset)}
-    slots_by_variant = {name: branch.slots for branch, name in position_branches}
+    slots_by_variant = {
+        name: tuple(branch.slots[ordinal] for ordinal in ordinals)
+        for branch, name in position_branches
+    }
     layouts_by_variant = {name: branch.layout for branch, name in position_branches}
 
     materialized: list[dict[str, Any]] = []
@@ -3282,27 +3344,48 @@ def _graph_node(model: Model, entity: Entity, row: dict[str, Any]) -> dict[str, 
     views are already name-keyed by :func:`_materialize_owner_node` and the
     assembly, and `familyVariant` names no declared member, so both pass through.
 
-    The rename map comes from the node's OWN concrete Entity where the row states
-    one: an abstract-root read narrows each node to its variant's declared
-    columns, and two concrete siblings may spell one column name for two
-    different members. A polymorphic level that projects no variant is read at an
-    abstract position that declares none of its descendants' own members, so the
-    model's remaining declarations fill what that position cannot name — never
-    overriding what it can.
+    Both the occurrence decode and the rename map come from the node's OWN
+    concrete Entity where the row states one: an abstract-root read narrows each
+    node to its variant's declared columns, two concrete siblings may spell one
+    column name for two different members, and an occurrence a single concrete
+    declares is invisible from the abstract position the read targeted. A
+    polymorphic level that projects no variant is read at an abstract position
+    that declares none of its descendants' own members, so the model's remaining
+    declarations fill what that position cannot name — never overriding what it
+    can.
     """
-    node = _materialize_owner_node(entity, row)
     concrete = entity
-    variant = node.get("familyVariant")
+    variant = row.get("familyVariant")
     if isinstance(variant, str):
         try:
             concrete = model.entity(variant)
         except KeyError:
             concrete = entity
+    node = _materialize_owner_node(concrete, row)
     names = {attribute["column"]: attribute["name"] for attribute in concrete.attributes}
     for other in model.entities:
         for attribute in other.attributes:
             names.setdefault(attribute["column"], attribute["name"])
     return {names.get(key, key): value for key, value in node.items()}
+
+
+def _position_value_object_columns(case: Case, entity: Entity) -> set[str]:
+    """Every top-level Value Object Column a read of *entity*'s position can carry.
+
+    An abstract inheritance node declares none of its concretes' own members, so
+    an occurrence a single concrete declares is invisible from the position the
+    query targeted while still arriving in that concrete's own rows. The union
+    over the position is therefore what an instance-form read of it materializes,
+    and it collapses to the entity's own occurrences for every concrete or
+    non-inheritance target.
+    """
+    family = Family(case.model.entity_defs)
+    position = family.concrete_descendants(entity.name) if entity.role else []
+    return {
+        vo["column"]
+        for name in (entity.name, *position)
+        for vo in case.model.entity(name).value_objects
+    }
 
 
 def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
@@ -3343,7 +3426,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     (golden,) = case.golden_statements(dialect)
     entity = case.model.entity(case.object_query["target"])
 
-    value_object_columns = {vo["column"] for vo in entity.value_objects}
+    value_object_columns = _position_value_object_columns(case, entity)
     # An instance form additionally carries every applicable occurrence, so a
     # Relational Document Layout read fans those out of its one Structured Column
     # too — after which each occurrence sits under the very column name a `Columns`

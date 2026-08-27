@@ -1351,6 +1351,7 @@ def test_case_runner_consumes_storage_layout_for_validation_reads_and_observatio
         "RelationalDocument",
         "STORAGE_LAYOUT_MODEL_REJECTED_RULES",
         "TableLayout",
+        "ValueObjectContributor",
         "position_projection",
         "position_view",
         "validate_storage_layout",

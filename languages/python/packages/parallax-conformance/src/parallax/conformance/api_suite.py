@@ -133,6 +133,8 @@ RECIPES: Final[list[Recipe]] = [
             + "\n\n"
             + inspect.getsource(read_models.Receipt)
             + "\n\n"
+            + inspect.getsource(read_models.Annotation)
+            + "\n\n"
             + inspect.getsource(read_models.Memo)
             + "\n\n"
             + inspect.getsource(snapshot_recipes.read_a_table_per_concrete_subtype_family)
@@ -1371,6 +1373,14 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
         "lanes; no separate idiomatic API story is needed"
     ),
     "m-inheritance-136": _TPCS_UNION_RESULT_SHAPE_REASON,
+    "m-inheritance-137": (
+        "the developer spelling is the exercised instance-form abstract-target `db.find` "
+        "of m-inheritance-109, asked of the whole root position instead of a narrowed one: "
+        "the call is identical and what differs is the emitted projection, which carries "
+        "the document read pair for the one branch declaring the occurrence and the typed "
+        "`NULL` placeholder for the branches declaring none — graded byte-exact by the "
+        "compile lane and end to end by the database-backed run lane"
+    ),
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,

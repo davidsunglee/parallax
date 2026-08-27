@@ -723,8 +723,10 @@ def test_tpcs_position_projection_order_is_canonical() -> None:
     # The stable cross-Table contributor ORDER (not just the set): the inherited
     # prefix in ANCESTRY order (id, title, folder_id, currency) then the
     # per-subtype OWN-column blocks in ALPHABETICAL subtype order — Invoice's
-    # amount_due, then Memo's body, then Receipt's paid_amount. The passed
-    # effective set is deliberately shuffled to prove canonicalization.
+    # amount_due, then Memo's body, then Receipt's paid_amount — and finally
+    # Memo's `annotation`, whose `Document` tier trails every scalar however early
+    # its declaring subtype sorts. The passed effective set is deliberately
+    # shuffled to prove canonicalization.
     defs = _document_defs()
     layout = compile_storage_layout(defs)
     family = Family(defs)
@@ -736,6 +738,7 @@ def test_tpcs_position_projection_order_is_canonical() -> None:
         "amount_due",
         "body",
         "paid_amount",
+        "annotation",
     )
 
 

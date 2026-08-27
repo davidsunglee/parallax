@@ -1318,6 +1318,16 @@
           "declaringOwner": "parallax.compatibility.Memo",
           "effectiveNullable": false,
           "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Memo"
+          ],
+          "column": "annotation",
+          "contributor": "valueObject:parallax.compatibility.Memo.annotation",
+          "declaringOwner": "parallax.compatibility.Memo",
+          "effectiveNullable": true,
+          "tier": "document"
         }
       ],
       "physicalPrimaryKey": [
