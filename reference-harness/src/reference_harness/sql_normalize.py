@@ -378,16 +378,24 @@ class WrapOrderKey:
 class WrapFacts:
     """The model and query facts the wrap's canonical shape depends on.
 
-    A statement carries none of them: which result alias holds a ``Document``, which
-    Sort Keys the read authored, and whether it capped its result are all facts of the
-    model and the Object Query behind the statement. A caller holding both supplies
-    them so the wrap is graded against the read it lowers, rather than against the
-    widest shape SQL alone admits.
+    A statement's TEXT carries none of them: which result alias holds a ``Document``,
+    which Sort Keys the read authored, and the cap it declared are all facts of the
+    model and the Object Query behind the statement, and the values its ``?`` holes
+    stand for are authored beside the text rather than in it. A caller holding them
+    supplies them so the wrap is graded against the read it lowers, rather than
+    against the widest shape SQL alone admits.
+
+    ``limit`` is the authored cap itself, not merely whether one exists, so the tail's
+    cap bind is compared with the row count the query asked for. ``binds`` is the whole
+    statement's bind list in order; the tail's own binds are its trailing entries,
+    because a wrap's binds follow every branch's (m-sql). ``None`` where the caller has
+    no bind list to grade against.
     """
 
     document_aliases: frozenset[str]
     order_keys: tuple[WrapOrderKey, ...]
-    limited: bool
+    limit: int | None = None
+    binds: tuple[object, ...] | None = None
 
 
 def _wrap_column(node: Expr | None) -> str | None:
@@ -563,19 +571,23 @@ def _wrap_order_key(node: Expr | None, dialect: str) -> str | None:
     return _extracted_wrap_column(node.this if isinstance(node, exp.Cast) else node, dialect)
 
 
-def _wrap_rank_term(node: Expr | None) -> tuple[str, bool] | None:
-    """The alias a Null Placement rank term ranks and the placement it reaches.
+def _wrap_rank_term(node: Expr | None, dialect: str) -> tuple[Expr, str, bool] | None:
+    """What a Null Placement rank term ranks, the alias it reaches, and its placement.
 
     MariaDB has no ``NULLS FIRST/LAST`` syntax and compensates with a leading boolean
-    term instead (``m-dialect`` *NULL ordering*): ``u.<alias> is null`` sorts ``NULL``s
-    last and ``not u.<alias> is null`` sorts them first. ``None`` for anything else.
+    term instead (``m-dialect`` *NULL ordering*): ``<key> is null`` sorts ``NULL``s
+    last and ``not <key> is null`` sorts them first. The ranked ``<key>`` is the WHOLE
+    key term the rank precedes — a result alias, or the document extraction over one
+    under its declared cast — so a rank over a ``Document``-resident key is recognized
+    exactly as the key it ranks is. ``None`` for anything else.
     """
     nulls_first = isinstance(node, exp.Not)
     inner = node.this if nulls_first else node
     if not isinstance(inner, exp.Is) or not isinstance(inner.expression, exp.Null):
         return None
-    alias = _wrap_column(inner.this)
-    return None if alias is None else (alias, nulls_first)
+    ranked = inner.this
+    alias = _wrap_order_key(ranked, dialect)
+    return None if alias is None or ranked is None else (ranked, alias, nulls_first)
 
 
 @dataclass(frozen=True, slots=True)
@@ -584,16 +596,21 @@ class _OrderTerm:
 
     ``expression`` is what the term sorts on, compared as a parsed expression so a
     dialect's rendering conventions cannot make an equal term unequal; ``spelling`` is
-    the whole term as it reads. ``nulls_first`` is ``None`` where the parse settles
-    nothing worth asserting — sqlglot resolves an omitted placement to the dialect's
-    native one, so a redundant explicit suffix reads the same as none, and a rank term
-    is a boolean that is never itself ``NULL``.
+    the whole term as it reads, and ``binds`` the values its ``?`` holes carry.
+    ``direction`` is the direction KEYWORD the term must spell, and ``None`` for the
+    rank term, which spells none: m-sql fixes ``<key> asc`` and ``<key> desc`` as the
+    canonical key terms, so an omitted ``asc`` is a second spelling of the first and a
+    direction on a rank term is a third. ``nulls_first`` is ``None`` where the parse
+    settles nothing worth asserting — sqlglot resolves an omitted placement to the
+    dialect's native one, so a redundant explicit suffix reads the same as none, and a
+    rank term is a boolean that is never itself ``NULL``.
     """
 
     expression: str
     spelling: str
-    descending: bool
+    direction: str | None
     nulls_first: bool | None
+    binds: tuple[str, ...] = ()
 
 
 def _extraction_cast(neutral_type: str | None, seam: _DialectSeam) -> str | None:
@@ -610,6 +627,18 @@ def _extraction_cast(neutral_type: str | None, seam: _DialectSeam) -> str | None
     return seam.casts.get(neutral_type)
 
 
+def _path_binds(path: tuple[str, ...], seam: _DialectSeam) -> tuple[str, ...]:
+    """The values a document extraction of *path* binds, in bind order (``m-dialect``).
+
+    Postgres carries the path segments as separate key binds; MariaDB carries the
+    whole ``$.a.b`` JSON-path string as one. Spelled here rather than read off any
+    emitter: the verifier is an independent oracle, so it derives the binds it expects.
+    """
+    if not path:
+        return ()
+    return path if seam.path_binds_per_segment else ("$." + ".".join(path),)
+
+
 def _key_spelling(key: WrapOrderKey, seam: _DialectSeam) -> str:
     """How *key* names its value: the union result alias, or the extraction over it.
 
@@ -620,8 +649,8 @@ def _key_spelling(key: WrapOrderKey, seam: _DialectSeam) -> str:
     column = f"{_WRAP_ALIAS}.{key.alias}"
     if not key.document_path:
         return column
-    binds = len(key.document_path) if seam.path_binds_per_segment else 1
-    extraction = f"{seam.extraction}({column}, {', '.join(['?'] * binds)})"
+    holes = ", ".join(["?"] * len(_path_binds(key.document_path, seam)))
+    extraction = f"{seam.extraction}({column}, {holes})"
     target = _extraction_cast(key.neutral_type, seam)
     return extraction if target is None else f"cast({extraction} as {target})"
 
@@ -636,20 +665,27 @@ def _expected_order_terms(key: WrapOrderKey, seam: _DialectSeam) -> list[_OrderT
     before it.
     """
     spelling = _key_spelling(key, seam)
+    binds = _path_binds(key.document_path, seam)
     native = key.descending == seam.null_is_largest
     requested = key.nulls_first if key.nullable else native
     compensates = requested != native
     terms: list[_OrderTerm] = []
     if compensates and not seam.placement_suffix:
         rank = f"{'not ' if requested else ''}{spelling} is null"
-        terms.append(_OrderTerm(expression=rank, spelling=rank, descending=False, nulls_first=None))
+        terms.append(
+            _OrderTerm(
+                expression=rank, spelling=rank, direction=None, nulls_first=None, binds=binds
+            )
+        )
     suffix = f" nulls {'first' if requested else 'last'}" if compensates else ""
+    direction = "desc" if key.descending else "asc"
     terms.append(
         _OrderTerm(
             expression=spelling,
-            spelling=f"{spelling} {'desc' if key.descending else 'asc'}{suffix}",
-            descending=key.descending,
+            spelling=f"{spelling} {direction}{suffix}",
+            direction=direction,
             nulls_first=requested if seam.placement_suffix else native,
+            binds=binds,
         )
     )
     return terms
@@ -660,23 +696,23 @@ def _ordered_term(node: Expr | None) -> Expr | None:
     return node.this if isinstance(node, exp.Ordered) else node
 
 
+# How the parse reports a term's direction keyword: absent, `asc`, `desc`. The rank
+# term spells none, so `None` maps to `None` rather than to the ascending default.
+_DIRECTION_IS_DESC: Mapping[str | None, bool | None] = {None: None, "asc": False, "desc": True}
+
+
 def _assert_authored_wrap_order(
-    terms: list[Expr], dialect: str, keys: tuple[WrapOrderKey, ...]
+    terms: list[Expr], dialect: str, expected: list[_OrderTerm]
 ) -> None:
     """The wrap orders by exactly the authored Sort Keys, as *dialect* renders them.
 
     Each expected term is parsed under the same dialect as the statement and compared
     as an expression, so what is asserted is the term the read lowers to rather than a
-    spelling of it.
+    spelling of it. The direction keyword is compared as the tri-state the parse
+    reports — absent, ``asc``, ``desc`` — so an omitted ``asc`` is refused for the
+    second spelling of the canonical term it is.
     """
-    seam = _DIALECT_SEAM.get(dialect)
-    if seam is None:
-        raise NonCanonicalError(
-            f"wrapped `union all`: m-dialect fixes no `order by` seam for {dialect!r}, so "
-            f"the authored Sort Keys cannot be graded against it"
-        )
     engine = sqlglot_dialect(dialect)
-    expected = [term for key in keys for term in _expected_order_terms(key, seam)]
     if len(terms) != len(expected):
         raise NonCanonicalError(
             f"wrapped `union all`: the outer `order by` has {len(terms)} term(s), but the "
@@ -688,7 +724,7 @@ def _assert_authored_wrap_order(
         if (
             not isinstance(found, exp.Ordered)
             or found.this != sqlglot.parse_one(term.expression, read=engine)
-            or bool(found.args.get("desc")) != term.descending
+            or found.args.get("desc") is not _DIRECTION_IS_DESC[term.direction]
             or (
                 term.nulls_first is not None
                 and bool(found.args.get("nulls_first")) != term.nulls_first
@@ -700,6 +736,45 @@ def _assert_authored_wrap_order(
             )
 
 
+def _assert_wrap_tail_binds(facts: WrapFacts, expected: list[_OrderTerm], dialect: str) -> None:
+    """The tail's binds are the ones the read it lowers puts there.
+
+    The tail's holes are the Document paths its ``order by`` extracts under, in term
+    order, then the cap — and a wrap's binds follow every branch's (m-sql), so they are
+    the bind list's trailing entries. Comparing the VALUES is what refuses a tail whose
+    shape is canonical but whose path addresses another member of the same arity, or
+    whose cap is not the row count the query asked for.
+    """
+    if facts.binds is None:
+        return
+    values: list[object] = [bind for term in expected for bind in term.binds]
+    if facts.limit is not None:
+        values.append(facts.limit)
+    if not values:
+        return
+    found = list(facts.binds)[len(facts.binds) - len(values) :]
+    if len(facts.binds) < len(values) or found != values:
+        raise NonCanonicalError(
+            f"wrapped `union all`: the tail binds {values!r} in {dialect} — the Document "
+            f"path(s) its `order by` extracts under, then the read's cap, after every "
+            f"branch bind — got {found!r} (m-sql / m-dialect / m-object-query)"
+        )
+
+
+def _assert_directed_key(term: Expr | None) -> None:
+    """One ``order by`` key term spells its direction.
+
+    m-sql fixes the canonical key terms as ``<key> asc`` and ``<key> desc``; a term
+    leaving the direction to the dialect's default is a second spelling of the first.
+    """
+    if not isinstance(term, exp.Ordered) or term.args.get("desc") is None:
+        raise NonCanonicalError(
+            f"wrapped `union all`: `order by` key "
+            f"{term.sql() if term is not None else None!r} spells no direction, but the "
+            f"canonical term is `<key> asc` / `<key> desc` (m-sql)"
+        )
+
+
 def _assert_wrap_order_shape(terms: list[Expr], union: exp.SetOperation, dialect: str) -> None:
     """Every ordering key names a union result alias, through the wrap alias.
 
@@ -709,33 +784,73 @@ def _assert_wrap_order_shape(terms: list[Expr], union: exp.SetOperation, dialect
     compensates a Null Placement with a rank term rather than a suffix prefixes that
     term to its key's own (``m-dialect``), so a rank term is admitted there — and only
     there — and only immediately before the key it ranks.
+
+    Which placement a key REQUESTS is a query fact, but which one a rank term reaches
+    is not: a rank term exists only where the dialect's native placement differs from
+    the request, and MariaDB's native placement is fixed by the direction, so
+    ``<key> is null`` compensates an ascending key and ``not <key> is null`` a
+    descending one and neither compensates the other. That pairing, the identity of the
+    ranked key with the key ranked, and the rank term's own lack of a direction are all
+    gradeable from the statement alone.
     """
     seam = _DIALECT_SEAM.get(dialect)
     ranked = seam is not None and not seam.placement_suffix
     aliases = set(union.named_selects)
     position = 0
     while position < len(terms):
-        rank = _wrap_rank_term(_ordered_term(terms[position])) if ranked else None
-        if rank is not None and rank[0] in aliases:
-            following = terms[position + 1] if position + 1 < len(terms) else None
-            if _wrap_order_key(_ordered_term(following), dialect) != rank[0]:
+        rank = _wrap_rank_term(_ordered_term(terms[position]), dialect) if ranked else None
+        if rank is not None and rank[1] in aliases:
+            key, _, nulls_first = rank
+            if isinstance(terms[position], exp.Ordered) and (
+                terms[position].args.get("desc") is not None
+            ):
                 raise NonCanonicalError(
                     f"wrapped `union all`: the Null Placement rank term "
-                    f"{terms[position].sql()!r} must be followed by the key it ranks, "
-                    f"`{_WRAP_ALIAS}.{rank[0]}` (m-dialect)"
+                    f"{terms[position].sql()!r} carries its own direction; the compensating "
+                    f"form ranks ascending and the direction rides the key it precedes "
+                    f"(m-dialect)"
+                )
+            following = terms[position + 1] if position + 1 < len(terms) else None
+            direction = "desc" if nulls_first else "asc"
+            if (
+                not isinstance(following, exp.Ordered)
+                or following.this != key
+                or following.args.get("desc") is not nulls_first
+            ):
+                raise NonCanonicalError(
+                    f"wrapped `union all`: the Null Placement rank term "
+                    f"{terms[position].sql()!r} compensates only a {direction} key, so it must "
+                    f"be followed by `{key.sql()} {direction}` — got "
+                    f"{following.sql() if following is not None else None!r} (m-dialect)"
                 )
             position += 2
             continue
-        key = _ordered_term(terms[position])
-        if _wrap_order_key(key, dialect) not in aliases:
+        key_expression = _ordered_term(terms[position])
+        if _wrap_order_key(key_expression, dialect) not in aliases:
             raise NonCanonicalError(
                 f"wrapped `union all`: `order by` key "
-                f"{key.sql() if key is not None else None!r} must name one of the union's "
-                f"result aliases {sorted(aliases)} through `{_WRAP_ALIAS}` — as "
-                f"`{_WRAP_ALIAS}.<alias>`, or as the {dialect} document extraction over it "
-                f"under its declared cast (m-sql)"
+                f"{key_expression.sql() if key_expression is not None else None!r} must name "
+                f"one of the union's result aliases {sorted(aliases)} through "
+                f"`{_WRAP_ALIAS}` — as `{_WRAP_ALIAS}.<alias>`, or as the {dialect} document "
+                f"extraction over it under its declared cast (m-sql)"
             )
+        _assert_directed_key(terms[position])
         position += 1
+
+
+def _assert_wrap_cap_shape(select: exp.Select) -> None:
+    """A cap is exactly ``limit ?`` (m-sql).
+
+    The row count crosses as a bind, so a literal, an arithmetic fold, a function
+    call, and a column are all caps the emitter never writes — and a column or a
+    non-deterministic function makes the capped row set depend on the data it caps.
+    """
+    limit = select.args.get("limit")
+    if limit is not None and not isinstance(limit.expression, exp.Placeholder):
+        raise NonCanonicalError(
+            f"wrapped `union all`: the cap is `limit ?` — the row count crosses as a bind, "
+            f"never as a literal, an expression, or a column — got {limit.sql()!r} (m-sql)"
+        )
 
 
 def _assert_wrap_tail(
@@ -743,23 +858,33 @@ def _assert_wrap_tail(
 ) -> None:
     """The result-shape tail the wrap exists to carry, as m-sql and m-dialect fix it.
 
-    With *facts* the tail is graded against the read it lowers: the cap is present
-    exactly when the query authored one, and the ordering terms are the ones the
-    authored Sort Keys render to in *dialect*. Without them only the ordering keys'
-    shape can be judged, since no statement carries the query behind it.
+    With *facts* the tail is graded against the read it lowers: the ordering terms are
+    the ones the authored Sort Keys render to in *dialect*, and the cap is present
+    exactly when the query authored one and binds the row count it asked for. Without
+    them only the ordering keys' shape can be judged, since no statement carries the
+    query behind it — but the cap's own shape is fixed by m-sql either way.
     """
     order = select.args.get("order")
     terms: list[Expr] = list(order.expressions) if order is not None else []
+    _assert_wrap_cap_shape(select)
     if facts is None:
         _assert_wrap_order_shape(terms, union, dialect)
         return
-    if bool(select.args.get("limit")) is not facts.limited:
+    seam = _DIALECT_SEAM.get(dialect)
+    if seam is None:
         raise NonCanonicalError(
-            f"wrapped `union all`: the read {'declares' if facts.limited else 'declares no'} "
-            f"`limit`, but the outer select carries "
-            f"{'none' if facts.limited else 'one'} (m-sql)"
+            f"wrapped `union all`: m-dialect fixes no `order by` seam for {dialect!r}, so "
+            f"the authored Sort Keys cannot be graded against it"
         )
-    _assert_authored_wrap_order(terms, dialect, facts.order_keys)
+    capped = facts.limit is not None
+    if bool(select.args.get("limit")) is not capped:
+        raise NonCanonicalError(
+            f"wrapped `union all`: the read {'declares' if capped else 'declares no'} "
+            f"`limit`, but the outer select carries {'none' if capped else 'one'} (m-sql)"
+        )
+    expected = [term for key in facts.order_keys for term in _expected_order_terms(key, seam)]
+    _assert_authored_wrap_order(terms, dialect, expected)
+    _assert_wrap_tail_binds(facts, expected, dialect)
 
 
 def wrapped_union_source(
@@ -812,7 +937,6 @@ def wrapped_union_source(
         )
     _assert_wrap_projection(select, union, facts)
     _assert_wrap_tail(select, union, dialect, facts)
-    return union
     return union
 
 
