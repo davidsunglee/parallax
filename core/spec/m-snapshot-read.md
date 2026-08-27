@@ -186,11 +186,12 @@ Within **one materialized graph**, one row is **one node**:
   milestone-set read materializes one graph per milestone; a streamed delivery
   materializes one graph per root. What every one of them promises is the same
   sentence above, applied to the graph a node was published from — so a row that
-  two *result roots* both reach is one node exactly where one graph carries
-  both, which an eager read guarantees and a streamed delivery declines.
-  Root-local is therefore the floor every materialization meets, and sharing
-  wider than one root is **permitted but never promised**. A caller that needs
-  to know two roots reached one row compares their identities.
+  two *result roots* both reach is one node only where one graph carries both,
+  which an eager read does and a streamed delivery does not. Neither is promised
+  to: **root-local is the floor every materialization meets and the whole of
+  what any of them promises**, so sharing wider than one root is permitted and
+  never promised. A caller that needs to know two roots reached one row compares
+  their identities.
 - A **value object** (`m-value-object`) is not a node: it has no identity, adds
   no relationship hop, and materializes *with* its owning entity as a plain
   nested value carrying the members *What a materialized value carries* fixes
@@ -289,10 +290,11 @@ delivered in full, which proves it without asking.
 
 Three divergences, and they apply identically to every representation.
 
-- **Identity narrows to root-local.** A row two result roots both reach is one
-  node per root, where a whole-result read may answer one node for both. Stated
-  in full under *Graph-local identity resolution* above, because the promise it
-  narrows governs both.
+- **Sharing narrows to root-local.** A row two result roots both reach is one
+  node per root, where a whole-result read may answer one node for both. The
+  promise is root-local either way, so what changes is what a caller can observe
+  beyond it rather than what they may rely on. Stated in full under *Graph-local
+  identity resolution* above, because the promise governs both.
 - **An unordered `limit` becomes specified.** `m-object-query` makes an
   unordered `limit` a cap rather than pagination, returning an unspecified
   matching subset. A stream orders by the Continuation Order before capping, so
