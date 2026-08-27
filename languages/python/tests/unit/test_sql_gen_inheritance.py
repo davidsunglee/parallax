@@ -36,6 +36,7 @@ DOCUMENT = model("document")
 DOCUMENT_LAYOUT = model("document-layout")
 INSTRUMENT = model("instrument")
 RATE = model("rate")
+MATERIALIZATION_KEYS = model("materialization-key-compatibility")
 
 
 def _narrow(model_: Any, *names: str) -> tuple[Any, ...]:
@@ -1213,3 +1214,87 @@ def test_family_attribute_resolution_spans_the_roots_projection_superset() -> No
         compile_read(
             oa.Comparison(op="eq", attr="Barren.y", value=1), meta, POSTGRES, target(meta, "Leaf")
         )
+
+
+# --------------------------------------------------------------------------- #
+# The union's result-shape tail (m-sql "Inheritance — table-per-concrete-      #
+# subtype lowering"). The two goldened witnesses are m-inheritance-134 / -135; #
+# these pin the seams a golden over `document.yaml` cannot reach, because that #
+# family's contributors neither collide nor live inside a document.            #
+# --------------------------------------------------------------------------- #
+def test_tpcs_union_refuses_only_a_genuinely_requested_read_lock() -> None:
+    # `entity_read_lock` hands the read its target's Effective Concurrency
+    # Strategy verbatim, so a participating read carries `optimistic` even though
+    # no suffix is ever emitted for it. The refusal tests what the append site
+    # tests — an actual shared row lock, which PostgreSQL grants over neither a
+    # `UNION` result nor any input of one, and which cannot be silently dropped
+    # because that lock is what licenses a later ungated write.
+    compiled = compile_read(
+        oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), lock="optimistic"
+    )
+    assert " union all " in compiled.statement.sql
+    assert "for share" not in compiled.statement.sql
+    with pytest.raises(SqlGenError, match="read-lock suffix over a table-per-concrete-subtype"):
+        compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), lock="locking")
+
+
+def test_tpcs_union_orders_by_the_collision_safe_result_alias() -> None:
+    # A contributor whose physical spelling is the synthetic `family_variant`
+    # carrier reaches the union only through its allocated internal alias, so
+    # ordering by it must name the alias — `u.family_variant` would order by the
+    # variant literal instead, silently answering a different query.
+    compiled = compile_read(
+        oa.All(),
+        MATERIALIZATION_KEYS,
+        POSTGRES,
+        target(MATERIALIZATION_KEYS, "Record"),
+        order_by=(oq.OrderKey(attr="catalog.Record.variantMarker", direction="asc"),),
+    )
+    assert compiled.statement.sql.endswith(") u order by u.parallax_attr_1 asc")
+    assert "t0.family_variant parallax_attr_1" in compiled.statement.sql
+
+
+def test_tpcs_union_orders_a_document_resident_key_through_the_union_alias() -> None:
+    # Under a Relational Document Layout the ordering key has no Column of its
+    # own, so the term is the dialect's extraction over the ONE Structured Column
+    # the union projects. Its path bind lands on the outer statement, after every
+    # branch bind and before the cap's. The wrapped branches project the document
+    # as a single aliased cell and the outer select expands the read pair.
+    compiled = compile_read(
+        oa.All(),
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, "Publication"),
+        order_by=(oq.OrderKey(attr="parallax.compatibility.Publication.title", direction="desc"),),
+        limit=2,
+        result_form="instance",
+    )
+    assert compiled.statement.sql == (
+        "select u.id, not u.payload is null, u.payload, u.family_variant from ("
+        "select t0.id, t0.payload, 'Book' family_variant from publication_book t0 union all "
+        "select t0.id, t0.payload, 'Film' family_variant from publication_film t0) u "
+        "order by jsonb_extract_path_text(u.payload, ?) desc limit ?"
+    )
+    assert compiled.statement.binds == ("title", 2)
+    assert compiled.document_reads == ((1, 2),)
+
+
+def test_tpcs_document_branches_omit_the_presence_cell_under_a_wrapped_union() -> None:
+    # A presence cell carries no result alias, so it cannot be addressed from
+    # outside a derived table; a wrapped union leaves the document slot a single
+    # aliased cell per branch and the outer select expands the pair.
+    plan = TpcsBranchPlan(
+        identity=EntityIdentity(None, "First"),
+        variant="First",
+        table="first_tbl",
+        columns=(
+            BranchColumn("first_payload", None, None, True, "payload", document=True),
+            BranchColumn("second_payload", None, None, False, "other_payload", document=True),
+        ),
+    )
+    projection, binds, document_reads = plan.projection(POSTGRES, "t0", document_pairs=False)
+    assert projection == (
+        "t0.first_payload payload, cast(null as jsonb) other_payload, 'First' family_variant"
+    )
+    assert binds == ()
+    assert document_reads == ()

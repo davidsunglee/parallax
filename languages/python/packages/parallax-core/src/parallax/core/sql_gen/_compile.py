@@ -51,6 +51,7 @@ from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as _inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
@@ -93,6 +94,7 @@ from parallax.core.sql_gen._inheritance import (
 from parallax.core.sql_gen._predicate import EntityScope as _EntityScope
 from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
 from parallax.core.storage_layout import DirectColumn as _DirectColumn
+from parallax.core.storage_layout import DocumentPath as _DocumentPath
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
 from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
@@ -692,8 +694,6 @@ def _compile_inheritance_read(
         entity,
         predicate,
         narrow_to,
-        order_keys,
-        limit,
         model,
         facet,
         storage,
@@ -729,7 +729,7 @@ def _compile_inheritance_read(
             return statement, plan.position, document_reads, transform
         case _TpcsUnionPlan():
             statement, document_reads, transform = _compile_tpcs_read(
-                plan, entity, model, facet, storage, dialect
+                plan, entity, order_keys, limit, model, facet, storage, dialect
             )
             return statement, plan.position, document_reads, transform
         case _:  # pragma: no cover - exhaustiveness guard
@@ -912,6 +912,8 @@ def _compile_tph_partitioned(
 def _compile_tpcs_read(
     plan: _TpcsUnionPlan,
     entity: EntityMetadata,
+    order_keys: tuple[OrderKey, ...],
+    limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
@@ -922,10 +924,16 @@ def _compile_tpcs_read(
 
     Each branch gets a FRESH ``_Ctx``: that is the whole mechanism behind a branch
     restarting its own alias scheme at `t0`, and behind the per-branch binds being
-    separable so they concatenate in the plan's canonical branch order. The
-    clause tail has no place to land in a union, which is why the plan refused an
-    `orderBy` / `limit` / read-lock read before reaching here.
+    separable so they concatenate in the plan's canonical branch order.
+
+    A `union all` has no clause tail of its own, so an ordered or limited read
+    wraps it as the derived table ``u`` and applies the tail against the union's
+    own result aliases — the shape a table-per-hierarchy partitioned read already
+    uses. The caller's predicate still lowers INSIDE each branch, where the branch
+    layout is what resolves a member's column; only the result-shape tail moves
+    outward. An unordered, uncapped read emits the bare union, unchanged.
     """
+    wrapped = bool(order_keys) or limit is not None
     branch_sqls: list[str] = []
     all_binds: list[object] = []
     document_reads: tuple[DocumentReadOrdinals, ...] | None = None
@@ -938,7 +946,9 @@ def _compile_tpcs_read(
             position=plan.position,
             variant=branch.identity,
         )
-        proj_sql, proj_binds, branch_document_reads = branch.projection(dialect, branch_scope.alias)
+        proj_sql, proj_binds, branch_document_reads = branch.projection(
+            dialect, branch_scope.alias, document_pairs=not wrapped
+        )
         if document_reads is None:
             document_reads = branch_document_reads
         elif document_reads != branch_document_reads:  # pragma: no cover - aligned union invariant
@@ -951,8 +961,75 @@ def _compile_tpcs_read(
         branch_sqls.append(" ".join(parts))
         all_binds.extend(branch_ctx.binds)
 
-    statement = _normalize(LoweredStatement(" union all ".join(branch_sqls), tuple(all_binds)))
-    return statement, document_reads or (), plan.transform
+    union = " union all ".join(branch_sqls)
+    if not wrapped:
+        statement = _normalize(LoweredStatement(union, tuple(all_binds)))
+        return statement, document_reads or (), plan.transform
+
+    outer_ctx = _Ctx(model, facet, storage, dialect)
+    outer_scope = _EntityScope(
+        outer_ctx,
+        entity,
+        _table_layout(storage, facet, plan.branches[0].identity),
+        alias="u",
+        position=plan.position,
+    )
+    projection, _projection_binds, outer_document_reads = plan.projection(
+        dialect, outer_scope.alias
+    )
+    outer_parts = [f"select {projection}", f"from ({union}) {outer_scope.alias}"]
+    if order_keys:
+        terms = [_tpcs_order_term(plan, outer_scope, key) for key in order_keys]
+        outer_parts.append("order by " + ", ".join(terms))
+    if limit is not None:
+        outer_parts.append(dialect.limit_clause())
+        outer_ctx.bind(limit)
+    statement = _normalize(LoweredStatement(" ".join(outer_parts), (*all_binds, *outer_ctx.binds)))
+    return statement, outer_document_reads, plan.transform
+
+
+def _tpcs_order_term(plan: _TpcsUnionPlan, scope: _EntityScope, key: OrderKey) -> str:
+    """One ``order by`` term measured against a wrapped union's result alias.
+
+    One thing differs from :func:`_order_term`: a member is named by the result
+    alias every branch projects it under rather than by any one branch's physical
+    spelling, because the union is the ordered relation and a colliding spelling
+    reaches it only through its allocated alias.
+
+    Nullability is the ordinary declared one. The positional rule (`m-object-query`)
+    admits a Sort Key only over a member applicable to every concrete in the active
+    position, so a legal key is owned by every branch and never meets that branch's
+    typed `NULL` placeholder.
+    """
+    attribute = scope.entity_attribute(key.attr)
+    direction = key.direction or "asc"
+    term = _tpcs_order_subject(plan, scope, attribute)
+    if attribute.nullable:
+        return scope.dialect.null_order(term, direction, key.nulls or "last")
+    return f"{term} {direction}"
+
+
+def _tpcs_order_subject(
+    plan: _TpcsUnionPlan, scope: _EntityScope, attribute: AttributeMetadata
+) -> str:
+    """The expression a wrapped union's ordering key compares, against the union alias.
+
+    Member Placement decides which contributor the union column belongs to, exactly
+    as it does inside a branch: a `DirectColumn` member claims its own, while a
+    `DocumentPath` member claims none and rides the slot the placement names. A
+    Relational Document Layout is declared by the family root, so every branch
+    places such a member at the same path inside the one Structured Column the union
+    projects, and the extraction is built once here rather than per branch.
+    """
+    placement = scope.layout.placement(attribute.identity)
+    document = placement if isinstance(placement, _DocumentPath) else None
+    column = plan.column_of(attribute.identity if document is None else document.slot.contributor)
+    reference = scope.dialect.qualified(scope.alias, column.result_alias)
+    if document is None:
+        return reference
+    extraction, path_binds = scope.dialect.nested_extract(reference, document.path)
+    scope.ctx.binds.extend(path_binds)
+    return scope.dialect.nested_cast(extraction, attribute.type)
 
 
 def _compile_tpcs_single(

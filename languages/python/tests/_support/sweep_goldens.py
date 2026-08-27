@@ -71,9 +71,11 @@ _TEMPORAL_VALUE_OBJECT_READS: Final[frozenset[str]] = frozenset(
 # table-per-hierarchy tag-predicate / abstract-superset / narrow / grouped-branch-OR
 # reads over payment.yaml and animal.yaml (001-006, 011-017), and table-per-concrete-
 # subtype single-concrete + union-all reads over document.yaml (050-053). All row-form
-# — compiled and run below.
+# — compiled and run below. `134`/`135` extend the union-all set with the result-shape
+# tail a `union all` has no place for: both wrap the union as a derived table and
+# apply `order by` — and, for `135`, the cap and its bind — against the union's alias.
 _INHERITANCE_READS: Final[frozenset[str]] = frozenset(
-    f"m-inheritance-{n:03d}" for n in (*range(1, 7), *range(11, 18), 50, 51, 52, 53)
+    f"m-inheritance-{n:03d}" for n in (*range(1, 7), *range(11, 18), 50, 51, 52, 53, 134, 135)
 )
 # The temporal-composed abstract reads (`m-inheritance-092`/`-093`, tagged both
 # `m-inheritance` and `m-temporal-read`) compile and run byte-exact
