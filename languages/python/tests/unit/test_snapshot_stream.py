@@ -175,6 +175,37 @@ def test_a_closed_stream_answers_nothing_at_all() -> None:
         stream.__enter__()
 
 
+def test_an_iterator_retained_past_the_scope_reads_nothing_and_yields_nothing() -> None:
+    # A view is taken inside the scope but consumed lazily, so every ADVANCE is
+    # its own entry point: an iterator first advanced after the scope closed
+    # issues no statement, publishes no root, and leaves the closed state
+    # standing rather than settling an exhausted one over it.
+    port = _pages([_order_row(1), _order_row(2)], [])
+    stream = _orders(port).stream(_all_orders(), batch_size=1)
+    with stream:
+        roots = iter(stream)
+    assert _reads(port) == []
+    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+        next(roots)
+    assert _reads(port) == []
+    assert repr(stream).endswith("state='closed')")
+
+
+def test_a_partly_drained_stream_does_not_resume_past_its_scope() -> None:
+    # The same rule at the harder position: the delivery is under way and the
+    # generator holds a live cursor, and it still reaches no page once the scope
+    # that answered it has closed.
+    port = _pages([_order_row(1)], [_order_row(2)], [])
+    stream = _orders(port).stream(_all_orders(), batch_size=1)
+    with stream:
+        roots = iter(stream)
+        assert next(roots).id == 1
+    drained = len(_reads(port))
+    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+        next(roots)
+    assert len(_reads(port)) == drained
+
+
 def test_the_pin_answers_before_the_first_page_and_matches_the_eager_read() -> None:
     # A stream computes its pin from the query rather than from a result, so it
     # is available before a single row is read and no page can revise what the

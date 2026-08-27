@@ -3022,9 +3022,13 @@ or descriptor authoring form and performs no audit stamping.
   discipline `UnitOfWork` already uses rather than by relying on
   `__enter__`/`__exit__`. Constructing a stream reaches nothing: the gate, the
   page plan, and every statement belong to the entered scope, so an un-entered
-  stream emits nothing and reads nothing. Entering twice, taking a second view
-  of either kind, taking a second pass, and reaching `pin` outside the scope all
-  raise `SnapshotStreamStateError`, whose message names the rule and never the
+  stream emits nothing and reads nothing. Delivery is lazy, so each ADVANCE of a
+  view is an entry point of its own: an iterator taken inside the scope and
+  advanced after it closed issues no statement, publishes no root, and leaves
+  the state the scope exit settled. Entering twice, taking a second view of
+  either kind, taking a second pass, advancing a view outside the scope that
+  answered it, and reaching `pin` outside the scope all raise
+  `SnapshotStreamStateError`, whose message names the rule and never the
   internals. Re-selecting one view is an error rather than a silent empty pass,
   which is the failure mode a still-callable streamed result invites. `pin` is
   available before the first page — a stream computes it from the query, as
