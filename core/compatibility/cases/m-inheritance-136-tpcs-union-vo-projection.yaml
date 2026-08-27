@@ -1,0 +1,55 @@
+# An ORDERED table-per-concrete-subtype `union all` over a Relational Document Layout
+# family: each branch projects the Structured Column as ONE aliased cell and the OUTER
+# select expands the document read pair against the union alias (m-inheritance,
+# m-storage-layout, m-sql, m-object-query, m-dialect, m-document-codec).
+#
+# Unwrapped, every branch projects its own pair — the presence cell `not t0.payload is
+# null` immediately followed by the document itself (m-inheritance-126). A presence
+# cell carries no result alias, so nothing outside a derived table can name it, and
+# wrapping the union to give the `order by` somewhere to land would strand the pair
+# inside. So the split moves rather than the projection: each branch contributes the
+# single aliased cell `t0.payload`, and the outer select rebuilds `not u.payload is
+# null, u.payload` over the union's own result alias.
+#
+# The ordering key is what forces that outer select to reach INTO the column. `title`
+# is document-resident under this layout, so it has no Column of its own to name; the
+# term is the dialect's extraction over the one Structured Column the union projects,
+# built once against `u` rather than once per branch. Its path bind is therefore an
+# OUTER bind, landing after every branch bind — here the branches bind nothing, so it
+# is the statement's only bind. `title` is non-nullable, so both dialects render the
+# plain term and neither emits a Null Placement suffix.
+#
+# The observed instances are m-inheritance-126's unchanged, which is the claim: only
+# where the pair is assembled moved, so each concrete still decodes its own document
+# with its own branch's shape and sibling-only members are omitted rather than
+# represented by null padding. `detail` is what makes that falsifiable — the two
+# concretes declare it at one path with incompatible types, so a document reaching the
+# wrong branch's decode answers a wrong value rather than erroring. Row comparison is
+# order-insensitive, so the ordering itself is graded by the golden text and by the
+# independent oracle, which reaches the same instances through the plain unordered
+# union with its branches in the other order.
+model: models/document-layout.yaml
+tags: [m-inheritance, m-storage-layout, m-sql, m-object-query, m-dialect, m-document-codec, table-per-concrete-subtype, document-layout, union-all, root, orderBy, ordering, directive, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Publication
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.Publication.title
+        direction: desc
+then:
+  statements:
+    - sql:
+        postgres: select u.id, not u.payload is null, u.payload, u.family_variant from (select t0.id, t0.payload, 'Book' family_variant from publication_book t0 union all select t0.id, t0.payload, 'Film' family_variant from publication_film t0) u order by jsonb_extract_path_text(u.payload, ?) desc
+        mariadb: select u.id, not u.payload is null, u.payload, u.family_variant from (select t0.id, t0.payload, 'Book' family_variant from publication_book t0 union all select t0.id, t0.payload, 'Film' family_variant from publication_film t0) u order by json_value(u.payload, ?) desc
+      binds:
+        postgres: [title]
+        mariadb: ['$.title']
+  referenceSql: select id, payload, 'Film' as family_variant from publication_film union all select id, payload, 'Book' as family_variant from publication_book
+  graph:
+    Publication:
+      - { id: 10, title: Systems, detail: ISBN-10, pages: 320, familyVariant: Book }
+      - { id: 20, title: Frames, detail: 850, minutes: 95, familyVariant: Film }
+  roundTrips: 1

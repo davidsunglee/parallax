@@ -1370,6 +1370,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
         "nested TPCS narrow lowering is exercised by the compile and database-backed run "
         "lanes; no separate idiomatic API story is needed"
     ),
+    "m-inheritance-136": _TPCS_UNION_RESULT_SHAPE_REASON,
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,
