@@ -9,8 +9,14 @@ of the m-read-lock read-lock suffix, whose lock-clause keywords sqlglot tokenize
 from __future__ import annotations
 
 import pytest
+import sqlglot
 
-from reference_harness.sql_normalize import is_canonical, normalize
+from reference_harness.sql_normalize import (
+    NonCanonicalError,
+    is_canonical,
+    normalize,
+    wrapped_union_source,
+)
 
 
 def test_read_lock_share_suffix_normalizes_to_lowercase() -> None:
@@ -233,9 +239,13 @@ def test_a_wrapped_union_under_another_alias_is_not_canonical() -> None:
 
 def test_a_wrapped_union_projecting_a_wildcard_is_not_canonical() -> None:
     # The outer select projects the union's own result aliases through; a wildcard
-    # names none of them.
-    wildcard = _WRAPPED_UNION.replace("select u.id, u.title from", "select * from", 1)
-    assert not is_canonical(wildcard, "postgres")
+    # names none of them, and qualifying it with the wrap alias does not make `*` one
+    # — not even where the union's own branches project a wildcard, so the aliases it
+    # answers are spelled `*` too.
+    for outer in ("select * from", "select u.* from"):
+        assert not is_canonical(_WRAPPED_UNION.replace("select u.id, u.title from", outer, 1))
+    starred = "select u.* from (select * from invoice t0 union all select * from memo t0) u limit ?"
+    assert not is_canonical(starred, "postgres")
 
 
 def test_a_wrapped_union_without_a_result_tail_is_not_canonical() -> None:
@@ -273,8 +283,9 @@ def test_a_wrapped_plain_union_is_not_canonical() -> None:
 
 
 # The outer shape m-sql fixes is the whole of what the wrap buys, so the verifier
-# grades it rather than accepting any named projection. Each refusal below was
-# reproduced as a wrongly-accepted `is_canonical` before the check existed.
+# grades it rather than accepting any named projection. Every spelling below reaches
+# its union under an outer select that a projection-blind recognizer reads as
+# canonical, so grading the outer shape is the only thing that refuses it.
 
 
 @pytest.mark.parametrize(
@@ -315,6 +326,23 @@ def test_a_wrapped_union_expands_a_document_read_pair_over_its_alias() -> None:
     )
 
 
+def test_a_presence_pair_is_admitted_only_over_a_named_document_alias() -> None:
+    # Which alias holds the Document is a model fact no statement carries. A caller
+    # that knows names it, and a pair over a scalar — a shape indistinguishable from
+    # the read pair in SQL alone — is refused; a caller that does not know gets the
+    # widest reading the statement supports.
+    scalar_pair = (
+        "select not u.id is null, u.id, u.payload from "
+        "(select t0.id, t0.payload from publication_book t0 "
+        "union all "
+        "select t0.id, t0.payload from publication_film t0) u order by u.id limit ?"
+    )
+    tree = sqlglot.parse_one(scalar_pair, read="postgres")
+    assert wrapped_union_source(tree) is not None
+    with pytest.raises(NonCanonicalError):
+        wrapped_union_source(tree, frozenset({"payload"}))
+
+
 def test_a_wrapped_union_ordered_by_a_foreign_qualifier_is_not_canonical() -> None:
     # An ordering key names the result alias its contributor was allocated above,
     # taken against the union alias — never a branch's own spelling.
@@ -322,23 +350,49 @@ def test_a_wrapped_union_ordered_by_a_foreign_qualifier_is_not_canonical() -> No
     assert not is_canonical(_WRAPPED_UNION.replace("order by u.title", "order by u.missing", 1))
 
 
+@pytest.mark.parametrize(
+    "tail",
+    [
+        pytest.param("order by 1", id="ordinal"),
+        pytest.param("order by ?", id="bind"),
+        pytest.param("order by 'title'", id="constant"),
+        pytest.param("order by random()", id="foreign-function"),
+        pytest.param("order by upper(u.title)", id="folded-alias"),
+        pytest.param("order by u.id + u.title", id="two-aliases"),
+        pytest.param("order by cast(u.title as varchar(64))", id="cast-without-extraction"),
+    ],
+)
+def test_a_wrapped_union_ordered_by_anything_but_an_alias_key_is_not_canonical(tail: str) -> None:
+    # m-sql fixes the whole key, not just its qualifier: an ordering key is the result
+    # alias, or the document extraction over it under its declared cast. A key naming
+    # no alias sorts on something the union does not answer, and one folding an alias
+    # sorts on a value no member has.
+    assert not is_canonical(_WRAPPED_UNION.replace("order by u.title desc", tail, 1), "postgres")
+
+
 def test_a_wrapped_union_ordered_by_an_extraction_over_the_alias_is_canonical() -> None:
     # The positive twin: a key over a Structured Column member lowers to the same
-    # extraction a predicate over it does, taken against the union alias.
+    # extraction a predicate over it does — under the same declared cast, in each
+    # dialect's own spelling — taken against the union alias.
     extracted = (
         "select u.id, u.payload from "
         "(select t0.id, t0.payload from publication_book t0 "
         "union all "
         "select t0.id, t0.payload from publication_film t0) u "
-        "order by jsonb_extract_path_text(u.payload, ?) desc"
+        "order by {key} desc"
     )
-    assert is_canonical(extracted, "postgres")
+    assert is_canonical(extracted.format(key="jsonb_extract_path_text(u.payload, ?)"), "postgres")
+    assert is_canonical(
+        extracted.format(key="cast(jsonb_extract_path_text(u.payload, ?) as decimal(18, 2))"),
+        "postgres",
+    )
+    assert is_canonical(extracted.format(key="json_value(u.payload, ?)"), "mariadb")
 
 
 def test_a_malformed_wrapper_is_refused_rather_than_scored_as_one_select() -> None:
-    # The fallback the wrap recognizer used to leave open: a wrapper the recognizer
-    # declined kept its branches in the outer scope, where a globally numbered
-    # `t0, t1, …` sequence made rule 1 accept the statement outright.
+    # Declining a malformed wrapper is not the same as refusing it: a declined wrapper
+    # keeps its branches in the outer scope, where a globally numbered `t0, t1, …`
+    # sequence satisfies rule 1 and the statement is accepted outright.
     globally_numbered = (
         "select x.id, x.title from "
         "(select t0.id, t0.title from invoice t0 "
