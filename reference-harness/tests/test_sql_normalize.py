@@ -193,6 +193,83 @@ def test_union_all_preserves_all_and_branch_order() -> None:
     assert order == sorted(order)
 
 
+# --- the wrapped `union all` (an ordered or limited abstract read) -----------
+# An abstract read declaring `orderBy` or `limit` wraps the whole union as the derived
+# table `u` and applies the tail against that alias (m-sql). That wrap is the ONE shape
+# whose outer select is a table-less scope, so each branch keeps restarting its own
+# `t0, t1, …` sequence; every other way of reaching a union puts tables in the outer
+# scope, and a normalizer that exempted those would be granting an exemption rather
+# than applying a rule.
+
+_WRAPPED_UNION = (
+    "select u.id, u.title from "
+    "(select t0.id, t0.title from invoice t0 "
+    "union all "
+    "select t0.id, t0.title from memo t0) u order by u.title desc limit ?"
+)
+
+
+def test_wrapped_union_read_is_a_normalization_fixed_point() -> None:
+    # The canonical wrap: sole derived source aliased `u`, named projection, tail.
+    assert is_canonical(_WRAPPED_UNION, "postgres")
+    assert normalize(_WRAPPED_UNION, "postgres") == _WRAPPED_UNION
+
+
+def test_a_wrapped_unions_branches_are_the_unwrapped_reads_byte_for_byte() -> None:
+    # What recognizing the wrap buys: branch scoping survives it, so ordering a read
+    # does not renumber the branches the same read unordered already spells.
+    bare = "select t0.id, t0.title from invoice t0 union all select t0.id, t0.title from memo t0"
+    assert is_canonical(bare, "postgres")
+    assert bare in _WRAPPED_UNION
+
+
+def test_a_wrapped_union_under_another_alias_is_not_canonical() -> None:
+    # m-sql names the derived table `u`; another alias is a different statement the
+    # goldens must not spell.
+    assert not is_canonical(_WRAPPED_UNION.replace(" u ", " x ").replace("u.", "x."), "postgres")
+
+
+def test_a_wrapped_union_projecting_a_wildcard_is_not_canonical() -> None:
+    # The outer select projects the union's own result aliases through; a wildcard
+    # names none of them.
+    wildcard = _WRAPPED_UNION.replace("select u.id, u.title from", "select * from", 1)
+    assert not is_canonical(wildcard, "postgres")
+
+
+def test_a_wrapped_union_without_a_result_tail_is_not_canonical() -> None:
+    # The tail is the only reason to wrap. Without one the canonical form is the bare
+    # union, so the wrap is a second spelling of one read.
+    tailless = _WRAPPED_UNION.split(" order by ")[0]
+    assert not is_canonical(tailless, "postgres")
+
+
+def test_a_wrapped_union_joined_to_another_table_is_not_canonical() -> None:
+    # The outer scope is table-less ONLY in the canonical wrap. A join gives it a
+    # table of its own, which rule 1 must number from the branches it now shares a
+    # scope with — the locking table-per-hierarchy partitioned read's shape, which
+    # numbers `t0, t1, t2` across the whole statement.
+    joined = (
+        "select u.id, t0.name from "
+        "(select t0.id, t0.title from invoice t0 "
+        "union all "
+        "select t0.id, t0.title from memo t0) u "
+        "join folder t0 on t0.id = u.id order by u.title desc"
+    )
+    assert not is_canonical(joined, "postgres")
+
+
+def test_a_wrapped_union_carrying_an_outer_predicate_is_not_canonical() -> None:
+    # Only the result-shape tail moves outward; the caller's predicate keeps lowering
+    # inside each branch, where that branch's own Table Layout resolves it.
+    filtered = _WRAPPED_UNION.replace(" order by ", " where u.id = ? order by ", 1)
+    assert not is_canonical(filtered, "postgres")
+
+
+def test_a_wrapped_plain_union_is_not_canonical() -> None:
+    # The wrap does not launder the set operation inside it.
+    assert not is_canonical(_WRAPPED_UNION.replace("union all", "union"), "postgres")
+
+
 # --- only `union all` is a canonical set operation ----------------------------
 # `union all` is the ONLY canonical m-sql set operation (the TPCS abstract-read
 # lowering). A plain `union` silently DE-DUPLICATES rows — changing the read's

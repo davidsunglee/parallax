@@ -340,22 +340,45 @@ def is_union_all(node: exp.SetOperation) -> bool:
     return isinstance(node, exp.Union) and not node.args.get("distinct")
 
 
-def _wrapped_union_source(select: exp.Select) -> exp.SetOperation | None:
-    """The ``union all`` *select* reads as its whole ``from`` source, else ``None``.
+# The alias m-sql gives the derived table an ordered or limited abstract read wraps
+# its union as, and the clauses that wrap may carry outward.
+_WRAP_ALIAS = "u"
+_WRAP_TAIL = ("order", "limit")
+_WRAP_FORBIDDEN = ("joins", "where", "group", "having", "distinct", "locks", "offset")
+
+
+def wrapped_union_source(select: exp.Select) -> exp.SetOperation | None:
+    """The set operation *select* wraps as m-sql's derived table ``u``, else ``None``.
 
     A ``union all`` has no clause tail of its own, so an ordered or limited
-    table-per-concrete-subtype read wraps it as a derived table and applies the tail
-    against the union's alias (m-sql). That wrap is a SCOPE boundary rather than a
-    source of its own: the outer select names no table, and each branch keeps
-    restarting its own ``t0, t1, …`` sequence. A union reached any other way — the
-    locking table-per-hierarchy partitioned read JOINS its derived identity relation —
-    is a source among others and is deliberately not one.
+    table-per-concrete-subtype read wraps the whole union as the derived table ``u``
+    and applies the result-shape tail against that alias (m-sql). Recognized so, the
+    wrap is a SCOPE boundary rather than a source of its own: the outer select names
+    no table, and each branch keeps restarting its own ``t0, t1, …`` sequence.
+
+    Only that exact shape is recognized, because the scope boundary is what it buys
+    and any other shape has tables of its own in the outer scope. The union must be
+    the sole ``from`` source, aliased ``u``, joined to nothing; the outer select must
+    project named cells rather than a wildcard, carry the tail that is the only reason
+    to wrap, and carry no clause the wrap does not move outward. A union reached any
+    other way — the locking table-per-hierarchy partitioned read JOINS its derived
+    identity relation — is a source among others and deliberately not one, and a wrap
+    in any other shape keeps its branches in the outer scope, where rule 1's alias
+    sequence rejects the statement.
     """
     source = select.args.get("from_")
     inner = source.this if isinstance(source, exp.From) else None
-    if isinstance(inner, exp.Subquery) and isinstance(inner.this, exp.SetOperation):
-        return inner.this
-    return None
+    if not isinstance(inner, exp.Subquery) or not isinstance(inner.this, exp.SetOperation):
+        return None
+    if inner.alias != _WRAP_ALIAS:
+        return None
+    if any(select.args.get(clause) for clause in _WRAP_FORBIDDEN):
+        return None
+    if not any(select.args.get(clause) for clause in _WRAP_TAIL):
+        return None
+    if any(projection.is_star for projection in select.expressions):
+        return None
+    return inner.this
 
 
 def _canonical_select_scopes(tree: Expr) -> list[exp.Select]:
@@ -373,7 +396,7 @@ def _canonical_select_scopes(tree: Expr) -> list[exp.Select]:
     keeps its own canonical shape, so it contributes no scope.
     """
     if isinstance(tree, exp.Select):
-        wrapped = _wrapped_union_source(tree)
+        wrapped = wrapped_union_source(tree)
         if wrapped is not None:
             return [tree, *_canonical_select_scopes(wrapped)]
         return [tree]
@@ -410,7 +433,7 @@ def _assert_select_canonical(select: exp.Select) -> None:
     """
     # A wrapped `union all` is scored as its own branch scopes, so the outer select
     # owns nothing inside it.
-    wrapped = _wrapped_union_source(select)
+    wrapped = wrapped_union_source(select)
     nested = (
         set()
         if wrapped is None

@@ -82,7 +82,13 @@ from .predicate_write_validate import (
     validate_predicate_write,
 )
 from .providers import DatabaseProvider
-from .sql_normalize import _detach_read_lock, is_union_all, normalize, sqlglot_dialect
+from .sql_normalize import (
+    _detach_read_lock,
+    is_union_all,
+    normalize,
+    sqlglot_dialect,
+    wrapped_union_source,
+)
 from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )
@@ -2216,12 +2222,16 @@ def _union_all_body(tree: Any) -> Any:
     Table each reads, its per-column shape, its `familyVariant` literal — are the
     same either way, so unwrapping here keeps one oracle for both forms rather
     than forking it by whether the read declared a result shape.
+
+    The wrap is recognized by the normalizer's own verifier, so a golden that
+    wraps its union in any other shape is not unwrapped and fails the branch walk
+    below with the one branch its outer select is, rather than being graded as
+    though the wrap were canonical.
     """
     if isinstance(tree, exp.Select):
-        source = tree.args.get("from_")
-        inner = source.this if isinstance(source, exp.From) else None
-        if isinstance(inner, exp.Subquery):
-            return inner.this
+        wrapped = wrapped_union_source(tree)
+        if wrapped is not None:
+            return wrapped
     return tree
 
 
