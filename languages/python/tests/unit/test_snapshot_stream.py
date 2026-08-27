@@ -206,6 +206,38 @@ def test_a_partly_drained_stream_does_not_resume_past_its_scope() -> None:
     assert len(_reads(port)) == drained
 
 
+@pytest.mark.parametrize("view", ["default", "checked"])
+def test_every_advance_past_the_scope_refuses_again_rather_than_ending(view: str) -> None:
+    # Each ADVANCE is an entry point of its own, so the refusal is not spent by
+    # the first one that meets it: a caller looping over a retained view sees the
+    # named error every time rather than an empty iteration after the first.
+    port = _pages([_order_row(1), _order_row(2)], [])
+    stream = _orders(port).stream(_all_orders(), batch_size=1)
+    with stream:
+        roots = iter(stream) if view == "default" else stream.checked()
+    for _ in range(3):
+        with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+            next(roots)
+    assert _reads(port) == []
+    assert repr(stream).endswith("state='closed')")
+
+
+def test_an_exhausted_view_ends_inside_its_scope_and_refuses_outside_it() -> None:
+    # Exhaustion is not a refusal: a delivery that ran out keeps answering
+    # `StopIteration` while its scope stands, so the iterator protocol holds. The
+    # scope rule then applies to it like everything else the stream exposes.
+    port = _pages([_order_row(1)], [])
+    stream = _orders(port).stream(_all_orders(), batch_size=1)
+    with stream:
+        roots = iter(stream)
+        assert [root.id for root in roots] == [1]
+        with pytest.raises(StopIteration):
+            next(roots)
+        assert repr(stream).endswith("state='exhausted')")
+    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+        next(roots)
+
+
 def test_the_pin_answers_before_the_first_page_and_matches_the_eager_read() -> None:
     # A stream computes its pin from the query rather than from a result, so it
     # is available before a single row is read and no page can revise what the

@@ -29,7 +29,6 @@ first, in the discipline the unit of work's own scope flag already uses.
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterator, Mapping
-from contextlib import closing
 from typing import Final, Literal, cast
 
 from parallax.core import continuation
@@ -220,30 +219,36 @@ class SnapshotStream[T]:
             raise SnapshotStreamStateError(f"{self._node.target.canonical}: no such Entity")
         return entity
 
-    def _drain(self, *, checked: bool) -> Iterator[object]:
-        """The paging generator, with the terminal state it settles.
+    def _advance(self, pages: Generator[object], /) -> object:
+        """One advance of a view: the scope check, the next root, the state it settles.
 
         Every advance is an entry point and checks the state again, because
-        taking a view returns a generator that a caller may hold past the scope
-        that answered it. A stream reached after its scope closed reads nothing,
-        yields nothing, and settles nothing — the state it was left in stands.
+        taking a view answers an iterator a caller may hold past the scope that
+        answered it. A stream reached after its scope closed reads nothing,
+        yields nothing, and settles nothing — the state it was left in stands,
+        and it stands for every later advance too.
 
-        A caller abandoning the loop closes this generator, which is a caller
-        decision rather than a stream outcome, so the state it leaves is the
-        draining one its scope exit then closes.
+        A delivery that already settled keeps answering ``StopIteration`` inside
+        its scope, so exhaustion is the end of an iteration rather than a second
+        refusal, and the terminal state a settled delivery carries is never
+        written over by a later advance.
         """
-        with closing(self._roots(checked=checked)) as roots:
-            while True:
-                self._require(_IN_SCOPE, _DRAINING)
-                try:
-                    root = next(roots)
-                except StopIteration:
-                    break
-                except BaseException:
-                    self._state = _FAILED
-                    raise
-                yield root
-        self._state = _EXHAUSTED
+        self._require(_IN_SCOPE, _DRAINING, _EXHAUSTED, _FAILED)
+        try:
+            return next(pages)
+        except StopIteration:
+            self._settle(_EXHAUSTED)
+            raise
+        except BaseException:
+            self._settle(_FAILED)
+            raise
+
+    def _settle(self, terminal: _State, /) -> None:
+        if self._state == _DRAINING:
+            self._state = terminal
+
+    def _drain(self, *, checked: bool) -> Iterator[object]:
+        return _Delivery(self._advance, self._roots(checked=checked))
 
     def _roots(self, *, checked: bool) -> Generator[object]:
         """One root at a time, page after page, holding only the cursor.
@@ -291,3 +296,25 @@ class SnapshotStream[T]:
             sources=page.sources,
         )
         return roots[0]
+
+
+class _Delivery(Iterator[object]):
+    """A view over one stream: an iterator guarding a paging generator.
+
+    Deliberately not the generator itself. An error raised out of a generator
+    frame CLOSES it, so a generator that refuses an out-of-scope advance could
+    refuse only once — every later advance of the same retained view would end
+    the caller's loop quietly instead. Guarding a separate object is what makes
+    each advance an entry point of its own for as long as the view is held.
+    """
+
+    __slots__ = ("_advance", "_pages")
+
+    def __init__(
+        self, advance: Callable[[Generator[object]], object], pages: Generator[object]
+    ) -> None:
+        self._advance = advance
+        self._pages = pages
+
+    def __next__(self) -> object:
+        return self._advance(self._pages)
