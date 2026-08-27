@@ -2214,7 +2214,7 @@ def _assert_union_all_only(case: Case, tree: Any) -> None:
             )
 
 
-def _union_all_body(case: Case, tree: Any) -> Any:
+def _union_all_body(case: Case, tree: Any, document_aliases: frozenset[str]) -> Any:
     """The `union all` *tree* asserts its branches against.
 
     A `union all` has no clause tail of its own, so an ordered or limited
@@ -2228,11 +2228,14 @@ def _union_all_body(case: Case, tree: Any) -> Any:
     recognized, so the outer shape this walk does not itself grade — the alias,
     the tail, each result alias projected through, the ordering keys — is graded
     there. A golden wrapping its union in any other shape is refused here instead
-    of being unwrapped and graded on its branches alone.
+    of being unwrapped and graded on its branches alone. *document_aliases* carries
+    the one part of that grade the statement alone cannot settle: the layout tier
+    behind each result alias, without which a presence pair over a scalar reads as
+    the Document read pair.
     """
     if isinstance(tree, exp.Select):
         try:
-            wrapped = wrapped_union_source(tree)
+            wrapped = wrapped_union_source(tree, document_aliases)
         except NonCanonicalError as error:
             raise CaseFailure(
                 f"{case.path.name}: table-per-concrete-subtype abstract read does not wrap "
@@ -2385,14 +2388,20 @@ def _assert_tpcs_union_shape(
     superset = [view.column_spellings[ordinal] for ordinal in ordinals]
     position_types = _placeholder_types(case.model, view.columns)
     placeholder_types = [position_types[ordinal] for ordinal in ordinals]
-    expected_columns = [*_tpcs_result_aliases(superset), _TPCS_VARIANT_COLUMN]
+    result_aliases = _tpcs_result_aliases(superset)
+    expected_columns = [*result_aliases, _TPCS_VARIANT_COLUMN]
+    document_aliases = frozenset(
+        alias
+        for alias, ordinal in zip(result_aliases, ordinals, strict=True)
+        if view.columns[ordinal].tier is ColumnTier.DOCUMENT
+    )
     for dialect in sorted(case.golden_dialects):
         statements = case.golden_statements(dialect)
         if not statements:
             continue
         tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
         _assert_union_all_only(case, tree)
-        branches = _union_branch_selects(_union_all_body(case, tree))
+        branches = _union_branch_selects(_union_all_body(case, tree, document_aliases))
         if len(branches) != len(position_branches):
             raise CaseFailure(
                 f"{case.path.name}: table-per-concrete-subtype abstract read lowers to "

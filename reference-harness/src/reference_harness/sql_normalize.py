@@ -348,8 +348,17 @@ _WRAP_FORBIDDEN = ("joins", "where", "group", "having", "distinct", "locks", "of
 
 
 def _wrap_column(node: Expr | None) -> str | None:
-    """The union result alias *node* reads through the wrap alias, else ``None``."""
-    if isinstance(node, exp.Column) and node.table == _WRAP_ALIAS and not node.args.get("db"):
+    """The union result alias *node* reads through the wrap alias, else ``None``.
+
+    A wildcard is not one: ``u.*`` names none of the aliases the union allocated, so it
+    is refused rather than read as an alias spelled ``*``.
+    """
+    if (
+        isinstance(node, exp.Column)
+        and isinstance(node.this, exp.Identifier)
+        and node.table == _WRAP_ALIAS
+        and not node.args.get("db")
+    ):
         return node.name
     return None
 
@@ -365,7 +374,9 @@ def _wrap_presence_cell(node: Expr | None) -> str | None:
     return None
 
 
-def _assert_wrap_projection(select: exp.Select, union: exp.SetOperation) -> None:
+def _assert_wrap_projection(
+    select: exp.Select, union: exp.SetOperation, document_aliases: frozenset[str] | None
+) -> None:
     """Every union result alias projected through the wrap, once, in the union's order.
 
     m-sql: the outer select projects the union's own result aliases through. The one
@@ -376,20 +387,30 @@ def _assert_wrap_projection(select: exp.Select, union: exp.SetOperation) -> None
     cells together admits exactly those two spellings, which is what makes a
     duplicated, computed, missing, extra, or foreign-qualified outer cell a refusal
     rather than merely "not a wildcard".
+
+    *document_aliases* narrows the exception to the aliases that actually hold a
+    Document, so a presence cell over a scalar is refused; ``None`` admits it over any
+    alias, which is all the statement alone settles.
     """
     cells: list[Expr] = list(select.expressions)
     aliases = union.named_selects
     position = 0
     for alias in aliases:
+        pairable = document_aliases is None or alias in document_aliases
         cell = cells[position] if position < len(cells) else None
-        if _wrap_presence_cell(cell) == alias:
+        if pairable and _wrap_presence_cell(cell) == alias:
             position += 1
             cell = cells[position] if position < len(cells) else None
         if _wrap_column(cell) != alias:
+            pair = (
+                f" — optionally preceded by its `not {_WRAP_ALIAS}.{alias} is null` Document "
+                f"presence cell"
+                if pairable
+                else f", and {alias!r} holds no Document, so no presence cell precedes it"
+            )
             raise NonCanonicalError(
                 f"wrapped `union all`: outer cell {position} must project the union result "
-                f"alias {alias!r} as `{_WRAP_ALIAS}.{alias}` — optionally preceded by its "
-                f"`not {_WRAP_ALIAS}.{alias} is null` Document presence cell — got "
+                f"alias {alias!r} as `{_WRAP_ALIAS}.{alias}`{pair} — got "
                 f"{cell.sql() if cell is not None else None!r} (m-sql)"
             )
         position += 1
@@ -399,6 +420,46 @@ def _assert_wrap_projection(select: exp.Select, union: exp.SetOperation) -> None
             f"union's {len(aliases)} result alias(es) {aliases}; only a Document read pair "
             f"adds a cell, and every alias is projected through exactly once (m-sql)"
         )
+
+
+# The document extraction m-dialect fixes per dialect. sqlglot parses MariaDB's
+# `json_value` into a node of its own and leaves the Postgres spelling an anonymous
+# call, so a key is matched by both shapes.
+_DOCUMENT_EXTRACTIONS = ("jsonb_extract_path_text", "json_value")
+
+
+def _extracted_wrap_column(node: Expr | None) -> str | None:
+    """The union result alias an m-dialect document extraction reads, else ``None``.
+
+    The extraction takes the Structured Column as its first argument and the path as
+    ``?`` binds (one per segment on Postgres, one whole JSON path on MariaDB), so a
+    call carrying anything else — a second column, a literal path, a folded
+    expression — is not the extraction m-sql orders by.
+    """
+    if isinstance(node, exp.JSONValue):
+        column, path = node.this, [node.args.get("path")]
+    elif isinstance(node, exp.Anonymous) and node.name.lower() in _DOCUMENT_EXTRACTIONS:
+        column, *path = node.expressions or [None]
+    else:
+        return None
+    if not path or not all(isinstance(segment, exp.Placeholder) for segment in path):
+        return None
+    return _wrap_column(column)
+
+
+def _wrap_order_key(node: Expr | None) -> str | None:
+    """The union result alias an ``order by`` key sorts on, else ``None``.
+
+    m-sql admits two spellings and no others: the result alias itself, and — for a
+    member the layout placed inside a Structured Column — the document extraction over
+    that alias under the declared type's cast. Which of the two a member takes is a
+    declaration fact the statement does not carry, so both are admitted for every
+    alias, while a constant, a bind, an arbitrary function, and an expression over two
+    aliases are keys the wrap never emits.
+    """
+    if (alias := _wrap_column(node)) is not None:
+        return alias
+    return _extracted_wrap_column(node.this if isinstance(node, exp.Cast) else node)
 
 
 def _assert_wrap_tail(select: exp.Select, union: exp.SetOperation) -> None:
@@ -412,15 +473,20 @@ def _assert_wrap_tail(select: exp.Select, union: exp.SetOperation) -> None:
     if order is None:
         return
     aliases = set(union.named_selects)
-    for column in order.find_all(exp.Column):
-        if _wrap_column(column) not in aliases:
+    for key in order.expressions:
+        term = key.this if isinstance(key, exp.Ordered) else key
+        if _wrap_order_key(term) not in aliases:
             raise NonCanonicalError(
-                f"wrapped `union all`: `order by` key {column.sql()!r} must name one of the "
-                f"union's result aliases {sorted(aliases)} through `{_WRAP_ALIAS}` (m-sql)"
+                f"wrapped `union all`: `order by` key {term.sql()!r} must name one of the "
+                f"union's result aliases {sorted(aliases)} through `{_WRAP_ALIAS}` — as "
+                f"`{_WRAP_ALIAS}.<alias>`, or as the document extraction over it under its "
+                f"declared cast (m-sql)"
             )
 
 
-def wrapped_union_source(select: exp.Select) -> exp.SetOperation | None:
+def wrapped_union_source(
+    select: exp.Select, document_aliases: frozenset[str] | None = None
+) -> exp.SetOperation | None:
     """The set operation *select* wraps as m-sql's derived table ``u``, else ``None``.
 
     A ``union all`` has no clause tail of its own, so an ordered or limited
@@ -439,6 +505,11 @@ def wrapped_union_source(select: exp.Select) -> exp.SetOperation | None:
     aliases through exactly once, and ordering only by those aliases. Refusing here is
     what keeps a malformed wrapper from falling through to be scored as an ordinary
     select whose branch aliases happen to run ``t0, t1, …`` globally.
+
+    *document_aliases* names the result aliases whose slot holds a ``Document``, the
+    only slot whose read pair the outer select expands. Which alias that is, is a model
+    fact no statement carries, so a caller holding the model passes them and the pair
+    is admitted over those aliases alone; ``None`` admits it over any alias.
     """
     source = select.args.get("from_")
     inner = source.this if isinstance(source, exp.From) else None
@@ -462,7 +533,7 @@ def wrapped_union_source(select: exp.Select) -> exp.SetOperation | None:
             "wrap carrying no `order by` / `limit` is a second spelling of the bare union "
             "(m-sql)"
         )
-    _assert_wrap_projection(select, union)
+    _assert_wrap_projection(select, union, document_aliases)
     _assert_wrap_tail(select, union)
     return union
 
