@@ -29,7 +29,8 @@ from typing import Any
 import sqlglot
 import yaml
 
-from .sql_normalize import normalize, sqlglot_dialect
+from .sql_canonical import sqlglot_dialect
+from .sql_normalize import normalize
 
 
 class SqlLintFailure(Exception):

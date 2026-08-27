@@ -1,4 +1,5 @@
-"""Unit tests for the m-sql SQL normalizer (``sql_normalize``).
+"""Unit tests for the m-sql canonical form: the SQL normalizer (``sql_normalize``)
+and the wrapped-``union all`` oracle it calls (``sql_wrapped_union``).
 
 These are Docker-free: ``normalize`` is a pure function, so the canonical-form
 rules can be checked without booting a database. They guard the canonical form
@@ -11,13 +12,11 @@ from __future__ import annotations
 import pytest
 import sqlglot
 
-from reference_harness.sql_normalize import (
-    NonCanonicalError,
+from reference_harness.sql_canonical import NonCanonicalError, sqlglot_dialect
+from reference_harness.sql_normalize import is_canonical, normalize
+from reference_harness.sql_wrapped_union import (
     WrapFacts,
     WrapOrderKey,
-    is_canonical,
-    normalize,
-    sqlglot_dialect,
     wrapped_union_source,
 )
 

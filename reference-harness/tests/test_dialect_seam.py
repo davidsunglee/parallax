@@ -24,7 +24,8 @@ from reference_harness.providers.mariadb import (
     _to_db_bind,
     _to_pymysql,
 )
-from reference_harness.sql_normalize import is_canonical, normalize, sqlglot_dialect
+from reference_harness.sql_canonical import sqlglot_dialect
+from reference_harness.sql_normalize import is_canonical, normalize
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
