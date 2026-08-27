@@ -84,6 +84,8 @@ from .predicate_write_validate import (
 from .providers import DatabaseProvider
 from .sql_normalize import (
     NonCanonicalError,
+    WrapFacts,
+    WrapOrderKey,
     _detach_read_lock,
     is_union_all,
     normalize,
@@ -2214,7 +2216,7 @@ def _assert_union_all_only(case: Case, tree: Any) -> None:
             )
 
 
-def _union_all_body(case: Case, tree: Any, document_aliases: frozenset[str]) -> Any:
+def _union_all_body(case: Case, tree: Any, dialect: str, facts: WrapFacts) -> Any:
     """The `union all` *tree* asserts its branches against.
 
     A `union all` has no clause tail of its own, so an ordered or limited
@@ -2226,16 +2228,17 @@ def _union_all_body(case: Case, tree: Any, document_aliases: frozenset[str]) -> 
 
     The wrap is VERIFIED by the normalizer's own verifier rather than merely
     recognized, so the outer shape this walk does not itself grade — the alias,
-    the tail, each result alias projected through, the ordering keys — is graded
+    the tail, each result alias projected through, the ordering terms — is graded
     there. A golden wrapping its union in any other shape is refused here instead
-    of being unwrapped and graded on its branches alone. *document_aliases* carries
-    the one part of that grade the statement alone cannot settle: the layout tier
-    behind each result alias, without which a presence pair over a scalar reads as
-    the Document read pair.
+    of being unwrapped and graded on its branches alone. *facts* carry what the
+    statement alone cannot settle and this caller does know: the layout tier behind
+    each result alias, and the Sort Keys and cap the read authored, without which
+    the outer tail is graded only for shape and a presence pair over a scalar reads
+    as the Document read pair.
     """
     if isinstance(tree, exp.Select):
         try:
-            wrapped = wrapped_union_source(tree, document_aliases)
+            wrapped = wrapped_union_source(tree, dialect, facts)
         except NonCanonicalError as error:
             raise CaseFailure(
                 f"{case.path.name}: table-per-concrete-subtype abstract read does not wrap "
@@ -2358,6 +2361,81 @@ def _tpcs_position_branches(
     return pairs
 
 
+def _tpcs_order_keys(
+    case: Case,
+    view: PositionLayoutView,
+    position_branches: list[tuple[PositionBranch, str]],
+    ordinals: tuple[int, ...],
+    result_aliases: list[str],
+) -> tuple[WrapOrderKey, ...]:
+    """The read's authored Sort Keys as the wrap's `order by` must render them.
+
+    An ordered abstract read applies its tail against the union alias, so each key
+    names the result alias its member reaches rather than any branch's own spelling
+    (m-sql). The positional rule (m-object-query) admits a Sort Key only over a member
+    applicable to every concrete in the position, so every branch places it and the
+    branches agree on how: in a Column of its own, or at one path inside the Structured
+    Column, which is what decides whether the key is the alias or the extraction over
+    it. The nullability that selects its Null Placement term (m-dialect) is the
+    DECLARED one, which is why the key never meets a branch's typed `NULL` placeholder.
+    """
+    keys: list[WrapOrderKey] = []
+    for sort_key in case.object_query.get("orderBy") or []:
+        attr = sort_key.get("attr")
+        member = str(attr).rpartition(".")[2]
+        indices = [index for index, address in enumerate(view.members) if address.path == (member,)]
+        if len(indices) != 1:
+            raise CaseFailure(
+                f"{case.path.name}: `orderBy` key {attr!r} resolves to {len(indices)} member(s) "
+                f"of the read's position, so the `union all` wrap's `order by` cannot be "
+                f"graded against it (m-object-query)."
+            )
+        address = view.members[indices[0]]
+        placements = [branch.placements[indices[0]] for branch, _ in position_branches]
+        placed = {
+            (
+                placement.slot.contributor,
+                placement.path if isinstance(placement, DocumentPath) else (),
+            )
+            for placement in placements
+            if placement is not None
+        }
+        if any(placement is None for placement in placements) or len(placed) != 1:
+            raise CaseFailure(
+                f"{case.path.name}: `orderBy` key {attr!r} is placed differently across the "
+                f"`union all` branches, so the wrap's `order by` has no one spelling against "
+                f"the union alias (m-sql / m-object-query)."
+            )
+        contributor, document_path = placed.pop()
+        alias = next(
+            (
+                result_aliases[index]
+                for index, ordinal in enumerate(ordinals)
+                if view.columns[ordinal].contributor == contributor
+            ),
+            None,
+        )
+        if alias is None:
+            raise CaseFailure(
+                f"{case.path.name}: `orderBy` key {attr!r} reaches a Column the read does not "
+                f"project, so the wrap's `order by` names no result alias for it (m-sql)."
+            )
+        declared = next(
+            item for item in case.model.entity(address.owner).attributes if item["name"] == member
+        )
+        keys.append(
+            WrapOrderKey(
+                alias=alias,
+                descending=sort_key.get("direction", "asc") == "desc",
+                nulls_first=sort_key.get("nulls", "last") == "first",
+                nullable=bool(declared.get("nullable", False)),
+                document_path=document_path,
+                neutral_type=declared["type"],
+            )
+        )
+    return tuple(keys)
+
+
 def _assert_tpcs_union_shape(
     case: Case,
     view: PositionLayoutView,
@@ -2383,6 +2461,11 @@ def _assert_tpcs_union_shape(
     case's own result form projects (:func:`_projected_position_ordinals`), so a
     row-form read of a position holding a `Document` slot is graded on omitting it
     rather than on carrying it.
+
+    An ordered or limited read additionally wraps its union, and the wrap's own shape
+    is graded against the same facts: which result alias holds a `Document`, and the
+    Sort Keys and cap the Object Query authored, each rendered as the dialect under
+    test spells it.
     """
     ordinals = _projected_position_ordinals(case, view, position_branches)
     superset = [view.column_spellings[ordinal] for ordinal in ordinals]
@@ -2390,10 +2473,14 @@ def _assert_tpcs_union_shape(
     placeholder_types = [position_types[ordinal] for ordinal in ordinals]
     result_aliases = _tpcs_result_aliases(superset)
     expected_columns = [*result_aliases, _TPCS_VARIANT_COLUMN]
-    document_aliases = frozenset(
-        alias
-        for alias, ordinal in zip(result_aliases, ordinals, strict=True)
-        if view.columns[ordinal].tier is ColumnTier.DOCUMENT
+    facts = WrapFacts(
+        document_aliases=frozenset(
+            alias
+            for alias, ordinal in zip(result_aliases, ordinals, strict=True)
+            if view.columns[ordinal].tier is ColumnTier.DOCUMENT
+        ),
+        order_keys=_tpcs_order_keys(case, view, position_branches, ordinals, result_aliases),
+        limited=case.object_query.get("limit") is not None,
     )
     for dialect in sorted(case.golden_dialects):
         statements = case.golden_statements(dialect)
@@ -2401,7 +2488,7 @@ def _assert_tpcs_union_shape(
             continue
         tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
         _assert_union_all_only(case, tree)
-        branches = _union_branch_selects(_union_all_body(case, tree, document_aliases))
+        branches = _union_branch_selects(_union_all_body(case, tree, dialect, facts))
         if len(branches) != len(position_branches):
             raise CaseFailure(
                 f"{case.path.name}: table-per-concrete-subtype abstract read lowers to "
