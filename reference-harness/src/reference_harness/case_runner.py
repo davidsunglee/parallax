@@ -82,16 +82,9 @@ from .predicate_write_validate import (
     validate_predicate_write,
 )
 from .providers import DatabaseProvider
-from .sql_normalize import (
-    NonCanonicalError,
-    WrapFacts,
-    WrapOrderKey,
-    _detach_read_lock,
-    is_union_all,
-    normalize,
-    sqlglot_dialect,
-    wrapped_union_source,
-)
+from .sql_canonical import NonCanonicalError, sqlglot_dialect
+from .sql_normalize import _detach_read_lock, is_union_all, normalize
+from .sql_wrapped_union import WrapFacts, WrapOrderKey, wrapped_union_source
 from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )

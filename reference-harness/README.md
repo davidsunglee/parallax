@@ -22,6 +22,8 @@ src/reference_harness/
 ├── sql_lint.py        # sqlglot-parse every golden / reference SQL string
 ├── serde.py           # canonical (de)serialize for queries AND the metamodel (JSON + YAML)
 ├── sql_normalize.py   # sqlglot implementation of the m-sql normalization rules
+├── sql_wrapped_union.py # the oracle for the derived table an ordered/limited union wraps as
+├── sql_canonical.py   # the sqlglot dialect map + the refusal every canonicality check raises
 ├── ddl_builder.py     # descriptor -> CREATE TABLE DDL (dialect-aware via the provider)
 ├── data_loader.py     # load fixture rows
 ├── dep_graph_check.py # parse modules.md; assert DAG + legal direction
