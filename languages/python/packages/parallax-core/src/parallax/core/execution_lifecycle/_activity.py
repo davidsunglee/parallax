@@ -304,11 +304,12 @@ class EnforcementScope(Protocol):
 class DatabaseCallScope(Protocol):
     """A scope that opens Database Calls, and the whole of what opening one needs.
 
-    Three activity kinds satisfy it — Read, Write Batch, and Stream Batch — and
-    an executor that only issues statements declares this rather than any one of
-    them. Naming the narrower thing is what keeps an annotation from claiming a
-    Read where a page's own batch is what ran, which the lifecycle's own rule
-    that a batch never nests a duplicate Read forbids.
+    A Database Call's parent is a Read, a Write Batch, or a Stream Batch and
+    never anything else, so an executor that only issues statements declares
+    this rather than any one of them. Naming the narrower thing is what keeps an
+    annotation from claiming a Read where another kind of scope opened the call,
+    which the lifecycle's own rule that a batch never nests a duplicate Read
+    forbids.
     """
 
     def database_call(

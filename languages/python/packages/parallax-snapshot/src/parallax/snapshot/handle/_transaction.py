@@ -635,13 +635,12 @@ class Transaction:
         """Deliver ``query``'s roots one at a time inside this transaction, as
         the scope-bound single-pass peer of :meth:`find`.
 
-        It participates exactly as :meth:`find` does, once per PAGE rather than
-        once per read: each page force-flushes pending writes before its own
-        statements run, so a loop that writes as it reads still sees its own
-        writes, and derives every level's read lock from that level's own target
-        Entity. The buffer a writing loop accumulates is therefore bounded by
-        one page rather than by the result — the same dial, pointed at the same
-        thing.
+        Participation is per PAGE rather than per read: each page force-flushes
+        pending writes before its own statements run, so a loop that writes as
+        it reads still sees its own writes, and derives every level's read lock
+        from that level's own target Entity. The buffer a writing loop
+        accumulates is therefore bounded by one page rather than by the result —
+        the same dial, pointed at the same thing.
 
         Delivery is attempt-local. A ``db.transact`` may re-execute its
         callback, and roots already consumed cannot be revoked, so a retried
