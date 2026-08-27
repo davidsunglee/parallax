@@ -1012,19 +1012,22 @@ A column not applicable to a branch is a **`NULL` placeholder** — `cast(null a
 <type>)` in that branch's declared column type, so the union's result column types
 resolve deterministically rather than defaulting to an untyped `NULL`. The cast
 **target-type spelling is a dialect decision** owned by `m-dialect` and **diverges
-from the DDL column type for strings**:
+from the DDL column type for strings and documents**:
 
 | Declared column type | Postgres placeholder cast | MariaDB placeholder cast |
 |---|---|---|
 | `decimal(p, s)` | `cast(null as decimal(p, s))` | `cast(null as decimal(p, s))` (identical) |
 | bounded `string` (`maxLength n`) | `cast(null as varchar(n))` | `cast(null as char(n))` |
-| unbounded `string` | `cast(null as text)` | `cast(null as text)` |
+| unbounded `string` | `cast(null as text)` | `cast(null as char)` |
+| `json` (a Structured Column) | `cast(null as jsonb)` | `cast(null as char)` |
 
 MariaDB's `CAST` target grammar **does not accept `varchar`** — a bounded string
 placeholder casts to **`char(n)`** even though the *column* type is `varchar(n)` on
-both dialects (`m-dialect`: string types map to `char` under MariaDB `CAST`). This is
-the general rule; a future dialect supplies its own placeholder-cast spelling behind
-the same `m-dialect` seam.
+both dialects (`m-dialect`: string types map to `char` under MariaDB `CAST`). The same
+grammar accepts neither an unbounded character target other than `char` nor any
+document target, so both an unbounded string and a Structured Column place bare
+`char` there. This is the general rule; a future dialect supplies its own
+placeholder-cast spelling behind the same `m-dialect` seam.
 
 Because nothing else identifies a row's source table after the union, `familyVariant`
 is projected **as a subtype variant-spelling string literal per branch** (the
