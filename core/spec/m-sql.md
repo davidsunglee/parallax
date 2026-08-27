@@ -1065,17 +1065,20 @@ result-shape tail (*Clause order*) against that alias:
     postgres: select u.id, u.title, u.currency, u.amount_due, u.body, u.paid_amount, u.family_variant from (select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as varchar(64)) body, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant from memo t0) u order by u.title desc limit ?
 ```
 
-Every branch is unchanged from the unordered read: the caller's predicate keeps
-lowering **inside** each branch, where that branch's own Table Layout resolves each
-member's Column, and each branch keeps restarting its own `t0, t1, …` sequence
-(rule 1 scopes per branch, and the wrap adds one table-less outer scope). Only the
-tail moves outward. A cap therefore applies to the union's rows rather than to each
-branch's, and its `?` bind follows every branch bind.
+Every clause but the tail stays where the unordered read puts it: the caller's
+predicate keeps lowering **inside** each branch, where that branch's own Table Layout
+resolves each member's Column, and each branch keeps restarting its own `t0, t1, …`
+sequence (rule 1 scopes per branch, and the wrap adds one table-less outer scope). A
+cap therefore applies to the union's rows rather than to each branch's, and its `?`
+bind follows every branch bind.
 
 The outer select projects the union's own result aliases through; a `Document` slot
 is the one exception, because a presence cell carries no result alias and so cannot
 be addressed from outside the derived table — each branch projects that slot as a
-single aliased cell and the outer select expands the *Document read pair* over it.
+single aliased cell **instead of** the *Document read pair* it projects unwrapped,
+and the outer select expands the pair over that alias. That relocation is the one
+respect in which a wrapped branch's projection differs from the same branch's
+unwrapped: where the pair is assembled moves, and nothing a branch reads does.
 
 An `order by` key names the **result alias** its contributor was allocated above,
 never a branch's physical spelling, so a contributor holding an internal
