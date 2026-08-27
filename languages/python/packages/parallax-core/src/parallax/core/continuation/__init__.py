@@ -1,11 +1,11 @@
 """``parallax.core.continuation`` — the page node a streamed read advances by.
 
 Pure, and shaped like its neighbour :mod:`parallax.core.deep_fetch`: an Entity,
-a canonical Object Query, and a model in; a frozen plan out; no I/O anywhere.
-It lives beside deep fetch rather than inside a handle because the page
-statement is the same cross-language contract the ``1 + L`` shape is — every
-target must lower the same SQL for the same page — so the keyset algebra is
-stated once here rather than re-derived per implementation.
+a canonical Object Query, and a model in; a plan out; no I/O anywhere. It lives
+beside deep fetch rather than inside a handle because the page statement is the
+same cross-language contract the ``1 + L`` shape is — every target must lower
+the same SQL for the same page — so the keyset algebra is stated once here
+rather than re-derived per implementation.
 
 The plan answers two nodes and nothing else. :meth:`ContinuationPlan.first` is
 the first page: the caller's own query under the Continuation Order, capped at
@@ -47,9 +47,11 @@ class ContinuationError(ValueError):
 class ContinuationPlan:
     """One query's page nodes, in the Continuation Order it advances by.
 
-    Frozen by construction: :func:`plan` is its only constructor, and it answers
-    nodes rather than holding any of a stream's state — the cursor, the emitted
-    count, and the exhaustion verdict all belong to the loop that consumes it.
+    Holds none of a stream's state: it answers nodes off the query and key
+    :func:`plan` formed it from, while the cursor, the emitted count, and the
+    exhaustion verdict all belong to the loop that consumes it. Nothing mutates
+    it, so two pages of one plan are two values and the plan is the same
+    afterwards.
     """
 
     __slots__ = ("_key", "_order", "_query")
