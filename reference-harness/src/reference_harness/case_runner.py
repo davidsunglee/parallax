@@ -29,7 +29,7 @@ import re
 import threading
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any, NamedTuple
 
@@ -2232,9 +2232,9 @@ def _union_all_body(case: Case, tree: Any, dialect: str, facts: WrapFacts) -> An
     there. A golden wrapping its union in any other shape is refused here instead
     of being unwrapped and graded on its branches alone. *facts* carry what the
     statement alone cannot settle and this caller does know: the layout tier behind
-    each result alias, and the Sort Keys and cap the read authored, without which
-    the outer tail is graded only for shape and a presence pair over a scalar reads
-    as the Document read pair.
+    each result alias, the Sort Keys and cap the read authored, and this dialect's
+    bind list, without which the outer tail is graded only for shape, a presence pair
+    over a scalar reads as the Document read pair, and any same-arity tail bind passes.
     """
     if isinstance(tree, exp.Select):
         try:
@@ -2480,7 +2480,7 @@ def _assert_tpcs_union_shape(
             if view.columns[ordinal].tier is ColumnTier.DOCUMENT
         ),
         order_keys=_tpcs_order_keys(case, view, position_branches, ordinals, result_aliases),
-        limited=case.object_query.get("limit") is not None,
+        limit=case.object_query.get("limit"),
     )
     for dialect in sorted(case.golden_dialects):
         statements = case.golden_statements(dialect)
@@ -2488,7 +2488,8 @@ def _assert_tpcs_union_shape(
             continue
         tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
         _assert_union_all_only(case, tree)
-        branches = _union_branch_selects(_union_all_body(case, tree, dialect, facts))
+        dialect_facts = replace(facts, binds=tuple(case.statement_binds(0, dialect)))
+        branches = _union_branch_selects(_union_all_body(case, tree, dialect, dialect_facts))
         if len(branches) != len(position_branches):
             raise CaseFailure(
                 f"{case.path.name}: table-per-concrete-subtype abstract read lowers to "
