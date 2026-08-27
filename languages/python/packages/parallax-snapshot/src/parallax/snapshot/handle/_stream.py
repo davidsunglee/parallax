@@ -28,7 +28,8 @@ first, in the discipline the unit of work's own scope flag already uses.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
+from contextlib import closing
 from typing import Final, Literal, cast
 
 from parallax.core import continuation
@@ -222,20 +223,29 @@ class SnapshotStream[T]:
     def _drain(self, *, checked: bool) -> Iterator[object]:
         """The paging generator, with the terminal state it settles.
 
+        Every advance is an entry point and checks the state again, because
+        taking a view returns a generator that a caller may hold past the scope
+        that answered it. A stream reached after its scope closed reads nothing,
+        yields nothing, and settles nothing — the state it was left in stands.
+
         A caller abandoning the loop closes this generator, which is a caller
         decision rather than a stream outcome, so the state it leaves is the
         draining one its scope exit then closes.
         """
-        try:
-            yield from self._roots(checked=checked)
-        except GeneratorExit:
-            raise
-        except BaseException:
-            self._state = _FAILED
-            raise
+        with closing(self._roots(checked=checked)) as roots:
+            while True:
+                self._require(_IN_SCOPE, _DRAINING)
+                try:
+                    root = next(roots)
+                except StopIteration:
+                    break
+                except BaseException:
+                    self._state = _FAILED
+                    raise
+                yield root
         self._state = _EXHAUSTED
 
-    def _roots(self, *, checked: bool) -> Iterator[object]:
+    def _roots(self, *, checked: bool) -> Generator[object]:
         """One root at a time, page after page, holding only the cursor.
 
         A short page proves exhaustion — fewer roots than asked for means no
