@@ -218,6 +218,10 @@ _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
 # extraction because that member is document-resident. `m-storage-layout-025` and
 # `-026` are respectively the Columns and Document arms of the valid-read transparency
 # proof, so the compile sweep grades each arm's physical projection independently.
+# `m-inheritance-136` is `-126` with a result-shape tail: an ordered union wraps as a
+# derived table, so each branch projects the Structured Column as ONE aliased cell and
+# the outer select rebuilds the document read pair — and the ordering key, being
+# document-resident, extracts from that column against the union alias.
 _STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS: Final[frozenset[str]] = frozenset(
     {f"m-storage-layout-{n:03d}" for n in (*range(17, 22), 25, 26)}
     | {
@@ -225,6 +229,7 @@ _STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS: Final[frozenset[str]] = frozenset(
         "m-inheritance-124",
         "m-inheritance-126",
         "m-inheritance-127",
+        "m-inheritance-136",
         "m-navigate-025",
     }
 )

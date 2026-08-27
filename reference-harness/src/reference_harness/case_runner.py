@@ -1238,8 +1238,10 @@ def _same_projected_document(
     source = presence.this.this
     if source.name != candidate.name or source.table != candidate.table:
         return False
-    physical = _physical_column_source(select, source, dialect)
-    return physical is not None and physical[1] in document_columns.get(physical[0], frozenset())
+    physical = _physical_column_sources(select, source, dialect)
+    return bool(physical) and all(
+        column in document_columns.get(table, frozenset()) for table, column in physical
+    )
 
 
 def _containing_select(expression: Any) -> Any | None:
@@ -1318,14 +1320,23 @@ def _ordinal_passthrough_column(select: Any, ordinal: int) -> Any | None:
     return candidate if isinstance(candidate, exp.Column) and not candidate.is_star else None
 
 
-def _physical_column_source(select: Any, column: Any, dialect: str) -> tuple[str, str] | None:
-    """Trace one selected Column through aliases to its physical Table and Column."""
+def _physical_column_sources(
+    select: Any, column: Any, dialect: str
+) -> tuple[tuple[str, str], ...] | None:
+    """Trace one selected Column through aliases to every physical Table and Column it
+    can come from, or ``None`` where any branch of the trace stops.
+
+    A derived table over a `union all` contributes one source PER BRANCH, and a
+    table-per-concrete-subtype union's branches read DIFFERENT Tables by construction
+    (m-inheritance) — so a wrapped such read is traceable only if the answer is the
+    whole set. A caller asking a per-source question asks it of every member.
+    """
     relations = _source_relations(select)
     relation = relations.get(column.table)
     if relation is None and not column.table and len(relations) == 1:
         relation = next(iter(relations.values()))
     if isinstance(relation, exp.Table):
-        return relation.name, column.name
+        return ((relation.name, column.name),)
     if not isinstance(relation, exp.Subquery):
         return None
     branches = _select_branches(relation.this)
@@ -1339,14 +1350,15 @@ def _physical_column_source(select: Any, column: Any, dialect: str) -> tuple[str
         passthroughs = [_ordinal_passthrough_column(branch, ordinal) for branch in branches]
     else:
         passthroughs = [_passthrough_column(branch, column, dialect) for branch in branches]
-    sources = [
-        source
-        for branch, passthrough in zip(branches, passthroughs, strict=True)
-        if passthrough is not None
-        if (source := _physical_column_source(branch, passthrough, dialect)) is not None
-    ]
-    unique = set(sources)
-    return next(iter(unique)) if len(sources) == len(branches) and len(unique) == 1 else None
+    sources: list[tuple[str, str]] = []
+    for branch, passthrough in zip(branches, passthroughs, strict=True):
+        if passthrough is None:
+            return None
+        traced = _physical_column_sources(branch, passthrough, dialect)
+        if traced is None:
+            return None
+        sources.extend(traced)
+    return tuple(dict.fromkeys(sources))
 
 
 def _identifier_identity(name: str, dialect: str, *, quoted: bool) -> str:
