@@ -200,19 +200,24 @@ A `table-per-concrete-subtype` abstract read lowers to `union all` over the effe
 concrete tables (`m-sql`); a column not applicable to a branch is a `cast(null as
 <type>)` placeholder in the column's declared type, so the union's result column types
 resolve deterministically. The **CAST target-type spelling is a dialect decision owned
-here** — and, for strings, it **diverges from the DDL column type**:
+here** — and, for strings and documents, it **diverges from the DDL column type**:
 
 | Declared column type | Postgres | MariaDB |
 |---|---|---|
 | `decimal(p, s)` | `cast(null as decimal(p, s))` | `cast(null as decimal(p, s))` |
 | bounded `string` (`maxLength n`) | `cast(null as varchar(n))` | `cast(null as char(n))` |
-| unbounded `string` | `cast(null as text)` | `cast(null as text)` |
+| unbounded `string` | `cast(null as text)` | `cast(null as char)` |
+| `json` (a Structured Column) | `cast(null as jsonb)` | `cast(null as char)` |
 
 MariaDB's `CAST` target grammar does **not** accept `varchar`, so a bounded-string
 placeholder casts to `char(n)` even though the *column* type is `varchar(n)` on both
-dialects (the general rule: **string types map to `char` under a MariaDB `CAST`**). A
-future dialect supplies its own placeholder-cast spelling behind this same decision
-point; nothing above the seam names the concrete cast type.
+dialects (the general rule: **string types map to `char` under a MariaDB `CAST`**).
+That grammar admits no unbounded character target but `char`, and no document target
+at all — MariaDB's `JSON` is an alias for `LONGTEXT`, and neither spelling is a legal
+`CAST` target — so an unbounded string and a Structured Column both place bare `char`
+there, while Postgres casts each to its own type. A future dialect supplies its own
+placeholder-cast spelling behind this same decision point; nothing above the seam
+names the concrete cast type.
 
 ### Array traversal form (`m-value-object`)
 
