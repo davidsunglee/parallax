@@ -6,17 +6,18 @@ node carries, the seek `after` composes onto the caller's own predicate, and the
 two query shapes a page plan refuses outright. Every assertion here is over the
 returned `ObjectQueryNode` alone.
 
-The Continuation Order is one Attribute wherever it is graded, because
-`m-metamodel` refuses a composite primary key as a defect rather than a shape.
-That is what makes a cursor one bindable value here rather than a lexicographic
-tuple, and it is asserted rather than assumed by
-:func:`test_no_corpus_model_declares_a_composite_primary_key`.
+The Continuation Order is one Attribute wherever it is graded, because formation
+refuses a second primary-key Attribute by either route it could arrive — locally
+(`m-metamodel`) or through an inheritance family's ancestry chain
+(`m-inheritance`). That is what makes a cursor one bindable value here rather
+than a lexicographic tuple, and both routes are asserted against formation
+itself rather than against what the corpus happens to declare.
 """
 
 from __future__ import annotations
 
 import pytest
-from _corpus_model_support import corpus
+from _corpus_model_support import corpus, formed
 from _corpus_model_support import model as accepted_model
 from _corpus_model_support import target as entity_of
 
@@ -27,6 +28,7 @@ from parallax.core.metamodel import (
     Metamodel,
     PrimaryKey,
 )
+from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import (
     AsOfRange,
     History,
@@ -37,6 +39,7 @@ from parallax.core.object_query import (
     object_query,
 )
 from parallax.core.predicate import All, And, Comparison, Group, Or, PredicateNode
+from parallax.descriptor import _records
 
 ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")
@@ -221,11 +224,64 @@ def test_an_authored_ordering_has_no_page_order() -> None:
 # --------------------------------------------------------------------------- #
 # The model rule the single-term cursor rests on.                              #
 # --------------------------------------------------------------------------- #
+_TWO_LOCAL_KEYS = _records.Metamodel(
+    entities=(
+        _records.Entity(
+            name="LedgerEntry",
+            table="ledger_entry",
+            attributes=(
+                _records.Attribute(name="bookId", type="int64", column="book_id", primary_key=True),
+                _records.Attribute(name="lineNo", type="int64", column="line_no", primary_key=True),
+            ),
+        ),
+    )
+)
+
+_TWO_FAMILY_KEYS = _records.Metamodel(
+    entities=(
+        _records.Entity(
+            name="Ledger",
+            inheritance=_records.Inheritance(role="root", strategy="table-per-concrete-subtype"),
+            attributes=(
+                _records.Attribute(name="bookId", type="int64", column="book_id", primary_key=True),
+            ),
+        ),
+        _records.Entity(
+            name="LedgerLine",
+            table="ledger_line",
+            inheritance=_records.Inheritance(role="concrete-subtype", parent="Ledger"),
+            attributes=(
+                _records.Attribute(name="lineNo", type="int64", column="line_no", primary_key=True),
+            ),
+        ),
+    )
+)
+
+
+def test_a_composite_primary_key_does_not_form() -> None:
+    # The premise the single-term seek rests on, asserted where it is decided: a
+    # second local primary-key Attribute is a formation defect, so no accepted
+    # model presents a Continuation Order of two members and the seek is one
+    # comparison rather than a lexicographic disjunction. The day that contract
+    # widens, this fails before anything downstream silently skips a root.
+    with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-multiple"):
+        formed(_TWO_LOCAL_KEYS)
+
+
+def test_a_family_whose_ancestry_chain_declares_a_second_key_does_not_form() -> None:
+    # The other route to a composite key, and the one a stream reaches through:
+    # `_family_key` resolves a subtype's order through its family root, so a
+    # subtype adding a key of its own would widen the order without touching the
+    # root. The applicable ancestry chain admits exactly one primary-key
+    # Attribute (`m-inheritance`), so that model does not form either.
+    with pytest.raises(MetamodelValidationError, match="inheritance-primary-key-multiple"):
+        formed(_TWO_FAMILY_KEYS)
+
+
 def test_no_corpus_model_declares_a_composite_primary_key() -> None:
-    # `m-metamodel` refuses more than one local primary-key Attribute as a
-    # defect rather than a shape, so a page cursor is one bindable value. This is
-    # what makes the seek above one comparison rather than a lexicographic
-    # disjunction, and it fails here first if the contract ever widens.
+    # The inventory beside the rule: every shipped model the streaming lane
+    # plans against carries a single-Attribute key today, so the seek's premise
+    # holds of the corpus and not only of formation.
     for stem, model in corpus().items():
         for entity in model.entities:
             keys = [
