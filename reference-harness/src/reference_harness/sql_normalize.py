@@ -340,6 +340,24 @@ def is_union_all(node: exp.SetOperation) -> bool:
     return isinstance(node, exp.Union) and not node.args.get("distinct")
 
 
+def _wrapped_union_source(select: exp.Select) -> exp.SetOperation | None:
+    """The ``union all`` *select* reads as its whole ``from`` source, else ``None``.
+
+    A ``union all`` has no clause tail of its own, so an ordered or limited
+    table-per-concrete-subtype read wraps it as a derived table and applies the tail
+    against the union's alias (m-sql). That wrap is a SCOPE boundary rather than a
+    source of its own: the outer select names no table, and each branch keeps
+    restarting its own ``t0, t1, …`` sequence. A union reached any other way — the
+    locking table-per-hierarchy partitioned read JOINS its derived identity relation —
+    is a source among others and is deliberately not one.
+    """
+    source = select.args.get("from_")
+    inner = source.this if isinstance(source, exp.From) else None
+    if isinstance(inner, exp.Subquery) and isinstance(inner.this, exp.SetOperation):
+        return inner.this
+    return None
+
+
 def _canonical_select_scopes(tree: Expr) -> list[exp.Select]:
     """The independent SELECT scopes rule 1 applies to, in first-appearance order.
 
@@ -347,12 +365,17 @@ def _canonical_select_scopes(tree: Expr) -> list[exp.Select]:
     table-per-concrete-subtype inheritance strategy as N independent branches, so
     rule 1's alias scheme (``t0, t1, …``) restarts PER BRANCH — each branch is scored
     on its own tables/columns, and branch order is preserved by the left-to-right leaf
-    walk. A set operation that is NOT ``union all`` (a plain de-duplicating ``union``,
-    or ``intersect`` / ``except``) is non-canonical and rejected — it never appears in
-    canonical m-sql. DML (Insert / Update / Delete) is not a SELECT and keeps its own
-    canonical shape, so it contributes no scope.
+    walk. An ordered or limited such read wraps the union in a derived table, which
+    adds the outer select as a table-less scope of its own and leaves every branch
+    scope unchanged. A set operation that is NOT ``union all`` (a plain de-duplicating
+    ``union``, or ``intersect`` / ``except``) is non-canonical and rejected — it never
+    appears in canonical m-sql. DML (Insert / Update / Delete) is not a SELECT and
+    keeps its own canonical shape, so it contributes no scope.
     """
     if isinstance(tree, exp.Select):
+        wrapped = _wrapped_union_source(tree)
+        if wrapped is not None:
+            return [tree, *_canonical_select_scopes(wrapped)]
         return [tree]
     if isinstance(tree, exp.SetOperation):
         if not is_union_all(tree):
@@ -385,13 +408,21 @@ def _assert_select_canonical(select: exp.Select) -> None:
     exactly the false negative that used to force such a chain to be hand-folded
     right-nested.
     """
+    # A wrapped `union all` is scored as its own branch scopes, so the outer select
+    # owns nothing inside it.
+    wrapped = _wrapped_union_source(select)
+    nested = (
+        set()
+        if wrapped is None
+        else {id(node) for node in (*wrapped.find_all(exp.Table), *wrapped.find_all(exp.Column))}
+    )
     # A row-lock suffix (`for share of t0`) references an existing alias and
     # sqlglot models that reference as its own Table node; it is not a FROM
     # source, so exclude it from the alias sequence.
     aliases = [
         table.alias
         for table in select.find_all(exp.Table, bfs=False)
-        if table.find_ancestor(exp.Lock) is None
+        if table.find_ancestor(exp.Lock) is None and id(table) not in nested
     ]
     expected = [f"t{index}" for index in range(len(aliases))]
     if aliases != expected:
@@ -399,6 +430,8 @@ def _assert_select_canonical(select: exp.Select) -> None:
             f"read table aliases must be {expected} in source order (m-sql rule 1), got {aliases}"
         )
     for column in select.find_all(exp.Column):
+        if id(column) in nested:
+            continue
         if not column.table:
             raise NonCanonicalError(f"column {column.name!r} is not alias-qualified (m-sql rule 1)")
 

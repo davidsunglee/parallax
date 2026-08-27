@@ -1050,6 +1050,48 @@ alphabetical order, regardless of the authored order. `familyVariant` appears on
 compatibility rows/graphs (`m-case-format`); the projected `family_variant` literal
 is the on-the-wire carrier the harness renames to `familyVariant`.
 
+#### Ordered or limited abstract read
+
+A `union all` has no clause tail of its own, so an abstract read declaring `orderBy`
+or `limit` wraps the whole union as the derived table `u` and applies the
+result-shape tail (*Clause order*) against that alias:
+
+```yaml
+# target: Document (abstract root over Invoice / Memo / Receipt), ordered and capped:
+- sql:
+    postgres: select u.id, u.title, u.currency, u.amount_due, u.body, u.paid_amount, u.family_variant from (select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as varchar(64)) body, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant from memo t0) u order by u.title desc limit ?
+```
+
+Every branch is unchanged from the unordered read: the caller's predicate keeps
+lowering **inside** each branch, where that branch's own Table Layout resolves each
+member's Column, and each branch keeps restarting its own `t0, t1, …` sequence
+(rule 1 scopes per branch, and the wrap adds one table-less outer scope). Only the
+tail moves outward. A cap therefore applies to the union's rows rather than to each
+branch's, and its `?` bind follows every branch bind.
+
+The outer select projects the union's own result aliases through; a `Document` slot
+is the one exception, because a presence cell carries no result alias and so cannot
+be addressed from outside the derived table — each branch projects that slot as a
+single aliased cell and the outer select expands the *Document read pair* over it.
+
+An `order by` key names the **result alias** its contributor was allocated above,
+never a branch's physical spelling, so a contributor holding an internal
+`parallax_attr_N` alias is ordered by that alias. A key over a member the layout
+placed inside a Structured Column lowers to the same extraction and typed cast a
+predicate over it does, taken against the union alias. The positional rule
+(`m-object-query`) admits a Sort Key only over a member applicable to every concrete
+in the read's position, so an ordering key is owned by every branch and never meets
+a typed `NULL` placeholder; its Null Placement term follows its declared nullability
+exactly as for a single-table read.
+
+A **read-lock suffix** is the one part of the tail the wrap does not rescue.
+PostgreSQL forbids a locking clause over a `UNION` result and over every input of
+one, and the suffix cannot be silently dropped, because that lock is what licenses a
+later ungated write (`m-read-lock`). A table-per-concrete-subtype union read that
+genuinely requests a shared row lock is therefore **refused**. The `optimistic`
+Effective Concurrency Strategy emits no suffix and is not such a request, so a
+participating read carrying it is ordered, capped, and executed like any other.
+
 ### Inheritance — concrete-subtype DML
 
 A create / update / delete of an inheritance participant is a **concrete-subtype

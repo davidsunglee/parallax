@@ -2144,6 +2144,24 @@ def _assert_union_all_only(case: Case, tree: Any) -> None:
             )
 
 
+def _union_all_body(tree: Any) -> Any:
+    """The `union all` *tree* asserts its branches against.
+
+    A `union all` has no clause tail of its own, so an ordered or limited
+    table-per-concrete-subtype read wraps it as a derived table and applies the
+    tail against the union's alias (m-sql). The branch facts — count, order, the
+    Table each reads, its per-column shape, its `familyVariant` literal — are the
+    same either way, so unwrapping here keeps one oracle for both forms rather
+    than forking it by whether the read declared a result shape.
+    """
+    if isinstance(tree, exp.Select):
+        source = tree.args.get("from_")
+        inner = source.this if isinstance(source, exp.From) else None
+        if isinstance(inner, exp.Subquery):
+            return inner.this
+    return tree
+
+
 def _union_branch_selects(tree: Any) -> list[Any]:
     """The leaf SELECT branches of a (possibly nested) `union all`, in order.
 
@@ -2286,7 +2304,7 @@ def _assert_tpcs_union_shape(
             continue
         tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
         _assert_union_all_only(case, tree)
-        branches = _union_branch_selects(tree)
+        branches = _union_branch_selects(_union_all_body(tree))
         if len(branches) != len(position_branches):
             raise CaseFailure(
                 f"{case.path.name}: table-per-concrete-subtype abstract read lowers to "

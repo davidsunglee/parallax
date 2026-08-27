@@ -83,23 +83,31 @@ the gap means threading a step's own target and golden projection into
 `_materialize_family_variant`, which is harness work outside any Python-target
 ticket.
 
-### D-56 — A table-per-concrete-subtype union-all read cannot run inside a transaction in either concurrency mode
+### D-56 — A table-per-concrete-subtype union-all read cannot run inside a transaction whose target resolves to the Locking strategy
 
-*Medium — a legal read shape is unreachable from `Transaction.find`.* Relates to
-`read_lock.mode_for`, `parallax.core.sql_gen._inheritance._plan_tpcs_read`.
+*Low — one concurrency mode of a legal read shape is unreachable from
+`Transaction.find`.* Relates to `parallax.core.sql_gen._inheritance._plan_tpcs_read`,
+`m-sql` *Ordered or limited abstract read*.
 
-**What.** `read_lock.mode_for` is the identity function, so a read carries a
-non-`None` lock mode under **both** `locking` and `optimistic`, and
-`_plan_tpcs_read` refuses a union-all read carrying any lock (its "has no
-goldened lowering yet" refusal). A TPCS family — the corpus's `Rate` — is
-therefore readable through `db.find` and not through `Transaction.find`.
+**What.** `_plan_tpcs_read` refuses a union-all read that requests a shared row
+lock. PostgreSQL grants a locking clause over neither a `UNION` result nor any
+input of one, and the suffix cannot be silently dropped because that lock is what
+licenses a later ungated write. So a TPCS family — the corpus's `Rate` — is
+readable inside a transaction whose target resolves to `optimistic`, and not
+inside one that falls back to `locking` (an unversioned Non-Temporal or
+Valid-Time-only target, or an explicit `concurrency="locking"`).
 
-**Why it is deferred rather than fixed.** It is a lowering gap with a goldening
-cost. The abstract-target licensing proof that hit this used a
-table-per-hierarchy family instead; the symptom the proof needed — one read whose
-rows resolve to their own concretes — is the same either way, so nothing was
-lost. Any later work reaching for a TPCS family through a transaction hits the
-same wall and must plan around it or close it.
+**Why it is deferred rather than fixed.** It is a database restriction rather than
+a lowering gap: no spelling of the union acquires the lock the caller asked for.
+Closing it means either locking the concrete rows through a second statement per
+branch — which is a new statement-count contract — or refusing the fallback at the
+`m-read-lock` layer instead, where the caller can see it. Both are design choices
+with cross-language reach, so neither belongs in an incidental fix.
+
+*(The wider half of this entry — every mode refused, including `optimistic`, and
+`orderBy` / `limit` refused with them — is closed. The guard now tests
+`lock == "locking"`, matching the append site's own check, and an ordered or
+limited union wraps as a derived table: `m-inheritance-134` / `-135`.)*
 
 ### D-67 — A deep-fetch or snapshot CHILD level's graph node shape is authored per projection, and production materializes one merged, narrowed node
 

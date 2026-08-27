@@ -104,12 +104,12 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.object_query import OrderKey
 from parallax.core.predicate import Narrow, PredicateNode
 from parallax.core.sql_gen._context import ColumnScope as _ColumnScope
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
 from parallax.core.storage_layout import (
+    ColumnContributor,
     ColumnSlot,
     ColumnTier,
     DirectColumn,
@@ -1144,8 +1144,16 @@ class TpcsBranchPlan:
     columns: tuple[BranchColumn, ...]
 
     def projection(
-        self, dialect: Dialect, alias: str
+        self, dialect: Dialect, alias: str, *, document_pairs: bool = True
     ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
+        """The branch's select list, its binds, and its document-read ordinals.
+
+        ``document_pairs`` is ``False`` when the union is wrapped by an ordered or
+        limited outer select: a presence cell has no result alias to be addressed
+        by from outside the derived table, so the document slot stays a single
+        aliased cell here and :meth:`TpcsUnionPlan.projection` expands the pair
+        against the union alias instead.
+        """
         exprs: list[str] = []
         binds: list[object] = []
         document_reads: list[DocumentReadOrdinals] = []
@@ -1154,6 +1162,14 @@ class TpcsBranchPlan:
             if branch_column.owned:
                 if branch_column.document:
                     expression = dialect.qualified(alias, branch_column.column)
+                    if not document_pairs:
+                        exprs.append(
+                            expression
+                            if branch_column.result_alias == branch_column.column
+                            else f"{expression} {branch_column.result_alias}"
+                        )
+                        ordinal += 1
+                        continue
                     presence, document = dialect.project_document_read(expression)
                     if branch_column.result_alias != branch_column.column:
                         document = f"{document} {branch_column.result_alias}"
@@ -1175,9 +1191,12 @@ class TpcsBranchPlan:
             else:
                 if branch_column.document:
                     document_type = dialect.null_cast(JSON, None)
-                    exprs.extend(
-                        ("false", f"cast(null as {document_type}) {branch_column.result_alias}")
-                    )
+                    placeholder = f"cast(null as {document_type}) {branch_column.result_alias}"
+                    if not document_pairs:
+                        exprs.append(placeholder)
+                        ordinal += 1
+                        continue
+                    exprs.extend(("false", placeholder))
                     document_reads.append((ordinal, ordinal + 1))
                     ordinal += 2
                     continue
@@ -1195,6 +1214,21 @@ class TpcsBranchPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class TpcsUnionColumn:
+    """One union RESULT column: the contributor it carries and the result alias
+    every branch projects it under.
+
+    A branch column is what one branch selects; this is what the union yields, so
+    it is what an outer select over the union alias — and therefore an ordering
+    key measured against it — can name.
+    """
+
+    contributor: AttributeIdentity | ValueObjectIdentity | RelationalDocument
+    result_alias: str
+    document: bool
+
+
+@dataclass(frozen=True, slots=True)
 class TpcsUnionPlan:
     """A position resolving to two or more concretes: canonical `union all`, one
     branch per concrete in canonical order, every branch restarting its own
@@ -1205,12 +1239,61 @@ class TpcsUnionPlan:
     ``inner`` is the SAME predicate for every branch — each branch lowers it
     against its own fresh context, which is what restarts the aliases and keeps
     the per-branch binds separable for concatenation in branch order.
+
+    ``columns`` is the union's own result sequence, aligned with every branch's
+    :attr:`TpcsBranchPlan.columns`. A `union all` has no clause tail of its own,
+    so an ordered or limited read wraps it as a derived table and applies the
+    tail against :meth:`projection` — the only place a Position Layout
+    contributor is reachable by the one name all branches agree on.
     """
 
     branches: tuple[TpcsBranchPlan, ...]
     position: tuple[EntityIdentity, ...]
+    columns: tuple[TpcsUnionColumn, ...]
     inner: PredicateNode
     transform: RowTransform
+
+    def projection(
+        self, dialect: Dialect, alias: str
+    ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
+        """The select list of an outer read over the union's ``alias``.
+
+        Every branch already applied its own per-type rendering, so this selects
+        each result alias through rather than projecting it a second time — the
+        one exception being a `Document` slot, whose presence cell is expanded
+        here because the branch left it unexpanded for exactly that reason.
+        """
+        exprs: list[str] = []
+        document_reads: list[DocumentReadOrdinals] = []
+        ordinal = 0
+        for column in self.columns:
+            reference = dialect.qualified(alias, column.result_alias)
+            if column.document:
+                presence, document = dialect.project_document_read(reference)
+                exprs.extend((presence, document))
+                document_reads.append((ordinal, ordinal + 1))
+                ordinal += 2
+                continue
+            exprs.append(reference)
+            ordinal += 1
+        exprs.append(dialect.qualified(alias, "family_variant"))
+        return ", ".join(exprs), (), tuple(document_reads)
+
+    def column_of(self, contributor: ColumnContributor) -> TpcsUnionColumn:
+        """``contributor``'s union result column.
+
+        A member the layout placed inside a Structured Column makes no Column
+        claim of its own, so it is reached through the contributor of the slot
+        that carries it rather than through its own identity — which is what
+        makes this total for every member the position can order by, the
+        positional rule (`m-object-query`) having already excluded the rest.
+        """
+        for column in self.columns:
+            if column.contributor == contributor:
+                return column
+        raise SqlGenError(  # pragma: no cover - a validated Sort Key names a projected member
+            f"{contributor} has no Column in the table-per-concrete-subtype union"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1233,8 +1316,6 @@ def plan_inheritance_read(
     entity: EntityMetadata,
     predicate: PredicateNode,
     narrow_to: tuple[EntityIdentity, ...] | None,
-    order_keys: tuple[OrderKey, ...],
-    limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
@@ -1248,10 +1329,11 @@ def plan_inheritance_read(
     outright.
 
     ``instance_form`` is the object lane (`result_form == "instance"`), the only
-    thing about the read's consumption lane the family projection depends on. The
-    clause-tail arguments are here rather than at the assembly site because the
-    union lane must REFUSE them, and its two refusals have a fixed relative order
-    that a caller-side check would silently reorder.
+    thing about the read's consumption lane the family projection depends on.
+    ``lock`` is here rather than at the assembly site because the union lane must
+    REFUSE a genuinely requested shared row lock before any branch is assembled;
+    ordering and the cap are the assembler's, since a union applies them to its
+    own outer select rather than to any branch.
     """
     view = entity_view(facet, entity.identity)
     position, inner, narrowed = _read_position(view, predicate, narrow_to, facet)
@@ -1259,7 +1341,7 @@ def plan_inheritance_read(
         return _plan_tph_read(
             entity, view, position, inner, facet, storage, instance_form, narrowed
         )
-    return _plan_tpcs_read(position, inner, order_keys, limit, facet, storage, instance_form, lock)
+    return _plan_tpcs_read(position, inner, facet, storage, instance_form, lock)
 
 
 def _read_position(
@@ -1347,8 +1429,6 @@ def _plan_tph_read(
 def _plan_tpcs_read(
     position: InheritancePositionView,
     inner: PredicateNode,
-    order_keys: tuple[OrderKey, ...],
-    limit: int | None,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     instance_form: bool,
@@ -1408,10 +1488,17 @@ def _plan_tpcs_read(
             transform=transform,
         )
 
-    if order_keys or limit is not None or lock is not None:  # pragma: no cover
+    if lock == "locking":
+        # A shared row lock is the one clause a derived-table wrap cannot rescue:
+        # PostgreSQL forbids a locking clause over a `UNION` result and over every
+        # input of one, and dropping it silently would leave a later ungated write
+        # unlicensed. Ordering and limiting have an outer select to land on, so
+        # only a GENUINELY requested lock refuses — matching the append site's own
+        # `== "locking"` test, which is why a participating read carrying the
+        # `optimistic` Effective Concurrency Strategy passes here.
         raise SqlGenError(
-            "orderBy / limit / a read-lock suffix over a table-per-concrete-"
-            "subtype union-all read (2+ effective concretes) has no goldened lowering yet"
+            "a read-lock suffix over a table-per-concrete-subtype union-all read "
+            "(2+ effective concretes) has no goldened lowering yet"
         )
     # Instance-form: a VO-FREE family's
     # union-all lowering is BYTE-IDENTICAL to its row-form sibling (no slot-4
@@ -1452,6 +1539,14 @@ def _plan_tpcs_read(
     )
     spellings = tuple(_contributor_column(layout_position.branches, index) for index in scalars)
     result_aliases = _result_aliases(spellings)
+    union_columns = tuple(
+        TpcsUnionColumn(
+            contributor=layout_position.columns[index].contributor,
+            result_alias=result_alias,
+            document=layout_position.columns[index].tier is ColumnTier.DOCUMENT,
+        )
+        for index, result_alias in zip(scalars, result_aliases, strict=True)
+    )
     branches = tuple(
         TpcsBranchPlan(
             identity=branch.concrete_entities[0],
@@ -1545,6 +1640,7 @@ def _plan_tpcs_read(
     return TpcsUnionPlan(
         branches=branches,
         position=concretes,
+        columns=union_columns,
         inner=inner,
         transform=transform,
     )

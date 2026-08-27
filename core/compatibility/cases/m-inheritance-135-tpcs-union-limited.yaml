@@ -1,0 +1,38 @@
+# A LIMITED table-per-concrete-subtype `union all` read: the cap applies to the union
+# alias, never to a branch (m-inheritance, m-sql, m-object-query).
+#
+# A per-branch `limit` would cap each concrete table independently and return up to
+# `n` rows PER branch, which is a different query. The cap therefore rides the same
+# derived-table wrap the ordering does (m-inheritance-134), on the outer select, and
+# its `?` bind lands AFTER every branch's own binds — the branch-first bind order the
+# union already fixes, extended through the tail rather than interrupted by it. Here
+# the branches bind nothing, so the cap is the statement's only bind.
+#
+# `order by u.title desc limit ?` makes the cap OBSERVABLE through row membership: the
+# two largest titles across the whole family are Receipt-A and Memo-A, each from a
+# different concrete table, so an implementation that capped per branch would return
+# Invoice-A and Invoice-B as well. Row comparison is order-insensitive, which is
+# exactly why the cap is what carries the ordering into the assertion.
+model: models/document.yaml
+tags: [m-inheritance, m-object-query, m-sql, table-per-concrete-subtype, union-all, root, orderBy, ordering, limit, directive, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Document
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.Document.title
+        direction: desc
+    limit: 2
+then:
+  statements:
+    - sql:
+        postgres: select u.id, u.title, u.folder_id, u.currency, u.amount_due, u.body, u.paid_amount, u.family_variant from (select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, cast(null as varchar(64)) body, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.folder_id, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant from memo t0 union all select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, cast(null as varchar(64)) body, t0.paid_amount, 'Receipt' family_variant from receipt t0) u order by u.title desc limit ?
+        mariadb: select u.id, u.title, u.folder_id, u.currency, u.amount_due, u.body, u.paid_amount, u.family_variant from (select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, cast(null as char(64)) body, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.folder_id, cast(null as char(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant from memo t0 union all select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, cast(null as char(64)) body, t0.paid_amount, 'Receipt' family_variant from receipt t0) u order by u.title desc limit ?
+      binds: [2]
+  referenceSql: select * from (select id, title, folder_id, currency, amount_due, null as body, null as paid_amount, 'Invoice' as family_variant from invoice union all select id, title, folder_id, currency, null as amount_due, null as body, paid_amount, 'Receipt' as family_variant from receipt union all select id, title, folder_id, null as currency, null as amount_due, body, null as paid_amount, 'Memo' as family_variant from memo) every_document order by title desc limit 2
+  rows:
+    - { id: 1, title: Memo-A, folder_id: 102, currency: null, amount_due: null, body: Reminder, paid_amount: null, familyVariant: Memo }
+    - { id: 1, title: Receipt-A, folder_id: 100, currency: USD, amount_due: null, body: null, paid_amount: 120.00, familyVariant: Receipt }
+  roundTrips: 1

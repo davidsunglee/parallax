@@ -630,6 +630,14 @@ _TPCS_ROW_SIBLING_REASON: Final[str] = (
     "mechanism, over a different subtype combination — no distinct developer-facing "
     "spelling to add"
 )
+_TPCS_UNION_RESULT_SHAPE_REASON: Final[str] = (
+    "the developer-facing spelling is `order_by(...)` / `.limit(...)`, already exercised "
+    "as an idiomatic example (`m-object-query-003`), asked here of an abstract "
+    "table-per-concrete-subtype target: the call a developer writes is identical and "
+    "only the emitted statement differs, wrapping the union as a derived table so the "
+    "result-shape tail has somewhere to land — which the compile/run lanes grade "
+    "byte-exact on both dialects"
+)
 _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON: Final[str] = (
     "a representative sibling of the exercised polymorphic-navigation examples "
     "(m-inheritance-070/071 for table-per-concrete-subtype; m-navigate-004/008/010 for "
@@ -1319,6 +1327,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-050": _TPCS_ROW_SIBLING_REASON,
     "m-inheritance-051": _TPCS_ROW_SIBLING_REASON,
     "m-inheritance-053": _TPCS_ROW_SIBLING_REASON,
+    "m-inheritance-134": _TPCS_UNION_RESULT_SHAPE_REASON,
+    "m-inheritance-135": _TPCS_UNION_RESULT_SHAPE_REASON,
     "m-inheritance-060": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
     "m-inheritance-061": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
     "m-inheritance-062": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
