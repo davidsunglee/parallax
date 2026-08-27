@@ -432,13 +432,12 @@ def find(
 
     ``calls`` is the scope this executor brackets its Database Calls against,
     handed down by whichever composition root owns the operation: the Read a
-    standalone read's own root opened, the Read a participating read's
-    transaction attempt opened, or the Stream Batch one page of a streamed read
-    runs inside. It is the narrower Database Call scope rather than a Read
-    because opening calls is the whole of what this executor asks of it.
-    Passing the shared inert activity — which omitting the argument does — runs
-    the same code and emits nothing, and is what the default path and a declined
-    root do.
+    standalone read's own root opened, or the Read a participating read's
+    transaction attempt opened. It is the narrower Database Call scope rather
+    than a Read because opening calls is the whole of what this executor asks of
+    it. Passing the shared inert activity — which omitting the argument does —
+    runs the same code and emits nothing, and is what the default path, a
+    declined root, and one page of a streamed read do.
     """
     meta = model.meta
     root_entity = _metadata(meta, query.target.canonical)
