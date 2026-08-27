@@ -50,6 +50,7 @@ from parallax.core.entity import (
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
+    INERT,
     InstalledLifecycle,
     TransactionAttemptActivity,
     refuse_reentry,
@@ -76,6 +77,7 @@ from parallax.snapshot.handle._predicate_writes import (
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
+    FindResult,
     ResultPublication,
     RowsResult,
     Snapshot,
@@ -85,6 +87,7 @@ from parallax.snapshot.handle._read import (
     typed_publication,
     wire_publication,
 )
+from parallax.snapshot.handle._stream import SnapshotStream, check_batch_size
 from parallax.snapshot.handle._wire import WireTransactionView
 from parallax.snapshot.handle._wire_writes import WireWriteLane
 from parallax.snapshot.handle._write_inputs import (
@@ -604,6 +607,7 @@ class Transaction:
         """
         return WireTransactionView(
             self._wire_find,
+            self._wire_stream,
             WireWriteLane(
                 self._model,
                 self._uow,
@@ -627,7 +631,72 @@ class Transaction:
         refuse_reentry(self._lifecycle)
         return self._read(node, wire_publication(self._model.meta))
 
-    def _read[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
+    def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
+        """Deliver ``query``'s roots one at a time inside this transaction, as
+        the scope-bound single-pass peer of :meth:`find`.
+
+        It participates exactly as :meth:`find` does, once per PAGE rather than
+        once per read: each page force-flushes pending writes before its own
+        statements run, so a loop that writes as it reads still sees its own
+        writes, and derives every level's read lock from that level's own target
+        Entity. The buffer a writing loop accumulates is therefore bounded by
+        one page rather than by the result — the same dial, pointed at the same
+        thing.
+
+        Delivery is attempt-local. A ``db.transact`` may re-execute its
+        callback, and roots already consumed cannot be revoked, so a retried
+        callback opens a fresh stream and may observe them again.
+        """
+        refuse_reentry(self._lifecycle)
+        construction = _materializing(self._construction)
+        return self._streamed(
+            object_query_node(query),
+            typed_publication(self._model.meta, construction),
+            batch_size,
+        )
+
+    def _wire_stream(self, node: ObjectQueryNode, batch_size: int) -> SnapshotStream[Any]:
+        """One participating Wire stream, published as Wire nodes one at a time.
+
+        The view ``tx.wire`` answers holds this method rather than the
+        transaction, so this is where a Wire stream enters and where re-entry is
+        refused.
+        """
+        refuse_reentry(self._lifecycle)
+        return self._streamed(node, wire_publication(self._model.meta), batch_size)
+
+    def _streamed(
+        self, node: ObjectQueryNode, publication: ResultPublication, batch_size: int
+    ) -> SnapshotStream[Any]:
+        """One participating stream of ``node``, published through
+        ``publication`` — the whole composition both read interfaces run."""
+        check_batch_size(batch_size)
+        return SnapshotStream(node, self._model, publication, self._page, batch_size=batch_size)
+
+    def _page(self, node: ObjectQueryNode) -> FindResult:
+        """One page of a participating stream: a find inside the force-flush.
+
+        The flush is per page rather than once at entry for two reasons that
+        point the same way: a page reads the database like any other
+        participating read, so read-your-own-writes has to hold at every one of
+        them rather than intermittently; and a buffer flushed once at entry
+        would grow with the result, which is the unbounded growth a stream
+        exists to remove. An empty buffer costs one truthiness check, so a
+        read-only loop pays nothing.
+        """
+        return self._uow.read(
+            lambda: find(
+                node,
+                self._model,
+                self._dialect,
+                self._conn,
+                preference=self._uow.settings.concurrency,
+                ledger=self._uow,
+                calls=INERT,
+            )
+        )
+
+    def _read(self, node: ObjectQueryNode, publication: ResultPublication) -> Snapshot[Any]:
         """One participating read of ``node``, published through ``publication`` —
         the whole composition both read interfaces run.
 
@@ -645,7 +714,7 @@ class Transaction:
         preflight(node, model=self._model.meta, form="graph")
         return self._uow.read(lambda: self._published(node, publication))
 
-    def _published[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
+    def _published(self, node: ObjectQueryNode, publication: ResultPublication) -> Snapshot[Any]:
         """One participating read's own activity: execute, convert, publish."""
         with self._attempt.read(node.target, publication.interface) as read:
             if scans_an_axis(node):
@@ -666,7 +735,7 @@ class Transaction:
                     self._conn,
                     preference=self._uow.settings.concurrency,
                     ledger=self._uow,
-                    read=read,
+                    calls=read,
                 )
             )
 

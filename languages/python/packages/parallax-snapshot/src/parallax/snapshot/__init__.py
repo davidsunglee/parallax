@@ -34,6 +34,13 @@ canonical instruction at all — the write verb's OWN static verdict, raised
 before any evidence question, while input breaking a rule another module owns
 keeps that module's class instead.
 
+The streamed peer of a Snapshot is here as well: :class:`SnapshotStream`
+(``SnapshotStream[T]``), what ``db.stream`` / ``tx.stream`` and their Wire peers
+answer — a scope-bound, single-pass delivery of roots with no whole-result
+accessor — and :class:`SnapshotStreamStateError`, its refusal of a second entry,
+a second view, a reach outside its scope, or a continuation past a root whose
+own primary key did not decode.
+
 The Wire read interface's own result vocabulary is here too: :class:`WireEntity`,
 the frozen Entity node ``db.wire.find`` / ``tx.wire.find`` publishes, and
 :data:`WireValue`, the recursive plain-value shape its positions carry. The
@@ -76,6 +83,8 @@ from parallax.snapshot.handle import (
     Snapshot,
     SnapshotConnectionError,
     SnapshotMaterializationError,
+    SnapshotStream,
+    SnapshotStreamStateError,
     StoredDataIssue,
     TooManyResultsFound,
     TransactionOwnershipError,
@@ -104,6 +113,8 @@ __all__ = [
     "SnapshotDecodingError",
     "SnapshotInspectionError",
     "SnapshotMaterializationError",
+    "SnapshotStream",
+    "SnapshotStreamStateError",
     "StoredDataIssue",
     "TooManyResultsFound",
     "TransactionOwnershipError",

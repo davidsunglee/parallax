@@ -59,6 +59,11 @@ public-surface check promises. Where the exported names live:
 - :mod:`~parallax.snapshot.handle._wire_writes` — the Wire write ingress those
   verbs delegate to, which shares the evidence resolver, the claim algebra, the
   instruction IR, and the buffer with the Typed verbs.
+- :mod:`~parallax.snapshot.handle._stream` — :class:`SnapshotStream`, the
+  scope-bound single-pass delivery ``db.stream`` / ``tx.stream`` and their Wire
+  peers answer, and :class:`SnapshotStreamStateError`, the one refusal its own
+  rules raise. The page loop above the find executor and the per-root
+  publication below it live here; the executor between them is unchanged.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, :func:`entity_read_lock`, the composed
   per-Entity read-lock derivation every participating read resolves its own
@@ -142,6 +147,7 @@ from parallax.snapshot.handle._read import (
     find_history,
 )
 from parallax.snapshot.handle._step_lowering import lower_step
+from parallax.snapshot.handle._stream import SnapshotStream, SnapshotStreamStateError
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import (
     WireChanges,
@@ -188,6 +194,8 @@ __all__ = [
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotMaterializationError",
+    "SnapshotStream",
+    "SnapshotStreamStateError",
     "StoredDataIssue",
     "TooManyResultsFound",
     "Transaction",

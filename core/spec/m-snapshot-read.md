@@ -181,6 +181,16 @@ Within **one materialized graph**, one row is **one node**:
 - Resolution is **graph-local**: two *separate* materializations make no
   same-node promise, and no node is ever interned beyond its own graph. There is
   no scope wider than the graph in this module.
+- **A result is not necessarily one graph**, so graph-local is narrower than
+  result-wide. An eager read materializes its whole result as one graph; a
+  milestone-set read materializes one graph per milestone; a streamed delivery
+  materializes one graph per root. What every one of them promises is the same
+  sentence above, applied to the graph a node was published from — so a row that
+  two *result roots* both reach is one node exactly where one graph carries
+  both, which an eager read guarantees and a streamed delivery declines.
+  Root-local is therefore the floor every materialization meets, and sharing
+  wider than one root is **permitted but never promised**. A caller that needs
+  to know two roots reached one row compares their identities.
 - A **value object** (`m-value-object`) is not a node: it has no identity, adds
   no relationship hop, and materializes *with* its owning entity as a plain
   nested value carrying the members *What a materialized value carries* fixes
@@ -249,6 +259,56 @@ surfacing the first bullet above leaves each language spec to fix, answered the
 same way before and after. What composition fixes globally is the behavior —
 same objects, no SQL, the distinction preserved — because otherwise one authored
 program would answer differently per language.
+
+## Streamed delivery
+
+A snapshot read may be delivered as a **Snapshot Stream** instead of as a whole
+result. A stream is scope-bound and single-pass: it delivers roots one at a
+time, forward only, and exposes no whole-result accessor. Delivery is the
+distinction and representation is not, so a stream is a peer of the read it
+streams in every representation that read has — one delivery mechanism, never a
+format argument.
+
+Roots arrive in the **Continuation Order**: a deterministic total order the
+delivery derives rather than an Object Query clause, which always includes the
+primary key and is therefore total.
+
+Delivery is bounded by a **page size** counting root positions. It never bounds
+included relationship rows, and it is a performance dial and nothing else:
+changing it changes neither the order roots arrive in, nor which roots arrive,
+nor the members, loadedness, identity, or issues any of them carries.
+
+Each page is an ordinary read of a bounded root query, so `m-deep-fetch`'s
+**`1 + L` ceiling applies once per page** and a page's child levels are the same
+`IN (gathered keys)` lookups any read issues. A page that returned fewer roots
+than it asked for proves exhaustion; a full one does not, so exhaustion costs one
+more root statement returning nothing — unless a declared `limit` was already
+delivered in full, which proves it without asking.
+
+### Where a stream diverges from a whole-result read
+
+Three divergences, and they apply identically to every representation.
+
+- **Identity narrows to root-local.** A row two result roots both reach is one
+  node per root, where a whole-result read may answer one node for both. Stated
+  in full under *Graph-local identity resolution* above, because the promise it
+  narrows governs both.
+- **An unordered `limit` becomes specified.** `m-object-query` makes an
+  unordered `limit` a cap rather than pagination, returning an unspecified
+  matching subset. A stream orders by the Continuation Order before capping, so
+  the same query with the same `limit` returns the Continuation Order's own
+  first `n` roots. The stream is strictly more specified — nothing a
+  whole-result read promised is broken — but the two answer differently, and
+  that is a property of the delivery rather than of the query.
+- **A root whose primary key did not decode ends the delivery.** Only decoded
+  values are bindable and the primary key is always in the Continuation Order,
+  so such a root supplies nothing to continue from. The rule is stated
+  positionally-independent — *a stream cannot continue past a root whose primary
+  key did not decode* — precisely so the page size cannot change it: the same
+  stored row may not be survivable at one page size and fatal at another. The
+  root itself is published exactly as a whole-result read publishes it, in band
+  where the reading surface delivers classified roots in band and as a refusal
+  where it refuses them; what follows it is the end of the delivery either way.
 
 ## Round trips
 

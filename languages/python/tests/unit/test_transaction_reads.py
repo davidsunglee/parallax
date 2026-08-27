@@ -48,7 +48,7 @@ from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.execution_lifecycle._activity import INERT, ReadActivity
+from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.unit_work import (
     Concurrency,
@@ -83,7 +83,7 @@ class _RecordedFind:
     result: FindResult
 
 
-def _recording_find(calls: list[_RecordedFind]) -> Callable[..., FindResult]:
+def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., FindResult]:
     """A ``find`` stand-in recording the ledger each call was handed.
 
     Spelled with the executor's full signature rather than ``*args`` so the
@@ -100,7 +100,7 @@ def _recording_find(calls: list[_RecordedFind]) -> Callable[..., FindResult]:
         *,
         preference: Concurrency | None = None,
         ledger: ObservationLedger | None = None,
-        read: ReadActivity = INERT,
+        calls: DatabaseCallScope = INERT,
     ) -> FindResult:
         result = real(
             query,
@@ -109,9 +109,9 @@ def _recording_find(calls: list[_RecordedFind]) -> Callable[..., FindResult]:
             port,
             preference=preference,
             ledger=ledger,
-            read=read,
+            calls=calls,
         )
-        calls.append(_RecordedFind(None if ledger is None else ledger.participation, result))
+        recorded.append(_RecordedFind(None if ledger is None else ledger.participation, result))
         return result
 
     return recording

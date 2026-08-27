@@ -43,11 +43,20 @@ observes a half-published graph and nothing writes to a published one. The
 per-family key map the builder assigns logical identity through is discarded
 there: identity is computed once, while building, and a merge consumes the dense
 IDs without re-extracting or re-hashing a key.
+
+A sealed graph is also where result SCOPE is expressed. Because a merge's whole
+universe is the roots it is handed, :func:`root_scoped` narrows a graph to one
+of them by rebuilding the row shell alone — every array shared by reference —
+and everything downstream runs unchanged over the result. :func:`root_members`
+is the other half of advancing through a result: each root's decoded Attributes,
+and the absence that names a root whose own primary key never decoded.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import Final, Literal, cast
 
 from parallax.core.document_codec import DocumentPathSegment
@@ -78,6 +87,8 @@ __all__ = [
     "StoredDataIssueCode",
     "StoredDataIssueInput",
     "graph_rows",
+    "root_members",
+    "root_scoped",
 ]
 
 
@@ -186,6 +197,53 @@ def graph_rows(graph: SnapshotGraph) -> GraphRows:
     """``graph``'s sealed arrays — the internal read a merge and an importing
     builder take, and the whole of what either is granted."""
     return graph._rows  # pyright: ignore[reportPrivateUsage] - the one seam this scope reads a sealed graph through
+
+
+def root_scoped(graph: SnapshotGraph, position: int, *, pin: Pin | None = None) -> SnapshotGraph:
+    """``graph`` narrowed to the single root at ``position``.
+
+    A merge's whole universe is the roots it is handed, so narrowing them is the
+    whole of what root-local scope IS — a new row shell over every one of
+    ``graph``'s arrays, shared by reference and copied nowhere. Scope is
+    therefore a property of the graph rather than a mode: the merge, the
+    classification, and both materializers run unchanged over what this answers,
+    and none of them learns that anything narrowed.
+
+    ``pin`` overrides the whole-graph pin for this root alone, which is what a
+    root standing at its own milestone edge needs; omitting it keeps ``graph``'s.
+    """
+    rows = graph_rows(graph)
+    return SnapshotGraph(
+        replace(rows, roots=(rows.roots[position],), pin=rows.pin if pin is None else pin)
+    )
+
+
+def root_members(graph: SnapshotGraph) -> Iterator[Mapping[AttributeIdentity, object] | None]:
+    """Each root's decoded Attribute members in result order.
+
+    ``None`` where a root's own primary key is null or undecodable, which is the
+    one root shape that stands behind no projection at all and so can answer no
+    member. A caller advancing through a result reads both facts here: how far
+    it got, and whether the root it stopped on has anything to advance FROM.
+
+    Deliberately lazy and Attribute-keyed. A caller that needs one root's values
+    holds one mapping rather than the whole result's, and the identities it is
+    keyed by are the ones a member is named by everywhere else — never the
+    positions the row happens to store them at.
+    """
+    rows = graph_rows(graph)
+    for root in rows.roots:
+        if isinstance(root, InvalidRootInput):
+            yield None
+        else:
+            layout = rows.layouts[root]
+            values = rows.member_rows[root]
+            yield MappingProxyType(
+                {
+                    cast("AttributeIdentity", layout.members[position]): values[position]
+                    for position in range(layout.attribute_count)
+                }
+            )
 
 
 class GraphBuilder:
