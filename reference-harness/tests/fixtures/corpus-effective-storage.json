@@ -518,8 +518,13 @@
       "attribute": {
         "body": "body"
       },
-      "documentPath": {},
-      "valueObject": {}
+      "documentPath": {
+        "annotation.author": "annotation:author",
+        "annotation.priority": "annotation:priority"
+      },
+      "valueObject": {
+        "annotation": "annotation"
+      }
     },
     "parallax.compatibility.Receipt": {
       "attribute": {

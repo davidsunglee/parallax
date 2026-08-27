@@ -1298,3 +1298,23 @@ def test_tpcs_document_branches_omit_the_presence_cell_under_a_wrapped_union() -
     )
     assert binds == ()
     assert document_reads == ()
+
+
+def test_tpcs_union_projects_a_top_level_occurrence_for_the_instance_form_alone() -> None:
+    # `m-sql` *Read projection* rule 3: a top-level Value Object occurrence's own
+    # `Document` slot reaches an instance-form read and no row-form one. Under
+    # `Columns` layout only the concrete that DECLARES the occurrence carries the
+    # Structured Column, so the owning branch projects the document read pair and
+    # each sibling branch the typed `NULL` placeholder under the same result alias.
+    instance = compile_read(
+        oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), result_form="instance"
+    )
+    assert (
+        "not t0.annotation is null, t0.annotation, 'Memo' family_variant"
+    ) in instance.statement.sql
+    assert instance.statement.sql.count("false, cast(null as jsonb) annotation") == 2
+    assert instance.document_reads == ((7, 8),)
+
+    row_form = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+    assert "annotation" not in row_form.statement.sql
+    assert row_form.document_reads == ()

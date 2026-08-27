@@ -492,9 +492,10 @@ def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
 ) -> Snapshot[Any]:
     """The object-lane sibling of the row-form TPCS narrow-to-abstract-subtype
     read (`m-inheritance-109`, `m-inheritance-052` its values-lane witness).
-    The union-all instance form is byte-identical to the row form for this
-    value-object-free family, and each `Invoice`/`Receipt` instance carries
-    only its own declared members."""
+    The narrow excludes the one concrete declaring an occurrence, so this
+    POSITION carries no `Document` slot and its union-all instance form is
+    byte-identical to the row form, with each `Invoice`/`Receipt` instance
+    carrying only its own declared members."""
     return db.find(Document.where(Document.narrow(FinancialDocument)))
 ```
 
@@ -1902,8 +1903,14 @@ class Receipt(FinancialDocument, table="receipt", namespace=_NS, inheritance=Con
     paid_amount: Attr[Decimal] = attr(precision=18, scale=2)
 
 
+class Annotation(ValueObject):
+    author: Attr[str | None]
+    priority: Attr[str | None]
+
+
 class Memo(Document, table="memo", namespace=_NS, inheritance=ConcreteSubtype):
     body: Attr[str] = attr(max_length=64)
+    annotation: Attr[Annotation | None]
 
 
 def read_a_table_per_concrete_subtype_family(db: Database) -> Snapshot[Any]:

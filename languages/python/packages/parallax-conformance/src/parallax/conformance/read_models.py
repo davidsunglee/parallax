@@ -46,6 +46,7 @@ from parallax.core import (
     Rel,
     TablePerHierarchy,
     TxTemporal,
+    ValueObject,
     attr,
     index,
     rel,
@@ -59,6 +60,7 @@ __all__ = [
     "PAYMENT_MODEL",
     "PERSON_MODEL",
     "RATE_MODEL",
+    "Annotation",
     "Balance",
     "CardPayment",
     "CashPayment",
@@ -143,8 +145,14 @@ class Receipt(FinancialDocument, table="receipt", namespace=_NS, inheritance=Con
     paid_amount: Attr[Decimal] = attr(precision=18, scale=2)
 
 
+class Annotation(ValueObject):
+    author: Attr[str | None]
+    priority: Attr[str | None]
+
+
 class Memo(Document, table="memo", namespace=_NS, inheritance=ConcreteSubtype):
     body: Attr[str] = attr(max_length=64)
+    annotation: Attr[Annotation | None]
 
 
 class Folder(

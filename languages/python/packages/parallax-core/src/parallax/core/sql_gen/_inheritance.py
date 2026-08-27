@@ -1426,6 +1426,23 @@ def _plan_tph_read(
     )
 
 
+def _projects_document_slot(
+    contributor: ColumnContributor, *, instance_form: bool, document_resident: bool
+) -> bool:
+    """Whether a `union all` branch projects ``contributor``'s `Document` slot.
+
+    A top-level Value Object occurrence owns a Structured Column of its own under
+    `Columns` layout, and `m-sql` *Read projection* rule 3 gives it to an
+    instance-form read alone — a row-form read omits it. A Relational Document
+    Layout's shared Structured Column additionally answers rule 5's other need:
+    a row-form read still projects it to produce a member the layout placed at a
+    Document Path, which ``document_resident`` is.
+    """
+    if isinstance(contributor, ValueObjectIdentity):
+        return instance_form
+    return isinstance(contributor, RelationalDocument) and (instance_form or document_resident)
+
+
 def _plan_tpcs_read(
     position: InheritancePositionView,
     inner: PredicateNode,
@@ -1500,16 +1517,6 @@ def _plan_tpcs_read(
             "a read-lock suffix over a table-per-concrete-subtype union-all read "
             "(2+ effective concretes) has no goldened lowering yet"
         )
-    # Instance-form: a VO-FREE family's
-    # union-all lowering is BYTE-IDENTICAL to its row-form sibling (no slot-4
-    # value-object columns to add either way — m-inheritance-109 witnesses
-    # this exact shape, verified against m-inheritance-052's own golden). A
-    # VO-BEARING family's union-all instance-form projection remains
-    # genuinely unwitnessed (no corpus golden authors what a value-object
-    # document column looks like split across `union all` branches whose
-    # owning concrete may not even declare it) — narrowed refusal, never a
-    # blanket one, and never a guessed lowering with no witness to check it
-    # against.
     layout_position = position_layout(storage, concretes)
     document_resident = any(
         isinstance(
@@ -1522,9 +1529,8 @@ def _plan_tpcs_read(
         index
         for index, column in enumerate(layout_position.columns)
         if column.tier is not ColumnTier.DOCUMENT
-        or (
-            isinstance(column.contributor, RelationalDocument)
-            and (instance_form or document_resident)
+        or _projects_document_slot(
+            column.contributor, instance_form=instance_form, document_resident=document_resident
         )
     )
     by_identity: dict[AttributeIdentity | ValueObjectIdentity, AttributeMetadata] = {

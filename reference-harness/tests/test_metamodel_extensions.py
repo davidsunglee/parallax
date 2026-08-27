@@ -225,8 +225,16 @@ def test_concrete_subtype_derives_the_full_inherited_attribute_chain() -> None:
         "amount_due",
     ]
     # The concrete sibling Memo sits directly under the root, so it inherits only the
-    # root chain (id, title, folder_id) — NOT FinancialDocument's currency — plus body.
-    assert _entity_columns(document, "Memo") == ["id", "title", "folder_id", "body"]
+    # root chain (id, title, folder_id) — NOT FinancialDocument's currency — plus its own
+    # body and the Structured Column its own `annotation` occurrence claims, which sits
+    # in the trailing `Document` tier rather than beside the scalars.
+    assert _entity_columns(document, "Memo") == [
+        "id",
+        "title",
+        "folder_id",
+        "body",
+        "annotation",
+    ]
 
 
 def test_intermediate_abstract_subtype_inheritance_chain() -> None:

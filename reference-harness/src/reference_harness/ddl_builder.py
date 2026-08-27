@@ -222,21 +222,25 @@ def placeholder_cast_type(neutral_type: str, max_length: int | None, dialect: st
       * ``decimal(p, s)`` is identical on both dialects.
       * A bounded ``string`` casts to Postgres ``varchar(n)`` but MariaDB ``char(n)`` —
         MariaDB's ``CAST`` target grammar does NOT accept ``varchar`` (it uses
-        ``char``), whereas the *column* type is ``varchar(n)`` on both. An unbounded
-        string casts to ``text`` (a legal CAST target on both).
+        ``char``). An unbounded one casts to Postgres ``text`` and MariaDB ``char``,
+        which is that grammar's only unbounded character target.
+      * ``json`` diverges for the same reason: Postgres casts to its own ``jsonb``
+        document type, while MariaDB's ``JSON`` is an alias for ``LONGTEXT`` and is
+        no more a legal CAST target than ``LONGTEXT`` itself, so the document
+        placeholder casts to ``char`` there too.
       * Every other neutral type reuses the DDL column-type mapping (``int64`` ->
         ``bigint``, ...), which is a legal CAST target on both dialects.
 
     This is the read-side counterpart of :func:`_column_type`; it exists separately
-    because CAST targets and column types are not the same grammar (the string
-    divergence above).
+    because CAST targets and column types are not the same grammar (the divergences
+    above).
     """
     decimal = _DECIMAL_RE.match(neutral_type)
     if decimal:
         return f"decimal({decimal.group(1)},{decimal.group(2)})"
+    if dialect == "mariadb" and neutral_type in ("string", _DOCUMENT_TYPE):
+        return f"char({max_length})" if neutral_type == "string" and max_length else "char"
     if neutral_type == "string":
-        if dialect == "mariadb":
-            return f"char({max_length})" if max_length else "text"
         return f"varchar({max_length})" if max_length else "text"
     return _column_type(neutral_type, max_length, dialect)
 

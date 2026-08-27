@@ -140,17 +140,19 @@ _SNAPSHOT_READ_MILESTONE_SET_READS: Final[frozenset[str]] = frozenset(
 )
 # Multi-concrete polymorphic instance-form reads:
 # the `then.graph` siblings of the row-form abstract-multi-concrete reads above
-# (m-inheritance-003/-013/-015/-052), pinning the per-variant node shape
+# (m-inheritance-003/-013/-015/-052/-050), pinning the per-variant node shape
 # (own-branch members only, no null sibling padding, plus `familyVariant`)
 # `db.find` on an abstract multi-concrete position must eventually produce.
-# Every one of the four compiles BYTE-IDENTICAL to its row-form sibling
-# (animal.yaml/payment.yaml/document.yaml declare no value objects, so the
-# instance-form slot-4 delta is empty): table-per-hierarchy (106-108) always
-# does; table-per-concrete-subtype case 109 supports the witnessed VO-free shape.
-# A VO-bearing TPCS multi-concrete family retains a narrower refusal because no
-# case witnesses it. Runtime graph materialization is covered by the run sweep.
+# Four of the five compile BYTE-IDENTICAL to their row-form sibling: the position
+# holds no top-level Value Object occurrence, so the instance-form slot-4 delta is
+# empty. `m-inheritance-137` is the one that differs, and it is why the set is not
+# simply the row-form goldens over again: `document.yaml`'s Memo declares an
+# occurrence its siblings do not, so the union carries one `Document` slot that
+# only an instance-form read projects — the owning branch as the document read
+# pair, each other branch as the typed `NULL` placeholder.
 _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-106", "m-inheritance-107", "m-inheritance-108", "m-inheritance-109"}
+    | {"m-inheritance-137"}
 )
 # The read-lock matrix's compile-eligible in-slice read cases (`m-read-lock`):
 # `m-read-lock-001` is the harness-lane single-

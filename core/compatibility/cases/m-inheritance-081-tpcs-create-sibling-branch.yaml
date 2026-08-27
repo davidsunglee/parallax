@@ -7,8 +7,10 @@
 # a Memo is an ordinary single-table INSERT into the concrete `memo` table — no shared
 # table, no tag, and no currency column (contrast the Invoice create m-inheritance-010,
 # whose chain runs through FinancialDocument and supplies currency). The nullable
-# inherited root FK folder_id is omitted, so it reads back null. Starts from an EMPTY
-# schema and asserts the single inserted memo row.
+# inherited root FK folder_id is omitted, so it reads back null, and so is Memo's own
+# nullable top-level Value Object occurrence `annotation` — a member an insert may omit
+# is absent from the INSERT's column list and reads back as the Structured Column's
+# NULL. Starts from an EMPTY schema and asserts the single inserted memo row.
 model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -27,5 +29,5 @@ then:
       binds: [5, Memo-C, Note]
   tableState:
     memo:
-      - { id: 5, title: Memo-C, folder_id: null, body: Note }
+      - { id: 5, title: Memo-C, folder_id: null, body: Note, annotation: null }
   roundTrips: 1

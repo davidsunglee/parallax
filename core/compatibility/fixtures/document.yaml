@@ -19,6 +19,12 @@
 #   Folder 102 Gamma owns Memo-A (Memo)                              — memo branch only; so a
 #                    narrow to FinancialDocument ({Invoice, Receipt}) DROPS Gamma
 #   Folder 103 Empty owns nothing                                    — matched by NO branch
+#
+# Memo-A carries the family's one top-level Value Object occurrence, `annotation`, as a
+# whole embedded document loaded into the Structured Column the `Columns` layout gives
+# that occurrence on `memo` alone. The Invoice and Receipt rows author no `annotation`
+# key because their concretes declare none — the physical asymmetry an instance-form
+# abstract-target read observes as an owning branch beside two placeholder branches.
 parallax.compatibility.Invoice:
   - id: 1
     title: Invoice-A
@@ -41,6 +47,9 @@ parallax.compatibility.Memo:
     title: Memo-A
     body: Reminder
     folderId: 102
+    annotation:
+      author: Ada
+      priority: high
 parallax.compatibility.Folder:
   - id: 100
     name: Alpha
