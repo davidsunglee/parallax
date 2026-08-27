@@ -539,10 +539,10 @@ A typed plain value graph returned by a snapshot read: identity-resolved within 
 _Avoid_: domain snapshot, JSON output, serialization form, lazy collection
 
 **Snapshot Stream**:
-A scope-bound, single-pass delivery of roots materialized and published in
-bounded batches under one Continuation Order; a transactional stream makes its
-batches participate in one Transaction Attempt without promising one database
-snapshot.
+A scope-bound, single-pass delivery of roots in one Continuation Order: each
+bounded batch of root positions is materialized as one page, and that page's
+roots are published one at a time. A transactional stream makes its batches
+participate in one Transaction Attempt without promising one database snapshot.
 _Avoid_: cursor, lazy Snapshot, result set, batch iterator
 
 **Stream Batch**:

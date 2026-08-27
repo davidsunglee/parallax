@@ -2999,6 +2999,49 @@ or descriptor authoring form and performs no audit stamping.
   to-one); a single-concrete view is typed as that concrete class, and a
   multi-concrete view's elements are their concrete classes.
 
+### Streamed results
+
+- **`stream` is the delivery peer of `find`, in every namespace `find` has
+  one.** The public streaming surface is `db.stream` / `tx.stream`
+  (`SnapshotStream[T]`) beside `db.wire.stream` / `tx.wire.stream`
+  (`SnapshotStream[WireEntity]`), exported from `parallax.snapshot`. Delivery is
+  the verb and representation stays the namespace, so there is no `format=`
+  argument, no public format enum, and no `findInBatches`-shaped call. Each
+  accepts exactly the query spellings its `find` peer accepts and crosses the
+  same read gate, at context entry rather than at the call.
+- **`SnapshotStream[T]` is deliberately not a `Snapshot[T]`.** Its whole
+  surface is `__enter__` / `__exit__`, `__iter__`, `checked()`, `pin`, and
+  `__repr__`. There is no `results()`, no arity accessor, and no way to re-read
+  what already went past — a caller holding one holds a position in a delivery
+  rather than a value. Iterating is the default view and raises
+  `InvalidDataError` at a root whose stored state contradicted the model;
+  `checked()` is the same delivery with that root arriving as its `InvalidData`
+  record, and the two views are the exact peers `Snapshot` and
+  `CheckedSnapshot` are.
+- **Scope binding is one state field checked at every entry point**, in the
+  discipline `UnitOfWork` already uses rather than by relying on
+  `__enter__`/`__exit__`. Constructing a stream reaches nothing: the gate, the
+  page plan, and every statement belong to the entered scope, so an un-entered
+  stream emits nothing and reads nothing. Entering twice, taking a second view
+  of either kind, taking a second pass, and reaching `pin` outside the scope all
+  raise `SnapshotStreamStateError`, whose message names the rule and never the
+  internals. Re-selecting one view is an error rather than a silent empty pass,
+  which is the failure mode a still-callable streamed result invites. `pin` is
+  available before the first page — a stream computes it from the query, as
+  `find` does — and inside the scope alone, so "outside the scope, everything
+  raises" is one rule rather than one rule with an exception.
+- **`batch_size` is public, per-call, and defaults to `1000`.** It counts ROOT
+  positions, never included relationship rows, and is validated exactly as
+  `limit` is: `type(batch_size) is not int` is an identity check, so nothing is
+  coerced and `True` is not the page size 1, and a non-positive or non-`int`
+  value raises `ValueError` at the call, before any plan or page exists. There
+  is no handle-level default, no connection setting, and no environment
+  variable — the only page size is the one a call names.
+- **Refusal order matches `find`'s.** Re-entry is refused first, then a
+  connection over a model that composes no Entity Class (Typed only), then this
+  call's own arguments; the read gate and the deferred-Feature refusal follow at
+  context entry, before any I/O.
+
 ### Invalid stored data
 
 - **The result element.** A Snapshot element is `T | InvalidData[T]`: a root
@@ -3071,8 +3114,9 @@ or descriptor authoring form and performs no audit stamping.
 
 - **Two read interfaces, not a format argument.** The public read surface is
   `db.find` / `tx.find` (`Snapshot[T]`) beside `db.wire.find` / `tx.wire.find`
-  (`Snapshot[WireEntity]`). There is no `format=` argument, no public format
-  enum, and no `db.typed` or `tx.typed` namespace. `db.wire` and `tx.wire` are
+  (`Snapshot[WireEntity]`), and their streamed peers `db.stream` / `tx.stream`
+  beside `db.wire.stream` / `tx.wire.stream` (§4). There is no `format=`
+  argument, no public format enum, and no `db.typed` or `tx.typed` namespace. `db.wire` and `tx.wire` are
   lightweight views over the same connected model and adapter; `tx.wire`
   additionally shares the Unit of Work, observation ledger, locking, and
   Execution Lifecycle with the Typed transaction interface, so the two are not
@@ -4559,7 +4603,8 @@ scopes ordinarily do.
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
+| Streamed-read page plan (support) | `parallax.core.continuation` | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read` | generated forbidden contracts |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Execution lifecycle recorder (support, isolated child of `parallax.core.execution_lifecycle`) | `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` | generated forbidden contracts |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
@@ -4644,6 +4689,12 @@ parallax.snapshot._inspection --> parallax.core.metamodel
 parallax.snapshot._inspection --> parallax.core.inheritance
 parallax.snapshot._inspection --> parallax.core.relationship
 parallax.snapshot._inspection --> parallax.core.temporal_read
+parallax.core.continuation --> parallax.core.metamodel
+parallax.core.continuation --> parallax.core.inheritance
+parallax.core.continuation --> parallax.core.predicate
+parallax.core.continuation --> parallax.core.object_query
+parallax.core.continuation --> parallax.core.temporal_read
+parallax.snapshot.handle --> parallax.core.continuation
 parallax.snapshot.handle --> parallax.snapshot.materialize
 parallax.snapshot.handle --> parallax.snapshot._read_result
 parallax.snapshot.handle --> parallax.snapshot._inspection

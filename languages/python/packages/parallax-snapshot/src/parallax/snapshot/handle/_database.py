@@ -104,6 +104,7 @@ from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
+    FindResult,
     ResultPublication,
     RowsResult,
     Snapshot,
@@ -113,6 +114,7 @@ from parallax.snapshot.handle._read import (
     typed_publication,
     wire_publication,
 )
+from parallax.snapshot.handle._stream import SnapshotStream, check_batch_size
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import WireDatabaseView
 from parallax.snapshot.handle._write_lowering import stream_lowered
@@ -423,6 +425,32 @@ class Database:
         node = object_query_node(query)
         return self._read(node, typed_publication(self._connected.model.meta, construction))
 
+    def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
+        """Deliver ``query``'s roots one at a time, in the Continuation Order,
+        as the scope-bound single-pass peer of :meth:`find`.
+
+        Nothing executes until the returned stream's scope is entered, and the
+        whole result is never materialized: each page of ``batch_size`` root
+        positions is deep-fetched into one sealed graph and published one root
+        at a time, so what Parallax holds is one page plus one root rather than
+        the result.
+
+        ``batch_size`` counts ROOT positions — never included relationship rows
+        — and is a performance dial alone: it changes neither the order roots
+        arrive in, nor which roots arrive, nor what any of them carries. It is
+        validated exactly as ``limit`` is, at this call and before any I/O.
+
+        The refusal order is :meth:`find`'s: re-entry first, then a connection
+        that can materialize no Snapshot at all, then this call's own arguments.
+        """
+        refuse_reentry(self._lifecycle)
+        construction = self._connected.materializing()
+        return self._stream(
+            object_query_node(query),
+            typed_publication(self._connected.model.meta, construction),
+            batch_size,
+        )
+
     @property
     def wire(self) -> WireDatabaseView:
         """This connection's Wire read interface (spec §3).
@@ -432,7 +460,7 @@ class Database:
         Class, which is why a descriptor-backed connection answers this and
         refuses :meth:`find`.
         """
-        return WireDatabaseView(self._wire_find)
+        return WireDatabaseView(self._wire_find, self._wire_stream)
 
     def _wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
         """One Wire read: :meth:`_read` under the wire publication.
@@ -444,7 +472,43 @@ class Database:
         refuse_reentry(self._lifecycle)
         return self._read(node, wire_publication(self._connected.model.meta))
 
-    def _read[R](self, node: ObjectQueryNode, publication: ResultPublication[R]) -> R:
+    def _wire_stream(self, node: ObjectQueryNode, batch_size: int) -> SnapshotStream[Any]:
+        """One Wire stream: :meth:`_stream` under the wire publication.
+
+        The view ``db.wire`` answers holds this method rather than the handle,
+        so this — not the property that built the view — is where a Wire stream
+        enters and where re-entry is refused.
+        """
+        refuse_reentry(self._lifecycle)
+        return self._stream(node, wire_publication(self._connected.model.meta), batch_size)
+
+    def _stream(
+        self, node: ObjectQueryNode, publication: ResultPublication, batch_size: int
+    ) -> SnapshotStream[Any]:
+        """One non-transactional stream of ``node``, published through
+        ``publication`` — the whole composition both read interfaces run.
+
+        Non-transactional in the same three ways :meth:`_read` is: no read lock,
+        no Concurrency Preference, and no participation stamped on the values it
+        publishes. Constructing a stream reaches nothing: the gate, the page
+        plan, and every statement are the entered scope's, so a stream nobody
+        enters is inert.
+        """
+        check_batch_size(batch_size)
+        return SnapshotStream(
+            node, self._connected.model, publication, self._page, batch_size=batch_size
+        )
+
+    def _page(self, node: ObjectQueryNode) -> FindResult:
+        """One page of a standalone stream: the ordinary find executor.
+
+        A page IS an eager read of a bounded root query, so the executor is the
+        one :meth:`find` runs and the `1 + L` ceiling applies to the page
+        exactly as it applies to a whole eager result.
+        """
+        return find(node, self._connected.model, self._dialect, self._port, calls=INERT)
+
+    def _read(self, node: ObjectQueryNode, publication: ResultPublication) -> Snapshot[Any]:
         """One non-transactional read of ``node``, published through
         ``publication`` — the whole composition both read interfaces run.
 
@@ -481,7 +545,7 @@ class Database:
                     self._connected.model,
                     self._dialect,
                     self._port,
-                    read=read,
+                    calls=read,
                 )
             )
 

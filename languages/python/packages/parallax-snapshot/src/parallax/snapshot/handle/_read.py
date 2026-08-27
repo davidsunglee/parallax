@@ -36,10 +36,13 @@ _write_inputs`'s retention while each row is still live, and hands the resulting
 Source Hints to whichever materializer runs. The dependency goes this way and
 only this way — the write-input module names nothing here.
 
-One executor, two materializers. :func:`snapshot_from_find_result` and
-:func:`wire_from_find_result` are PEERS over the same
+One executor, two materializers. The two :class:`ResultPublication` values are
+PEERS over the same
 :class:`~parallax.snapshot.materialize.GraphMerge`: which one runs is chosen
-after execution has already finished and neither calls the other.
+after execution has already finished and neither calls the other. Each publishes
+one sealed graph at a time, so an eager find, a milestone-set find, and a
+streamed read differ in WHICH graphs they hand over rather than in how a graph
+becomes a result.
 :func:`find_rows` is the values lane's own degenerate case — the transformed row
 IS the representation, so it publishes rows directly and shares with :func:`find`
 exactly the canonicalization, compilation, and Database Call bracket that decide
@@ -71,10 +74,10 @@ failed-call rules.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
 from parallax.core import predicate as predicate_algebra
@@ -83,7 +86,7 @@ from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
-from parallax.core.execution_lifecycle._activity import INERT, ReadActivity
+from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope, ReadActivity
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -120,7 +123,6 @@ from parallax.snapshot.materialize import (
     RelationshipViewKey,
     SnapshotGraph,
     UnwindTree,
-    WireEntity,
     classify_roots,
     hydrates,
     merge_graph_input,
@@ -155,8 +157,6 @@ __all__ = [
     "find_rows",
     "stage_publishable_rows",
     "typed_publication",
-    "wire_from_find_result",
-    "wire_from_history_result",
     "wire_publication",
 ]
 
@@ -374,7 +374,7 @@ def find(
     *,
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,
-    read: ReadActivity = INERT,
+    calls: DatabaseCallScope = INERT,
 ) -> FindResult:
     """The one per-level deep-fetch / snapshot-materialization loop (m-deep-fetch
     "one query per non-empty relationship level"; m-snapshot-read "round trips").
@@ -430,12 +430,15 @@ def find(
     effective-Optimistic write may import that evidence while an
     effective-Locking one cannot.
 
-    ``read`` is the activity this executor brackets its Database Calls against,
+    ``calls`` is the scope this executor brackets its Database Calls against,
     handed down by whichever composition root owns the operation: the Read a
-    standalone read's own root opened, or the Read a participating read's
-    transaction attempt opened. Passing the shared inert activity — which
-    omitting the argument does — runs the same code and emits nothing, and is
-    what the default path and a declined root do.
+    standalone read's own root opened, the Read a participating read's
+    transaction attempt opened, or the Stream Batch one page of a streamed read
+    runs inside. It is the narrower Database Call scope rather than a Read
+    because opening calls is the whole of what this executor asks of it.
+    Passing the shared inert activity — which omitting the argument does — runs
+    the same code and emits nothing, and is what the default path and a declined
+    root do.
     """
     meta = model.meta
     root_entity = _metadata(meta, query.target.canonical)
@@ -451,7 +454,7 @@ def find(
         lock=entity_read_lock(meta, root_entity.identity, preference),
     )
     root_refs = _convert_level(
-        builder, ROOT_LEVEL, model, port, dialect, root_compiled, read, observations
+        builder, ROOT_LEVEL, model, port, dialect, root_compiled, calls, observations
     )
 
     level_refs: list[tuple[int, ...]] = []
@@ -477,7 +480,7 @@ def find(
             lock=entity_read_lock(meta, child_query.target, preference),
         )
         child_refs = _convert_level(
-            builder, index + 1, model, port, dialect, child_compiled, read, observations
+            builder, index + 1, model, port, dialect, child_compiled, calls, observations
         )
         _attach_children(builder, meta, level, parents, child_refs)
         level_refs.append(child_refs)
@@ -734,7 +737,7 @@ def _convert_level(
     port: DbPort,
     dialect: Dialect,
     compiled: CompiledRead,
-    read: ReadActivity,
+    calls: DatabaseCallScope,
     observations: ReadObservations,
 ) -> tuple[int, ...]:
     """Execute one level and convert each of its rows as that row materializes.
@@ -764,7 +767,7 @@ def _convert_level(
     settles against.
     """
     refs: list[int] = []
-    for row in _execute_compiled(port, dialect, compiled, read):
+    for row in _execute_compiled(port, dialect, compiled, calls):
         context = LevelContext(
             model.layouts.entity(row.resolved_entity),
             compiled.projected_documents,
@@ -947,7 +950,7 @@ def _correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> Attrib
 
 
 def _execute_compiled(
-    port: DbPort, dialect: Dialect, compiled: CompiledRead, read: ReadActivity
+    port: DbPort, dialect: Dialect, compiled: CompiledRead, calls: DatabaseCallScope
 ) -> Iterator[MaterializedReadRow]:
     """Execute one compiled read, materializing its rows through its OWN transform.
 
@@ -967,11 +970,11 @@ def _execute_compiled(
     MATERIALIZED row is reachable for exactly as long as its consumer takes to
     convert it, and the level never holds a second copy of its result set.
     """
-    return map(compiled.materialize_row, execute_read(port, dialect, compiled, read))
+    return map(compiled.materialize_row, execute_read(port, dialect, compiled, calls))
 
 
 def execute_read(
-    port: DbPort, dialect: Dialect, compiled: CompiledRead, read: ReadActivity
+    port: DbPort, dialect: Dialect, compiled: CompiledRead, calls: DatabaseCallScope
 ) -> list[Row]:
     """Run one compiled read's statement inside its own Database Call bracket.
 
@@ -990,7 +993,7 @@ def execute_read(
     """
     statement = compiled.statement
     document_reads = compiled.document_reads
-    with read.database_call(statement, "READ", compiled.target) as call:
+    with calls.database_call(statement, "READ", compiled.target) as call:
         driver_sql = dialect.to_driver_sql(statement.sql)
         binds = list(statement.binds)
         rows = (
@@ -1135,42 +1138,34 @@ def _edge_pin(edge: Edge) -> Pin:
     return Pin(tx_time=edge.tx_time_or_none, valid_time=edge.valid_time_or_none)
 
 
-def wire_from_find_result(result: FindResult, meta: Metamodel) -> Snapshot[WireEntity]:
-    """``result``'s graph as a Wire Snapshot — the PEER of
-    :func:`snapshot_from_find_result`, not a wrapper of it.
+class RootsOf(Protocol):
+    """One materializer's publication of the roots ONE sealed graph carries.
 
-    Both run the same :func:`~parallax.snapshot.materialize.merge_graph_input`
-    over the same executor's own sealed graph and the same root classification
-    over that merge, and neither calls the other: which materializer runs is
-    decided after execution has already finished, so a typed read builds no
-    frozen mapping and a wire read constructs no Entity. Both also attach the
-    same Source Hints the executor retained, so a Wire node and a Typed node of
-    one row carry the identical evidence.
+    The whole conversion, in one call: merge the graph, classify its roots, and
+    publish the ones that hydrate. ``includes`` is the requested Include Path
+    tree, which the Wire unwind bounds its walk by and the typed construction
+    does not consult. ``ordinal_offset`` is where this graph's roots start in
+    the ordered result being published, which is nonzero wherever one result
+    spans several graphs. ``sources`` is the Source Hint the executor retained
+    per PROJECTION, which each published node carries so a later keyed write
+    reads its evidence off the value it was handed.
     """
-    merge = merge_graph_input(result.graph)
-    roots = wire_roots(merge, meta, result.includes, sources=merge.by_allocation(result.sources))
-    return Snapshot(roots, result.graph.pin)
 
-
-def wire_from_history_result(result: HistoryFindResult, meta: Metamodel) -> Snapshot[WireEntity]:
-    """Every milestone's roots as ONE ordered Wire result.
-
-    Each milestone graph is classified on its own — graph-local identity never
-    promises reuse across milestones — while a classified root's ordinal names
-    its position in the published result rather than in the graph it came from,
-    so the offset advances by what each graph contributed. A milestone-set read
-    carries no Include Path (`m-case-format`), so every graph unwinds root-only.
-    """
-    roots: list[WireEntity | InvalidData[WireEntity]] = []
-    for graph in result.graphs:
-        roots.extend(wire_roots(merge_graph_input(graph), meta, ordinal_offset=len(roots)))
-    return Snapshot(tuple(roots), Pin())
+    def __call__(
+        self,
+        graph: SnapshotGraph,
+        includes: UnwindTree = EMPTY_UNWIND,
+        /,
+        *,
+        ordinal_offset: int = 0,
+        sources: ReadSources = MappingProxyType({}),
+    ) -> tuple[object, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
-class ResultPublication[R]:
-    """Which materializer a read publishes through, as the two conversions the
-    one dispatch can reach: a find's own graph, and a milestone-set find's graphs.
+class ResultPublication:
+    """Which materializer a read publishes through, as the ONE conversion every
+    orchestration reaches it by.
 
     A handle's read orchestration is the same whichever materializer runs — the
     shared gate, the milestone-set dispatch, the executor entry, the activity the
@@ -1180,59 +1175,87 @@ class ResultPublication[R]:
     equivalence the Typed and Wire interfaces promise is structural rather than
     maintained by inspection.
 
+    :attr:`roots_of` is deliberately per-GRAPH rather than per-result. An eager
+    find publishes one graph, a milestone-set find concatenates one per
+    milestone, and a streamed read publishes one root-scoped graph at a time —
+    three orchestrations over one conversion, which is what keeps result scope a
+    property of the graph a materializer is handed rather than a mode it is told
+    about. :meth:`from_find` and :meth:`from_history` are the two eager
+    compositions over it, so neither is an independent conversion that could
+    drift from the streamed one.
+
     ``interface`` is the same choice named for the Read activity that
     orchestration opens: which materializer publishes IS which read interface
     ran, so the two are one value rather than two that could disagree.
     """
 
     interface: ReadInterface
-    from_find: Callable[[FindResult], R]
-    from_history: Callable[[HistoryFindResult], R]
+    roots_of: RootsOf
 
-
-def typed_publication(
-    meta: Metamodel, construction: EntityGraphConstruction
-) -> ResultPublication[Snapshot[Any]]:
-    """Publish through the typed materializer: frozen Entity instances."""
-    return ResultPublication(
-        "TYPED",
-        lambda result: snapshot_from_find_result(result, meta, construction),
-        lambda result: snapshot_from_history_result(result, meta, construction),
-    )
-
-
-def wire_publication(meta: Metamodel) -> ResultPublication[Snapshot[WireEntity]]:
-    """Publish through the wire materializer: frozen declared-name value trees."""
-    return ResultPublication(
-        "WIRE",
-        lambda result: wire_from_find_result(result, meta),
-        lambda result: wire_from_history_result(result, meta),
-    )
-
-
-def snapshot_from_find_result(
-    result: FindResult, meta: Metamodel, construction: EntityGraphConstruction
-) -> Snapshot[Any]:
-    roots = _materialize_result_graph(result.graph, meta, construction, sources=result.sources)
-    return Snapshot(roots, result.graph.pin)
-
-
-def snapshot_from_history_result(
-    result: HistoryFindResult, meta: Metamodel, construction: EntityGraphConstruction
-) -> Snapshot[Any]:
-    """Every milestone's roots as ONE ordered result.
-
-    Each milestone graph is classified on its own — graph-local identity never
-    promises reuse across milestones — while a classified root's ordinal names
-    its position in the published result rather than in the graph it came from,
-    so the offset advances by what each graph contributed.
-    """
-    roots: list[Any] = []
-    for graph in result.graphs:
-        roots.extend(
-            _materialize_result_graph(graph, meta, construction, ordinal_offset=len(roots))
+    def from_find(self, result: FindResult) -> Snapshot[Any]:
+        """``result``'s one graph as a Snapshot at that read's own pin."""
+        return Snapshot(
+            self.roots_of(result.graph, result.includes, sources=result.sources),
+            result.graph.pin,
         )
-    return Snapshot(tuple(roots), Pin())
+
+    def from_history(self, result: HistoryFindResult) -> Snapshot[Any]:
+        """Every milestone's roots as ONE ordered result.
+
+        Each milestone graph is classified on its own — graph-local identity
+        never promises reuse across milestones — while a classified root's
+        ordinal names its position in the published result rather than in the
+        graph it came from, so the offset advances by what each graph
+        contributed. A milestone-set read carries no Include Path
+        (`m-case-format`), so every graph publishes root-only, and the outer pin
+        is empty because a scan is not a pin.
+        """
+        roots: list[object] = []
+        for graph in result.graphs:
+            roots.extend(self.roots_of(graph, ordinal_offset=len(roots)))
+        return Snapshot(tuple(roots), Pin())
+
+
+def typed_publication(meta: Metamodel, construction: EntityGraphConstruction) -> ResultPublication:
+    """Publish through the typed materializer: frozen Entity instances."""
+
+    def roots_of(
+        graph: SnapshotGraph,
+        includes: UnwindTree = EMPTY_UNWIND,
+        /,
+        *,
+        ordinal_offset: int = 0,
+        sources: ReadSources = MappingProxyType({}),
+    ) -> tuple[object, ...]:
+        del includes  # the typed construction walks the merge, never the include tree
+        return _materialize_result_graph(
+            graph, meta, construction, ordinal_offset=ordinal_offset, sources=sources
+        )
+
+    return ResultPublication("TYPED", roots_of)
+
+
+def wire_publication(meta: Metamodel) -> ResultPublication:
+    """Publish through the wire materializer: frozen declared-name value trees."""
+
+    def roots_of(
+        graph: SnapshotGraph,
+        includes: UnwindTree = EMPTY_UNWIND,
+        /,
+        *,
+        ordinal_offset: int = 0,
+        sources: ReadSources = MappingProxyType({}),
+    ) -> tuple[object, ...]:
+        merge = merge_graph_input(graph)
+        return wire_roots(
+            merge,
+            meta,
+            includes,
+            ordinal_offset=ordinal_offset,
+            sources=merge.by_allocation(sources),
+        )
+
+    return ResultPublication("WIRE", roots_of)
 
 
 def _materialize_result_graph(

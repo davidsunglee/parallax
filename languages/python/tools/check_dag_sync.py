@@ -248,8 +248,24 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.temporal_read",
         }
     ),
+    # The page node a streamed read advances by: pure, and scoped apart from the
+    # handle that consumes it because the page statement is a cross-language
+    # contract rather than one implementation's helper. Its grants are what
+    # composing an ordinary Object Query needs and nothing else, so the scope
+    # row is what proves a continuation reaches no port, no SQL generation, no
+    # dialect, and no materialization.
+    "parallax.core.continuation": frozenset(
+        {
+            "parallax.core.metamodel",
+            "parallax.core.inheritance",
+            "parallax.core.predicate",
+            "parallax.core.object_query",
+            "parallax.core.temporal_read",
+        }
+    ),
     "parallax.snapshot.handle": frozenset(
         {
+            "parallax.core.continuation",
             "parallax.snapshot.materialize",
             "parallax.snapshot._read_result",
             "parallax.snapshot._inspection",

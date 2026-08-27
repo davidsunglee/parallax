@@ -37,6 +37,8 @@ def test_top_package_public_surfaces() -> None:
         "connect",
         "Snapshot",
         "CheckedSnapshot",
+        "SnapshotStream",
+        "SnapshotStreamStateError",
         "InvalidData",
         "InvalidDataError",
         "ObjectKey",

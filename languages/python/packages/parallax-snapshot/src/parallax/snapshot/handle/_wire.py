@@ -35,6 +35,7 @@ from typing import Any
 from parallax.core.object_query import ObjectQueryNode, deserialize
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle._read import Snapshot
+from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._wire_writes import (
     WireChanges,
     WirePredicateTarget,
@@ -59,6 +60,7 @@ type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]
 node itself, or — on a class-backed model — the Typed authoring value."""
 
 type _WireFind = Callable[[ObjectQueryNode], Snapshot[WireEntity]]
+type _WireStream = Callable[[ObjectQueryNode, int], SnapshotStream[WireEntity]]
 
 
 def wire_query_node(query: WireQuery) -> ObjectQueryNode:
@@ -85,10 +87,11 @@ class WireDatabaseView:
     own retained evidence an effective-Optimistic write may still settle against.
     """
 
-    __slots__ = ("_find",)
+    __slots__ = ("_find", "_stream")
 
-    def __init__(self, find: _WireFind) -> None:
+    def __init__(self, find: _WireFind, stream: _WireStream) -> None:
         self._find = find
+        self._stream = stream
 
     def find(self, query: WireQuery) -> Snapshot[WireEntity]:
         """Execute ``query`` exactly once and return its Wire Snapshot.
@@ -100,6 +103,19 @@ class WireDatabaseView:
         stored state contradicted the model publishes in its place.
         """
         return self._find(wire_query_node(query))
+
+    def stream(self, query: WireQuery, *, batch_size: int = 1000) -> SnapshotStream[WireEntity]:
+        """Deliver ``query``'s roots one at a time, in the Continuation Order,
+        as the scope-bound single-pass peer of :meth:`find`.
+
+        Delivery is the verb and representation stays the namespace: this
+        answers the same frozen
+        :class:`~parallax.snapshot.materialize.WireEntity` nodes ``find`` does,
+        one root at a time instead of all of them, with no format argument
+        anywhere. ``batch_size`` counts root positions and is a performance dial
+        alone.
+        """
+        return self._stream(wire_query_node(query), batch_size)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
@@ -129,8 +145,8 @@ class WireTransactionView(WireDatabaseView):
 
     __slots__ = ("_writes",)
 
-    def __init__(self, find: _WireFind, writes: WireWriteLane) -> None:
-        super().__init__(find)
+    def __init__(self, find: _WireFind, stream: _WireStream, writes: WireWriteLane) -> None:
+        super().__init__(find, stream)
         self._writes = writes
 
     def insert(
