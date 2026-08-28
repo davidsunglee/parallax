@@ -12,6 +12,7 @@ gated; a skip is reported, never silent (spec §6).
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Callable, Sequence
 from typing import Any, Final, cast
@@ -208,44 +209,44 @@ class _ExecutedPort:
         return self._inner.transaction(body)
 
 
-def _stream_root_positions(case: case_format.Case, statements: int) -> set[int]:
+# A page's root statement carries the page's own bound; a child level inside one
+# never does, a page size bounding root positions and never the rows a level
+# gathers (`m-snapshot-read`).
+_PAGE_BOUND: Final = re.compile(r"\blimit \?$")
+
+
+def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) -> set[int]:
     """Where each page's ROOT statement sits in a streamed case's flat list.
 
     `m-case-format` makes ``then.statements`` the pages' own `1 + L` groups
-    concatenated, and which of them is a root is fixed by the delivery's own
-    arithmetic rather than read off any statement's text: a page delivers the
-    size it asked for until one falls short, and a page that delivered no roots
-    gathered no parent keys and so ran no child level at all. The recovered
-    partition must consume the authored list exactly, so a delivery shape this
-    arithmetic does not describe fails here rather than being graded against the
-    wrong statements.
+    concatenated, and a page executes a child level only where the level above it
+    GATHERED parent keys — so a page's group is one root statement followed by as
+    many levels as that page's own rows reached, which no count of the query's
+    include paths recovers. What every page's root statement carries and no child
+    level of one ever does is the page's own bound, so that is what a root is
+    recognized by. How MANY pages there are is the delivery's own arithmetic — a
+    page delivers the size it asked for until one falls short, and a declared
+    limit ends it early — and a delivery that ran a different number of them
+    fails here rather than being graded against the wrong statements.
     """
     doc = case_document(case)
     query = cast("dict[str, Any]", doc["when"]["objectQuery"])
     size = cast("int", cast("dict[str, Any]", doc["when"]["stream"])["batchSize"])
     limit = cast("int | None", query.get("limit"))
-    includes = cast("list[dict[str, Any]]", query.get("includes", []))
-    levels = len(
-        {
-            tuple(segment["rel"] for segment in path["segments"][: depth + 1])
-            for path in includes
-            for depth in range(len(cast("list[dict[str, Any]]", path["segments"])))
-        }
-    )
     graph = cast("dict[str, list[Any]]", doc["then"]["graph"])
     roots = sum(len(nodes) for nodes in graph.values())
-    positions: set[int] = set()
-    index = 0
+    pages = 0
     delivered = 0
     while True:
         requested = size if limit is None else min(size, limit - delivered)
         page = min(requested, roots - delivered)
-        positions.add(index)
-        index += 1 + (levels if page else 0)
+        pages += 1
         delivered += page
         if page < requested or (limit is not None and delivered >= limit):
             break
-    assert index == statements, (case.case_id, sorted(positions), statements)
+    positions = {index for index, sql in enumerate(statements) if _PAGE_BOUND.search(sql)}
+    assert positions and min(positions) == 0, (case.case_id, sorted(positions))
+    assert len(positions) == pages, (case.case_id, sorted(positions), pages)
     return positions
 
 
@@ -263,12 +264,10 @@ def _grade_streamed_statements(
     roots reached in an order nothing pins.
     """
     dialect = dialect_for("postgres")
-    golden = [
-        (dialect.to_driver_sql(sql), wire_binds(binds))
-        for sql, binds in _read_golden_statements(case)
-    ]
+    authored = _read_golden_statements(case)
+    golden = [(dialect.to_driver_sql(sql), wire_binds(binds)) for sql, binds in authored]
     assert len(executed) == len(golden), (case.case_id, executed, golden)
-    roots = _stream_root_positions(case, len(golden))
+    roots = _stream_root_positions(case, [sql for sql, _binds in authored])
     for index, ((ran_sql, ran_binds), (golden_sql, golden_binds)) in enumerate(
         zip(executed, golden, strict=True)
     ):
