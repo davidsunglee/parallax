@@ -793,46 +793,6 @@ closing them means reopening a cross-language contract the corpus took the other
 way on purpose. It stays graded at
 `tests/unit/test_transaction_streams.py`.
 
-### D-86 — A scenario read step's `expectRows` grades the rows its statements returned, never the values the step published
-
-*Medium — a portable observation the conformance envelope does not carry, so
-outside Python a scenario read step's rows reach no oracle at all.* Owned by
-`core/spec/m-conformance-adapter.md` *Scenario cases* rather than by this target;
-recorded here because streamed-step work surfaced it. Relates to
-`core/spec/m-case-format.md` *Relationship contents at a step*,
-`parallax.conformance.engine._run_group_step`,
-`tests/compatibility/test_run_sweep.py`.
-
-**What.** A step's `expectRows` states the roots that step published, and nothing
-compares it against them. The envelope's only per-step content channel is
-`stepGraphs`, which carries what an `expectGraph` step states and is admitted
-only on a read declaring Include Paths; a read step's rows have no channel. The
-Python run sweep therefore grades `expectRows` at the injected `DbPort` — it
-captures each step's result sets, runs the production materializer over them, and
-compares that to the case — so what is graded is that the step's own statements
-returned those rows, not that the step handed those values to the case. A foreign
-adapter has no such seam to wrap, so there the observable is absent rather than
-approximated. A streamed step inherits this: its pages, seek coordinates,
-exhaustion, and the gate a later write binds are all graded, while a delivery
-that published its roots reordered or short still passes. What a streamed
-delivery publishes IS graded where a streamed `read` case states `then.graph`,
-which the envelope reports from the delivery itself.
-
-**Why it is deferred rather than fixed.** Closing it is a cross-language envelope
-change with two shapes, and the choice between them is a contract decision:
-
-- **A `stepRows` observation** — one entry per read step, the values it
-  published, mirroring `stepGraphs`. Grades every scenario read step in every
-  language against what it published, and retires the port-capture lane. Costs a
-  new adapter obligation for a value adapters currently need not retain.
-- **`expectGraph` without Include Paths on a read step** — reuse `stepGraphs` for
-  the root-only graph. No new channel, and it reaches streamed steps once they
-  admit the member. Costs the rule that both `expectGraph` placements state
-  relationship contents, and leaves `expectRows` ungraded in its own vocabulary.
-
-A is the honest one: `expectRows` is the observable the format already gives
-every read step, and A is what makes it one.
-
 ## Forwarding pointers
 
 Removed entries whose number a live document still cites. One line each; drop a
@@ -863,6 +823,7 @@ prose.
 - **D-71** → fixed. `_row_codec._assignment_matches_original` compares both sides whole and presence-preserving — with the nested-`many` exception, which has no absence to preserve and reads as the empty collection on both sides — as `python.md`'s *Provenance comparison* paragraph and `docs/adr/0003` state.
 - **D-73** → fixed. A Wire read publishes what one materialization carries — the members the stored document held, plus and minus what `m-snapshot-read` fixes at each — so both representations observe one value; `core/spec/m-snapshot-read.md` *What a materialized value carries* states the read contract and `python.md` §4 the published node.
 - **D-84** → closed by [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory). The Snapshot Stream's Execution Lifecycle producer exists: `parallax.core.execution_lifecycle._activity` opens a `SNAPSHOT_STREAM` root for a standalone delivery and a child of the current Transaction Attempt for a participating one, one Stream Batch per page, and each page's Database Calls under that batch. `engine.run_stream_case` therefore reads its `emissions` and `observations.roundTrips` off the delivered stream like every other lane, `_DeliveredCalls` is gone, and so is the run sweep's own port seam.
+- **D-86** → closed by [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory). The envelope carries the channel: `core/spec/m-conformance-adapter.md` *Per-step row observations* defines `stepRows` — one `{ at, rows }` entry per scenario read step the adapter drives, carrying the values that step PUBLISHED rather than the result sets its statements returned — and `tests/compatibility/test_run_sweep.py` grades every step's `expectRows` against it, the injected-port capture lane (`_ReadCapturePort`, `_scenario_read_schedule`, `_logical_row_transform`) deleted with it. One read step owns no entry, and the spec says which and why: a materializing predicate write's resolving read is production's own internal resolve, handed to no caller, so what holds an implementation to that step is its golden resolve statement and the per-row binds the write derives from those very rows.
 
 ## History
 
@@ -874,4 +835,4 @@ carry at all — needs the entry it stood for:
 - `.humanlayer/tasks/cor-3-build-python-slice/05-deferred-ledger.md` — D-1 … D-37.
 - `.humanlayer/tasks/cor-47-build-python-declarations/09-deferred-ledger.md` — D-36 … D-48.
 - `.humanlayer/tasks/cor-85-typed-and-wire-apis/19-deferred-ledger.md` — D-71, D-73.
-- `.humanlayer/tasks/cor-83-stream-deep-fetch-reads-at-fixed-memory/08-deferred-ledger.md` — D-84.
+- `.humanlayer/tasks/cor-83-stream-deep-fetch-reads-at-fixed-memory/08-deferred-ledger.md` — D-84, D-86.

@@ -1168,15 +1168,13 @@ _READ_STORY_IDS = [story.case_id for story in READ_STORIES]
 
 class _StatementCapturePort:
     """A pass-through ``m-db-port`` decorator capturing every SQL statement +
-    binds a read story's find ACTUALLY executes — the SAME port-seam capture
-    point ``test_run_sweep._ReadCapturePort`` establishes, generalized to
-    record the statement text (not just its rows): `then.rows` alone cannot
+    binds a read story's find ACTUALLY executes: `then.rows` alone cannot
     distinguish whether a `m-read-lock` story's runtime developer path emitted
     the shared read-lock suffix; only the statement text can. ``transaction``
-    nests another capture wrapper
-    sharing this SAME ``statements`` list (mirroring ``_ReadCapturePort``'s
-    own ``transaction``), so a `tx.find` inside `db.transact` is captured
-    from the SAME single execution as a non-transactional `db.find`.
+    nests another capture wrapper sharing this SAME ``statements`` list, because
+    the underlying provider hands ``body`` ITSELF rather than this decorator, so
+    a `tx.find` inside `db.transact` is captured from the SAME single execution
+    as a non-transactional `db.find`.
     """
 
     def __init__(

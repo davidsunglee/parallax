@@ -224,13 +224,19 @@ _SCENARIO_CASE = case_format.default_cases_dir() / "m-unit-work-001-read-your-ow
 _WRITE_SEQUENCE_CASE = case_format.default_cases_dir() / "m-unit-work-003-fk-insert-ordering.yaml"
 
 
-def test_run_case_scenario_reports_round_trips_only() -> None:
-    # A scenario run routes through the write lane: its write step commits and its find
-    # reads committed state; the envelope carries only `roundTrips` (no per-step rows).
+def test_run_case_scenario_reports_round_trips_and_the_rows_its_read_step_published() -> None:
+    # A scenario run routes through the write lane: its write step commits and its
+    # find reads committed state. The envelope carries `roundTrips` and one
+    # `stepRows` entry (m-conformance-adapter) — at the READ step's own pointer,
+    # never the write step's, and carrying the row the find published rather than
+    # anything the write buffered.
     envelope = adapter.run_case(_SCENARIO_CASE, "postgres", _WritePort())
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
-    assert envelope["observations"] == {"roundTrips": 2}
+    assert envelope["observations"] == {
+        "roundTrips": 2,
+        "stepRows": [{"at": "/scenario/1", "rows": [{"id": 7}]}],
+    }
     assert [e["casePointer"] for e in envelope["emissions"]] == [
         "/scenario/0/write",
         "/scenario/1/objectQuery",

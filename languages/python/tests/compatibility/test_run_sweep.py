@@ -14,8 +14,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Any, Final, cast
 
 import jsonschema
@@ -32,7 +31,6 @@ from _support.corpus import (
     wire_value_deep,
 )
 from _support.repo import adapter_schema
-from _support.sql import compile_read
 from _support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
@@ -40,24 +38,9 @@ from _support.sweep_goldens import (
     write_golden_statements,
 )
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
-from parallax.core import predicate as predicate_algebra
 from parallax.core import storage_layout
-from parallax.core.base import DocumentValue, PresentDocument
-from parallax.core.db_port import Row
 from parallax.core.dialect import dialect_for
-from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import Metamodel
-from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import (
-    WireEntity,
-    merge_graph_input,
-    require_publishable,
-    wire_roots,
-)
-from parallax.snapshot.materialize._convert import LevelContext, convert_row
-from parallax.snapshot.materialize._graph import GraphBuilder
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
 # level's nodes PER PROJECTION — the unnarrowed concrete superset with a sibling
@@ -432,195 +415,14 @@ def _reachable_write_cases() -> list[case_format.Case]:
 _WRITE_CASES = _reachable_write_cases()
 
 
-class _ReadCapturePort:
-    """A pass-through ``m-db-port`` decorator capturing each row-returning read.
-
-    A scenario's per-step find rows are not adapter-envelope observations
-    (m-conformance-adapter: scenario cases report ``identityChecks`` /
-    ``roundTrips``), but design 22 grades every find step's wire rows against its
-    ``expectRows``. Capturing at the injected port seam observes them from the
-    SAME single execution the envelope reports — a scenario's finds are exactly
-    its ``execute`` calls, in step order (writes go through ``execute_write`` /
-    ``transaction``).
-
-    A `uow`-GROUPED find runs on the
-    transaction's OWN connection (``tx._conn``, ``engine._run_uow_group``) —
-    the object ``database.transact``'s closure receives as its argument, which
-    a bare pass-through ``transaction(body)`` would hand ``body`` UNWRAPPED
-    (the underlying provider's ``PostgresAdapter.transaction`` passes ITSELF,
-    not this decorator). ``transaction`` therefore wraps that inner connection
-    in a NESTED ``_ReadCapturePort`` sharing this SAME ``reads`` list, so a
-    grouped find is captured from the SAME single execution as an ungrouped
-    one, in the SAME step order.
-    """
-
-    def __init__(self, inner: Any, reads: list[list[dict[str, Any]]] | None = None) -> None:
-        self._inner = inner
-        self.reads: list[list[dict[str, Any]]] = reads if reads is not None else []
-
-    def execute(
-        self, sql: str, binds: Any, document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[dict[str, Any]]:
-        rows = self._inner.execute(sql, binds, document_reads)
-        self.reads.append(rows)
-        return rows
-
-    def execute_write(self, sql: str, binds: Any) -> int:
-        return self._inner.execute_write(sql, binds)
-
-    def transaction(self, body: Any, *, isolation: str | None = None) -> Any:
-        reads = self.reads
-
-        def wrapped(conn: Any) -> Any:
-            return body(_ReadCapturePort(conn, reads=reads))
-
-        return self._inner.transaction(wrapped, isolation=isolation)
-
-
 def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] | None]:
     """Each FIND step's declared ``expectRows`` in step order (None asserts nothing).
 
-    For a lane that reports one row list per find step. The port-capture lane
-    reads :func:`_scenario_read_schedule` instead, because a port sees every read
-    a step makes rather than only the find steps'.
+    For the interleaved lane, which reports one row list per find step rather than
+    the pointer-addressed ``stepRows`` entries the envelope carries.
     """
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
     return [step.get("expectRows") for step in steps if "objectQuery" in step]
-
-
-@dataclass(frozen=True, slots=True)
-class _ReadGroup:
-    """The port result sets ONE graded row observation is assembled from.
-
-    ``reads`` is how many successive ``execute`` calls the observation spans, so
-    a group whose ``expected`` is ``None`` is that many reads nothing grades.
-    """
-
-    reads: int
-    expected: list[dict[str, Any]] | None
-    transform: Callable[[Row], Row] | None
-
-
-def _scenario_read_schedule(case: case_format.Case, model: Metamodel) -> list[_ReadGroup]:
-    """Every read the scenario issues, in order, grouped by what grades it.
-
-    An eager find step contributes ONE graded read — its declared ``expectRows``
-    (``None`` asserts nothing) and its own row transform — plus one UNGRADED read
-    per Include level after the root: a deep fetch costs ``1 + L`` reads at the
-    port and ``expectRows`` states the ROOT rows alone, the child levels being
-    graded by the step-graph observation an `expectGraph` step asserts instead —
-    an `access` step's, or the find's own where it states one. A STREAMED find
-    step (`m-case-format` *Streamed read steps*) instead contributes ONE graded
-    observation spanning EVERY read it made, because its ``expectRows`` are the
-    roots the whole delivery published: each page is a result set of its own and
-    the terminal empty page contributes none, so the observation is their
-    concatenation. Such a step declares no includes — the format refuses one
-    structurally (`m-case-format` *Streamed read steps*) — which is what makes
-    every one of its reads a root page, the level partition a deep fetch would
-    need having no second source here. A
-    write step contributes the
-    RESOLVING READS its keyed verbs owe (`m-case-format` *Resolving reads a write
-    owes*), which grade nothing here — the values they publish are graded by the
-    DML the write then emits. How many it owes is the case's own arithmetic: a
-    step's declared round trips less the golden statements it lists, which is
-    exactly what the reference harness's own count gate asserts, so this reads the
-    number rather than re-deriving the rule.
-
-    The port seam these rows are captured at sits BELOW the read's own transform,
-    so a captured document is still a provider-neutral ``DocumentRead``. The
-    compiled transform fans out a Relational Document Layout's Structured Column
-    and materializes every occurrence into the declared composite ``expectRows``
-    authors. Compiling a bare ``all()`` read of the same target recovers exactly
-    the projection metadata the executed read carried.
-    """
-    schedule: list[_ReadGroup] = []
-    for step in cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"]):
-        if "objectQuery" not in step:
-            emitted = len(cast("list[Any]", step.get("statements", [])))
-            schedule.append(_ReadGroup(step.get("roundTrips", 1) - emitted, None, None))
-            continue
-        entity = engine.case_entity(model, step["objectQuery"]["target"])
-        compiled = compile_read(
-            predicate_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
-        )
-        transform = _logical_row_transform(compiled, model)
-        reads = step.get("roundTrips", 1)
-        if "stream" in step:
-            assert not step["objectQuery"].get("includes"), (case.case_id, step)
-            schedule.append(_ReadGroup(reads, step.get("expectRows"), transform))
-            continue
-        schedule.append(_ReadGroup(1, step.get("expectRows"), transform))
-        schedule.append(_ReadGroup(max(0, reads - 1), None, None))
-    return schedule
-
-
-def _logical_row_transform(compiled: Any, model: Metamodel) -> Callable[[Row], Row]:
-    """A captured port row as the observation ``expectRows`` grades.
-
-    An instance-form step's occurrence is the one the read PUBLISHES, exactly as
-    `then.graph` renders the same value. So it comes from the materializer rather
-    than from the row: a direct Column's ``DocumentRead`` carrier never reaches a
-    comparison, an undeclared stored key never enters one, and a declared member
-    enters one exactly where the read contract carries it (`m-snapshot-read` *What
-    a materialized value carries*) rather than wherever the row happens to store
-    something.
-    """
-
-    layouts = LayoutCatalog(model)
-
-    def transform(row: Row) -> Row:
-        materialized = compiled.materialize_row(row)
-        builder = GraphBuilder(ViewSchema.of())
-        ref = convert_row(
-            materialized.values,
-            LevelContext(
-                layouts.entity(materialized.resolved_entity),
-                compiled.projected_documents,
-                compiled.attribute_reads(materialized.resolved_entity),
-            ),
-            builder,
-            source=ROOT_LEVEL,
-            findings=materialized.findings,
-            family_tag_unknown=materialized.family_tag_unknown,
-            classified_members=materialized.classified_members,
-        )
-        merge = merge_graph_input(builder.seal((ref,), Pin()))
-        require_publishable(merge)
-        (published,) = wire_roots(merge, model)
-        # `require_publishable` has already refused an issue-bearing read, so the
-        # one root here is conforming rather than a classified record.
-        assert isinstance(published, WireEntity), (materialized.resolved_entity, published)
-        values = materialized.values
-        if materialized.family_variant is not None:
-            values["familyVariant"] = materialized.family_variant
-        position = inheritance_view(model).entity(materialized.resolved_entity)
-        for occurrence in () if position is None else position.applicable_value_objects:
-            column = occurrence.storage.name
-            if column in values:
-                values[column] = published[occurrence.identity.path[-1]]
-        return values
-
-    return transform
-
-
-def test_logical_row_transform_unwraps_a_direct_document_from_its_source_carrier() -> None:
-    case = next(case for case in _WRITE_CASES if case.case_id == "m-value-object-066")
-    model = engine.load_case_metamodel(case)
-    entity = engine.case_entity(model, "parallax.compatibility.Subscriber")
-    compiled = compile_read(
-        predicate_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
-    )
-    document: DocumentValue = {
-        "street": "1 Elm St",
-        "city": "Rome",
-        "geo": {"country": "IT"},
-    }
-
-    transformed = _logical_row_transform(compiled, model)(
-        {"id": 1, "version": 1, "address": PresentDocument(document)}
-    )
-
-    assert transformed["address"] == document
 
 
 @pytest.mark.parametrize("case", _WRITE_CASES, ids=[c.case_id for c in _WRITE_CASES])
@@ -636,15 +438,14 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     the group's own last step. A writeSequence executes the whole FK-ordered
     sequence in one transaction. Grading: the envelope's per-step emissions equal the
     golden DML and its total round trips the case's `then.roundTrips`; every scenario
-    find step's observed wire rows equal its `expectRows` (captured at the port seam
-    from the same execution); a writeSequence's committed `tableState` observation
-    equals `then.tableState`, table for table.
+    read step's `stepRows` observation equals its `expectRows` (:func:`_grade_step_rows`);
+    a writeSequence's committed `tableState` observation equals `then.tableState`,
+    table for table.
     """
     model = engine.load_case_metamodel(case)
     provisioner.reset(model, case_fixtures(case))
 
-    port = _ReadCapturePort(provisioner.port)
-    envelope = adapter.run_case(case.path, "postgres", port)
+    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -666,24 +467,12 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     _grade_execution_lifecycle(case_document(case)["then"], envelope["observations"])
 
     if case.shape == "scenario":
-        schedule = _scenario_read_schedule(case, model)
-        assert len(port.reads) == sum(group.reads for group in schedule), (
-            case.case_id,
-            port.reads,
-        )
-        cursor = 0
-        for group in schedule:
-            observed = [row for rows in port.reads[cursor : cursor + group.reads] for row in rows]
-            cursor += group.reads
-            if group.expected is not None and group.transform is not None:
-                compare_rows(
-                    [engine.wire_row(group.transform(row)) for row in observed], group.expected
-                )
+        steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+        _grade_step_rows(case, steps, envelope)
         # `expectError` steps grade through the adapter's `errors` observation
         # (`m-conformance-adapter` / `errorObservation.errorClass`): one entry
         # per declaring step, in step order — and NO entry for any other
         # scenario (the adapter omits an empty `errors` array entirely).
-        steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
         expected_errors = [
             {"at": f"/scenario/{index}", "errorClass": step["expectError"]}
             for index, step in enumerate(steps)
@@ -701,6 +490,135 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
         for table, expected_rows in expected_state.items():
             compare_rows(observed_state[table], expected_rows)
+
+
+def _resolves_a_materializing_write(steps: list[dict[str, Any]], index: int) -> bool:
+    """Whether the read step at ``index`` is a materializing predicate write's own
+    resolving read (`m-case-format` *Materializing cases*).
+
+    Such a write is authored immediately after the find that resolves it and over
+    that find's own target, in the predicate-selected object form rather than the
+    keyed buffer a list spells. A READLESS predicate write — the unversioned,
+    non-temporal exception — resolves nothing, and the corpus authors no find
+    before one; were it to, the step would report an entry this refuses to expect,
+    failing the pointer list loudly rather than leaving its rows unasserted.
+    """
+    following = steps[index + 1] if index + 1 < len(steps) else None
+    write = None if following is None else following.get("write")
+    if not isinstance(write, dict):
+        return False
+    target = cast("dict[str, Any]", write).get("target")
+    if not isinstance(target, dict):
+        return False
+    return cast("dict[str, Any]", target).get("entity") == steps[index]["objectQuery"]["target"]
+
+
+def _grade_step_rows(case: case_format.Case, steps: list[dict[str, Any]], envelope: Any) -> None:
+    """Grade every read step's `expectRows` against the run's own `stepRows`
+    observation.
+
+    The values a step published are what `m-conformance-adapter`'s `stepRows`
+    reports — one entry per read step the adapter drove, at that step's own
+    pointer, in step order — compared through the SAME order-insensitive
+    comparator every other row oracle uses. What is graded is therefore what the
+    step HANDED OVER, not what its statements returned: a streamed step's entry is
+    its whole delivery's roots, and a deep-fetch step's is its roots alone, with no
+    per-lane arithmetic over result sets in between.
+
+    The pointer list is asserted whole, so a lane that stopped driving a step fails
+    on the list rather than passing on the steps it still answers — the same rule
+    :func:`_grade_step_graphs` follows. The one read step that owns no entry is a
+    materializing predicate write's resolving read, identified from the case
+    (:func:`_resolves_a_materializing_write`) rather than from the engine's own
+    pairing, so the two disagreeing is a failure rather than a silent skip.
+    """
+    expected = [
+        (f"/scenario/{index}", step.get("expectRows"))
+        for index, step in enumerate(steps)
+        if "objectQuery" in step and not _resolves_a_materializing_write(steps, index)
+    ]
+    observed = cast("list[dict[str, Any]]", envelope["observations"].get("stepRows", []))
+    assert [entry["at"] for entry in observed] == [at for at, _ in expected], (
+        case.case_id,
+        observed,
+    )
+    for entry, (_at, expected_rows) in zip(observed, expected, strict=True):
+        if expected_rows is not None:
+            compare_rows(entry["rows"], expected_rows)
+
+
+# The `stepRows` oracle's own directional proof, run without a database: an
+# implementation that published the wrong values, stopped answering a step, or
+# answered the ONE step that owns no entry must be refused rather than accepted.
+# `m-value-object-066` is the case that exercises all three, because its four
+# steps are a read, a materializing predicate write's resolving read, that write,
+# and a verify read — so its expected pointer list is a strict subset of its read
+# steps, which is the property a grader could silently get wrong.
+_STEP_ROWS_ORACLE_CASE: Final[str] = "m-value-object-066"
+
+
+def _step_rows_envelope(steps: list[dict[str, Any]]) -> dict[str, Any]:
+    """A conforming `stepRows` envelope for ``steps``: every read step the adapter
+    drives, answering exactly the rows that step's own `expectRows` states."""
+    return {
+        "observations": {
+            "stepRows": [
+                {"at": f"/scenario/{index}", "rows": step["expectRows"]}
+                for index, step in enumerate(steps)
+                if "objectQuery" in step and not _resolves_a_materializing_write(steps, index)
+            ]
+        }
+    }
+
+
+def _step_rows_oracle_case() -> tuple[case_format.Case, list[dict[str, Any]]]:
+    case = next(c for c in _WRITE_CASES if c.case_id == _STEP_ROWS_ORACLE_CASE)
+    return case, cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+
+
+def test_grade_step_rows_accepts_a_run_that_published_what_every_step_states() -> None:
+    case, steps = _step_rows_oracle_case()
+    envelope = _step_rows_envelope(steps)
+
+    # Pinned as a literal rather than derived, so the exclusion this case exists to
+    # exercise is stated independently of the rule that computes it.
+    assert [entry["at"] for entry in envelope["observations"]["stepRows"]] == [
+        "/scenario/0",
+        "/scenario/3",
+    ]
+    _grade_step_rows(case, steps, envelope)
+
+
+def test_grade_step_rows_refuses_a_run_that_published_the_wrong_values() -> None:
+    case, steps = _step_rows_oracle_case()
+    envelope = _step_rows_envelope(steps)
+    envelope["observations"]["stepRows"][0]["rows"] = [{"id": 2, "version": 1, "address": None}]
+
+    with pytest.raises(AssertionError):
+        _grade_step_rows(case, steps, envelope)
+
+
+def test_grade_step_rows_refuses_a_run_that_left_a_step_unanswered() -> None:
+    case, steps = _step_rows_oracle_case()
+    envelope = _step_rows_envelope(steps)
+    del envelope["observations"]["stepRows"][-1]
+
+    with pytest.raises(AssertionError):
+        _grade_step_rows(case, steps, envelope)
+
+
+def test_grade_step_rows_refuses_an_entry_for_a_materializing_writes_own_resolve() -> None:
+    # The resolving read of a materializing predicate write hands its rows to no
+    # caller, so an adapter reporting one for it is reporting something it did not
+    # publish — captured at a port, or re-read.
+    case, steps = _step_rows_oracle_case()
+    envelope = _step_rows_envelope(steps)
+    envelope["observations"]["stepRows"].insert(
+        1, {"at": "/scenario/1", "rows": steps[1]["expectRows"]}
+    )
+
+    with pytest.raises(AssertionError):
+        _grade_step_rows(case, steps, envelope)
 
 
 def _grade_step_graphs(
@@ -1055,8 +973,7 @@ def test_run_only_write_sequence_run_sweep(case: case_format.Case, provisioner: 
     model = engine.load_case_metamodel(case)
     provisioner.reset(model, case_fixtures(case))
 
-    port = _ReadCapturePort(provisioner.port)
-    envelope = adapter.run_case(case.path, "postgres", port)
+    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 

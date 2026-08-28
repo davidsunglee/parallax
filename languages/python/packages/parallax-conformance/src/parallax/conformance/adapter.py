@@ -314,13 +314,12 @@ def _run(
     error run records the raised failure's classification (``errorClass`` /
     ``nativeCode``). A scenario run reports the contract observations
     (``roundTrips``, plus one ``errors`` entry per `expectError` step whose
-    verb raised its declared application-lifecycle error and one ``stepGraphs``
+    verb raised its declared application-lifecycle error, one ``stepGraphs``
     entry per step declaring `expectGraph` in either placement — an `access`
     step's retained view, or an include-bearing read step's own materialized
-    graph); its per-step find
-    rows are observable at the injected port seam, where the run sweep grades
-    them against each step's
-    ``expectRows``. A rejected run touches no database and no port: it reports
+    graph — and one ``stepRows`` entry per read step it drove, carrying the values
+    that step published, which is what the run sweep grades against each step's
+    ``expectRows``). A rejected run touches no database and no port: it reports
     the classified ``rejectedRule`` with ``roundTrips: 0`` (m-conformance-
     adapter).
     """
@@ -331,6 +330,8 @@ def _run(
         scenario_observations: dict[str, Any] = {"roundTrips": run.round_trips}
         if run.errors:
             scenario_observations["errors"] = run.errors
+        if run.step_rows:
+            scenario_observations["stepRows"] = run.step_rows
         if run.step_graphs:
             scenario_observations["stepGraphs"] = run.step_graphs
         return run.emissions, scenario_observations

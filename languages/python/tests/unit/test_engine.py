@@ -782,6 +782,23 @@ def _account(identifier: int, owner: str, balance: str, version: int) -> Row:
     }
 
 
+def _two_delivery_port() -> _ScriptedPort:
+    """The four pages `m-unit-work-030`'s two deliveries read at `batchSize: 2`.
+
+    Each delivery reads every account — {1, 2} then {3} — and the second reads
+    account 1 at the version the first write left, which is what makes the two
+    deliveries' own observations of that key distinguishable at all.
+    """
+    return _ScriptedPort(
+        read_rows=[
+            [_account(1, "Ada", "100.00", 1), _account(2, "Linus", "250.00", 1)],
+            [_account(3, "Grace", "10.00", 1)],
+            [_account(1, "Ada", "125.00", 2), _account(2, "Linus", "250.00", 1)],
+            [_account(3, "Grace", "10.00", 1)],
+        ]
+    )
+
+
 def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_its_root() -> None:
     # `m-unit-work-030`: a grouped read step carrying `stream` runs through
     # `tx.wire.stream` at its declared page size, and each write settles against
@@ -796,14 +813,7 @@ def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_i
     # evidence and that a second reading of a delivered key files a second
     # observed state; the test below moves `on` alone, where reading the group's
     # latest observation and reading the named delivery's diverge.
-    port = _ScriptedPort(
-        read_rows=[
-            [_account(1, "Ada", "100.00", 1), _account(2, "Linus", "250.00", 1)],
-            [_account(3, "Grace", "10.00", 1)],
-            [_account(1, "Ada", "125.00", 2), _account(2, "Linus", "250.00", 1)],
-            [_account(3, "Grace", "10.00", 1)],
-        ]
-    )
+    port = _two_delivery_port()
 
     run = engine.run_scenario_case(_case("m-unit-work-030"), "postgres", port)
 
@@ -835,19 +845,41 @@ def test_run_scenario_case_settles_on_the_named_delivery_rather_than_the_latest_
     # gate here and commits.
     document = copy.deepcopy(dict(_case("m-unit-work-030").document))
     cast("list[dict[str, Any]]", cast("dict[str, Any]", document["when"])["scenario"])[3]["on"] = 0
-    port = _ScriptedPort(
-        read_rows=[
-            [_account(1, "Ada", "100.00", 1), _account(2, "Linus", "250.00", 1)],
-            [_account(3, "Grace", "10.00", 1)],
-            [_account(1, "Ada", "125.00", 2), _account(2, "Linus", "250.00", 1)],
-            [_account(3, "Grace", "10.00", 1)],
-        ]
-    )
+    port = _two_delivery_port()
 
     with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
         engine.run_scenario_case(
             dataclasses.replace(_case("m-unit-work-030"), document=document), "postgres", port
         )
+
+
+def test_run_scenario_case_reports_each_streamed_steps_own_delivered_roots() -> None:
+    # A streamed step's `stepRows` observation (m-conformance-adapter) is the roots
+    # ITS OWN delivery published, concatenated across every page in delivery order.
+    # `m-unit-work-030`'s two deliveries read the same three accounts either side of
+    # a write that moves account 1, so the two entries differ by exactly what that
+    # write did: an observation read off the group's accumulated published values,
+    # or off one page, could not tell them apart.
+    run = engine.run_scenario_case(_case("m-unit-work-030"), "postgres", _two_delivery_port())
+
+    assert run.step_rows == [
+        {
+            "at": "/scenario/0",
+            "rows": [
+                {"id": 1, "owner": "Ada", "balance": "100.00", "version": 1},
+                {"id": 2, "owner": "Linus", "balance": "250.00", "version": 1},
+                {"id": 3, "owner": "Grace", "balance": "10.00", "version": 1},
+            ],
+        },
+        {
+            "at": "/scenario/2",
+            "rows": [
+                {"id": 1, "owner": "Ada", "balance": "125.00", "version": 2},
+                {"id": 2, "owner": "Linus", "balance": "250.00", "version": 1},
+                {"id": 3, "owner": "Grace", "balance": "10.00", "version": 1},
+            ],
+        },
+    ]
 
 
 _ORDER_1_ROW: Row = {
