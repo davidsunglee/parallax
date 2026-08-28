@@ -4,10 +4,23 @@ A streamed read exists to make the Parallax-owned working set independent of the
 total number of roots. `m-snapshot-read` *What a delivery costs* states the bound
 in three layers — one page's sealed graph at `O(P_B)`, the current root's merge
 and classification at `O(G_max)`, and its construction or Wire unwind at
-`O(G_max)` — and names three exclusions. This suite is the instrument for all
-six, in both namespaces.
+`O(G_max)` — and names three exclusions. This suite is the instrument for the
+whole bound and for both exclusions, in both namespaces.
 
-**Five readings, each its own statement.** Page graphs do not accumulate with the
+**Two of the three layers are priced separately; the middle one is graded by its
+RELEASE.** A page graph and a published root are both alive at the sample point
+and each carries its own coefficient, so the census prices them apart. The merge
+between them is not alive at any point a sample can be taken from outside the
+delivery — it is built and dropped inside one publication — and it borrows the
+page graph's own arrays rather than copying them, so even held deliberately its
+closure is dominated by structure the first layer has already been charged for.
+What is stated about it here is therefore what the spec's release column states
+and what a sample between two roots can settle: no merge survives the root it
+published. A merge kept for the page, or kept past its root, fails that at every
+point of the grid; a merge whose peak exceeds one root while it lives is what no
+instrument outside the delivery separates from the page it was scoped from.
+
+**Six readings, each its own statement.** Page graphs do not accumulate with the
 result. A delivery holds one page graph and one published root at a time, and the
 survivor census says so in arithmetic rather than in prose: it is exactly affine
 in the page's own node population and the published root's, with **no term in the
@@ -16,7 +29,7 @@ are demonstrated rather than asserted — a caller retaining every root reproduc
 the `O(N)` growth the bound declines to prevent, and a writing loop's buffer
 grows with the page size and stops there.
 
-**The exclusions are what make the first three readings mean anything.** A bound
+**The exclusions are what make the first four readings mean anything.** A bound
 that excluded nothing would be a claim about the caller's program rather than
 about Parallax, so the price of one root comes from the retaining arm — what one
 root of THIS graph costs on THIS interpreter — and the streamed arm has to come
@@ -30,6 +43,17 @@ bytes. The census is the reading that is not a difference: its coefficients are
 literals, every one of them names what it counts, and a second live page graph
 fails it at every point of the grid.
 
+**The census is read four ways, because counting Parallax's own objects is blind
+where the bound is weakest.** A page graph or a root is a kind Parallax defines
+and is counted; a built-in `list` the delivery banks one item into per PAGE is
+not, and past the first page it adds no survivor of any kind — while every byte
+reading here compares two arms standing at the same position, which is to say
+having read the same number of pages. So the counts are taken over every survivor
+whatever defined its type, over the REFERENCES those survivors hold, and from the
+heap's side over what a holder older than the window took. The reference count is
+the one that prices a page: two sample positions differ by the pages between them,
+and pages grow with `N`.
+
 Every reading reads a whole interpreter, so each runs in one of its own behind
 ``in_a_child_interpreter`` and the class is CI's rather than the merge gate's.
 The machine-relative figures — what a page and a root cost in bytes on one
@@ -40,6 +64,7 @@ machine — are `tools/stream_overhead.py`'s and are recorded in
 from __future__ import annotations
 
 import datetime as dt
+import gc
 import sys
 import tracemalloc
 from collections.abc import Callable, Sequence
@@ -272,9 +297,11 @@ frozen Entity instance and the node state naming what it was read from."""
 _WIRE: Final = _Namespace("wire", _wire_stream, fixed=36, per_page_node=2, per_published_node=1)
 """The Wire lane. The same page term, because retention is a property of the read
 rather than of the representation, and one object per published node: an unwound
-value tree carries its own state in the tree rather than beside it. One fewer
-fixed object than the Typed lane, and it is the VIEW: ``db.wire`` answers a fresh
-one per access and an open delivery holds none of it."""
+value tree carries its own state in the tree rather than beside it. One MORE
+fixed object than the Typed lane — the frozen sequence the published root's one
+included relationship is spelled as, which a Typed root answers from its node
+state instead. It is fixed rather than per-node because there is one of them per
+relationship the include tree names, whatever the fan-out inside it."""
 
 _NAMESPACES: Final = (_TYPED, _WIRE)
 
@@ -356,16 +383,50 @@ def _defined_by_parallax(kind: type) -> bool:
     return kind.__module__.startswith("parallax.")
 
 
-def _census(seam: Seam) -> tuple[int, dict[str, int]]:
-    """How many objects of Parallax's own a seam leaves alive, and how many of
-    each kind, keyed by qualified name so no private class has to be imported to
-    ask about it."""
-    alive = _parallax_survivors(seam)
+class _Live(NamedTuple):
+    """What a running delivery holds, read four ways from one sample, because
+    each answers what the other three cannot.
+
+    ``parallax`` is what Parallax's own structure costs, and ``tracked`` is every
+    survivor whatever defined its type, so anything the delivery banks in a
+    built-in list, dict, or set — invisible to the first, because ``list`` is not
+    a kind Parallax defines — lands in the second. ``references`` is what neither
+    count can see: one container is one object however many things it points at,
+    so a delivery keeping one item per PAGE moves no count at all and moves this
+    by one for every page it has read. ``inbound`` is the same reading from the
+    other end, and the only one that sees a holder OLDER than the window: what a
+    pre-existing registry took is counted where it points rather than where it is
+    held.
+
+    All four are counts of structure rather than readings of an allocator, so all
+    four are exact — and none of them sees what a holder that predates the window
+    keeps of values the collector never tracked, which is what the byte readings
+    are taken beside them for.
+    """
+
+    parallax: int
+    tracked: int
+    references: int
+    inbound: int
+
+
+def _census(seam: Seam) -> tuple[_Live, dict[str, int]]:
+    """What a seam leaves alive at its sample point, and how many objects of
+    Parallax's own of each kind, keyed by qualified name so no private class has
+    to be imported to ask about it."""
+    graph = live_graph(warmed(seam))
+    alive = [obj for obj in graph.survivors if _defined_by_parallax(type(obj))]
     counts: dict[str, int] = {}
     for obj in alive:
         name = type(obj).__qualname__
         counts[name] = counts.get(name, 0) + 1
-    return len(alive), counts
+    live = _Live(
+        len(alive),
+        len(graph.survivors),
+        sum(len(gc.get_referents(obj)) for obj in graph.survivors),
+        graph.inbound,
+    )
+    return live, counts
 
 
 _SOURCES: Final = frozenset(
@@ -503,15 +564,12 @@ def test_what_a_delivery_holds_is_the_page_and_the_root_and_not_the_result() -> 
     for namespace in _NAMESPACES:
         for batch_size in _PAGE_SIZES:
             for fanout in _FANOUTS:
-                alive, _ = _census(
+                live, _ = _census(
                     _paused(namespace, _LARGE, batch_size=batch_size, fanout=fanout, at=_AT)
                 )
-                assert alive == namespace.survivors_for(batch_size=batch_size, fanout=fanout), (
-                    namespace.name,
-                    batch_size,
-                    fanout,
-                    alive,
-                )
+                assert live.parallax == namespace.survivors_for(
+                    batch_size=batch_size, fanout=fanout
+                ), (namespace.name, batch_size, fanout, live)
 
 
 @in_a_child_interpreter
@@ -519,6 +577,16 @@ def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -
     # The two independence readings the fit above asserts by omission, taken
     # directly so a failure names which of them broke. Ten times the roots is the
     # same census; nearly twice as far into the same delivery is the same census.
+    #
+    # Read four ways rather than as the Parallax-owned count alone, because the
+    # count above is blind in a direction only this reading covers. `list` is not
+    # a kind Parallax defines, so a delivery banking one item per PAGE adds no
+    # Parallax-owned survivor and adds no survivor of any kind past the first —
+    # and at a FIXED position every byte difference here is between two arms that
+    # have read the same number of pages, so nothing in bytes sees it either. It
+    # is the reference count that does: the two positions differ by the pages
+    # between them, and a delivery holding one thing per page holds more at the
+    # second. Growth in the number of pages is growth in `N`.
     defined_in: set[str] = set()
     for namespace in _NAMESPACES:
         near = _census(_paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT))

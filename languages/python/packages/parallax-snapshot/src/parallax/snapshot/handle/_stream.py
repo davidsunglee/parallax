@@ -199,11 +199,13 @@ class SnapshotStream[T]:
         observing it.
 
         Everything deterministic happens here and nothing reaches the database:
-        the same read gate an eager find crosses, then the page plan and the
-        query's own lowered as-of coordinates. Each is a refusal a caller can
-        earn, so all of them precede the stream's own activity — a refused stream
-        opens no Root Execution and calls no Provider — and constructing a stream
-        without entering it observes nothing and reads nothing.
+        the same read gate an eager find crosses, then the page plan, then the
+        pin the delivery will answer for itself — the query's own lowered as-of
+        coordinates where it reads one instant, and the empty pin where it scans
+        an axis. Each is a refusal a caller can earn, so all of them precede the
+        stream's own activity — a refused stream opens no Root Execution and
+        calls no Provider — and constructing a stream without entering it
+        observes nothing and reads nothing.
         """
         self._require(_ENTER_ONCE, _CREATED)
         preflight(self._node, model=self._model.meta, form="graph")
@@ -267,14 +269,15 @@ class SnapshotStream[T]:
 
     @property
     def pin(self) -> Pin:
-        """The query's OWN lowered as-of coordinates, available before the first
-        page: a stream computes them from the query rather than from a result,
-        and every page's sealed graph carries the identical pin, so no page can
-        revise what the caller was already told.
+        """Where the delivery as a whole stands, available before the first page:
+        a stream settles this from the query rather than from a result, so no
+        page can revise what the caller was already told.
 
-        A milestone-set delivery answers the EMPTY pin, exactly as the whole
-        result of the same query does: a scan is not a pin, and each root of one
-        stands at its own milestone edge rather than at a coordinate the delivery
+        For a read at one instant that is the query's OWN lowered as-of
+        coordinates, which every page's sealed graph carries identically. For a
+        milestone-set read it is the EMPTY pin, exactly as the whole result of
+        the same query answers: a scan is not a pin, and each root of one stands
+        at its own milestone edge rather than at any coordinate the delivery
         holds."""
         self._require(_IN_SCOPE, _OPEN, _DRAINING)
         return self._pin

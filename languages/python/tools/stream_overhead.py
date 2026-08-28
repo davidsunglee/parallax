@@ -210,9 +210,9 @@ LANES: Final = (Lane("typed", _typed), Lane("wire", _wire))
 
 
 def paused(lane: Lane, total: int, *, batch_size: int) -> Seam:
+    """A delivery of ``total`` roots sampled inside its third page, with that
+    page's graph sealed, that root published, and the caller still holding it."""
     at = sample_after(batch_size)
-    """A delivery of ``total`` roots sampled at position ``at``, with that page's
-    graph sealed, that root published, and the caller still holding it."""
 
     def seam(sample: Callable[[], None]) -> None:
         database = Database(cast("DbPort", GeneratingPort(total)), ORDERS_MODEL)

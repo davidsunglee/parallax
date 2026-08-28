@@ -15,7 +15,7 @@ interpreter bump that changed nothing.
 The *shape* of the bound is gated instead, in
 `tests/unit/test_snapshot_stream_retention.py`, which the `cost` class owns and CI
 runs on every change through `just python-check-cost`. That suite states the bound
-as five separate readings. Page graphs do not accumulate: what a delivery retains
+as six separate readings. Page graphs do not accumulate: what a delivery retains
 at ten times the roots, at a later position of the same delivery, and once
 drained, differs from the baseline by less than one retained root costs. One page
 graph and one published root are alive at a time, counted as objects — one
@@ -29,10 +29,15 @@ survivors = fixed + per_page_node x batch_size x (1 + fanout)
 ```
 
 with the coefficients pinned as literals — 35 / 2 / 2 in the Typed lane, 36 / 2 /
-1 in the Wire lane, the one fixed object of difference being the Wire view, which
-`db.wire` answers fresh per access and an open delivery does not hold. **There is
+1 in the Wire lane. The Wire lane's one extra fixed object is the frozen sequence
+its published root spells the included relationship as, which a Typed root answers
+from its node state instead; there is one per relationship the include tree names,
+whatever the fan-out inside it, which is what makes it fixed. **There is
 no term in the total result size and no term in how far the delivery has got**,
-and both absences are read directly as well as by omission. And the two
+and both absences are read directly as well as by omission — over every survivor
+whatever defined its type, and over the references those survivors hold, so a
+delivery banking one thing per PAGE fails them even though it adds no object of
+Parallax's own and no object at all past the first. And the two
 exclusions are demonstrated rather than asserted: a caller retaining every root
 reproduces growth proportional to the result, and a participating loop's buffered
 writes cost the same per write at every page size, so the buffer is the dial's
