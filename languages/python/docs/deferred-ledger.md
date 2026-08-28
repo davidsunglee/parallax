@@ -752,48 +752,47 @@ The entry exists so that a later pass reading the ratio in the report finds the
 decomposition, the two real repairs, and the reason the obvious third one is
 forbidden, rather than rediscovering all three.
 
-### D-85 — A streamed delivery's cross-language obligations are graded only by Python unit tests, because no corpus case shape can state them
+### D-85 — The stability table is graded in no language, because no case shape sequences a write between two pages
 
-*Medium — three portable contracts a second language target would be held to
-none of, all blocked behind one case-format change.* Relates to
+*Medium — one portable contract a second language target would be held to none
+of, and whose insert and delete rows are graded nowhere at all.* Relates to
 `core/spec/m-case-format.md` *Streamed reads*, `core/spec/m-snapshot-read.md`
 *Stability under concurrent writing*, `tests/unit/test_transaction_streams.py`,
 `tests/unit/test_continuation.py`.
 
-**What.** `when.stream` is a `read`-shape context member admitted only beside
-`then.graph`, and a scenario step has no delivery member at all, so nothing in
-the corpus can say *this step is streamed* or place any other step between two
-pages of one delivery. Three obligations follow the corpus's own rule — the
-compatibility corpus is the primary behavioral verification — and none of them
-can be authored:
-
-- **A streamed root's evidence licenses a later write.** Claim scope is derived
-  structurally from evidence data rather than from the value it travelled on, so
-  which delivery a root arrived through must not change the write it licenses.
-  This needs a streamed scenario READ step for a keyed write step to settle
-  against.
-- **A Wire-streamed value and a Typed read of one row coalesce onto one claim.**
-  This needs the first change AND a representation the case can name, which
-  `when.stream` deliberately does not carry and no corpus model — none being
-  class-backed — could drive both halves of.
-- **The stability table.** `m-snapshot-read` states five per-position effects of
-  a concurrent write, plus the caller-as-writer case and attempt-local delivery.
-  Grading any of them needs a write to land BETWEEN two pages of one delivery,
-  which no case shape sequences: `given.apply` runs once, before the lane's first
-  golden statement.
-
-All three are graded in Python meanwhile — the first two in
-`tests/unit/test_transaction_streams.py`, the stability pair in
+**What.** A scenario step now admits `when.stream`, so a streamed READ step
+exists — but nothing places any other step BETWEEN two pages of one delivery:
+`given.apply` runs once, before the lane's first golden statement. So
+`m-snapshot-read` *Stability under concurrent writing* — five per-position
+effects of a concurrent write, the caller-as-writer case, attempt-local delivery
+— cannot be authored. Its two insert rows and its delete row are graded by
+nothing, in any language; the remaining rows are graded only by
 `tests/unit/test_continuation.py`'s mutating page loop, which contrasts an
 authored `orderBy` against the primary-key order that is immune to it.
 
-**Why it is deferred rather than fixed.** The repair is a corpus-case shape
-change to `m-case-format` — a cross-language normative contract — and the
-decision protocol reserves that for the user. It was raised during
+**Why it is deferred rather than fixed.** It needs a second cross-language
+normative change — a sequencing point letting a step run between two pages —
+after the one that landed. Splitting them was deliberate: bundling both into one
+phase is the shape that was rejected when these obligations were first weighed,
+three decisions wearing one name.
+
+**When.** Scheduled for
 [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory)
-Phase 4 with the options laid out and is open pending that answer; the ticket's
-own structure outline carries the analysis. This entry exists so the gap outlives
-the ticket if the answer is to accept the Python grading.
+Phase 7, whose own work is draining this ledger and reading the ticket's
+divergences back as one section, and which the `phases-6-7` review covers. Phase
+4a left the ground under it: both executors drive a delivery page by page inside
+a scenario step's own unit of work, so the hook has one loop to hang on in each,
+against a placement whose grading already exists.
+
+**Two siblings this entry no longer carries.** A streamed root's evidence
+licensing a later write is CLOSED — `m-unit-work-030` grades it through the
+corpus on both dialects. A Wire-streamed value coalescing with a Typed read onto
+one claim is filed OUT of COR-83: it is blocked not by missing format surface but
+by the settled decision that `when.stream` names no representation, and by no
+corpus model being class-backed — neither of which has a streaming rationale, and
+closing them means reopening a cross-language contract the corpus took the other
+way on purpose. It stays graded at
+`tests/unit/test_transaction_streams.py`.
 
 ## Forwarding pointers
 
