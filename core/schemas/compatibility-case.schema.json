@@ -2,20 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags", "shape"],
   "oneOf": [
     {
-      "description": "A read case: a queryable Object Query with expected rows or an expected object graph.",
+      "description": "A read case: a queryable Object Query with expected rows or an expected object graph. The optional `when.stream` context member makes the read STREAMED — the roots are delivered one at a time in the Continuation Order over keyset-paged root statements of `when.stream.batchSize` positions each — and is admitted only beside `then.graph`: `then.rows` has no streamed peer and a milestone-set `then.graphs` is not streamable.",
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "read" },
         "when": {
           "required": ["objectQuery"],
           "propertyNames": {
-            "enum": ["objectQuery", "uow", "equivalentEncodings"]
+            "enum": ["objectQuery", "uow", "stream", "equivalentEncodings"]
           }
         },
         "then": {
@@ -26,7 +26,18 @@
             { "required": ["graphs"] }
           ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["when"],
+            "properties": { "when": { "required": ["stream"] } }
+          },
+          "then": {
+            "properties": { "then": { "required": ["graph"] } }
+          }
+        }
+      ]
     },
     {
       "description": "A writeSequence case: ordered DML asserted by the resulting table state (milestone-chaining temporal writes, batched non-temporal writes, m-detach detached insert/update merge-back).",
@@ -374,7 +385,7 @@
       }
     },
     "when": {
-      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `at`, `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe the unit-of-work mode, transaction instant, observed milestone coordinate, and alternate surface encodings.",
+      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `stream`, `at`, `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe the unit-of-work mode, the streamed delivery, transaction instant, observed milestone coordinate, and alternate surface encodings.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -395,6 +406,19 @@
             "retryOptimisticConflicts": {
               "description": "Whether an optimistic-lock conflict joins the retriable set for this unit of work (m-opt-lock). Default false — a conflict surfaces to the caller after one attempt. Transient database failures (deadlock / serialization failure) are always retriable regardless of this flag.",
               "type": "boolean"
+            }
+          }
+        },
+        "stream": {
+          "description": "The streamed delivery context of a read case (m-snapshot-read *Streamed delivery*): its presence makes the read STREAMED rather than eager, exactly as `when.uow.concurrency` makes a read's mode prescriptive rather than descriptive. A streamed read keyset-pages its root positions in the Continuation Order and deep-fetches one page at a time, so its `then.statements` is the concatenation of the pages' own `1 + L` groups and its `then.graph` is the roots the eager read of the same Object Query publishes, in the same order. It names no representation: delivery is the verb and the namespace stays the surface's, so an implementation satisfies the case through whichever streamed read it exposes. Sibling of the action member, never a query clause — a page size is how the client consumes the result, not part of the Object Query the corpus canonicalizes and round-trips.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["batchSize"],
+          "properties": {
+            "batchSize": {
+              "description": "The page size the stream requests, counted in ROOT positions and never in included relationship rows. Spelled exactly as the lifecycle event's own `batchSize` so the corpus keeps one vocabulary for a page size. A performance dial alone: it changes the pages a read costs and nothing about which roots arrive, their order, or what each carries.",
+              "type": "integer",
+              "minimum": 1
             }
           }
         },

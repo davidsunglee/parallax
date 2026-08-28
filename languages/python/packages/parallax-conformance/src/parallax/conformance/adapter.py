@@ -239,26 +239,41 @@ def _read_observations(
 ) -> dict[str, Any]:
     """A read case's own observation shape (m-case-format "Read result form"):
     ``then.graphs`` (a milestone-set snapshot read) / ``then.graph`` (a deep
-    fetch or a plain instance-form materialization) / ``then.rows`` (row-form) —
-    a case satisfies its `then` requirement with exactly one, so exactly one of
-    these three run lanes ever answers it."""
+    fetch, a plain instance-form materialization, or a streamed delivery) /
+    ``then.rows`` (row-form) — a case satisfies its `then` requirement with
+    exactly one, so exactly one of these three run lanes ever answers it.
+
+    ``when.stream`` selects WITHIN the graph lane rather than beside it, because
+    it names the DELIVERY and not the result: a streamed case reports the same
+    ``graph`` observation an eager one does, and running the eager read to
+    produce it would match `then.graph` while producing none of the page
+    partition the case states (`m-conformance-adapter` *Streamed reads*). What a
+    streamed run does NOT report is its ``emissions``: a Snapshot Stream
+    publishes no Database Call activity, and the port is no substitute for one.
+    """
     then = case.document.get("then")
-    has_graphs = isinstance(then, Mapping) and "graphs" in then
-    has_graph = isinstance(then, Mapping) and "graph" in then
-    if has_graphs:
+    when = case.document.get("when")
+    streamed = isinstance(when, Mapping) and "stream" in when
+    if isinstance(then, Mapping) and "graphs" in then:
         emissions, graphs, round_trips = engine.run_graphs_case(case, dialect, port, lifecycle)
         return {
             "emissions": emissions,
             "observations": {"graphs": graphs, "roundTrips": round_trips},
         }
-    if has_graph:
-        emissions, graph, round_trips, stored_data_issues = engine.run_graph_case(
-            case, dialect, port, lifecycle
-        )
+    if streamed or (isinstance(then, Mapping) and "graph" in then):
+        graph_emissions: list[engine.Emission] = []
+        if streamed:
+            graph, round_trips, stored_data_issues = engine.run_stream_case(
+                case, dialect, port, lifecycle
+            )
+        else:
+            graph_emissions, graph, round_trips, stored_data_issues = engine.run_graph_case(
+                case, dialect, port, lifecycle
+            )
         observations: dict[str, Any] = {"graph": graph, "roundTrips": round_trips}
         if stored_data_issues is not None:
             observations["storedDataIssues"] = stored_data_issues
-        return {"emissions": emissions, "observations": observations}
+        return {"emissions": graph_emissions, "observations": observations}
     emissions, rows, round_trips = engine.run_read_case(case, dialect, port, lifecycle)
     return {"emissions": emissions, "observations": {"rows": rows, "roundTrips": round_trips}}
 

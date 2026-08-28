@@ -1,0 +1,129 @@
+# A streamed deep fetch pays `1 + L` per PAGE (m-snapshot-read): the page loop
+# around the executor adds nothing to the ceiling, and a short final page ends
+# the delivery without a further statement.
+#
+# Orders {1, 2, 42} are delivered at `batchSize: 2` with two include levels
+# (`Order.items`, then `OrderItem.statuses`), so the delivery is two pages of
+# three statements each — never one whole-result read, and never a statement per
+# root. Page 1 asks for 2 and gets orders 1 and 2; its item level gathers order
+# ids {1, 2} and its status level the item ids {11, 12, 21}. Page 2 continues
+# from the Continuation Order coordinate of the root page 1 delivered LAST — id
+# 2 — so its root statement carries a `t0.id > ?` conjunct page 1 has no
+# coordinate for, and its own levels gather {42} and {421, 422}. It returns ONE
+# root for a requested 2, which proves exhaustion: no third root statement is
+# authored or executed.
+#
+# The delivered graph is exactly what an eager read of the same Object Query
+# publishes, in the same order, because a page size is a performance dial and
+# nothing else. Round trips are 3 + 3 = 6, one per authored statement.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-object-query, m-deep-fetch, stream, streamed-delivery, to-many, relationship, graph, materialization, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed read's keyset seek - page 2's root statement binds the primary key of the root page 1 delivered last, and each page's child levels bind the keys that page's own roots gathered"
+when:
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      in:
+        attr: parallax.compatibility.Order.id
+        values:
+          - 1
+          - 2
+          - 42
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.items
+          - rel: parallax.compatibility.OrderItem.statuses
+  stream:
+    batchSize: 2
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?) order by t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?) order by t0.id asc limit ?
+      binds: [1, 2, 42, 2]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
+      binds: [1, 2]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?) order by t0.code asc
+        mariadb: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?) order by t0.code asc
+      binds: [11, 12, 21]
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?) and t0.id > ? order by t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?) and t0.id > ? order by t0.id asc limit ?
+      binds: [1, 2, 42, 2, 2]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
+      binds: [42]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?) order by t0.code asc
+        mariadb: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?) order by t0.code asc
+      binds: [421, 422]
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (1, 2, 42)
+  graph:
+    Order:
+      - id: 1
+        name: Ada
+        sku: A-100
+        qty: 5
+        price: 10.50
+        active: true
+        orderedOn: 2024-01-05
+        items:
+          - id: 12
+            orderId: 1
+            sku: B-200
+            quantity: 1
+            shippedOn: 2024-02-15
+            statuses:
+              - { id: 203, orderId: 1, orderItemId: 12, code: PICKED }
+          - id: 11
+            orderId: 1
+            sku: A-100
+            quantity: 2
+            shippedOn: null
+            statuses:
+              - { id: 202, orderId: 1, orderItemId: 11, code: PACKED }
+              - { id: 201, orderId: 1, orderItemId: 11, code: PICKED }
+      - id: 2
+        name: Linus
+        sku: B-200
+        qty: 10
+        price: 20.00
+        active: true
+        orderedOn: 2024-02-10
+        items:
+          - id: 21
+            orderId: 2
+            sku: A-300
+            quantity: 4
+            shippedOn: 2024-02-20
+            statuses: []
+      - id: 42
+        name: Grace
+        sku: A-999
+        qty: 30
+        price: 99.99
+        active: true
+        orderedOn: 2024-06-30
+        items:
+          - id: 422
+            orderId: 42
+            sku: B-200
+            quantity: 5
+            shippedOn: 2024-02-05
+            statuses: []
+          - id: 421
+            orderId: 42
+            sku: A-999
+            quantity: 3
+            shippedOn: 2024-03-10
+            statuses:
+              - { id: 204, orderId: 42, orderItemId: 421, code: PICKED }
+  roundTrips: 6

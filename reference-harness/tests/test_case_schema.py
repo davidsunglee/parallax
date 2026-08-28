@@ -1385,6 +1385,78 @@ def _rejected_case_costing_a_round_trip() -> dict[str, Any]:
     return doc
 
 
+def _streamed_read_case(**stream: Any) -> dict[str, Any]:
+    """A minimal streamed read: `when.stream` beside the Object Query, `then.graph`."""
+    return {
+        "model": "models/orders.yaml",
+        "tags": ["m-snapshot-read"],
+        "shape": "read",
+        "compileEligibility": {"mode": "run-only", "reason": "query-result-dependent"},
+        "when": {
+            "objectQuery": {"target": "Order", "predicate": {"all": {}}},
+            "stream": {"batchSize": 2, **stream},
+        },
+        "then": {
+            "statements": [
+                {
+                    "sql": {"postgres": "select t0.id from orders t0 order by t0.id asc limit ?"},
+                    "binds": [2],
+                }
+            ],
+            "graph": {"Order": [{"id": 1}]},
+            "roundTrips": 1,
+        },
+    }
+
+
+def test_schema_accepts_a_streamed_read_case() -> None:
+    assert _is_valid(_streamed_read_case())
+
+
+def _streamed_without_page_size() -> dict[str, Any]:
+    doc = _streamed_read_case()
+    doc["when"]["stream"] = {}
+    return doc
+
+
+def _streamed_zero_page_size() -> dict[str, Any]:
+    return _streamed_read_case(batchSize=0)
+
+
+def _streamed_negative_page_size() -> dict[str, Any]:
+    return _streamed_read_case(batchSize=-1)
+
+
+def _streamed_fractional_page_size() -> dict[str, Any]:
+    return _streamed_read_case(batchSize=1.5)
+
+
+def _streamed_naming_a_representation() -> dict[str, Any]:
+    # `when.stream` names the delivery and never a representation: a member no
+    # adapter could honor is refused rather than ignored (m-case-format).
+    return _streamed_read_case(interface="typed")
+
+
+def _streamed_beside_rows() -> dict[str, Any]:
+    doc = _streamed_read_case()
+    doc["then"].pop("graph")
+    doc["then"]["rows"] = [{"id": 1}]
+    return doc
+
+
+def _streamed_beside_milestone_graphs() -> dict[str, Any]:
+    doc = _streamed_read_case()
+    doc["then"].pop("graph")
+    doc["then"]["graphs"] = [{"pin": {"transaction-time": "2024-01-01T00:00:00Z"}, "graph": {}}]
+    return doc
+
+
+def _streamed_write_sequence() -> dict[str, Any]:
+    doc = _write_sequence_case()
+    doc["when"]["stream"] = {"batchSize": 2}
+    return doc
+
+
 REJECTED_CASES = {
     "write-value-step-with-golden-statements": _write_value_step_with_golden_statements,
     "write-value-step-costing-a-round-trip": _write_value_step_costing_a_round_trip,
@@ -1438,6 +1510,14 @@ REJECTED_CASES = {
     "graphs-entry-stray-key": _graphs_entry_stray_key,
     "stored-data-record-missing-hydration": _stored_data_record_missing_hydration,
     "stored-data-issue-unknown-code": _stored_data_issue_unknown_code,
+    "streamed-without-page-size": _streamed_without_page_size,
+    "streamed-zero-page-size": _streamed_zero_page_size,
+    "streamed-negative-page-size": _streamed_negative_page_size,
+    "streamed-fractional-page-size": _streamed_fractional_page_size,
+    "streamed-naming-a-representation": _streamed_naming_a_representation,
+    "streamed-beside-rows": _streamed_beside_rows,
+    "streamed-beside-milestone-graphs": _streamed_beside_milestone_graphs,
+    "streamed-write-sequence": _streamed_write_sequence,
 }
 
 

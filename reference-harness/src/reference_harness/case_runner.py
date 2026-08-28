@@ -2792,13 +2792,12 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         (statements[index], case.statement_binds(index, dialect))
         for index in range(1, len(statements))
     ]
-    children_by_step = _execute_fetch_levels(
-        case, db, "then.statements", query, steps, root_rows, levels
-    )
+    executed = _execute_fetch_levels(case, db, "then.statements", query, steps, root_rows, levels)
+    _refuse_unused_levels(case, "then.statements", dialect, executed, len(levels))
 
     # Assemble the graph: attach each child set under its relationship name on
     # the parent rows, following the declared paths.
-    assembled = _assemble_graph(case, query, steps, root_rows, children_by_step)
+    assembled = _assemble_graph(case, query, steps, root_rows, executed.children_by_hop)
 
     expected = case.expected_graph or {}
     if not _graphs_equal(assembled, expected, case.model):
@@ -2822,6 +2821,39 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class _ExecutedLevels:
+    """What one run of a query's child levels produced, and how much SQL it used.
+
+    ``consumed`` is the count rather than a slice because the levels a run
+    executes are a PREFIX of the statements it was handed: a streamed read's
+    pages share one flat ``then.statements`` list, so each page reads the tail
+    left by the pages before it and hands the rest back.
+    """
+
+    children_by_hop: dict[_HopKey, dict[Any, list[dict[str, Any]]]]
+    consumed: int
+
+
+def _refuse_unused_levels(
+    case: Case, source: str, dialect: str, executed: _ExecutedLevels, listed: int
+) -> None:
+    """Refuse a case listing child SQL its own levels never reached.
+
+    Enforced by the callers that hand over their WHOLE statement list, because
+    only they know that nothing follows: a streamed page is handed the tail of a
+    list later pages still consume, so an unused statement there is the next
+    page's root rather than dead SQL.
+    """
+    if executed.consumed != listed:
+        raise CaseFailure(
+            f"{case.path.name}: {source} ({dialect}) lists "
+            f"{listed - executed.consumed} unused deep-fetch child "
+            f"statement(s). Child SQL MUST be omitted after a level gathers no "
+            f"parent keys."
+        )
+
+
 def _execute_fetch_levels(
     case: Case,
     db: DatabaseProvider,
@@ -2830,7 +2862,7 @@ def _execute_fetch_levels(
     steps: list[_FetchStep],
     root_rows: list[dict[str, Any]],
     levels: list[tuple[str, list[Any]]],
-) -> dict[_HopKey, dict[Any, list[dict[str, Any]]]]:
+) -> _ExecutedLevels:
     """Execute one Object Query's child levels and bucket each hop's rows by parent key.
 
     The N+1-elimination contract, executed once for both positions an Include
@@ -2956,14 +2988,230 @@ def _execute_fetch_levels(
 
     _assert_child_ordering(case.path.name, steps, children_by_step)
 
-    if statement_index != len(levels):
-        raise CaseFailure(
-            f"{case.path.name}: {source} ({dialect}) lists "
-            f"{len(levels) - statement_index} unused deep-fetch child "
-            f"statement(s). Child SQL MUST be omitted after a level gathers no "
-            f"parent keys."
+    return _ExecutedLevels(children_by_hop=children_by_step, consumed=statement_index)
+
+
+def _primary_key_column(entity: Entity) -> str:
+    """The physical column of *entity*'s primary key.
+
+    The Continuation Order always ends in the primary key (`m-snapshot-read`), and
+    a Metamodel primary key is one Attribute, so this is the whole coordinate a
+    streamed page seeks from.
+    """
+    for attribute in entity.attributes:
+        if attribute.get("primaryKey"):
+            return attribute["column"]
+    raise CaseFailure(f"{entity.canonical_name}: no primary key to continue a stream from")
+
+
+def _instance_form_root_rows(
+    case: Case, db: DatabaseProvider, entity: Entity, sql: str, binds: list[Any]
+) -> list[dict[str, Any]]:
+    """One instance-form root statement's rows, ready to become graph nodes.
+
+    Instance form is what a `then.graph` read publishes: the Document fan-out of a
+    Relational Document Layout read, each row carrying its own Structured Column
+    values, and `familyVariant` materialized from the tag map for an
+    abstract-target read. Per-variant COLUMN narrowing is deliberately NOT done
+    here — a caller comparing the matched row SET against `referenceSql` needs the
+    unnarrowed rows.
+    """
+    value_object_columns = _position_value_object_columns(case, entity)
+    projected = _materialize_target_tph_document_layout(
+        case, _query_rows(case, db, sql, binds), include_value_objects=True
+    )
+    rows: list[dict[str, Any]] = [
+        _MaterializedRow(
+            row,
+            value_object_columns={key: row[key] for key in value_object_columns if key in row},
         )
-    return children_by_step
+        for row in projected
+    ]
+    return _materialize_family_variant(case, rows)
+
+
+@dataclass(frozen=True, slots=True)
+class _StreamPage:
+    """One page of a streamed delivery: what it read, published, and cost."""
+
+    root_rows: list[dict[str, Any]]
+    nodes: list[dict[str, Any]]
+    consumed: int
+
+
+def _stream_page(
+    case: Case,
+    db: DatabaseProvider,
+    query: dict[str, Any],
+    steps: list[_FetchStep],
+    root_entity: Entity,
+    root_sql: str,
+    root_binds: list[Any],
+    levels: list[tuple[str, list[Any]]],
+) -> _StreamPage:
+    """Execute one page of a streamed read and publish its roots.
+
+    A page IS an eager read of a bounded root query (`m-snapshot-read` *Streamed
+    delivery*), so it is graded by the graders an eager read of the same Object
+    Query gets: the deep-fetch levels and their assembly where the query declares
+    Include Paths, the single-statement instance-form materialization where it
+    declares none. What the page adds is that it consumes a PREFIX of *levels* and
+    reports how much, because the statements after it belong to later pages.
+    """
+    if not _query_has_includes(query):
+        rows = _instance_form_root_rows(case, db, root_entity, root_sql, root_binds)
+        narrowed = _narrow_to_variant_columns(case, rows)
+        nodes = [_graph_node(case.model, root_entity, row) for row in narrowed]
+        return _StreamPage(root_rows=rows, nodes=nodes, consumed=0)
+
+    root_rows = _materialize_target_tph_document_layout(
+        case, _query_rows(case, db, root_sql, root_binds), include_value_objects=True
+    )
+    root_rows = _materialize_family_variant(case, root_rows)
+    executed = _execute_fetch_levels(case, db, "then.statements", query, steps, root_rows, levels)
+    assembled = _assemble_graph(case, query, steps, root_rows, executed.children_by_hop)
+    nodes = assembled.get(root_entity.name, [])
+    return _StreamPage(root_rows=root_rows, nodes=nodes, consumed=executed.consumed)
+
+
+def _assert_stream(case: Case, db: DatabaseProvider) -> None:
+    """Execute a streamed read page by page and assert the delivery it authored.
+
+    A streamed case's ``then.statements`` is the pages' own ``1 + L`` groups
+    concatenated (`m-case-format` *Streamed reads*), so the page partition has to
+    be recovered before anything can be graded against it: each page's root
+    statement is executed, its child levels consume as much of the remaining list
+    as the page's own roots reach, and the next page starts where that stopped.
+
+    Three properties are then derived independently of the authored SQL, so a
+    delivery that reached the right rows the wrong way fails rather than passing
+    on its graph alone. The requested page size is `batchSize`, narrowed by
+    whatever of a declared ``limit`` is still undelivered, and a page returns at
+    most that many roots. A page after the first seeks from the Continuation Order
+    coordinate of the root the page before it delivered LAST — the primary key,
+    which is the whole coordinate the ordering this phase lowers is made of — over
+    the same predicate binds every page carries. And exhaustion is proven rather
+    than assumed: a short page ends the delivery, while a full one is followed by
+    one more root statement returning nothing, unless a declared ``limit`` was
+    already delivered in full.
+
+    The FIRST page's own binds are the baseline the later pages are measured
+    against rather than an independently derived list: the harness executes
+    authored goldens rather than compiling the query, so a predicate's binds have
+    no second source here. What is derived is everything the pages after it must
+    agree with — which is why a first page carrying a seek it should not have is
+    caught by the levels its own too-narrow result no longer feeds, and a
+    continuing page that stopped seeking by its SQL text rather than its binds.
+
+    The published roots are the concatenation of the pages', compared to
+    ``then.graph`` exactly as an eager read's are, because a page size changes
+    neither membership nor order nor what a root carries.
+    """
+    dialect = db.dialect
+    query = case.object_query
+    statements = case.golden_statements(dialect)
+    entries = [(sql, case.statement_binds(index, dialect)) for index, sql in enumerate(statements)]
+    steps = _fetch_steps(case.model, query) if _query_has_includes(query) else []
+    root_entity = case.model.entity(query["target"])
+    key_column = _primary_key_column(root_entity)
+    batch_size = case.batch_size
+    limit = query.get("limit")
+
+    nodes: list[dict[str, Any]] = []
+    root_rows: list[dict[str, Any]] = []
+    predicate_binds: list[Any] = []
+    first_root_sql = ""
+    later_root_sql: str | None = None
+    cursor: Any = None
+    index = 0
+    page = 0
+    while True:
+        if index >= len(entries):
+            raise CaseFailure(
+                f"{case.path.name}: then.statements ({dialect}) ends after {page} page(s), "
+                f"but the delivery is not exhausted — the last page returned a FULL "
+                f"{batch_size} root(s), which proves nothing. Author the root statement "
+                f"that returns none, or a final page shorter than the size it asked for."
+            )
+        root_sql, authored = entries[index]
+        index += 1
+        requested = batch_size if limit is None else min(batch_size, limit - len(root_rows))
+        if page == 0:
+            first_root_sql = root_sql
+            predicate_binds = list(authored[:-1])
+            expected_binds: list[Any] = [*predicate_binds, requested]
+        else:
+            expected_binds = [*predicate_binds, cursor, requested]
+        if [_coerce_identity_key(bind) for bind in authored] != [
+            _coerce_identity_key(bind) for bind in expected_binds
+        ]:
+            raise CaseFailure(
+                f"{case.path.name}: then.statements ({dialect}) page {page + 1} root binds "
+                f"{authored!r} != {expected_binds!r}. A page binds the query's own "
+                f"predicate binds, then — after the first page — the Continuation Order "
+                f"coordinate of the root the previous page delivered LAST, then the size "
+                f"it is asking for."
+            )
+        if page == 1:
+            later_root_sql = root_sql
+        if page >= 1 and root_sql == first_root_sql:
+            raise CaseFailure(
+                f"{case.path.name}: then.statements ({dialect}) page {page + 1} repeats the "
+                f"FIRST page's root SQL. A continuing page carries a seek conjunct the "
+                f"first page has no coordinate for, so the two texts cannot be equal."
+            )
+        if page >= 2 and root_sql != later_root_sql:
+            raise CaseFailure(
+                f"{case.path.name}: then.statements ({dialect}) page {page + 1} root SQL "
+                f"differs from page 2's. Every continuing page seeks the same way and "
+                f"differs only in the coordinate it binds."
+            )
+
+        executed = _stream_page(
+            case, db, query, steps, root_entity, root_sql, authored, entries[index:]
+        )
+        index += executed.consumed
+        delivered = len(executed.root_rows)
+        if delivered > requested:
+            raise CaseFailure(
+                f"{case.path.name}: page {page + 1} returned {delivered} root(s) for a "
+                f"requested {requested}. A page size bounds the root positions a page "
+                f"delivers."
+            )
+        nodes.extend(executed.nodes)
+        root_rows.extend(executed.root_rows)
+        if executed.root_rows:
+            cursor = _coerce_identity_key(executed.root_rows[-1][key_column])
+        page += 1
+        if delivered < requested or (limit is not None and len(root_rows) >= limit):
+            break
+
+    if index != len(entries):
+        raise CaseFailure(
+            f"{case.path.name}: then.statements ({dialect}) lists {len(entries) - index} "
+            f"statement(s) after the delivery ended. A stream stops at its first short "
+            f"page, so nothing follows it."
+        )
+
+    assembled = {root_entity.name: nodes}
+    expected = case.expected_graph or {}
+    if not _graphs_equal(assembled, expected, case.model):
+        raise CaseFailure(
+            f"{case.path.name}: delivered graph != then.graph.\n"
+            f"  delivered: {assembled!r}\n"
+            f"  expected:  {expected!r}"
+        )
+
+    reference_sql = case.reference_sql_for(dialect)
+    if reference_sql is not None:
+        reference_rows = _materialize_family_variant(case, db.query(reference_sql))
+        root_projection = [_project_like(row, root_rows) for row in reference_rows]
+        if not _rows_equal(root_projection, root_rows, case.tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: referenceSql root rows != the delivered root rows.\n"
+                f"  reference: {reference_rows!r}\n"
+                f"  delivered: {root_rows!r}"
+            )
 
 
 def _graphs_root_entity(case: Case) -> Entity:
@@ -3534,28 +3782,11 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     (golden,) = case.golden_statements(dialect)
     entity = case.model.entity(case.object_query["target"])
 
-    value_object_columns = _position_value_object_columns(case, entity)
-    # An instance form additionally carries every applicable occurrence, so a
-    # Relational Document Layout read fans those out of its one Structured Column
-    # too — after which each occurrence sits under the very column name a `Columns`
-    # layout would have given it and the node assembly below is layout-blind.
-    projected = _materialize_target_tph_document_layout(
-        case,
-        _query_rows(case, db, golden, case.statement_binds(0, dialect)),
-        include_value_objects=True,
-    )
-    rows: list[dict[str, Any]] = [
-        _MaterializedRow(
-            row,
-            value_object_columns={key: row[key] for key in value_object_columns if key in row},
-        )
-        for row in projected
-    ]
     # `familyVariant` materialization happens on the RAW rows (also what a
     # referenceSql identity check below compares against — the matched ROW SET,
     # unrelated to per-variant field narrowing); the per-variant COLUMN narrowing
     # is a separate, graph-assembly-only step.
-    rows = _materialize_family_variant(case, rows)
+    rows = _instance_form_root_rows(case, db, entity, golden, case.statement_binds(0, dialect))
     narrowed_rows = _narrow_to_variant_columns(case, rows)
     assembled = {entity.name: [_graph_node(case.model, entity, row) for row in narrowed_rows]}
 
@@ -6994,16 +7225,10 @@ def _run_step_includes(
             )
         return None
     steps = _fetch_steps(case.model, query)
-    children_by_hop = _execute_fetch_levels(
-        case,
-        reader,
-        f"when.scenario[{index}].statements",
-        query,
-        steps,
-        root_rows,
-        pairs[1:],
-    )
-    return _StepIncludes(query, steps, root_rows, children_by_hop)
+    source = f"when.scenario[{index}].statements"
+    executed = _execute_fetch_levels(case, reader, source, query, steps, root_rows, pairs[1:])
+    _refuse_unused_levels(case, source, reader.dialect, executed, len(pairs) - 1)
+    return _StepIncludes(query, steps, root_rows, executed.children_by_hop)
 
 
 def _step_graph_nodes(
@@ -8593,7 +8818,14 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     validate_query_inheritance(case.model.entity_defs, case.object_query)
     _assert_round_trip_count(case, dialect)  # layer 5 (count)
     _provision(case, db)
-    if _is_deep_fetch(case):
+    if case.is_streamed:
+        # A streamed read (`m-case-format` *Streamed reads*): `then.statements` is
+        # the pages' own `1 + L` groups concatenated, so the page partition is
+        # recovered and graded before the delivered roots are compared to
+        # `then.graph`. It branches ahead of every other read form because the
+        # delivery, not the result member, is what decides how the statements read.
+        _assert_stream(case, db)  # layer 2 + 5 (per-page delivery)
+    elif _is_deep_fetch(case):
         _assert_deep_fetch(case, db)  # layer 2 + 5 (graph)
     elif case.expected_graphs is not None:
         # A milestone-set snapshot read (m-snapshot-read, Q5a): a `history` /

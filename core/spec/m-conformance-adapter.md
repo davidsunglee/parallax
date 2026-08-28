@@ -383,7 +383,9 @@ assert different things:
   per-milestone `{pin, graph}` observation for a milestone-set snapshot read. A
   graph-form read additionally reports `storedDataIssues` for the result positions
   whose stored state contradicted the declared model, and omits the key entirely
-  when every position conformed
+  when every position conformed. A read case carrying `when.stream` reports the
+  same `graph` observation, delivered rather than materialized whole (see
+  *Streamed reads*, below)
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `roundTrips`, plus `stateChecks` for
@@ -412,6 +414,45 @@ assert different things:
   unconditional for every claimant of the shape; the schema field itself stays
   optional and additive, exactly like `errorClass` before it, so an existing
   run output that never claims `rejected` stays valid unchanged.
+
+### Streamed reads (`when.stream`)
+
+A `read` case carrying `when.stream` (`m-case-format`) is satisfied by the
+implementation's own **streamed** read, opened over the case's `when.objectQuery`
+with the declared `when.stream.batchSize`, and by nothing else. Running the eager
+read and reporting its result is a conformance failure even where the graph
+matches: what the case states is the page partition — the requested size each
+root statement binds, the seek coordinate each later page continues from, and the
+statement a full final page costs to prove exhaustion — and an eager read
+produces none of it.
+
+The case names **no representation**, because delivery is the verb and the
+namespace stays the surface's. An adapter drives whichever streamed read it
+exposes and reports:
+
+- **`observations.graph`** — the roots the delivery published, in delivery order,
+  in the same root-class-keyed shape an eager graph read reports. Delivery
+  publishes one root at a time; the observation is what the case's `then.graph`
+  is compared against, so an adapter accumulates the delivered roots for
+  reporting and the memory that costs is the runner's, never a claim about the
+  implementation's own working set.
+- **`observations.roundTrips`** — every database call the delivery made, the
+  terminal empty root statement included.
+- **`emissions`** — every statement the delivery executed, in execution order
+  across pages: each page's root statement followed by the child levels that page
+  ran. The list is the whole delivery's, not one page's. It is read off the
+  Database Calls the delivery publishes (`m-execution-lifecycle`), like every
+  other run's, and never off the database port — a port carries the driver's own
+  statement text rather than the lowered statement a Database Call borrows, so an
+  adapter reporting from there would report a statement it recovered rather than
+  one it ran. An adapter whose streams publish no such activity reports an
+  **empty** `emissions` list; the statements the case authors are then graded by
+  executing them, which is what the corpus runner does with every golden.
+
+Under `compile`, a `when.stream` case is **always** run-only: its later pages
+bind a coordinate read off an earlier page's result, which is the
+`query-result-dependent` criterion, so the adapter answers the defined
+`status: "run-only"` envelope for one exactly as it does for a deep fetch.
 
 ### Execution lifecycle (`executionLifecycle`)
 

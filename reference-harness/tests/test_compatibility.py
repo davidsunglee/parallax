@@ -10,16 +10,23 @@ Postgres.
 Requires Docker (Testcontainers). If no provider can be started, the suite errors
 rather than silently passing, because the walking skeleton's whole point is the
 real-database run.
+
+The module's second half is the same runner exercised from the other side: a
+shipped case damaged in one specific way, asserted to be REFUSED. It lives here
+because the harness designates exactly one entry point to a live database — the
+``provider`` fixture below — and both directions of the runner need one.
 """
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from reference_harness.case import dialect_executed_cases, discover_cases
-from reference_harness.case_runner import run_case
+from reference_harness.case import Case, dialect_executed_cases, discover_cases
+from reference_harness.case_runner import CaseFailure, run_case
 from reference_harness.providers import available_dialects, provider_for
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -76,3 +83,84 @@ def test_a_dialect_is_available() -> None:
 @pytest.mark.parametrize("case", CASES, ids=[_case_id(c) for c in CASES])
 def test_case(case, provider) -> None:
     run_case(case, provider)
+
+
+# --------------------------------------------------------------------------
+# The streamed-delivery oracle: a delivery that reached the right rows the
+# wrong way is refused (m-case-format "Streamed reads")
+#
+# A streamed case's `then.statements` is the pages' own `1 + L` groups
+# concatenated, so almost everything that makes a stream a stream lives in the
+# page partition rather than in the graph: the size each page asks for, the
+# coordinate each later page continues from, and the statement a full final page
+# costs to prove exhaustion. A grader that only assembled the roots and compared
+# them to `then.graph` would accept every delivery below, which is why each is
+# authored as a refusal rather than left to the corpus's own green run. The
+# undamaged form of each case passes as an ordinary member of the sweep above.
+# --------------------------------------------------------------------------
+
+_DEEP_FETCH = "m-snapshot-read-027-streamed-deep-fetch"
+_TERMINAL_PAGE = "m-snapshot-read-028-stream-empty-terminal-page"
+
+
+def _damaged(stem: str) -> Case:
+    """A writable copy of the shipped case named *stem*."""
+    return copy.deepcopy(next(case for case in ALL_CASES if case.path.stem == stem))
+
+
+def _statements(case: Case) -> list[dict[str, Any]]:
+    return case.then["statements"]
+
+
+def test_a_page_seeking_from_the_wrong_root_is_refused(provider) -> None:
+    """The continuation is the previous page's LAST root, derived rather than trusted."""
+    case = _damaged(_DEEP_FETCH)
+    _statements(case)[3]["binds"][3] = 1
+
+    with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
+        run_case(case, provider)
+
+
+def test_a_page_asking_for_the_wrong_size_is_refused(provider) -> None:
+    """The requested size is `batchSize`, not whatever the golden happens to bind."""
+    case = _damaged(_DEEP_FETCH)
+    _statements(case)[0]["binds"][-1] = 3
+
+    with pytest.raises(CaseFailure, match="the size it is asking for"):
+        run_case(case, provider)
+
+
+def test_a_delivery_ending_on_a_full_page_is_refused(provider) -> None:
+    """A full final page proves nothing, so dropping the terminal statement fails."""
+    case = _damaged(_TERMINAL_PAGE)
+    del _statements(case)[4]
+    case.then["roundTrips"] = 4
+
+    with pytest.raises(CaseFailure, match="the delivery is not exhausted"):
+        run_case(case, provider)
+
+
+def test_a_statement_after_the_delivery_ended_is_refused(provider) -> None:
+    """A stream stops at its first short page, so nothing may follow it."""
+    case = _damaged(_DEEP_FETCH)
+    entries = _statements(case)
+    entries.append(copy.deepcopy(entries[3]))
+    case.then["roundTrips"] = 7
+
+    with pytest.raises(CaseFailure, match="after the delivery ended"):
+        run_case(case, provider)
+
+
+def test_a_continuing_page_that_does_not_seek_is_refused(provider) -> None:
+    """A continuing page carries a conjunct the first page has no coordinate for.
+
+    The bind oracle alone would accept this: the binds are unchanged and still
+    name the right coordinate. What refuses it is that the two root SQL texts are
+    equal, which no keyset-paged delivery can produce.
+    """
+    case = _damaged(_DEEP_FETCH)
+    entries = _statements(case)
+    entries[3]["sql"] = copy.deepcopy(entries[0]["sql"])
+
+    with pytest.raises(CaseFailure, match="repeats the FIRST page's root SQL"):
+        run_case(case, provider)

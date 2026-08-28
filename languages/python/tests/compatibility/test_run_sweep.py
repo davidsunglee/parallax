@@ -173,6 +173,64 @@ def _grade_execution_lifecycle(then: dict[str, Any], observations: dict[str, Any
     )
 
 
+def _is_streamed(case: case_format.Case) -> bool:
+    when = case_document(case).get("when", {})
+    return isinstance(when, dict) and "stream" in when
+
+
+class _ExecutedPort:
+    """A pass-through ``m-db-port`` decorator recording each statement as EXECUTED.
+
+    A streamed read publishes no Database Call activity, so its envelope carries
+    an empty `emissions` list (m-conformance-adapter) and the statements it ran
+    are observable only here. What the port sees is the DRIVER's own text, and
+    recovering the canonical spelling from it is the one direction nothing may
+    travel — so the goldens are translated OUTWARD instead, through the same
+    :meth:`Dialect.to_driver_sql` production lowered them with, and compared in
+    the driver's space.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.executed: list[tuple[str, list[Any]]] = []
+
+    def execute(
+        self, sql: str, binds: Any, document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[dict[str, Any]]:
+        self.executed.append((sql, list(binds)))
+        return self._inner.execute(sql, binds, document_reads)
+
+    def execute_write(self, sql: str, binds: Any) -> int:
+        self.executed.append((sql, list(binds)))
+        return self._inner.execute_write(sql, binds)
+
+    def transaction(self, body: Callable[[Any], Any]) -> Any:
+        return self._inner.transaction(body)
+
+
+def _grade_streamed_statements(
+    case: case_format.Case, executed: list[tuple[str, list[Any]]]
+) -> None:
+    """The delivery's own statements against the pages the case authored.
+
+    Graded positionally and exactly, unlike an eager read's child levels: a
+    streamed case authors the whole page partition, and a page's root binds — its
+    predicate binds, its seek coordinate, and the size it asked for — are
+    positional by construction. A child level inside a page keeps the ordinary
+    gathered-key rule, which is why the bind comparison falls back to the
+    multiset wherever the authored bind list is not the executed one.
+    """
+    dialect = dialect_for("postgres")
+    golden = [
+        (dialect.to_driver_sql(sql), wire_binds(binds))
+        for sql, binds in _read_golden_statements(case)
+    ]
+    assert len(executed) == len(golden), (case.case_id, executed, golden)
+    for (ran_sql, ran_binds), (golden_sql, golden_binds) in zip(executed, golden, strict=True):
+        assert ran_sql == golden_sql, (case.case_id, ran_sql, golden_sql)
+        assert Counter(wire_binds(ran_binds)) == Counter(golden_binds), (case.case_id, ran_binds)
+
+
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
 def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     model = engine.load_case_metamodel(case)
@@ -180,13 +238,19 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
     provisioner.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
-    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
+    streamed = _is_streamed(case)
+    port = _ExecutedPort(provisioner.port) if streamed else provisioner.port
+    envelope = adapter.run_case(case.path, "postgres", port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
     doc = case_document(case)
     then = doc.get("then", {})
     golden_statements = _read_golden_statements(case)
+    if streamed:
+        assert envelope["emissions"] == []
+        _grade_streamed_statements(case, cast("_ExecutedPort", port).executed)
+        golden_statements = []
     emissions = envelope["emissions"]
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
     for index, (emission, (golden_sql, golden_binds)) in enumerate(

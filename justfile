@@ -119,7 +119,7 @@ report-check-all-summary:
 # ===========================================================================
 
 [doc("Every blocking check over the core spec and compatibility corpus.")]
-core-check: core-check-module-graph core-check-slice-profiles core-check-schemas core-check-contract-tools core-check-twin-layouts core-check-language-spec
+core-check: core-check-module-graph core-check-slice-profiles core-check-schemas core-check-contract-tools core-check-twin-layouts core-check-batch-size-twins core-check-language-spec
 
 [metadata("runtime:fast")]
 [doc("modules.md DAG legality, per-module fixture coverage, and the active-to-deferred rule.")]
@@ -156,6 +156,11 @@ core-check-contract-tools:
 [doc("Cross-layout descriptor and case twins have equal logical models and observations.")]
 core-check-twin-layouts:
     cd {{harness}} && uv run python -m reference_harness.twin_layout_check ../core/compatibility
+
+[metadata("runtime:fast")]
+[doc("Streamed batch-size case twins state one read at every page size.")]
+core-check-batch-size-twins:
+    cd {{harness}} && uv run python -m reference_harness.batch_size_twin_check ../core/compatibility
 
 [metadata("runtime:fast")]
 [doc("Every completed language spec still fills in the canonical template.")]

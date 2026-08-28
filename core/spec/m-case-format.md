@@ -125,10 +125,10 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
 - **`when`** — the action under test and how the client performs it. Exactly one
   **action** member per shape (`objectQuery` | `writeSequence` | `scenario` |
   `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt
-  conflict's `write`); the **context** members (`uow`, `mutation`, `at`,
-  `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe the
-  unit-of-work mode, the written verb, transaction instant, observed milestone
-  coordinate, and alternate surface encodings.
+  conflict's `write`); the **context** members (`uow`, `stream`, `mutation`,
+  `at`, `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe
+  the unit-of-work mode, the streamed delivery, the written verb, transaction
+  instant, observed milestone coordinate, and alternate surface encodings.
 - **`then`** — everything the case asserts: the golden `statements`, the naive
   `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
@@ -144,7 +144,8 @@ read by the coverage gate and the language gate; grouping them buys no readabili
 A case is one of **nine shapes**, named by the required top-level `shape`:
 
 - **`read`** — a queryable `when.objectQuery` naming its own `target`,
-  asserting `then.rows` or a deep-fetch `then.graph`.
+  asserting `then.rows` or a deep-fetch `then.graph`; a `when.stream` context
+  member makes the same read a **streamed** one (see *Streamed reads*, below).
 - **`writeSequence`** — ordered DML under `when.writeSequence`, asserting the
   resulting `then.tableState` (the temporal writes `m-txtime-write` /
   `m-bitemp-write`, the set-based `m-batch-write`,
@@ -332,6 +333,7 @@ keeps the assertion honest across engines.
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — either a standalone/table-level defect or a cross-entity family invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; `concurrency` is the resolved Concurrency Preference, not a claim that every Entity uses one strategy; descriptive |
+| `when.stream` | `when` | no | the streamed delivery of a `read` case (`{batchSize}`) — its presence makes the read streamed rather than eager, and its `batchSize` is the page size in ROOT positions; admitted only beside `then.graph` (see *Streamed reads*, below) |
 | `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `txStart` / physical `in_z` the optimistic gate binds |
 | `when.observedValidStart` | `when` | conflict | the observed milestone's `validStart` / physical `from_z` — with `when.observedTxStart` it is that milestone's own EDGE, naming the milestone the close observed instead of the close's address (see *Naming the observed milestone*, below) |
 | `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `objectQuery`; each MUST normalize and canonicalize to it |
@@ -597,6 +599,70 @@ milestone-set graph carries **no** deep-fetch includes — history-with-includes
 (`snapshot-history-includes`) is staged and claimed by neither object-lifecycle
 slice — so each graph is rooted at the read's own query `target`.)
 
+#### Streamed reads (`when.stream`)
+
+A read case is **streamed** when its `when` carries the context member
+**`stream`**, whose sole field **`batchSize`** is the page size the client asks
+for, counted in **root positions** and never in included relationship rows. The
+member is **prescriptive**, as `when.uow.concurrency` is: its presence states
+that the read is delivered one root at a time in the Continuation Order over
+keyset-paged root statements, not that an eager read happened to be executed
+that way.
+
+It names **no representation**. Delivery is the verb and the namespace stays the
+surface's, so an implementation satisfies a streamed case through whichever
+streamed read it exposes; two surfaces over one materialization are `m-wire`'s
+subject, not this one's.
+
+`when.stream` is admitted **only beside `then.graph`**. `then.rows` has no
+streamed peer — a values-lane read publishes no roots to deliver one at a time —
+and a milestone-set `then.graphs` read is not streamable, because a milestone set
+is not keyset-ordered by the root's own key.
+
+**What the case asserts is the whole delivery, page boundaries included.**
+`then.statements` is the ordered concatenation of the pages' own statement
+groups: each page is an eager deep fetch of a bounded root query, so a page costs
+the ordinary `1 + L` — its root statement plus one statement per child level that
+gathered parent keys — and the page loop adds nothing to that ceiling. The root
+statements are **not one repeating text**: the first page's carries no seek
+conjunct, so it differs from every later page's, and two child levels of the same
+relationship differ whenever their pages gathered different numbers of parent
+keys. A flat ordered list of `{sql, binds}` states all of that with no new
+authoring form.
+
+Three properties of that list are graded independently of the SQL text:
+
+- **The page size is honored.** A page's root statement binds its requested size,
+  which is `batchSize` — or, under a declared `limit`, whatever of it is still
+  undelivered — and the page returns at most that many roots.
+- **The continuation is the previous page's own last root.** A page after the
+  first binds a seek coordinate equal to the Continuation Order coordinate of the
+  root the previous page delivered last. This is what makes a streamed case
+  `query-result-dependent` even when it declares no includes at all (see *Compile
+  eligibility*, below).
+- **Exhaustion is proven, not assumed.** A page shorter than the size it
+  requested ends the delivery. A **full** final page does not, so it is followed
+  by one more root statement that returns nothing — unless a declared `limit` was
+  already delivered in full, which ends the delivery without it.
+
+`then.graph` is the roots an **eager** read of the same Object Query publishes, in
+the same order: `batchSize` changes neither membership nor order nor what a root
+carries, so a streamed case needs no authoring form of its own for its result. A
+**batch-size pair** — two cases sharing one model, one `when.objectQuery`, and one
+`then.graph`, differing only in `batchSize` and in the physical observations that
+follow from it — is how the corpus proves that invariance, on the file-based
+precedent *Cross-layout twin proofs* sets: the corpus executes authored goldens
+rather than compiling them, so a second page size needs authored goldens of its
+own, and a within-case re-run field would be ungradeable by the corpus's own
+primary oracle. Such a pair is named
+`<module>-NNN-<proof>-batch-size-twin-<batchSize>.yaml`, its pair identity is
+`<module>-<proof>`, and a static gate asserts the members agree on everything
+their shared claim covers.
+
+`then.roundTrips` needs no rule of its own: every authored page statement
+executes, the terminal empty root statement included, so the deep-fetch rule
+(the count equals the authored statement count) already holds across pages.
+
 #### Graph keys and back-reference cycles
 
 Every key in a `then.graph` node is a **declared model member name** — an Attribute
@@ -731,6 +797,16 @@ N; a deep fetch whose root is empty runs only the root statement). For these
 cases `then.statements` is an **ordered list** of statement entries (root plus
 the child levels that execute) rather than a single entry, and `then.graph`
 replaces (or accompanies) `then.rows`.
+
+For a **streamed** read (*Streamed reads*, above) this layer applies **per page**
+rather than once over the whole list: the statements partition into the pages'
+own `1 + L` groups, and a group's child levels are keyed by the distinct parent
+keys **that page's** roots gathered, never the whole result's. The partition
+itself is graded beside them — the requested size each root statement binds, the
+Continuation Order coordinate a page after the first seeks from, and whether a
+full final page is followed by the empty root statement exhaustion requires — so
+a delivery that reached the same rows through different pages fails the case
+rather than passing on its graph alone.
 
 A **path-root guard** (`m-object-query`'s `appliesTo` beside a path's
 `segments`) participates in this layer twice, and both are declared rather than
@@ -2163,9 +2239,12 @@ of `when` + `given`, so only `run` grades it. Two criteria make a case run-only:
   deep-fetch fan-out binds, materialized predicate writes, `sequence`-strategy PK
   allocations (whose following `INSERT` binds registry-read values — a `max`-strategy
   insert folds the computation into its own SQL and stays eligible),
-  framework-owned observed-version / `in_z` binds, or a close whose address is read
+  framework-owned observed-version / `in_z` binds, a close whose address is read
   off the milestone a find of its own unit of work observed (*Settling against a
-  grouped find*, above). `given` fixtures are legitimate
+  grouped find*, above), or a streamed read's **keyset seek** — a page after the
+  first binds the Continuation Order coordinate of the root the previous page
+  delivered last, so **every** `when.stream` case is run-only, including one
+  declaring no includes at all. `given` fixtures are legitimate
   inputs; `then` expectations are never fed back.
 
 Eligibility is an **authored, reviewed** declaration — intent is a human judgment.
