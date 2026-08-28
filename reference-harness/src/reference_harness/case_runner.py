@@ -35,6 +35,7 @@ from typing import Any, Literal, NamedTuple
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.errors import SqlglotError
 from sqlglot.expressions.core import Expr
 
 from . import errors, portable_literal, serde
@@ -3119,72 +3120,153 @@ def _seek_splice(first_page_sql: str, later_page_sql: str) -> tuple[int, int]:
     return head, len(later_page_sql) - tail
 
 
-def _seek_tokens(terms: list[_ContinuationTerm], coordinates: tuple[Any, ...]) -> list[str]:
-    """The comparisons and null checks a page seeking past *coordinates* spells.
+_SEEK_COMPARATORS: dict[type[Expr], str] = {
+    exp.GT: ">",
+    exp.GTE: ">=",
+    exp.LT: "<",
+    exp.LTE: "<=",
+    exp.EQ: "=",
+}
 
-    The bind derivation's counterpart, and what makes the seek's DIRECTION
-    gradeable at all: a page seeking the wrong way past the right coordinates
-    binds exactly what a correct one binds, so only the comparator it spells
-    tells the two apart. Derived from `m-snapshot-read`'s seek alone, in the
-    order it composes: the hoisted range a non-nullable leading term is entitled
-    to, then one branch per tie depth, each tying with every coordinate above it
-    before comparing its own.
+# The splice recovers the seek together with the keyword joining it to the rest
+# of the predicate: the `where` or `and` that introduces the conjunct, or the
+# `and` that joins it to the predicate it precedes.
+_SEEK_BOUNDARY = re.compile(r"^(?:where|and)\s+|\s+and$", re.IGNORECASE)
+
+
+type _SeekNode = str | _SeekJunction
+
+
+@dataclass(frozen=True, slots=True)
+class _SeekJunction:
+    """One composed branch of a seek: the operator, and the nodes it joins.
+
+    Same-operator nesting is flattened and grouping is dropped, on the composed
+    side and on the spelled side alike, so a parenthesization or an association
+    the two spell differently compares equal — while a page that conjoined what
+    the order disjoins, or negated what it compares, does not.
     """
-    if len(terms) == 1:
-        return _after_tokens(terms[0], coordinates[0])
-    lead = terms[0]
-    tokens = [] if lead.nullable else [f"{lead.column} {'>=' if lead.direction == 'asc' else '<='}"]
-    for depth, term in enumerate(terms):
-        after = _after_tokens(term, coordinates[depth])
-        if not after:
-            continue
-        tokens.extend(_ties_token(terms[above], coordinates[above]) for above in range(depth))
-        tokens.extend(after)
-    return tokens
+
+    operator: Literal["and", "or", "not"]
+    operands: tuple[_SeekNode, ...]
 
 
-def _after_tokens(term: _ContinuationTerm, coordinate: Any) -> list[str]:
-    """What one term spells for everything it orders strictly after *coordinate*."""
-    if coordinate is None:
-        return [f"{term.column} is not null"] if term.nulls == "first" else []
-    tokens = [f"{term.column} {'>' if term.direction == 'asc' else '<'}"]
-    if term.nullable and term.nulls == "last":
-        tokens.append(f"{term.column} is null")
-    return tokens
-
-
-def _ties_token(term: _ContinuationTerm, coordinate: Any) -> str:
-    return f"{term.column} is null" if coordinate is None else f"{term.column} ="
-
-
-def _spelled_seek(fragment: str, terms: list[_ContinuationTerm]) -> list[str]:
-    """The seek *fragment*'s own comparisons and null checks, in the order it spells them.
-
-    Read as tokens rather than parsed: what a seek is composed of is one
-    comparison or null check per Continuation Order term per branch, and the
-    member each names is the term's own column. Members outside the order are
-    ignored, so a clause the splice happened to carry along — the query's own
-    predicate beside the conjunct — states nothing about the seek.
-    """
-    columns = "|".join(
-        re.escape(column)
-        for column in sorted({term.column for term in terms}, key=len, reverse=True)
-    )
-    pattern = re.compile(
-        rf"\b(?:\w+\.)?(?P<column>{columns})\b"
-        rf"(?:\s*(?P<op>>=|<=|=|>|<)\s*\?|\s+is\s+(?P<negated>not\s+)?null)"
-    )
-    return [
-        f"{match['column']} {match['op']}"
-        if match["op"]
-        else f"{match['column']} is {'not ' if match['negated'] else ''}null"
-        for match in pattern.finditer(fragment)
+def _joined(operator: Literal["and", "or"], operands: Sequence[_SeekNode]) -> _SeekNode:
+    flattened = [
+        operand
+        for node in operands
+        for operand in (
+            node.operands
+            if isinstance(node, _SeekJunction) and node.operator == operator
+            else (node,)
+        )
     ]
+    if len(flattened) == 1:
+        return flattened[0]
+    return _SeekJunction(operator, tuple(flattened))
+
+
+def _composed_seek(terms: list[_ContinuationTerm], coordinates: tuple[Any, ...]) -> _SeekNode:
+    """The Boolean expression a page seeking past *coordinates* is composed of.
+
+    The bind derivation's counterpart, and what makes the seek's SHAPE gradeable
+    at all: a page that seeks the wrong way, or disjoins what the order
+    conjoins, binds exactly what a correct one binds. Derived from
+    `m-snapshot-read`'s seek alone: the lexicographic remainder — one branch per
+    tie depth, disjoined, each branch tying with every coordinate above it before
+    comparing its own in that term's direction and placement — behind the range a
+    non-nullable leading term hoists. A single-term order composes neither part:
+    one strict comparison already is the top-level conjunct the hoist supplies.
+    """
+    branches: list[_SeekNode] = []
+    for depth, term in enumerate(terms):
+        after = _strictly_after(term, coordinates[depth])
+        if after is None:
+            continue
+        ties = [_ties_with(terms[above], coordinates[above]) for above in range(depth)]
+        branches.append(_joined("and", [*ties, after]))
+    lead = terms[0]
+    if len(terms) == 1:
+        return branches[0]
+    remainder = _joined("or", branches)
+    if lead.nullable:
+        return remainder
+    return _joined("and", [_hoisted_range(lead), remainder])
+
+
+def _strictly_after(term: _ContinuationTerm, coordinate: Any) -> _SeekNode | None:
+    """``None`` where *term* admits nothing at all after *coordinate*.
+
+    A null coordinate is *at* the nulls rather than at any value, so what follows
+    it is the non-nulls under Nulls First and nothing at all under Nulls Last —
+    a depth that admits nothing contributing no branch of its own.
+    """
+    if coordinate is None:
+        return f"{term.column} is not null" if term.nulls == "first" else None
+    strict = f"{term.column} {'>' if term.direction == 'asc' else '<'} ?"
+    if term.nullable and term.nulls == "last":
+        return _SeekJunction("or", (strict, f"{term.column} is null"))
+    return strict
+
+
+def _ties_with(term: _ContinuationTerm, coordinate: Any) -> _SeekNode:
+    return f"{term.column} is null" if coordinate is None else f"{term.column} = ?"
+
+
+def _hoisted_range(term: _ContinuationTerm) -> _SeekNode:
+    return f"{term.column} {'>=' if term.direction == 'asc' else '<='} ?"
+
+
+def _spelled_seek(fragment: str, dialect: str) -> _SeekNode:
+    """The Boolean expression the spliced *fragment* actually spells.
+
+    Parsed rather than scanned for the comparisons it mentions: a seek is a
+    composed expression, and a page that grouped its branches differently, joined
+    them with the other operator, or negated one of them mentions exactly the
+    comparisons a correct page mentions, in exactly their order. What the splice
+    carries along either side of the conjunct is the boundary keyword that
+    introduces or joins it, which is dropped here; a fragment that then parses as
+    no expression at all is carried into the mismatch as its own text rather than
+    refused for a second reason.
+    """
+    text = _SEEK_BOUNDARY.sub("", fragment.strip())
+    try:
+        parsed = sqlglot.parse_one(text, read=sqlglot_dialect(dialect))
+    except SqlglotError:
+        return text
+    return _seek_node(parsed)
+
+
+def _seek_node(expression: Expr) -> _SeekNode:
+    if isinstance(expression, exp.Paren):
+        return _seek_node(expression.this)
+    if isinstance(expression, exp.And | exp.Or):
+        operator: Literal["and", "or"] = "and" if isinstance(expression, exp.And) else "or"
+        return _joined(operator, [_seek_node(expression.this), _seek_node(expression.expression)])
+    if isinstance(expression, exp.Not):
+        return _SeekJunction("not", (_seek_node(expression.this),))
+    if isinstance(expression, exp.Is) and isinstance(expression.expression, exp.Null):
+        negated = "not " if expression.args.get("negate") else ""
+        return f"{_seek_member(expression.this)} is {negated}null"
+    comparator = _SEEK_COMPARATORS.get(type(expression))
+    if comparator is not None and isinstance(expression.expression, exp.Placeholder):
+        return f"{_seek_member(expression.this)} {comparator} ?"
+    return expression.sql()
+
+
+def _seek_member(expression: Expr) -> str:
+    return expression.name if isinstance(expression, exp.Column) else expression.sql()
+
+
+def _render_seek(node: _SeekNode) -> str:
+    if isinstance(node, str):
+        return node
+    if node.operator == "not":
+        return f"not {_render_seek(node.operands[0])}"
+    return f"({f' {node.operator} '.join(_render_seek(operand) for operand in node.operands)})"
 
 
 class _PageText(NamedTuple):
-    """One continuing page's root statement, beside the first page's own."""
-
     case: Case
     dialect: str
     page: int
@@ -3205,10 +3287,10 @@ def _refuse_a_drifting_page(
     cannot be equal. Two continuing pages differ in text only where their
     coordinates differ in NULLNESS, a null one being sought through a null test
     rather than through a comparison. And the page is otherwise the first page's
-    statement with that one conjunct spliced in, spelling exactly the comparisons
-    and null checks the Continuation Order composes for the coordinates it is
-    seeking past — which is what grades the seek's DIRECTION, the one part of it
-    no bind can carry.
+    statement with that one conjunct spliced in, spelling exactly the Boolean
+    expression the Continuation Order composes for the coordinates it is seeking
+    past — which is what grades the seek's DIRECTION and its BRANCHING, the parts
+    of it no bind can carry.
     """
     case, dialect, page, first_root_sql, root_sql = text
     where = f"{case.path.name}: then.statements ({dialect}) page {page + 1}"
@@ -3232,13 +3314,14 @@ def _refuse_a_drifting_page(
             f"continuing page reads the same rows the same way and differs only by the "
             f"seek:\n  first:      {first_root_sql}\n  continuing: {root_sql}"
         )
-    spelled = _spelled_seek(root_sql[spliced_at:spliced_to], terms)
-    composed = _seek_tokens(terms, cursor)
+    spelled = _spelled_seek(root_sql[spliced_at:spliced_to], dialect)
+    composed = _composed_seek(terms, cursor)
     if spelled != composed:
         raise CaseFailure(
-            f"{where} seeks {spelled!r}, not {composed!r}. A page compares each Continuation "
-            f"Order term in that term's OWN direction and placement, one branch per tie depth, "
-            f"behind the range a non-nullable leading term hoists."
+            f"{where} seeks {_render_seek(spelled)}, not {_render_seek(composed)}. A page "
+            f"compares each Continuation Order term in that term's OWN direction and "
+            f"placement, one branch per tie depth DISJOINED, behind the range a non-nullable "
+            f"leading term hoists."
         )
 
 
