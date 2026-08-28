@@ -3071,23 +3071,66 @@ def _direct_term(
 
 _DOCUMENT_EXTRACTION = {"postgres": "jsonb_extract_path_text", "mariadb": "json_value"}
 
-_CAST_COMPARED_DOCUMENT_TYPES = frozenset({"int32", "int64", "float32", "float64", "boolean"})
+_DOCUMENT_CAST_TARGETS = {
+    "postgres": {
+        "int32": "bigint",
+        "int64": "bigint",
+        "float32": "real",
+        "float64": "double precision",
+        "boolean": "boolean",
+    },
+    "mariadb": {
+        "int32": "signed",
+        "int64": "signed",
+        "float32": "float",
+        "float64": "double",
+        "boolean": "signed",
+    },
+}
 
 
-def _compares_under_a_cast(type_spelling: str | None) -> bool:
-    """Whether a document-resident member of this declared type compares CAST.
+def _document_cast_target(type_spelling: str | None, dialect: str) -> str | None:
+    """The CAST target a document-resident member of this declared type compares
+    under on *dialect*, or ``None`` where it compares as the extracted text.
 
     The numeric family casts because a JSON number's integer part has no fixed
     width, so its stored spelling does not compare in value order as text; a
     `boolean` casts because the two dialects' extractions do not spell it alike.
     Every other declarable type compares as the extracted text, the canonical
-    document spelling already ordering correctly (m-dialect). Spelled here rather
-    than taken from any implementation: the ①↔② cross-check is an independent
-    derivation, so it must know the table itself.
+    document spelling already ordering correctly. Which target each casts TO is a
+    dialect decision, and a `decimal(p, s)` casts to its own declared precision on
+    both (m-dialect). Spelled here rather than taken from any implementation: the
+    ①↔② cross-check is an independent derivation, so it must know the table
+    itself.
     """
     if type_spelling is None:
-        return False
-    return type_spelling in _CAST_COMPARED_DOCUMENT_TYPES or type_spelling.startswith("decimal(")
+        return None
+    if type_spelling.startswith("decimal("):
+        precision, _, scale = (
+            type_spelling.removeprefix("decimal(").removesuffix(")").partition(",")
+        )
+        return f"decimal({precision.strip()}, {scale.strip()})"
+    return _DOCUMENT_CAST_TARGETS.get(dialect, {}).get(type_spelling)
+
+
+def _cast_target_spelling(target: exp.DataType | str, dialect: str) -> str:
+    """*target* as one canonical spelling, so the two sides compare as types.
+
+    Each side reaches this differently — the expected one from the table above,
+    the observed one off the parsed statement — so both are put through the
+    dialect's own type parser rather than compared as text: a golden is free to
+    spell `DECIMAL(18,2)` where the table says `decimal(18, 2)`. What survives
+    the normalization is the target's identity, which is what m-dialect fixes and
+    what a page's own result depends on; MariaDB's `signed` and `bigint` alone
+    normalize alike, so those two are indistinguishable here and the live sweep
+    is what refuses the one MariaDB's CAST grammar rejects.
+    """
+    node = (
+        target
+        if isinstance(target, exp.DataType)
+        else exp.DataType.build(target, dialect=sqlglot_dialect(dialect))
+    )
+    return node.sql(dialect=sqlglot_dialect(dialect)).lower()
 
 
 def _extraction_path_binds(path: tuple[str, ...], dialect: str) -> tuple[Any, ...]:
@@ -3114,11 +3157,12 @@ def _resident_term(
     nullable: bool,
 ) -> _ContinuationTerm:
     extraction = f"{document_column} extraction"
+    target = _document_cast_target(member.type_spelling, dialect)
     return _ContinuationTerm(
         column=member.column,
-        compared=f"cast({extraction})"
-        if _compares_under_a_cast(member.type_spelling)
-        else extraction,
+        compared=extraction
+        if target is None
+        else f"cast({extraction} as {_cast_target_spelling(target, dialect)})",
         tested=extraction,
         path_binds=_extraction_path_binds(member.path, dialect),
         direction=direction,
@@ -3127,24 +3171,53 @@ def _resident_term(
     )
 
 
+def _read_resolved_entities(case: Case, query: dict[str, Any], root: Entity) -> list[Entity]:
+    """Every Entity whose own Table *query* resolves over, the position included.
+
+    A concrete-target read resolves over its target alone. An abstract position
+    resolves over each concrete subtype its effective set admits as well: under
+    table-per-hierarchy every one of them shares the position's own Table, and
+    under table-per-concrete-subtype each carries a Table of its own while the
+    root carries none at all. Both questions residence raises — where a member
+    sits, and whether the read reaches one placement of it or several — are asked
+    of this same list.
+    """
+    position = _abstract_family_position(case, query)
+    if position is None:
+        return [root]
+    return [
+        root,
+        *(
+            case.model.entity(concrete)
+            for concrete in _read_effective_set(case, position.family, position.target)
+        ),
+    ]
+
+
 def _resolved_document_member(
     case: Case, query: dict[str, Any], root: Entity, address: MemberAddress
 ) -> tuple[str, _DocumentMember] | None:
     """The ONE Structured Column and member a resident Sort Key extracts from.
 
     A seek spells its extraction against a single Table's document column, so the
-    read has to resolve the member to one. An abstract position does not: its SQL
-    partitions per concrete branch, each branch carrying its own Table, and a
-    tableless root carries none at all. Anything this cannot resolve is refused by
-    name rather than derived from.
+    read has to resolve the member to one — which is a question about the Tables
+    the read reaches, not about the position's abstractness. A table-per-hierarchy
+    family shares ONE Table, so a member resident in its document is resolved
+    there however many branches the read partitions into. A tableless root has no
+    Table to extract from, and a table-per-concrete-subtype family places the same
+    member in a Structured Column per branch, so neither resolves to one and both
+    are refused by name rather than derived from.
     """
-    if _abstract_family_position(case, query) is not None:
-        return None
-    document_column, members = _document_layout_members(case, root)
-    member = next((member for member in members if member.address == address), None)
-    if not document_column or member is None:
-        return None
-    return document_column, member
+    slots: set[tuple[str, str]] = set()
+    resolved: tuple[str, _DocumentMember] | None = None
+    for entity in _read_resolved_entities(case, query, root):
+        document_column, members = _document_layout_members(case, entity)
+        member = next((member for member in members if member.address == address), None)
+        if not document_column or member is None:
+            continue
+        slots.add((entity.table, document_column))
+        resolved = document_column, member
+    return resolved if len(slots) == 1 else None
 
 
 def _document_resident_members(case: Case, entity: Entity) -> set[MemberAddress]:
@@ -3161,20 +3234,15 @@ def _read_document_resident_members(case: Case, query: dict[str, Any]) -> set[Me
     not that member either — only the declaring owner tells one sibling's resident
     member from the other's Column.
 
-    Residence belongs to a Table's own layout, so an abstract position holds none
-    of its own: a table-per-concrete-subtype root is TABLELESS, and a member every
-    branch's document carries is resident in nothing that root can be asked
-    about. The question is therefore asked of each concrete Table the read
-    resolves over as well as of the position it is read at.
+    Residence belongs to a Table's own layout, so an abstract position may hold
+    none of its own: a table-per-concrete-subtype root is TABLELESS, and a member
+    every branch's document carries is resident in nothing that root can be asked
+    about. The question is therefore asked of every Table the read resolves over.
     """
-    members = _document_resident_members(case, case.model.entity(query["target"]))
-    position = _abstract_family_position(case, query)
-    if position is None:
-        return members
-    return members.union(
+    return set[MemberAddress]().union(
         *(
-            _document_resident_members(case, case.model.entity(concrete))
-            for concrete in _read_effective_set(case, position.family, position.target)
+            _document_resident_members(case, entity)
+            for entity in _read_resolved_entities(case, query, case.model.entity(query["target"]))
         )
     )
 
@@ -3220,8 +3288,8 @@ def _continuation_order(
             raise CaseFailure(
                 f"{case.path.name}: the Continuation Order names the document-resident member "
                 f"{key['attr']}, which this read resolves to no single Structured Column — an "
-                f"extraction is spelled against ONE Table's document, and this one has none to "
-                f"spell it against"
+                f"extraction is spelled against ONE Table's document, and this read reaches no "
+                f"Table holding it, or more than one"
             )
         document_column, member = resolved
         terms.append(
@@ -3477,14 +3545,16 @@ def _seek_member(expression: Expr, dialect: str) -> str:
     A Column answers its own bare name, dropping the alias the statement
     qualifies it with. A document-resident member has no name in the statement at
     all — its Document Path rides in a bind hole — so what the text can be held
-    to is the Structured Column it extracts from and whether the declared type's
-    cast stands between the extraction and the comparison. WHICH member it is
-    stays a bind question, and the seek's bind list is where it is asked.
+    to is the Structured Column it extracts from and the CAST the declared type
+    compares through, target included: another target can order the same page's
+    rows the same way and carry the same cursor forward, so a wrong one survives
+    the next page and only the target itself refuses it. WHICH member it is stays
+    a bind question, and the seek's bind list is where it is asked.
     """
     if isinstance(expression, exp.Cast):
         source = _extraction_source(expression.this, dialect)
         if source is not None:
-            return f"cast({source} extraction)"
+            return f"cast({source} extraction as {_cast_target_spelling(expression.to, dialect)})"
     source = _extraction_source(expression, dialect)
     if source is not None:
         return f"{source} extraction"
