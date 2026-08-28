@@ -1922,6 +1922,83 @@ def read_a_table_per_concrete_subtype_family(db: Database) -> Snapshot[Any]:
     return db.find(Document.where(Document.all))
 ```
 
+### Streamed delivery — one root at a time, in either namespace
+
+Spec: `python.md` §4 (*Streamed results*: `db.stream` / `db.wire.stream`, the scope-bound single-pass delivery, and `batch_size`) and `m-snapshot-read` *Streamed delivery* (the Continuation Order, the `1 + L` ceiling per page, and *What a delivery costs*). Graded by `tests/api/test_snapshot_recipes.py` (real Postgres: the same roots, the same order, and the same included children at three page sizes, in both namespaces). The memory bound the surface exists for is measured separately in `tests/unit/test_snapshot_stream_retention.py`, which the `cost` class owns, and the page partition each delivery spells is graded against golden SQL by the corpus's streamed cases (`m-snapshot-read-027`, `-031` through `-037`).
+
+The two loops below are the whole difference between a bounded read and an unbounded one, and it is not the `with` block — it is what the body does with each root. Summing as you go keeps the working set at one page plus one root; appending each root to a list reproduces the whole-result retention the stream exists to remove, and `m-snapshot-read` excludes that case on purpose rather than preventing it. Nothing about the stream itself changes: a caller who needs the whole result should call `db.find`, which says so in one word.
+
+```python
+def stream_a_result_one_root_at_a_time(db: Database, page: int) -> tuple[int, list[str]]:
+    """A read delivered one root at a time instead of all at once, in both
+    namespaces over one query.
+
+    ``db.stream`` is ``db.find``'s peer, not a different read: the same Object
+    Query, the same includes, the same values. What differs is delivery. The
+    result is scope-bound and single-pass — it has no whole-result accessor, and
+    nothing outside the ``with`` block answers — so a loop over it holds one root
+    and the page it came from, whatever the result's size. Summing as you go, as
+    below, is the shape that stays bounded; appending each root to a list is not,
+    and is outside the guarantee on purpose.
+
+    ``batch_size`` counts ROOT positions and is a performance dial and nothing
+    else. It changes neither which roots arrive, nor the order they arrive in, nor
+    what any of them carries; what it changes is how many round trips the delivery
+    costs and how much one page holds. Included children are not counted by it:
+    every one of a delivered root's items is loaded, exactly as under ``db.find``.
+
+    Roots arrive in the Continuation Order — the query's own ``order_by`` first,
+    then the primary key — which is a total order the delivery derives, so it is
+    deterministic even for a query that declared no ordering at all.
+    """
+    quantity = 0
+    with db.stream(Order.where(Order.all).include(Order.items), batch_size=page) as orders:
+        for order in orders:
+            quantity += sum(item.quantity for item in order.items)
+
+    names: list[str] = []
+    with db.wire.stream(Order.where(Order.all), batch_size=page) as rows:
+        for row in rows:
+            names.append(str(row["name"]))
+    return quantity, names
+```
+
+### Streamed delivery inside a transaction — the write buffer a page bounds
+
+Spec: `python.md` §4 (a participating delivery) and `m-snapshot-read` *Stability under concurrent writing* (per-page stability, the caller-as-writer hazard, and the primary-key escape). Graded by `tests/api/test_snapshot_recipes.py` (real Postgres: every account credited exactly once, read back from the committed rows) and `tests/unit/test_transaction_streams.py`'s Docker-free halves (the flush is per page, and the buffer never exceeds one page's worth of writes at any page size).
+
+A delivery is stable per page and no further, so a loop that is both the reader and the writer can move its own roots across the position its next page seeks from — seeing one twice, or never. The escape is in the query rather than in the loop: order by nothing, and the Continuation Order is the primary key, which no write moves. A loop that must order by a mutable member asks the database for the isolation it needs, through `db.transact(..., isolation=...)`.
+
+```python
+def stream_and_write_inside_one_transaction(db: Database, page: int) -> list[Decimal]:
+    """A streamed delivery inside a unit of work, writing every root it hands over.
+
+    ``tx.stream`` is ``tx.find``'s peer the same way, and what participation adds
+    is a flush before every PAGE rather than one at entry: the writes the loop
+    buffered reach the database before the statement that reads the next page, so
+    read-your-own-writes holds at every page boundary and the buffer a consuming
+    loop accumulates is bounded by the page size rather than by the result.
+
+    A delivery is stable per PAGE and no further, so a loop that writes the member
+    its own query ordered by can move a root across the position the next page
+    seeks from — and see it twice, or not at all. This one orders by nothing,
+    which makes the Continuation Order the primary key alone; no write moves a
+    primary key, so the hazard cannot arise. That is the escape whenever a loop is
+    both the reader and the writer.
+    """
+    written: list[Decimal] = []
+
+    def credit(tx: Transaction) -> None:
+        with tx.stream(Account.where(Account.id >= 1), batch_size=page) as accounts:
+            for account in accounts:
+                balance = account.balance + Decimal("10.00")
+                tx.update(account.edit(balance=balance))
+                written.append(balance)
+
+    db.transact(credit)
+    return written
+```
+
 ### Stale web edit — Transaction-Time-Only (Balance)
 
 Spec: `python.md` §3 (the recipe and the edge it transports). Graded by `tests/api/test_stale_web_edit.py` (real Postgres: the clean submit and the concurrent-supersession refusal, each under both concurrency modes) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves (the observed-`in_z` gate a zero-row close raises through).

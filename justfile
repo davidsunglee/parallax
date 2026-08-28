@@ -342,6 +342,18 @@ python-report-lifecycle-overhead:
 python-report-snapshot-graph-overhead:
     cd {{python}} && uv run python tools/snapshot_graph_overhead.py
 
+# The same reason again, over the streamed read's working set: what a running
+# delivery holds is a total in bytes, so this prints it as evidence and judges
+# nothing. The SHAPE of the bound — a survivor census with no term in the result
+# size and none in how far the delivery has got, and both exclusions demonstrated
+# — is gated in `tests/unit/test_snapshot_stream_retention.py`, which the `cost`
+# class owns and CI runs on every change. What has been read off this, and under
+# what conditions, is `languages/python/docs/stream-baseline.md`.
+[metadata("runtime:medium")]
+[doc("Working set of a running streamed delivery per page size, against what retaining a root costs.")]
+python-report-stream-overhead:
+    cd {{python}} && uv run python tools/stream_overhead.py
+
 # A `report` for the same reason as its neighbour above: a total in bytes is
 # machine- and interpreter-relative, so what it prints is evidence rather than a
 # verdict, and it belongs to no aggregate. It measures three arms — the fixture

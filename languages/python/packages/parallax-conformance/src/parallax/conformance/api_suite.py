@@ -141,6 +141,60 @@ RECIPES: Final[list[Recipe]] = [
         ),
     ),
     Recipe(
+        title="Streamed delivery — one root at a time, in either namespace",
+        spec=(
+            "`python.md` §4 (*Streamed results*: `db.stream` / `db.wire.stream`, the "
+            "scope-bound single-pass delivery, and `batch_size`) and "
+            "`m-snapshot-read` *Streamed delivery* (the Continuation Order, the "
+            "`1 + L` ceiling per page, and *What a delivery costs*)"
+        ),
+        graded_by=(
+            "`tests/api/test_snapshot_recipes.py` (real Postgres: the same roots, the "
+            "same order, and the same included children at three page sizes, in both "
+            "namespaces). The memory bound the surface exists for is measured "
+            "separately in `tests/unit/test_snapshot_stream_retention.py`, which the "
+            "`cost` class owns, and the page partition each delivery spells is graded "
+            "against golden SQL by the corpus's streamed cases "
+            "(`m-snapshot-read-027`, `-031` through `-037`)"
+        ),
+        notes=(
+            "The two loops below are the whole difference between a bounded read and an "
+            "unbounded one, and it is not the `with` block — it is what the body does "
+            "with each root. Summing as you go keeps the working set at one page plus "
+            "one root; appending each root to a list reproduces the whole-result "
+            "retention the stream exists to remove, and `m-snapshot-read` excludes that "
+            "case on purpose rather than preventing it. Nothing about the stream itself "
+            "changes: a caller who needs the whole result should call `db.find`, which "
+            "says so in one word."
+        ),
+        snippet=inspect.getsource(snapshot_recipes.stream_a_result_one_root_at_a_time),
+    ),
+    Recipe(
+        title="Streamed delivery inside a transaction — the write buffer a page bounds",
+        spec=(
+            "`python.md` §4 (a participating delivery) and `m-snapshot-read` "
+            "*Stability under concurrent writing* (per-page stability, the "
+            "caller-as-writer hazard, and the primary-key escape)"
+        ),
+        graded_by=(
+            "`tests/api/test_snapshot_recipes.py` (real Postgres: every account "
+            "credited exactly once, read back from the committed rows) and "
+            "`tests/unit/test_transaction_streams.py`'s Docker-free halves (the flush "
+            "is per page, and the buffer never exceeds one page's worth of writes at "
+            "any page size)"
+        ),
+        notes=(
+            "A delivery is stable per page and no further, so a loop that is both the "
+            "reader and the writer can move its own roots across the position its next "
+            "page seeks from — seeing one twice, or never. The escape is in the query "
+            "rather than in the loop: order by nothing, and the Continuation Order is "
+            "the primary key, which no write moves. A loop that must order by a mutable "
+            "member asks the database for the isolation it needs, through "
+            "`db.transact(..., isolation=...)`."
+        ),
+        snippet=inspect.getsource(snapshot_recipes.stream_and_write_inside_one_transaction),
+    ),
+    Recipe(
         title="Stale web edit — Transaction-Time-Only (Balance)",
         spec="`python.md` §3 (the recipe and the edge it transports)",
         graded_by=(

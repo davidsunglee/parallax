@@ -346,13 +346,34 @@ way and at the same point whichever delivery the caller asked for.
 
 ### Where a stream diverges from a whole-result read
 
-Four divergences, and they apply identically to every representation.
+A stream answers the same query over the same data, and four things about its
+answer differ. All four follow from the two facts that make a delivery a
+delivery, and neither fact is representation-specific, so every divergence
+applies identically to every representation.
+
+**Because a stream publishes one root at a time**, it never holds two roots'
+results together, and two divergences follow:
 
 - **Sharing narrows to root-local.** A row two result roots both reach is one
   node per root, where a whole-result read may answer one node for both. The
   promise is root-local either way, so what changes is what a caller can observe
   beyond it rather than what they may rely on. Stated in full under *Graph-local
   identity resolution* above, because the promise governs both.
+- **A milestone set arrives one root at a time rather than grouped by
+  milestone.** A whole-result `history` / `asOfRange` read answers one graph per
+  milestone, in chronological edge order, with every root of one milestone
+  together. A stream has no graphs to group into: each root stands at its **own**
+  edge pin — the same pin the whole-result read gives the graph that root would
+  have belonged to — and a milestone-set delivery answers the **empty** pin for
+  itself, exactly as the whole result of the same query does, because a scan is
+  not a pin. Exactly as the whole result does, it also retains no write evidence:
+  every milestone root stands at a finite Transaction-Time edge and is read-only
+  through every keyed verb.
+
+**Because a stream derives a Continuation Order the query did not declare**, it
+answers in a total order where a whole-result read may answer in none, and two
+more follow:
+
 - **An unordered `limit` becomes specified.** `m-object-query` makes an
   unordered `limit` a cap rather than pagination, returning an unspecified
   matching subset. A stream orders by the Continuation Order before capping, so
@@ -360,34 +381,27 @@ Four divergences, and they apply identically to every representation.
   first `n` roots. The stream is strictly more specified — nothing a
   whole-result read promised is broken — but the two answer differently, and
   that is a property of the delivery rather than of the query.
-- **A milestone set arrives in the Continuation Order rather than grouped by
-  milestone.** A whole-result `history` / `asOfRange` read answers one graph per
-  milestone, in chronological edge order, with every root of one milestone
-  together. A stream has no graphs to group into: it delivers roots one at a
-  time, in the Continuation Order, and each root stands at its **own** edge pin —
-  the same pin the whole-result read gives the graph that root would have
-  belonged to. The two agree wherever the orders agree, which is every read that
-  declares no `orderBy`: there the Continuation Order is the key then the edge,
-  and within one key that is the chronological edge rank itself. They part only
-  where an authored `orderBy` spans several keys' histories, which the eager form
-  ranks by milestone first and the stream by the authored key first. A
-  milestone-set delivery answers the **empty** pin for itself, exactly as the
-  whole result of the same query does — a scan is not a pin — and, exactly as the
-  whole result does, retains no write evidence: every milestone root stands at a
-  finite Transaction-Time edge and is read-only through every keyed verb.
 - **A root that did not decode a Continuation Order member ends the delivery.**
-  Only decoded values are bindable, so such a root supplies no coordinate for
-  the term that names the member and nothing to continue from. The primary key
-  is always in the Continuation Order, which makes a root whose own key did not
-  decode the case every stream has; an authored Sort Key over any other member,
-  and a milestone-set read's own edge, put those members under the same rule. The rule is stated
-  positionally-independent — *a stream cannot continue past a root that did not
-  decode every Continuation Order member* — precisely so the page size cannot
-  change it: the same stored row may not be survivable at one page size and
-  fatal at another. The root itself is published exactly as a whole-result read
-  publishes it, in band where the reading surface delivers classified roots in
-  band and as a refusal where it refuses them; what follows it is the end of the
-  delivery either way.
+  Only decoded values are bindable, so such a root supplies no coordinate for the
+  term that names the member and nothing to continue from. The rule is over
+  **every** member the order names, whichever put it there: an authored Sort Key
+  over any member, the primary key, and a milestone-set read's own edge are one
+  rule and not three. The primary key is the instance every stream has, because
+  the Continuation Order always ends in it. The rule is also stated independently
+  of position — *a stream cannot continue past a root that did not decode every
+  Continuation Order member* — precisely so the page size cannot change it: the
+  same stored row may not be survivable at one page size and fatal at another.
+  The root itself is published exactly as a whole-result read publishes it, in
+  band where the reading surface delivers classified roots in band and as a
+  refusal where it refuses them; what follows it is the end of the delivery
+  either way.
+
+The two orders themselves agree far more often than the second pair suggests. A
+milestone set declaring no `orderBy` is ordered by the key then the edge, which
+within one key is the chronological edge rank the whole-result read groups by, so
+the two deliver the same roots in the same sequence. They part only where an
+authored `orderBy` spans several keys' histories, which the eager form ranks by
+milestone first and the stream by the authored key first.
 
 ### Stability under concurrent writing
 
@@ -441,6 +455,58 @@ cannot be recalled: the re-execution opens a **fresh** delivery, which starts
 from the beginning and delivers those roots again. Nothing is buffered until
 commit. An effect a consumer performs per root therefore owes exactly the
 retry-safety every other effect performed inside such a closure owes.
+
+### What a delivery costs
+
+A streamed read exists for one guarantee about memory, and it is the guarantee
+rather than the mechanism that is normative: **the implementation-owned working
+set of a delivery is independent of the number of roots the query matches.**
+Writing `B` for the page size, `P_B` for one page's own converted result, `G_max`
+for the largest single root's published graph, and `N` for the whole result, the
+bound is `O(P_B + G_max)` and contains no term in `N`.
+
+Three layers, each separately bounded and each released at a stated point:
+
+| Layer | Holds | Bound | Released |
+|---|---|---|---|
+| the page's converted result | every projection for one page's roots and their relationship fan-out | `O(P_B)` | after that page's last root is published |
+| the current root's merge and classification | the merged nodes and issues reachable from that root | `O(G_max)` | when the delivery advances |
+| the current root's materialized value | that root's published graph and its cycle and aliasing closure | `O(G_max)` | when the delivery advances |
+
+The bound is deliberately **not** `O(B)`. `P_B` is a page's whole converted
+result rather than its root count, so a page of roots each carrying a large
+relationship fan-out is priced at what it carries; and `G_max` is one root's own
+graph, so a single root with a hundred thousand children dominates both terms at
+every page size. The page size is the dial over the first term alone, and it
+trades against round trips in the ordinary way: a smaller page holds less and
+costs more statements.
+
+Three things are **excluded**, and naming them is part of the contract, because a
+bound that excluded nothing would be a claim about the consumer's program rather
+than about the implementation:
+
+- **Values the consumer retains.** A consumer that keeps every root it was handed
+  has reproduced the whole-result retention on purpose, and nothing is expected
+  to prevent it. This is the same fact *Nothing de-duplicates across a delivery*
+  states from the other side: the implementation retains no delivered root, so
+  the only thing that can be holding one is the caller.
+- **Writes a surrounding unit of work has buffered, and the observations they
+  captured.** These are the unit of work's, not the delivery's. A participating
+  delivery does bound them in one respect — a page forces the buffer out before
+  it reads, so a consuming loop that writes each root holds a page's worth of
+  writes rather than a result's — but what they cost is `m-unit-work`'s subject
+  and grows with what the loop wrote.
+- **State the database holds for the delivery.** Server-side transaction state,
+  cursors, and whatever a driver keeps for a result set are outside this bound
+  entirely. An implementation whose port materialized a whole result set before
+  answering the first page would satisfy every clause above and still allocate
+  `O(N)`; what stops that is the paging itself — each page is a separate bounded
+  query — rather than anything this section can state about the driver.
+
+Nothing here fixes an absolute figure. Like `m-perf-bench`'s numeric targets, the
+constants are per-language; what is portable is that the three layers are bounded
+as above, that the three exclusions are the only ones, and that a language target
+can demonstrate the independence from `N` rather than assert it.
 
 ## Round trips
 

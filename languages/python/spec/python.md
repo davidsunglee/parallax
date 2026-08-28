@@ -3070,6 +3070,17 @@ or descriptor authoring form and performs no audit stamping.
   root already consumed cannot be recalled, and the re-execution opens a fresh
   stream that delivers from the beginning — so a per-root effect owes the same
   retry-safety every other effect inside that callback owes.
+- **The memory bound is gated as a SHAPE and reported as a number.**
+  `m-snapshot-read` *What a delivery costs* bounds the Parallax-owned working set
+  at `O(P_B + G_max)` with three named exclusions; this target grades that in the
+  `cost` class (§10), as five measurements over `tests/unit/`'s memory
+  instruments. What is asserted there is a survivor census with no term in the
+  result size and no term in how far the delivery has got, the page graph and the
+  published root counted separately, and both exclusions demonstrated rather than
+  claimed. What is not asserted anywhere is a byte total: `just
+  python-report-stream-overhead` prints one, reading
+  `languages/python/docs/stream-baseline.md`, and belongs to no aggregate for the
+  reason every other `report` here does.
 
 ### Invalid stored data
 
@@ -5206,7 +5217,9 @@ rows receive the transaction's shared lock.
 - **Report-only measurement evidence.** Retained-memory and timing evidence for
   published instance state is a `report` — `just python-report-instance-state`,
   reading `languages/python/docs/instance-state-baseline.md` — and belongs to no
-  aggregate and to no CI job. There is deliberately **no timing gate anywhere in
+  aggregate and to no CI job. Its siblings are the same: the streamed delivery's
+  working set is `just python-report-stream-overhead`, reading
+  `languages/python/docs/stream-baseline.md`. There is deliberately **no timing gate anywhere in
   this target**: a total in bytes and an elapsed time are machine- and
   interpreter-relative, and every CI job runs a floating runner label, so a
   threshold over either would fail for reasons unrelated to the change under it.
