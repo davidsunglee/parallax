@@ -82,7 +82,6 @@ _TRAVELER_ID = "parallax.compatibility.Traveler.id"
 _TRAVELER_SCORE = "parallax.compatibility.Traveler.score"
 
 type _Row = Mapping[AttributeIdentity, object]
-"""One generated root: its decoded members, keyed the way a delivery reads them."""
 
 
 def _planned(
@@ -104,7 +103,6 @@ def _planned(
 
 
 def _identity(model: Metamodel, reference: str) -> AttributeIdentity:
-    """The Attribute Identity a Sort Key reference names, as the plan reads it."""
     class_name, _, name = reference.rpartition(".")
     entity = entity_by_name(model, class_name)
     attribute = None if entity is None else entity.attribute(name)
@@ -240,8 +238,6 @@ def test_a_narrowed_reads_sort_key_is_measured_at_the_narrowed_position() -> Non
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class _SeekCase:
-    """One row of the seek matrix: an ordering, a coordinate, and the exact node."""
-
     id: str
     order_by: tuple[OrderKey, ...]
     coordinates: tuple[tuple[str, object], ...]
@@ -725,7 +721,6 @@ def _matches(node: PredicateNode, row: _Row) -> bool:
 
 
 def _compares(op: str, held: object, value: object) -> bool:
-    """One scalar comparison of a decoded member against a bound coordinate."""
     here = cast("Any", held)
     there = cast("Any", value)
     match op:

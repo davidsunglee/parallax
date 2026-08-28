@@ -15,11 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from reference_harness.case_twins import (
+    case_twin_arms,
     logical_case,
     mapping_document,
-    module_and_body,
     module_ids,
     primary_module,
+    twin_arms,
     yaml_paths,
 )
 from reference_harness.dep_graph_check import MODULE_SLUG
@@ -92,68 +93,31 @@ def _layout_errors(path: Path, arm: str, document: Mapping[str, Any]) -> list[st
     return errors
 
 
-def _pairs(
-    paths: list[Path], pattern: re.Pattern[str], kind: str, errors: list[str]
-) -> dict[tuple[str, ...], dict[str, Path]]:
-    candidates: list[tuple[tuple[str, ...], str, Path]] = []
-    for path in paths:
-        match = pattern.match(path.name)
-        if match is None:
-            continue
-        groups = match.groupdict()
-        arm = groups.pop("arm")
-        key = tuple(groups[name] for name in sorted(groups))
-        candidates.append((key, arm, path))
-    return _collect_pairs(candidates, kind, errors)
-
-
-def _collect_pairs(
-    candidates: list[tuple[tuple[str, ...], str, Path]], kind: str, errors: list[str]
-) -> dict[tuple[str, ...], dict[str, Path]]:
-    pairs: dict[tuple[str, ...], dict[str, Path]] = {}
-    for key, arm, path in candidates:
-        members = pairs.setdefault(key, {})
-        previous = members.get(arm)
-        if previous is not None:
-            errors.append(
-                f"{kind} twin {key!r} has two {arm} members: {previous.name}, {path.name}"
-            )
-        else:
-            members[arm] = path
+def _refuse_incomplete[K](pairs: dict[K, dict[str, Path]], kind: str, errors: list[str]) -> None:
+    """A layout twin states one behavior in BOTH storage layouts or states nothing."""
     for key, members in pairs.items():
         missing = [arm for arm in _ARMS if arm not in members]
         if missing:
             errors.append(f"{kind} twin {key!r} is missing {', '.join(missing)} member(s)")
-    return pairs
 
 
 def _descriptor_pairs(compatibility_root: Path, errors: list[str]) -> dict[str, dict[str, Path]]:
-    models = compatibility_root / "models"
-    raw = _pairs(yaml_paths(models), _MODEL_RE, "descriptor", errors)
-    return {key[0]: members for key, members in raw.items()}
+    candidates: list[tuple[str, str, Path]] = []
+    for path in yaml_paths(compatibility_root / "models"):
+        match = _MODEL_RE.match(path.name)
+        if match is not None:
+            candidates.append((match.group("proof"), match.group("arm"), path))
+    pairs = twin_arms(candidates, "descriptor", errors)
+    _refuse_incomplete(pairs, "descriptor", errors)
+    return pairs
 
 
 def _case_pairs(
     paths: list[Path], modules: frozenset[str], errors: list[str]
 ) -> dict[tuple[str, str], dict[str, Path]]:
-    candidates: list[tuple[tuple[str, ...], str, Path]] = []
-    for path in paths:
-        twin = _CASE_TWIN_RE.match(path.name)
-        if twin is None:
-            continue
-        parsed = module_and_body(twin.group("prefix"), modules)
-        if parsed is None:
-            errors.append(
-                f"{path.name}: twin case name must begin with a catalog module and "
-                "three-digit case sequence"
-            )
-            continue
-        arm = twin.group("arm")
-        candidates.append((parsed, arm, path))
-    return {
-        (key[0], key[1]): members
-        for key, members in _collect_pairs(candidates, "case", errors).items()
-    }
+    pairs = case_twin_arms(paths, _CASE_TWIN_RE, modules, "case", errors)
+    _refuse_incomplete(pairs, "case", errors)
+    return pairs
 
 
 def _normalize_model_reference(value: Any) -> Any:

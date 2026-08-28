@@ -422,9 +422,9 @@ implementation's own **streamed** read, opened over the case's `when.objectQuery
 with the declared `when.stream.batchSize`, and by nothing else. Running the eager
 read and reporting its result is a conformance failure even where the graph
 matches: what the case states is the page partition — the requested size each
-root statement binds, the seek coordinate each later page continues from, and the
-statement a full final page costs to prove exhaustion — and an eager read
-produces none of it.
+root statement binds, the Continuation Order coordinates each later page
+continues from, and the statement a full final page costs to prove exhaustion —
+and an eager read produces none of it.
 
 The case names **no representation**, because delivery is the verb and the
 namespace stays the surface's. An adapter drives whichever streamed read it
@@ -450,7 +450,7 @@ exposes and reports:
   executing them, which is what the corpus runner does with every golden.
 
 Under `compile`, a `when.stream` case is **always** run-only: its later pages
-bind a coordinate read off an earlier page's result, which is the
+bind coordinates read off an earlier page's result, which is the
 `query-result-dependent` criterion, so the adapter answers the defined
 `status: "run-only"` envelope for one exactly as it does for a deep fetch.
 

@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 
 from reference_harness.case import Case, dialect_executed_cases, discover_cases
-from reference_harness.case_runner import CaseFailure, run_case
+from reference_harness.case_runner import CaseFailure, _continuation_order, run_case
 from reference_harness.providers import available_dialects, provider_for
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -92,7 +92,7 @@ def test_case(case, provider) -> None:
 # A streamed case's `then.statements` is the pages' own `1 + L` groups
 # concatenated, so almost everything that makes a stream a stream lives in the
 # page partition rather than in the graph: the size each page asks for, the
-# coordinate each later page continues from, and the statement a full final page
+# coordinates each later page continues from, and the statement a full final page
 # costs to prove exhaustion. A grader that only assembled the roots and compared
 # them to `then.graph` would accept every delivery below, which is why each is
 # authored as a refusal rather than left to the corpus's own green run. The
@@ -103,6 +103,7 @@ _DEEP_FETCH = "m-snapshot-read-027-streamed-deep-fetch"
 _TERMINAL_PAGE = "m-snapshot-read-028-stream-empty-terminal-page"
 _MIXED_DIRECTIONS = "m-snapshot-read-031-stream-order-mixed-directions"
 _NULLABLE_PLACEMENT = "m-snapshot-read-032-stream-order-nullable-placement"
+_MULTI_TERM_SEEK = "m-snapshot-read-033-stream-order-multi-term-seek"
 
 
 def _damaged(stem: str) -> Case:
@@ -235,3 +236,64 @@ def test_a_continuing_page_respelling_its_seek_is_refused(provider) -> None:
 
     with pytest.raises(CaseFailure, match="seeking the same shape of coordinates"):
         run_case(case, provider)
+
+
+def test_a_page_seeking_the_wrong_WAY_past_the_right_coordinates_is_refused(provider) -> None:
+    """A page's binds carry its coordinates and never the direction it compares them in.
+
+    The damaged page is the terminal one, whose coordinates are null where no
+    other page's are, so no sibling page constrains its text; its binds are
+    untouched and correct; and it still returns nothing, the one root it could
+    have reached having been delivered already. Every other oracle here passes.
+    What refuses it is that the Continuation Order composes the comparator, and
+    an ascending term is never sought backwards.
+    """
+    case = _damaged(_NULLABLE_PLACEMENT)
+    entry = _statements(case)[3]
+    entry["sql"] = {
+        dialect: sql.replace("t0.id > ?", "t0.id < ?") for dialect, sql in entry["sql"].items()
+    }
+
+    with pytest.raises(CaseFailure, match="seeks .*, not "):
+        run_case(case, provider)
+
+
+def test_continuing_pages_drifting_outside_their_seek_are_refused(provider) -> None:
+    """A continuing page is the first page's statement plus the seek, and nothing else.
+
+    Every continuing page here reverses the same ordering term, so they still
+    agree with each other and the same-shape rule sees nothing; the seek they
+    spell is untouched and so are their binds. What refuses it is that the pages
+    no longer read the same rows the same way: a delivery whose later pages
+    reorder themselves is not one read paged.
+    """
+    case = _damaged(_MULTI_TERM_SEEK)
+    for index in (2, 4, 6):
+        entry = _statements(case)[index]
+        entry["sql"] = {
+            dialect: sql.replace(
+                "order by t0.active asc, t0.id desc", "order by t0.active asc, t0.id asc"
+            )
+            for dialect, sql in entry["sql"].items()
+        }
+
+    with pytest.raises(CaseFailure, match="ONE conjunct spliced into it"):
+        run_case(case, provider)
+
+
+def test_a_document_resident_sort_key_is_refused_rather_than_mis_derived() -> None:
+    """What this oracle cannot derive it refuses by name, database or no database.
+
+    A Sort Key over a Structured Column member lowers through an extraction that
+    binds its Document Path ahead of every coordinate — on the ordering term and
+    on each comparison and null check the seek spells. The bind derivation
+    composes coordinates alone, so a streamed case authored over such an order
+    would be graded against a bind list missing every path segment and refused
+    for the wrong reason.
+    """
+    case = _damaged("m-storage-layout-020-document-layout-path-predicate-ordering")
+    query = case.object_query
+    entity = case.model.entity(query["target"])
+
+    with pytest.raises(CaseFailure, match="document-resident member"):
+        _continuation_order(case, query, entity)

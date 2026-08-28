@@ -1386,7 +1386,6 @@ def _rejected_case_costing_a_round_trip() -> dict[str, Any]:
 
 
 def _streamed_read_case(**stream: Any) -> dict[str, Any]:
-    """A minimal streamed read: `when.stream` beside the Object Query, `then.graph`."""
     return {
         "model": "models/orders.yaml",
         "tags": ["m-snapshot-read"],

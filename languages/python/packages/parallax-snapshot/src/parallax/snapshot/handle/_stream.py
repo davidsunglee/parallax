@@ -70,9 +70,9 @@ _SINGLE_PASS: Final = (
     "inside its scope, and to no second view and no second pass"
 )
 _IN_SCOPE: Final = "a Snapshot Stream answers only inside its own scope"
-_KEYLESS_ROOT: Final = (
-    "a stream cannot continue past a root whose primary key did not decode "
-    "(snapshot-stream-keyless-root)"
+_CURSORLESS_ROOT: Final = (
+    "a stream cannot continue past a root that did not decode every Continuation "
+    "Order member (snapshot-stream-cursorless-root)"
 )
 
 
@@ -119,8 +119,8 @@ class SnapshotStream[T]:
     ``batch_size`` counts ROOT positions and is a performance dial alone. It
     changes neither the order roots arrive in, nor which roots arrive, nor what
     each carries — including the one root shape that ends a delivery early, a
-    root whose own primary key did not decode, which ends it from whatever
-    position it lands in.
+    root that did not decode every Continuation Order member, which ends it from
+    whatever position it lands in.
     """
 
     __slots__ = (
@@ -257,6 +257,10 @@ class SnapshotStream[T]:
         more exist. A full final page does not, so it costs one more root
         statement returning nothing, unless a declared ``limit`` has already
         been delivered in full.
+
+        Every root is asked whether the delivery could continue from it, not
+        just the one its page ends on: a root that answers no ends the delivery
+        wherever it lands, so the page size never decides which roots arrive.
         """
         plan = self._plan
         if plan is None:  # pragma: no cover - draining is reachable from an entered scope alone
@@ -275,8 +279,8 @@ class SnapshotStream[T]:
                 if not checked and isinstance(root, InvalidData):
                     raise InvalidDataError((cast("InvalidData[object]", root),))
                 yield root
-                if members is None:
-                    raise SnapshotStreamStateError(_KEYLESS_ROOT)
+                if members is None or not plan.continues_from(members):
+                    raise SnapshotStreamStateError(_CURSORLESS_ROOT)
                 cursor = members
             emitted += delivered
             if delivered < size or (limit is not None and emitted >= limit):
