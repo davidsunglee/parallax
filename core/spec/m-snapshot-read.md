@@ -342,15 +342,19 @@ Three divergences, and they apply identically to every representation.
   first `n` roots. The stream is strictly more specified — nothing a
   whole-result read promised is broken — but the two answer differently, and
   that is a property of the delivery rather than of the query.
-- **A root whose primary key did not decode ends the delivery.** Only decoded
-  values are bindable and the primary key is always in the Continuation Order,
-  so such a root supplies nothing to continue from. The rule is stated
-  positionally-independent — *a stream cannot continue past a root whose primary
-  key did not decode* — precisely so the page size cannot change it: the same
-  stored row may not be survivable at one page size and fatal at another. The
-  root itself is published exactly as a whole-result read publishes it, in band
-  where the reading surface delivers classified roots in band and as a refusal
-  where it refuses them; what follows it is the end of the delivery either way.
+- **A root that did not decode a Continuation Order member ends the delivery.**
+  Only decoded values are bindable, so such a root supplies no coordinate for
+  the term that names the member and nothing to continue from. The primary key
+  is always in the Continuation Order, which makes a root whose own key did not
+  decode the case every stream has; an authored Sort Key over any other member
+  puts that member under the same rule. The rule is stated
+  positionally-independent — *a stream cannot continue past a root that did not
+  decode every Continuation Order member* — precisely so the page size cannot
+  change it: the same stored row may not be survivable at one page size and
+  fatal at another. The root itself is published exactly as a whole-result read
+  publishes it, in band where the reading surface delivers classified roots in
+  band and as a refusal where it refuses them; what follows it is the end of the
+  delivery either way.
 
 ## Round trips
 

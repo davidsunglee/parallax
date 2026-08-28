@@ -27,10 +27,10 @@ from pathlib import Path
 from typing import Any
 
 from reference_harness.case_twins import (
+    case_twin_arms,
     is_physical_case_member,
     logical_case,
     mapping_document,
-    module_and_body,
     module_ids,
     yaml_paths,
 )
@@ -60,34 +60,6 @@ def _declared_batch_size(document: Mapping[str, Any]) -> object:
     return stream.get("batchSize") if isinstance(stream, Mapping) else None
 
 
-def _twin_members(
-    paths: list[Path], modules: frozenset[str], errors: list[str]
-) -> dict[tuple[str, str], dict[str, Path]]:
-    """Group every batch-size twin arm under its ``<module>-<proof>`` pair identity."""
-    members: dict[tuple[str, str], dict[str, Path]] = {}
-    for path in paths:
-        twin = _CASE_TWIN_RE.match(path.name)
-        if twin is None:
-            continue
-        parsed = module_and_body(twin.group("prefix"), modules)
-        if parsed is None:
-            errors.append(
-                f"{path.name}: batch-size twin name must begin with a catalog module and "
-                "three-digit case sequence"
-            )
-            continue
-        arm = twin.group("arm")
-        previous = members.setdefault(parsed, {}).get(arm)
-        if previous is not None:
-            errors.append(
-                f"batch-size twin {parsed!r} has two {arm}-sized members: "
-                f"{previous.name}, {path.name}"
-            )
-        else:
-            members[parsed][arm] = path
-    return members
-
-
 def batch_size_twin_errors(compatibility_root: Path) -> list[str]:
     """Return every batch-size twin inconsistency under *compatibility_root*."""
     errors: list[str] = []
@@ -95,9 +67,10 @@ def batch_size_twin_errors(compatibility_root: Path) -> list[str]:
         return [f"not a directory: {compatibility_root}"]
 
     modules = module_ids(compatibility_root, errors)
-    for pair, arms in sorted(
-        _twin_members(yaml_paths(compatibility_root / "cases"), modules, errors).items()
-    ):
+    candidates = case_twin_arms(
+        yaml_paths(compatibility_root / "cases"), _CASE_TWIN_RE, modules, "batch-size", errors
+    )
+    for pair, arms in sorted(candidates.items()):
         if len(arms) < 2:
             (only,) = arms.values()
             errors.append(

@@ -1037,7 +1037,7 @@ _MILESTONE_SET_GRAPH_SIBLING_REASON: Final[str] = (
 
 _STREAMED_DELIVERY_REASON: Final[str] = (
     "the corpus's streamed-delivery lane, whose claim is the PAGE PARTITION rather than "
-    "the values published: the size each page asks for, the Continuation Order coordinate "
+    "the values published: the size each page asks for, the Continuation Order coordinates "
     "each later page seeks from, and the statement a full final page costs to prove "
     "exhaustion. An idiomatic story publishes roots and never statements, so one over "
     "`db.stream` would grade the graph its eager sibling already grades and nothing that "
@@ -1045,7 +1045,7 @@ _STREAMED_DELIVERY_REASON: Final[str] = (
     "sweep drives `db.wire.stream` itself against real Postgres, compares every statement "
     "the delivery executed to the authored pages, and materializes the case's own "
     "`then.graph`; and the delivery contract the surface adds on top — single pass, one "
-    "view, scope binding, the keyless-root rule, and page-size invariance in BOTH "
+    "view, scope binding, the cursorless-root rule, and page-size invariance in BOTH "
     "namespaces — is graded against the shipped surface by `tests/unit/test_snapshot_stream.py`"
 )
 

@@ -12,15 +12,15 @@ statement returning nothing unless a declared ``limit`` was already delivered.
 Identity is root-local, which is a NARROWING of what an eager read happens to do
 rather than a second identity rule, so the within-root half is asserted to agree
 with ``find`` and the cross-root half to diverge from it, in both namespaces.
-And the one root shape that cannot supply a cursor ends the delivery from
-whatever position it lands in, which is what keeps ``batch_size`` a performance
-dial.
+And a root that cannot supply a cursor — its own key or an authored Sort Key's
+member undecoded — ends the delivery from whatever position it lands in, which
+is what keeps ``batch_size`` a performance dial.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from decimal import Decimal
 from typing import Any, cast
 
@@ -529,29 +529,52 @@ def test_a_to_one_two_roots_reach_diverges_the_same_way_in_the_wire_namespace() 
 
 
 # --------------------------------------------------------------------------- #
-# A keyless root ends the stream from any position.                            #
+# A root supplying no coordinate ends the stream from any position.            #
 # --------------------------------------------------------------------------- #
-def _keyless_pages(position: int, *, size: int) -> RecordingPort:
+def _undecodable_qty_row() -> Row:
+    return {**_order_row(0), "qty": "many"}
+
+
+def _by_qty() -> ObjectQuery[Order, Order]:
+    return _all_orders().order_by(Order.qty.asc())
+
+
+# Every root shape a delivery can read no cursor off: the primary key the
+# Continuation Order always ends in, and an authored Sort Key over any other
+# member. Both are the same rule — only decoded values are bindable — and both
+# are graded at every position and page size, because the position a corrupt row
+# lands in decides nothing.
+_CURSORLESS = [
+    pytest.param(_keyless_order_row, _all_orders, id="keyless"),
+    pytest.param(_undecodable_qty_row, _by_qty, id="undecodable-sort-key"),
+]
+
+
+def _cursorless_pages(row: Callable[[], Row], position: int, *, size: int) -> RecordingPort:
     rows = [_order_row(1), _order_row(2), _order_row(3)]
-    rows[position] = _keyless_order_row()
+    rows[position] = row()
     return _pages(*[rows[start : start + size] for start in range(0, len(rows), size)])
 
 
+@pytest.mark.parametrize(("row", "query"), _CURSORLESS)
 @pytest.mark.parametrize("position", [0, 1, 2], ids=["first", "middle", "last"])
 @pytest.mark.parametrize("size", [2, 3])
-def test_the_checked_view_delivers_a_keyless_root_and_then_refuses_to_continue(
-    position: int, size: int
+def test_the_checked_view_delivers_a_cursorless_root_and_then_refuses_to_continue(
+    row: Callable[[], Row],
+    query: Callable[[], ObjectQuery[Order, Order]],
+    position: int,
+    size: int,
 ) -> None:
     # The rule is positional-independent so `batch_size` cannot change it: the
     # same corrupt row may not be survivable at one page size and fatal at
     # another. What the caller gets is every root up to and including the
-    # keyless one, and then the reason there is no more.
+    # cursorless one, and then the reason there is no more.
     delivered: list[object] = []
     with (
-        _orders(_keyless_pages(position, size=size)).stream(
-            _all_orders(), batch_size=size
+        _orders(_cursorless_pages(row, position, size=size)).stream(
+            query(), batch_size=size
         ) as stream,
-        pytest.raises(SnapshotStreamStateError, match="keyless-root"),
+        pytest.raises(SnapshotStreamStateError, match="cursorless-root"),
     ):
         for root in stream.checked():
             delivered.append(root)
@@ -559,15 +582,19 @@ def test_the_checked_view_delivers_a_keyless_root_and_then_refuses_to_continue(
     assert isinstance(delivered[-1], InvalidData)
 
 
+@pytest.mark.parametrize(("row", "query"), _CURSORLESS)
 @pytest.mark.parametrize("position", [0, 1, 2], ids=["first", "middle", "last"])
 @pytest.mark.parametrize("size", [2, 3])
-def test_the_default_view_raises_at_a_keyless_root_from_any_position(
-    position: int, size: int
+def test_the_default_view_raises_at_a_cursorless_root_from_any_position(
+    row: Callable[[], Row],
+    query: Callable[[], ObjectQuery[Order, Order]],
+    position: int,
+    size: int,
 ) -> None:
     delivered: list[object] = []
     with (
-        _orders(_keyless_pages(position, size=size)).stream(
-            _all_orders(), batch_size=size
+        _orders(_cursorless_pages(row, position, size=size)).stream(
+            query(), batch_size=size
         ) as stream,
         pytest.raises(InvalidDataError),
     ):
@@ -577,7 +604,7 @@ def test_the_default_view_raises_at_a_keyless_root_from_any_position(
 
 
 def test_a_stream_that_failed_answers_nothing_further() -> None:
-    port = _keyless_pages(0, size=2)
+    port = _cursorless_pages(_keyless_order_row, 0, size=2)
     with _orders(port).stream(_all_orders(), batch_size=2) as stream:
         with pytest.raises(InvalidDataError):
             list(stream)

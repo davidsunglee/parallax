@@ -6,7 +6,8 @@ Two kinds exist — the cross-layout descriptor/fixture/case triples and the
 streamed batch-size case pairs — and each owns its own naming grammar, its own
 subject, and its own notion of what an arm legitimately changes. What they share
 is this module: how a case document is reduced to the behavior an arm may not
-change, and how the corpus's catalog module prefix is read off a filename.
+change, how the corpus's catalog module prefix is read off a filename, and how
+the files a grammar matches are collected into the pairs a gate then grades.
 
 Keeping the reduction here is what makes a new physical observation a one-line
 change: a `then` key that becomes an arm-specific golden is added once and every
@@ -15,7 +16,8 @@ twin gate stops comparing it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import re
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -25,12 +27,14 @@ from reference_harness.dep_graph_check import DepGraphFailure, parse_catalog
 __all__ = [
     "TOP_LEVEL_PHYSICAL_KEYS",
     "PhysicalMember",
+    "case_twin_arms",
     "is_physical_case_member",
     "logical_case",
     "mapping_document",
     "module_and_body",
     "module_ids",
     "primary_module",
+    "twin_arms",
     "yaml_paths",
 ]
 
@@ -92,6 +96,59 @@ def module_and_body(prefix: str, modules: frozenset[str]) -> tuple[str, str] | N
         if len(body) > 4 and body[:3].isdigit() and body[3] == "-":
             return module, body[4:]
     return None
+
+
+def twin_arms[K](
+    candidates: Iterable[tuple[K, str, Path]], kind: str, errors: list[str]
+) -> dict[K, dict[str, Path]]:
+    """Group one kind of twin's candidate files by pair identity and then by arm.
+
+    Two files claiming the same arm of one pair are recorded rather than silently
+    collapsed: the surviving file would go on being graded against a twin the
+    other half of the corpus believes it is not.
+    """
+    arms: dict[K, dict[str, Path]] = {}
+    for key, arm, path in candidates:
+        members = arms.setdefault(key, {})
+        previous = members.get(arm)
+        if previous is not None:
+            errors.append(
+                f"{kind} twin {key!r} has two {arm} members: {previous.name}, {path.name}"
+            )
+        else:
+            members[arm] = path
+    return arms
+
+
+def case_twin_arms(
+    paths: Iterable[Path],
+    pattern: re.Pattern[str],
+    modules: frozenset[str],
+    kind: str,
+    errors: list[str],
+) -> dict[tuple[str, str], dict[str, Path]]:
+    """Every case twin *pattern* matches, grouped by ``<module>-<proof>`` and arm.
+
+    *pattern* carries the twin's own naming grammar through two groups: ``prefix``
+    is everything before the twin marker, which must resolve to a catalog module
+    and a case sequence, and ``arm`` is what distinguishes the members. A gate
+    contributes the grammar and the completeness rule; the pairing itself is
+    shared, so no two gates can disagree about which files are one twin.
+    """
+    candidates: list[tuple[tuple[str, str], str, Path]] = []
+    for path in paths:
+        match = pattern.match(path.name)
+        if match is None:
+            continue
+        parsed = module_and_body(match.group("prefix"), modules)
+        if parsed is None:
+            errors.append(
+                f"{path.name}: {kind} twin name must begin with a catalog module and "
+                "three-digit case sequence"
+            )
+            continue
+        candidates.append((parsed, match.group("arm"), path))
+    return twin_arms(candidates, kind, errors)
 
 
 def primary_module(document: Mapping[str, Any], is_module_tag: Callable[[str], bool]) -> str | None:

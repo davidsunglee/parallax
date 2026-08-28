@@ -208,6 +208,47 @@ class _ExecutedPort:
         return self._inner.transaction(body)
 
 
+def _stream_root_positions(case: case_format.Case, statements: int) -> set[int]:
+    """Where each page's ROOT statement sits in a streamed case's flat list.
+
+    `m-case-format` makes ``then.statements`` the pages' own `1 + L` groups
+    concatenated, and which of them is a root is fixed by the delivery's own
+    arithmetic rather than read off any statement's text: a page delivers the
+    size it asked for until one falls short, and a page that delivered no roots
+    gathered no parent keys and so ran no child level at all. The recovered
+    partition must consume the authored list exactly, so a delivery shape this
+    arithmetic does not describe fails here rather than being graded against the
+    wrong statements.
+    """
+    doc = case_document(case)
+    query = cast("dict[str, Any]", doc["when"]["objectQuery"])
+    size = cast("int", cast("dict[str, Any]", doc["when"]["stream"])["batchSize"])
+    limit = cast("int | None", query.get("limit"))
+    includes = cast("list[dict[str, Any]]", query.get("includes", []))
+    levels = len(
+        {
+            tuple(segment["rel"] for segment in path["segments"][: depth + 1])
+            for path in includes
+            for depth in range(len(cast("list[dict[str, Any]]", path["segments"])))
+        }
+    )
+    graph = cast("dict[str, list[Any]]", doc["then"]["graph"])
+    roots = sum(len(nodes) for nodes in graph.values())
+    positions: set[int] = set()
+    index = 0
+    delivered = 0
+    while True:
+        requested = size if limit is None else min(size, limit - delivered)
+        page = min(requested, roots - delivered)
+        positions.add(index)
+        index += 1 + (levels if page else 0)
+        delivered += page
+        if page < requested or (limit is not None and delivered >= limit):
+            break
+    assert index == statements, (case.case_id, sorted(positions), statements)
+    return positions
+
+
 def _grade_streamed_statements(
     case: case_format.Case, executed: list[tuple[str, list[Any]]]
 ) -> None:
@@ -215,10 +256,11 @@ def _grade_streamed_statements(
 
     Graded positionally and exactly, unlike an eager read's child levels: a
     streamed case authors the whole page partition, and a page's root binds — its
-    predicate binds, its seek coordinate, and the size it asked for — are
-    positional by construction. A child level inside a page keeps the ordinary
-    gathered-key rule, which is why the bind comparison falls back to the
-    multiset wherever the authored bind list is not the executed one.
+    predicate binds, its seek coordinates, and the size it asked for — are
+    positional by construction, so a delivery that permuted them would be
+    delivering a different read. A child level inside a page keeps the ordinary
+    gathered-key rule, its `IN` list being the distinct keys that page's own
+    roots reached in an order nothing pins.
     """
     dialect = dialect_for("postgres")
     golden = [
@@ -226,9 +268,16 @@ def _grade_streamed_statements(
         for sql, binds in _read_golden_statements(case)
     ]
     assert len(executed) == len(golden), (case.case_id, executed, golden)
-    for (ran_sql, ran_binds), (golden_sql, golden_binds) in zip(executed, golden, strict=True):
+    roots = _stream_root_positions(case, len(golden))
+    for index, ((ran_sql, ran_binds), (golden_sql, golden_binds)) in enumerate(
+        zip(executed, golden, strict=True)
+    ):
         assert ran_sql == golden_sql, (case.case_id, ran_sql, golden_sql)
-        assert Counter(wire_binds(ran_binds)) == Counter(golden_binds), (case.case_id, ran_binds)
+        observed_binds = wire_binds(ran_binds)
+        if index in roots:
+            assert observed_binds == golden_binds, (case.case_id, ran_binds, golden_binds)
+        else:
+            assert Counter(observed_binds) == Counter(golden_binds), (case.case_id, ran_binds)
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])

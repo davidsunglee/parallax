@@ -703,10 +703,10 @@ class _DeliveredCalls(DbPort):
     Every statement this package reports comes off the delivered Execution
     Lifecycle stream, because a Database Call carries the canonical Lowered
     Statement it borrowed while the port carries only the driver's own text. A
-    Snapshot Stream publishes no such activity yet, so a streamed run reports no
-    emissions at all rather than statements recovered from driver text — and the
-    one number the run envelope still owes, the round trips its execution cost,
-    is counted here without reading a single statement.
+    delivery publishing no such activity therefore reports no emissions at all
+    rather than statements recovered from driver text — and the one number the
+    run envelope still owes, the round trips its execution cost, is counted here
+    without reading a single statement.
     """
 
     __slots__ = ("_inner", "count")
@@ -740,7 +740,6 @@ _STREAM_ERRORS = (*_READ_ERRORS, ContinuationError, handle.SnapshotStreamStateEr
 
 
 def _stream_batch_size(case: case_format.Case) -> int:
-    """The page size a streamed case declares (`m-case-format` *Streamed reads*)."""
     when = case.document.get("when")
     stream = cast("Mapping[str, object]", when).get("stream") if isinstance(when, Mapping) else None
     size = (

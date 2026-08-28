@@ -7,11 +7,14 @@ same cross-language contract the ``1 + L`` shape is — every target must lower
 the same SQL for the same page — so the keyset algebra is stated once here
 rather than re-derived per implementation.
 
-The plan answers two nodes and nothing else. :meth:`ContinuationPlan.first` is
-the first page: the caller's own query under the Continuation Order, capped at
-the page size. :meth:`ContinuationPlan.after` is every later page: the same
-node with the caller's predicate conjoined with the seek that skips everything
-already delivered.
+The plan answers two nodes and one question about a root.
+:meth:`ContinuationPlan.first` is the first page: the caller's own query under
+the Continuation Order, capped at the page size. :meth:`ContinuationPlan.after`
+is every later page: the same node with the caller's predicate conjoined with
+the seek that skips everything already delivered. And
+:meth:`ContinuationPlan.continues_from` is whether a root supplies the
+coordinates that seek would bind — the question a delivery asks of every root it
+publishes rather than only of the one a page happens to end on.
 
 The Continuation Order itself is deliberately NOT readable off the plan. A
 caller hands over the last root's whole member map and the plan selects its own
@@ -121,6 +124,16 @@ class ContinuationPlan:
             order_by=self._order,
             limit=limit,
         )
+
+    def continues_from(self, root: Mapping[AttributeIdentity, object]) -> bool:
+        """Whether ``root`` carries a coordinate for every term the seek binds.
+
+        Only decoded values are bindable, so a root missing one of the plan's own
+        members can begin no later page. The question is asked of every published
+        root rather than only of the one a page ends on, which is what keeps the
+        page size from deciding whether a stored row is survivable.
+        """
+        return all(term.identity in root for term in self._terms)
 
     def _seek(self, last_root: Mapping[AttributeIdentity, object]) -> tuple[PredicateNode, ...]:
         """The conjuncts admitting exactly the roots after ``last_root``.
@@ -249,14 +262,12 @@ def _strictly_after(term: _Term, coordinate: Scalar) -> PredicateNode:
 
 
 def _ties_with(term: _Term, coordinate: Scalar) -> PredicateNode:
-    """``term`` at the same ordering position as ``coordinate``."""
     if coordinate is None:
         return NullCheck(op="isNull", attr=term.attr)
     return Comparison(op="eq", attr=term.attr, value=coordinate)
 
 
 def _term(key: OrderKey, model: Metamodel) -> _Term:
-    """``key`` resolved against ``model`` into the term a seek is composed from."""
     attribute = _attribute(key.attr, model)
     return _Term(
         key=key,
