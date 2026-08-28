@@ -33,6 +33,13 @@ from typing import Final, Literal, cast
 
 from parallax.core import continuation
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.execution_lifecycle import ReadInterface
+from parallax.core.execution_lifecycle._activity import (
+    INERT,
+    ActivityTarget,
+    SnapshotStreamActivity,
+    StreamBatchActivity,
+)
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.temporal_read import Pin, query_pin
@@ -42,15 +49,35 @@ from parallax.snapshot.handle._read import ResultPublication, declaring_metadata
 from parallax.snapshot.materialize import InvalidData, InvalidDataError
 from parallax.snapshot.materialize._graph import root_members, root_scoped
 
-__all__ = ["PageRead", "SnapshotStream", "SnapshotStreamStateError", "check_batch_size"]
+__all__ = [
+    "OpenStream",
+    "PageRead",
+    "SnapshotStream",
+    "SnapshotStreamStateError",
+    "check_batch_size",
+]
 
-type PageRead = Callable[[ObjectQueryNode], FindResult]
+type PageRead = Callable[[ObjectQueryNode, StreamBatchActivity], FindResult]
 """How one page reaches the database: the executor entry its owner composed.
 
 A standalone stream's page is a plain find; a participating one's runs inside
 its unit of work's force-flush, so buffered writes reach the database before the
 page that must see them. Which it is belongs to the handle that opened the
 stream, never to the loop above it.
+
+The page is handed its own Stream Batch UNENTERED, because where that scope
+opens is part of the same answer: a participating page enters it after the
+flush, which is what leaves the dependency batch an ordered sibling of the page
+rather than a scope around it (`m-execution-lifecycle`).
+"""
+
+type OpenStream = Callable[[ActivityTarget, ReadInterface, int], SnapshotStreamActivity]
+"""How the stream's own Execution Activity opens: the observation seam its owner
+composed.
+
+A standalone stream is a Root Execution of its own; a participating one is a
+child of the current Transaction Attempt. Which it is belongs to the handle that
+opened the stream, exactly as :data:`PageRead` does.
 """
 
 type _State = Literal["created", "open", "draining", "exhausted", "failed", "closed"]
@@ -124,9 +151,12 @@ class SnapshotStream[T]:
     """
 
     __slots__ = (
+        "_activity",
         "_batch_size",
+        "_failure",
         "_model",
         "_node",
+        "_open_stream",
         "_page_read",
         "_pin",
         "_plan",
@@ -140,6 +170,7 @@ class SnapshotStream[T]:
         model: CatalogedModel,
         publication: ResultPublication,
         page_read: PageRead,
+        open_stream: OpenStream,
         *,
         batch_size: int,
     ) -> None:
@@ -147,24 +178,33 @@ class SnapshotStream[T]:
         self._model = model
         self._publication = publication
         self._page_read = page_read
+        self._open_stream = open_stream
         self._batch_size = batch_size
         self._state: _State = _CREATED
         self._plan: continuation.ContinuationPlan | None = None
         self._pin: Pin = Pin()
+        self._activity: SnapshotStreamActivity = INERT
+        self._failure: BaseException | None = None
 
     def __enter__(self) -> SnapshotStream[T]:
-        """Open the stream's scope: gate the query and plan its pages.
+        """Open the stream's scope: gate the query, plan its pages, and start
+        observing it.
 
         Everything deterministic happens here and nothing reaches the database:
         the same read gate an eager find crosses, then the page plan and the
-        query's own lowered as-of coordinates. Constructing a stream and never
-        entering it therefore emits nothing and reads nothing.
+        query's own lowered as-of coordinates. Each is a refusal a caller can
+        earn, so all of them precede the stream's own activity — a refused stream
+        opens no Root Execution and calls no Provider — and constructing a stream
+        without entering it observes nothing and reads nothing.
         """
         self._require(_ENTER_ONCE, _CREATED)
         preflight(self._node, model=self._model.meta, form="graph")
         entity = self._entity()
         self._plan = continuation.plan(entity, self._node, self._model.meta)
         self._pin = query_pin(self._node, declaring_metadata(self._model.meta, entity.identity))
+        self._activity = self._open_stream(
+            self._node.target, self._publication.interface, self._batch_size
+        ).__enter__()
         self._state = _OPEN
         return self
 
@@ -175,7 +215,22 @@ class SnapshotStream[T]:
         _traceback: object,
         /,
     ) -> None:
+        """Close the scope, and end the observation the way the delivery ended.
+
+        What ended the stream is the delivery's own verdict rather than whatever
+        exception happens to be leaving the block: Parallax's work failing IS the
+        stream failing, whether the caller re-raised it or caught it, and a
+        caller's own exception is a caller stopping early however it arrived. A
+        delivery that exhausted has already finished, so neither rewrites it.
+        """
         self._state = _CLOSED
+        failure = self._failure
+        self._failure = None
+        self._activity.__exit__(
+            type(failure) if failure is not None else None,
+            failure,
+            failure.__traceback__ if failure is not None else None,
+        )
 
     def __iter__(self) -> Iterator[T]:
         """The default view: each root as it is published, refusing invalid data.
@@ -239,13 +294,30 @@ class SnapshotStream[T]:
         except StopIteration:
             self._settle(_EXHAUSTED)
             raise
-        except BaseException:
-            self._settle(_FAILED)
+        except BaseException as failure:
+            self._settle(_FAILED, failure)
             raise
 
-    def _settle(self, terminal: _State, /) -> None:
-        if self._state == _DRAINING:
-            self._state = terminal
+    def _settle(self, terminal: _State, failure: BaseException | None = None, /) -> None:
+        """Record how the delivery ended, once.
+
+        Exhaustion finishes the observed stream HERE, where it was discovered,
+        rather than at the scope exit that follows it: the outcome is true at
+        this point, and settling it here is what leaves a later caller error with
+        nothing to rewrite. A failure is remembered instead, because the scope's
+        own exit is where a stream announces one — and remembering it is what
+        keeps the verdict correct for a caller that caught the failure and left
+        the block normally. The reference is dropped at that exit, so a failed
+        delivery holds one exception for the remainder of its scope and no
+        longer.
+        """
+        if self._state != _DRAINING:
+            return
+        self._state = terminal
+        if terminal == _EXHAUSTED:
+            self._activity.exhausted()
+        else:
+            self._failure = failure
 
     def _drain(self, *, checked: bool) -> Iterator[object]:
         return _Delivery(self._advance, self._roots(checked=checked))
@@ -261,6 +333,11 @@ class SnapshotStream[T]:
         Every root is asked whether the delivery could continue from it, not
         just the one its page ends on: a root that answers no ends the delivery
         wherever it lands, so the page size never decides which roots arrive.
+
+        Each page is prepared inside a Stream Batch of its own and published
+        outside it, so what a stream costs an observer is two events per page
+        plus two for itself — proportional to the pages it read rather than to
+        the roots it delivered.
         """
         plan = self._plan
         if plan is None:  # pragma: no cover - draining is reachable from an entered scope alone
@@ -271,7 +348,7 @@ class SnapshotStream[T]:
         while True:
             size = self._batch_size if limit is None else min(self._batch_size, limit - emitted)
             node = plan.first(limit=size) if cursor is None else plan.after(cursor, limit=size)
-            page = self._page_read(node)
+            page = self._page_read(node, self._activity.batch())
             delivered = 0
             for position, members in enumerate(root_members(page.graph)):
                 root = self._published(page, position, ordinal=emitted + position)

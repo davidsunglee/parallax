@@ -247,9 +247,10 @@ def _read_observations(
     it names the DELIVERY and not the result: a streamed case reports the same
     ``graph`` observation an eager one does, and running the eager read to
     produce it would match `then.graph` while producing none of the page
-    partition the case states (`m-conformance-adapter` *Streamed reads*). What a
-    streamed run does NOT report is its ``emissions``: a Snapshot Stream
-    publishes no Database Call activity, and the port is no substitute for one.
+    partition the case states (`m-conformance-adapter` *Streamed reads*). Its
+    ``emissions`` are the delivery's own — every page's statements in execution
+    order, read off the Database Calls the Snapshot Stream publishes, like every
+    other lane's.
     """
     then = case.document.get("then")
     when = case.document.get("when")
@@ -261,15 +262,10 @@ def _read_observations(
             "observations": {"graphs": graphs, "roundTrips": round_trips},
         }
     if streamed or (isinstance(then, Mapping) and "graph" in then):
-        graph_emissions: list[engine.Emission] = []
-        if streamed:
-            graph, round_trips, stored_data_issues = engine.run_stream_case(
-                case, dialect, port, lifecycle
-            )
-        else:
-            graph_emissions, graph, round_trips, stored_data_issues = engine.run_graph_case(
-                case, dialect, port, lifecycle
-            )
+        run = engine.run_stream_case if streamed else engine.run_graph_case
+        graph_emissions, graph, round_trips, stored_data_issues = run(
+            case, dialect, port, lifecycle
+        )
         observations: dict[str, Any] = {"graph": graph, "roundTrips": round_trips}
         if stored_data_issues is not None:
             observations["storedDataIssues"] = stored_data_issues

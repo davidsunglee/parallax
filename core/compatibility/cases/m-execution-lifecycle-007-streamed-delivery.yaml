@@ -1,0 +1,178 @@
+# Streamed delivery (m-execution-lifecycle): a Snapshot Stream is a Root
+# Execution of its own, and each page it reads is a Stream Batch under it.
+#
+# The seventh root kind reaches this module's oracle. `kind: snapshot-stream` is
+# what separates this case from its six siblings — one opens `read` and five open
+# `transaction-invocation` — and the Started transition is the only one in the
+# algebra carrying a page size, which is what makes its Stream Batch children
+# countable against a result the events never size.
+#
+# Two pages over three orders at `batchSize: 2`, with one include level, so the
+# tree has every relation the module states about a stream. Activity 1 is the
+# stream and spans the whole delivery. Activities 2 and 5 are its pages, each
+# bracketing that page's own two Database Calls and nothing else: a Stream Batch
+# IS the page-read activity, so no Read activity appears anywhere in this stream
+# even though a page runs the same executor an eager deep fetch runs.
+#
+# What the sequence pins down is the batch BOUNDARY. Page 1's batch finishes
+# (sequence 7) before page 2's opens (sequence 8), and the roots page 1 delivered
+# were published in between — outside every batch, under the stream itself —
+# because a batch completes once the page's converted result is ready rather than
+# once the caller is done with it. That is why the event count is proportional to
+# PAGES: three roots and two pages emit the same ten events three roots and two
+# pages would emit at any result size, plus the two Database Call pairs each page
+# owes.
+#
+# The stream finishes `exhausted` at the moment exhaustion was discovered: page 2
+# asked for two roots and got one, which proves no more exist without the extra
+# root statement a full final page would cost (m-snapshot-read). Every Database
+# Call names its statement by INDEX into the same flat `then.statements` list a
+# streamed case already authors page by page, so the emission order and the
+# delivery agree here or the case fails.
+model: models/orders.yaml
+tags: [m-execution-lifecycle, m-snapshot-read, m-deep-fetch, stream, streamed-delivery, to-many, relationship, graph, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed read's keyset seek - page 2's root statement binds the primary key of the root page 1 delivered last, and each page's item level binds the order ids that page's own roots gathered"
+when:
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      in:
+        attr: parallax.compatibility.Order.id
+        values:
+          - 1
+          - 2
+          - 3
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.items
+  stream:
+    batchSize: 2
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?) order by t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?) order by t0.id asc limit ?
+      binds: [1, 2, 3, 2]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
+      binds: [1, 2]
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?) and t0.id > ? order by t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?) and t0.id > ? order by t0.id asc limit ?
+      binds: [1, 2, 3, 2, 2]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
+      binds: [3]
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (1, 2, 3)
+  graph:
+    Order:
+      - id: 1
+        name: Ada
+        sku: A-100
+        qty: 5
+        price: 10.50
+        active: true
+        orderedOn: 2024-01-05
+        items:
+          - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+          - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
+      - id: 2
+        name: Linus
+        sku: B-200
+        qty: 10
+        price: 20.00
+        active: true
+        orderedOn: 2024-02-10
+        items:
+          - { id: 21, orderId: 2, sku: A-300, quantity: 4, shippedOn: 2024-02-20 }
+      - id: 3
+        name: ada
+        sku: A-300
+        qty: 15
+        price: 30.25
+        active: false
+        orderedOn: 2024-03-15
+        items: []
+  roundTrips: 4
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: snapshot-stream
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            snapshotStreamStarted:
+              target: parallax.compatibility.Order
+              interface: wire
+              batchSize: 2
+          - sequence: 2
+            activity: 2
+            parent: 1
+            streamBatchStarted: {}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            databaseCallStarted:
+              target: parallax.compatibility.Order
+              kind: read
+              statement: 0
+          - sequence: 4
+            activity: 3
+            parent: 2
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 2 }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            databaseCallStarted:
+              target: parallax.compatibility.OrderItem
+              kind: read
+              statement: 1
+          - sequence: 6
+            activity: 4
+            parent: 2
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 3 }
+          - sequence: 7
+            activity: 2
+            parent: 1
+            streamBatchFinished: { outcome: completed }
+          - sequence: 8
+            activity: 5
+            parent: 1
+            streamBatchStarted: {}
+          - sequence: 9
+            activity: 6
+            parent: 5
+            databaseCallStarted:
+              target: parallax.compatibility.Order
+              kind: read
+              statement: 2
+          - sequence: 10
+            activity: 6
+            parent: 5
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 11
+            activity: 7
+            parent: 5
+            databaseCallStarted:
+              target: parallax.compatibility.OrderItem
+              kind: read
+              statement: 3
+          - sequence: 12
+            activity: 7
+            parent: 5
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 0 }
+          - sequence: 13
+            activity: 5
+            parent: 1
+            streamBatchFinished: { outcome: completed }
+          - sequence: 14
+            activity: 1
+            parent: null
+            snapshotStreamFinished: { outcome: exhausted }

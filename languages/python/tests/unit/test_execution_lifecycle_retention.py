@@ -221,10 +221,13 @@ from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     JoinedInvocationActivity,
     ReadActivity,
+    SnapshotStreamActivity,
+    StreamBatchActivity,
     TransactionAttemptActivity,
     TransactionInvocationActivity,
     WriteBatchActivity,
     open_read_root,
+    open_snapshot_stream_root,
     open_transaction_root,
 )
 from parallax.core.unit_work import FixedClock
@@ -240,6 +243,14 @@ rather than approximate."""
 
 SMALL: Final = rows(SMALL_ROWS)
 LARGE: Final = rows(LARGE_ROWS)
+
+PAGE: Final = 1_000
+"""The page size a streamed root reports — ``stream``'s own default.
+
+Outside the interpreter's small-integer cache and built once at import, so a
+stream that materialized its own rather than borrowing the caller's would be an
+allocation these readings can see.
+"""
 
 LIFECYCLE_PACKAGE: Final = "parallax.core.execution_lifecycle"
 _TESTING: Final = f"{LIFECYCLE_PACKAGE}.testing"
@@ -742,6 +753,40 @@ def _participating_read_chain(
     return (invocation, attempt, read, call)
 
 
+def _stream_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
+    """A Snapshot Stream root, one page of it, and that page's Database Call.
+
+    The second shape whose root is not a transaction, and the one that puts a
+    Database Call three levels down rather than two.
+    """
+    stream = stack.enter_context(
+        open_snapshot_stream_root(installed, target=TARGET, interface="TYPED", batch_size=PAGE)
+    )
+    batch = stack.enter_context(stream.batch())
+    call = stack.enter_context(batch.database_call(STATEMENT, "READ", TARGET))
+    call.read_completed(SMALL)
+    stack.callback(stream.exhausted)
+    return (stream, batch, call)
+
+
+def _participating_stream_chain(
+    stack: ExitStack, installed: InstalledLifecycle
+) -> tuple[object, ...]:
+    """An invocation, its attempt, a participating stream, one page, and its call.
+
+    The DEEPEST correlation chain the algebra admits — five levels — and the one
+    that puts the two stream kinds at a second depth apiece, which is what makes
+    the per-depth reading below say anything about them.
+    """
+    invocation, attempt = _begun_attempt(stack, installed)
+    stream = stack.enter_context(attempt.snapshot_stream(TARGET, "TYPED", PAGE))
+    batch = stack.enter_context(stream.batch())
+    call = stack.enter_context(batch.database_call(STATEMENT, "READ", TARGET))
+    call.read_completed(SMALL)
+    stack.callback(stream.exhausted)
+    return (invocation, attempt, stream, batch, call)
+
+
 def _joined_invocation_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
     """An invocation, its attempt, and a joining call nested inside it.
 
@@ -780,6 +825,17 @@ _SHAPES: Final = (
         _joined_invocation_chain,
         (TransactionInvocationActivity, TransactionAttemptActivity, JoinedInvocationActivity),
     ),
+    (_stream_chain, (SnapshotStreamActivity, StreamBatchActivity, DatabaseCallActivity)),
+    (
+        _participating_stream_chain,
+        (
+            TransactionInvocationActivity,
+            TransactionAttemptActivity,
+            SnapshotStreamActivity,
+            StreamBatchActivity,
+            DatabaseCallActivity,
+        ),
+    ),
 )
 """Every CORRELATION chain the algebra admits, and the kinds each level is.
 
@@ -796,16 +852,18 @@ _ACTIVITY_KINDS: Final = (
     DatabaseCallActivity,
     JoinedInvocationActivity,
     ReadActivity,
+    SnapshotStreamActivity,
+    StreamBatchActivity,
     TransactionAttemptActivity,
     TransactionInvocationActivity,
     WriteBatchActivity,
 )
 """The activity Protocols this runtime implements.
 
-Five of the seven kinds `m-execution-lifecycle` names, plus the joining call an
-invocation nests. Snapshot Stream and Stream Batch have events and no activity
-here yet, and their arrival is what would take the longest correlation chain
-from four levels to five.
+All seven kinds `m-execution-lifecycle` names, plus the joining call an
+invocation nests. The two stream kinds are what take the longest correlation
+chain from four levels to five, a participating stream sitting under an attempt
+and its pages and their calls under that.
 """
 
 
@@ -850,10 +908,10 @@ def _chains_below(kind: type, above: tuple[type, ...] = ()) -> tuple[tuple[type,
 
 
 def _admitted_chains() -> frozenset[tuple[type, ...]]:
-    """Every correlation chain a root can parent, from the two root openers."""
+    """Every correlation chain a root can parent, from the three root openers."""
     roots = tuple(
         opened
-        for opener in (open_read_root, open_transaction_root)
+        for opener in (open_read_root, open_snapshot_stream_root, open_transaction_root)
         for opened in (get_type_hints(opener).get("return"),)
         if isinstance(opened, type)
     )
@@ -1571,17 +1629,17 @@ def test_a_joining_call_nests_a_live_scope_the_correlation_tree_does_not_show() 
     assert len(transitions.parents) == 1 and None not in transitions.parents, transitions.parents
 
 
-def test_the_correlation_chains_nest_four_levels_and_no_more() -> None:
+def test_the_correlation_chains_nest_five_levels_and_no_more() -> None:
     # What an event's `parent_activity_id` can chain through, which is what the
     # two structural readings below are taken over — deliberately not a bound on
     # `D`, which the joining recursion grows past any of these. Enumerated from
     # the Protocols and compared against the shapes this suite measures, so a
-    # kind that grew a parent level — the stream activities
-    # `m-execution-lifecycle` names and this runtime has yet to open — fails here
-    # first and forces those readings to be taken again.
+    # kind that grows a parent level fails here first and forces those readings
+    # to be taken again. Five is the participating stream: an invocation, its
+    # attempt, the stream under it, one page, and that page's call.
     admitted = _admitted_chains()
     assert admitted == frozenset(kinds for _, kinds in _SHAPES)
-    assert max(len(chain) for chain in admitted) == 4
+    assert max(len(chain) for chain in admitted) == 5
 
 
 def test_no_live_activity_holds_any_of_its_tree_but_its_own_parent() -> None:
@@ -1605,12 +1663,13 @@ def test_no_live_activity_holds_any_of_its_tree_but_its_own_parent() -> None:
 
 def test_an_activity_holds_the_same_at_every_depth_it_can_open_at() -> None:
     # The other half of the depth claim: a level costs what it costs wherever it
-    # sits. Two of the kinds open at more than one depth — a Read directly under
-    # a Handle and two levels down under an attempt, a Database Call under either
-    # of those — and each is read as the total ITS OWN structure holds rather
-    # than as a difference between two chains, so nothing an ancestor holds can
-    # cancel out of the comparison. The Database Call readings cross a read call
-    # and a write call as well, which weigh the same.
+    # sits. Four of the kinds open at more than one depth — a Read directly under
+    # a Handle and two levels down under an attempt, a Snapshot Stream as a root
+    # and under an attempt, a Stream Batch under either of those, and a Database
+    # Call under all of them — and each is read as the total ITS OWN structure
+    # holds rather than as a difference between two chains, so nothing an
+    # ancestor holds can cancel out of the comparison. The Database Call readings
+    # cross a read call and a write call as well, which weigh the same.
     depths: dict[type, set[int]] = {}
     holdings: dict[type, set[tuple[int, int]]] = {}
     for shape, kinds in _SHAPES:
@@ -1621,6 +1680,8 @@ def test_an_activity_holds_the_same_at_every_depth_it_can_open_at() -> None:
     assert {kind for kind, at in depths.items() if len(at) > 1} == {
         ReadActivity,
         DatabaseCallActivity,
+        SnapshotStreamActivity,
+        StreamBatchActivity,
     }
     disagreeing = {
         kind.__name__: readings for kind, readings in holdings.items() if len(readings) > 1

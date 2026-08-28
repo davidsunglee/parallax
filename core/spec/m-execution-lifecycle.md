@@ -343,11 +343,16 @@ StreamBatchFinished(StreamBatchCompleted | StreamBatchFailed(failure))
 ```
 
 It starts after any read-dependency Write Batch and before page planning. Its
-Database Calls are direct children; it spans conversion and materialization and
-completes once the whole page is ready to yield, including an empty terminal
-page. Caller processing happens after batch completion. A failed batch finishes
-before the stream fails and is the stream failure's cause. Stream Batch is the
-page-read activity; it never nests a duplicate Read activity.
+Database Calls are direct children; it spans conversion and completes once the
+page's converted result — the one shared input every root of that page is
+published from — is ready, including an empty terminal page. Materializing and
+publishing those roots runs one root at a time under the parent Snapshot Stream,
+outside every batch, so a per-root materialization or invalid-data failure
+reaches a batch that already finished Completed and is attributed to the
+Snapshot Stream directly rather than to that batch. Caller processing happens
+after batch completion. A failed batch finishes before the stream fails and is
+the stream failure's cause. Stream Batch is the page-read activity; it never
+nests a duplicate Read activity.
 
 ## Handler failures, re-entry, and fan-out
 
@@ -421,7 +426,7 @@ write. The adapter observation uses the identical shape and indexes its own
 emissions. The shape is a case assertion format, not a public serialization
 contract.
 
-This module owns six cases:
+This module owns seven cases:
 
 | Case | Observable distinction |
 |---|---|
@@ -431,6 +436,7 @@ This module owns six cases:
 | retry then commit | one invocation contains a rolled-back attempt and a later committed attempt; zero-row enforcement is attributed to the completed call |
 | retry exhaustion | every failed call, batch, and attempt finishes before the next attempt; classifier truth remains retry-eligible when the budget ends |
 | joined invocation | the joined activity has no attempt and its buffered write reaches the outer attempt's pre-commit batch |
+| streamed delivery | a Snapshot Stream root brackets one Stream Batch per page, each page's Database Calls are that batch's own, and the delivery finishes exhausted |
 
 The compatibility harness validates oracle shape and correlation but observes no
 execution of its own. Each language grades the oracle through its conformance

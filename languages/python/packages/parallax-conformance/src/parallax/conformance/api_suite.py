@@ -1289,6 +1289,19 @@ _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON: Final[str] = (
     "idiomatic spelling distinct from what that runner already exercises directly"
 )
 
+_EXECUTION_LIFECYCLE_STREAMED_ROOT_REASON: Final[str] = (
+    "the m-execution-lifecycle spine's streamed arm: its `then.executionLifecycle` oracle is "
+    "graded end-to-end by the run sweep (`tests/compatibility/test_run_sweep.py`) against the "
+    "stream a REAL `db.wire.stream` delivered to an installed Provider, and the spelling an "
+    "application reaches that stream through — a Provider named at `connect` — is the one the "
+    "joined story above already shows. What a streamed story would ADD is the page partition, "
+    "which is what an idiomatic example cannot show at all: it publishes roots and never "
+    "activities, so it would grade the graph the eager sibling already grades. The stream's "
+    "own activity tree — a root of its own, one Stream Batch per page, and per-root "
+    "publication outside every batch — is graded against the shipped surface by "
+    "`tests/unit/test_execution_lifecycle_stream.py`"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-execution-lifecycle: the spine's own two graders -------------------- #
     # (`-006` is an exercised story above: the composition spelling no oracle states)
@@ -1297,6 +1310,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-execution-lifecycle-003": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-004": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-005": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
+    "m-execution-lifecycle-007": _EXECUTION_LIFECYCLE_STREAMED_ROOT_REASON,
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
     "m-unit-work-021": _OBSERVED_STATE_COALESCING_REASON,

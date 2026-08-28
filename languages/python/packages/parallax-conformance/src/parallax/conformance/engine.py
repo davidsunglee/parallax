@@ -697,45 +697,6 @@ def run_graph_case(
     )
 
 
-class _DeliveredCalls(DbPort):
-    """How many times one delivery reached the database, and nothing about what it ran.
-
-    Every statement this package reports comes off the delivered Execution
-    Lifecycle stream, because a Database Call carries the canonical Lowered
-    Statement it borrowed while the port carries only the driver's own text. A
-    delivery publishing no such activity therefore reports no emissions at all
-    rather than statements recovered from driver text — and the one number the
-    run envelope still owes, the round trips its execution cost, is counted here
-    without reading a single statement.
-    """
-
-    __slots__ = ("_inner", "count")
-
-    def __init__(self, inner: DbPort) -> None:
-        self._inner = inner
-        self.count = 0
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[DocumentReadOrdinals] = (),
-    ) -> list[Row]:
-        self.count += 1
-        return self._inner.execute(sql, binds, document_reads)
-
-    def execute_write(  # pragma: no cover - a standalone delivery writes nothing
-        self, sql: str, binds: Sequence[object]
-    ) -> int:
-        self.count += 1
-        return self._inner.execute_write(sql, binds)
-
-    def transaction[T](  # pragma: no cover - a standalone delivery opens no boundary
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:
-        return self._inner.transaction(body, isolation=isolation)
-
-
 _STREAM_ERRORS = (*_READ_ERRORS, ContinuationError, handle.SnapshotStreamStateError)
 
 
@@ -760,7 +721,7 @@ def run_stream_case(
     dialect_name: str,
     port: DbPort,
     lifecycle: LifecycleRun | None = None,
-) -> tuple[dict[str, list[Row | None]], int, list[dict[str, object]] | None]:
+) -> tuple[list[Emission], dict[str, list[Row | None]], int, list[dict[str, object]] | None]:
     """Run a streamed read through ``db.wire.stream`` and report what it delivered.
 
     The whole lane is production's streamed read at the case's own declared page
@@ -779,6 +740,12 @@ def run_stream_case(
     The roots are accumulated for reporting, which is the harness's memory rather
     than a claim about production's: what the caller grades is the roots the
     delivery published, and that needs the whole delivery in hand.
+
+    Its statements and round trips come off the delivered lifecycle exactly as
+    every other lane's do: a Snapshot Stream publishes one Stream Batch per page
+    and every page's Database Calls under it, and each of those carries the
+    canonical Lowered Statement it borrowed. Nothing here observes at the
+    database port, which carries the driver's own text.
     """
     query = _read_query(case)
     domain = load_case_domain_model(case)
@@ -790,8 +757,7 @@ def run_stream_case(
         )
     dialect = dialect_for(dialect_name)
     observed = lifecycle_run(lifecycle).observation()
-    calls = _DeliveredCalls(port)
-    db = handle.Database(calls, domain, dialect=dialect, lifecycle_provider=observed.provider)
+    db = handle.Database(port, domain, dialect=dialect, lifecycle_provider=observed.provider)
     roots: list[object] = []
     try:
         with db.wire.stream(query, batch_size=_stream_batch_size(case)) as delivery:
@@ -799,8 +765,9 @@ def run_stream_case(
     except _STREAM_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return (
+        _read_emissions(observed),
         {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
-        calls.count,
+        observed.round_trips,
         _stored_data_records(roots),
     )
 

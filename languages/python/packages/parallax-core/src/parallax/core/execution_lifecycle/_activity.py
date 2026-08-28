@@ -72,6 +72,16 @@ from parallax.core.execution_lifecycle._events import (
     ReadStarted,
     RetryPolicy,
     RootExecution,
+    SnapshotStreamFinished,
+    SnapshotStreamOutcome,
+    SnapshotStreamStarted,
+    StreamBatchCompleted,
+    StreamBatchFailed,
+    StreamBatchFinished,
+    StreamBatchStarted,
+    StreamClosedEarly,
+    StreamExhausted,
+    StreamFailed,
     TransactionAttemptFinished,
     TransactionAttemptOutcome,
     TransactionAttemptStarted,
@@ -345,6 +355,72 @@ class ReadActivity(Protocol):
         ...
 
 
+class StreamBatchActivity(Protocol):
+    """One page's scope: the Database Calls it issues, and nothing else.
+
+    A batch is the page-read activity in its own right and never nests a Read.
+    Its success outcome carries no data, so leaving the scope normally IS its
+    completion — the discipline a Read and a Write Batch already answer by.
+
+    Constructing one emits nothing, because a page decides where its own batch
+    starts: a participating page force-flushes first, and the dependency batch
+    that flush runs is an ordered SIBLING of this scope rather than something
+    inside it.
+    """
+
+    def __enter__(self) -> StreamBatchActivity: ...
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
+    def database_call(
+        self, statement: LoweredStatement, kind: DatabaseCallKind, target: ActivityTarget, /
+    ) -> DatabaseCallActivity:
+        """Open this page's next Database Call over the exact ``statement``
+        presented to the port."""
+        ...
+
+
+class SnapshotStreamActivity(Protocol):
+    """One stream's scope: its pages, and which of its two non-failure endings
+    it reached.
+
+    A Read has one success outcome and therefore no method to forget. A stream
+    has two — the delivery ran out, or the caller stopped early — and only the
+    stream can tell them apart, so exhaustion is ANNOUNCED and leaving the scope
+    without having announced it is Closed Early. That makes the caller-broke
+    case the default rather than something a call site must remember to report.
+
+    :meth:`exhausted` finishes the stream where exhaustion was discovered rather
+    than deferring it to the scope's own exit, so an observer learns the outcome
+    at the moment it became true. A caller error after that point therefore
+    cannot rewrite it: the scope has nothing left to finish.
+    """
+
+    def __enter__(self) -> SnapshotStreamActivity: ...
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
+    def batch(self) -> StreamBatchActivity:
+        """The scope this stream's next requested page is prepared inside."""
+        ...
+
+    def exhausted(self) -> None:
+        """The delivery ran out, which finishes the stream here."""
+        ...
+
+
 class TransactionAttemptActivity(Protocol):
     """One physical attempt's scope: what runs inside it, and how it ended.
 
@@ -388,6 +464,17 @@ class TransactionAttemptActivity(Protocol):
 
     def write_batch(self, trigger: WriteBatchTrigger, /) -> WriteBatchActivity:
         """Open the Write Batch one flush of this attempt's buffer runs inside."""
+        ...
+
+    def snapshot_stream(
+        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+    ) -> SnapshotStreamActivity:
+        """Open a participating Snapshot Stream under this attempt.
+
+        A stream is a CHILD of the attempt rather than of the pages it runs, so
+        the dependency batch a page flushes out is its ordered sibling under the
+        same attempt.
+        """
         ...
 
     def joined_invocation(self) -> JoinedInvocationActivity:
@@ -483,6 +570,14 @@ class _InertActivity:
     def write_batch(self, trigger: WriteBatchTrigger, /) -> _InertActivity:
         return self
 
+    def snapshot_stream(
+        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+    ) -> _InertActivity:
+        return self
+
+    def batch(self) -> _InertActivity:
+        return self
+
     def joined_invocation(self) -> _InertActivity:
         return self
 
@@ -500,6 +595,8 @@ class _InertActivity:
     def rolled_back(self, trigger: RollbackTrigger, /) -> None: ...
 
     def rollback_failed(self, trigger: RollbackTrigger, rollback_error: Exception, /) -> None: ...
+
+    def exhausted(self) -> None: ...
 
 
 INERT: Final = _InertActivity()
@@ -1028,6 +1125,140 @@ class _LiveWriteBatch(_LiveActivity):
         return _LiveEnforcement(self, call._activity_id if isinstance(call, _LiveActivity) else 0)
 
 
+class _LiveStreamBatch(_LiveActivity):
+    """One observed page: its Database Calls, and its own bracket.
+
+    Built where the page loop decides to run a page and OPENED where the page's
+    own preparation puts it, which for a participating stream is after the
+    force-flush. Construction takes no Activity ID for the same reason an attempt
+    does not: a page whose preparation raised before the batch opened ran no
+    batch, and every activity numbered after it in that root would otherwise sit
+    past a gap nothing explains.
+    """
+
+    __slots__ = ()
+
+    def __enter__(self) -> _LiveStreamBatch:
+        publisher = self._publisher
+        if not publisher.active:
+            return self
+        self._open()
+        publisher.deliver(
+            StreamBatchStarted(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+            )
+        )
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        publisher = self._publisher
+        if not publisher.active:
+            return
+        publisher.deliver(
+            StreamBatchFinished(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                StreamBatchCompleted() if exc is None else StreamBatchFailed(self._propagated(exc)),
+            )
+        )
+
+    def database_call(
+        self, statement: LoweredStatement, kind: DatabaseCallKind, target: ActivityTarget, /
+    ) -> _LiveDatabaseCall:
+        return _LiveDatabaseCall(self._publisher, self, statement, kind, target)
+
+
+class _LiveSnapshotStream(_LiveActivity):
+    """One observed stream: its pages, and the one ending it reached.
+
+    The ending is delivered by whichever of the two routes reaches it first —
+    :meth:`exhausted` where the delivery ran out, the scope's own exit
+    otherwise — and only ever once. That is what lets exhaustion finish at the
+    moment it is discovered while a caller error arriving afterwards finds
+    nothing left to rewrite.
+
+    It holds no page state at all, so what one stream costs is the same whether
+    it delivered one page or a million.
+    """
+
+    __slots__ = ("_batch_size", "_finished", "_interface", "_target")
+
+    _interface: ReadInterface
+
+    def __init__(
+        self,
+        publisher: _Publisher,
+        parent: _LiveActivity | None,
+        target: ActivityTarget,
+        interface: ReadInterface,
+        batch_size: int,
+    ) -> None:
+        super().__init__(publisher, parent)
+        self._target = target.canonical
+        self._interface = interface
+        self._batch_size = batch_size
+        self._finished = False
+
+    def __enter__(self) -> _LiveSnapshotStream:
+        publisher = self._publisher
+        if not publisher.active:
+            return self
+        self._open()
+        publisher.deliver(
+            SnapshotStreamStarted(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                self._target,
+                self._interface,
+                self._batch_size,
+            )
+        )
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        self._finish(StreamClosedEarly() if exc is None else StreamFailed(self._propagated(exc)))
+
+    def batch(self) -> _LiveStreamBatch:
+        return _LiveStreamBatch(self._publisher, self)
+
+    def exhausted(self) -> None:
+        self._finish(StreamExhausted())
+
+    def _finish(self, outcome: SnapshotStreamOutcome) -> None:
+        publisher = self._publisher
+        if self._finished or not publisher.active:
+            return
+        self._finished = True
+        publisher.deliver(
+            SnapshotStreamFinished(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                outcome,
+            )
+        )
+
+
 class _LiveTransactionAttempt(_LiveActivity):
     """One observed physical attempt.
 
@@ -1114,6 +1345,11 @@ class _LiveTransactionAttempt(_LiveActivity):
 
     def write_batch(self, trigger: WriteBatchTrigger, /) -> _LiveWriteBatch:
         return _LiveWriteBatch(self._publisher, self, trigger)
+
+    def snapshot_stream(
+        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+    ) -> _LiveSnapshotStream:
+        return _LiveSnapshotStream(self._publisher, self, target, interface, batch_size)
 
     def joined_invocation(self) -> _LiveJoinedInvocation:
         return _LiveJoinedInvocation(self._publisher, self)
@@ -1318,6 +1554,34 @@ def open_read_root(
     if handler is None:
         return INERT
     return _LiveRead(_Publisher(execution.id, installed, handler), None, target, interface)
+
+
+def open_snapshot_stream_root(
+    installed: InstalledLifecycle | None,
+    *,
+    target: ActivityTarget,
+    interface: ReadInterface,
+    batch_size: int,
+) -> SnapshotStreamActivity:
+    """The Snapshot Stream root activity for one standalone stream, or
+    :data:`INERT`.
+
+    Called at context entry, after the deterministic gate and the page plan the
+    stream is refused by: an invalid target, an invalid query, or an order the
+    continuation cannot compose therefore creates no root and calls no Provider,
+    and a stream nobody entered creates none either. With no Provider installed
+    nothing at all is allocated here, the page size the Started transition would
+    carry included.
+    """
+    if installed is None:
+        return INERT
+    execution = RootExecution(uuid4(), "SNAPSHOT_STREAM")
+    handler = _opened(installed, execution)
+    if handler is None:
+        return INERT
+    return _LiveSnapshotStream(
+        _Publisher(execution.id, installed, handler), None, target, interface, batch_size
+    )
 
 
 def open_transaction_root(
