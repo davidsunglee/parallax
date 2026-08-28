@@ -625,9 +625,11 @@ groups: each page is an eager deep fetch of a bounded root query, so a page cost
 the ordinary `1 + L` — its root statement plus one statement per child level that
 gathered parent keys — and the page loop adds nothing to that ceiling. The root
 statements are **not one repeating text**: the first page's carries no seek
-conjunct, so it differs from every later page's, and two child levels of the same
-relationship differ whenever their pages gathered different numbers of parent
-keys. A flat ordered list of `{sql, binds}` states all of that with no new
+conjunct, so it differs from every later page's; two continuing pages differ from
+each other wherever their coordinates differ in NULLNESS, a null one being sought
+through a null test rather than through a comparison; and two child levels of the
+same relationship differ whenever their pages gathered different numbers of
+parent keys. A flat ordered list of `{sql, binds}` states all of that with no new
 authoring form.
 
 Three properties of that list are graded independently of the SQL text:
@@ -636,8 +638,8 @@ Three properties of that list are graded independently of the SQL text:
   which is `batchSize` — or, under a declared `limit`, whatever of it is still
   undelivered — and the page returns at most that many roots.
 - **The continuation is the previous page's own last root.** A page after the
-  first binds a seek coordinate equal to the Continuation Order coordinate of the
-  root the previous page delivered last. This is what makes a streamed case
+  first binds the Continuation Order coordinates of the root the previous page
+  delivered last — one per term of that order. This is what makes a streamed case
   `query-result-dependent` even when it declares no includes at all (see *Compile
   eligibility*, below).
 - **Exhaustion is proven, not assumed.** A page shorter than the size it
@@ -803,7 +805,7 @@ rather than once over the whole list: the statements partition into the pages'
 own `1 + L` groups, and a group's child levels are keyed by the distinct parent
 keys **that page's** roots gathered, never the whole result's. The partition
 itself is graded beside them — the requested size each root statement binds, the
-Continuation Order coordinate a page after the first seeks from, and whether a
+Continuation Order coordinates a page after the first seeks from, and whether a
 full final page is followed by the empty root statement exhaustion requires — so
 a delivery that reached the same rows through different pages fails the case
 rather than passing on its graph alone.
@@ -2242,7 +2244,7 @@ of `when` + `given`, so only `run` grades it. Two criteria make a case run-only:
   framework-owned observed-version / `in_z` binds, a close whose address is read
   off the milestone a find of its own unit of work observed (*Settling against a
   grouped find*, above), or a streamed read's **keyset seek** — a page after the
-  first binds the Continuation Order coordinate of the root the previous page
+  first binds the Continuation Order coordinates of the root the previous page
   delivered last, so **every** `when.stream` case is run-only, including one
   declaring no includes at all. `given` fixtures are legitimate
   inputs; `then` expectations are never fed back.

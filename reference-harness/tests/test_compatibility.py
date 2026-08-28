@@ -101,6 +101,8 @@ def test_case(case, provider) -> None:
 
 _DEEP_FETCH = "m-snapshot-read-027-streamed-deep-fetch"
 _TERMINAL_PAGE = "m-snapshot-read-028-stream-empty-terminal-page"
+_MIXED_DIRECTIONS = "m-snapshot-read-031-stream-order-mixed-directions"
+_NULLABLE_PLACEMENT = "m-snapshot-read-032-stream-order-nullable-placement"
 
 
 def _damaged(stem: str) -> Case:
@@ -163,4 +165,73 @@ def test_a_continuing_page_that_does_not_seek_is_refused(provider) -> None:
     entries[3]["sql"] = copy.deepcopy(entries[0]["sql"])
 
     with pytest.raises(CaseFailure, match="repeats the FIRST page's root SQL"):
+        run_case(case, provider)
+
+
+def test_a_page_hoisting_the_wrong_leading_coordinate_is_refused(provider) -> None:
+    """The hoisted range is DERIVED from the leading term's own coordinate.
+
+    Its bind repeats a value the remainder binds again, so a golden that got it
+    wrong still selects a plausible row set — and here selects the right one, the
+    remainder being unchanged. What refuses it is that the derivation says which
+    coordinate the range compares against.
+    """
+    case = _damaged(_MIXED_DIRECTIONS)
+    _statements(case)[1]["binds"][0] = False
+
+    with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
+        run_case(case, provider)
+
+
+def test_a_page_binding_the_wrong_tie_coordinate_is_refused(provider) -> None:
+    """Every term of the order supplies its own coordinate, at every tie depth.
+
+    The damaged bind is the second branch's `qty` coordinate — neither the
+    leading term nor the primary key — so an oracle that continued from the last
+    root's KEY alone, as a single-term order allows, would accept it.
+    """
+    case = _damaged(_MIXED_DIRECTIONS)
+    _statements(case)[1]["binds"][3] = 5
+
+    with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
+        run_case(case, provider)
+
+
+def test_a_page_dropping_its_hoisted_range_is_refused(provider) -> None:
+    """The range is redundant by rows and required by contract.
+
+    Removing it leaves a statement that selects exactly the same roots, so every
+    result-level oracle passes; the delivery has simply given up the leading
+    index range a non-nullable leading term is entitled to.
+    """
+    case = _damaged(_MIXED_DIRECTIONS)
+    entry = _statements(case)[1]
+    entry["sql"] = {
+        dialect: sql.replace("where t0.active <= ? and (", "where (")
+        for dialect, sql in entry["sql"].items()
+    }
+    del entry["binds"][0]
+
+    with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
+        run_case(case, provider)
+
+
+def test_a_continuing_page_respelling_its_seek_is_refused(provider) -> None:
+    """Two pages seeking coordinates of the same NULLNESS seek the same way.
+
+    The damaged page reorders one disjunction, which no bind comparison sees: the
+    binds are unchanged, in the same positions, and the statement selects exactly
+    the same rows. Only the text is different, and a delivery whose page
+    statements drift apart is one whose seek is not a function of its order.
+    """
+    case = _damaged(_NULLABLE_PLACEMENT)
+    entry = _statements(case)[2]
+    entry["sql"] = {
+        dialect: sql.replace(
+            "where (t0.sku > ? or t0.sku is null or", "where (t0.sku is null or t0.sku > ? or"
+        )
+        for dialect, sql in entry["sql"].items()
+    }
+
+    with pytest.raises(CaseFailure, match="seeking the same shape of coordinates"):
         run_case(case, provider)

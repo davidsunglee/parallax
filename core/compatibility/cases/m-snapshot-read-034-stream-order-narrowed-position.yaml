@@ -1,0 +1,68 @@
+# A streamed read's Sort Keys are measured against the NARROWED position while
+# its primary key comes from the family root (m-snapshot-read, m-object-query's
+# positional rule, m-inheritance).
+#
+# The read is positioned at the abstract root `Animal` and `narrowTo` moves the
+# result to [Dog], which is the only reason `Dog.barkVolume` is referenceable at
+# all — asked of the unnarrowed root the identical key is
+# `attribute-outside-active-position`. The Continuation Order composed over it
+# spans two positions at once: the narrowed subtype's own Sort Key, then
+# `Animal.id`, because the physical primary key is family-wide and root-owned and
+# a concrete subtype declares none of its own.
+#
+# `barkVolume` is nullable, so the leading term is not hoisted and its branch
+# admits both ranges the descending Nulls Last placement leaves — `t0.bark_volume
+# < ? or t0.bark_volume is null`. The narrowing's own tag guard `t0.kind = ?`
+# binds AFTER the seek it is conjoined beside, which is what a page whose query
+# carries clauses of its own looks like.
+#
+# Pages of 1 over the family's two dogs: {Rex} at barkVolume 7, then {Fido} at 3
+# seeking past (7, 1), then the empty terminal statement seeking past (3, 2) that
+# a full final page costs. Three root statements, no includes, and the delivered
+# graph carries each node's `familyVariant` with no sibling branch's columns.
+model: models/animal.yaml
+tags: [m-snapshot-read, m-object-query, m-inheritance, m-sql, table-per-hierarchy, narrow, stream, streamed-delivery, orderBy, ordering, nullable, familyVariant, graph, materialization, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed read's keyset seek - each continuing root statement binds the Continuation Order coordinates of the root the previous page delivered last, so the emissions depend on a query result even though the read declares no includes"
+when:
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      all: {}
+    narrowTo:
+      - parallax.compatibility.Dog
+    orderBy:
+      - attr: parallax.compatibility.Dog.barkVolume
+        direction: desc
+  stream:
+    batchSize: 1
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
+      binds: [dog, 1]
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where (t0.bark_volume < ? or t0.bark_volume is null or (t0.bark_volume = ? and t0.id > ?)) and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
+      binds: [7, 7, 1, dog, 1]
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where (t0.bark_volume < ? or t0.bark_volume is null or (t0.bark_volume = ? and t0.id > ?)) and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
+      binds: [3, 3, 2, dog, 1]
+  referenceSql: select id, kind, name, owner_id, license_id, bark_volume from animal where kind = 'dog'
+  graph:
+    Animal:
+      - id: 1
+        name: Rex
+        ownerId: 10
+        licenseId: L-100
+        barkVolume: 7
+        familyVariant: Dog
+      - id: 2
+        name: Fido
+        ownerId: 11
+        licenseId: L-101
+        barkVolume: 3
+        familyVariant: Dog
+  roundTrips: 3

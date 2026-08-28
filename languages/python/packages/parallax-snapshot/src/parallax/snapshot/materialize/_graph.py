@@ -49,7 +49,8 @@ universe is the roots it is handed, :func:`root_scoped` narrows a graph to one
 of them by rebuilding the row shell alone — every array shared by reference —
 and everything downstream runs unchanged over the result. :func:`root_members`
 is the other half of advancing through a result: each root's decoded Attributes,
-and the absence that names a root whose own primary key never decoded.
+the members it holds none of, and the absence that names a root whose own
+primary key never decoded.
 """
 
 from __future__ import annotations
@@ -226,6 +227,12 @@ def root_members(graph: SnapshotGraph) -> Iterator[Mapping[AttributeIdentity, ob
     member. A caller advancing through a result reads both facts here: how far
     it got, and whether the root it stopped on has anything to advance FROM.
 
+    A member whose stored value no conforming member could hold is OMITTED from
+    the mapping rather than carried as its absence sentinel: only decoded values
+    are bindable, so a caller advancing by such a member has nothing to continue
+    from and finding out by asking is the same question the ``None`` above
+    answers for the key.
+
     Deliberately lazy and Attribute-keyed. A caller that needs one root's values
     holds one mapping rather than the whole result's, and the identities it is
     keyed by are the ones a member is named by everywhere else — never the
@@ -242,6 +249,7 @@ def root_members(graph: SnapshotGraph) -> Iterator[Mapping[AttributeIdentity, ob
                 {
                     cast("AttributeIdentity", layout.members[position]): values[position]
                     for position in range(layout.attribute_count)
+                    if values[position] is not ABSENT
                 }
             )
 

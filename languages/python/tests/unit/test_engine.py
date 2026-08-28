@@ -7004,15 +7004,16 @@ def test_run_stream_case_refuses_a_milestone_set_read() -> None:
 
 def test_run_stream_case_reports_a_refused_delivery_as_an_engine_error() -> None:
     # The delivery's own refusals reach the caller as the lane's error rather
-    # than as an implementation exception: an authored `orderBy` is one the page
-    # plan cannot yet compose, and it is raised before any statement runs.
+    # than as an implementation exception. A Sort Key naming a member outside the
+    # read's own position is refused by the gate the stream crosses at scope
+    # entry, so it is raised before any statement runs.
     case = _doctored(
         _STREAM_CASE_ID,
         objectQuery={
             **cast("Mapping[str, Any]", _load_case(_STREAM_CASE_ID).document["when"])[
                 "objectQuery"
             ],
-            "orderBy": [{"attr": "parallax.compatibility.Order.qty", "direction": "desc"}],
+            "orderBy": [{"attr": "parallax.compatibility.OrderItem.sku"}],
         },
         stream={"batchSize": 2},
     )

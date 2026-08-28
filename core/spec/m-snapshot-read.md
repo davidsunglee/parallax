@@ -273,8 +273,46 @@ streams in every representation that read has — one delivery mechanism, never 
 format argument.
 
 Roots arrive in the **Continuation Order**: a deterministic total order the
-delivery derives rather than an Object Query clause, which always includes the
-primary key and is therefore total.
+delivery derives rather than an Object Query clause. It is composed the same way
+for every read — the query's authored Sort Keys, in the precedence the query
+declares, then the primary key **ascending** unless a Sort Key already named it.
+Every term is an ordinary Sort Key resolved at the query's own result position
+(`m-object-query`), so an authored one is carried exactly as authored, absent
+direction and Null Placement included, and the appended key is one Attribute
+(`m-metamodel` admits no composite primary key). The key is total, so the
+composed order is total and no two roots tie in it.
+
+A page after the first carries the query's own predicate conjoined with a
+**seek** admitting exactly the roots the Continuation Order places after the one
+the previous page delivered last. The seek is a top-level conjunct rather than a
+term nested inside the predicate, because a leading index range is reached
+through ordinary conjunct pushdown, and it has two parts:
+
+- The **hoisted leading conjunct** — the leading term compared non-strictly
+  against its own coordinate (`>=` ascending, `<=` descending). It is implied by
+  the remainder and carried anyway, because the remainder alone offers nothing to
+  push down: without it a delivery plans as a scan from the head of the index, or
+  as a disjunction that discards index order under the page's own ordering and
+  page size. It is emitted **only for a non-nullable leading term** — where nulls
+  can fall after a non-null coordinate, "after" is two disjoint ranges and no
+  single comparison covers both.
+- The **lexicographic remainder** — one branch per tie depth, disjoined: the
+  leading term strictly after its coordinate, or the leading term at its
+  coordinate and the second strictly after its own, and so on through the last
+  term.
+
+"Strictly after" and "at" are measured in each term's **own** ordering. A
+descending term reverses the comparison. A nullable term's Null Placement decides
+which side its nulls fall on, so under `last` the nulls follow a non-null
+coordinate and under `first` they precede it; a null coordinate is *at* the nulls
+rather than at any value, so what follows it is the non-nulls under `first` and
+**nothing at all** under `last` — a depth that admits nothing contributes no
+branch. Only decoded values are bindable, so a coordinate carries a comparison
+where the term holds a value and a null test where it holds none.
+
+A single-term Continuation Order — the undeclared-`orderBy` case, ordering by the
+primary key alone — needs neither part: one strict comparison already is the
+top-level conjunct the hoist exists to supply.
 
 Delivery is bounded by a **page size** counting root positions. It never bounds
 included relationship rows, and it is a performance dial and nothing else:
