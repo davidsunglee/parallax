@@ -17,6 +17,7 @@ import psycopg
 import pytest
 from psycopg import errors
 from psycopg.rows import TupleRow
+from psycopg.sql import Composable
 from psycopg.types.json import Jsonb
 
 import parallax.postgres
@@ -108,10 +109,13 @@ class _FakeCursor:
 
     Every statement it is handed is appended to the list its connection gave it,
     so a test can ask what the adapter actually sent and in what order — which is
-    the whole observable of a boundary opened at a requested isolation.
+    the whole observable of a boundary opened at a requested isolation. A
+    statement arrives either as the encoded text the port sends or as the
+    composed statement a requested isolation is delimited into, so the list holds
+    both and :func:`_sent` renders either one.
     """
 
-    def __init__(self, error: psycopg.Error | None, executed: list[bytes]) -> None:
+    def __init__(self, error: psycopg.Error | None, executed: list[object]) -> None:
         self._error = error
         self._executed = executed
         self.description: object | None = None
@@ -123,7 +127,7 @@ class _FakeCursor:
     def __exit__(self, *_: object) -> bool:
         return False
 
-    def execute(self, sql: bytes, _binds: object = None) -> None:
+    def execute(self, sql: bytes | Composable, _binds: object = None) -> None:
         self._executed.append(sql)
         if self._error is not None:
             raise self._error
@@ -197,7 +201,7 @@ class _FakeConnection:
         self.adapters = _FakeAdapters()
         self.rollbacks = 0
         self.closed = False
-        self.executed: list[bytes] = []
+        self.executed: list[object] = []
         self.begins = 0
 
     def cursor(self, **_: object) -> _FakeCursor:
@@ -218,6 +222,16 @@ class _FakeConnection:
 
 def _adapter(connection: _FakeConnection) -> PostgresAdapter:
     return PostgresAdapter(cast("psycopg.Connection[TupleRow]", connection))
+
+
+def _sent(connection: _FakeConnection) -> list[str]:
+    """The statements the adapter handed the driver, as the driver would render them."""
+    return [
+        statement.as_string()
+        if isinstance(statement, Composable)
+        else cast("bytes", statement).decode()
+        for statement in connection.executed
+    ]
 
 
 def test_adapter_registers_boundary_value_loaders() -> None:
@@ -407,9 +421,25 @@ def test_a_requested_isolation_is_the_boundarys_first_statement() -> None:
         lambda port: port.execute("select 1", []), isolation="repeatable read"
     )
     assert isinstance(outcome, Committed)
-    assert connection.executed == [
-        b"set transaction isolation level repeatable read",
-        b"select 1",
+    assert _sent(connection) == [
+        "set local transaction_isolation = 'repeatable read'",
+        "select 1",
+    ]
+
+
+def test_a_requested_isolation_reaches_the_database_as_a_value_not_as_sql() -> None:
+    # The level is a public API string, so what a caller spells is not
+    # constrained by anything above this seam. It is delimited as the setting's
+    # VALUE rather than composed into the statement, so a string that would
+    # otherwise append transaction modes the boundary was never asked for — or
+    # end the statement and start another — arrives as one quoted value for
+    # Postgres to refuse.
+    connection = _FakeConnection()
+    _adapter(connection).transaction(
+        lambda _port: None, isolation="serializable, read only'; drop table grade --"
+    )
+    assert _sent(connection) == [
+        "set local transaction_isolation = 'serializable, read only''; drop table grade --'"
     ]
 
 
@@ -418,13 +448,15 @@ def test_a_refused_isolation_reports_a_boundary_that_never_opened() -> None:
     # nothing. The body never runs, the empty transaction is undone here rather
     # than by the caller, and the outcome is the one for a boundary that never
     # opened — nothing to retry, nothing to undo.
-    connection = _FakeConnection(cursor_error=errors.SyntaxError("syntax error at or near"))
+    connection = _FakeConnection(
+        cursor_error=errors.InvalidParameterValue("invalid value for parameter")
+    )
     ran: list[str] = []
     outcome = _adapter(connection).transaction(
         lambda _port: ran.append("body"), isolation="not a level"
     )
     assert isinstance(outcome, BeginFailed)
-    assert _translated(outcome.error).native_code == "42601"
+    assert _translated(outcome.error).native_code == "22023"
     assert ran == []
     assert connection.rollbacks == 1
     assert not connection.closed
@@ -435,12 +467,12 @@ def test_a_connection_that_cannot_undo_a_refused_isolation_is_discarded() -> Non
     # not open as asked. When even that fails, what the connection would run next
     # is unknown, so it is dropped rather than handed back.
     connection = _FakeConnection(
-        cursor_error=errors.SyntaxError("syntax error at or near"),
+        cursor_error=errors.InvalidParameterValue("invalid value for parameter"),
         rollback_error=errors.OperationalError("the connection is closed"),
     )
     outcome = _adapter(connection).transaction(lambda _port: None, isolation="not a level")
     assert isinstance(outcome, BeginFailed)
-    assert _translated(outcome.error).native_code == "42601"
+    assert _translated(outcome.error).native_code == "22023"
     assert connection.closed
 
 

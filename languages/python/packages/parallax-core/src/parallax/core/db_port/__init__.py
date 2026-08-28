@@ -69,10 +69,15 @@ class Committed[T]:
 
 @dataclass(frozen=True, slots=True)
 class BeginFailed:
-    """The transaction never began, so the body never ran.
+    """The boundary never opened as asked, so the body never ran.
 
-    Nothing was attempted and nothing needs undoing, which is what separates this
-    from every other unhappy outcome.
+    No work of the caller's was attempted and nothing of it needs undoing, which
+    is what separates this from every other unhappy outcome. An adapter may have
+    driven its driver as far as a physical transaction and then failed to bring
+    it to the boundary that was asked for — a refused ``isolation``, say; undoing
+    that empty transaction is the adapter's own business and is finished before
+    this outcome is reported, so what a caller holds is a boundary that never
+    opened either way.
     """
 
     error: Exception
