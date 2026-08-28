@@ -1,9 +1,10 @@
-"""What a run of code costs in memory, from four directions at once.
+"""What a run of code costs in memory, from five directions at once.
 
-Four instruments, because an object can appear without any byte reaching the
-allocator, a borrowed graph can be kept without either number moving, and a
-container that existed before the window can grow inside it without becoming a
-survivor at all:
+Five instruments, because an object can appear without any byte reaching the
+allocator, a borrowed graph can be kept without either number moving, a container
+that existed before the window can grow inside it without becoming a survivor at
+all, and a structure built and dropped between two points of a longer sequence is
+gone from every reading taken at the end of it:
 
 **Bytes allocated.** :func:`allocation` grades retention over repeated runs, so a
 byte kept per run cannot hide in the floor, beside the high-water rise after
@@ -32,6 +33,13 @@ borrowed list of rows, and an allocation count cannot see a value the window
 never allocated. What it costs is that the value has to be built inside the
 window, which is what the caller arranges.
 
+**The high-water mark of one region.** :func:`high_water` grades the most a
+marked region of a longer sequence held at once, over what was already alive
+where it opened. Every reading above answers what is still there at a sample
+point, so a structure a sequence builds and releases before reaching one is
+invisible to all of them; this is the reading that prices it, and the only one
+that can say what a step's PEAK was rather than what it left behind.
+
 **What one object holds.** :func:`closure` grades the objects and references one
 object reaches without passing through any of a caller-named BOUNDARY. Where the
 counts above answer what a whole window kept, this answers what one participant
@@ -39,8 +47,9 @@ in it kept, so a caller comparing one structure against the same structure
 somewhere else compares two totals rather than the difference of two sums that
 share most of their terms.
 
-**Warming, which one of them does for itself and one cannot.** :func:`retained`
-warms both its seam and its sampler inside its own call. :func:`live_graph` opens
+**Warming, which two of them do for themselves and one cannot.**
+:func:`retained` warms both its seam and its sampler inside its own call, and
+:func:`high_water` warms its span the same way. :func:`live_graph` opens
 its window before the first run, so a seam that fills a memo on first reach is
 handed to it through :func:`warmed`, which puts those memos in the baseline the
 sample is compared against rather than in the sample.
@@ -93,9 +102,11 @@ __all__ = [
     "Closure",
     "LiveGraph",
     "Seam",
+    "Span",
     "allocation",
     "closure",
     "first_run",
+    "high_water",
     "in_a_child_interpreter",
     "live_graph",
     "retained",
@@ -120,6 +131,17 @@ type Seam = Callable[[Callable[[], None]], None]
 
 Sampling is a parameter rather than a second copy of the sequence, so the bytes
 and the survivors are graded over the same code.
+"""
+
+type Span = Callable[[Callable[[], None], Callable[[], None]], None]
+"""One sequence through the seam, calling ``opened`` where the region being
+measured begins and ``closed`` where it ends.
+
+Two marks rather than :data:`Seam`'s one, because a peak needs a floor and a
+roof: what was already alive where the region opened, and the high-water it
+reached before anything it built was released. The region is a middle of the
+sequence rather than its innermost point, so the sequence keeps running after
+``closed`` and whatever it has to unwind is outside the reading.
 """
 
 
@@ -360,6 +382,40 @@ def retained(seam: Seam) -> int:
         before, _ = tracemalloc.get_traced_memory()
         seam(sample)
     return sampled[1] - before
+
+
+def high_water(span: Span) -> int:
+    """The most ``span``'s marked region held at once, over what was alive when it
+    opened.
+
+    The reading the others cannot take. Every instrument above answers what is
+    still there at a sample point, so a structure a longer sequence builds and
+    releases before reaching one leaves no trace in any of them; this answers how
+    large that structure ever was. What a region left BEHIND is inside the figure
+    too — the roof is measured against the floor rather than against the level the
+    region settled at — so one number covers both what a step peaked at and what
+    it kept.
+
+    The floor is read after a collection, so a region that only reuses structure
+    its caller already built reads near zero rather than reporting the caller's
+    own level. The span is warmed for the reason :func:`retained` warms its seam,
+    and ``tracemalloc`` must already be tracing, as it must be there.
+    """
+    marks: list[int] = []
+
+    def opened() -> None:
+        gc.collect()
+        marks.append(tracemalloc.get_traced_memory()[0])
+        tracemalloc.reset_peak()
+
+    def closed() -> None:
+        marks.append(tracemalloc.get_traced_memory()[1])
+
+    with untraced():
+        for _ in range(WARMUP):
+            span(_unsampled, _unsampled)
+        span(opened, closed)
+    return marks[1] - marks[0]
 
 
 def warmed(seam: Seam) -> Seam:

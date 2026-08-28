@@ -15,7 +15,7 @@ interpreter bump that changed nothing.
 The *shape* of the bound is gated instead, in
 `tests/unit/test_snapshot_stream_retention.py`, which the `cost` class owns and CI
 runs on every change through `just python-check-cost`. That suite states the bound
-as six separate readings. Page graphs do not accumulate: what a delivery retains
+as seven separate readings. Page graphs do not accumulate: what a delivery retains
 at ten times the roots, at a later position of the same delivery, and once
 drained, differs from the baseline by less than one retained root costs. One page
 graph and one published root are alive at a time, counted as objects — one
@@ -35,13 +35,21 @@ from its node state instead; there is one per relationship the include tree name
 whatever the fan-out inside it, which is what makes it fixed. **There is
 no term in the total result size and no term in how far the delivery has got**,
 and both absences are read directly as well as by omission — over every survivor
-whatever defined its type, and over the references those survivors hold, so a
-delivery banking one thing per PAGE fails them even though it adds no object of
-Parallax's own and no object at all past the first. And the two
-exclusions are demonstrated rather than asserted: a caller retaining every root
-reproduces growth proportional to the result, and a participating loop's buffered
-writes cost the same per write at every page size, so the buffer is the dial's
-own multiple.
+whatever defined its type, over the references those survivors hold, and in bytes
+over the survivors and everything untracked they hold — so a delivery banking one
+thing per PAGE fails them whether what grows is objects, references, or the bytes
+inside a container that gains neither. Publishing one root peaks at that root's
+own graph: the high-water of the region between two roots is exactly the same at
+ten times the result and at a later position, grows with the fan-out, and moves
+less across the whole grid of page sizes than one more child of the same root
+moves it, which is what prices the merge layer the census cannot reach.
+
+Two of the bound's three exclusions are demonstrated rather than asserted: a
+caller retaining every root reproduces growth proportional to the result, and a
+participating loop's buffered writes cost the same per write at every page size,
+so the buffer is the dial's own multiple. The third — what the database and its
+driver hold — has no executable witness in that suite, for the same reason it has
+none here and under the same heading below.
 
 ## The reading
 

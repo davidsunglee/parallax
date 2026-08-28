@@ -49,21 +49,23 @@ out:
 | **aggregation** (group-by / having) | `m-agg` aggregate path | folded into `read-mix.yaml` |
 
 A **streamed-delivery** workload is the deep-fetch family's paging counterpart,
-and it exists for the same reason: a declared round-trip count catches a
-regression a wall-time number would reward. A delivery of `N` roots at page size
-`B` over `L` relationship levels costs `floor(N / B) + 1` root statements and
-`ceil(N / B) x L` child statements, and each workload's `expectRoundTrips` is that
-arithmetic evaluated at its own page size. What the family exports is that
-declared count and the page statements behind it — the shape a conforming
-delivery of the result must produce — rather than a delivery: a fixture here
-carries golden SQL and no Object Query, so the reference harness replays the list
-and counts it, and it is a language target running the same result through its
-OWN delivery that has something to diverge. Such a target that stopped paging,
-that re-fetched per root, or that dropped the terminal statement a full final page
-needs misses the declared count however fast it got there. The family is a set of
-workloads over ONE result at several page sizes rather than one workload, because
-what it makes comparable is the trade: the same rows for fewer round trips and a
-larger per-page working set.
+and it declares the same kind of thing: the round-trip arithmetic a paged delivery
+of one result owes. A delivery of `N` roots at page size `B` over `L` relationship
+levels costs `floor(N / B) + 1` root statements and `ceil(N / B) x L` child
+statements, and each workload's `expectRoundTrips` is that arithmetic evaluated at
+its own page size.
+
+What the family exports is that count and the page statements behind it — the
+shape a conforming delivery of the result must produce. It exports no delivery: a
+fixture here carries golden SQL and no Object Query, so nothing in it names the
+read an implementation issues, and the reference harness replays the authored list
+and counts that. The declared count therefore meets a run only where the run
+reports its own — the adapter's `benchmark` command carries each workload's
+`roundTrips` beside its `expectRoundTrips` — and how a workload's statements
+become the read an implementation issues is the implementation's, because no field
+of the fixture says. The family is a set of workloads over ONE result at several
+page sizes rather than one workload, because what it makes comparable is the
+trade: the same rows for fewer round trips and a larger per-page working set.
 
 Each workload declares its golden SQL as an ordered list of `{sql, binds}`
 **statement entries** (`statements`, per dialect, exactly like a compatibility
