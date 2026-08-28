@@ -41,7 +41,7 @@ from _support.sweep_goldens import (
     write_golden_statements,
 )
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
-from parallax.core import storage_layout
+from parallax.core import inheritance, storage_layout
 from parallax.core.dialect import dialect_for
 from parallax.core.metamodel import Metamodel, entity_by_name
 
@@ -503,10 +503,10 @@ def _resolves_a_materializing_write(
 
     Such a write is authored immediately after the find that resolves it and over
     that find's own target, in the predicate-selected object form rather than the
-    keyed buffer a list spells. A READLESS predicate write — the unversioned,
-    non-temporal exception — resolves nothing, and the corpus authors no find
-    before one; were it to, the step would report an entry this refuses to expect,
-    failing the pointer list loudly rather than leaving its rows unasserted.
+    keyed buffer a list spells — and its target MATERIALIZES
+    (:func:`_materializes_when_written`). Adjacency and target alone would exclude
+    too much: a READLESS predicate write resolves nothing, so an ordinary find
+    before one publishes its rows like any other read and owns its entry.
 
     "That find's own target" is decided by MODEL IDENTITY, because a case spells
     an Entity either way it may (`m-case-format` *How a case spells an Entity*):
@@ -521,8 +521,31 @@ def _resolves_a_materializing_write(
     target = cast("dict[str, Any]", write).get("target")
     if not isinstance(target, dict):
         return False
-    return _names_one_entity(
-        model, cast("dict[str, Any]", target).get("entity"), steps[index]["objectQuery"]["target"]
+    entity = cast("dict[str, Any]", target).get("entity")
+    if not _names_one_entity(model, entity, steps[index]["objectQuery"]["target"]):
+        return False
+    return _materializes_when_written(model, cast("str", entity))
+
+
+def _materializes_when_written(model: Metamodel, entity_name: str) -> bool:
+    """Whether a predicate write against ``entity_name`` must resolve its rows
+    before it writes them.
+
+    A VERSIONED or TEMPORAL target materializes; an unversioned, non-temporal
+    `update` or `delete` is the sole readless exception (`m-case-format`
+    *Materializing cases*). Both profiles are owned by the family ROOT, so a
+    subtype spelling is answered from its root rather than from local declarations
+    that carry neither.
+    """
+    entity = entity_by_name(model, entity_name)
+    if entity is None:
+        return False
+    position = inheritance.view(model).entity(entity.identity)
+    root = None if position is None else model.entity(position.root)
+    if root is None:
+        return False
+    return bool(root.declared_as_of_axes) or any(
+        attribute.optimistic_locking for attribute in root.declared_attributes
     )
 
 
@@ -590,8 +613,15 @@ def _grade_step_rows(
 # ORDER property: its two streamed steps each publish three roots across two pages,
 # so a swap inside one entry leaves the multiset intact and only a positional
 # comparison catches it.
+# `m-batch-write-005` carries the READLESS profile: Wallet is Account without the
+# optimistic-lock version and without a temporal axis, so its predicate delete
+# resolves nothing. The case authors the write before its verifying find, which
+# is the adjacency the exclusion keys on read backwards; reversing the two steps
+# builds the adjacency the corpus never authors, where the profile is the only
+# thing separating a published read from a write's internal resolve.
 _STEP_ROWS_ORACLE_CASE: Final[str] = "m-value-object-066"
 _STREAMED_STEP_ROWS_ORACLE_CASE: Final[str] = "m-unit-work-030"
+_READLESS_WRITE_ORACLE_CASE: Final[str] = "m-batch-write-005"
 
 
 def _step_rows_envelope(model: Metamodel, steps: list[dict[str, Any]]) -> dict[str, Any]:
@@ -678,6 +708,23 @@ def test_grade_step_rows_pairs_a_materializing_write_by_entity_rather_than_spell
     assert respelled[1]["objectQuery"]["target"] != canonical
 
     _grade_step_rows(case, model, respelled, _step_rows_envelope(model, steps))
+
+
+def test_grade_step_rows_expects_an_entry_for_a_find_before_a_readless_write() -> None:
+    # Adjacency alone does not make a read a write's internal resolve: an
+    # unversioned, non-temporal `update`/`delete` is readless (`m-case-format`
+    # *Materializing cases*), so a find before one is an ordinary read that
+    # publishes its rows and owns a `stepRows` entry like every other. Production
+    # runs that find on its own and reports it; a grader excluding it would reject
+    # a conforming run on the pointer list.
+    case, model, steps = _step_rows_oracle_case(_READLESS_WRITE_ORACLE_CASE)
+    write, find = steps
+    adjacent = [deepcopy(find), deepcopy(write)]
+    envelope = {
+        "observations": {"stepRows": [{"at": "/scenario/0", "rows": deepcopy(find["expectRows"])}]}
+    }
+
+    _grade_step_rows(case, model, adjacent, envelope)
 
 
 def test_grade_step_rows_accepts_a_delivery_that_published_its_roots_in_order() -> None:
