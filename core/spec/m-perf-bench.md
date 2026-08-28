@@ -48,6 +48,16 @@ out:
 | **milestone workloads** (insert / update / terminate chains) | `m-txtime-write` milestone-chaining write cost | `milestone-write.yaml` |
 | **aggregation** (group-by / having) | `m-agg` aggregate path | folded into `read-mix.yaml` |
 
+**What a fixture observes, in all five families.** A workload declares golden SQL
+rather than an Object Query, so a run of it executes the AUTHORED statements. What
+lands in the report is therefore the cost of the WORKLOAD against the database —
+those statements, that dataset, and the round trips between them — rather than the
+cost of a target's own path to them. That is what makes one number mean the same
+thing in every language: the read a run issues is the fixture's rather than the
+runtime's. It is equally what a benchmark does not observe, and the reason the
+behavioral guarantees live in the compatibility corpus and in each target's own
+gates instead.
+
 A **streamed-delivery** workload is the deep-fetch family's paging counterpart,
 and it declares the same kind of thing: the round-trip arithmetic a paged delivery
 of one result owes. A delivery of `N` roots at page size `B` over `L` relationship
@@ -108,9 +118,11 @@ For each workload the harness measures and reports:
 - **wall-time percentiles** — `p50` and `p95` over the workload's iterations (a
   single mean hides tail latency; percentiles are the comparable metric);
 - **database round trips** — the count of statements the run issued, reported by
-  the implementation beside the workload's declared count, so the round-trip
-  discipline `m-deep-fetch` / `m-unit-work` guarantee is carried in the report
-  rather than left to the wall-clock figures alone;
+  the implementation beside the workload's declared count, so the statement cost
+  of a workload sits in the report next to its timings rather than being left to
+  the wall-clock figures alone. It is a reported figure and not a check: what
+  makes `m-deep-fetch` / `m-unit-work` round-trip discipline binding is the
+  compatibility corpus's golden statements;
 - **memory** — **peak** and **steady** resident set over the run (cache/index
   footprint is a first-class cost for a cache-centric framework).
 
@@ -161,12 +173,15 @@ gameable*:
 - **Round trips are declared, and a run reports its own.** A workload's
   `expectRoundTrips` is the count a conforming run of it owes; the adapter's
   `benchmark` command carries the count the run issued beside it, and
-  `roundTripsOk` is that comparison. So an implementation that "got faster" by
-  quietly breaking the N+1 or cache-hit guarantee reports the higher count and
-  fails the comparison even where wall-time improved. What the comparison is not
-  is an independent observation of the implementation: no field of a workload
-  names the read to issue, so which statements a workload becomes — and the
-  counting of them — are the implementation's own.
+  `roundTripsOk` is that comparison. What that buys is a legible trade: a
+  wall-time figure read beside a statement count says whether a number moved by
+  doing the work faster or by issuing different work, which a timing column alone
+  cannot. What it is not is an observation of the implementation — no field of a
+  workload names the read to issue, so which statements a workload becomes, and
+  the count reported for them, are the implementation's own. The round-trip
+  DISCIPLINE is a conformance property, settled against golden statements in the
+  compatibility corpus and in each target's own gates, rather than one a
+  benchmark decides.
 - **Percentiles, not means.** Reporting `p50`/`p95` makes tail latency visible, so
   an implementation cannot hide a slow path behind a fast average.
 - **Memory is reported alongside time.** A space/time trade is visible rather than
