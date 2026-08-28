@@ -179,6 +179,11 @@ class RecordingPort:
         write_affected: int = 1,
     ) -> None:
         self.ops: list[tuple[object, ...]] = []
+        # One entry per boundary this port was asked to open, carrying exactly
+        # what the caller requested — `None` where it asked for nothing. Kept
+        # beside `ops` rather than inside it so an isolation observation cannot
+        # move a `("begin",)` entry every other suite already asserts on.
+        self.isolations: list[str | None] = []
         self.rows = list(rows)
         self.row_queue = [list(result) for result in row_queue]
         self.write_affected = write_affected
@@ -211,7 +216,10 @@ class RecordingPort:
             return self.write_affected_queue.pop(0)
         return self.write_affected
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
+        self.isolations.append(isolation)
         self.ops.append(("begin",))
         if self.begin_faults:
             return BeginFailed(self.begin_faults.pop(0))
@@ -310,5 +318,7 @@ class NoIoPort:
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         raise AssertionError("no write expected — the guard runs first")
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         return body_outcome(cast("DbPort", self), body)

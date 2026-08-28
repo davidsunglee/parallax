@@ -175,7 +175,7 @@ class _CannedPort:
         raise AssertionError("a read recipe issues no DML")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a read recipe opens no transaction")
 

@@ -145,7 +145,9 @@ class _FakePort:
         self.ops.append("write")
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         self.boundaries += 1
         return body_outcome(self, body)
 

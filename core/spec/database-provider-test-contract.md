@@ -54,6 +54,13 @@ For every supported adapter, the smoke suite covers:
 - a transaction callback that commits on success and reports `Committed(value)`
 - distinct `BeginFailed`, callback- and commit-triggered `RolledBack`, and
   callback- and commit-triggered `RollbackFailed` boundary outcomes
+- a boundary opened at a **requested isolation**, which the callback observes as
+  the level the database reports for its own transaction, and a level the
+  database refuses, which reports `BeginFailed` and runs no callback. What is
+  proved is the passthrough and the refusal — that the requested value reached
+  the database and that a boundary which could not open as asked opened at no
+  other level — never what any level means, which `m-db-port` deliberately does
+  not define
 - a bytes write round trip through the dialect bind seam
 - affected-row semantics for matched and unmatched DML
 - feasible transient classification through the portable database error surface

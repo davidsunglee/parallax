@@ -879,6 +879,121 @@ def test_paging_reproduces_the_whole_result_in_the_order_the_first_page_declares
 
 
 # --------------------------------------------------------------------------- #
+# Stability: what a write to an ordered-by member does to a delivery.          #
+# --------------------------------------------------------------------------- #
+# The dataset names every root `name-0` / `name-1` / `name-2`, so `name-2` is
+# ahead of every root a delivery has already passed and `name-` is behind every
+# root it has not reached yet — one write of each is all the two mutable-key
+# rows of the stability table need.
+_AT_THE_FRONT = "name-0"
+_AHEAD_OF_EVERY_ROOT = "name-2"
+_BEHIND_EVERY_ROOT = "name-"
+
+type _MutableRow = dict[AttributeIdentity, object]
+type _Writer = Callable[[Sequence[_MutableRow], Sequence[_MutableRow]], None]
+
+
+def _delivered_under_writes(
+    order_by: tuple[OrderKey, ...], *, batch_size: int, write: _Writer
+) -> list[object]:
+    """The root ids a delivery yields while ``write`` mutates the dataset.
+
+    The page loop with the one ordering the production loop has: a page's cursor
+    is the last root's values AS DELIVERED, and the write that follows reaches
+    the database before the next page's own statement runs. That gap is the
+    whole subject — a cursor naming a coordinate the row has since left.
+    """
+    rows = [dict(row) for row in _dataset()]
+    plan = _planned(ORDERS, "Order", order_by=order_by)
+    ranked = _ranked(plan.first(limit=1).order_by)
+    identity = _identity(ORDERS, _ORDER_ID)
+    delivered: list[object] = []
+    cursor: _Row | None = None
+    for _page in range(len(rows) * 2 + 2):
+        node = (
+            plan.first(limit=batch_size) if cursor is None else plan.after(cursor, limit=batch_size)
+        )
+        page = sorted((row for row in rows if _matches(node.predicate, row)), key=ranked)[
+            :batch_size
+        ]
+        delivered.extend(row[identity] for row in page)
+        if len(page) < batch_size:
+            return delivered
+        cursor = dict(page[-1])
+        write(page, rows)
+    raise AssertionError("the delivery did not end")
+
+
+def _moves_a_delivered_root_ahead(
+    page: Sequence[_MutableRow], _rows: Sequence[_MutableRow]
+) -> None:
+    """The loop's own write: every root it is handed at the front of the order
+    is moved to the back of it, which is the shape of a loop marking what it
+    processed in the column it asked to be ordered by."""
+    for row in page:
+        if row[_identity(ORDERS, _ORDER_NAME)] == _AT_THE_FRONT:
+            row[_identity(ORDERS, _ORDER_NAME)] = _AHEAD_OF_EVERY_ROOT
+
+
+def _moves_an_undelivered_root_behind(
+    _page: Sequence[_MutableRow], rows: Sequence[_MutableRow]
+) -> None:
+    """A writer the delivery is not the source of: it moves the LAST root of the
+    order behind every root, which no page size has reached by the time the
+    first page ends."""
+    for row in rows:
+        if row[_identity(ORDERS, _ORDER_ID)] == 9:
+            row[_identity(ORDERS, _ORDER_NAME)] = _BEHIND_EVERY_ROOT
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 3], ids=lambda size: f"batch-{size}")
+def test_a_root_whose_ordered_by_member_moves_ahead_of_the_cursor_is_delivered_twice(
+    batch_size: int,
+) -> None:
+    # The duplicate row of the stability table, and the one a writing loop
+    # reaches by itself: the cursor names the coordinate the root stood at when
+    # it was delivered, so a root moved past that coordinate satisfies the next
+    # page's seek all over again. Nothing de-duplicates across a delivery.
+    delivered = _delivered_under_writes(
+        (OrderKey(attr=_ORDER_NAME),), batch_size=batch_size, write=_moves_a_delivered_root_ahead
+    )
+    assert len(delivered) > len(set(delivered))
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 3], ids=lambda size: f"batch-{size}")
+def test_a_root_whose_ordered_by_member_moves_behind_the_cursor_is_skipped(
+    batch_size: int,
+) -> None:
+    # The skip row, which needs a root the delivery has not reached yet: moved
+    # behind the position the delivery already passed, it satisfies no later
+    # page's seek and nothing ever sees it.
+    delivered = _delivered_under_writes(
+        (OrderKey(attr=_ORDER_NAME),),
+        batch_size=batch_size,
+        write=_moves_an_undelivered_root_behind,
+    )
+    assert 9 not in delivered
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 3], ids=lambda size: f"batch-{size}")
+@pytest.mark.parametrize(
+    "write",
+    [_moves_a_delivered_root_ahead, _moves_an_undelivered_root_behind],
+    ids=["moved-ahead", "moved-behind"],
+)
+def test_the_undeclared_order_is_immune_to_both_because_no_write_moves_a_key(
+    write: _Writer, batch_size: int
+) -> None:
+    # The immunity the same two writers meet against the default order: with no
+    # authored `orderBy` the Continuation Order is the primary key alone, and a
+    # keyed write ADDRESSES a row by that key rather than changing it — so
+    # neither writer can move a root across the position, and every root arrives
+    # exactly once at every page size.
+    delivered = _delivered_under_writes((), batch_size=batch_size, write=write)
+    assert delivered == list(range(1, len(_dataset()) + 1))
+
+
+# --------------------------------------------------------------------------- #
 # The model rule the appended term rests on.                                   #
 # --------------------------------------------------------------------------- #
 _TWO_LOCAL_KEYS = _records.Metamodel(

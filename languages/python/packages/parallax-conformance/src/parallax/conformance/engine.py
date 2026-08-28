@@ -731,9 +731,9 @@ class _DeliveredCalls(DbPort):
         return self._inner.execute_write(sql, binds)
 
     def transaction[T](  # pragma: no cover - a standalone delivery opens no boundary
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
-        return self._inner.transaction(body)
+        return self._inner.transaction(body, isolation=isolation)
 
 
 _STREAM_ERRORS = (*_READ_ERRORS, ContinuationError, handle.SnapshotStreamStateError)
@@ -1157,12 +1157,14 @@ class _AbortingPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         return self._inner.execute_write(sql, binds)
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         def aborting(conn: DbPort) -> T:
             body(conn)
             raise _RollbackStep
 
-        return self._inner.transaction(aborting)
+        return self._inner.transaction(aborting, isolation=isolation)
 
 
 def _write_port(port: DbPort, *, rollback: bool) -> DbPort:

@@ -121,7 +121,7 @@ class FakeDbPort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -403,7 +403,9 @@ class FakeWritePort:
         self.writes.append((sql, list(binds)))
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         outcome = body_outcome(self, body)
         if isinstance(outcome, Committed):
             self.commits += 1
@@ -1238,7 +1240,9 @@ class _ScriptedPort:
         self.writes.append((sql, tuple(binds)))
         return self._write_affected.pop(0) if self._write_affected else 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
     def close(self) -> None:
@@ -1577,7 +1581,7 @@ class _CancellableBlockingConnection:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -1657,7 +1661,7 @@ class _TerminableBlockingConnection:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -1764,7 +1768,7 @@ class _TerminableOnlyViaUnderlyingSeamConnection:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -1922,7 +1926,7 @@ class _CapabilityLessConnection:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -2027,7 +2031,7 @@ class _AllRungsRaiseConnection:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         self.calls.append("transaction")
         return body_outcome(self, body)
@@ -4954,7 +4958,7 @@ class QueueDbPort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
 
@@ -6719,7 +6723,9 @@ class _QueueWritePort(QueueDbPort):
         self.writes.append((sql, list(binds)))
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
 

@@ -264,11 +264,19 @@ class _ResolvedOptions:
     branch :meth:`Database.transact` injects into
     :func:`~parallax.core.auto_retry.run_with_retry` (`m-opt-lock`
     "Retry contract").
+
+    ``isolation`` is the one option with no resolved default of its own: it
+    stays whatever the call named, because ``None`` here is a request for
+    nothing rather than a stand-in for a value Parallax would supply. Every
+    physical attempt of this boundary asks the port for the same level, so a
+    retry re-opens at the isolation the invocation asked for rather than at the
+    database's default.
     """
 
     retries: int
     concurrency: Concurrency
     retry_optimistic_conflicts: bool
+    isolation: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -585,6 +593,7 @@ class Database:
         retries: int | None = None,
         concurrency: Concurrency | None = None,
         retry_optimistic_conflicts: bool | None = None,
+        isolation: str | None = None,
     ) -> T:
         """Run ``fn(tx)`` in a transaction, returning its value only after commit.
 
@@ -597,7 +606,13 @@ class Database:
         to the shared read lock, so one transaction mixes both (`m-unit-work`
         "Strategy selection"). ``retries`` bounds re-executions rather than total
         attempts, and a negative bound is a deterministic refusal raised before
-        any transaction is opened or observed. A call
+        any transaction is opened or observed. ``isolation`` is the one option
+        Parallax carries rather than interprets: an explicit value reaches
+        :meth:`~parallax.core.db_port.DbPort.transaction` unchanged, in the
+        database's own vocabulary, and omitting it asks for nothing and leaves
+        whatever the adapter or its driver defaults to. No level's behavior is
+        promised here — only that the request arrived — and every physical
+        attempt of one invocation opens at the same requested level. A call
         while a transaction is active on the current thread joins it, but only
         through the exact ``Database`` that opened the boundary — any other
         handle raises :class:`TransactionOwnershipError` before every later
@@ -642,6 +657,7 @@ class Database:
                 retries=retries,
                 concurrency=concurrency,
                 retry_optimistic_conflicts=retry_optimistic_conflicts,
+                isolation=isolation,
             )
             # The join path returns immediately and ignores these arguments in
             # favor of the active transaction's own (m-unit-work); rollback-only
@@ -666,6 +682,7 @@ class Database:
             retry_optimistic_conflicts=(
                 retry_optimistic_conflicts if retry_optimistic_conflicts is not None else False
             ),
+            isolation=isolation,
         )
         # The last deterministic refusal, and it belongs here rather than at the
         # retry loop's own entry: the loop runs inside the root opened below, so
@@ -741,7 +758,9 @@ class Database:
                             subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
                         )
 
-                    return _attempted(self._port.transaction(in_txn), physical)
+                    return _attempted(
+                        self._port.transaction(in_txn, isolation=options.isolation), physical
+                    )
 
             try:
                 return run_with_retry(
@@ -828,13 +847,22 @@ def _check_join_options(
     retries: int | None,
     concurrency: Concurrency | None,
     retry_optimistic_conflicts: bool | None,
+    isolation: str | None,
 ) -> None:
-    """Refuse a joining call's explicit option that conflicts with the boundary."""
+    """Refuse a joining call's explicit option that conflicts with the boundary.
+
+    ``isolation`` joins on the same terms as the other three, and the sentinel
+    carries one more meaning there: a boundary opened without one is active at
+    ``None``, so a joining call NAMING a level conflicts with it. That is the
+    honest answer rather than a strict one — the transaction is already open, and
+    an isolation is only a property of a boundary at the moment it opens.
+    """
     _refuse_conflict("retries", retries, active.retries)
     _refuse_conflict("concurrency", concurrency, active.concurrency)
     _refuse_conflict(
         "retry_optimistic_conflicts", retry_optimistic_conflicts, active.retry_optimistic_conflicts
     )
+    _refuse_conflict("isolation", isolation, active.isolation)
 
 
 def _refuse_conflict(name: str, explicit: object | None, active_value: object) -> None:

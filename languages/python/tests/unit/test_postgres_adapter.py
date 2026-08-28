@@ -104,10 +104,16 @@ def test_translating_driver_errors_passes_a_non_driver_exception() -> None:
 
 
 class _FakeCursor:
-    """A psycopg-cursor stand-in whose ``execute`` raises a preset driver error."""
+    """A psycopg-cursor stand-in whose ``execute`` raises a preset driver error.
 
-    def __init__(self, error: psycopg.Error | None) -> None:
+    Every statement it is handed is appended to the list its connection gave it,
+    so a test can ask what the adapter actually sent and in what order — which is
+    the whole observable of a boundary opened at a requested isolation.
+    """
+
+    def __init__(self, error: psycopg.Error | None, executed: list[bytes]) -> None:
         self._error = error
+        self._executed = executed
         self.description: object | None = None
         self.rowcount = 0
 
@@ -117,7 +123,8 @@ class _FakeCursor:
     def __exit__(self, *_: object) -> bool:
         return False
 
-    def execute(self, _sql: bytes, _binds: object) -> None:
+    def execute(self, sql: bytes, _binds: object = None) -> None:
+        self._executed.append(sql)
         if self._error is not None:
             raise self._error
 
@@ -190,11 +197,14 @@ class _FakeConnection:
         self.adapters = _FakeAdapters()
         self.rollbacks = 0
         self.closed = False
+        self.executed: list[bytes] = []
+        self.begins = 0
 
     def cursor(self, **_: object) -> _FakeCursor:
-        return _FakeCursor(self.cursor_error)
+        return _FakeCursor(self.cursor_error, self.executed)
 
     def transaction(self) -> _FakeTxn:
+        self.begins += 1
         return _FakeTxn(begin_error=self.begin_error, commit_error=self.commit_error)
 
     def rollback(self) -> None:
@@ -254,7 +264,7 @@ def test_fold_document_reads_rejects_invalid_projection_metadata_and_row_width()
 
 class _JsonNullCursor(_FakeCursor):
     def __init__(self) -> None:
-        super().__init__(None)
+        super().__init__(None, [])
         self.description = object()
 
     def fetchall(self) -> list[object]:
@@ -377,6 +387,61 @@ def test_transaction_reports_a_boundary_that_never_began() -> None:
     assert _translated(outcome.error).category is None
     assert ran == []
     assert connection.rollbacks == 0
+
+
+def test_a_boundary_asked_for_no_isolation_sends_no_level_statement() -> None:
+    # The default path is the whole default path: absence asks for nothing, so
+    # the connection keeps whatever it already defaults to and the boundary costs
+    # exactly the statements the body ran.
+    connection = _FakeConnection()
+    assert _adapter(connection).transaction(lambda _port: "kept") == Committed("kept")
+    assert connection.executed == []
+
+
+def test_a_requested_isolation_is_the_boundarys_first_statement() -> None:
+    # Postgres accepts a level only as the transaction's first statement, which
+    # is what makes this part of opening the boundary rather than of the work
+    # inside it. The level is the caller's own spelling, sent unexamined.
+    connection = _FakeConnection()
+    outcome = _adapter(connection).transaction(
+        lambda port: port.execute("select 1", []), isolation="repeatable read"
+    )
+    assert isinstance(outcome, Committed)
+    assert connection.executed == [
+        b"set transaction isolation level repeatable read",
+        b"select 1",
+    ]
+
+
+def test_a_refused_isolation_reports_a_boundary_that_never_opened() -> None:
+    # A level the database will not take leaves a transaction that began and did
+    # nothing. The body never runs, the empty transaction is undone here rather
+    # than by the caller, and the outcome is the one for a boundary that never
+    # opened — nothing to retry, nothing to undo.
+    connection = _FakeConnection(cursor_error=errors.SyntaxError("syntax error at or near"))
+    ran: list[str] = []
+    outcome = _adapter(connection).transaction(
+        lambda _port: ran.append("body"), isolation="not a level"
+    )
+    assert isinstance(outcome, BeginFailed)
+    assert _translated(outcome.error).native_code == "42601"
+    assert ran == []
+    assert connection.rollbacks == 1
+    assert not connection.closed
+
+
+def test_a_connection_that_cannot_undo_a_refused_isolation_is_discarded() -> None:
+    # The undo is the last thing this adapter can do about a boundary it could
+    # not open as asked. When even that fails, what the connection would run next
+    # is unknown, so it is dropped rather than handed back.
+    connection = _FakeConnection(
+        cursor_error=errors.SyntaxError("syntax error at or near"),
+        rollback_error=errors.OperationalError("the connection is closed"),
+    )
+    outcome = _adapter(connection).transaction(lambda _port: None, isolation="not a level")
+    assert isinstance(outcome, BeginFailed)
+    assert _translated(outcome.error).native_code == "42601"
+    assert connection.closed
 
 
 def test_transaction_reports_a_commit_time_driver_error_as_rolled_back() -> None:

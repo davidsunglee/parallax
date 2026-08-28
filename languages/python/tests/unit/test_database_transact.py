@@ -136,6 +136,10 @@ _CONFLICTING_JOINS: list[tuple[str, Callable[[Database], object]]] = [
         "retry_optimistic_conflicts",
         lambda db: db.transact(_must_not_run, retry_optimistic_conflicts=True),
     ),
+    # The boundary these join opened with no isolation at all, so NAMING one
+    # conflicts: an already-open transaction cannot be re-opened at a level, and
+    # the sentinel says the same thing here it says for the other three.
+    ("isolation", lambda db: db.transact(_must_not_run, isolation="serializable")),
 ]
 
 
@@ -154,6 +158,65 @@ def test_join_with_a_conflicting_explicit_option_raises(
     # The conflict is refused before the joined closure runs, and refusing it
     # does not doom the outer transaction (nothing entered the joined frame).
     assert db.transact(outer) == "survived"
+
+
+# --------------------------------------------------------------------------- #
+# Isolation: carried to the port, never interpreted.                          #
+# --------------------------------------------------------------------------- #
+def test_an_omitted_isolation_asks_the_port_for_nothing() -> None:
+    # The sentinel is a request for nothing rather than a value Parallax would
+    # supply, so the boundary opens at whatever the adapter already defaults to.
+    port = RecordingPort()
+    account_db(port).transact(lambda _tx: "ok")
+    assert port.isolations == [None]
+
+
+@pytest.mark.parametrize(
+    "level", ["serializable", "repeatable read", "whatever this adapter takes"]
+)
+def test_an_explicit_isolation_reaches_the_port_unchanged(level: str) -> None:
+    # An unvalidated `str`: Parallax defines no portable vocabulary of levels and
+    # grades no level's behavior, so the value the caller named is the value the
+    # port is handed — including one no database would accept, which the adapter
+    # and its database settle rather than this handle.
+    port = RecordingPort()
+    account_db(port).transact(lambda _tx: "ok", isolation=level)
+    assert port.isolations == [level]
+
+
+def test_every_retry_of_one_invocation_opens_at_the_requested_isolation() -> None:
+    # The level belongs to the invocation rather than to one physical attempt:
+    # a re-executed callback that silently ran at the database's default would
+    # answer differently from the attempt before it.
+    port = RecordingPort()
+    port.txn_faults = [deadlock(), deadlock()]
+    assert account_db(port).transact(lambda _tx: "ok", isolation="serializable") == "ok"
+    assert port.isolations == ["serializable"] * 3
+
+
+def test_a_join_omitting_or_repeating_the_active_isolation_is_accepted() -> None:
+    port = RecordingPort()
+    db = account_db(port)
+
+    def outer(_tx: Transaction) -> str:
+        assert db.transact(lambda _inner: "omitted") == "omitted"
+        return db.transact(lambda _inner: "repeated", isolation="serializable")
+
+    assert db.transact(outer, isolation="serializable") == "repeated"
+    # Two joins, and neither opened a second boundary to re-negotiate.
+    assert port.isolations == ["serializable"]
+
+
+def test_a_join_naming_a_different_isolation_raises_before_its_callback_runs() -> None:
+    port = RecordingPort()
+    db = account_db(port)
+
+    def outer(_tx: Transaction) -> str:
+        with pytest.raises(TransactionOptionConflictError, match="isolation"):
+            db.transact(_must_not_run, isolation="repeatable read")
+        return "survived"
+
+    assert db.transact(outer, isolation="serializable") == "survived"
 
 
 def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() -> None:
@@ -435,7 +498,9 @@ class _RollbackFailingPort(RecordingPort):
             category=None, native_code=None, message="the connection is lost"
         )
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         self.ops.append(("begin",))
         outcome = body_outcome(self, body)
         if isinstance(outcome, RolledBack):

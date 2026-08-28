@@ -205,8 +205,8 @@ class _ExecutedPort:
         self.executed.append((sql, list(binds)))
         return self._inner.execute_write(sql, binds)
 
-    def transaction(self, body: Callable[[Any], Any]) -> Any:
-        return self._inner.transaction(body)
+    def transaction(self, body: Callable[[Any], Any], *, isolation: str | None = None) -> Any:
+        return self._inner.transaction(body, isolation=isolation)
 
 
 # A page's root statement carries the page's own bound; a child level inside one
@@ -522,13 +522,13 @@ class _ReadCapturePort:
     def execute_write(self, sql: str, binds: Any) -> int:
         return self._inner.execute_write(sql, binds)
 
-    def transaction(self, body: Any) -> Any:
+    def transaction(self, body: Any, *, isolation: str | None = None) -> Any:
         reads = self.reads
 
         def wrapped(conn: Any) -> Any:
             return body(_ReadCapturePort(conn, reads=reads))
 
-        return self._inner.transaction(wrapped)
+        return self._inner.transaction(wrapped, isolation=isolation)
 
 
 def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] | None]:

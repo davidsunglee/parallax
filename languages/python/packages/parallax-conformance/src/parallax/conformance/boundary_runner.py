@@ -299,7 +299,9 @@ class FaultInjectingPort:
             raise translated_fault(self._fault)
         return self._inner.execute_write(sql, binds)
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         inner = self
 
         def wrapped(conn: DbPort) -> T:
@@ -309,7 +311,7 @@ class FaultInjectingPort:
                 )
             )
 
-        return self._inner.transaction(wrapped)
+        return self._inner.transaction(wrapped, isolation=isolation)
 
 
 def expected_attempts(

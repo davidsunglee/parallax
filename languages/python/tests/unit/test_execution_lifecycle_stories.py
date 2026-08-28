@@ -42,7 +42,9 @@ class _AccountPort:
         self.writes.append(sql)
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
 

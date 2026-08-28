@@ -356,6 +356,59 @@ Three divergences, and they apply identically to every representation.
   band and as a refusal where it refuses them; what follows it is the end of the
   delivery either way.
 
+### Stability under concurrent writing
+
+A delivery is stable **per page**, and that is the whole of what it promises.
+Each page is an ordinary read taking its own view of the data, and nothing
+between two pages holds the roots a later one will reach — so a root that
+changed after the page that would have delivered it was read is a change the
+delivery never sees. A unit of work open around the delivery does not widen
+this by itself: what a boundary adds is whatever the DATABASE's own isolation
+adds, and at an ordinary per-statement default that is nothing, leaving a
+participating delivery exactly as skewed as a standalone one. A shared row lock
+closes no part of it either — it holds roots already read and says nothing about
+roots not yet reached, and locking every root of an unbounded delivery is a
+different problem. A caller who needs more asks the database for it; this
+contract states per-page stability and grades no isolation's behavior.
+
+What per-page stability admits is stated against the delivery's **position** —
+the Continuation Order coordinate the last delivered root stood at, which is
+what the next page seeks from:
+
+| Concurrent change | Effect on the delivery |
+|---|---|
+| a root inserted behind the position | never delivered — it did not exist when the delivery passed there |
+| a root inserted ahead of the position | delivered |
+| a root deleted ahead of the position | never delivered |
+| a root moved from ahead of the position to behind it | skipped entirely |
+| a root moved from behind the position to ahead of it | delivered twice |
+
+**The last two require a Continuation Order term a write can move, so they are
+reachable only where the query authored one.** With no authored `orderBy` the
+Continuation Order is the primary key alone, and no write moves a root's primary
+key — a keyed write addresses a row by that key rather than changing it — so
+nothing can cross the position, and neither a skip nor a duplicate is possible
+at all. The hazard is a property of what the query ordered by, not of streaming.
+
+**The concurrent writer may be the reader.** A delivery consumed by a loop that
+writes the member its query ordered by moves its own roots across its own
+position, which is the two rows above with one caller on both sides of them. The
+loop is under the same rule everything else is, and the same escape: order by
+nothing, and the order is the primary key no write moves.
+
+**Nothing de-duplicates across a delivery.** Recognizing a root already
+delivered means retaining every delivered root's identity, which is `O(N)` in
+the result — the whole-result retention a streamed delivery exists to remove —
+and it would still repair no skip, because a skipped root is one nothing ever
+saw.
+
+**Delivery is per attempt.** A boundary that re-executes its closure after a
+retriable failure re-executes what the closure did, and a root already delivered
+cannot be recalled: the re-execution opens a **fresh** delivery, which starts
+from the beginning and delivers those roots again. Nothing is buffered until
+commit. An effect a consumer performs per root therefore owes exactly the
+retry-safety every other effect performed inside such a closure owes.
+
 ## Round trips
 
 Materialization is `m-deep-fetch`'s contract observed through the graph: **at
