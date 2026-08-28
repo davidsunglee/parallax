@@ -3022,6 +3022,31 @@ class _ContinuationTerm:
     nullable: bool
 
 
+def _document_resident_columns(case: Case, entity: Entity) -> set[str]:
+    return {member.column for member in _document_layout_members(case, entity)[1]}
+
+
+def _read_document_resident_columns(case: Case, query: dict[str, Any]) -> set[str]:
+    """Every column a Table *query* reads carries inside a document instead.
+
+    Residence belongs to a Table's own layout, so an abstract position holds none
+    of its own: a table-per-concrete-subtype root is TABLELESS, and a member every
+    branch's document carries is resident in nothing that root can be asked
+    about. The question is therefore asked of each concrete Table the read
+    resolves over as well as of the position it is read at.
+    """
+    columns = _document_resident_columns(case, case.model.entity(query["target"]))
+    position = _abstract_family_position(case, query)
+    if position is None:
+        return columns
+    return columns.union(
+        *(
+            _document_resident_columns(case, case.model.entity(concrete))
+            for concrete in _read_effective_set(case, position.family, position.target)
+        )
+    )
+
+
 def _continuation_order(case: Case, query: dict[str, Any], root: Entity) -> list[_ContinuationTerm]:
     """The Continuation Order *query* is delivered in (`m-snapshot-read`).
 
@@ -3036,13 +3061,12 @@ def _continuation_order(case: Case, query: dict[str, Any], root: Entity) -> list
     """
     terms: list[_ContinuationTerm] = []
     names_the_key = False
+    resident = _read_document_resident_columns(case, query)
     for key in query.get("orderBy", []):
         class_name, _, name = key["attr"].rpartition(".")
         entity = case.model.entity(class_name)
         attribute = entity.attribute_by_name(name)
-        if attribute["column"] in {
-            member.column for member in _document_layout_members(case, entity)[1]
-        }:
+        if attribute["column"] in resident | _document_resident_columns(case, entity):
             raise CaseFailure(
                 f"{case.path.name}: the Continuation Order names the document-resident member "
                 f"{key['attr']}, whose every extraction binds a Document Path this oracle "

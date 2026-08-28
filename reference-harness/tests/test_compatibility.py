@@ -317,3 +317,21 @@ def test_a_document_resident_sort_key_is_refused_rather_than_mis_derived() -> No
 
     with pytest.raises(CaseFailure, match="document-resident member"):
         _continuation_order(case, query, entity)
+
+
+def test_a_document_resident_sort_key_at_a_TABLELESS_position_is_refused() -> None:
+    """Residence belongs to a Table, and an abstract position holds none of its own.
+
+    The read is at a table-per-concrete-subtype root: every concrete branch keeps
+    `title` inside its own document, while the root itself has no Table to be
+    asked. Asking only the position the Sort Key is resolved at answers that the
+    member has an ordinary Column, and the order derived from that grades a
+    delivery against coordinates no page ever binds alone.
+    """
+    case = _damaged("m-inheritance-136-tpcs-union-vo-projection")
+    query = case.object_query
+    entity = case.model.entity(query["target"])
+
+    assert entity.table == ""
+    with pytest.raises(CaseFailure, match="document-resident member"):
+        _continuation_order(case, query, entity)
