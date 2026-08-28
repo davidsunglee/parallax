@@ -334,7 +334,12 @@ to pin the `1 + L` ceiling independently of whether observation is installed.
 ## What the suite pins down
 
 Snapshot cases are **read**-shape deep-fetch cases (`m-case-format`): golden
-statements, the assembled `then.graph`, and the declared `then.roundTrips`. The
+statements, the assembled `then.graph`, and the declared `then.roundTrips`. A
+**streamed** case is the same shape carrying `when.stream`, so the page
+partition its statements spell out — the requested size, the seek each later
+page continues from, and the statement a full final page costs — is graded
+beside the delivered graph, and a **batch-size pair** grades the invariance the
+page size promises. The
 graph fixture is a tree, so the diamond's shared node appears as equal values at
 both positions, and diamond fixtures stay **projection-neutral** — every path to
 a shared row fetches the identical attribute set, so no graph expectation

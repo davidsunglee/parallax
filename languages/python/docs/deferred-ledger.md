@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-84**.
+Entry numbering is continuous and never reused. The next new number is **D-85**.
 
 ## Entries
 
@@ -781,6 +781,44 @@ prose.
 - **D-76** → closed by the decision it asked for. An invalid scenario `mutate` `set` is a **case-authoring failure**: `core/spec/m-case-format.md` states it in the register the bare write row already uses, and the corpus's own model-aware validation (`reference_harness.schema_validate._validate_scenario_edit`, run by `just core-check-schemas`) refuses such a case before either executor sees it. Undeclarability is the design rather than a gap — an edit refusal is deliberately not an `expectError` member — so what the entry called a divergence is now one rule with one enforcement point, and the Python lane's own verdict (`engine._judged_assignments`) is a restatement rather than the portability mechanism.
 - **D-71** → fixed. `_row_codec._assignment_matches_original` compares both sides whole and presence-preserving — with the nested-`many` exception, which has no absence to preserve and reads as the empty collection on both sides — as `python.md`'s *Provenance comparison* paragraph and `docs/adr/0003` state.
 - **D-73** → fixed. A Wire read publishes what one materialization carries — the members the stored document held, plus and minus what `m-snapshot-read` fixes at each — so both representations observe one value; `core/spec/m-snapshot-read.md` *What a materialized value carries* states the read contract and `python.md` §4 the published node.
+
+### D-84 — A streamed run reports no emissions, because a Snapshot Stream publishes no Database Call activity
+
+*Medium — the conformance envelope a streamed case gets back is one observation
+short of what the contract states, and nothing but the corpus runner's own
+execution covers the gap.* Relates to `parallax.conformance.engine.run_stream_case`,
+`parallax.conformance.engine._DeliveredCalls`, `parallax.snapshot.handle._stream`.
+
+**What.** `core/spec/m-conformance-adapter.md` *Streamed reads* says a streamed
+run reports its `emissions` off the Database Calls the delivery publishes, and
+never off the database port — a port carries the driver's own statement text
+rather than the lowered statement a Database Call borrows, and recovering one
+from the other reports a statement nobody ran (pinned by
+`tests/unit/test_lifecycle_observation.py::test_no_conformance_module_recovers_a_statement_from_driver_text`).
+A Snapshot Stream publishes no such activity: its pages run through the executor
+with an inert Database Call scope, so `LifecycleObservation` records nothing for
+one. `run_stream_case` therefore reports an EMPTY `emissions` list, and the one
+number the run envelope still owes — `observations.roundTrips`, which the
+adapter schema requires — is counted at the port by `_DeliveredCalls`, which
+reads no statement at all.
+
+The statements a streamed case authors are still graded twice against a real
+database: the reference harness executes every authored page itself and derives
+the page partition from the result (`core-check` plus the compatibility sweep),
+and `tests/compatibility/test_run_sweep.py` compares what the delivery executed
+at its own port seam against the goldens translated OUTWARD through
+`Dialect.to_driver_sql`, never recovered inward. What is missing is the envelope
+observation, which is what a second language target would be held to.
+
+**Why it is deferred rather than fixed.** The repair is the Snapshot Stream's own
+Execution Lifecycle producer: the Root Execution, the Stream Batch per page, and
+the real Database Call scope in place of the inert one. That is a core contract
+(`core/spec/m-execution-lifecycle.md` states what a Stream Batch spans and when
+it completes) with no producer anywhere yet, and it is owned in full by
+[COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory).
+Once a delivery publishes those events, `run_stream_case` reads its emissions and
+round trips off them like every other lane, `_DeliveredCalls` is deleted, and the
+run sweep's own port seam goes with it.
 
 ## History
 

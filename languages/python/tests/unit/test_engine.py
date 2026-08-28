@@ -6970,3 +6970,53 @@ def test_run_scenario_case_access_step_graph_keeps_an_all_to_one_terminal_null()
 
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert graph["Order"] == [None]
+
+
+# --------------------------------------------------------------------------- #
+# Streamed delivery (m-case-format "Streamed reads"): the three inputs the      #
+# streamed run lane refuses before or during the delivery.                      #
+# --------------------------------------------------------------------------- #
+def _doctored(case_id: str, **members: Any) -> case_format.Case:
+    """*case_id*'s case with its `when` members replaced — a document no schema
+    admits, reaching the engine entry point the way a mis-authored corpus would."""
+    case = _load_case(case_id)
+    document = dict(case.document)
+    document["when"] = {**cast("Mapping[str, Any]", document["when"]), **members}
+    return dataclasses.replace(case, document=document)
+
+
+_STREAM_CASE_ID: Final[str] = "m-snapshot-read-029"
+
+
+def test_run_stream_case_refuses_a_page_size_that_is_not_a_positive_int() -> None:
+    case = _doctored(_STREAM_CASE_ID, stream={"batchSize": 0})
+    with pytest.raises(engine.EngineError, match="positive integer"):
+        engine.run_stream_case(case, "postgres", FakeDbPort([]))
+
+
+def test_run_stream_case_refuses_a_milestone_set_read() -> None:
+    # A milestone set is not ordered by the root's own key, so it has no keyset
+    # continuation to page by — refused before a page is planned.
+    case = _doctored("m-snapshot-read-013", stream={"batchSize": 2})
+    with pytest.raises(engine.EngineError, match="milestone AXIS"):
+        engine.run_stream_case(case, "postgres", FakeDbPort([]))
+
+
+def test_run_stream_case_reports_a_refused_delivery_as_an_engine_error() -> None:
+    # The delivery's own refusals reach the caller as the lane's error rather
+    # than as an implementation exception: an authored `orderBy` is one the page
+    # plan cannot yet compose, and it is raised before any statement runs.
+    case = _doctored(
+        _STREAM_CASE_ID,
+        objectQuery={
+            **cast("Mapping[str, Any]", _load_case(_STREAM_CASE_ID).document["when"])[
+                "objectQuery"
+            ],
+            "orderBy": [{"attr": "parallax.compatibility.Order.qty", "direction": "desc"}],
+        },
+        stream={"batchSize": 2},
+    )
+    port = FakeDbPort([])
+    with pytest.raises(engine.EngineError):
+        engine.run_stream_case(case, "postgres", port)
+    assert port.executed == []

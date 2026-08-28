@@ -576,8 +576,8 @@ class Case:
 
         Holds exactly one action member per shape (``objectQuery`` | ``writeSequence``
         | ``scenario`` | ``coherence`` | ``concurrency`` | ``boundary`` | ``attempts``
-        | ``write``) plus the context members ``uow`` / ``at`` / ``observedTxStart`` /
-        ``observedValidStart`` / ``equivalentEncodings``.
+        | ``write``) plus the context members ``uow`` / ``stream`` / ``at`` /
+        ``observedTxStart`` / ``observedValidStart`` / ``equivalentEncodings``.
         """
         return self.raw.get("when", {})
 
@@ -651,6 +651,27 @@ class Case:
     def object_query(self) -> dict[str, Any]:
         """The canonical Object Query a read or rejected case carries."""
         return self.when["objectQuery"]
+
+    @property
+    def is_streamed(self) -> bool:
+        """True for a read case delivered as a Snapshot Stream (``when.stream``).
+
+        The member is PRESCRIPTIVE (`m-case-format` *Streamed reads*): its
+        presence states the read is delivered one root at a time over keyset-paged
+        root statements, so the whole `then.statements` list is the pages'
+        ``1 + L`` groups concatenated rather than one read's levels.
+        """
+        return "stream" in self.when
+
+    @property
+    def batch_size(self) -> int:
+        """The page size a streamed read requests, in ROOT positions.
+
+        Required wherever ``when.stream`` is present, so this raises rather than
+        defaulting: a missing page size makes the whole page partition
+        underivable, and no default could stand in for one the case never named.
+        """
+        return int(self.when["stream"]["batchSize"])
 
     @property
     def is_write_sequence(self) -> bool:

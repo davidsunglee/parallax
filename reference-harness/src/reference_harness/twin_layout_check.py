@@ -14,41 +14,21 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from reference_harness.corpus_yaml import read_corpus_yaml
-from reference_harness.dep_graph_check import MODULE_SLUG, DepGraphFailure, parse_catalog
+from reference_harness.case_twins import (
+    logical_case,
+    mapping_document,
+    module_and_body,
+    module_ids,
+    primary_module,
+    yaml_paths,
+)
+from reference_harness.dep_graph_check import MODULE_SLUG
 
 _ARM = r"columns|document"
 _MODEL_RE = re.compile(rf"^(?P<proof>.+)-layout-twin-(?P<arm>{_ARM})\.ya?ml$")
 _CASE_TWIN_RE = re.compile(rf"^(?P<prefix>.+)-layout-twin-(?P<arm>{_ARM})\.ya?ml$")
-_CASE_BODY_RE = re.compile(r"^(?P<number>[0-9]{3})-(?P<proof>.+)$")
 _MODULE_TAG_RE = re.compile(rf"^{MODULE_SLUG}$")
-_TOP_LEVEL_PHYSICAL_KEYS = frozenset({"statements", "referenceSql", "tableState", "execution"})
-_STEP_STATEMENT_PATHS = frozenset(
-    {
-        ("when", "scenario", "[]"),
-        ("when", "coherence", "[]"),
-        ("when", "attempts", "[]"),
-        ("when", "concurrency", "rounds", "[]", "A"),
-        ("when", "concurrency", "rounds", "[]", "B"),
-    }
-)
 _ARMS = ("columns", "document")
-
-
-def _yaml_paths(directory: Path) -> list[Path]:
-    return sorted({*directory.glob("*.yaml"), *directory.glob("*.yml")})
-
-
-def _mapping(path: Path, kind: str, errors: list[str]) -> dict[str, Any] | None:
-    try:
-        document = read_corpus_yaml(path)
-    except Exception as exc:
-        errors.append(f"{path.name}: cannot parse {kind}: {exc}")
-        return None
-    if not isinstance(document, dict):
-        errors.append(f"{path.name}: {kind} is not a mapping")
-        return None
-    return document
 
 
 def _entity_declarations(document: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -122,7 +102,6 @@ def _pairs(
             continue
         groups = match.groupdict()
         arm = groups.pop("arm")
-        groups.pop("number", None)
         key = tuple(groups[name] for name in sorted(groups))
         candidates.append((key, arm, path))
     return _collect_pairs(candidates, kind, errors)
@@ -150,18 +129,8 @@ def _collect_pairs(
 
 def _descriptor_pairs(compatibility_root: Path, errors: list[str]) -> dict[str, dict[str, Path]]:
     models = compatibility_root / "models"
-    raw = _pairs(_yaml_paths(models), _MODEL_RE, "descriptor", errors)
+    raw = _pairs(yaml_paths(models), _MODEL_RE, "descriptor", errors)
     return {key[0]: members for key, members in raw.items()}
-
-
-def _module_ids(compatibility_root: Path, errors: list[str]) -> frozenset[str]:
-    modules_path = compatibility_root.parent / "spec" / "modules.md"
-    try:
-        markdown = modules_path.read_text(encoding="utf-8")
-        return frozenset(parse_catalog(markdown))
-    except (OSError, DepGraphFailure) as exc:
-        errors.append(f"cannot read the canonical module catalog {modules_path}: {exc}")
-        return frozenset()
 
 
 def _case_pairs(
@@ -172,16 +141,7 @@ def _case_pairs(
         twin = _CASE_TWIN_RE.match(path.name)
         if twin is None:
             continue
-        prefix = twin.group("prefix")
-        parsed: tuple[str, str] | None = None
-        for module in sorted(modules, key=len, reverse=True):
-            module_prefix = f"{module}-"
-            if not prefix.startswith(module_prefix):
-                continue
-            body = _CASE_BODY_RE.match(prefix.removeprefix(module_prefix))
-            if body is not None:
-                parsed = (module, body.group("proof"))
-                break
+        parsed = module_and_body(twin.group("prefix"), modules)
         if parsed is None:
             errors.append(
                 f"{path.name}: twin case name must begin with a catalog module and "
@@ -196,16 +156,6 @@ def _case_pairs(
     }
 
 
-def _primary_module(document: Mapping[str, Any]) -> str | None:
-    tags = document.get("tags")
-    if not isinstance(tags, list):
-        return None
-    return next(
-        (tag for tag in tags if isinstance(tag, str) and _MODULE_TAG_RE.fullmatch(tag) is not None),
-        None,
-    )
-
-
 def _normalize_model_reference(value: Any) -> Any:
     if not isinstance(value, str):
         return value
@@ -216,33 +166,18 @@ def _normalize_model_reference(value: Any) -> Any:
     return str(path.with_name(f"{match.group('proof')}-layout-twin-<arm>.yaml"))
 
 
-def _is_physical_case_member(path: tuple[str, ...], key: str) -> bool:
-    if not path:
-        return key == "tags"
-    if path == ("given",):
-        return key == "apply"
-    if path == ("then",):
-        return key in _TOP_LEVEL_PHYSICAL_KEYS
-    if path == ("when", "scenario", "[]"):
-        return key in {"statements", "referenceSql"}
-    return key == "statements" and path in _STEP_STATEMENT_PATHS
+def _is_module_tag(tag: str) -> bool:
+    return _MODULE_TAG_RE.fullmatch(tag) is not None
 
 
-def _logical_case(value: Any, *, path: tuple[str, ...] = ()) -> Any:
-    if isinstance(value, list):
-        return [_logical_case(item, path=(*path, "[]")) for item in value]
-    if not isinstance(value, Mapping):
-        return value
-    normalized: dict[str, Any] = {}
-    for key, item in value.items():
-        if _is_physical_case_member(path, key):
-            continue
-        normalized[key] = (
-            _normalize_model_reference(item)
-            if not path and key == "model"
-            else _logical_case(item, path=(*path, key))
-        )
-    return normalized
+def _logical_case(document: Mapping[str, Any]) -> Any:
+    """A layout twin's case document reduced to its layout-INVARIANT behavior.
+
+    The two arms name different descriptor files by construction, so the model
+    reference is normalized to the shared proof rather than dropped: an arm
+    referencing another proof's descriptor must still fail.
+    """
+    return logical_case(document, rewrite=_normalize_model_reference)
 
 
 def twin_layout_errors(compatibility_root: Path) -> list[str]:
@@ -259,7 +194,7 @@ def twin_layout_errors(compatibility_root: Path) -> list[str]:
             continue
         for arm in _ARMS:
             path = members[arm]
-            document = _mapping(path, "model descriptor", errors)
+            document = mapping_document(path, "model descriptor", errors)
             if document is None:
                 continue
             descriptor_documents[(proof, arm)] = document
@@ -278,7 +213,7 @@ def twin_layout_errors(compatibility_root: Path) -> list[str]:
             if not fixture_path.is_file():
                 errors.append(f"descriptor twin {proof!r} is missing fixture {fixture_path.name}")
                 continue
-            fixture = _mapping(fixture_path, "fixture", errors)
+            fixture = mapping_document(fixture_path, "fixture", errors)
             if fixture is not None:
                 fixture_documents[arm] = fixture
         if all(arm in fixture_documents for arm in _ARMS):
@@ -286,8 +221,8 @@ def twin_layout_errors(compatibility_root: Path) -> list[str]:
                 errors.append(f"fixture twin {proof!r} does not author equal logical rows")
 
     cases = compatibility_root / "cases"
-    modules = _module_ids(compatibility_root, errors)
-    case_pairs = _case_pairs(_yaml_paths(cases), modules, errors)
+    modules = module_ids(compatibility_root, errors)
+    case_pairs = _case_pairs(yaml_paths(cases), modules, errors)
     used_descriptors: set[str] = set()
     for key, members in case_pairs.items():
         if any(arm not in members for arm in _ARMS):
@@ -296,20 +231,20 @@ def twin_layout_errors(compatibility_root: Path) -> list[str]:
         model_proofs: dict[str, str] = {}
         for arm in _ARMS:
             path = members[arm]
-            case = _mapping(path, "compatibility case", errors)
+            case = mapping_document(path, "compatibility case", errors)
             if case is None:
                 continue
             documents[arm] = case
-            primary_module = _primary_module(case)
-            if primary_module is not None and primary_module not in modules:
+            module_tag = primary_module(case, _is_module_tag)
+            if module_tag is not None and module_tag not in modules:
                 errors.append(
-                    f"{path.name}: first module tag {primary_module!r} is not in the "
+                    f"{path.name}: first module tag {module_tag!r} is not in the "
                     "canonical module catalog"
                 )
-            elif primary_module != key[0]:
+            elif module_tag != key[0]:
                 errors.append(
                     f"{path.name}: filename module {key[0]!r} does not match first "
-                    f"module tag {primary_module!r}"
+                    f"module tag {module_tag!r}"
                 )
             model = case.get("model")
             model_name = Path(model).name if isinstance(model, str) else ""

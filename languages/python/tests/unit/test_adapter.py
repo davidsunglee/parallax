@@ -825,6 +825,47 @@ def test_run_case_graph_observation_omits_classification_when_every_position_con
     assert json.loads(json.dumps(envelope)) == envelope
 
 
+_STREAM_CASE = (
+    case_format.default_cases_dir() / "m-snapshot-read-029-page-invariance-batch-size-twin-2.yaml"
+)
+
+
+def _order(identifier: int, name: str) -> dict[str, object]:
+    return {
+        "id": identifier,
+        "name": name,
+        "sku": "A-100",
+        "qty": 5,
+        "price": decimal.Decimal("10.50"),
+        "active": True,
+        "ordered_on": dt.date(2024, 1, 5),
+    }
+
+
+def test_run_case_streamed_observation_reports_the_delivered_roots() -> None:
+    # `when.stream` routes ahead of the result member, through `run_stream_case`
+    # and the shipped streamed read — three pages at `batchSize: 2` over four
+    # roots, the third returning nothing because a full final page proves no
+    # exhaustion. The envelope carries the delivered graph and the round trips
+    # the delivery cost; its `emissions` are EMPTY, because a Snapshot Stream
+    # publishes no Database Call activity for an engine to read statements off.
+    port = _QueuePort(
+        [
+            [_order(1, "Ada"), _order(2, "Linus")],
+            [_order(3, "ada"), _order(42, "Grace")],
+            [],
+        ]
+    )
+    envelope = adapter.run_case(_STREAM_CASE, "postgres", port)
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    assert envelope["emissions"] == []
+    assert envelope["observations"]["roundTrips"] == 3
+    assert [root["id"] for root in envelope["observations"]["graph"]["Order"]] == [1, 2, 3, 42]
+    assert "storedDataIssues" not in envelope["observations"]
+    assert json.loads(json.dumps(envelope)) == envelope
+
+
 def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> None:
     # `then.graphs` (a milestone-set snapshot read) routes through
     # `run_graphs_case`; the envelope's `observations["graphs"]` carries the
