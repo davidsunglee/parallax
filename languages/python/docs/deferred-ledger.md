@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-85**.
+Entry numbering is continuous and never reused. The next new number is **D-86**.
 
 ## Entries
 
@@ -752,6 +752,49 @@ The entry exists so that a later pass reading the ratio in the report finds the
 decomposition, the two real repairs, and the reason the obvious third one is
 forbidden, rather than rediscovering all three.
 
+### D-85 — A streamed delivery's cross-language obligations are graded only by Python unit tests, because no corpus case shape can state them
+
+*Medium — three portable contracts a second language target would be held to
+none of, all blocked behind one case-format change.* Relates to
+`core/spec/m-case-format.md` *Streamed reads*, `core/spec/m-snapshot-read.md`
+*Stability under concurrent writing*, `tests/unit/test_transaction_streams.py`,
+`tests/unit/test_continuation.py`.
+
+**What.** `when.stream` is a `read`-shape context member admitted only beside
+`then.graph`, and a scenario step has no delivery member at all, so nothing in
+the corpus can say *this step is streamed* or place any other step between two
+pages of one delivery. Three obligations follow the corpus's own rule — the
+compatibility corpus is the primary behavioral verification — and none of them
+can be authored:
+
+- **A streamed root's evidence licenses a later write.** Claim scope is derived
+  structurally from evidence data rather than from the value it travelled on, so
+  which delivery a root arrived through must not change the write it licenses.
+  This needs a streamed scenario READ step for a keyed write step to settle
+  against.
+- **A Wire-streamed value and a Typed read of one row coalesce onto one claim.**
+  This needs the first change AND a representation the case can name, which
+  `when.stream` deliberately does not carry and no corpus model — none being
+  class-backed — could drive both halves of.
+- **The stability table.** `m-snapshot-read` states five per-position effects of
+  a concurrent write, plus the caller-as-writer case and attempt-local delivery.
+  Grading any of them needs a write to land BETWEEN two pages of one delivery,
+  which no case shape sequences: `given.apply` runs once, before the lane's first
+  golden statement.
+
+All three are graded in Python meanwhile — the first two in
+`tests/unit/test_transaction_streams.py`, the stability pair in
+`tests/unit/test_continuation.py`'s mutating page loop, which contrasts an
+authored `orderBy` against the primary-key order that is immune to it.
+
+**Why it is deferred rather than fixed.** The repair is a corpus-case shape
+change to `m-case-format` — a cross-language normative contract — and the
+decision protocol reserves that for the user. It was raised during
+[COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory)
+Phase 4 with the options laid out and is open pending that answer; the ticket's
+own structure outline carries the analysis. This entry exists so the gap outlives
+the ticket if the answer is to accept the Python grading.
+
 ## Forwarding pointers
 
 Removed entries whose number a live document still cites. One line each; drop a
@@ -785,10 +828,12 @@ prose.
 
 ## History
 
-Per-ticket files under `.humanlayer/tasks/` hold the full text of entries this
-file no longer carries, each named for the ticket that closed them. Consult them
-when a commit message or document cites a D-number this file does not hold:
+Per-ticket files under `.humanlayer/tasks/` hold the full text of every entry
+removed from the list above, each named for the ticket that closed it. Consult
+them when a D-number this file carries only as a forwarding line — or does not
+carry at all — needs the entry it stood for:
 
 - `.humanlayer/tasks/cor-3-build-python-slice/05-deferred-ledger.md` — D-1 … D-37.
 - `.humanlayer/tasks/cor-47-build-python-declarations/09-deferred-ledger.md` — D-36 … D-48.
 - `.humanlayer/tasks/cor-85-typed-and-wire-apis/19-deferred-ledger.md` — D-71, D-73.
+- `.humanlayer/tasks/cor-83-stream-deep-fetch-reads-at-fixed-memory/08-deferred-ledger.md` — D-84.

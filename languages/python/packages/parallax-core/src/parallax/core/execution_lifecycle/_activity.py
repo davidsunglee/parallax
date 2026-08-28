@@ -8,6 +8,12 @@ rather than of any call site's discipline. A caller supplies only an outcome tha
 carries data it alone holds, such as the rows a query call returned; the failure
 path is the scope's own business.
 
+A Snapshot Stream is the one scope whose Finished may come before its exit. A
+delivery that runs out of roots learns so inside the body, and WHEN exhaustion
+was discovered is what its case asserts, so the outcome is emitted where it is
+learned and the exit finds the activity already finished. Balance is unchanged —
+one Finished per Started, whatever ends it first.
+
 Delivery is the publisher's job rather than the activity's, so quarantine and
 last-resort reporting are written once instead of once per activity kind, and an
 activity stays small enough to be obviously correct.
@@ -1241,6 +1247,11 @@ class _LiveSnapshotStream(_LiveActivity):
         return _LiveStreamBatch(self._publisher, self)
 
     def exhausted(self) -> None:
+        """Finish the stream here, at the point exhaustion was discovered.
+
+        The scope's own exit then has nothing left to emit, so an early close of
+        an already-exhausted delivery is not a second outcome.
+        """
         self._finish(StreamExhausted())
 
     def _finish(self, outcome: SnapshotStreamOutcome) -> None:
