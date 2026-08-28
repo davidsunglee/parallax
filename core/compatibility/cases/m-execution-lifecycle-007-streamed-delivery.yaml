@@ -1,11 +1,12 @@
 # Streamed delivery (m-execution-lifecycle): a Snapshot Stream is a Root
 # Execution of its own, and each page it reads is a Stream Batch under it.
 #
-# The seventh root kind reaches this module's oracle. `kind: snapshot-stream` is
-# what separates this case from its six siblings — one opens `read` and five open
-# `transaction-invocation` — and the Started transition is the only one in the
-# algebra carrying a page size, which is what makes its Stream Batch children
-# countable against a result the events never size.
+# The third root kind reaches this module's oracle, and it is the last of the
+# three. `kind: snapshot-stream` is what separates this case from its six
+# siblings — one opens `read` and five open `transaction-invocation` — and the
+# Started transition is the only one in the algebra carrying a page size, which
+# is what makes its Stream Batch children countable against a result the events
+# never size.
 #
 # Two pages over three orders at `batchSize: 2`, with one include level, so the
 # tree has every relation the module states about a stream. Activity 1 is the
@@ -15,13 +16,14 @@
 # even though a page runs the same executor an eager deep fetch runs.
 #
 # What the sequence pins down is the batch BOUNDARY. Page 1's batch finishes
-# (sequence 7) before page 2's opens (sequence 8), and the roots page 1 delivered
-# were published in between — outside every batch, under the stream itself —
-# because a batch completes once the page's converted result is ready rather than
-# once the caller is done with it. That is why the event count is proportional to
-# PAGES: three roots and two pages emit the same ten events three roots and two
-# pages would emit at any result size, plus the two Database Call pairs each page
-# owes.
+# (sequence 7) before page 2's opens (sequence 8), so no batch spans another and
+# none of them spans the caller consuming the roots it delivered: a batch
+# completes once the page's converted result is ready rather than once the caller
+# is done with it. Delivering a root to the caller emits no event of its own, so
+# that consumption is nowhere in the sequence — which is exactly why the sequence
+# is proportional to PAGES rather than to roots: three roots and two pages emit
+# the same six stream and batch events three roots and two pages would emit at
+# any result size, plus the two Database Call pairs each page owes.
 #
 # The stream finishes `exhausted` at the moment exhaustion was discovered: page 2
 # asked for two roots and got one, which proves no more exist without the extra
