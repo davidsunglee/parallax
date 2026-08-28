@@ -121,6 +121,15 @@ def test_a_boundary_opens_at_the_requested_isolation(provisioner: Any) -> None:
     assert provisioner.port.transaction(body) == Committed(None)
     assert observed == ["serializable", "read committed"]
 
+    # The value is delimited rather than composed into the statement, so a
+    # string carrying further transaction modes is one value Postgres refuses
+    # instead of a clause it honours: the boundary never opens, and the level
+    # the next one reports is untouched by it.
+    injected = provisioner.port.transaction(body, isolation="serializable, read only")
+    assert isinstance(injected, BeginFailed)
+    assert provisioner.port.transaction(body) == Committed(None)
+    assert observed == ["serializable", "read committed", "read committed"]
+
 
 def test_a_refused_isolation_reports_a_boundary_that_never_opened(provisioner: Any) -> None:
     # A boundary that could not open as asked opens at no other level: the
@@ -135,7 +144,7 @@ def test_a_refused_isolation_reports_a_boundary_that_never_opened(provisioner: A
     outcome = provisioner.port.transaction(never_runs, isolation="not a level")
     assert isinstance(outcome, BeginFailed)
     assert isinstance(outcome.error, DatabaseError)
-    assert outcome.error.native_code == "42601"
+    assert outcome.error.native_code == "22023"
     assert ran == []
     assert provisioner.port.transaction(_after) == Committed("after")
 

@@ -31,6 +31,7 @@ from collections.abc import Callable, Generator, Sequence
 
 import psycopg
 from psycopg.rows import TupleRow, dict_row
+from psycopg.sql import SQL, Literal
 from psycopg.types.datetime import TimestamptzLoader
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
@@ -305,10 +306,11 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         before the body sees a port, so it governs this transaction alone and
         leaves the connection's own default untouched for the next one. Postgres
         is the authority on the value — this adapter neither validates the level
-        nor maps it — so a level it will not accept ends the boundary
-        :class:`~parallax.core.db_port.BeginFailed`: nothing was attempted, and a
-        request silently downgraded to a level the caller did not ask for is
-        worse than one refused.
+        nor maps it, and carries it as a bound VALUE rather than composing it
+        into SQL text — so a level it will not accept ends the boundary
+        :class:`~parallax.core.db_port.BeginFailed`: no work of the caller's was
+        attempted, and a request silently downgraded to a level the caller did
+        not ask for is worse than one refused.
         """
         boundary = self._connection.transaction()
         try:
@@ -344,16 +346,27 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         and nothing about what any value means, so the database is what accepts
         or refuses it.
 
+        It arrives as the bound VALUE of the transaction-scoped setting rather
+        than as SQL text the level name is composed into. The port defines no
+        vocabulary of levels, so this adapter has no list to hold a caller's
+        string against — and a string reaching the statement as text would let
+        one append transaction modes the boundary was never asked to open, or
+        end the statement and start another. Delimited as a value, anything
+        Postgres does not know as a level is a value it refuses, which is the
+        same authority over the request that a rejected level name is.
+
         A refusal leaves a transaction that began and did nothing. Undoing it is
         this adapter's business rather than the caller's, and the outcome
-        reported is the one for a boundary that never opened — nothing ran, so
-        there is nothing to retry and nothing for a caller to undo. A connection
-        too broken to undo an empty transaction is discarded rather than handed
-        back, since what it would run next is unknown.
+        reported is the one for a boundary that never opened as asked — no work
+        of the caller's ran, so there is nothing to retry and nothing for a
+        caller to undo. A connection too broken to undo an empty transaction is
+        discarded rather than handed back, since what it would run next is
+        unknown.
         """
+        request = SQL("set local transaction_isolation = {}").format(Literal(isolation))
         try:
             with self._connection.cursor() as cursor:
-                cursor.execute(f"set transaction isolation level {isolation}".encode())
+                cursor.execute(request)
         except psycopg.Error as exc:
             try:
                 boundary.__exit__(type(exc), exc, exc.__traceback__)
