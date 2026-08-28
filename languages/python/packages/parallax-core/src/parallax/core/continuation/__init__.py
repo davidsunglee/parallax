@@ -206,7 +206,11 @@ def _remainder(terms: tuple[_Term, ...], coordinates: tuple[Scalar, ...]) -> Pre
     has to reason past to see what the seek does.
 
     A branch that ties with something is grouped, because an ``and`` inside an
-    ``or`` reads as a branch of it. The leading branch never is: it ties with
+    ``or`` reads as a branch of it, and its own "strictly after" is grouped in
+    turn where that is a disjunction — a nullable term under Nulls Last is
+    strictly after its coordinate OR null, and ungrouped beside its ties the
+    ``or`` would escape them and admit every null of that term whatever the terms
+    above it hold. The leading branch is grouped neither way: it ties with
     nothing, so whatever it is composed of is already a disjunct of the whole.
     Where a single branch survives, it is never the leading one alone — the order
     ends in the primary key, whose branch drops under no coordinate — so the
@@ -218,7 +222,11 @@ def _remainder(terms: tuple[_Term, ...], coordinates: tuple[Scalar, ...]) -> Pre
         if isinstance(after, NoneOp):
             continue
         ties = tuple(_ties_with(terms[at], coordinates[at]) for at in range(depth))
-        branches.append(Group(operand=And(operands=(*ties, after))) if ties else after)
+        if not ties:
+            branches.append(after)
+            continue
+        within = Group(operand=after) if isinstance(after, Or) else after
+        branches.append(Group(operand=And(operands=(*ties, within))))
     if len(branches) == 1:
         return branches[0]
     return Group(operand=Or(operands=tuple(branches)))

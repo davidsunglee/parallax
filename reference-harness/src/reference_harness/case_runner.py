@@ -3031,12 +3031,120 @@ class _ContinuationTerm:
     against the statement's own text while the coordinates are graded against its
     binds. Null Placement reaches both — under `last` a null coordinate has
     nothing after it, so its depth contributes neither branch nor bind.
+
+    ``column`` is the result key the term's coordinate is read under, which a
+    document-resident member has as much as a Column-mapped one. The two
+    spellings beside it are how the statement names the member, and they differ
+    for a resident term: a comparison goes through the declared type's cast where
+    the type has one, while a null test asks the bare extraction, presence being
+    a question the cast does not change. ``path_binds`` is what every one of
+    those occurrences binds ahead of its own coordinate — empty for a Column,
+    which names itself.
     """
 
     column: str
+    compared: str
+    tested: str
+    path_binds: tuple[Any, ...]
     direction: Literal["asc", "desc"]
     nulls: Literal["first", "last"]
     nullable: bool
+
+
+def _direct_term(
+    column: str,
+    *,
+    direction: Literal["asc", "desc"],
+    nulls: Literal["first", "last"],
+    nullable: bool,
+) -> _ContinuationTerm:
+    return _ContinuationTerm(
+        column=column,
+        compared=column,
+        tested=column,
+        path_binds=(),
+        direction=direction,
+        nulls=nulls,
+        nullable=nullable,
+    )
+
+
+_DOCUMENT_EXTRACTION = {"postgres": "jsonb_extract_path_text", "mariadb": "json_value"}
+
+_CAST_COMPARED_DOCUMENT_TYPES = frozenset({"int32", "int64", "float32", "float64", "boolean"})
+
+
+def _compares_under_a_cast(type_spelling: str | None) -> bool:
+    """Whether a document-resident member of this declared type compares CAST.
+
+    The numeric family casts because a JSON number's integer part has no fixed
+    width, so its stored spelling does not compare in value order as text; a
+    `boolean` casts because the two dialects' extractions do not spell it alike.
+    Every other declarable type compares as the extracted text, the canonical
+    document spelling already ordering correctly (m-dialect). Spelled here rather
+    than taken from any implementation: the ①↔② cross-check is an independent
+    derivation, so it must know the table itself.
+    """
+    if type_spelling is None:
+        return False
+    return type_spelling in _CAST_COMPARED_DOCUMENT_TYPES or type_spelling.startswith("decimal(")
+
+
+def _extraction_path_binds(path: tuple[str, ...], dialect: str) -> tuple[Any, ...]:
+    """The binds one document extraction over *path* carries, per dialect.
+
+    Postgres `jsonb_extract_path_text` takes one hole per segment; MariaDB
+    `json_value` takes one hole holding the whole ``$.a.b`` JSON path
+    (m-dialect). A read's extraction therefore binds a different NUMBER of values
+    on the two dialects for the same member, which is why a seek's bind list is
+    derived per dialect rather than translated between them.
+    """
+    if dialect == "mariadb":
+        return ("$." + ".".join(path),)
+    return tuple(path)
+
+
+def _resident_term(
+    member: _DocumentMember,
+    document_column: str,
+    dialect: str,
+    *,
+    direction: Literal["asc", "desc"],
+    nulls: Literal["first", "last"],
+    nullable: bool,
+) -> _ContinuationTerm:
+    extraction = f"{document_column} extraction"
+    return _ContinuationTerm(
+        column=member.column,
+        compared=f"cast({extraction})"
+        if _compares_under_a_cast(member.type_spelling)
+        else extraction,
+        tested=extraction,
+        path_binds=_extraction_path_binds(member.path, dialect),
+        direction=direction,
+        nulls=nulls,
+        nullable=nullable,
+    )
+
+
+def _resolved_document_member(
+    case: Case, query: dict[str, Any], root: Entity, address: MemberAddress
+) -> tuple[str, _DocumentMember] | None:
+    """The ONE Structured Column and member a resident Sort Key extracts from.
+
+    A seek spells its extraction against a single Table's document column, so the
+    read has to resolve the member to one. An abstract position does not: its SQL
+    partitions per concrete branch, each branch carrying its own Table, and a
+    tableless root carries none at all. Anything this cannot resolve is refused by
+    name rather than derived from.
+    """
+    if _abstract_family_position(case, query) is not None:
+        return None
+    document_column, members = _document_layout_members(case, root)
+    member = next((member for member in members if member.address == address), None)
+    if not document_column or member is None:
+        return None
+    return document_column, member
 
 
 def _document_resident_members(case: Case, entity: Entity) -> set[MemberAddress]:
@@ -3071,7 +3179,9 @@ def _read_document_resident_members(case: Case, query: dict[str, Any]) -> set[Me
     )
 
 
-def _continuation_order(case: Case, query: dict[str, Any], root: Entity) -> list[_ContinuationTerm]:
+def _continuation_order(
+    case: Case, query: dict[str, Any], root: Entity, dialect: str
+) -> list[_ContinuationTerm]:
     """The Continuation Order *query* is delivered in (`m-snapshot-read`).
 
     The authored Sort Keys in the precedence the query declares, then the primary
@@ -3079,9 +3189,11 @@ def _continuation_order(case: Case, query: dict[str, Any], root: Entity) -> list
     Placement default to `asc` and `last` (`m-object-query`) and are carried
     whether or not they are observable.
 
-    A Sort Key over a document-resident member is refused rather than derived
-    from: its every extraction binds a Document Path ahead of the coordinate, and
-    the derivations below spell no part of one.
+    Residence is not part of that order and changes none of it: what it changes
+    is how each term is spelled and bound, so it is resolved here — per dialect,
+    the two extractions differing in both — and carried on the term. A resident
+    member the read resolves to no single Structured Column is refused by name,
+    since no one extraction spells it.
     """
     terms: list[_ContinuationTerm] = []
     names_the_key = False
@@ -3092,52 +3204,41 @@ def _continuation_order(case: Case, query: dict[str, Any], root: Entity) -> list
         entity = case.model.entity(class_name)
         attribute = entity.attribute_by_name(name)
         address = member_address(family, entity.canonical_name, name)
-        if address in resident | _document_resident_members(case, entity):
+        direction: Literal["asc", "desc"] = key.get("direction", "asc")
+        nulls: Literal["first", "last"] = key.get("nulls", "last")
+        nullable = bool(attribute.get("nullable"))
+        names_the_key = names_the_key or bool(attribute.get("primaryKey"))
+        if address not in resident | _document_resident_members(case, entity):
+            terms.append(
+                _direct_term(
+                    attribute["column"], direction=direction, nulls=nulls, nullable=nullable
+                )
+            )
+            continue
+        resolved = _resolved_document_member(case, query, root, address)
+        if resolved is None:
             raise CaseFailure(
                 f"{case.path.name}: the Continuation Order names the document-resident member "
-                f"{key['attr']}, whose every extraction binds a Document Path this oracle "
-                f"derives no part of"
+                f"{key['attr']}, which this read resolves to no single Structured Column — an "
+                f"extraction is spelled against ONE Table's document, and this one has none to "
+                f"spell it against"
             )
-        names_the_key = names_the_key or bool(attribute.get("primaryKey"))
+        document_column, member = resolved
         terms.append(
-            _ContinuationTerm(
-                column=attribute["column"],
-                direction=key.get("direction", "asc"),
-                nulls=key.get("nulls", "last"),
-                nullable=bool(attribute.get("nullable")),
+            _resident_term(
+                member,
+                document_column,
+                dialect,
+                direction=direction,
+                nulls=nulls,
+                nullable=nullable,
             )
         )
     if not names_the_key:
         terms.append(
-            _ContinuationTerm(
-                column=_primary_key_column(root), direction="asc", nulls="last", nullable=False
-            )
+            _direct_term(_primary_key_column(root), direction="asc", nulls="last", nullable=False)
         )
     return terms
-
-
-def _seek_binds(terms: list[_ContinuationTerm], coordinates: tuple[Any, ...]) -> list[Any]:
-    """The binds a page seeking past *coordinates* carries, in emission order.
-
-    Derived from `m-snapshot-read`'s seek alone, never from the authored SQL: a
-    single-term order needs one strict comparison; a multi-term one needs the
-    lexicographic remainder — one branch per tie depth, each binding the
-    coordinates it ties with and then its own — preceded, for a NON-NULLABLE
-    leading term, by the redundant hoisted range that binds the leading
-    coordinate once more. A null coordinate binds nothing at any depth, since
-    both spellings that carry it are null checks, and under Nulls Last it
-    contributes no branch of its own at all: nothing sorts after a null there.
-    """
-    if len(terms) == 1:
-        return [coordinates[0]]
-    binds: list[Any] = [] if terms[0].nullable else [coordinates[0]]
-    for depth, term in enumerate(terms):
-        if coordinates[depth] is None and term.nulls == "last":
-            continue
-        binds.extend(tie for tie in coordinates[:depth] if tie is not None)
-        if coordinates[depth] is not None:
-            binds.append(coordinates[depth])
-    return binds
 
 
 def _seek_splice(first_page_sql: str, later_page_sql: str) -> tuple[int, int]:
@@ -3211,35 +3312,63 @@ def _joined(operator: Literal["and", "or"], operands: Sequence[_SeekNode]) -> _S
     return _SeekJunction(operator, tuple(flattened))
 
 
-def _composed_seek(terms: list[_ContinuationTerm], coordinates: tuple[Any, ...]) -> _SeekNode:
-    """The Boolean expression a page seeking past *coordinates* is composed of.
+@dataclass(frozen=True, slots=True)
+class _ComposedSeek:
+    """The expression a page's seek is, and the binds carrying it, as ONE value.
 
-    The bind derivation's counterpart, and what makes the seek's SHAPE gradeable
-    at all: a page that seeks the wrong way, or disjoins what the order
-    conjoins, binds exactly what a correct one binds. Derived from
-    `m-snapshot-read`'s seek alone: the lexicographic remainder — one branch per
-    tie depth, disjoined, each branch tying with every coordinate above it before
-    comparing its own in that term's direction and placement — behind the range a
-    non-nullable leading term hoists. A single-term order composes neither part:
-    one strict comparison already is the top-level conjunct the hoist supplies.
+    The two are one derivation rather than two agreeing ones: every leaf that
+    spells a member spells its binds too — a Document Path ahead of a coordinate
+    where the member is document-resident, the coordinate alone where it is a
+    Column — so a shape and a bind list cannot drift apart here the way two
+    parallel walks of the same order could.
     """
-    branches: list[_SeekNode] = []
+
+    node: _SeekNode
+    binds: tuple[Any, ...]
+
+
+def _composed(operator: Literal["and", "or"], parts: Sequence[_ComposedSeek]) -> _ComposedSeek:
+    return _ComposedSeek(
+        _joined(operator, [part.node for part in parts]),
+        tuple(bind for part in parts for bind in part.binds),
+    )
+
+
+def _composed_seek(terms: list[_ContinuationTerm], coordinates: tuple[Any, ...]) -> _ComposedSeek:
+    """The seek a page continuing past *coordinates* carries.
+
+    Derived from `m-snapshot-read`'s seek alone, never from the authored SQL: the
+    lexicographic remainder — one branch per tie depth, disjoined, each branch
+    tying with every coordinate above it before comparing its own in that term's
+    direction and placement — behind the range a non-nullable leading term
+    hoists. A single-term order composes neither part: one strict comparison
+    already is the top-level conjunct the hoist supplies. A null coordinate
+    carries no coordinate bind at any depth, both spellings that reach it being
+    null checks, and under Nulls Last contributes no branch at all: nothing sorts
+    after a null there.
+
+    Grading the SHAPE is what the binds cannot do — a page that seeks the wrong
+    way, or disjoins what the order conjoins, binds exactly what a correct one
+    binds — and grading the binds is what the shape cannot do, two resident terms
+    over one document being one spelling told apart only by the paths they bind.
+    """
+    branches: list[_ComposedSeek] = []
     for depth, term in enumerate(terms):
         after = _strictly_after(term, coordinates[depth])
         if after is None:
             continue
         ties = [_ties_with(terms[above], coordinates[above]) for above in range(depth)]
-        branches.append(_joined("and", [*ties, after]))
+        branches.append(_composed("and", [*ties, after]) if ties else after)
     lead = terms[0]
     if len(terms) == 1:
         return branches[0]
-    remainder = _joined("or", branches)
+    remainder = _composed("or", branches)
     if lead.nullable:
         return remainder
-    return _joined("and", [_hoisted_range(lead), remainder])
+    return _composed("and", [_hoisted_range(lead, coordinates[0]), remainder])
 
 
-def _strictly_after(term: _ContinuationTerm, coordinate: Any) -> _SeekNode | None:
+def _strictly_after(term: _ContinuationTerm, coordinate: Any) -> _ComposedSeek | None:
     """``None`` where *term* admits nothing at all after *coordinate*.
 
     A null coordinate is *at* the nulls rather than at any value, so what follows
@@ -3247,19 +3376,34 @@ def _strictly_after(term: _ContinuationTerm, coordinate: Any) -> _SeekNode | Non
     a depth that admits nothing contributing no branch of its own.
     """
     if coordinate is None:
-        return f"{term.column} is not null" if term.nulls == "first" else None
-    strict = f"{term.column} {'>' if term.direction == 'asc' else '<'} ?"
+        return _null_leaf(term, negated=True) if term.nulls == "first" else None
+    strict = _comparison_leaf(term, ">" if term.direction == "asc" else "<", coordinate)
     if term.nullable and term.nulls == "last":
-        return _SeekJunction("or", (strict, f"{term.column} is null"))
+        return _ComposedSeek(
+            _SeekJunction("or", (strict.node, _null_leaf(term).node)),
+            (*strict.binds, *term.path_binds),
+        )
     return strict
 
 
-def _ties_with(term: _ContinuationTerm, coordinate: Any) -> _SeekNode:
-    return f"{term.column} is null" if coordinate is None else f"{term.column} = ?"
+def _ties_with(term: _ContinuationTerm, coordinate: Any) -> _ComposedSeek:
+    if coordinate is None:
+        return _null_leaf(term)
+    return _comparison_leaf(term, "=", coordinate)
 
 
-def _hoisted_range(term: _ContinuationTerm) -> _SeekNode:
-    return f"{term.column} {'>=' if term.direction == 'asc' else '<='} ?"
+def _hoisted_range(term: _ContinuationTerm, coordinate: Any) -> _ComposedSeek:
+    return _comparison_leaf(term, ">=" if term.direction == "asc" else "<=", coordinate)
+
+
+def _comparison_leaf(term: _ContinuationTerm, comparator: str, coordinate: Any) -> _ComposedSeek:
+    return _ComposedSeek(f"{term.compared} {comparator} ?", (*term.path_binds, coordinate))
+
+
+def _null_leaf(term: _ContinuationTerm, *, negated: bool = False) -> _ComposedSeek:
+    return _ComposedSeek(
+        f"{term.tested} is {'not ' if negated else ''}null", tuple(term.path_binds)
+    )
 
 
 def _spelled_seek(fragment: str, dialect: str) -> _SeekNode:
@@ -3279,30 +3423,33 @@ def _spelled_seek(fragment: str, dialect: str) -> _SeekNode:
         parsed = sqlglot.parse_one(text, read=sqlglot_dialect(dialect))
     except SqlglotError:
         return text
-    return _seek_node(parsed)
+    return _seek_node(parsed, dialect)
 
 
-def _seek_node(expression: Expr) -> _SeekNode:
+def _seek_node(expression: Expr, dialect: str) -> _SeekNode:
     if isinstance(expression, exp.Paren):
-        return _seek_node(expression.this)
+        return _seek_node(expression.this, dialect)
     if isinstance(expression, exp.And | exp.Or):
         operator: Literal["and", "or"] = "and" if isinstance(expression, exp.And) else "or"
-        return _joined(operator, [_seek_node(expression.this), _seek_node(expression.expression)])
+        return _joined(
+            operator,
+            [_seek_node(expression.this, dialect), _seek_node(expression.expression, dialect)],
+        )
     if isinstance(expression, exp.Not):
-        negated = _null_test(expression.this, negate=True)
+        negated = _null_test(expression.this, dialect, negate=True)
         if negated is not None:
             return negated
-        return _SeekJunction("not", (_seek_node(expression.this),))
-    plain = _null_test(expression, negate=False)
+        return _SeekJunction("not", (_seek_node(expression.this, dialect),))
+    plain = _null_test(expression, dialect, negate=False)
     if plain is not None:
         return plain
     comparator = _SEEK_COMPARATORS.get(type(expression))
     if comparator is not None and isinstance(expression.expression, exp.Placeholder):
-        return f"{_seek_member(expression.this)} {comparator} ?"
+        return f"{_seek_member(expression.this, dialect)} {comparator} ?"
     return expression.sql()
 
 
-def _null_test(expression: Expr, *, negate: bool) -> str | None:
+def _null_test(expression: Expr, dialect: str, *, negate: bool) -> str | None:
     """*expression* as the one null-test leaf a seek composes, or ``None`` where it
     is not a leaf the composed side could have built.
 
@@ -3321,11 +3468,53 @@ def _null_test(expression: Expr, *, negate: bool) -> str | None:
     if negate and expression.args.get("negate"):
         return None
     negated = negate or bool(expression.args.get("negate"))
-    return f"{_seek_member(expression.this)} is {'not ' if negated else ''}null"
+    return f"{_seek_member(expression.this, dialect)} is {'not ' if negated else ''}null"
 
 
-def _seek_member(expression: Expr) -> str:
+def _seek_member(expression: Expr, dialect: str) -> str:
+    """The member a seek leaf compares, in the spelling the composed side uses.
+
+    A Column answers its own bare name, dropping the alias the statement
+    qualifies it with. A document-resident member has no name in the statement at
+    all — its Document Path rides in a bind hole — so what the text can be held
+    to is the Structured Column it extracts from and whether the declared type's
+    cast stands between the extraction and the comparison. WHICH member it is
+    stays a bind question, and the seek's bind list is where it is asked.
+    """
+    if isinstance(expression, exp.Cast):
+        source = _extraction_source(expression.this, dialect)
+        if source is not None:
+            return f"cast({source} extraction)"
+    source = _extraction_source(expression, dialect)
+    if source is not None:
+        return f"{source} extraction"
     return expression.name if isinstance(expression, exp.Column) else expression.sql()
+
+
+def _extraction_source(node: Expr, dialect: str) -> str | None:
+    """The Structured Column *dialect*'s document extraction reads, else ``None``.
+
+    The extraction takes that column as its first argument and its Document Path
+    as bind holes — one per segment on Postgres, one whole JSON path on MariaDB —
+    so a call carrying a literal path, a second column, or a folded expression is
+    not the extraction `m-sql` compares through. sqlglot parses MariaDB's
+    ``json_value`` into a node of its own and leaves the Postgres spelling an
+    anonymous call, so each dialect is matched by the shape it emits.
+    """
+    extraction = _DOCUMENT_EXTRACTION.get(dialect)
+    if extraction is None:
+        return None
+    if isinstance(node, exp.JSONValue):
+        if extraction != "json_value":
+            return None
+        column, path = node.this, [node.args.get("path")]
+    elif isinstance(node, exp.Anonymous) and node.name.lower() == extraction:
+        column, *path = node.expressions or [None]
+    else:
+        return None
+    if not path or not all(isinstance(segment, exp.Placeholder) for segment in path):
+        return None
+    return column.name if isinstance(column, exp.Column) else None
 
 
 def _render_seek(node: _SeekNode) -> str:
@@ -3346,7 +3535,7 @@ class _PageText(NamedTuple):
 
 def _refuse_a_drifting_page(
     text: _PageText,
-    terms: list[_ContinuationTerm],
+    seek: _ComposedSeek,
     cursor: tuple[Any, ...],
     seek_shapes: dict[tuple[bool, ...], str],
 ) -> None:
@@ -3385,10 +3574,9 @@ def _refuse_a_drifting_page(
             f"seek:\n  first:      {first_root_sql}\n  continuing: {root_sql}"
         )
     spelled = _spelled_seek(root_sql[spliced_at:spliced_to], dialect)
-    composed = _composed_seek(terms, cursor)
-    if spelled != composed:
+    if spelled != seek.node:
         raise CaseFailure(
-            f"{where} seeks {_render_seek(spelled)}, not {_render_seek(composed)}. A page "
+            f"{where} seeks {_render_seek(spelled)}, not {_render_seek(seek.node)}. A page "
             f"compares each Continuation Order term in that term's OWN direction and "
             f"placement, one branch per tie depth DISJOINED, behind the range a non-nullable "
             f"leading term hoists."
@@ -3518,7 +3706,7 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
     entries = [(sql, case.statement_binds(index, dialect)) for index, sql in enumerate(statements)]
     steps = _fetch_steps(case.model, query) if _query_has_includes(query) else []
     root_entity = case.model.entity(query["target"])
-    terms = _continuation_order(case, query, root_entity)
+    terms = _continuation_order(case, query, root_entity, dialect)
     batch_size = case.batch_size
     limit = query.get("limit")
 
@@ -3541,16 +3729,18 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
         root_sql, authored = entries[index]
         index += 1
         requested = batch_size if limit is None else min(batch_size, limit - len(root_rows))
+        seek: _ComposedSeek | None = None
         if page == 0:
             first_root_sql = root_sql
             carried_binds = list(authored[:-1])
             expected_binds: list[Any] = [*carried_binds, requested]
         else:
+            seek = _composed_seek(terms, cursor)
             spliced_at, spliced_to = _seek_splice(first_root_sql, root_sql)
             seek_bind_position = root_sql[:spliced_at].count("?")
             expected_binds = [
                 *carried_binds[:seek_bind_position],
-                *_seek_binds(terms, cursor),
+                *seek.binds,
                 *carried_binds[seek_bind_position:],
                 requested,
             ]
@@ -3564,9 +3754,9 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
                 f"coordinates of the root the previous page delivered LAST, spliced in "
                 f"where the two statements diverge, then the size it is asking for."
             )
-        if page >= 1:
+        if seek is not None:
             _refuse_a_drifting_page(
-                _PageText(case, dialect, page, first_root_sql, root_sql), terms, cursor, seek_shapes
+                _PageText(case, dialect, page, first_root_sql, root_sql), seek, cursor, seek_shapes
             )
 
         executed = _stream_page(

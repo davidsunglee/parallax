@@ -28,10 +28,12 @@ import pytest
 from reference_harness.case import Case, dialect_executed_cases, discover_cases
 from reference_harness.case_runner import (
     CaseFailure,
+    _composed_seek,
     _continuation_order,
-    _ContinuationTerm,
+    _direct_term,
     _PageText,
     _refuse_a_drifting_page,
+    _render_seek,
     run_case,
 )
 from reference_harness.inheritance import validate_family
@@ -113,6 +115,32 @@ _TERMINAL_PAGE = "m-snapshot-read-028-stream-empty-terminal-page"
 _MIXED_DIRECTIONS = "m-snapshot-read-031-stream-order-mixed-directions"
 _NULLABLE_PLACEMENT = "m-snapshot-read-032-stream-order-nullable-placement"
 _MULTI_TERM_SEEK = "m-snapshot-read-033-stream-order-multi-term-seek"
+_DOCUMENT_RESIDENT = "m-snapshot-read-035-stream-order-document-resident"
+
+# The Document Path spellings the resident case's pages carry, per dialect: one
+# hole per segment on Postgres, one whole JSON path on MariaDB.
+_RESIDENT_EXTRACTIONS = {
+    "postgres": (
+        "cast(jsonb_extract_path_text(t0.payload, ?) as bigint)",
+        "jsonb_extract_path_text(t0.payload, ?)",
+    ),
+    "mariadb": (
+        "cast(json_value(t0.payload, ?) as signed)",
+        "json_value(t0.payload, ?)",
+    ),
+}
+
+
+def _respell_resident_pages(case: Case, was: str, now: str) -> None:
+    """Rewrite every continuing page of the resident case, each dialect its own way."""
+    for entry in _statements(case)[1:]:
+        entry["sql"] = {
+            dialect: sql.replace(
+                was.format(*_RESIDENT_EXTRACTIONS[dialect]),
+                now.format(*_RESIDENT_EXTRACTIONS[dialect]),
+            )
+            for dialect, sql in entry["sql"].items()
+        }
 
 
 def _damaged(stem: str) -> Case:
@@ -310,9 +338,78 @@ def test_a_continuing_page_negating_its_seek_is_refused(provider) -> None:
         run_case(case, provider)
 
 
+def test_a_resident_branch_that_dropped_its_grouping_is_not_authorable(provider) -> None:
+    """A tie's own two-way branch has to be grouped, and no golden may spell it flat.
+
+    Ungrouped, `and` binds tighter than `or`, so the second branch becomes
+    "destination at its coordinate and nights strictly after its own" OR "nights
+    is null" — which admits every null-`nights` trip in the table whatever its
+    destination, re-delivering roots the stream already published. The fixtures
+    have no such trip, so the damaged pages return exactly the rows the correct
+    ones return and bind exactly what they bind. What refuses them is the
+    canonical-SQL rule rather than the seek oracle behind it: a disjunction
+    grouped directly inside a disjunction is not a spelling m-sql admits, so the
+    flat branch has no authorable form and the seek it would compose is never
+    reached.
+    """
+    case = _damaged(_DOCUMENT_RESIDENT)
+    _respell_resident_pages(case, "and ({0} < ? or {1} is null))", "and {0} < ? or {1} is null)")
+
+    with pytest.raises(CaseFailure, match="is not canonical"):
+        run_case(case, provider)
+
+
+def test_a_resident_null_check_spelled_against_the_cast_is_refused(provider) -> None:
+    """Presence is asked of the extraction, and the cast is not part of the question.
+
+    Casting before a null test selects the same rows — a cast of NULL is NULL — so
+    the damaged pages deliver the same graph and bind the same paths in the same
+    places. What differs is that the statement claims the declared type stands
+    between the document and a presence question that never asks it.
+    """
+    case = _damaged(_DOCUMENT_RESIDENT)
+    _respell_resident_pages(case, "or {1} is null))", "or {0} is null))")
+
+    with pytest.raises(CaseFailure, match="seeks .*, not "):
+        run_case(case, provider)
+
+
+def test_a_resident_comparison_that_dropped_its_cast_is_refused(provider) -> None:
+    """A member whose document form does not order as text compares under its cast.
+
+    `nights` is an `int32`, so the damaged page compares `"7"` against `"1"` as
+    text. Both fixture values are single digits, so the rows and the ordering are
+    unchanged and every bind still lands where it did — the statement simply stops
+    claiming the cast m-dialect's table gives the numeric family.
+    """
+    case = _damaged(_DOCUMENT_RESIDENT)
+    _respell_resident_pages(case, "{0} < ?", "{1} < ?")
+
+    with pytest.raises(CaseFailure, match="seeks .*, not "):
+        run_case(case, provider)
+
+
+def test_a_resident_page_binding_the_wrong_path_first_is_refused(provider) -> None:
+    """Which member an extraction reads is a BIND, so the paths are graded as binds.
+
+    Two resident terms over one Structured Column spell one expression and are
+    told apart only by the Document Paths their holes carry, in the order the seek
+    composes them. Swapping the leading branch's path for the second term's leaves
+    the statement text untouched.
+    """
+    case = _damaged(_DOCUMENT_RESIDENT)
+    for entry in _statements(case)[1:]:
+        for dialect, binds in entry["binds"].items():
+            entry["binds"][dialect] = [*binds]
+            entry["binds"][dialect][0] = binds[5]
+
+    with pytest.raises(CaseFailure, match="root binds"):
+        run_case(case, provider)
+
+
 _NULLS_FIRST_TERMS = [
-    _ContinuationTerm(column="sku", direction="asc", nulls="first", nullable=True),
-    _ContinuationTerm(column="id", direction="asc", nulls="last", nullable=False),
+    _direct_term("sku", direction="asc", nulls="first", nullable=True),
+    _direct_term("id", direction="asc", nulls="last", nullable=False),
 ]
 _NULLS_FIRST_PAGE = (
     "select t0.id, t0.sku from orders t0 order by t0.sku asc nulls first, t0.id asc limit ?"
@@ -332,7 +429,7 @@ def _grade_a_page_past_a_null(case: Case, dialect: str, non_nulls: str, ties: st
     )
     _refuse_a_drifting_page(
         _PageText(case, dialect, 1, _NULLS_FIRST_PAGE, continuing),
-        _NULLS_FIRST_TERMS,
+        _composed_seek(_NULLS_FIRST_TERMS, (None, 4)),
         (None, 4),
         {},
     )
@@ -392,7 +489,10 @@ def test_a_direct_sort_key_spelled_like_a_document_member_is_accepted() -> None:
     query = {**case.object_query, "orderBy": [{"attr": "parallax.compatibility.Traveler.id"}]}
     entity = case.model.entity(query["target"])
 
-    assert [term.column for term in _continuation_order(case, query, entity)] == ["score"]
+    order = _continuation_order(case, query, entity, "postgres")
+    assert [(term.column, term.compared, term.path_binds) for term in order] == [
+        ("score", "score", ())
+    ]
 
 
 def test_a_sort_key_a_TPH_SIBLING_keeps_in_a_Column_of_its_own_is_accepted() -> None:
@@ -433,25 +533,44 @@ def test_a_sort_key_a_TPH_SIBLING_keeps_in_a_Column_of_its_own_is_accepted() -> 
     }
     entity = case.model.entity(query["target"])
 
-    assert [term.column for term in _continuation_order(case, query, entity)] == ["b_code", "id"]
+    order = _continuation_order(case, query, entity, "postgres")
+    assert [(term.column, term.compared, term.path_binds) for term in order] == [
+        ("b_code", "b_code", ()),
+        ("id", "id", ()),
+    ]
 
 
-def test_a_document_resident_sort_key_is_refused_rather_than_mis_derived() -> None:
-    """What this oracle cannot derive it refuses by name, database or no database.
+def test_a_document_resident_sort_key_seeks_through_its_own_extraction() -> None:
+    """A resident Sort Key is derived from, not refused, and per dialect.
 
-    A Sort Key over a Structured Column member lowers through an extraction that
-    binds its Document Path ahead of every coordinate — on the ordering term and
-    on each comparison and null check the seek spells. The bind derivation
-    composes coordinates alone, so a streamed case authored over such an order
-    would be graded against a bind list missing every path segment and refused
-    for the wrong reason.
+    A member inside a Structured Column has no Column to name, so every one of
+    its occurrences is the dialect's extraction over that column and binds a
+    Document Path ahead of its own coordinate — one hole per segment on Postgres,
+    one whole JSON path on MariaDB, so the same order is a different bind list on
+    the two. `score` is an `int64`, whose document form does not order as text, so
+    the comparisons go through its declared cast while the null check beside them
+    asks the bare extraction.
     """
     case = _damaged("m-storage-layout-020-document-layout-path-predicate-ordering")
     query = case.object_query
     entity = case.model.entity(query["target"])
 
-    with pytest.raises(CaseFailure, match="document-resident member"):
-        _continuation_order(case, query, entity)
+    order = _continuation_order(case, query, entity, "postgres")
+    assert [(term.column, term.compared, term.tested, term.path_binds) for term in order] == [
+        ("score", "cast(payload extraction)", "payload extraction", ("score",)),
+        ("id", "id", "id", ()),
+    ]
+    assert [term.path_binds for term in _continuation_order(case, query, entity, "mariadb")] == [
+        ("$.score",),
+        (),
+    ]
+
+    seek = _composed_seek(order, (7, 1))
+    assert _render_seek(seek.node) == (
+        "(cast(payload extraction) < ? or payload extraction is null "
+        "or (cast(payload extraction) = ? and id > ?))"
+    )
+    assert seek.binds == ("score", 7, "score", "score", 7, 1)
 
 
 def test_a_document_resident_sort_key_at_a_TABLELESS_position_is_refused() -> None:
@@ -469,4 +588,4 @@ def test_a_document_resident_sort_key_at_a_TABLELESS_position_is_refused() -> No
 
     assert entity.table == ""
     with pytest.raises(CaseFailure, match="document-resident member"):
-        _continuation_order(case, query, entity)
+        _continuation_order(case, query, entity, "postgres")
