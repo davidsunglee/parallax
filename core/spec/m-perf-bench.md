@@ -37,15 +37,27 @@ without forcing non-idiomatic structures.
 
 A benchmark fixture is a YAML document under `core/compatibility/benchmarks/`. It
 names a model descriptor, a dataset to load, and an ordered list of **workloads**
-to measure. The shipped fixtures cover the four workload families the spec calls
+to measure. The shipped fixtures cover the five workload families the spec calls
 out:
 
 | Workload family | Exercises | Example fixture |
 |---|---|---|
 | **query mix** (point + range reads) | `m-predicate` / `m-sql` predicate evaluation, query-cache hit/miss (`m-process-cache`) | `read-mix.yaml` |
 | **deep-fetch shapes** (to-one, to-many, multi-hop) | `m-deep-fetch` N+1 elimination — round-trips must stay `1 + levels` regardless of fan-out | `deep-fetch.yaml` |
+| **streamed delivery** (one result at several page sizes) | `m-snapshot-read` streamed delivery — the same `1 + levels` ceiling applied once per page, and the page-size / round-trip trade | `stream.yaml` |
 | **milestone workloads** (insert / update / terminate chains) | `m-txtime-write` milestone-chaining write cost | `milestone-write.yaml` |
 | **aggregation** (group-by / having) | `m-agg` aggregate path | folded into `read-mix.yaml` |
+
+A **streamed-delivery** workload is the deep-fetch family's paging counterpart,
+and it exists for the same reason: a declared round-trip count catches a
+regression a wall-time number would reward. A delivery of `N` roots at page size
+`B` over `L` relationship levels costs `floor(N / B) + 1` root statements and
+`ceil(N / B) x L` child statements, so an implementation that stopped paging,
+that re-fetched per root, or that dropped the terminal statement a full final page
+needs, diverges from its declared `expectRoundTrips` however fast it got. The
+family is a set of workloads over ONE result at several page sizes rather than one
+workload, because what it makes comparable is the trade: the same rows for fewer
+round trips and a larger per-page working set.
 
 Each workload declares its golden SQL as an ordered list of `{sql, binds}`
 **statement entries** (`statements`, per dialect, exactly like a compatibility

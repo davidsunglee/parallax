@@ -775,13 +775,41 @@ after the one that landed. Splitting them was deliberate: bundling both into one
 phase is the shape that was rejected when these obligations were first weighed,
 three decisions wearing one name.
 
-**When.** Scheduled for
+**When.** Was scheduled for
 [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory)
-Phase 7, whose own work is draining this ledger and reading the ticket's
-divergences back as one section, and which the `phases-6-7` review covers. Phase
-4a left the ground under it: both executors drive a delivery page by page inside
-a scenario step's own unit of work, so the hook has one loop to hang on in each,
-against a placement whose grading already exists.
+Phase 7 and is **not closed there**: scoping it against the shape Phase 7 built
+put it above what that phase could take, and it is raised rather than
+half-landed. Phase 4a's groundwork holds — both executors drive a delivery page
+by page inside a scenario step's own unit of work, so the hook has one loop to
+hang on in each — and the plumbing on top of it is small: the harness's
+`_deliver_stream` page loop and the engine's delivery loop each gain one call
+site, and the page oracle needs no change at all, because it derives the page
+partition and the seek from the rows the delivery actually returned.
+
+**What Phase 7 established about the remaining cost, so it is not re-derived.**
+The plumbing is not the work; two normative sub-decisions are, and each is a
+design decision rather than an edit.
+
+- **What the between-page statements ARE.** `given.apply`'s naive,
+  dialect-agnostic entry shape relocated to a page boundary is the cheap
+  spelling, but it leaves open whether the writer is the reader's own connection
+  — the caller-as-writer row — or a second one, which is what the three insert
+  and delete rows mean by *concurrent*. The two are different claims and the
+  corpus has no vocabulary that distinguishes them today.
+- **What a mid-delivery mutation does to the result oracle.** A `read` case's
+  `then.referenceSql` is the independent half of triple equivalence, executed
+  after the delivery; under a mutation applied between two pages it necessarily
+  disagrees with what the delivery published, so the member either becomes
+  inadmissible on such a case or acquires a second meaning. `then.graph` is in
+  the same position — it currently states what an eager read of the same query
+  publishes, which is exactly what a stability case must NOT state.
+
+Both fall under COR-83's own decision protocol as significant (*anything altering
+the shape of a corpus case or the conformance-adapter contract*), so they are the
+user's rather than an implementing session's. Scale, for planning: the change
+reaches `m-case-format`, `m-conformance-adapter`, `compatibility-case.schema.json`,
+both executors, and three to five new cases with goldens on both dialects — Phase
+4a's size, which was a phase of its own.
 
 **Two siblings this entry no longer carries.** A streamed root's evidence
 licensing a later write is CLOSED — `m-unit-work-030` grades it through the

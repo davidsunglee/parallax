@@ -91,6 +91,7 @@ check-all` resolve exactly what each run contains.
 | The compatibility-matrix report | `just report-matrix` |
 | The execution lifecycle's dispatch and overhead baseline | `just python-report-lifecycle-overhead` |
 | The Snapshot graph's retained and build overhead baseline | `just python-report-snapshot-graph-overhead` |
+| The streamed delivery's working set per page size | `just python-report-stream-overhead` |
 | The published instance-state three-arm retained and timing matrix | `just python-report-instance-state` |
 | Formatting, applied in place | `just harness-format`, `just python-format` |
 

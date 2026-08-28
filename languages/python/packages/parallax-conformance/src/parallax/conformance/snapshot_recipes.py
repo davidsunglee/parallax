@@ -16,16 +16,19 @@ an executable proof.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from parallax.conformance.read_models import Document, Payment
-from parallax.conformance.story_models import OrderStatus
-from parallax.snapshot.handle import Database, Snapshot
+from parallax.conformance.story_models import Account, Order, OrderStatus
+from parallax.snapshot.handle import Database, Snapshot, Transaction
 
 __all__ = [
     "read_a_table_per_concrete_subtype_family",
     "read_a_table_per_hierarchy_family",
     "read_to_one_relationship_states",
+    "stream_a_result_one_root_at_a_time",
+    "stream_and_write_inside_one_transaction",
 ]
 
 
@@ -67,3 +70,66 @@ def read_a_table_per_concrete_subtype_family(db: Database) -> Snapshot[Any]:
     through an intermediate abstract subtype (``Invoice``/``Receipt`` under
     ``FinancialDocument``) and one declared directly under the root (``Memo``)."""
     return db.find(Document.where(Document.all))
+
+
+def stream_a_result_one_root_at_a_time(db: Database, page: int) -> tuple[int, list[str]]:
+    """A read delivered one root at a time instead of all at once, in both
+    namespaces over one query.
+
+    ``db.stream`` is ``db.find``'s peer, not a different read: the same Object
+    Query, the same includes, the same values. What differs is delivery. The
+    result is scope-bound and single-pass — it has no whole-result accessor, and
+    nothing outside the ``with`` block answers — so a loop over it holds one root
+    and the page it came from, whatever the result's size. Summing as you go, as
+    below, is the shape that stays bounded; appending each root to a list is not,
+    and is outside the guarantee on purpose.
+
+    ``batch_size`` counts ROOT positions and is a performance dial and nothing
+    else. It changes neither which roots arrive, nor the order they arrive in, nor
+    what any of them carries; what it changes is how many round trips the delivery
+    costs and how much one page holds. Included children are not counted by it:
+    every one of a delivered root's items is loaded, exactly as under ``db.find``.
+
+    Roots arrive in the Continuation Order — the query's own ``order_by`` first,
+    then the primary key — which is a total order the delivery derives, so it is
+    deterministic even for a query that declared no ordering at all.
+    """
+    quantity = 0
+    with db.stream(Order.where(Order.all).include(Order.items), batch_size=page) as orders:
+        for order in orders:
+            quantity += sum(item.quantity for item in order.items)
+
+    names: list[str] = []
+    with db.wire.stream(Order.where(Order.all), batch_size=page) as rows:
+        for row in rows:
+            names.append(str(row["name"]))
+    return quantity, names
+
+
+def stream_and_write_inside_one_transaction(db: Database, page: int) -> list[Decimal]:
+    """A streamed delivery inside a unit of work, writing every root it hands over.
+
+    ``tx.stream`` is ``tx.find``'s peer the same way, and what participation adds
+    is a flush before every PAGE rather than one at entry: the writes the loop
+    buffered reach the database before the statement that reads the next page, so
+    read-your-own-writes holds at every page boundary and the buffer a consuming
+    loop accumulates is bounded by the page size rather than by the result.
+
+    A delivery is stable per PAGE and no further, so a loop that writes the member
+    its own query ordered by can move a root across the position the next page
+    seeks from — and see it twice, or not at all. This one orders by nothing,
+    which makes the Continuation Order the primary key alone; no write moves a
+    primary key, so the hazard cannot arise. That is the escape whenever a loop is
+    both the reader and the writer.
+    """
+    written: list[Decimal] = []
+
+    def credit(tx: Transaction) -> None:
+        with tx.stream(Account.where(Account.id >= 1), batch_size=page) as accounts:
+            for account in accounts:
+                balance = account.balance + Decimal("10.00")
+                tx.update(account.edit(balance=balance))
+                written.append(balance)
+
+    db.transact(credit)
+    return written
