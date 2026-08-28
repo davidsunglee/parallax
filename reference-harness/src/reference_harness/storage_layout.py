@@ -103,6 +103,27 @@ class MemberAddress:
     path: tuple[str, ...]
 
 
+def member_address(family: Family, entity: str, name: str) -> MemberAddress:
+    """The address the top-level member *name* reaches at *entity* is placed under.
+
+    Nearest declaration first, as a position resolves a member: disjoint
+    inheritance siblings may reuse one member name (m-inheritance), and where they
+    share a Table each declaration holds its own placement, so only the declaring
+    owner tells the two apart. A name no declaration in the ancestry carries — a
+    synthesized discriminator — addresses the position itself and so matches no
+    placement.
+    """
+    for identity in reversed(family.ancestry(entity)):
+        definition = family.defs[identity]
+        declared = (
+            *(definition.get("attributes") or []),
+            *(definition.get("valueObjects") or []),
+        )
+        if any(isinstance(member, dict) and member.get("name") == name for member in declared):
+            return MemberAddress(identity, (name,))
+    return MemberAddress(family.defs.canonical_key(entity), (name,))
+
+
 @dataclass(frozen=True, slots=True)
 class DirectColumn:
     """A member stored in a Column of its own."""
