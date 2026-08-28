@@ -3067,9 +3067,10 @@ def _execute_fetch_levels(
 def _primary_key_column(entity: Entity) -> str:
     """The physical column of *entity*'s primary key.
 
-    The Continuation Order always ends in the primary key (`m-snapshot-read`), and
-    a Metamodel primary key is one Attribute, so this is the last coordinate a
-    streamed page seeks from and the one that makes the order total.
+    Every Continuation Order carries the primary key (`m-snapshot-read`), and a
+    Metamodel primary key is one Attribute, so this is the coordinate a streamed
+    page seeks from once the query's own Sort Keys are spent — and, for a
+    single-instant read, the one that makes the order total.
     """
     for attribute in entity.attributes:
         if attribute.get("primaryKey"):
@@ -3308,9 +3309,11 @@ def _continuation_order(
     """The Continuation Order *query* is delivered in (`m-snapshot-read`).
 
     The authored Sort Keys in the precedence the query declares, then the primary
-    key ascending unless a Sort Key already named it. Direction and Null
-    Placement default to `asc` and `last` (`m-object-query`) and are carried
-    whether or not they are observable.
+    key ascending, and then — for a milestone-set read — every declared As-Of
+    Axis start ascending in canonical rank, each appended term omitted where a
+    Sort Key already named it. Direction and Null Placement default to `asc` and
+    `last` (`m-object-query`) and are carried whether or not they are
+    observable.
 
     Residence is not part of that order and changes none of it: what it changes
     is how each term is spelled and bound, so it is resolved here — per dialect,
@@ -3854,13 +3857,13 @@ def _deliver_stream(case: Case, db: DatabaseProvider, source: str) -> _StreamDel
     whatever of a declared ``limit`` is still undelivered, and a page returns at
     most that many roots. A page after the first seeks past the Continuation
     Order coordinates of the root the page before it delivered LAST, composed and
-    lowered here from the query's own ``orderBy`` and the model's primary key
-    rather than read off the golden — its coordinates graded as binds and the
-    direction it compares them in, which no bind carries, graded as the
-    comparators it spells. And exhaustion is proven rather than assumed: a short
-    page ends the delivery, while a full one is followed by one more root
-    statement returning nothing, unless a declared ``limit`` was already
-    delivered in full.
+    lowered here from the query's own ``orderBy``, the model's primary key, and a
+    milestone-set read's own edge columns rather than read off the golden — its
+    coordinates graded as binds and the direction it compares them in, which no
+    bind carries, graded as the comparators it spells. And exhaustion is proven
+    rather than assumed: a short page ends the delivery, while a full one is
+    followed by one more root statement returning nothing, unless a declared
+    ``limit`` was already delivered in full.
 
     The FIRST page's own binds are the baseline the later pages are measured
     against rather than an independently derived list: the harness executes

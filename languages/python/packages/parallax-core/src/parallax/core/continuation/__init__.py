@@ -238,9 +238,10 @@ def _remainder(terms: tuple[_Term, ...], coordinates: tuple[Scalar, ...]) -> Pre
     ``or`` would escape them and admit every null of that term whatever the terms
     above it hold. The leading branch is grouped neither way: it ties with
     nothing, so whatever it is composed of is already a disjunct of the whole.
-    Where a single branch survives, it is never the leading one alone — the order
-    ends in the primary key, whose branch drops under no coordinate — so the
-    remainder handed back as one node is never an ungrouped disjunction.
+    Where a single branch survives beside another term, it is never the leading
+    one alone — every order carries the primary key, a non-nullable term whose
+    branch drops under no coordinate — so the remainder handed back as one node is
+    never an ungrouped disjunction.
     """
     branches: list[PredicateNode] = []
     for depth, term in enumerate(terms):

@@ -3073,11 +3073,12 @@ or descriptor authoring form and performs no audit stamping.
 - **The memory bound is gated as a SHAPE and reported as a number.**
   `m-snapshot-read` *What a delivery costs* bounds the Parallax-owned working set
   at `O(P_B + G_max)` with three named exclusions; this target grades that in the
-  `cost` class (§10), as five measurements over `tests/unit/`'s memory
+  `cost` class (§10), as six measurements over `tests/unit/`'s memory
   instruments. What is asserted there is a survivor census with no term in the
-  result size and no term in how far the delivery has got, the page graph and the
-  published root counted separately, and both exclusions demonstrated rather than
-  claimed. What is not asserted anywhere is a byte total: `just
+  result size and no term in how far the delivery has got — taken over every
+  survivor and over the references they hold, so a per-PAGE retention of any type
+  fails it — the page graph and the published root counted separately, and both
+  exclusions demonstrated rather than claimed. What is not asserted anywhere is a byte total: `just
   python-report-stream-overhead` prints one, reading
   `languages/python/docs/stream-baseline.md`, and belongs to no aggregate for the
   reason every other `report` here does.

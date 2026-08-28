@@ -553,11 +553,11 @@ def _by_qty() -> ObjectQuery[Order, Order]:
     return _all_orders().order_by(Order.qty.asc())
 
 
-# Every root shape a delivery can read no cursor off: the primary key the
-# Continuation Order always ends in, and an authored Sort Key over any other
-# member. Both are the same rule — only decoded values are bindable — and both
-# are graded at every position and page size, because the position a corrupt row
-# lands in decides nothing.
+# Every root shape a delivery can read no cursor off: the primary key every
+# Continuation Order carries, and an authored Sort Key over any other member.
+# Both are the same rule — only decoded values are bindable — and both are graded
+# at every position and page size, because the position a corrupt row lands in
+# decides nothing.
 _CURSORLESS = [
     pytest.param(_keyless_order_row, _all_orders, id="keyless"),
     pytest.param(_undecodable_qty_row, _by_qty, id="undecodable-sort-key"),

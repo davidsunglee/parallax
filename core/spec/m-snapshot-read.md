@@ -323,9 +323,9 @@ rather than at any value, so what follows it is the non-nulls under `first` and
 branch. Only decoded values are bindable, so a coordinate carries a comparison
 where the term holds a value and a null test where it holds none.
 
-A single-term Continuation Order — the undeclared-`orderBy` case, ordering by the
-primary key alone — needs neither part: one strict comparison already is the
-top-level conjunct the hoist exists to supply.
+A single-term Continuation Order — a single-instant read declaring no `orderBy`,
+ordering by the primary key alone — needs neither part: one strict comparison
+already is the top-level conjunct the hoist exists to supply.
 
 Delivery is bounded by a **page size** counting root positions. It never bounds
 included relationship rows, and it is a performance dial and nothing else:
@@ -340,9 +340,11 @@ more root statement returning nothing — unless a declared `limit` was already
 delivered in full, which proves it without asking.
 
 Delivery adds no capability and removes none. A query a whole-result read may not
-execute is equally unexecutable streamed — a `history` read carrying `includes`
-is the staged `snapshot-history-includes` feature above, and is refused the same
-way and at the same point whichever delivery the caller asked for.
+execute is equally unexecutable streamed, and the reverse holds too: a `history`
+read carrying `includes` is the `snapshot-history-includes` feature above, whose
+availability is the target's own claim, and whichever way that claim answers it
+answers identically — and at the same point — for a streamed read and a
+whole-result one.
 
 ### Where a stream diverges from a whole-result read
 
@@ -387,7 +389,7 @@ more follow:
   **every** member the order names, whichever put it there: an authored Sort Key
   over any member, the primary key, and a milestone-set read's own edge are one
   rule and not three. The primary key is the instance every stream has, because
-  the Continuation Order always ends in it. The rule is also stated independently
+  every Continuation Order carries it. The rule is also stated independently
   of position — *a stream cannot continue past a root that did not decode every
   Continuation Order member* — precisely so the page size cannot change it: the
   same stored row may not be survivable at one page size and fatal at another.
@@ -396,12 +398,16 @@ more follow:
   refusal where it refuses them; what follows it is the end of the delivery
   either way.
 
-The two orders themselves agree far more often than the second pair suggests. A
-milestone set declaring no `orderBy` is ordered by the key then the edge, which
-within one key is the chronological edge rank the whole-result read groups by, so
-the two deliver the same roots in the same sequence. They part only where an
-authored `orderBy` spans several keys' histories, which the eager form ranks by
-milestone first and the stream by the authored key first.
+The two deliver the same roots at the same pins whatever the query, and they
+deliver them in the same sequence wherever their two orders agree. Over **one**
+key's own history they always do: the Continuation Order there is the edge rank,
+which is what the whole-result read groups by. Across several keys they generally
+do not, and that is true of a read declaring no `orderBy` as much as of one that
+authors a Sort Key — the whole-result read ranks by milestone across every key and
+puts every root of one milestone together, while the stream ranks by the leading
+term, the primary key or an authored member, before it reaches the edge. A key
+whose milestones interleave with another key's is therefore delivered in one
+sequence eagerly and another streamed.
 
 ### Stability under concurrent writing
 
@@ -432,16 +438,20 @@ what the next page seeks from:
 
 **The last two require a Continuation Order term a write can move, so they are
 reachable only where the query authored one.** With no authored `orderBy` the
-Continuation Order is the primary key alone, and no write moves a root's primary
-key — a keyed write addresses a row by that key rather than changing it — so
-nothing can cross the position, and neither a skip nor a duplicate is possible
-at all. The hazard is a property of what the query ordered by, not of streaming.
+Continuation Order is the primary key, followed for a milestone-set read by the
+milestone edge. No write relocates either coordinate: a keyed write addresses a
+row by its primary key rather than changing it, and a milestone's edge is the
+start instant its own interval opened at, which a later write closes or
+supersedes — writing a new milestone at a new start — rather than moving. Nothing
+already delivered can cross the position, so neither a skip nor a duplicate is
+possible at all. The hazard is a property of what the query ordered by, not of
+streaming.
 
 **The concurrent writer may be the reader.** A delivery consumed by a loop that
 writes the member its query ordered by moves its own roots across its own
 position, which is the two rows above with one caller on both sides of them. The
 loop is under the same rule everything else is, and the same escape: order by
-nothing, and the order is the primary key no write moves.
+nothing, and every term the order is then composed of is one no write moves.
 
 **Nothing de-duplicates across a delivery.** Recognizing a root already
 delivered means retaining every delivered root's identity, which is `O(N)` in
@@ -470,7 +480,7 @@ Three layers, each separately bounded and each released at a stated point:
 | Layer | Holds | Bound | Released |
 |---|---|---|---|
 | the page's converted result | every projection for one page's roots and their relationship fan-out | `O(P_B)` | after that page's last root is published |
-| the current root's merge and classification | the merged nodes and issues reachable from that root | `O(G_max)` | when the delivery advances |
+| the current root's merge and classification | the merged nodes and issues reachable from that root | `O(G_max)` | when that root is published |
 | the current root's materialized value | that root's published graph and its cycle and aliasing closure | `O(G_max)` | when the delivery advances |
 
 The bound is deliberately **not** `O(B)`. `P_B` is a page's whole converted

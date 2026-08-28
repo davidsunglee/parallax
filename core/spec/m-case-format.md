@@ -663,9 +663,9 @@ carries, so a streamed case needs no authoring form of its own for its result.
 above), whose roots the delivery publishes one at a time, each standing at its
 own edge pin: the graphs are recovered by partitioning the delivered roots by
 that pin under the same pairwise-disjointness rule the eager form states, so what
-the two forms assert is one milestone set either way. A
+the two forms assert is one milestone set either way.
 
-**batch-size pair** — two cases sharing one model, one `when.objectQuery`, and one
+A **batch-size pair** — two cases sharing one model, one `when.objectQuery`, and one
 `then.graph`, differing only in `batchSize` and in the physical observations that
 follow from it — is how the corpus proves that invariance, on the file-based
 precedent *Cross-layout twin proofs* sets: the corpus executes authored goldens
