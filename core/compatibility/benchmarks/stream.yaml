@@ -1,7 +1,7 @@
 # Benchmark fixture (m-perf-bench): the streamed-delivery workload.
 #
 # Exercises m-snapshot-read's Streamed delivery at scale. The headline property is
-# the one `expectRoundTrips` was built to guard: a delivery costs
+# the one `expectRoundTrips` declares: a delivery costs
 # `floor(N / B) + 1` root statements and `ceil(N / B) * L` child statements — the
 # `1 + L` deep-fetch ceiling applied ONCE PER PAGE. What is declared here is that
 # count and the page statements behind it, not a delivery: like every fixture in

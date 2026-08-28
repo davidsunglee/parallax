@@ -15,7 +15,7 @@ interpreter bump that changed nothing.
 The *shape* of the bound is gated instead, in
 `tests/unit/test_snapshot_stream_retention.py`, which the `cost` class owns and CI
 runs on every change through `just python-check-cost`. That suite states the bound
-as seven separate readings. Page graphs do not accumulate: what a delivery retains
+as eight separate readings. Page graphs do not accumulate: what a delivery retains
 at ten times the roots, at a later position of the same delivery, and once
 drained, differs from the baseline by less than one retained root costs. One page
 graph and one published root are alive at a time, counted as objects — one
@@ -37,12 +37,30 @@ no term in the total result size and no term in how far the delivery has got**,
 and both absences are read directly as well as by omission — over every survivor
 whatever defined its type, over the references those survivors hold, and in bytes
 over the survivors and everything untracked they hold — so a delivery banking one
-thing per PAGE fails them whether what grows is objects, references, or the bytes
-inside a container that gains neither. Publishing one root peaks at that root's
-own graph: the high-water of the region between two roots is exactly the same at
-ten times the result and at a later position, grows with the fan-out, and moves
-less across the whole grid of page sizes than one more child of the same root
-moves it, which is what prices the merge layer the census cannot reach.
+thing per PAGE off something it published fails them whether what grows is
+objects, references, or the bytes inside a container that gains neither.
+
+Every one of those walks outwards from the delivery's own survivors, so the two
+absences are then read once more over the WHOLE PROCESS: every tracked object in
+it, every reference they hold, and what they and everything untracked they reach
+weigh, as three totals with no baseline, equal to the byte at ten times the roots
+and at a later position of the same delivery. A total needs no survivor to start
+at, which is the only way a holder created BEFORE the measurement — banking one
+already-existing value per page, and so growing by neither an object nor a byte
+of its own — comes inside the claim. The price of a total is that it prices
+everything: the two arms may differ in nothing but the one dial, down to the width
+of every value the fixture produces.
+
+Publishing one root peaks at that root's own graph: the high-water of the region
+between two roots is exactly the same at ten times the result, at a later
+position, and across a thirty-two-fold spread of page sizes, and what it costs per
+node falls across the whole fan-out grid. Page-size equality is exact rather than
+a tolerance, because `m-snapshot-read` gives the page to the first layer alone;
+that is what prices the merge layer the census cannot reach. A high-water reading
+is a maximum, so an allocation that never takes the process above an earlier
+moment of the same publication is invisible to it however it scales — which is why
+that grid is thirty-two-fold rather than convenient, and why the merge and the
+construction it feeds are priced as a pair rather than apart.
 
 Two of the bound's three exclusions are demonstrated rather than asserted: a
 caller retaining every root reproduces growth proportional to the result, and a
