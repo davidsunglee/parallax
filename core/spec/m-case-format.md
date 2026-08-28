@@ -1214,15 +1214,14 @@ A scenario READ step MAY carry the same **`stream`** context member a `read`
 case's `when` does, with the same sole field `batchSize` and the same meaning
 (*Streamed reads*, above): the step's `objectQuery` is delivered one root at a
 time in the Continuation Order over keyset-paged root statements rather than
-resolved eagerly. Its own `statements` are that delivery's pages — the ordered
-concatenation of each page's `1 + L` group, exactly as a streamed `read` case's
-`then.statements` is — so its declared `roundTrips` is the length of that list
-and the per-step count rule needs no clause of its own. The three properties
-graded independently of the SQL text are the same three, derived the same way:
-the size each page asks for, the Continuation Order coordinates each page after
-the first seeks from, and the statement a full final page costs to prove
-exhaustion. Its `expectRows` are the roots the delivery published, across every
-page, in delivery order.
+resolved eagerly. Its own `statements` are that delivery's pages, in delivery
+order, exactly as a streamed `read` case's `then.statements` are — so its
+declared `roundTrips` is the length of that list and the per-step count rule
+needs no clause of its own. The three properties graded independently of the SQL
+text are the same three, derived the same way: the size each page asks for, the
+Continuation Order coordinates each page after the first seeks from, and the
+statement a full final page costs to prove exhaustion. Its `expectRows` are the
+roots the delivery published, across every page, in delivery order.
 
 This placement is what makes a streamed root's **evidence** gradeable by the
 corpus rather than by one language's own tests. A `uow`-grouped write step naming
@@ -1237,9 +1236,18 @@ second observation of it exactly as a second find does.
 
 A streamed step declares **`uow`**, for the reason `on` itself does: what a
 delivery retains is transaction-scoped evidence, and a scenario opens a streamed
-delivery to settle against it. It declares no **`expectGraph`**: what a streamed
-step materializes below its roots is graded nowhere, and the format admits no
-shape the corpus does not grade.
+delivery to settle against it. It states its roots and nothing under them: its
+query declares no **`includes`** and the step no **`expectGraph`**. The step's
+own content oracle is `expectRows`, which carries roots; the format's step-level
+oracle for what a read materialized BELOW its roots is `expectGraph` in its read
+placement (*Relationship contents at a step*, below), which grades one read's
+whole graph as a single value — the eager result a delivery exists not to
+assemble. What a streamed delivery materializes below its roots is graded where a
+streamed `read` case states it, in `then.graph` (*Streamed reads*, above), so
+admitting a level HERE would add a shape the corpus does not grade rather than
+reaching one it cannot otherwise. Each page of a step's delivery is therefore one
+root statement and no more, which is what makes its `statements` a flat
+page-per-entry list.
 
 A case carrying a streamed step is **query-result-dependent** and therefore
 `run-only` (see *Compile eligibility*), for the reason a streamed `read` case is:

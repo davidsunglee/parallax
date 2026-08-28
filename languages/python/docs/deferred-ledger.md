@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-86**.
+Entry numbering is continuous and never reused. The next new number is **D-87**.
 
 ## Entries
 
@@ -64,9 +64,8 @@ corpus model declares a namespace.
 ### D-55 — The reference harness grades a scenario find's `expectRows` against the raw projected row, disagreeing with `m-case-format` for a family target
 
 *Low — narrows what a corpus case may assert, never produces a wrong pass.*
-**Owned by the reference harness, not this target** — the only entry here whose
-repair lands outside `languages/python`, kept because Python work surfaced it and
-nothing else tracks it. Relates to `reference-harness`
+**Owned by the reference harness, not this target**, kept because Python work
+surfaced it and nothing else tracks it. Relates to `reference-harness`
 `case_runner._materialize_family_variant`.
 
 **What.** `m-case-format` (*Read result form*) states that a scenario observation
@@ -793,6 +792,46 @@ corpus model being class-backed — neither of which has a streaming rationale, 
 closing them means reopening a cross-language contract the corpus took the other
 way on purpose. It stays graded at
 `tests/unit/test_transaction_streams.py`.
+
+### D-86 — A scenario read step's `expectRows` grades the rows its statements returned, never the values the step published
+
+*Medium — a portable observation the conformance envelope does not carry, so
+outside Python a scenario read step's rows reach no oracle at all.* Owned by
+`core/spec/m-conformance-adapter.md` *Scenario cases* rather than by this target;
+recorded here because streamed-step work surfaced it. Relates to
+`core/spec/m-case-format.md` *Relationship contents at a step*,
+`parallax.conformance.engine._run_group_step`,
+`tests/compatibility/test_run_sweep.py`.
+
+**What.** A step's `expectRows` states the roots that step published, and nothing
+compares it against them. The envelope's only per-step content channel is
+`stepGraphs`, which carries what an `expectGraph` step states and is admitted
+only on a read declaring Include Paths; a read step's rows have no channel. The
+Python run sweep therefore grades `expectRows` at the injected `DbPort` — it
+captures each step's result sets, runs the production materializer over them, and
+compares that to the case — so what is graded is that the step's own statements
+returned those rows, not that the step handed those values to the case. A foreign
+adapter has no such seam to wrap, so there the observable is absent rather than
+approximated. A streamed step inherits this: its pages, seek coordinates,
+exhaustion, and the gate a later write binds are all graded, while a delivery
+that published its roots reordered or short still passes. What a streamed
+delivery publishes IS graded where a streamed `read` case states `then.graph`,
+which the envelope reports from the delivery itself.
+
+**Why it is deferred rather than fixed.** Closing it is a cross-language envelope
+change with two shapes, and the choice between them is a contract decision:
+
+- **A `stepRows` observation** — one entry per read step, the values it
+  published, mirroring `stepGraphs`. Grades every scenario read step in every
+  language against what it published, and retires the port-capture lane. Costs a
+  new adapter obligation for a value adapters currently need not retain.
+- **`expectGraph` without Include Paths on a read step** — reuse `stepGraphs` for
+  the root-only graph. No new channel, and it reaches streamed steps once they
+  admit the member. Costs the rule that both `expectGraph` placements state
+  relationship contents, and leaves `expectRows` ungraded in its own vocabulary.
+
+A is the honest one: `expectRows` is the observable the format already gives
+every read step, and A is what makes it one.
 
 ## Forwarding pointers
 

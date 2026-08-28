@@ -458,27 +458,9 @@ def _steps(case: Case) -> list[dict[str, Any]]:
     return case.when["scenario"]
 
 
-def _skip_without_a_golden(case: Case, provider) -> None:
-    """Skip where *case* authors no golden for this provider's dialect.
-
-    Every `m-unit-work` scenario states Postgres goldens alone, and a scenario
-    listing none for a dialect takes the dialect-agnostic path there — it grades
-    no delivery at all, so there is nothing on that dialect to refuse.
-    """
-    dialects = {
-        dialect
-        for step in _steps(case)
-        for entry in step.get("statements", [])
-        for dialect in entry["sql"]
-    }
-    if provider.dialect not in dialects:
-        pytest.skip(f"{case.path.stem} authors no {provider.dialect} golden")
-
-
 def test_a_streamed_step_page_seeking_from_the_wrong_root_is_refused(provider) -> None:
     """A step's pages reach the delivery oracle, not a single-statement find path."""
     case = _damaged(_STREAMED_EVIDENCE)
-    _skip_without_a_golden(case, provider)
     _steps(case)[0]["statements"][1]["binds"][0] = 1
 
     with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
@@ -492,7 +474,6 @@ def test_a_streamed_step_ending_on_a_full_page_is_refused(provider) -> None:
     remaining page still returns the two roots page 1 asked for.
     """
     case = _damaged(_STREAMED_EVIDENCE)
-    _skip_without_a_golden(case, provider)
     del _steps(case)[0]["statements"][1]
     _steps(case)[0]["roundTrips"] = 1
     case.then["roundTrips"] = 5
@@ -505,12 +486,12 @@ def test_a_write_settling_against_the_OTHER_delivery_is_refused(provider) -> Non
     """Which delivery published the root decides the version the write gates on.
 
     The two deliveries observe account 1 at two generations, so a write naming the
-    first one may not carry the second one's gate. This is the claim the case
-    exists for, damaged: an implementation filing one slot per key rather than one
-    per observed state cannot tell the two apart.
+    first one may not carry the second one's gate. The damage moves the step's `on`
+    and nothing else: a grader reading the gate off the group's LATEST observation
+    rather than off the delivery the step names accepts the case as authored, where
+    each write already names the delivery that ran most recently before it.
     """
     case = _damaged(_STREAMED_EVIDENCE)
-    _skip_without_a_golden(case, provider)
     _steps(case)[3]["on"] = 0
 
     with pytest.raises(CaseFailure, match="observed version 1, but its golden gate binds 2"):

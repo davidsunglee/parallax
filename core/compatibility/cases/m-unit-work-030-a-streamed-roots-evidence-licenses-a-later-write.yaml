@@ -3,10 +3,9 @@
 # observed states for one Entity and primary key"; m-case-format *Streamed read
 # steps* / *Settling against a grouped find*).
 #
-# The streamed peer of m-unit-work-024, and the corpus's own statement of the
-# claim that ticket-level acceptance turns on: claim scope is derived structurally
-# from evidence data, never from the value it travelled on, so which DELIVERY a
-# root arrived through must not change what it licenses. The unit of work reads
+# The streamed peer of m-unit-work-024: claim scope is derived structurally from
+# evidence data, never from the value it travelled on, so which DELIVERY a root
+# arrived through must not change what it licenses. The unit of work reads
 # every account twice as a paged delivery and writes account 1 after each reading,
 # naming the delivery its value came from.
 #   step 0 stream: `batchSize: 2` over three accounts — page 1 returns {1, 2} and
@@ -23,12 +22,15 @@
 #                  returns account 1 at 125.00 / version 2. Its pages are the same
 #                  two statements: a page size and a Continuation Order are
 #                  properties of the query, not of what the rows hold.
-#   step 3 write : `balance = 175.00`, naming step 2 — gated on version 2. Naming
-#                  step 0 here would gate on version 1, which the row has left, and
-#                  the write would affect zero rows; an implementation filing one
-#                  slot per key rather than one per observed state cannot tell the
-#                  two deliveries apart and settles both writes against whichever
-#                  ran last.
+#   step 3 write : `balance = 175.00`, naming step 2 — gated on version 2, the
+#                  generation THAT delivery published for a key the first delivery
+#                  had already handed over at version 1. A delivery re-reading a
+#                  key it already delivered FILES a second observed state rather
+#                  than revising the first, and each write binds the one its own
+#                  delivery published: an implementation whose ledger holds one
+#                  observation per key, so that the second delivery's reading of
+#                  account 1 does not enter it, gates this write on version 1 —
+#                  a generation the row has left — and affects zero rows.
 # The case is `run-only` twice over (query-result-dependent): every continuing page
 # binds the primary key of the root the page before it delivered last, and every
 # gate binds a version a delivery returned.
@@ -53,9 +55,11 @@ when:
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 order by t0.id asc limit ?
           binds: [2]
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id > ? order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id > ? order by t0.id asc limit ?
           binds: [2, 2]
       referenceSql: select id, owner, balance, version from account
       expectRows:
@@ -74,6 +78,7 @@ when:
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
+            mariadb: update account set balance = ?, version = ? where id = ? and version = ?
           binds: [125.00, 2, 1, 1]
     - uow: two-deliveries
       objectQuery:
@@ -87,9 +92,11 @@ when:
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 order by t0.id asc limit ?
           binds: [2]
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id > ? order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id > ? order by t0.id asc limit ?
           binds: [2, 2]
       referenceSql: select id, owner, balance, version from account
       expectRows:
@@ -108,6 +115,7 @@ when:
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
+            mariadb: update account set balance = ?, version = ? where id = ? and version = ?
           binds: [175.00, 3, 1, 2]
 then:
   roundTrips: 6

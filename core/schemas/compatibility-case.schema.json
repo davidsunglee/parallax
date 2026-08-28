@@ -593,11 +593,18 @@
                 "then": { "required": ["objectQuery"] }
               },
               {
-                "description": "A `stream` step is a READ step inside a `uow` group that states no `expectGraph` (m-case-format *Streamed read steps*). `objectQuery`, because delivery is how a READ is consumed and a write or lifecycle-action step consumes no result. `uow`, for the reason `on` itself requires one: what a delivery retains is transaction-scoped evidence, and a scenario opens a streamed delivery to settle a later write against it. And no `expectGraph`, because what a streamed step materializes BELOW its roots is graded nowhere — admitting the member here would put a shape in the format that no executor answers, which the corpus refuses structurally rather than discovering at run time.",
+                "description": "A `stream` step is a READ step inside a `uow` group that states its roots and nothing under them (m-case-format *Streamed read steps*). `objectQuery`, because delivery is how a READ is consumed and a write or lifecycle-action step consumes no result. `uow`, for the reason `on` itself requires one: what a delivery retains is transaction-scoped evidence, and a scenario opens a streamed delivery to settle a later write against it. And neither `objectQuery.includes` nor `expectGraph`: the step's own content oracle is `expectRows`, which carries roots, and the format's step-level oracle for what a read materialized BELOW its roots is `expectGraph` in its read placement, which grades one read's whole graph as a single value — the eager result a delivery exists not to assemble. A streamed delivery's child levels are graded where a streamed `read` case states them in `then.graph`, so admitting a level here would add a shape the corpus does not grade. The refusal is structural rather than discovered at run time.",
                 "if": { "required": ["stream"] },
                 "then": {
                   "required": ["objectQuery", "uow"],
-                  "not": { "required": ["expectGraph"] }
+                  "allOf": [
+                    { "not": { "required": ["expectGraph"] } },
+                    {
+                      "properties": {
+                        "objectQuery": { "not": { "required": ["includes"] } }
+                      }
+                    }
+                  ]
                 }
               },
               {
