@@ -281,6 +281,26 @@ def test_continuing_pages_drifting_outside_their_seek_are_refused(provider) -> N
         run_case(case, provider)
 
 
+def test_a_continuing_page_negating_its_seek_is_refused(provider) -> None:
+    """A seek is the expression an order COMPOSES, not the comparisons it mentions.
+
+    The damaged page mentions exactly the comparisons and null checks its own
+    coordinates compose, in exactly their order, and binds exactly what a correct
+    page binds. It is the terminal one, whose null coordinate no sibling page's
+    text constrains, and it still returns nothing. Only the Boolean shape is
+    different, and a Continuation Order composes no negation at any depth.
+    """
+    case = _damaged(_NULLABLE_PLACEMENT)
+    entry = _statements(case)[3]
+    entry["sql"] = {
+        dialect: sql.replace("t0.id > ?", "not not t0.id > ?")
+        for dialect, sql in entry["sql"].items()
+    }
+
+    with pytest.raises(CaseFailure, match="seeks .*, not "):
+        run_case(case, provider)
+
+
 def test_a_document_resident_sort_key_is_refused_rather_than_mis_derived() -> None:
     """What this oracle cannot derive it refuses by name, database or no database.
 
