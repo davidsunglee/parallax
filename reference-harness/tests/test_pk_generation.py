@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 
 from reference_harness.case import discover_cases, load_model
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _assert_pk_allocation,
     _assert_write_input_columns,
     _expected_sequence_counter,

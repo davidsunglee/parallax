@@ -26,8 +26,8 @@ from typing import Any
 import pytest
 
 from reference_harness.case import Case, dialect_executed_cases, discover_cases
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _composed_seek,
     _continuation_order,
     _direct_term,

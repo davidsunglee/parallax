@@ -22,13 +22,11 @@ real implementation, graded against the golden SQL.
 from __future__ import annotations
 
 import contextlib
-import datetime
 import functools
 import json
 import re
 import threading
-import uuid
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any, Literal, NamedTuple
@@ -38,8 +36,9 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.expressions.core import Expr
 
-from . import errors, portable_literal, serde
+from . import errors, serde
 from .case import Case, Entity, Model, conflict_write_rows, step_as_read
+from .case_assertions import CaseFailure, rows_equal, scalars_equal
 from .data_loader import load_model
 from .ddl_builder import (
     contributor_types,
@@ -179,16 +178,12 @@ ALL_REJECTED_RULES = (
 )
 
 
-class CaseFailure(AssertionError):
-    """A compatibility-case assertion failed."""
-
-
 def _coerce_identity_key(value: Any) -> Any:
     """Coerce a DB / expected scalar to an exact hashable identity-key form.
 
     Used only by deep-fetch key gathering, bucket lookup, and node identity.
     Projected graph values must keep their original types so graph equality can
-    compare numerics exactly via :func:`_scalars_equal`.
+    compare numerics exactly via :func:`case_assertions.scalars_equal`.
     """
     if isinstance(value, bool):
         return value
@@ -201,121 +196,6 @@ def _coerce_identity_key(value: Any) -> Any:
 
 def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     return dict(row)
-
-
-def _to_decimal(value: Any) -> Any:
-    """Normalize a numeric to an EXACT ``Decimal``; pass non-numerics through.
-
-    Integers and ``Decimal``\\ s convert losslessly. A ``float`` is converted via
-    its shortest round-tripping repr (``Decimal(str(x))``) so a YAML-authored
-    ``0.1`` becomes ``Decimal('0.1')`` — matching the DB's exact ``numeric`` —
-    rather than ``Decimal(0.1)``, which would inject the binary-float expansion.
-    ``bool`` is deliberately NOT treated as numeric, so ``True`` never equals 1.
-    """
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return Decimal(value)
-    if isinstance(value, float):
-        return Decimal(str(value))
-    if isinstance(value, Decimal):
-        return value
-    return value
-
-
-# The host carrier each string-carried Neutral Type decodes to, and the decoder
-# that reads its portable literal.
-_LITERAL_CARRIERS: tuple[tuple[type, Callable[[str], Any]], ...] = (
-    (datetime.datetime, portable_literal.decode_timestamp),
-    (datetime.date, portable_literal.decode_date),
-    (datetime.time, portable_literal.decode_time),
-    (uuid.UUID, portable_literal.decode_uuid),
-    (bytes, portable_literal.decode_octets),
-)
-
-
-def _decoded_against(value: Any, other: Any) -> Any:
-    """*value* decoded as a portable literal of *other*'s space, else unchanged.
-
-    ``datetime`` is asked before ``date`` because it is a ``date`` subclass, so an
-    instant would otherwise be compared against a calendar-date literal.
-    """
-    if not isinstance(value, str):
-        return value
-    for carrier, decode in _LITERAL_CARRIERS:
-        if isinstance(other, carrier):
-            return decode(value) if decode(value) is not None else value
-    return value
-
-
-def _scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
-    """Compare two scalars exactly in Decimal space, or within ``tolerance``.
-
-    Numerics compare as exact Decimals (no ``float`` anywhere) so a ``decimal``
-    money column matches to the cent and a value's type never depends on whether
-    it is whole. When the case declares a ``tolerance`` — for inherently inexact
-    results (stddev / variance / repeating-decimal avg) that cannot be authored
-    exactly and differ in scale across dialects — numeric comparison becomes
-    ``abs(left - right) <= tolerance``. Non-numerics (str / bool / None) use ``==``.
-
-    A case authors a `date` / `time` / `timestamp` / `uuid` / `bytes` value as its
-    PORTABLE LITERAL — the corpus YAML schema resolves four implicit types and no
-    more (:mod:`corpus_yaml`), so such a value reaches here as the text its author
-    wrote, while the row read back carries the decoded host value. The literal is
-    decoded before comparison, so the two name the same value or they do not.
-    """
-    if isinstance(left, bool) or isinstance(right, bool):
-        # bool is not numeric: a boolean equals only a boolean of the same value
-        # (so True != 1 and False != 0), never a number that happens to be 0/1.
-        return isinstance(left, bool) and isinstance(right, bool) and left == right
-    left, right = _decoded_against(left, right), _decoded_against(right, left)
-    da, db = _to_decimal(left), _to_decimal(right)
-    if isinstance(da, Decimal) and isinstance(db, Decimal):
-        if tolerance is not None:
-            return abs(da - db) <= tolerance
-        return da == db
-    return left == right
-
-
-def _row_matches(left: dict[str, Any], right: dict[str, Any], tolerance: Decimal | None) -> bool:
-    if left.keys() != right.keys():
-        return False
-    return all(_scalars_equal(left[key], right[key], tolerance) for key in left)
-
-
-def _rows_equal(
-    left: list[dict[str, Any]],
-    right: list[dict[str, Any]],
-    tolerance: Decimal | None = None,
-    *,
-    ordered: bool = False,
-) -> bool:
-    """Order-insensitive multiset comparison of result rows.
-
-    Tolerance-aware scalar comparison is not hashable, so this is a greedy match:
-    each left row must claim a distinct right row. Result sets are tiny, so the
-    O(n^2) match is free.
-
-    ``ordered`` compares positionally instead, for the one row sequence whose order
-    a case fixes: a streamed step's published roots, which arrive in the delivery's
-    Continuation Order across every page (m-case-format "Streamed read steps").
-    """
-    if len(left) != len(right):
-        return False
-    if ordered:
-        return all(
-            _row_matches(row, candidate, tolerance)
-            for row, candidate in zip(left, right, strict=True)
-        )
-    remaining = list(right)
-    for row in left:
-        for index, candidate in enumerate(remaining):
-            if _row_matches(row, candidate, tolerance):
-                del remaining[index]
-                break
-        else:
-            return False
-    return not remaining
 
 
 # --- statement-entry readers ------------------------------------------------
@@ -1540,7 +1420,7 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     # from the tag metadata map, never projected as SQL.
     golden_rows = _materialize_family_variant(case, golden_rows)
 
-    if not _rows_equal(golden_rows, expected, tolerance):
+    if not rows_equal(golden_rows, expected, tolerance):
         raise CaseFailure(
             f"{case.path.name}: then.statements ({dialect}) rows != then.rows.\n"
             f"  golden:   {golden_rows!r}\n"
@@ -1553,7 +1433,7 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
             case, db.query(reference_sql), include_value_objects=False
         )
         reference_rows = _materialize_family_variant(case, reference_rows)
-        if not _rows_equal(reference_rows, expected, tolerance):
+        if not rows_equal(reference_rows, expected, tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != then.rows.\n"
                 f"  reference: {reference_rows!r}\n"
@@ -2886,7 +2766,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     if reference_sql is not None:
         reference_rows = _materialize_family_variant(case, db.query(reference_sql))
         root_projection = [_project_like(r, root_rows) for r in reference_rows]
-        if not _rows_equal(root_projection, root_rows, case.tolerance):
+        if not rows_equal(root_projection, root_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql root rows != then.statements root rows.\n"
                 f"  reference: {reference_rows!r}\n"
@@ -3822,7 +3702,7 @@ def _binds_equal(authored: list[Any], derived: list[Any]) -> bool:
     if len(authored) != len(derived):
         return False
     return all(
-        _scalars_equal(left, right, None) for left, right in zip(authored, derived, strict=True)
+        scalars_equal(left, right, None) for left, right in zip(authored, derived, strict=True)
     )
 
 
@@ -4013,7 +3893,7 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
     if reference_sql is not None:
         reference_rows = _materialize_family_variant(case, db.query(reference_sql))
         root_projection = [_project_like(row, delivered.root_rows) for row in reference_rows]
-        if not _rows_equal(root_projection, delivered.root_rows, case.tolerance):
+        if not rows_equal(root_projection, delivered.root_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql root rows != the delivered root rows.\n"
                 f"  reference: {reference_rows!r}\n"
@@ -4066,7 +3946,7 @@ def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
         reference_rows = [_project_like(r, root_rows) for r in db.query(reference_sql)]
-        if not _rows_equal(reference_rows, root_rows, case.tolerance):
+        if not rows_equal(reference_rows, root_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != then.statements milestone rows.\n"
                 f"  reference: {reference_rows!r}\n"
@@ -4135,7 +4015,7 @@ def _assert_milestone_partition(
             index
             for index, row in enumerate(root_rows)
             if all(
-                _scalars_equal(row.get(from_column_by_attr[name]), date, None)
+                scalars_equal(row.get(from_column_by_attr[name]), date, None)
                 for name, date in pin.items()
             )
         ]
@@ -4332,7 +4212,7 @@ def _graphs_equal(
                     return False
             return not remaining
 
-        return _scalars_equal(a, b, None)
+        return scalars_equal(a, b, None)
 
     if model is None:
         return equal_value(left, right)
@@ -4344,7 +4224,7 @@ def _graphs_equal(
         return all(
             equal_value_object(a[key], b[key], nested_by_name[key])
             if key in nested_by_name
-            else _scalars_equal(a[key], b[key], None)
+            else scalars_equal(a[key], b[key], None)
             for key in a
         )
 
@@ -4378,7 +4258,7 @@ def _graphs_equal(
             relationship_name = key.split("[", 1)[0]
             relationship = relationships.get(relationship_name)
             if relationship is None:
-                if not _scalars_equal(a[key], b[key], None):
+                if not scalars_equal(a[key], b[key], None):
                     return False
                 continue
 
@@ -4639,7 +4519,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
         # equivalent selection); materialize familyVariant on it the same way,
         # so this identity check compares apples to apples (m-inheritance).
         reference_rows = _materialize_family_variant(case, db.query(reference_sql))
-        if not _rows_equal(reference_rows, identity_rows, case.tolerance):
+        if not rows_equal(reference_rows, identity_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != golden rows (identity).\n"
                 f"  reference: {reference_rows!r}\n"
@@ -5599,7 +5479,7 @@ def _write_value_equal(left: Any, right: Any) -> bool:
     """
     left = _bytes_to_hex(left)
     right = _bytes_to_hex(right)
-    if _scalars_equal(left, right, None):
+    if scalars_equal(left, right, None):
         return True
     return str(left) == str(right)
 
@@ -7283,7 +7163,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     types = contributor_types(case.model)
     for table, expected_rows in expected.items():
         actual = _read_table(db, _table_layout(case, table), types)
-        if not _rows_equal(actual, expected_rows, case.tolerance):
+        if not rows_equal(actual, expected_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: table {table!r} state after the write "
                 f"sequence != then.tableState.\n"
@@ -7338,7 +7218,7 @@ def _assert_scenario_reference_sql(
     if reference_sql is None:
         return
     reference_rows = _query_rows(case, reader, reference_sql, [])
-    if not _rows_equal(reference_rows, golden_rows, case.tolerance):
+    if not rows_equal(reference_rows, golden_rows, case.tolerance):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] referenceSql rows != golden rows.\n"
             f"  reference: {reference_rows!r}\n"
@@ -8356,7 +8236,7 @@ def _assert_step_row_observables(
     order inside a page (m-case-format "Streamed read steps").
     """
     expect = step.get("expectRows")
-    if expect is not None and not _rows_equal(rows, expect, tolerance, ordered="stream" in step):
+    if expect is not None and not rows_equal(rows, expect, tolerance, ordered="stream" in step):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] rows != expectRows.\n"
             f"  rows:     {rows!r}\n"
@@ -8941,7 +8821,7 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
         types = contributor_types(case.model)
         for table, expected_rows in case.expected_table_state.items():
             actual = _read_table(db, _table_layout(case, table), types)
-            if not _rows_equal(actual, expected_rows, case.tolerance):
+            if not rows_equal(actual, expected_rows, case.tolerance):
                 raise CaseFailure(
                     f"{case.path.name}: table {table!r} state after the conflict "
                     f"case != then.tableState.\n"
@@ -9021,7 +8901,7 @@ def _assert_table_state(case: Case, db: DatabaseProvider) -> None:
     types = contributor_types(case.model)
     for table, expected_rows in case.expected_table_state.items():
         actual = _read_table(db, _table_layout(case, table), types)
-        if not _rows_equal(actual, expected_rows, case.tolerance):
+        if not rows_equal(actual, expected_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: table {table!r} state != then.tableState.\n"
                 f"  actual:   {actual!r}\n"
@@ -9309,7 +9189,7 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
     round steps on its own held non-autocommit session; a ``kind: read`` step is
     fetched on that HELD session (``session.query`` -- inside the open transaction, so
     a locking SELECT both takes the lock and returns its rows) and its ``expectRows``
-    compared via the order-insensitive :func:`_rows_equal`, while a ``kind: write``
+    compared via the order-insensitive :func:`case_assertions.rows_equal`, while a ``kind: write``
     step asserts only that it did not block/raise. Success is exactly "NO node raised
     and every ``expectRows`` matched". Sessions are rolled back + closed in a finally
     (releasing any lock a held read took).
@@ -9340,7 +9220,7 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
                         for sql, binds in pairs:
                             rows = session.query(sql, binds)
                         expect = step.get("expectRows") or []
-                        if not _rows_equal(rows, expect, tolerance):
+                        if not rows_equal(rows, expect, tolerance):
                             row_failures.append(
                                 f"node {node} observed rows != expectRows.\n"
                                 f"  observed: {rows!r}\n"
@@ -9461,7 +9341,7 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
             results.append(rows)
 
             observe = step.get("observeRows")
-            if observe is not None and not _rows_equal(rows, observe, tolerance):
+            if observe is not None and not rows_equal(rows, observe, tolerance):
                 raise CaseFailure(
                     f"{case.path.name}: coherence[{index}] on node "
                     f"{step['node']} observed rows != observeRows.\n"

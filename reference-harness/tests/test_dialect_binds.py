@@ -31,8 +31,8 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from reference_harness.case import Case, Model, discover_cases
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _assert_binds_dialect_keys,
     _assert_reference_sql_dialect_keys,
 )

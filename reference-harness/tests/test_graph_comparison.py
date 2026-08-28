@@ -18,8 +18,8 @@ import pytest
 
 import reference_harness.case_runner as case_runner
 from reference_harness.case import Case, load_case, load_model
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _assert_child_ordering,
     _assert_deep_fetch,
     _assert_graphs,

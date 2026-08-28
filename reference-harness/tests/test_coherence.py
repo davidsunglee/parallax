@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 
 from reference_harness.case import Case, discover_cases, load_case
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _assert_coherence,
     _assert_coherence_identity,
     _assert_coherence_normalization,

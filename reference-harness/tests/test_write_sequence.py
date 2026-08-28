@@ -18,8 +18,8 @@ from typing import Any, cast
 import pytest
 
 from reference_harness.case import Case, discover_cases, load_model
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _assert_carried_document,
     _assert_scenario_count_consistency,
     _assert_write_input_columns,

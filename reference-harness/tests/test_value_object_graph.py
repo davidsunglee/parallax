@@ -25,8 +25,8 @@ from typing import Any, cast
 import pytest
 
 from reference_harness.case import load_case, load_model
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _alias_document_presence_projections,
     _assert_single_statement_graph,
     _graphs_equal,
