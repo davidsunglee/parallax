@@ -287,15 +287,26 @@ def _rows_equal(
     left: list[dict[str, Any]],
     right: list[dict[str, Any]],
     tolerance: Decimal | None = None,
+    *,
+    ordered: bool = False,
 ) -> bool:
     """Order-insensitive multiset comparison of result rows.
 
     Tolerance-aware scalar comparison is not hashable, so this is a greedy match:
     each left row must claim a distinct right row. Result sets are tiny, so the
     O(n^2) match is free.
+
+    ``ordered`` compares positionally instead, for the one row sequence whose order
+    a case fixes: a streamed step's published roots, which arrive in the delivery's
+    Continuation Order across every page (m-case-format "Streamed read steps").
     """
     if len(left) != len(right):
         return False
+    if ordered:
+        return all(
+            _row_matches(row, candidate, tolerance)
+            for row, candidate in zip(left, right, strict=True)
+        )
     remaining = list(right)
     for row in left:
         for index, candidate in enumerate(remaining):
@@ -2019,7 +2030,6 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
         return rows
     effective = _read_effective_set(case, family, target_name)
     expected_columns = set(position_projection(case.model.storage_layout, family, effective))
-    variant_map = tag_value_to_subtype(case.model.entity_defs)
 
     # Projection-shape assertion, derived from the GOLDEN SQL projection rather than a
     # sample row, so it is row-count-INDEPENDENT: a zero-row abstract read still
@@ -2043,6 +2053,24 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
             f"(m-sql / m-inheritance, resolved Q6)."
         )
 
+    return _materialize_tph_family_variant(case, family, target_name, rows)
+
+
+def _materialize_tph_family_variant(
+    case: Case, family: Family, target_name: str, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Replace each row's raw tag column with the derived ``familyVariant``.
+
+    The row-level half of the table-per-hierarchy materialization, shared by the
+    whole-read path (which asserts the golden projection shape first) and the
+    per-step one (whose shape its own step golden fixes).
+    """
+    tag_column = family.tag_column_of(target_name)
+    if tag_column is None:
+        return rows
+    if rows and all("familyVariant" in row and tag_column not in row for row in rows):
+        return rows
+    variant_map = tag_value_to_subtype(case.model.entity_defs)
     materialized: list[dict[str, Any]] = []
     for row in rows:
         new_row = _materialized_row(row)
@@ -2063,6 +2091,29 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
         new_row["familyVariant"] = variant
         materialized.append(new_row)
     return materialized
+
+
+def _materialize_step_family_variant(
+    case: Case, step: dict[str, Any], rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Materialize ``familyVariant`` for a scenario step whose OWN read targets an
+    abstract position.
+
+    A step's ``expectRows`` states the leaves that read materialized, and an
+    abstract-target read's leaf carries the derived variant rather than the raw tag
+    column its SQL projects (`m-case-format` "Read targeting"). The position is
+    classified from the STEP's own query, because a scenario names one target per
+    step and none for the case.
+    """
+    position = _abstract_family_position(case, step.get("objectQuery"))
+    if position is None:
+        return rows
+    family, target_name = position.family, position.target
+    if position.strategy == STRATEGY_TPCS:
+        return _materialize_tpcs_family_variant(case, rows, family, target_name)
+    if position.strategy != STRATEGY_TPH:
+        return rows
+    return _materialize_tph_family_variant(case, family, target_name, rows)
 
 
 def _narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -8218,9 +8269,13 @@ def _assert_step_row_observables(
     ``expectState``, ``expectError``) are adapter-delegated — validated by the
     schema and graded by each language's API Conformance Suite — so the wire
     harness skips them here.
+
+    A STREAMED step compares positionally: its rows are the roots its delivery
+    handed over in the Continuation Order, and nothing else in the case grades the
+    order inside a page (m-case-format "Streamed read steps").
     """
     expect = step.get("expectRows")
-    if expect is not None and not _rows_equal(rows, expect, tolerance):
+    if expect is not None and not _rows_equal(rows, expect, tolerance, ordered="stream" in step):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] rows != expectRows.\n"
             f"  rows:     {rows!r}\n"
@@ -8484,6 +8539,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                     step_as_read(case, step), reader, f"scenario[{index}].statements"
                 ).root_rows
                 _assert_scenario_reference_sql(case, reader, index, step, rows)
+                rows = _materialize_step_family_variant(case, step, rows)
                 includes = None
             elif pairs:
                 # A DB-touching step: m-unit-work finds are single-statement, so the round-trip
@@ -8517,6 +8573,11 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                     case, read_entity, rows, include_value_objects=True
                 )
                 rows = [_materialize_owner_node(read_entity, row) for row in rows]
+                # An ABSTRACT-target step read publishes concrete leaves, so the raw tag
+                # column its SQL projects becomes the derived `familyVariant` its
+                # `expectRows` states — the same recomputation a whole abstract read's
+                # `then.rows` are materialized through.
+                rows = _materialize_step_family_variant(case, step, rows)
                 # A read step's own Include Paths are the levels after the root, run
                 # and retained here so this step's own graph and any later `access`
                 # both state contents THIS read materialized rather than re-fetched

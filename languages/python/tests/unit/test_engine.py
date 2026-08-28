@@ -60,6 +60,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
@@ -880,6 +881,76 @@ def test_run_scenario_case_reports_each_streamed_steps_own_delivered_roots() -> 
             ],
         },
     ]
+
+
+def _abstract_step_query(case_id: str) -> ObjectQueryNode:
+    """The first scenario step's query of ``case_id`` — an abstract-position read."""
+    steps = cast("list[dict[str, Any]]", cast("dict[str, Any]", _case(case_id).document)["when"])
+    return engine._step_query(  # pyright: ignore[reportPrivateUsage] - the engine's own step reader
+        cast("list[dict[str, Any]]", cast("dict[str, Any]", steps)["scenario"])[0]
+    )
+
+
+# `m-inheritance-130`'s step 0 reads the abstract root `Vehicle` and is handed the
+# concrete `Car` that row resolves to: id 1, `Sedan`, version 5, four doors, and no
+# `axles` key at all, a materialized node carrying only its own branch's members.
+_PUBLISHED_CAR: Row = {"id": 1, "name": "Sedan", "version": 5, "doors": 4, "familyVariant": "Car"}
+
+
+def test_graph_rows_renders_an_abstract_positions_whole_projection() -> None:
+    # What an abstract step's `expectRows` state is the projection the published
+    # node OCCUPIES (m-case-format "Read targeting"): every column the position's
+    # superset places, `null` where the row's own branch contributes none, and the
+    # `familyVariant` the node carries. Rendering the ADDRESSED position's
+    # applicable members instead drops `doors` — a value the read published — and
+    # reports no variant, which is a node no case could state.
+    case = _case("m-inheritance-130")
+
+    rows = engine._graph_rows(  # pyright: ignore[reportPrivateUsage] - the engine's own row renderer
+        engine.load_case_metamodel(case),
+        _abstract_step_query("m-inheritance-130"),
+        [dict(_PUBLISHED_CAR)],
+    )
+
+    assert rows == [
+        {
+            "id": 1,
+            "name": "Sedan",
+            "version": 5,
+            "doors": 4,
+            "axles": None,
+            "familyVariant": "Car",
+        }
+    ]
+
+
+def test_graph_rows_narrows_an_abstract_positions_projection_to_its_selection() -> None:
+    # Narrowing shrinks the superset the position projects without making the read
+    # concrete: over `[Car]` alone the sibling `axles` is no column of the
+    # projection at all, and the node still states the variant it resolved to.
+    case = _case("m-inheritance-130")
+    query = dataclasses.replace(
+        _abstract_step_query("m-inheritance-130"), narrow_to=("parallax.compatibility.Car",)
+    )
+
+    rows = engine._graph_rows(  # pyright: ignore[reportPrivateUsage] - the engine's own row renderer
+        engine.load_case_metamodel(case), query, [dict(_PUBLISHED_CAR)]
+    )
+
+    assert rows == [{"id": 1, "name": "Sedan", "version": 5, "doors": 4, "familyVariant": "Car"}]
+
+
+def test_graph_rows_refuses_an_abstract_read_that_published_no_variant() -> None:
+    # An abstract position publishes concrete nodes, so a node arriving without the
+    # variant is a lane that resolved nothing rather than a row to render: which
+    # branch its columns belong to would have to be guessed.
+    case = _case("m-inheritance-130")
+    node = {key: value for key, value in _PUBLISHED_CAR.items() if key != "familyVariant"}
+
+    with pytest.raises(engine.EngineError, match="familyVariant"):
+        engine._graph_rows(  # pyright: ignore[reportPrivateUsage] - the engine's own row renderer
+            engine.load_case_metamodel(case), _abstract_step_query("m-inheritance-130"), [node]
+        )
 
 
 _ORDER_1_ROW: Row = {

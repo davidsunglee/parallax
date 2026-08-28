@@ -459,7 +459,8 @@ ordinary find step reports its one. The roots the delivery publishes are what
 the step's `expectRows` states, and the adapter reports them under the step's own
 pointer as its `stepRows` entry (*Per-step row observations*, below) — across
 every page, in delivery order — so a delivery that published its roots short,
-duplicated, or altered fails against the rows the case states. Those same roots are
+duplicated, altered, or **reordered** fails against the rows the case states.
+Those same roots are
 the evidence a later write step naming that step with `on` settles against, and
 that write's **gate** is the second observable holding an adapter to its own
 delivery: resolving it from anything but the observation that delivery recorded

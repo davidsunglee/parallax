@@ -1223,6 +1223,14 @@ Continuation Order coordinates each page after the first seeks from, and the
 statement a full final page costs to prove exhaustion. Its `expectRows` are the
 roots the delivery published, across every page, in delivery order.
 
+That order is **compared positionally**, which no other row oracle is: `then.rows`
+and every eager step's `expectRows` state a result set, whose order the case does
+not fix (*The layered assertion model*, layer 2), while a delivery's order IS the
+Continuation Order the stream exists to hold to. Its page partition alone cannot
+grade it — the seek coordinates pin only the root each page ended on, leaving a
+delivery free to publish a page's own roots in any order — so the step's rows are
+where a reordered delivery is refused.
+
 This placement is what makes a streamed root's **evidence** gradeable by the
 corpus rather than by one language's own tests. A `uow`-grouped write step naming
 such a step with `on` (*Settling against a grouped find*, above) settles against

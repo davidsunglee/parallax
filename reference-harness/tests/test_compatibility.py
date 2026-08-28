@@ -482,6 +482,25 @@ def test_a_streamed_step_ending_on_a_full_page_is_refused(provider) -> None:
         run_case(case, provider)
 
 
+def test_a_streamed_step_whose_roots_are_stated_out_of_delivery_order_is_refused(
+    provider,
+) -> None:
+    """A delivery publishes in the Continuation Order, and only its rows grade that.
+
+    The damage swaps the first and last root of the first delivery's `expectRows`
+    and nothing else: the multiset is unchanged, both pages still ask for the same
+    size, and the second page still seeks from the same coordinate — so every other
+    oracle the step carries still passes, and only a positional row comparison
+    refuses it.
+    """
+    case = _damaged(_STREAMED_EVIDENCE)
+    rows = _steps(case)[0]["expectRows"]
+    rows[0], rows[-1] = rows[-1], rows[0]
+
+    with pytest.raises(CaseFailure, match="rows != expectRows"):
+        run_case(case, provider)
+
+
 def test_a_write_settling_against_the_OTHER_delivery_is_refused(provider) -> None:
     """Which delivery published the root decides the version the write gates on.
 

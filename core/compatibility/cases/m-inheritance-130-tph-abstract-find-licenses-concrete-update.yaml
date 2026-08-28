@@ -21,9 +21,11 @@
 #
 #   step 0 find  : abstract-ROOT read of vehicle 1 (Sedan, version 5), 1 round trip. A
 #                  root read injects no tag predicate — every row of the shared table
-#                  belongs to the family — but still projects the tag column. It asserts
-#                  no rows of its own: what it observed is stated by the gate it licenses
-#                  below, and the verify read states the row.
+#                  belongs to the family — but still projects the tag column. Its rows
+#                  are what the read MATERIALIZED: the position's whole superset, the
+#                  sibling Truck branch null, carrying the derived `familyVariant` the
+#                  tag resolved to rather than the tag column itself. That variant is
+#                  the recognition the gate below depends on, so the step states it.
 #   step 1 write : rename Car 1 with NO authored `observedVersion`. The gate binds the 5
 #                  step 0 observed and advances to 6, the tag guard riding with the pk and
 #                  the version binding last (m-inheritance-084's own bind order).
@@ -58,6 +60,8 @@ when:
         - sql:
             postgres: select t0.id, t0.kind, t0.name, t0.version, t0.doors, t0.axles from vehicle t0 where t0.id = ?
           binds: [1]
+      expectRows:
+        - { id: 1, name: Sedan, version: 5, doors: 4, axles: null, familyVariant: Car }
     - uow: observe-and-update
       write:
         - mutation: update

@@ -159,6 +159,21 @@ def compare_rows(observed: list[dict[str, Any]], expected: list[dict[str, Any]])
             raise AssertionError(f"observed row unmatched: {row!r}\n  expected pool: {remaining!r}")
 
 
+def compare_rows_in_order(observed: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
+    """Positional row comparison, with :func:`compare_rows`' own value semantics.
+
+    The oracle for a row sequence whose ORDER the case states — a streamed step's
+    published roots, which arrive in the delivery's Continuation Order across every
+    page (`m-case-format` *Streamed read steps*). Every other row oracle compares as
+    a multiset, so this is the one comparator a reordered delivery fails.
+    """
+    obs = [_wire_row(row) for row in observed]
+    exp = [_wire_row(row) for row in expected]
+    assert len(obs) == len(exp), f"row count: observed {obs!r} != expected {exp!r}"
+    for index, (left, right) in enumerate(zip(obs, exp, strict=True)):
+        assert _row_equal(left, right), (index, left, right)
+
+
 def instance_row(instance: Entity, *, family_variant: bool = False) -> dict[str, Any]:
     """Render one materialized entity instance's OWN scalar/value-object
     members to a PHYSICAL-COLUMN-keyed row — the same key convention

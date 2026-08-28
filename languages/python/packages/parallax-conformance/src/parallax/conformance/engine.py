@@ -70,6 +70,8 @@ from parallax.core.db_port import (
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.entity import DomainModel
 from parallax.core.metamodel import (
+    AbstractRoot,
+    AbstractSubtype,
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
@@ -2426,8 +2428,21 @@ def _run_standalone_find(
     return db.transact(lambda tx: tx.wire.find(query), concurrency=concurrency), observed
 
 
+def _names_one_entity(model: AcceptedMetamodel, left: str, right: str) -> bool:
+    """Whether two authored Entity spellings denote ONE Entity the model declares.
+
+    A case spells an Entity as the bare local name or as the canonical
+    ``<namespace>.<Entity>``, and both resolve by model identity (`m-case-format`
+    *How a case spells an Entity*), so the two legal spellings of one target must
+    pair. Total: an unresolvable spelling denotes no Entity and pairs with nothing,
+    leaving the refusal to the caller that owns the diagnostic.
+    """
+    resolved, other = entity_by_name(model, left), entity_by_name(model, right)
+    return resolved is not None and other is not None and resolved.identity == other.identity
+
+
 def _graph_rows(
-    model: AcceptedMetamodel, entity_name: str, roots: Sequence[object]
+    model: AcceptedMetamodel, query: ObjectQueryNode, roots: Sequence[object]
 ) -> list[Mapping[str, object]]:
     """Published result positions as physically-keyed rows — what a read step's
     ``expectRows`` grades.
@@ -2438,16 +2453,65 @@ def _graph_rows(
     production published, never a second traversal, and it reads nothing about how
     the roots arrived: an eager result and a delivery's concatenated pages render
     identically.
+
+    An ABSTRACT position publishes one CONCRETE node per row, so the read's own
+    projection is the position's fixed superset rather than the addressed
+    position's applicable members: each row carries every column the superset
+    places, ``null`` where the row's own branch contributes none, plus the
+    ``familyVariant`` the node itself publishes (`m-case-format` *Read
+    targeting*). Rendering the branch's members alone would DROP what the read
+    published; rendering the raw tag column would report a storage value no node
+    carries, which is exactly why the format names the variant instead.
     """
-    columns = _member_columns(model, entity_name)
-    return [
-        {
-            columns[name]: value
-            for name, value in (_graph_root(root) or {}).items()
-            if name in columns
-        }
-        for root in roots
-    ]
+    columns, family = _read_projection(model, query)
+    return [_projected_row(columns, family, _graph_root(root) or {}) for root in roots]
+
+
+def _projected_row(
+    columns: Mapping[str, str], family: bool, node: Mapping[str, object]
+) -> Mapping[str, object]:
+    """One published node as its projection's row."""
+    published = {columns[name]: value for name, value in node.items() if name in columns}
+    if not family or not node:
+        return published
+    variant = node.get("familyVariant")
+    if variant is None:
+        raise EngineError(
+            "an abstract-position read publishes a concrete node carrying "
+            f"`familyVariant`; this one published {sorted(node)}"
+        )
+    return {**dict.fromkeys(columns.values()), **published, "familyVariant": variant}
+
+
+def _read_projection(
+    model: AcceptedMetamodel, query: ObjectQueryNode
+) -> tuple[Mapping[str, str], bool]:
+    """The columns ``query`` projects, and whether it reads an abstract position.
+
+    Abstractness is the ADDRESSED position's own role, exactly as it is where
+    production decides to project the discriminator, while the column set follows
+    the query's resolved narrowing: narrowing an abstract read shrinks its
+    superset without making the read concrete.
+    """
+    facet = inheritance.view(model)
+    entity = case_entity(model, query.target.canonical)
+    view = facet.entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return {}, False
+    if not isinstance(entity.inheritance, (AbstractRoot, AbstractSubtype)):
+        return _member_columns(view.applicable_attributes, view.applicable_value_objects), False
+    position: inheritance.InheritancePositionView = view
+    if query.narrow_to:
+        narrowed = facet.position(
+            [case_entity(model, spelling).identity for spelling in query.narrow_to]
+        )
+        if narrowed is None:  # pragma: no cover - a read whose roots exist resolved it
+            raise EngineError(
+                f"narrowing {query.target.canonical!r} to {list(query.narrow_to)} resolves "
+                "no position of one inheritance family"
+            )
+        position = narrowed
+    return _member_columns(position.superset_attributes, position.superset_value_objects), True
 
 
 def _step_rows(
@@ -2462,24 +2526,17 @@ def _step_rows(
     """
     return {
         "at": f"/scenario/{index}",
-        "rows": [wire_row(row) for row in _graph_rows(model, query.target.canonical, roots)],
+        "rows": [wire_row(row) for row in _graph_rows(model, query, roots)],
     }
 
 
-def _member_columns(model: AcceptedMetamodel, entity_name: str) -> Mapping[str, str]:
-    """Each declared member name of ``entity_name`` paired with its own column."""
-    position = inheritance.view(model).entity(case_entity(model, entity_name).identity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        return {}
-    columns = {
-        attribute.identity.name: attribute.storage.name
-        for attribute in position.applicable_attributes
-    }
+def _member_columns(
+    attributes: Sequence[AttributeMetadata], value_objects: Sequence[ValueObjectMetadata]
+) -> Mapping[str, str]:
+    """Each member name paired with its own column, in projection order."""
+    columns = {attribute.identity.name: attribute.storage.name for attribute in attributes}
     columns.update(
-        {
-            occurrence.identity.path[-1]: occurrence.storage.name
-            for occurrence in position.applicable_value_objects
-        }
+        {occurrence.identity.path[-1]: occurrence.storage.name for occurrence in value_objects}
     )
     return columns
 
@@ -4002,7 +4059,7 @@ def _run_materializing_pair(
     assert instruction is not None  # the caller already established this via the same check
     find = _step_query(find_step)
     target = find.target.canonical
-    if target != instruction.target.entity:
+    if not _names_one_entity(model, target, instruction.target.entity):
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
             f"a resolving find over the SAME target entity (find targets {target!r}, write "
@@ -4813,7 +4870,7 @@ def _run_interleaved_group(
             )
             if read is not None:
                 result.rows[index] = _graph_rows(
-                    context.model, _step_query(steps[index]).target.canonical, read.roots
+                    context.model, _step_query(steps[index]), read.roots
                 )
             if not is_last:
                 turnstile.advance()
@@ -5453,9 +5510,7 @@ def run_interleaved_scenario_case(
         read, read_observed = _run_standalone_find(
             port, domain, dialect, concurrency, step, lifecycle
         )
-        rows_by_index[index] = _graph_rows(
-            model, _step_query(step).target.canonical, read.checked().results()
-        )
+        rows_by_index[index] = _graph_rows(model, _step_query(step), read.checked().results())
         round_trips += read_observed.round_trips
         lowered[index] = _LoweredStep(
             f"/scenario/{index}/objectQuery", read_observed.reads, False, False
@@ -5550,9 +5605,8 @@ def run_scenario_case(
             if "write" not in step:
                 next_step = steps[index + 1] if index + 1 < len(steps) else None
                 pairing = _is_materializing_write_step(next_step, model)
-                if (
-                    pairing is not None
-                    and _step_query(step).target.canonical == pairing.target.entity
+                if pairing is not None and _names_one_entity(
+                    model, _step_query(step).target.canonical, pairing.target.entity
                 ):
                     pair_lowered, pair_trips = _run_materializing_pair(
                         port, domain, model, dialect, concurrency, steps, index, shadow, lifecycle
