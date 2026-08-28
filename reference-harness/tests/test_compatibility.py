@@ -26,8 +26,16 @@ from typing import Any
 import pytest
 
 from reference_harness.case import Case, dialect_executed_cases, discover_cases
-from reference_harness.case_runner import CaseFailure, _continuation_order, run_case
+from reference_harness.case_runner import (
+    CaseFailure,
+    _continuation_order,
+    _ContinuationTerm,
+    _PageText,
+    _refuse_a_drifting_page,
+    run_case,
+)
 from reference_harness.providers import available_dialects, provider_for
+from reference_harness.storage_layout import validate_storage_layout
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -299,6 +307,56 @@ def test_a_continuing_page_negating_its_seek_is_refused(provider) -> None:
 
     with pytest.raises(CaseFailure, match="seeks .*, not "):
         run_case(case, provider)
+
+
+def test_either_production_spelling_of_a_negated_null_check_is_accepted() -> None:
+    """A valid continuation is accepted however its null check is written.
+
+    Under Nulls First what follows a null coordinate is the non-nulls, which a
+    page may spell `sku is not null` or `not sku is null`; sqlglot reads the
+    first into the second's tree under MariaDB and keeps them apart under
+    Postgres. Both are one leaf of the expression the order composes, so a seek
+    graded as an expression must accept either on either dialect.
+    """
+    case = _damaged(_NULLABLE_PLACEMENT)
+    terms = [
+        _ContinuationTerm(column="sku", direction="asc", nulls="first", nullable=True),
+        _ContinuationTerm(column="id", direction="asc", nulls="last", nullable=False),
+    ]
+    first = "select t0.id, t0.sku from orders t0 order by t0.sku asc nulls first, t0.id asc limit ?"
+    for spelling in ("t0.sku is not null", "not t0.sku is null"):
+        continuing = (
+            f"select t0.id, t0.sku from orders t0 where ({spelling} or "
+            f"(t0.sku is null and t0.id > ?)) order by t0.sku asc nulls first, t0.id asc limit ?"
+        )
+        for dialect in ("postgres", "mariadb"):
+            _refuse_a_drifting_page(
+                _PageText(case, dialect, 1, first, continuing), terms, (None, 4), {}
+            )
+
+
+def test_a_direct_sort_key_spelled_like_a_document_member_is_accepted() -> None:
+    """Residence belongs to the member, not to the Column spelling it would take.
+
+    A document-resident member claims no Column, so it can neither establish a
+    claim nor collide with one: the primary key here holds the physical column
+    `score`, the very spelling the resident Attribute `score` carries, and the
+    layout is valid. Ordering by `Traveler.id` therefore orders by a real Column
+    that no extraction reaches, and the derivation this oracle refuses to make
+    is not needed.
+    """
+    case = _damaged("m-storage-layout-020-document-layout-path-predicate-ordering")
+    traveler = next(
+        definition for definition in case.model.entity_defs if definition["name"] == "Traveler"
+    )
+    key = next(attribute for attribute in traveler["attributes"] if attribute["name"] == "id")
+    key["column"] = "score"
+    validate_storage_layout(case.model.entity_defs)
+
+    query = {**case.object_query, "orderBy": [{"attr": "parallax.compatibility.Traveler.id"}]}
+    entity = case.model.entity(query["target"])
+
+    assert [term.column for term in _continuation_order(case, query, entity)] == ["score"]
 
 
 def test_a_document_resident_sort_key_is_refused_rather_than_mis_derived() -> None:
