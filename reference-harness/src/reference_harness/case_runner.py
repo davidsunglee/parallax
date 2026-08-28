@@ -2995,13 +2995,97 @@ def _primary_key_column(entity: Entity) -> str:
     """The physical column of *entity*'s primary key.
 
     The Continuation Order always ends in the primary key (`m-snapshot-read`), and
-    a Metamodel primary key is one Attribute, so this is the whole coordinate a
-    streamed page seeks from.
+    a Metamodel primary key is one Attribute, so this is the last coordinate a
+    streamed page seeks from and the one that makes the order total.
     """
     for attribute in entity.attributes:
         if attribute.get("primaryKey"):
             return attribute["column"]
     raise CaseFailure(f"{entity.canonical_name}: no primary key to continue a stream from")
+
+
+@dataclass(frozen=True, slots=True)
+class _ContinuationTerm:
+    """One term of the order a streamed delivery advances by, as its BINDS see it.
+
+    Direction is deliberately absent: it decides which comparator a branch spells
+    and never how many coordinates that branch binds, so it belongs to the golden
+    text this oracle grades against rather than to the derivation.
+    """
+
+    column: str
+    nulls: str
+    nullable: bool
+
+
+def _continuation_order(case: Case, query: dict[str, Any], root: Entity) -> list[_ContinuationTerm]:
+    """The Continuation Order *query* is delivered in (`m-snapshot-read`).
+
+    The authored Sort Keys in the precedence the query declares, then the primary
+    key ascending unless a Sort Key already named it. Null Placement defaults to
+    `last` and is carried whether or not it is observable, because it is what
+    decides whether a null coordinate has anything after it at all.
+    """
+    terms: list[_ContinuationTerm] = []
+    names_the_key = False
+    for key in query.get("orderBy", []):
+        class_name, _, name = key["attr"].rpartition(".")
+        attribute = case.model.entity(class_name).attribute_by_name(name)
+        names_the_key = names_the_key or bool(attribute.get("primaryKey"))
+        terms.append(
+            _ContinuationTerm(
+                column=attribute["column"],
+                nulls=key.get("nulls", "last"),
+                nullable=bool(attribute.get("nullable")),
+            )
+        )
+    if not names_the_key:
+        terms.append(
+            _ContinuationTerm(column=_primary_key_column(root), nulls="last", nullable=False)
+        )
+    return terms
+
+
+def _seek_binds(terms: list[_ContinuationTerm], coordinates: tuple[Any, ...]) -> list[Any]:
+    """The binds a page seeking past *coordinates* carries, in emission order.
+
+    Derived from `m-snapshot-read`'s seek alone, never from the authored SQL: a
+    single-term order needs one strict comparison; a multi-term one needs the
+    lexicographic remainder — one branch per tie depth, each binding the
+    coordinates it ties with and then its own — preceded, for a NON-NULLABLE
+    leading term, by the redundant hoisted range that binds the leading
+    coordinate once more. A null coordinate binds nothing at any depth, since
+    both spellings that carry it are null checks, and under Nulls Last it
+    contributes no branch of its own at all: nothing sorts after a null there.
+    """
+    if len(terms) == 1:
+        return [coordinates[0]]
+    binds: list[Any] = [] if terms[0].nullable else [coordinates[0]]
+    for depth, term in enumerate(terms):
+        if coordinates[depth] is None and term.nulls == "last":
+            continue
+        binds.extend(tie for tie in coordinates[:depth] if tie is not None)
+        if coordinates[depth] is not None:
+            binds.append(coordinates[depth])
+    return binds
+
+
+def _seek_bind_position(first_page_sql: str, later_page_sql: str) -> int:
+    """How many of the query's own binds precede the seek's.
+
+    A continuing page's statement is the first page's with the seek spliced in,
+    so the two texts agree up to the splice: every bind hole they share before
+    that point is one the query itself carries, and the seek's binds follow it.
+    Recovering the position this way is what lets the seek be graded against a
+    read whose remaining clauses — a subtype narrowing's tag guard, say — bind
+    AFTER the predicate the seek is conjoined to.
+    """
+    shared = 0
+    for authored, continuing in zip(first_page_sql, later_page_sql, strict=False):
+        if authored != continuing:
+            break
+        shared += 1
+    return later_page_sql[:shared].count("?")
 
 
 def _instance_form_root_rows(
@@ -3087,12 +3171,12 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
     delivery that reached the right rows the wrong way fails rather than passing
     on its graph alone. The requested page size is `batchSize`, narrowed by
     whatever of a declared ``limit`` is still undelivered, and a page returns at
-    most that many roots. A page after the first seeks from the Continuation Order
-    coordinate of the root the page before it delivered LAST — the primary key,
-    which is the whole coordinate the ordering this phase lowers is made of — over
-    the same predicate binds every page carries. And exhaustion is proven rather
-    than assumed: a short page ends the delivery, while a full one is followed by
-    one more root statement returning nothing, unless a declared ``limit`` was
+    most that many roots. A page after the first seeks past the Continuation
+    Order coordinates of the root the page before it delivered LAST, composed and
+    lowered here from the query's own ``orderBy`` and the model's primary key
+    rather than read off the golden. And exhaustion is proven rather than
+    assumed: a short page ends the delivery, while a full one is followed by one
+    more root statement returning nothing, unless a declared ``limit`` was
     already delivered in full.
 
     The FIRST page's own binds are the baseline the later pages are measured
@@ -3102,6 +3186,12 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
     agree with — which is why a first page carrying a seek it should not have is
     caught by the levels its own too-narrow result no longer feeds, and a
     continuing page that stopped seeking by its SQL text rather than its binds.
+
+    Two continuing pages carry the same statement text where their coordinates
+    are null in the same places, and only there: a Sort Key over a nullable
+    member seeks a null coordinate through a null check and a non-null one
+    through a comparison, so the two spell different statements over the same
+    ordering.
 
     The published roots are the concatenation of the pages', compared to
     ``then.graph`` exactly as an eager read's are, because a page size changes
@@ -3113,16 +3203,16 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
     entries = [(sql, case.statement_binds(index, dialect)) for index, sql in enumerate(statements)]
     steps = _fetch_steps(case.model, query) if _query_has_includes(query) else []
     root_entity = case.model.entity(query["target"])
-    key_column = _primary_key_column(root_entity)
+    terms = _continuation_order(case, query, root_entity)
     batch_size = case.batch_size
     limit = query.get("limit")
 
     nodes: list[dict[str, Any]] = []
     root_rows: list[dict[str, Any]] = []
-    predicate_binds: list[Any] = []
+    carried_binds: list[Any] = []
     first_root_sql = ""
-    later_root_sql: str | None = None
-    cursor: Any = None
+    seek_shapes: dict[tuple[bool, ...], str] = {}
+    cursor: tuple[Any, ...] = ()
     index = 0
     page = 0
     while True:
@@ -3138,34 +3228,43 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
         requested = batch_size if limit is None else min(batch_size, limit - len(root_rows))
         if page == 0:
             first_root_sql = root_sql
-            predicate_binds = list(authored[:-1])
-            expected_binds: list[Any] = [*predicate_binds, requested]
+            carried_binds = list(authored[:-1])
+            expected_binds: list[Any] = [*carried_binds, requested]
         else:
-            expected_binds = [*predicate_binds, cursor, requested]
+            at = _seek_bind_position(first_root_sql, root_sql)
+            expected_binds = [
+                *carried_binds[:at],
+                *_seek_binds(terms, cursor),
+                *carried_binds[at:],
+                requested,
+            ]
         if [_coerce_identity_key(bind) for bind in authored] != [
             _coerce_identity_key(bind) for bind in expected_binds
         ]:
             raise CaseFailure(
                 f"{case.path.name}: then.statements ({dialect}) page {page + 1} root binds "
-                f"{authored!r} != {expected_binds!r}. A page binds the query's own "
-                f"predicate binds, then — after the first page — the Continuation Order "
-                f"coordinate of the root the previous page delivered LAST, then the size "
-                f"it is asking for."
+                f"{authored!r} != {expected_binds!r}. A page binds the query's own binds "
+                f"and — after the first page — the seek past the Continuation Order "
+                f"coordinates of the root the previous page delivered LAST, spliced in "
+                f"where the two statements diverge, then the size it is asking for."
             )
-        if page == 1:
-            later_root_sql = root_sql
         if page >= 1 and root_sql == first_root_sql:
             raise CaseFailure(
                 f"{case.path.name}: then.statements ({dialect}) page {page + 1} repeats the "
                 f"FIRST page's root SQL. A continuing page carries a seek conjunct the "
                 f"first page has no coordinate for, so the two texts cannot be equal."
             )
-        if page >= 2 and root_sql != later_root_sql:
-            raise CaseFailure(
-                f"{case.path.name}: then.statements ({dialect}) page {page + 1} root SQL "
-                f"differs from page 2's. Every continuing page seeks the same way and "
-                f"differs only in the coordinate it binds."
-            )
+        if page >= 1:
+            shape = tuple(coordinate is None for coordinate in cursor)
+            seeking = seek_shapes.setdefault(shape, root_sql)
+            if root_sql != seeking:
+                raise CaseFailure(
+                    f"{case.path.name}: then.statements ({dialect}) page {page + 1} root SQL "
+                    f"differs from an earlier page seeking the same shape of coordinates. "
+                    f"Two continuing pages differ in text only where their coordinates "
+                    f"differ in NULLNESS; otherwise they seek the same way and differ only "
+                    f"in what they bind."
+                )
 
         executed = _stream_page(
             case, db, query, steps, root_entity, root_sql, authored, entries[index:]
@@ -3181,7 +3280,8 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
         nodes.extend(executed.nodes)
         root_rows.extend(executed.root_rows)
         if executed.root_rows:
-            cursor = _coerce_identity_key(executed.root_rows[-1][key_column])
+            last = executed.root_rows[-1]
+            cursor = tuple(_coerce_identity_key(last[term.column]) for term in terms)
         page += 1
         if delivered < requested or (limit is not None and len(root_rows) >= limit):
             break

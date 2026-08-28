@@ -23,18 +23,29 @@ the node :meth:`ContinuationPlan.first` returns.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
-from typing import cast
+from dataclasses import dataclass, replace
+from typing import Literal, cast
 
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     EntityMetadata,
     Metamodel,
     PrimaryKey,
+    entity_by_name,
 )
 from parallax.core.object_query import ObjectQueryNode, OrderKey
-from parallax.core.predicate import And, Comparison, Scalar
+from parallax.core.predicate import (
+    And,
+    Comparison,
+    Group,
+    NoneOp,
+    NullCheck,
+    Or,
+    PredicateNode,
+    Scalar,
+)
 from parallax.core.temporal_read import conjunction_terms, scans_an_axis
 
 __all__ = ["ContinuationError", "ContinuationPlan", "plan"]
@@ -44,22 +55,45 @@ class ContinuationError(ValueError):
     """A query no page node can be composed for."""
 
 
+@dataclass(frozen=True, slots=True)
+class _Term:
+    """One Continuation Order term, resolved to everything a seek needs of it.
+
+    ``key`` is the Sort Key exactly as the page node carries it — an authored one
+    verbatim, absent direction and placement included, so a page orders by what
+    the caller asked for and not by a respelling of it. The three resolved fields
+    beside it are what the seek is composed from: the member the cursor
+    coordinate is read under, the effective direction, and whether the ordering
+    can put a null anywhere at all.
+    """
+
+    key: OrderKey
+    identity: AttributeIdentity
+    direction: Literal["asc", "desc"]
+    nulls: Literal["first", "last"]
+    nullable: bool
+
+    @property
+    def attr(self) -> str:
+        return self.key.attr
+
+
 class ContinuationPlan:
     """One query's page nodes, in the Continuation Order it advances by.
 
-    Holds none of a stream's state: it answers nodes off the query and key
+    Holds none of a stream's state: it answers nodes off the query and terms
     :func:`plan` formed it from, while the cursor, the emitted count, and the
     exhaustion verdict all belong to the loop that consumes it. Nothing mutates
     it, so two pages of one plan are two values and the plan is the same
     afterwards.
     """
 
-    __slots__ = ("_key", "_order", "_query")
+    __slots__ = ("_order", "_query", "_terms")
 
-    def __init__(self, query: ObjectQueryNode, key: AttributeIdentity) -> None:
+    def __init__(self, query: ObjectQueryNode, terms: tuple[_Term, ...]) -> None:
         self._query = query
-        self._key = key
-        self._order = (OrderKey(attr=_reference(key), direction="asc"),)
+        self._terms = terms
+        self._order = tuple(term.key for term in terms)
 
     def first(self, *, limit: int) -> ObjectQueryNode:
         """The first page: the caller's query, ordered and capped at ``limit``."""
@@ -74,18 +108,13 @@ class ContinuationPlan:
         members the cursor is made of is this plan's own answer, so no caller
         can assemble one this plan would disagree with.
 
-        The seek is a top-level conjunct of the caller's own predicate and never
-        a term nested inside it, because that is what a planner reaches an index
-        range through: an ordinary AND-qual over the leading ordering column.
-        The caller's terms bind first, so bind order stays caller-first exactly
-        as an injected as-of term leaves it.
+        The seek is composed of top-level conjuncts of the caller's own
+        predicate and never of terms nested inside it, because that is what a
+        planner reaches an index range through: an ordinary AND-qual over the
+        leading ordering column. The caller's terms bind first, so bind order
+        stays caller-first exactly as an injected as-of term leaves it.
         """
-        seek = Comparison(
-            op="greaterThan",
-            attr=self._order[0].attr,
-            value=self._cursor_value(last_root),
-        )
-        terms = (*conjunction_terms(self._query.predicate), seek)
+        terms = (*conjunction_terms(self._query.predicate), *self._seek(last_root))
         return replace(
             self._query,
             predicate=terms[0] if len(terms) == 1 else And(operands=terms),
@@ -93,46 +122,170 @@ class ContinuationPlan:
             limit=limit,
         )
 
-    def _cursor_value(self, last_root: Mapping[AttributeIdentity, object]) -> Scalar:
-        """The Continuation Order's own value off the last delivered root.
+    def _seek(self, last_root: Mapping[AttributeIdentity, object]) -> tuple[PredicateNode, ...]:
+        """The conjuncts admitting exactly the roots after ``last_root``.
 
-        A primary-key member is one of `m-predicate`'s neutral scalar types even
-        though a projection's values are typed as plain ``object``; the cast
-        reflects that runtime invariant rather than widening the comparison
-        node's own typed-literal contract.
+        One term needs one strict comparison, which is already the top-level
+        AND-qual a hoist exists to supply. Several need the lexicographic
+        remainder — one disjunct per tie depth — and, ahead of it, the redundant
+        non-strict comparison on the leading term that gives a planner a leading
+        range to seek: the remainder alone offers nothing to push down, so it
+        plans as a scan from the head of the index or as a disjunction that
+        discards index order under the page's own ``order by`` and ``limit``.
         """
-        if self._key not in last_root:
+        coordinates = tuple(self._coordinate(term, last_root) for term in self._terms)
+        lead = self._terms[0]
+        if len(self._terms) == 1:
+            return (_strictly_after(lead, coordinates[0]),)
+        remainder = _remainder(self._terms, coordinates)
+        if lead.nullable:
+            return (remainder,)
+        return (_hoist(lead, coordinates[0]), remainder)
+
+    def _coordinate(self, term: _Term, last_root: Mapping[AttributeIdentity, object]) -> Scalar:
+        """``term``'s own coordinate off the last delivered root.
+
+        A Continuation Order member holds one of `m-predicate`'s neutral scalar
+        types even though a projection's values are typed as plain ``object``;
+        the cast reflects that runtime invariant rather than widening the
+        comparison node's own typed-literal contract. A member the root does not
+        carry — one whose stored value no conforming member could hold — leaves
+        nothing bindable to continue from, so it is refused by name rather than
+        paged past.
+        """
+        if term.identity not in last_root:
             raise ContinuationError(
-                f"{self._key.name}: the Continuation Order names a member the delivered root "
-                "does not carry"
+                f"{term.identity.name}: the Continuation Order names a member the delivered "
+                "root does not carry"
             )
-        return cast("Scalar", last_root[self._key])
+        return cast("Scalar", last_root[term.identity])
 
 
 def plan(entity: EntityMetadata, query: ObjectQueryNode, model: Metamodel) -> ContinuationPlan:
-    """``query``'s page plan against ``model``, ordered by ``entity``'s family key.
+    """``query``'s page plan against ``model``, in its Continuation Order.
 
-    The Continuation Order is the family-declared primary key, ascending. That
-    key is total, immutable, and non-nullable, so every page seeks against an
-    index range and no write can move a root across a page boundary.
+    The Continuation Order is the query's authored Sort Keys in the precedence it
+    declares, followed by ``entity``'s family-declared primary key ascending
+    unless a Sort Key already named it. The key is total, immutable, and
+    non-nullable, so the composed order is total and no two roots tie in it.
 
     A milestone-set (``history`` / ``asOfRange``) read is refused: one primary
-    key stands behind several result roots there, so paging on the key alone
-    would skip or duplicate at a page boundary. An authored ``orderBy`` is
-    refused for the converse reason — the order a caller asked for is not the
-    order this plan advances by, and delivering roots in a different one would
-    answer a query nobody wrote.
+    key stands behind several result roots there, so paging on an order ending in
+    the key would skip or duplicate at a page boundary.
     """
     if scans_an_axis(query):
         raise ContinuationError(
             f"{query.target.canonical}: a milestone-set read has no streamed page order yet"
         )
-    if query.order_by:
-        raise ContinuationError(
-            f"{query.target.canonical}: a streamed read advances by primary key; an authored "
-            "orderBy has no streamed page order yet"
-        )
-    return ContinuationPlan(query, _family_key(entity, model))
+    key = _family_key(entity, model)
+    terms = [_term(sort_key, model) for sort_key in query.order_by]
+    if all(term.identity != key for term in terms):
+        terms.append(_term(OrderKey(attr=_reference(key), direction="asc"), model))
+    return ContinuationPlan(query, tuple(terms))
+
+
+def _remainder(terms: tuple[_Term, ...], coordinates: tuple[Scalar, ...]) -> PredicateNode:
+    """The lexicographic disjunction: one branch per tie depth.
+
+    A depth whose term admits nothing after its own coordinate — a null under
+    Nulls Last, which every remaining null ties with and no row follows —
+    contributes no branch, because a branch that matches no row is one a reader
+    has to reason past to see what the seek does.
+
+    A branch that ties with something is grouped, because an ``and`` inside an
+    ``or`` reads as a branch of it. The leading branch never is: it ties with
+    nothing, so whatever it is composed of is already a disjunct of the whole.
+    Where a single branch survives, it is never the leading one alone — the order
+    ends in the primary key, whose branch drops under no coordinate — so the
+    remainder handed back as one node is never an ungrouped disjunction.
+    """
+    branches: list[PredicateNode] = []
+    for depth, term in enumerate(terms):
+        after = _strictly_after(term, coordinates[depth])
+        if isinstance(after, NoneOp):
+            continue
+        ties = tuple(_ties_with(terms[at], coordinates[at]) for at in range(depth))
+        branches.append(Group(operand=And(operands=(*ties, after))) if ties else after)
+    if len(branches) == 1:
+        return branches[0]
+    return Group(operand=Or(operands=tuple(branches)))
+
+
+def _hoist(term: _Term, coordinate: Scalar) -> PredicateNode:
+    """``term`` non-strictly past ``coordinate`` — the redundant leading range.
+
+    Emitted only for a NON-NULLABLE leading term. With nulls placed after a
+    non-null coordinate, "after" is two disjoint ranges of the index and no
+    single comparison covers both, so there is nothing to hoist.
+    """
+    return Comparison(
+        op="greaterThanEquals" if term.direction == "asc" else "lessThanEquals",
+        attr=term.attr,
+        value=coordinate,
+    )
+
+
+def _strictly_after(term: _Term, coordinate: Scalar) -> PredicateNode:
+    """Everything ``term`` orders strictly after ``coordinate``.
+
+    Measured in the term's OWN ordering: a descending term reverses the
+    comparison, and a nullable term's Null Placement decides which side of the
+    non-nulls its nulls fall on. A null coordinate ties with every other null, so
+    what follows it is the non-nulls under Nulls First and nothing at all under
+    Nulls Last.
+    """
+    if coordinate is None:
+        if term.nulls == "first":
+            return NullCheck(op="isNotNull", attr=term.attr)
+        return NoneOp()
+    strict = Comparison(
+        op="greaterThan" if term.direction == "asc" else "lessThan",
+        attr=term.attr,
+        value=coordinate,
+    )
+    if term.nullable and term.nulls == "last":
+        return Or(operands=(strict, NullCheck(op="isNull", attr=term.attr)))
+    return strict
+
+
+def _ties_with(term: _Term, coordinate: Scalar) -> PredicateNode:
+    """``term`` at the same ordering position as ``coordinate``."""
+    if coordinate is None:
+        return NullCheck(op="isNull", attr=term.attr)
+    return Comparison(op="eq", attr=term.attr, value=coordinate)
+
+
+def _term(key: OrderKey, model: Metamodel) -> _Term:
+    """``key`` resolved against ``model`` into the term a seek is composed from."""
+    attribute = _attribute(key.attr, model)
+    return _Term(
+        key=key,
+        identity=attribute.identity,
+        direction=key.direction or "asc",
+        nulls=key.nulls or "last",
+        nullable=attribute.nullable,
+    )
+
+
+def _attribute(reference: str, model: Metamodel) -> AttributeMetadata:
+    """The Attribute a Sort Key's ``Entity.member`` reference addresses.
+
+    Resolved through the addressed Entity's own position, so a Sort Key naming a
+    family member through a subtype spelling answers the family root's Attribute
+    — the same identity the primary-key comparison below is made against.
+    """
+    class_name, _, name = reference.rpartition(".")
+    entity = entity_by_name(model, class_name)
+    attribute = None if entity is None else _applicable(entity, name, model)
+    if attribute is None:
+        raise ContinuationError(f"{reference}: the model declares no such Attribute")
+    return attribute
+
+
+def _applicable(entity: EntityMetadata, name: str, model: Metamodel) -> AttributeMetadata | None:
+    position = inheritance_view(model).entity(entity.identity)
+    inherited = None if position is None else position.applicable_attribute(name)
+    return inherited or entity.attribute(name)
 
 
 def _reference(identity: AttributeIdentity) -> str:
@@ -152,8 +305,8 @@ def _family_key(entity: EntityMetadata, model: Metamodel) -> AttributeIdentity:
     The physical primary key is family-wide and root-owned (`m-inheritance`), so
     a subtype position resolves it through its family root rather than through
     its own locally empty declaration. It is exactly one Attribute: `m-metamodel`
-    refuses a composite key outright, which is what makes a page cursor one
-    bindable value rather than a lexicographic tuple.
+    refuses a composite key outright, which is what makes the LAST term of every
+    Continuation Order one bindable value rather than a tuple.
     """
     position = inheritance_view(model).entity(entity.identity)
     root = entity if position is None else model.entity(position.root)
