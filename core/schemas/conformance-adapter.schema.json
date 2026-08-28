@@ -264,6 +264,20 @@
         "native": {}
       }
     },
+    "stepRowsObservation": {
+      "description": "The values ONE scenario read step published (m-conformance-adapter): `at` is the JSON Pointer naming the step, and `rows` the roots that read handed over, in the physically-keyed shape a whole-read `rows` observation carries and a step's `expectRows` is authored in. What is reported is what the step PUBLISHED, never the result sets its statements returned: a deep fetch's child levels return rows belonging under the roots rather than beside them, and a streamed step returns one result set per page while publishing one root at a time, so its entry is the roots of the whole delivery in delivery order. The resolving read of a materializing predicate write reports no entry — that read is the write's own internal resolve, which hands its rows to no caller.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "rows"],
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/jsonPointer"
+        },
+        "rows": {
+          "$ref": "#/$defs/rows"
+        }
+      }
+    },
     "stepGraphObservation": {
       "description": "The relationship contents observed at ONE scenario step declaring `expectGraph` (m-case-format): `at` is the JSON Pointer naming the step, and `graph` the contents that step observed. The observable's two placements report two different graphs. An ACCESS step reports what the already-materialized view it navigates still holds, keyed by the traversed relationship's target Entity under its local name — never a re-read, since an adapter that re-queries reports that the database is right while the case asks whether the view survived. A READ step reports what that read itself materialized, roots and included relationships together, keyed by its own target Entity — the same value a whole-read `graph` observation carries, reported per step because a scenario has many reads.",
       "type": "object",
@@ -628,6 +642,11 @@
           "description": "Lifecycle-state checks (m-detach five-state machine) an adapter reports for scenario steps declaring `expectState`. Optional and additive — an adapter that reports no lifecycle state omits it, and existing run outputs stay valid.",
           "type": "array",
           "items": { "$ref": "#/$defs/stateCheck" }
+        },
+        "stepRows": {
+          "description": "The values each scenario read step published (m-conformance-adapter), in step order, compared against each step's `expectRows`. A scenario has no single whole-read result, so these ride their own per-step key rather than the whole-read `rows` member. Optional and additive — a run reporting no such step omits it, and existing run outputs stay valid.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/stepRowsObservation" }
         },
         "stepGraphs": {
           "description": "The relationship contents an adapter observed at each scenario step declaring `expectGraph` (m-case-format), in step order. A scenario has no single whole-read graph, so these ride their own per-step key rather than the whole-read `graph` member. Optional and additive — a run whose case declares no `expectGraph` omits it, and existing run outputs stay valid.",

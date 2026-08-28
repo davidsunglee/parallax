@@ -360,15 +360,18 @@ class ScenarioRun:
     A scenario reports several observation channels of the SAME shape, so each is
     named rather than placed: ``errors`` holds one entry per `expectError` step
     whose verb raised its declared application-lifecycle error, and is filled by
-    the snapshot action-step lane alone; ``step_graphs`` one per step declaring
-    `expectGraph` (`m-conformance-adapter`), in step order, from either placement
-    of that observable — an `access` step's retained view on the snapshot lane, a
-    find step's own materialized graph on both.
+    the snapshot action-step lane alone; ``step_rows`` one per read step the run
+    itself drove, carrying the values that step published
+    (`m-conformance-adapter`); ``step_graphs`` one per step declaring
+    `expectGraph`, from either placement of that observable — an `access` step's
+    retained view on the snapshot lane, a find step's own materialized graph on
+    both. All three are in step order.
     """
 
     emissions: list[Emission]
     round_trips: int
     errors: list[dict[str, object]]
+    step_rows: list[dict[str, object]]
     step_graphs: list[dict[str, object]]
 
 
@@ -2424,15 +2427,17 @@ def _run_standalone_find(
 
 
 def _graph_rows(
-    model: AcceptedMetamodel, entity_name: str, snapshot: handle.Snapshot[handle.WireEntity]
+    model: AcceptedMetamodel, entity_name: str, roots: Sequence[object]
 ) -> list[Mapping[str, object]]:
-    """A Wire result's roots as physically-keyed rows — the interleaved lane's
-    own ``expectRows`` oracle.
+    """Published result positions as physically-keyed rows — what a read step's
+    ``expectRows`` grades.
 
     The corpus states a find step's expectation in the projection's own physical
     spelling while a Wire root is keyed by declared member name, so each member's
     value is re-keyed by the slot it occupies. It is a rendering of what
-    production published, never a second traversal.
+    production published, never a second traversal, and it reads nothing about how
+    the roots arrived: an eager result and a delivery's concatenated pages render
+    identically.
     """
     columns = _member_columns(model, entity_name)
     return [
@@ -2441,8 +2446,24 @@ def _graph_rows(
             for name, value in (_graph_root(root) or {}).items()
             if name in columns
         }
-        for root in snapshot.checked().results()
+        for root in roots
     ]
+
+
+def _step_rows(
+    model: AcceptedMetamodel, index: int, query: ObjectQueryNode, roots: Sequence[object]
+) -> dict[str, object]:
+    """One read step's `stepRows` observation (`m-conformance-adapter`): the
+    values that step published, at the step's own pointer, in wire space.
+
+    A step's rows are what it HANDED OVER rather than what its statements
+    returned — the distinction the observable exists to draw, and the reason this
+    takes published roots rather than a result set.
+    """
+    return {
+        "at": f"/scenario/{index}",
+        "rows": [wire_row(row) for row in _graph_rows(model, query.target.canonical, roots)],
+    }
 
 
 def _member_columns(model: AcceptedMetamodel, entity_name: str) -> Mapping[str, str]:
@@ -2888,6 +2909,7 @@ def _run_snapshot_scenario(
     round_trips = 0
     results: list[_ScenarioStepResult] = []
     errors: list[dict[str, object]] = []
+    step_rows: list[dict[str, object]] = []
     step_graphs: list[dict[str, object]] = []
     for index, step in enumerate(steps):
         match _snapshot_step_kind(step):
@@ -2930,13 +2952,14 @@ def _run_snapshot_scenario(
                     for statement in observation.since(mark, "read")
                 )
                 round_trips += observation.round_trips - mark
+                step_rows.append(_step_rows(model, index, query, snapshot.checked().results()))
                 observed = _read_step_graph(case, model, index, step, query, snapshot)
                 if observed is not None:
                     step_graphs.append(observed)
                 results.append(
                     _ScenarioStepResult(_root_members(snapshot), pin, identity, materialized=True)
                 )
-    return ScenarioRun(emissions, round_trips, errors, step_graphs)
+    return ScenarioRun(emissions, round_trips, errors, step_rows, step_graphs)
 
 
 def _root_members(
@@ -4437,6 +4460,34 @@ def _required(instant: dt.datetime | None) -> dt.datetime:
     return instant
 
 
+@dataclass(frozen=True, slots=True)
+class _StepRead:
+    """What one scenario read step handed over.
+
+    ``roots`` is the step's own result positions in the order it published them —
+    a delivery's pages concatenated where the step streamed — which is what its
+    `expectRows` states. ``graph`` is the eager Snapshot the step materialized,
+    which only an `expectGraph` reads and which a streamed step has none of: a
+    delivery assembles no whole result, and the format admits that oracle on no
+    streamed step.
+    """
+
+    roots: tuple[object, ...]
+    graph: handle.Snapshot[handle.WireEntity] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _GroupRun:
+    """One `uow` group's own report: its steps' lowered emissions in step order,
+    the round trips its single transaction made, and the per-step observations its
+    read steps filled, each in step order."""
+
+    lowered: list[_LoweredStep]
+    round_trips: int
+    step_rows: list[dict[str, object]]
+    step_graphs: list[dict[str, object]]
+
+
 def _run_group_step(
     tx: handle.Transaction,
     context: _CaseContext,
@@ -4445,7 +4496,7 @@ def _run_group_step(
     index: int,
     tx_instant: str,
     observation: LifecycleObservation,
-) -> tuple[_LoweredStep, handle.Snapshot[handle.WireEntity] | None]:
+) -> tuple[_LoweredStep, _StepRead | None]:
     """One `uow` group step, inside the group's own open transaction — the ONE
     interpreter both group runners share, contiguous span and interleaved index
     list alike.
@@ -4473,12 +4524,10 @@ def _run_group_step(
     observation, read across either call to recover the statements the step
     emits — for a delivery, every page's.
 
-    Returns the step's lowered emission pointer, and an eager find step's own
-    read output beside it: what a caller does with the rows it returned — grade
-    them, ignore them — is the caller's affair, and is the only thing the two
-    runners still do differently. A streamed step answers none, and owes none:
-    the only observable read off that output is the relationship contents an
-    `expectGraph` states, which the format does not admit on a streamed step.
+    Returns the step's lowered emission pointer, and — for a read step — what it
+    published beside it (:class:`_StepRead`), which is the step's own
+    `expectRows` observable on either lane. A write step publishes nothing and
+    answers ``None``.
     """
     model = context.model
     if "write" in step:
@@ -4516,16 +4565,16 @@ def _run_group_step(
     batch_size = _batch_size_of(step, f"/scenario/{index}/stream")
     if batch_size is None:
         snapshot = tx.wire.find(_step_query(step))
-        nodes = _published_nodes(snapshot)
+        read = _StepRead(tuple(snapshot.checked().results()), snapshot)
     else:
         with tx.wire.stream(_step_query(step), batch_size=batch_size) as delivery:
-            nodes = _published_from(list(delivery.checked()))
-        snapshot = None
+            read = _StepRead(tuple(delivery.checked()), None)
+    nodes = _published_from(read.roots)
     state.finds[index] = nodes
     state.published.extend(nodes)
     return _LoweredStep(
         f"/scenario/{index}/objectQuery", observation.since(mark, "read"), False, False
-    ), snapshot
+    ), read
 
 
 def _run_uow_group(
@@ -4536,7 +4585,7 @@ def _run_uow_group(
     start: int,
     end: int,
     lifecycle: LifecycleRun,
-) -> tuple[list[_LoweredStep], int, list[dict[str, object]]]:
+) -> _GroupRun:
     """Execute one CONTIGUOUS `uow` group's steps (index *start*..*end*
     inclusive) inside ONE ``db.transact``, in step order, each through the shared
     :func:`_run_group_step` interpreter.
@@ -4552,11 +4601,11 @@ def _run_uow_group(
     (:meth:`~parallax.conformance.temporal_state.TemporalShadow.staged`): visible
     to the group's own later steps, discarded with the rows when it aborts.
 
-    Its own find rows are graded elsewhere, so the read output each find step
-    answers is used here for one thing only: the graph observation a find step
-    declaring `expectGraph` owes (:func:`_read_step_graph`). Those contents are
-    what that read observed THROUGH this transaction, which is where
-    read-your-own-writes over a relationship becomes visible at all.
+    What each read step published is reported twice over, from the one value the
+    step handed back: as its `stepRows` observation (:func:`_step_rows`), and — for
+    a step declaring `expectGraph` — as its graph observation
+    (:func:`_read_step_graph`). Both are what that read observed THROUGH this
+    transaction, which is where read-your-own-writes becomes visible at all.
     """
     tx_instant = _group_tx_instant(steps, start, end)
     doomed = _group_is_doomed(steps, start, end)
@@ -4571,19 +4620,22 @@ def _run_uow_group(
         lifecycle_provider=observation.provider,
     )
     lowered: list[_LoweredStep] = []
+    step_rows: list[dict[str, object]] = []
     step_graphs: list[dict[str, object]] = []
 
     def body(tx: handle.Transaction) -> None:
         for index in range(start, end + 1):
-            step, output = _run_group_step(
+            step, read = _run_group_step(
                 tx, context, state, steps[index], index, tx_instant, observation
             )
             lowered.append(step)
-            if output is None:
+            if read is None:
                 continue
-            observed = _read_step_graph(
-                case, context.model, index, steps[index], _step_query(steps[index]), output
-            )
+            query = _step_query(steps[index])
+            step_rows.append(_step_rows(context.model, index, query, read.roots))
+            if read.graph is None:
+                continue
+            observed = _read_step_graph(case, context.model, index, steps[index], query, read.graph)
             if observed is not None:
                 step_graphs.append(observed)
 
@@ -4601,7 +4653,7 @@ def _run_uow_group(
     # Every statement this ONE transaction put on the wire, which is where the
     # group's round trips come from rather than from a second count this lane
     # keeps.
-    return lowered, observation.round_trips, step_graphs
+    return _GroupRun(lowered, observation.round_trips, step_rows, step_graphs)
 
 
 # --------------------------------------------------------------------------- #
@@ -4681,9 +4733,9 @@ class _InterleavedGroupResult:
     thread once both join — never silently swallowed), and every OWN find
     step's own observed rows (keyed by scenario step index) — the group's own
     oracle for `expectRows`, the
-    SAME grade the ordinary scenario run lane (`test_write_run_sweep`'s
-    `_ReadCapturePort`) already gives every OTHER find step; without this the
-    caller has no way to grade a grouped find at all, only its DML shape."""
+    SAME grade the ordinary scenario run lane gives every OTHER find step through
+    its `stepRows` observation; without this the caller has no way to grade a
+    grouped find at all, only its DML shape."""
 
     lowered: dict[int, _LoweredStep]
     conflict_actual: int | None = None
@@ -4756,12 +4808,12 @@ def _run_interleaved_group(
         for position, index in enumerate(indices):
             turnstile.wait_for(index)
             is_last = position == len(indices) - 1
-            lowered[index], output = _run_group_step(
+            lowered[index], read = _run_group_step(
                 tx, context, state, steps[index], index, _INERT_CLOCK_INSTANT, observation
             )
-            if output is not None:
+            if read is not None:
                 result.rows[index] = _graph_rows(
-                    context.model, _step_query(steps[index]).target.canonical, output
+                    context.model, _step_query(steps[index]).target.canonical, read.roots
                 )
             if not is_last:
                 turnstile.advance()
@@ -5401,7 +5453,9 @@ def run_interleaved_scenario_case(
         read, read_observed = _run_standalone_find(
             port, domain, dialect, concurrency, step, lifecycle
         )
-        rows_by_index[index] = _graph_rows(model, _step_query(step).target.canonical, read)
+        rows_by_index[index] = _graph_rows(
+            model, _step_query(step).target.canonical, read.checked().results()
+        )
         round_trips += read_observed.round_trips
         lowered[index] = _LoweredStep(
             f"/scenario/{index}/objectQuery", read_observed.reads, False, False
@@ -5441,7 +5495,12 @@ def run_scenario_case(
     `stepGraphs` is filled on both lanes, from whichever placement of
     `expectGraph` the case authors: an `access` step's retained view there, and
     here a find step's own materialized graph (:func:`_read_step_graph`) —
-    grouped, the contents that read observed inside the group's transaction."""
+    grouped, the contents that read observed inside the group's transaction.
+    `stepRows` is filled on both lanes too, by every read step this run drives —
+    ungrouped, grouped, and streamed alike. A MATERIALIZING pair's resolving find
+    drives none: production performs that read internally while planning the
+    write and hands its rows to no caller, so the step reports no entry
+    (`m-conformance-adapter` *Per-step row observations*)."""
     steps = _scenario_steps(case)
     lifecycle = lifecycle_run(lifecycle)
     if _has_action_step(steps):
@@ -5451,6 +5510,7 @@ def run_scenario_case(
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
+    step_rows: list[dict[str, object]] = []
     step_graphs: list[dict[str, object]] = []
     spans = _scenario_uow_spans(case.path.name, steps)
     if spans is None:
@@ -5479,12 +5539,11 @@ def run_scenario_case(
             label = span_start_labels.get(index)
             if label is not None:
                 start, end = spans[label]
-                group_lowered, group_trips, group_graphs = _run_uow_group(
-                    case, port, context, steps, start, end, lifecycle
-                )
-                lowered.extend(group_lowered)
-                step_graphs.extend(group_graphs)
-                round_trips += group_trips
+                group = _run_uow_group(case, port, context, steps, start, end, lifecycle)
+                lowered.extend(group.lowered)
+                step_rows.extend(group.step_rows)
+                step_graphs.extend(group.step_graphs)
+                round_trips += group.round_trips
                 index = end + 1
                 continue
             step = steps[index]
@@ -5511,7 +5570,9 @@ def run_scenario_case(
                         f"/scenario/{index}/objectQuery", read_observed.reads, False, False
                     )
                 )
-                observed = _read_step_graph(case, model, index, step, _step_query(step), read)
+                query = _step_query(step)
+                step_rows.append(_step_rows(model, index, query, read.checked().results()))
+                observed = _read_step_graph(case, model, index, step, query, read)
                 if observed is not None:
                     step_graphs.append(observed)
                 index += 1
@@ -5553,7 +5614,7 @@ def run_scenario_case(
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = _emissions([(step.pointer, step.statements) for step in lowered])
-    return ScenarioRun(emissions, round_trips, [], step_graphs)
+    return ScenarioRun(emissions, round_trips, [], step_rows, step_graphs)
 
 
 def run_write_sequence_case(

@@ -388,8 +388,9 @@ assert different things:
   *Streamed reads*, below)
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
-- scenario cases report `identityChecks` and `roundTrips`, plus `stateChecks` for
-  any step declaring `expectState` and `errors` for any step declaring `expectError`
+- scenario cases report `identityChecks` and `roundTrips`, plus `stepRows` for the
+  values their read steps published, `stateChecks` for any step declaring
+  `expectState`, and `errors` for any step declaring `expectError`
 - coherence cases report the final observed `rows`, and `identityChecks` for any step that declares `sameObjectAs`
 - error cases with a single-connection trigger (top-level `then.statements`)
   report `errorClass` — the neutral `m-db-error` category the final trigger
@@ -455,13 +456,14 @@ in: the adapter opens its own streamed read over that step's `objectQuery` at
 that step's `batchSize`, drains it, and reports the delivery's own statements
 under the step's pointer — every page's, in execution order — exactly as an
 ordinary find step reports its one. The roots the delivery publishes are what
-the step's `expectRows` states, and they are the evidence a later write step
-naming that step with `on` settles against. The envelope carries **no per-step
-row channel**: an adapter reports what the delivery *executed* and what the
-write it licensed *emitted*, never the values the delivery handed over. So the
-observable that holds an adapter to its own delivery is that write's **gate** —
-resolving it from anything but the observation that delivery recorded binds a
-generation the delivery never published, and the case fails there.
+the step's `expectRows` states, and the adapter reports them under the step's own
+pointer as its `stepRows` entry (*Per-step row observations*, below) — across
+every page, in delivery order — so a delivery that published its roots short,
+duplicated, or altered fails against the rows the case states. Those same roots are
+the evidence a later write step naming that step with `on` settles against, and
+that write's **gate** is the second observable holding an adapter to its own
+delivery: resolving it from anything but the observation that delivery recorded
+binds a generation the delivery never published, and the case fails there too.
 
 Under `compile`, a case carrying a `stream` member anywhere is **always**
 run-only: its later pages bind coordinates read off an earlier page's result,
@@ -515,6 +517,43 @@ golden SQL cannot see, mirroring the explicit-verdict shape of `identityCheck`:
 Both are additive and optional: an adapter that observes no lifecycle state or
 raised error simply omits them, so an existing `run` output (`roundTrips` plus
 `rows` / `graph` / `identityChecks` / `storedDataIssues`) stays valid unchanged.
+
+### Per-step row observations (`stepRows`)
+
+A scenario has no single whole-read result, so a read step's rows cannot ride the
+`rows` key: they are one observation **per step**. `stepRows` is the optional
+`observations` array carrying them — one `{ at, rows }` entry per scenario read
+step, `at` the JSON Pointer naming the step and `rows` the values that step
+published, in the same physically-keyed shape a whole-read `rows` observation
+carries and a step's `expectRows` is authored in (`m-case-format` *Row and
+table-state style*). Entries appear in step order.
+
+What is reported is what the step **published** — the roots the read handed over
+— never the result sets its statements returned. The two differ wherever a read
+publishes something other than its rows: a deep fetch's child levels return rows
+belonging UNDER the roots rather than beside them, and a streamed step returns one
+result set per page while publishing one root at a time. A streamed step's entry
+is therefore the roots of its whole delivery, across every page, in delivery order
+(`m-case-format` *Streamed read steps*); an eager step's is the roots of its one
+result, the child levels its Include Paths populated being graded by `stepGraphs`
+instead. An adapter answering this from a re-read, or from the rows its driver
+returned, reports that the database is right where the case asks what the caller
+was handed — the same distinction the `access` placement of `stepGraphs` draws.
+
+One read step reports no entry: the resolving read of a **materializing predicate
+write** (`m-case-format` *Materializing cases*). That read is the write's own
+internal resolve — an implementation performs it while planning the write and
+hands its rows to no caller, and an adapter that executed the find separately
+would resolve twice and report a round trip the case does not count. What holds an
+implementation to that step is what the case already states about it: its golden
+read statement, which fixes the projection the resolve carries, and the per-row
+binds the write then emits, which the planner derived from those very rows. Every
+other read step owns an entry, and a step that owns one and is missing it is an
+unanswered oracle rather than a pass.
+
+It is additive and optional in the same sense as `stateChecks` / `errors` /
+`stepGraphs`: a run reporting no such step omits it, and every existing `run`
+output stays valid unchanged.
 
 ### Per-step graph observations (`stepGraphs`)
 
