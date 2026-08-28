@@ -159,9 +159,9 @@ domination.
 **Anything held outside a Python object.** Every figure in this report and every
 count in the gated suite comes from `tracemalloc`, `gc.get_objects`, or
 `sys.getsizeof`, so all three price Python objects and the references among them.
-A mapping, or a buffer a C extension owns, is a constant-size shell at every one
-of them however large its backing grows, and an anonymous mapping never reaches
-the allocator `tracemalloc` traces. Observing that needs a resident-set reading
+A memory mapping (`mmap`), or a buffer a C extension owns, is a constant-size
+shell at every one of them however large its backing grows, and an anonymous
+mapping never reaches the allocator `tracemalloc` traces. Observing that needs a resident-set reading
 taken from outside the interpreter, and nothing in this repository takes one. The
 graded claim is therefore about the delivery's Python-level working set — which
 is what all of Parallax's own storage is — rather than about the process's

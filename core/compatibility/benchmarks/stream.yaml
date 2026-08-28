@@ -1,17 +1,17 @@
 # Benchmark fixture (m-perf-bench): the streamed-delivery workload.
 #
-# Exercises m-snapshot-read's Streamed delivery at scale. The headline property is
-# the one `expectRoundTrips` declares: a delivery costs
+# Prices, at scale, the statement shape of m-snapshot-read's Streamed delivery.
+# The headline property is the one `expectRoundTrips` declares: a delivery costs
 # `floor(N / B) + 1` root statements and `ceil(N / B) * L` child statements — the
 # `1 + L` deep-fetch ceiling applied ONCE PER PAGE. What is declared here is that
 # count and the page statements behind it, not a delivery: like every fixture in
-# this directory this one carries golden SQL rather than an Object Query, so
-# nothing here names the read an implementation issues, and the reference harness
-# replays the authored list and counts that. The declared count meets an
-# implementation's own only through the adapter's `benchmark` command, which
-# reports `roundTrips` beside this `expectRoundTrips`. `deep-fetch.yaml` declares
-# the same ceiling for one eager read; this declares it for a delivery, and adds
-# the page arithmetic on top.
+# this directory this one carries golden SQL rather than an Object Query, so a run
+# executes these page statements as authored and reports how many it issued.
+# `roundTrips` beside this `expectRoundTrips` therefore keeps the arithmetic and
+# the statement list consistent with each other; what grades a target's own paged
+# read is `m-snapshot-read-027` and its sibling streamed-delivery cases.
+# `deep-fetch.yaml` declares the same ceiling for one eager read; this declares it
+# for a delivery, and adds the page arithmetic on top.
 #
 # The three workloads are the same 20 roots at three page sizes, which is what
 # makes the page size legible as a TRADE rather than as a setting: 9, 6, and 3
