@@ -1787,9 +1787,14 @@ def _golden_projection_columns(case: Case) -> set[str]:
 
 class _DocumentMember(NamedTuple):
     """One member a Relational Document Layout keeps inside the shared Structured
-    Column: what a result row calls it, where it sits in the document, and — for a
-    leaf — the declared type its stored spelling decodes through."""
+    Column: where it sits in the document and — for a leaf — the declared type its
+    stored spelling decodes through.
 
+    ``name`` identifies the member and ``column`` only spells it: a member inside a
+    document claims no Column, so its spelling is free to collide with the Column a
+    direct member really holds."""
+
+    name: str
     column: str
     path: tuple[str, ...]
     type_spelling: str | None
@@ -1834,12 +1839,19 @@ def _document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[_Do
         if len(address.path) == 1 and isinstance(placement, DocumentPath) and placement.slot == slot
     }
     members = [
-        _DocumentMember(attribute["column"], resident[attribute["name"]], attribute["type"])
+        _DocumentMember(
+            attribute["name"],
+            attribute["column"],
+            resident[attribute["name"]],
+            attribute["type"],
+        )
         for attribute in entity.attributes
         if attribute["name"] in resident
     ]
     members.extend(
-        _DocumentMember(occurrence["column"], resident[occurrence["name"]], None)
+        _DocumentMember(
+            occurrence["name"], occurrence["column"], resident[occurrence["name"]], None
+        )
         for occurrence in entity.value_objects
         if occurrence["name"] in resident
     )
@@ -2134,8 +2146,8 @@ def _has_document_resident_attribute(case: Case, entity: Entity) -> bool:
     """Whether the layout placed any of *entity*'s own Attributes inside its
     Structured Column — the one need that reaches a Relational Document Layout's
     shared Column from a row-form read (`m-sql` *Read projection*, rule 5)."""
-    resident = {member.column for member in _document_layout_members(case, entity)[1]}
-    return any(attribute["column"] in resident for attribute in entity.attributes)
+    resident = {member.name for member in _document_layout_members(case, entity)[1]}
+    return any(attribute["name"] in resident for attribute in entity.attributes)
 
 
 def _is_instance_form(case: Case) -> bool:
@@ -3022,12 +3034,16 @@ class _ContinuationTerm:
     nullable: bool
 
 
-def _document_resident_columns(case: Case, entity: Entity) -> set[str]:
-    return {member.column for member in _document_layout_members(case, entity)[1]}
+def _document_resident_members(case: Case, entity: Entity) -> set[str]:
+    return {member.name for member in _document_layout_members(case, entity)[1]}
 
 
-def _read_document_resident_columns(case: Case, query: dict[str, Any]) -> set[str]:
-    """Every column a Table *query* reads carries inside a document instead.
+def _read_document_resident_members(case: Case, query: dict[str, Any]) -> set[str]:
+    """Every member a Table *query* reads carries inside a document instead.
+
+    Named rather than spelled: residence is a property of the member a Sort Key
+    names, and a member inside a document claims no Column, so a direct member is
+    free to hold the very Column a resident one would have been spelled with.
 
     Residence belongs to a Table's own layout, so an abstract position holds none
     of its own: a table-per-concrete-subtype root is TABLELESS, and a member every
@@ -3035,13 +3051,13 @@ def _read_document_resident_columns(case: Case, query: dict[str, Any]) -> set[st
     about. The question is therefore asked of each concrete Table the read
     resolves over as well as of the position it is read at.
     """
-    columns = _document_resident_columns(case, case.model.entity(query["target"]))
+    members = _document_resident_members(case, case.model.entity(query["target"]))
     position = _abstract_family_position(case, query)
     if position is None:
-        return columns
-    return columns.union(
+        return members
+    return members.union(
         *(
-            _document_resident_columns(case, case.model.entity(concrete))
+            _document_resident_members(case, case.model.entity(concrete))
             for concrete in _read_effective_set(case, position.family, position.target)
         )
     )
@@ -3061,12 +3077,12 @@ def _continuation_order(case: Case, query: dict[str, Any], root: Entity) -> list
     """
     terms: list[_ContinuationTerm] = []
     names_the_key = False
-    resident = _read_document_resident_columns(case, query)
+    resident = _read_document_resident_members(case, query)
     for key in query.get("orderBy", []):
         class_name, _, name = key["attr"].rpartition(".")
         entity = case.model.entity(class_name)
         attribute = entity.attribute_by_name(name)
-        if attribute["column"] in resident | _document_resident_columns(case, entity):
+        if name in resident | _document_resident_members(case, entity):
             raise CaseFailure(
                 f"{case.path.name}: the Continuation Order names the document-resident member "
                 f"{key['attr']}, whose every extraction binds a Document Path this oracle "
@@ -3163,19 +3179,14 @@ type _SeekNode = str | _SeekJunction
 
 @dataclass(frozen=True, slots=True)
 class _SeekJunction:
-    """One composed branch of a seek: the operator, and the nodes it joins.
-
-    Same-operator nesting is flattened and grouping is dropped, on the composed
-    side and on the spelled side alike, so a parenthesization or an association
-    the two spell differently compares equal — while a page that conjoined what
-    the order disjoins, or negated what it compares, does not.
-    """
-
     operator: Literal["and", "or", "not"]
     operands: tuple[_SeekNode, ...]
 
 
 def _joined(operator: Literal["and", "or"], operands: Sequence[_SeekNode]) -> _SeekNode:
+    """Flattened so that an association the composed and the spelled sides spell
+    differently compares equal, while a page that conjoined what the order
+    disjoins still does not."""
     flattened = [
         operand
         for node in operands
@@ -3268,14 +3279,35 @@ def _seek_node(expression: Expr) -> _SeekNode:
         operator: Literal["and", "or"] = "and" if isinstance(expression, exp.And) else "or"
         return _joined(operator, [_seek_node(expression.this), _seek_node(expression.expression)])
     if isinstance(expression, exp.Not):
+        negated = _null_test(expression.this, negate=True)
+        if negated is not None:
+            return negated
         return _SeekJunction("not", (_seek_node(expression.this),))
-    if isinstance(expression, exp.Is) and isinstance(expression.expression, exp.Null):
-        negated = "not " if expression.args.get("negate") else ""
-        return f"{_seek_member(expression.this)} is {negated}null"
+    plain = _null_test(expression, negate=False)
+    if plain is not None:
+        return plain
     comparator = _SEEK_COMPARATORS.get(type(expression))
     if comparator is not None and isinstance(expression.expression, exp.Placeholder):
         return f"{_seek_member(expression.this)} {comparator} ?"
     return expression.sql()
+
+
+def _null_test(expression: Expr, *, negate: bool) -> str | None:
+    """*expression* as the one null-test leaf a seek composes, or ``None`` if it is
+    not a null test.
+
+    A negated null test has two production spellings — `x is not null` and
+    `not x is null` — and a dialect may parse either into the other's tree, so the
+    negation is folded into the leaf rather than left as a junction the composed
+    side never builds.
+    """
+    while isinstance(expression, exp.Paren):
+        expression = expression.this
+    if not (isinstance(expression, exp.Is) and isinstance(expression.expression, exp.Null)):
+        return None
+    if expression.args.get("negate"):
+        negate = not negate
+    return f"{_seek_member(expression.this)} is {'not ' if negate else ''}null"
 
 
 def _seek_member(expression: Expr) -> str:
