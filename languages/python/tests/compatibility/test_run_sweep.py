@@ -172,6 +172,21 @@ def _is_streamed(case: case_format.Case) -> bool:
 _PAGE_BOUND: Final = re.compile(r"\blimit \?$")
 
 
+def _stated_roots(then: dict[str, Any]) -> int:
+    """How many roots a read case states its result carries.
+
+    One number from either result member: a single-instant read states one
+    graph, and a milestone-set read one per milestone, whose roots together are
+    the delivery's own. The delivery's page arithmetic is the same over both,
+    because a page counts root positions and never milestones.
+    """
+    graphs = cast("list[dict[str, Any]]", then.get("graphs", []))
+    graph_bodies = [cast("dict[str, list[Any]]", entry["graph"]) for entry in graphs] or [
+        cast("dict[str, list[Any]]", then["graph"])
+    ]
+    return sum(len(nodes) for body in graph_bodies for nodes in body.values())
+
+
 def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) -> set[int]:
     """Where each page's ROOT statement sits in a streamed case's flat list.
 
@@ -190,8 +205,7 @@ def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) ->
     query = cast("dict[str, Any]", doc["when"]["objectQuery"])
     size = cast("int", cast("dict[str, Any]", doc["when"]["stream"])["batchSize"])
     limit = cast("int | None", query.get("limit"))
-    graph = cast("dict[str, list[Any]]", doc["then"]["graph"])
-    roots = sum(len(nodes) for nodes in graph.values())
+    roots = _stated_roots(cast("dict[str, Any]", doc["then"]))
     pages = 0
     delivered = 0
     while True:

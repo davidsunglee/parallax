@@ -5785,6 +5785,46 @@ def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
     ]
 
 
+def test_run_streamed_graphs_case_groups_a_delivery_back_into_edge_ranked_graphs() -> None:
+    # A delivery publishes ROOTS, in the Continuation Order — the key, then the
+    # edge — so two objects standing at one milestone reach the caller in two
+    # runs. The observation groups them wherever they fall and ranks the entries
+    # by edge, which is what makes it the same `then.graphs` the eager read of
+    # the same query states, at any page size.
+    from parallax.core.base import INFINITY
+
+    def line(key: int, amount: str, in_z: dt.datetime, out_z: object) -> Row:
+        return {
+            "id": key,
+            "invoice_id": 100,
+            "amount": decimal.Decimal(amount),
+            "in_z": in_z,
+            "out_z": out_z,
+        }
+
+    january = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    april = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+    port = QueueDbPort(
+        [
+            [line(1000, "50.00", january, april)],
+            [line(1000, "75.00", april, INFINITY)],
+            [line(1001, "25.00", january, INFINITY)],
+            [],
+        ]
+    )
+    case = _doctored("m-snapshot-read-013", stream={"batchSize": 1})
+    emissions, graphs, round_trips = engine.run_streamed_graphs_case(case, "postgres", port)
+    assert round_trips == 4
+    assert len(emissions) == 4
+    assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
+        "2024-01-01T00:00:00+00:00",
+        "2024-04-01T00:00:00+00:00",
+    ]
+    assert [
+        [row["amount"] for row in _rows(_entry(g, "graph"), "InvoiceLine")] for g in graphs
+    ] == [["50.00", "25.00"], ["75.00"]]
+
+
 def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
     case = _synthetic(
         {
@@ -7198,11 +7238,22 @@ def test_run_stream_case_refuses_a_case_declaring_no_delivery() -> None:
 
 
 def test_run_stream_case_refuses_a_milestone_set_read() -> None:
-    # A milestone set is not ordered by the root's own key, so it has no keyset
-    # continuation to page by — refused before a page is planned.
+    # The two streamed lanes answer the two result members, exactly as the two
+    # eager ones do: a milestone-set delivery publishes one root per milestone at
+    # its own edge pin, which is `then.graphs`, so the `then.graph` lane refuses
+    # it rather than reporting one flat graph the case never stated.
     case = _doctored("m-snapshot-read-013", stream={"batchSize": 2})
-    with pytest.raises(engine.EngineError, match="milestone AXIS"):
+    with pytest.raises(engine.EngineError, match=re.escape("asserts `then.graphs`")):
         engine.run_stream_case(case, "postgres", FakeDbPort([]))
+
+
+def test_run_streamed_graphs_case_refuses_a_single_instant_read() -> None:
+    # And the converse: a delivery of a single-instant read publishes roots at
+    # one pin the query itself states, so there is no milestone partition to
+    # report and the case's own member says so.
+    case = _doctored(_STREAM_CASE_ID)
+    with pytest.raises(engine.EngineError, match=re.escape("asserts `then.graph`")):
+        engine.run_streamed_graphs_case(case, "postgres", FakeDbPort([]))
 
 
 def test_run_stream_case_reports_a_refused_delivery_as_an_engine_error() -> None:

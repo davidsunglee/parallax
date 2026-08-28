@@ -239,24 +239,25 @@ def _read_observations(
 ) -> dict[str, Any]:
     """A read case's own observation shape (m-case-format "Read result form"):
     ``then.graphs`` (a milestone-set snapshot read) / ``then.graph`` (a deep
-    fetch, a plain instance-form materialization, or a streamed delivery) /
-    ``then.rows`` (row-form) — a case satisfies its `then` requirement with
-    exactly one, so exactly one of these three run lanes ever answers it.
+    fetch or a plain instance-form materialization) / ``then.rows`` (row-form) —
+    a case satisfies its `then` requirement with exactly one, so exactly one of
+    these three run lanes ever answers it.
 
-    ``when.stream`` selects WITHIN the graph lane rather than beside it, because
-    it names the DELIVERY and not the result: a streamed case reports the same
-    ``graph`` observation an eager one does, and running the eager read to
-    produce it would match `then.graph` while producing none of the page
-    partition the case states (`m-conformance-adapter` *Streamed reads*). Its
-    ``emissions`` are the delivery's own — every page's statements in execution
-    order, read off the Database Calls the Snapshot Stream publishes, like every
-    other lane's.
+    ``when.stream`` selects WITHIN each graph lane rather than beside them,
+    because it names the DELIVERY and not the result: a streamed case reports the
+    same observation its eager peer does — ``graph``, or ``graphs`` for a
+    milestone-set read — and running the eager read to produce it would match the
+    case's result while producing none of the page partition the case states
+    (`m-conformance-adapter` *Streamed reads*). Its ``emissions`` are the
+    delivery's own — every page's statements in execution order, read off the
+    Database Calls the Snapshot Stream publishes, like every other lane's.
     """
     then = case.document.get("then")
     when = case.document.get("when")
     streamed = isinstance(when, Mapping) and "stream" in when
     if isinstance(then, Mapping) and "graphs" in then:
-        emissions, graphs, round_trips = engine.run_graphs_case(case, dialect, port, lifecycle)
+        run_graphs = engine.run_streamed_graphs_case if streamed else engine.run_graphs_case
+        emissions, graphs, round_trips = run_graphs(case, dialect, port, lifecycle)
         return {
             "emissions": emissions,
             "observations": {"graphs": graphs, "roundTrips": round_trips},

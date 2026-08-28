@@ -24,6 +24,7 @@ against what the corpus happens to declare.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cmp_to_key
@@ -46,6 +47,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import (
+    AsOf,
     AsOfRange,
     History,
     ObjectQueryNode,
@@ -69,6 +71,7 @@ from parallax.descriptor import _records
 ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")
 BALANCE = accepted_model("balance")
+POSITION = accepted_model("position")
 DOCUMENT_LAYOUT = accepted_model("document-layout")
 
 _ORDER_ID = "parallax.compatibility.Order.id"
@@ -80,6 +83,11 @@ _ANIMAL_ID = "parallax.compatibility.Animal.id"
 _DOG_BARK = "parallax.compatibility.Dog.barkVolume"
 _TRAVELER_ID = "parallax.compatibility.Traveler.id"
 _TRAVELER_SCORE = "parallax.compatibility.Traveler.score"
+_BALANCE_ID = "parallax.compatibility.Balance.id"
+_BALANCE_TX_START = "parallax.compatibility.Balance.txStart"
+_POSITION_ID = "parallax.compatibility.Position.id"
+_POSITION_VALID_START = "parallax.compatibility.Position.validStart"
+_POSITION_TX_START = "parallax.compatibility.Position.txStart"
 
 type _Row = Mapping[AttributeIdentity, object]
 
@@ -732,17 +740,192 @@ def test_advancing_from_a_root_whose_sort_key_did_not_decode_is_refused_by_name(
         plan.after({_key(entity_of(ORDERS, "Order")): 3}, limit=3)
 
 
-@pytest.mark.parametrize(
-    "selection",
-    [History(), AsOfRange(start="2024-01-01T00:00:00Z", end="2024-06-01T00:00:00Z")],
-    ids=["history", "asOfRange"],
+# --------------------------------------------------------------------------- #
+# The milestone edge: a scan's own third component.                            #
+# --------------------------------------------------------------------------- #
+_SCANS: tuple[tuple[str, TemporalSelection], ...] = (
+    ("history", History()),
+    ("asOfRange", AsOfRange(start="2024-01-01T00:00:00Z", end="2024-06-01T00:00:00Z")),
 )
-def test_a_milestone_set_read_has_no_page_order(selection: TemporalSelection) -> None:
+
+
+@pytest.mark.parametrize(
+    "selection", [selection for _, selection in _SCANS], ids=[id for id, _ in _SCANS]
+)
+def test_a_milestone_set_read_orders_by_the_key_then_its_one_axis_start(
+    selection: TemporalSelection,
+) -> None:
     # One primary key stands behind several result roots of a milestone-set read,
-    # so paging on an order ending in the key would skip or duplicate at a page
-    # boundary.
-    with pytest.raises(continuation.ContinuationError, match="milestone-set"):
-        _planned(BALANCE, "Balance", temporal={"transaction-time": selection})
+    # so the key alone is not total there. What separates two milestones of one
+    # key is the milestone each stands at, which is the axis's own start.
+    plan = _planned(BALANCE, "Balance", temporal={"transaction-time": selection})
+    assert plan.first(limit=2).order_by == (
+        OrderKey(attr=_BALANCE_ID, direction="asc"),
+        OrderKey(attr=_BALANCE_TX_START, direction="asc"),
+    )
+
+
+@pytest.mark.parametrize(
+    "selection", [selection for _, selection in _SCANS], ids=[id for id, _ in _SCANS]
+)
+def test_a_bitemporal_scan_appends_both_axis_starts_valid_time_first(
+    selection: TemporalSelection,
+) -> None:
+    # The edge is every declared axis in canonical rank (`m-metamodel`: Valid
+    # Time precedes Transaction Time wherever axes are ordered), which is the
+    # order a whole-result milestone read already ranks its graphs in. Scanning
+    # ONE axis still appends both: a milestone is a rectangle, and two rectangles
+    # of one key may differ on the axis the read pinned.
+    plan = _planned(POSITION, "Position", temporal={"transaction-time": selection})
+    assert plan.first(limit=2).order_by == (
+        OrderKey(attr=_POSITION_ID, direction="asc"),
+        OrderKey(attr=_POSITION_VALID_START, direction="asc"),
+        OrderKey(attr=_POSITION_TX_START, direction="asc"),
+    )
+
+
+def test_a_single_instant_temporal_read_appends_no_edge() -> None:
+    # A pin is not a scan: one milestone per key reaches the result, so the key
+    # is total by itself and the order is what every non-temporal read's is.
+    plan = _planned(POSITION, "Position", temporal={"transaction-time": AsOf("latest")})
+    assert plan.first(limit=2).order_by == (OrderKey(attr=_POSITION_ID, direction="asc"),)
+
+
+def test_an_authored_sort_key_naming_an_axis_start_is_not_appended_twice() -> None:
+    # The appended terms are the ones the author did NOT name, edge included —
+    # and an authored one is carried exactly as authored, its `desc` included,
+    # rather than respelled ascending behind it.
+    plan = _planned(
+        POSITION,
+        "Position",
+        temporal={"transaction-time": History()},
+        order_by=(OrderKey(attr=_POSITION_TX_START, direction="desc"),),
+    )
+    assert plan.first(limit=2).order_by == (
+        OrderKey(attr=_POSITION_TX_START, direction="desc"),
+        OrderKey(attr=_POSITION_ID, direction="asc"),
+        OrderKey(attr=_POSITION_VALID_START, direction="asc"),
+    )
+
+
+def test_a_milestone_page_seeks_past_the_edge_as_a_canonical_instant_literal() -> None:
+    # A projection holds an instant as a `datetime`, while a comparison binds
+    # `m-predicate`'s literal for it — the canonical UTC ISO-8601 spelling every
+    # other instant bind in the system carries. Binding the carrier would emit a
+    # page statement no golden could state.
+    plan = _planned(POSITION, "Position", temporal={"transaction-time": History()})
+    node = plan.after(
+        {
+            _identity(POSITION, _POSITION_ID): 1,
+            _identity(POSITION, _POSITION_VALID_START): dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            _identity(POSITION, _POSITION_TX_START): dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+        },
+        limit=2,
+    )
+    assert node.predicate == And(
+        operands=(
+            Comparison(op="greaterThanEquals", attr=_POSITION_ID, value=1),
+            Group(
+                operand=Or(
+                    operands=(
+                        Comparison(op="greaterThan", attr=_POSITION_ID, value=1),
+                        Group(
+                            operand=And(
+                                operands=(
+                                    Comparison(op="eq", attr=_POSITION_ID, value=1),
+                                    Comparison(
+                                        op="greaterThan",
+                                        attr=_POSITION_VALID_START,
+                                        value="2024-01-01T00:00:00+00:00",
+                                    ),
+                                )
+                            )
+                        ),
+                        Group(
+                            operand=And(
+                                operands=(
+                                    Comparison(op="eq", attr=_POSITION_ID, value=1),
+                                    Comparison(
+                                        op="eq",
+                                        attr=_POSITION_VALID_START,
+                                        value="2024-01-01T00:00:00+00:00",
+                                    ),
+                                    Comparison(
+                                        op="greaterThan",
+                                        attr=_POSITION_TX_START,
+                                        value="2024-04-01T00:00:00+00:00",
+                                    ),
+                                )
+                            )
+                        ),
+                    )
+                )
+            ),
+        )
+    )
+
+
+def test_a_milestone_root_whose_edge_did_not_decode_cannot_be_continued_from() -> None:
+    # The keyless-root rule reaching the edge: the Continuation Order names the
+    # axis starts, so a root carrying its key but not its milestone supplies no
+    # coordinate for them and the delivery cannot continue past it.
+    plan = _planned(POSITION, "Position", temporal={"transaction-time": History()})
+    carried = {
+        _identity(POSITION, _POSITION_ID): 1,
+        _identity(POSITION, _POSITION_VALID_START): dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    }
+    assert not plan.continues_from(carried)
+    with pytest.raises(continuation.ContinuationError, match="does not carry"):
+        plan.after(carried, limit=2)
+
+
+def _milestones() -> list[_Row]:
+    """Every rectangle of two keys, tying on each axis and on neither."""
+    starts = [
+        (dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 1, 1, tzinfo=dt.UTC)),
+        (dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 4, 1, tzinfo=dt.UTC)),
+        (dt.datetime(2024, 6, 1, tzinfo=dt.UTC), dt.datetime(2024, 4, 1, tzinfo=dt.UTC)),
+        (dt.datetime(2024, 6, 1, tzinfo=dt.UTC), dt.datetime(2024, 9, 1, tzinfo=dt.UTC)),
+    ]
+    return [
+        {
+            _identity(POSITION, _POSITION_ID): key,
+            _identity(POSITION, _POSITION_VALID_START): valid_start,
+            _identity(POSITION, _POSITION_TX_START): tx_start,
+        }
+        for key in (1, 2)
+        for valid_start, tx_start in starts
+    ]
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 3, 4, 5, 8, 9], ids=lambda size: f"batch-{size}")
+def test_a_milestone_delivery_pages_through_every_boundary_offset_without_skip_or_duplicate(
+    batch_size: int,
+) -> None:
+    # The property the edge exists for, asserted at every boundary offset a page
+    # size can land on: eight milestones over two keys, so a page boundary falls
+    # inside one key's own history at every size below eight. Ordering by the key
+    # alone would end each of those deliveries early — the next page seeks past
+    # the whole key — and this is the same paging evaluation the Column orderings
+    # above are graded by, over instants rather than scalars.
+    rows = _milestones()
+    plan = _planned(POSITION, "Position", temporal={"transaction-time": History()})
+    ranked = _ranked(POSITION, plan.first(limit=1).order_by)
+    expected = sorted(rows, key=ranked)
+    delivered: list[_Row] = []
+    cursor: _Row | None = None
+    while True:
+        node = (
+            plan.first(limit=batch_size) if cursor is None else plan.after(cursor, limit=batch_size)
+        )
+        page = sorted((row for row in rows if _matches(POSITION, node.predicate, row)), key=ranked)[
+            :batch_size
+        ]
+        delivered.extend(page)
+        if len(page) < batch_size:
+            break
+        cursor = page[-1]
+    assert delivered == expected
 
 
 # --------------------------------------------------------------------------- #
@@ -767,7 +950,7 @@ def _dataset() -> list[_Row]:
     return rows
 
 
-def _matches(node: PredicateNode, row: _Row) -> bool:
+def _matches(model: Metamodel, node: PredicateNode, row: _Row) -> bool:
     """Evaluate one seek against a row, in SQL's own three-valued reading.
 
     The vocabulary is exactly what a seek is composed of. A comparison against a
@@ -780,21 +963,33 @@ def _matches(node: PredicateNode, row: _Row) -> bool:
         case NoneOp():
             return False
         case Group(operand=operand):
-            return _matches(operand, row)
+            return _matches(model, operand, row)
         case And(operands=operands):
-            return all(_matches(operand, row) for operand in operands)
+            return all(_matches(model, operand, row) for operand in operands)
         case Or(operands=operands):
-            return any(_matches(operand, row) for operand in operands)
+            return any(_matches(model, operand, row) for operand in operands)
         case NullCheck(op=op, attr=attr):
-            held = row[_identity(ORDERS, attr)]
+            held = row[_identity(model, attr)]
             return (held is None) if op == "isNull" else (held is not None)
         case Comparison(op=op, attr=attr, value=value):
-            held = row[_identity(ORDERS, attr)]
+            held = row[_identity(model, attr)]
             if held is None:
                 return False
-            return _compares(op, held, value)
+            return _compares(op, held, _as_carrier(held, value))
         case _:  # pragma: no cover - a seek composes nothing else
             raise AssertionError(f"the seek composed {node!r}")
+
+
+def _as_carrier(held: object, value: object) -> object:
+    """One bound literal read back as the carrier the stored value is.
+
+    A page binds an instant as its canonical literal and the database parses it
+    back before comparing two instants; comparing the literal against the
+    carrier is what nothing does.
+    """
+    if isinstance(held, dt.datetime) and isinstance(value, str):
+        return dt.datetime.fromisoformat(value)
+    return value
 
 
 def _compares(op: str, held: object, value: object) -> bool:
@@ -813,7 +1008,7 @@ def _compares(op: str, held: object, value: object) -> bool:
             return bool(here <= there)
 
 
-def _ranked(order: Sequence[OrderKey]) -> Callable[[_Row], Any]:
+def _ranked(model: Metamodel, order: Sequence[OrderKey]) -> Callable[[_Row], Any]:
     """A total comparator over the Continuation Order the page node declares.
 
     Ranks nulls by the term's own Null Placement first, then compares the values,
@@ -823,7 +1018,7 @@ def _ranked(order: Sequence[OrderKey]) -> Callable[[_Row], Any]:
 
     def compare(left: _Row, right: _Row) -> int:
         for term in order:
-            identity = _identity(ORDERS, term.attr)
+            identity = _identity(model, term.attr)
             here, there = left[identity], right[identity]
             nulls_first = (term.nulls or "last") == "first"
             here_rank = (0 if nulls_first else 1) if here is None else (1 if nulls_first else 0)
@@ -860,7 +1055,7 @@ def test_paging_reproduces_the_whole_result_in_the_order_the_first_page_declares
     # delivers it twice.
     rows = _dataset()
     plan = _planned(ORDERS, "Order", order_by=order_by)
-    ranked = _ranked(plan.first(limit=1).order_by)
+    ranked = _ranked(ORDERS, plan.first(limit=1).order_by)
     expected = sorted(rows, key=ranked)
     delivered: list[_Row] = []
     cursor: _Row | None = None
@@ -868,7 +1063,7 @@ def test_paging_reproduces_the_whole_result_in_the_order_the_first_page_declares
         node = (
             plan.first(limit=batch_size) if cursor is None else plan.after(cursor, limit=batch_size)
         )
-        page = sorted((row for row in rows if _matches(node.predicate, row)), key=ranked)[
+        page = sorted((row for row in rows if _matches(ORDERS, node.predicate, row)), key=ranked)[
             :batch_size
         ]
         delivered.extend(page)
@@ -905,7 +1100,7 @@ def _delivered_under_writes(
     """
     rows = [dict(row) for row in _dataset()]
     plan = _planned(ORDERS, "Order", order_by=order_by)
-    ranked = _ranked(plan.first(limit=1).order_by)
+    ranked = _ranked(ORDERS, plan.first(limit=1).order_by)
     identity = _identity(ORDERS, _ORDER_ID)
     delivered: list[object] = []
     cursor: _Row | None = None
@@ -913,7 +1108,7 @@ def _delivered_under_writes(
         node = (
             plan.first(limit=batch_size) if cursor is None else plan.after(cursor, limit=batch_size)
         )
-        page = sorted((row for row in rows if _matches(node.predicate, row)), key=ranked)[
+        page = sorted((row for row in rows if _matches(ORDERS, node.predicate, row)), key=ranked)[
             :batch_size
         ]
         delivered.extend(row[identity] for row in page)

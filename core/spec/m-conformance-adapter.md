@@ -384,8 +384,9 @@ assert different things:
   graph-form read additionally reports `storedDataIssues` for the result positions
   whose stored state contradicted the declared model, and omits the key entirely
   when every position conformed. A read case carrying `when.stream` reports the
-  same `graph` observation, delivered rather than materialized whole (see
-  *Streamed reads*, below)
+  same result observation its unstreamed peer would — `graph`, or `graphs` for a
+  milestone-set read — delivered rather than materialized whole (see *Streamed
+  reads*, below)
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `roundTrips`, plus `stepRows` for the
@@ -437,6 +438,21 @@ exposes and reports:
   is compared against, so an adapter accumulates the delivered roots for
   reporting and the memory that costs is the runner's, never a claim about the
   implementation's own working set.
+- **`observations.graphs`** in its place, for a **milestone-set** delivery
+  (`history` / `asOfRange`), reported exactly as the eager milestone-set read
+  reports it: the ordered per-milestone `{pin, graph}` entries. A delivery has no
+  graphs to report directly — it publishes roots — so the entries are recovered
+  from each published root's own edge pin, which is the coordinate the entry
+  states. Roots of one milestone are grouped wherever they fall in the delivery
+  and never only where they fall adjacently: a delivery arrives in the
+  Continuation Order, the key before the edge, so several objects standing at one
+  milestone reach the caller in as many runs as there are objects. The entries
+  are ordered by **edge rank**, Valid Time before Transaction Time — the eager
+  order — because what a milestone-set result states is which milestones the read
+  reached, and an order the delivery happened to visit them in would make the
+  observation depend on the page size. An adapter reports whichever of the two
+  its case authors, and the choice is the query's: a scanned axis makes the read
+  milestone-set.
 - **`observations.roundTrips`** — every database call the delivery made, the
   terminal empty root statement included.
 - **`emissions`** — every statement the delivery executed, in execution order

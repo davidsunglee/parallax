@@ -8,7 +8,7 @@
   "required": ["model", "tags", "shape"],
   "oneOf": [
     {
-      "description": "A read case: a queryable Object Query with expected rows or an expected object graph. The optional `when.stream` context member makes the read STREAMED — the roots are delivered one at a time in the Continuation Order over keyset-paged root statements of `when.stream.batchSize` positions each — and is admitted only beside `then.graph`: `then.rows` has no streamed peer and a milestone-set `then.graphs` is not streamable.",
+      "description": "A read case: a queryable Object Query with expected rows or an expected object graph. The optional `when.stream` context member makes the read STREAMED — the roots are delivered one at a time in the Continuation Order over keyset-paged root statements of `when.stream.batchSize` positions each — and is admitted beside `then.graph` and beside a milestone-set `then.graphs`, never beside `then.rows`, which has no streamed peer.",
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "read" },
@@ -34,7 +34,11 @@
             "properties": { "when": { "required": ["stream"] } }
           },
           "then": {
-            "properties": { "then": { "required": ["graph"] } }
+            "properties": {
+              "then": {
+                "anyOf": [{ "required": ["graph"] }, { "required": ["graphs"] }]
+              }
+            }
           }
         }
       ]
@@ -410,7 +414,7 @@
           }
         },
         "stream": {
-          "description": "The streamed delivery context of a read case (m-snapshot-read *Streamed delivery*): its presence makes the read STREAMED rather than eager, exactly as `when.uow.concurrency` makes a read's mode prescriptive rather than descriptive. A streamed read keyset-pages its root positions in the Continuation Order and deep-fetches one page at a time, so its `then.statements` is the concatenation of the pages' own `1 + L` groups and its `then.graph` is the roots the eager read of the same Object Query publishes, in the same order. Sibling of the action member, never a query clause — a page size is how the client consumes the result, not part of the Object Query the corpus canonicalizes and round-trips.",
+          "description": "The streamed delivery context of a read case (m-snapshot-read *Streamed delivery*): its presence makes the read STREAMED rather than eager, exactly as `when.uow.concurrency` makes a read's mode prescriptive rather than descriptive. A streamed read keyset-pages its root positions in the Continuation Order and deep-fetches one page at a time, so its `then.statements` is the concatenation of the pages' own `1 + L` groups and its result is the roots the eager read of the same Object Query publishes, in the same order — `then.graph` for a single-instant read, and for a milestone-set read the same per-milestone `then.graphs` the eager read states, each delivered root standing at its own edge. Sibling of the action member, never a query clause — a page size is how the client consumes the result, not part of the Object Query the corpus canonicalizes and round-trips.",
           "$ref": "#/$defs/streamContext"
         },
         "objectQuery": {

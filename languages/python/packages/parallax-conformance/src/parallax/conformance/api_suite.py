@@ -1057,10 +1057,12 @@ _STREAMED_DELIVERY_REASON: Final[str] = (
     "`db.stream` would grade the graph its eager sibling already grades and nothing that "
     "makes the case a streamed one. Both halves are graded for real elsewhere: the run "
     "sweep drives `db.wire.stream` itself against real Postgres, compares every statement "
-    "the delivery executed to the authored pages, and materializes the case's own "
-    "`then.graph`; and the delivery contract the surface adds on top — single pass, one "
-    "view, scope binding, the cursorless-root rule, and page-size invariance in BOTH "
-    "namespaces — is graded against the shipped surface by `tests/unit/test_snapshot_stream.py`"
+    "the delivery executed to the authored pages, and materializes the case's own result — "
+    "`then.graph`, or the per-milestone `then.graphs` a milestone-set delivery publishes "
+    "one edge-pinned root at a time; and the delivery contract the surface adds on top — "
+    "single pass, one view, scope binding, the cursorless-root rule, and page-size "
+    "invariance in BOTH namespaces — is graded against the shipped surface by "
+    "`tests/unit/test_snapshot_stream.py`"
 )
 
 # The composition family's Transaction-Time-only arm. `m-snapshot-read-021`
@@ -1525,6 +1527,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-snapshot-read-033": _STREAMED_DELIVERY_REASON,
     "m-snapshot-read-034": _STREAMED_DELIVERY_REASON,
     "m-snapshot-read-035": _STREAMED_DELIVERY_REASON,
+    "m-snapshot-read-036": _STREAMED_DELIVERY_REASON,
+    "m-snapshot-read-037": _STREAMED_DELIVERY_REASON,
     # -- m-value-object: predicate-read representative siblings ------------- #
     "m-value-object-004": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-005": _VO_PREDICATE_SIBLING_REASON,

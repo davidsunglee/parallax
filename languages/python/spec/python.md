@@ -3033,7 +3033,10 @@ or descriptor authoring form and performs no audit stamping.
   which is the failure mode a still-callable streamed result invites. `pin` is
   available before the first page — a stream computes it from the query, as
   `find` does — and inside the scope alone, so "outside the scope, everything
-  raises" is one rule rather than one rule with an exception.
+  raises" is one rule rather than one rule with an exception. A milestone-set
+  delivery answers the EMPTY pin there, exactly as `find`'s own milestone-set
+  Snapshot does: a scan is not a pin, and each root it publishes stands at its
+  own edge, read back through `pin_of` / `edge_of`.
 - **`batch_size` is public, per-call, and defaults to `1000`.** It counts ROOT
   positions, never included relationship rows, and is validated exactly as
   `limit` is: `type(batch_size) is not int` is an identity check, so nothing is
