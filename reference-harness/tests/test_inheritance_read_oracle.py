@@ -24,8 +24,8 @@ from typing import Any, cast
 import pytest
 
 from reference_harness.case import Case, load_model
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _materialize_family_variant,
     _resolve_hop,
     run_case,

@@ -20,8 +20,8 @@ from typing import Any
 import pytest
 
 from reference_harness.case import Case, Entity, Model, discover_cases, load_model
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _assert_action_on,
     _assert_scenario,
     _assert_scenario_count_consistency,

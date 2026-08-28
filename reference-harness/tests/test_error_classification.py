@@ -15,7 +15,8 @@ from jsonschema import Draft202012Validator
 
 from reference_harness import errors
 from reference_harness.case import Case, Model, load_model
-from reference_harness.case_runner import CaseFailure, _assert_schema
+from reference_harness.case_assertions import CaseFailure
+from reference_harness.case_runner import _assert_schema
 from reference_harness.ddl_builder import ddl_for
 from reference_harness.providers.mariadb import MariaDbProvider
 from reference_harness.providers.postgres import PostgresProvider

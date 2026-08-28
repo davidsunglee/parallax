@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 from reference_harness.case import Case, Model
-from reference_harness.case_runner import CaseFailure, _assert_equivalent_encodings
+from reference_harness.case_assertions import CaseFailure
+from reference_harness.case_runner import _assert_equivalent_encodings
 from reference_harness.serde import canonical
 
 

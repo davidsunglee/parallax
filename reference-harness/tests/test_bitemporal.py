@@ -20,8 +20,8 @@ from typing import Any, cast
 import pytest
 
 from reference_harness.case import discover_cases, load_model
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _assert_conflict_input,
     _assert_temporal_only_union_binds,
     _assert_write_input_columns,

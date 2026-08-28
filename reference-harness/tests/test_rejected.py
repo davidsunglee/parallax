@@ -29,7 +29,8 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from reference_harness.case import Case, dialect_executed_cases, discover_cases, load_model
-from reference_harness.case_runner import ALL_REJECTED_RULES, CaseFailure, run_case
+from reference_harness.case_assertions import CaseFailure
+from reference_harness.case_runner import ALL_REJECTED_RULES, run_case
 from reference_harness.inheritance import (
     ABSTRACT_WRITE_TARGET,
     INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,

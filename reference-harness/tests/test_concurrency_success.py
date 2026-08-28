@@ -19,7 +19,8 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from reference_harness.case import Case, Model
-from reference_harness.case_runner import CaseFailure, _assert_schema
+from reference_harness.case_assertions import CaseFailure
+from reference_harness.case_runner import _assert_schema
 from reference_harness.schemas import build_registry, load_schemas
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

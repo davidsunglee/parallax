@@ -19,8 +19,8 @@ from pathlib import Path
 import pytest
 
 from reference_harness.case import discover_cases
+from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    CaseFailure,
     _assert_conflict_input,
     _assert_scenario_conflict_abort,
     _assert_schema,
