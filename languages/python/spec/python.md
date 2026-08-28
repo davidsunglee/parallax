@@ -3085,10 +3085,15 @@ or descriptor authoring form and performs no audit stamping.
   outwards from the window's own survivors, so the independence claim is made
   again over the WHOLE PROCESS, as three totals with no baseline: every tracked
   object, every reference they hold, and what they and everything untracked they
-  reach weigh, equal across arms that differ only in the result size or the
-  position reached. That reading needs no survivor to start at, which is what puts
-  a holder older than the window — an implementation-owned registry banking one
-  already-existing value per page — inside the claim rather than beside it. The
+  reach report through `sys.getsizeof`, equal across arms that differ only in the
+  result size or the position reached. That reading needs no survivor to start at,
+  which is what puts a holder older than the window — an implementation-owned
+  registry banking one already-existing value per page — inside the claim rather
+  than beside it. What it reaches is Python-level structure, so storage an object
+  merely points at — a mapping, a buffer an extension owns — is a constant-size
+  shell in all three, and no measurement in this target observes one; the graded
+  claim is about the delivery's Python working set, which is what all of
+  Parallax's own storage is. The
   middle layer is priced as a peak over the region one root's publication
   occupies, which the census cannot reach because nothing of it is alive when a
   sample can be taken; that peak is exactly equal across a thirty-two-fold spread

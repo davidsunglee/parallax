@@ -4,8 +4,9 @@ A streamed read exists to make the Parallax-owned working set independent of the
 total number of roots. `m-snapshot-read` *What a delivery costs* states the bound
 in three layers — one page's sealed graph at `O(P_B)`, the current root's merge
 and classification at `O(G_max)`, and its construction or Wire unwind at
-`O(G_max)` — and names three exclusions. This suite is the instrument for all
-three layers and for two of the three exclusions, in both namespaces.
+`O(G_max)` — and names three exclusions. This suite is the instrument for those
+layers — the first apart, the second and third together as a pair, for the reason
+below — and for two of the three exclusions, in both namespaces.
 
 **The three layers, and how each is priced.** The page graph and the published
 root are both alive at a point a census can be taken from outside the delivery,
@@ -24,11 +25,12 @@ is one root's own graph rather than the page's, by the region.
 the result. A delivery holds one page graph and one published root at a time, and
 the survivor census says so in arithmetic rather than in prose: it is exactly
 affine in the page's own node population and the published root's, with **no term
-in the total result size and none in how far the delivery has got**. Nothing
-anywhere in the process moves with either, which is the same claim taken over the
-whole heap instead of over the delivery's own survivors. Publishing one root
-peaks at that root's own graph, exactly independent of the result, of the
-position, and of the page, and rising sublinearly per node with the fan-out. And
+in the total result size and none in how far the delivery has got**. No Python
+object, reference, or reported object size anywhere in the process moves with
+either, which is the same claim taken over the whole heap instead of over the
+delivery's own survivors. Publishing one root peaks at that root's own graph,
+exactly independent of the result, of the position, and of the page, and costing
+less per node at each of eight fan-outs than at the one before. And
 two of the three exclusions are demonstrated rather than asserted — a caller
 retaining every root reproduces the `O(N)` growth the bound declines to prevent,
 and a writing loop's buffer grows with the page size and stops there.
@@ -74,19 +76,35 @@ value per page, is outside every arm above and outside every byte DIFFERENCE
 here, since the window it would have to be born in is the one it predates. The
 whole-heap reading has no window: it counts every tracked object in the process,
 every reference each of them holds, and what they and everything untracked they
-reach weigh, as three totals compared across arms that differ in exactly one
-thing. That is what makes "nothing grows with `N`" a statement about the
-implementation rather than about what a sample could reach — and it is why every
-value the fixtures produce is fixed-width, because a total will move for a longer
-string as readily as for a leak.
+reach report through `sys.getsizeof`, as three totals compared across arms that
+differ in exactly one thing. That is what widens "nothing grows with `N`" from
+what a sample can reach to every Python object in the process — and it is why
+every value the fixtures produce is fixed-width, because a total will move for a
+longer string as readily as for a leak. What it does not widen to is memory a
+Python object merely points at, which is the last paragraph below.
 
 **What the eight readings still do not prove.** Nothing here sees a transient
 smaller than the region it is allocated in — a high-water mark is a maximum, so an
 allocation that never takes the process above an earlier moment of the same
 publication is invisible however it scales, which is why the page grid the peak
 is read across is thirty-two-fold rather than convenient. Nothing here sees what
-a real driver holds, for the reason given above. And the second and third layers
-are priced together rather than apart, for the reason given above that too.
+a real driver holds, for the reason given above. The second and third layers are
+priced together rather than apart, for the reason given above that too. The
+fan-out grid REJECTS growth super-linear in one root's node count rather than
+proving the bound: eight points admit any quadratic coefficient small enough to
+stay under the linear term across them, and `_PEAK_FANOUTS` records how small
+that is.
+
+**And nothing here sees storage a Python object merely points at.** Every count
+above is `gc.get_objects` and `sys.getsizeof`, and every byte figure beside them
+is CPython's own allocator through `tracemalloc`. A delivery that banked its
+pages into an `mmap` or into a buffer a C extension owned would present a
+constant-size shell at every arm of every reading here, and the anonymous mapping
+behind it would never reach the allocator `tracemalloc` traces. What would catch
+it is a resident-set reading taken from outside the interpreter, and no
+measurement in this repository takes one. The readings below are therefore a
+statement about the delivery's PYTHON-LEVEL working set, which is what all of
+Parallax's own storage is, and not a proof that no memory anywhere grows.
 
 Every reading reads a whole interpreter, so each runs in one of its own behind
 ``in_a_child_interpreter`` and the class is CI's rather than the merge gate's.
@@ -189,12 +207,13 @@ spread anything above a handful of bytes per page root does."""
 _PEAK_FANOUTS: Final = (1, 2, 3, 4, 6, 8, 12, 16)
 """The fan-outs it is read across beside them.
 
-Wide enough that the SHAPE of the growth in ``G_max`` is readable and not merely
-its sign: what a publication costs per node has to fall across all of it, and a
-region carrying a term quadratic in the node count makes it rise instead. How
-small a quadratic term that catches is set by the widest pair — at these two it
-is a few pointers per node PAIR, and anything under that is below the grid's own
-resolution."""
+Wide enough to REJECT growth super-linear in ``G_max`` rather than merely to show
+that the peak moves with it: what a publication costs per node has to fall across
+all of it, and a region carrying a term quadratic in the node count makes it rise
+instead. A finite grid rejects rather than proves, and its resolution is set by
+the widest pair — at these two a quadratic term is caught from a few pointers per
+node PAIR upwards, and anything under that stays beneath the linear term at every
+point and passes."""
 
 _PEAK_ROOTS: Final = _LARGE * _TENFOLD
 """Roots in the result the peak grid runs against, so the widest page above is a
@@ -526,8 +545,8 @@ class _Live(NamedTuple):
 
 
 def _held_bytes(survivors: Sequence[object]) -> int:
-    """What ``survivors`` and everything untracked they hold weigh, counting a
-    value once per reference to it.
+    """What ``survivors`` and everything untracked they hold report through
+    :func:`sys.getsizeof`, counting a value once per PATH the walk arrives by.
 
     The blind spot of every count beside it. :func:`gc.get_objects` answers only
     what the collector tracks, so a ``bytearray``, ``bytes``, ``str``, or tuple of
@@ -537,19 +556,27 @@ def _held_bytes(survivors: Sequence[object]) -> int:
     ``sys.getsizeof`` is what prices them — the survivors being where the walk
     starts, and therefore the limit of what it can price.
 
-    Counted by REFERENCE rather than by identity, deliberately. Whether two equal
+    Counted by PATH rather than by identity, deliberately. Whether two equal
     integers or two equal strings are one object is the interpreter's business —
     CPython shares small ints, so the same walk over the same structure reaches a
     different number of distinct objects according to which values it happens to
-    hold — while how many times the structure points at a value of that size is
+    hold — while how many ways the structure arrives at a value of that size is
     the structure's own. Deduplicating by identity makes this reading move with
-    the ordinals a delivery has reached; not deduplicating makes it a function of
-    the shape alone.
+    the ordinals a delivery has reached; carrying no identity set at all makes it
+    a function of the shape alone. The cost of that is multiplicity rather than
+    imprecision: a shared untracked subgraph is walked once per path INTO it, so
+    everything under it is charged that many times whatever its own inbound
+    reference count is.
 
     The walk stops at every tracked object, which is what keeps it bounded and
     acyclic: an untracked object can hold only untracked objects, so nothing it
     reaches can point back at it, and everything tracked is already counted by the
     survivor sample or belongs to the heap that predates the window.
+
+    What it cannot price is storage a survivor merely points at.
+    :func:`sys.getsizeof` is what each type reports about ITSELF, so a mapping or
+    an extension-owned buffer weighs its shell here however large its backing
+    grows.
     """
     total = 0
     pending: list[object] = []
@@ -787,6 +814,14 @@ def test_nothing_in_the_process_grows_with_the_result_or_the_position() -> None:
     # implementation appended one existing value to per page would move nothing up
     # there and everything here.
     #
+    # What the three totals reach is Python-level structure: the collector's
+    # listing, the references in it, and what each object reports about its own
+    # size. Storage an object merely points at — an `mmap`, an extension-owned
+    # buffer — is a constant-size shell in all three however large its backing
+    # grows, and no reading in this suite or beside it observes one. The claim
+    # this makes is about every Python object in the process, which is what all of
+    # Parallax's own storage is, and not about the process's resident set.
+    #
     # Three totals, no baseline, and exact equality rather than a tolerance. The
     # arms differ in exactly one thing each — ten times the roots at one position,
     # and a later position of one result — and every value the fixture produces is
@@ -836,10 +871,12 @@ def test_publishing_one_root_peaks_at_that_roots_graph_and_not_at_the_pages() ->
     #
     # It rises with the fan-out, which is what makes `G_max` a real term rather
     # than an absent one — and what it costs PER NODE falls across the whole
-    # fan-out grid, which is what separates `O(G_max)` from any bound above it:
-    # a region carrying an `O(G_max**2)` term costs more per node the more nodes
-    # it has, so the sign of that slope is the shape of the bound and not merely
-    # its direction.
+    # fan-out grid, which REJECTS a bound above `O(G_max)` rather than proving
+    # one: a region carrying an `O(G_max**2)` term costs more per node the more
+    # nodes it has, so a falling slope refuses such a term at the eight fan-outs
+    # read. Eight points cannot establish an asymptote, and a quadratic
+    # coefficient small enough to stay under the linear term across all of them
+    # passes; `_PEAK_FANOUTS` records where that resolution sits.
     tracemalloc.start()
     try:
         for namespace in _NAMESPACES:

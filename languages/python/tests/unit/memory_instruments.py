@@ -43,11 +43,13 @@ total, and what that excludes is stated at the function.
 
 **What the whole process holds.** :func:`whole_heap` grades every object the
 collector tracks, every reference they hold, and what they and everything
-untracked they reach weigh — as totals, with no baseline and no survivor sample.
-Every reading above is a window's own difference, so a holder that existed before
-the window is outside all of them however much it took inside one. This is the
-reading that has no window to be outside of, and the price of it is that a total
-is meaningful only between two runs of one process that differ in one thing.
+untracked they reach report through :func:`sys.getsizeof` — as totals, with no
+baseline and no survivor sample. Every reading above is a window's own
+difference, so a holder that existed before the window is outside all of them
+however much it took inside one. This is the reading that has no window to be
+outside of, and it has two prices: a total is meaningful only between two runs of
+one process that differ in one thing, and it prices PYTHON OBJECTS rather than a
+process, so storage an object owns outside its own allocation is not in it.
 
 **What one object holds.** :func:`closure` grades the objects and references one
 object reaches without passing through any of a caller-named BOUNDARY. Where the
@@ -56,24 +58,38 @@ in it kept, so a caller comparing one structure against the same structure
 somewhere else compares two totals rather than the difference of two sums that
 share most of their terms.
 
-**Warming, which three of them do for themselves and one cannot.**
-:func:`retained` warms both its seam and its sampler inside its own call,
-:func:`high_water` warms its span the same way, and :func:`whole_heap` warms its
-seam and takes a whole discarded sample before the one it answers.
-:func:`live_graph` opens its window before the first run, so a seam that fills a
-memo on first reach is handed to it through :func:`warmed`, which puts those
-memos in the baseline the sample is compared against rather than in the sample.
+**Warming: four warm themselves, one is warmed from outside, and one must not
+be.** :func:`allocation` runs its seam :data:`WARMUP` times before opening either
+of its windows, :func:`retained` warms both its seam and its sampler inside its
+own call, :func:`high_water` warms its span the same way, and :func:`whole_heap`
+warms each seam and then takes a whole discarded set of readings before the set
+it answers. :func:`live_graph` opens its window before the first run, so a seam
+that fills a memo on first reach is handed to it through :func:`warmed`, which
+puts those memos in the baseline the sample is compared against rather than in
+the sample. :func:`first_run` is the one that must not be warmed at all: its
+subject IS the first run a process makes, so warming it would erase what it
+grades. :func:`closure` walks an object the caller already holds and runs no
+seam, so warming does not arise for it.
 
 Outside all of them, stated rather than implied. An object born and dropped
 inside a single call that the free list also serves: no sample point holds it and
-no counter moves. And an UNTRACKED object counted as an OBJECT:
+no counter moves. An UNTRACKED object counted as an OBJECT:
 :func:`gc.get_objects` answers only what the collector tracks, so a retained
 empty dictionary, all-immutable tuple, or integer is no survivor and no heap
 entry — it is reached and priced in bytes by the two walks that follow untracked
-referents, and counted by neither census. The instruments are read together for
-that reason: the byte counts see a retained integer no count can, the survivor
-sample sees a free-list list the byte counts cannot, and the whole-heap totals
-see what a holder older than the window took, which none of the rest can.
+referents, and counted by neither census. And, the widest of the three, STORAGE
+AN OBJECT OWNS OUTSIDE ITSELF: every byte figure here is either CPython's
+allocator through ``tracemalloc`` or a type's own :func:`sys.getsizeof`, and
+neither reaches memory a Python object merely points at. A fully touched
+``mmap.mmap`` reports the same hundred-odd bytes whether it maps four kilobytes
+or four megabytes, and replacing one with a larger mapping moves no object, no
+reference, no reported size, and no allocator counter — an anonymous mapping
+never reaches the allocator ``tracemalloc`` traces. Nothing in this module is an
+instrument for that; a resident-set reading taken from outside the interpreter
+is. The instruments are read together for what they DO cover: the byte counts
+see a retained integer no count can, the survivor sample sees a free-list list
+the byte counts cannot, and the whole-heap totals see what a holder older than
+the window took, which none of the rest can.
 
 **Where a reading is taken.** Every instrument here reads the whole process and
 not the seam alone — the survivor sample lists each tracked object and counts the
@@ -447,13 +463,20 @@ def high_water(span: Span) -> int:
 
 
 class Heap(NamedTuple):
-    """The whole process's own size at one point.
+    """The whole process's PYTHON-LEVEL size at one point.
 
-    ``objects`` and ``references`` are over what the collector tracks;
-    ``held`` adds every untracked object those reach, priced once per REFERENCE
-    to it for the reason :func:`closure` does not count them at all — whether two
-    equal integers are one object is the interpreter's business, while how many
-    times the heap points at a value of that size is the heap's own.
+    ``objects`` and ``references`` are over what the collector tracks; ``held``
+    adds every untracked object those reach, priced by :func:`sys.getsizeof` once
+    per PATH the walk arrives by, for the reason :func:`closure` does not count
+    them at all — whether two equal integers are one object is the interpreter's
+    business, while how many ways the heap arrives at a value of that size is the
+    heap's own shape. Per path and not per reference: the walk carries no
+    identity set, so a value under a shared untracked subgraph is charged once
+    for every path into it however few references point at it directly.
+
+    ``held`` is what each type reports about itself, so storage an object owns
+    outside its own allocation is in none of the three numbers: a fully touched
+    ``mmap.mmap`` weighs the same whatever it maps.
     """
 
     objects: int
@@ -469,8 +492,17 @@ def whole_heap(*seams: Seam) -> tuple[Heap, ...]:
     BEFORE the window is outside all of them: it is no survivor, a reference it
     took points at an object that may itself predate the window, and bytes it
     banked into an untracked buffer are reachable from nothing a survivor sample
-    can start walking at. A total has no window to be outside of, so anything
-    anywhere that grew is in one of these three numbers.
+    can start walking at. A total has no window to be outside of, so any PYTHON
+    STRUCTURE anywhere that grew is in one of these three numbers.
+
+    **Where a total still stops.** The three are :func:`gc.get_objects` and
+    :func:`sys.getsizeof`, which price Python objects and the references among
+    them rather than the process's memory. Storage an object owns outside its own
+    allocation — an ``mmap.mmap``, a buffer a C extension holds — is a
+    constant-size shell in every one of them however large its backing grows, so
+    growing one in place moves nothing here at all. What sees that is a
+    resident-set reading taken from outside the interpreter, which no instrument
+    in this module takes.
 
     **Every seam at once, because a total is not a difference.** Two totals are
     comparable only when they are taken in ONE process against everything else
@@ -509,11 +541,17 @@ def whole_heap(*seams: Seam) -> tuple[Heap, ...]:
 
 
 def _heap_census(heap: Sequence[object], instruments: frozenset[int]) -> Heap:
-    """``heap``'s own totals, less the two containers the listing needed.
+    """``heap``'s own totals, less the containers the listing needed.
 
-    The untracked walk terminates and cannot revisit: an untracked object holds
-    only untracked objects, so nothing it reaches can point back at anything
-    tracked, and every tracked object is already an entry of ``heap``.
+    The untracked walk carries no identity set and REVISITS deliberately: a value
+    reached by several paths is priced once for each of them, which is what keeps
+    ``held`` a function of the heap's shape rather than of how the interpreter
+    happened to share a value.
+
+    It terminates all the same. An untracked object holds only untracked objects
+    — inserting a tracked value into a dictionary re-tracks it, and a tuple is
+    immutable — so no untracked graph closes a cycle, and none of them can reach
+    back into anything tracked and re-count an entry of ``heap``.
     """
     objects = 0
     references = 0
