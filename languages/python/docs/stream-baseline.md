@@ -43,18 +43,22 @@ objects, references, or the bytes inside a container that gains neither.
 Every one of those walks outwards from the delivery's own survivors, so the two
 absences are then read once more over the WHOLE PROCESS: every tracked object in
 it, every reference they hold, and what they and everything untracked they reach
-weigh, as three totals with no baseline, equal to the byte at ten times the roots
-and at a later position of the same delivery. A total needs no survivor to start
-at, which is the only way a holder created BEFORE the measurement — banking one
-already-existing value per page, and so growing by neither an object nor a byte
-of its own — comes inside the claim. The price of a total is that it prices
-everything: the two arms may differ in nothing but the one dial, down to the width
-of every value the fixture produces.
+report through `sys.getsizeof`, as three totals with no baseline, equal to the
+byte at ten times the roots and at a later position of the same delivery. A total
+needs no survivor to start at, which is the only way a holder created BEFORE the
+measurement — banking one already-existing value per page, and so growing by
+neither an object nor a byte of its own — comes inside the claim. The price of a
+total is that it prices everything it reaches: the two arms may differ in nothing
+but the one dial, down to the width of every value the fixture produces. What it
+reaches is Python-level structure, and the last heading below says what that
+leaves out.
 
 Publishing one root peaks at that root's own graph: the high-water of the region
 between two roots is exactly the same at ten times the result, at a later
 position, and across a thirty-two-fold spread of page sizes, and what it costs per
-node falls across the whole fan-out grid. Page-size equality is exact rather than
+node falls at each of eight fan-outs — which rejects a term super-linear in
+`G_max` across that grid rather than establishing the asymptote. Page-size
+equality is exact rather than
 a tolerance, because `m-snapshot-read` gives the page to the first layer alone;
 that is what prices the merge layer the census cannot reach. A high-water reading
 is a maximum, so an allocation that never takes the process above an earlier
@@ -151,3 +155,14 @@ literals rather than a fit.
 `O(P_B + G_max)` rather than `O(B)` — one root with a hundred thousand line items
 dominates both terms — and no reading here varies `G_max` far enough to show that
 domination.
+
+**Anything held outside a Python object.** Every figure in this report and every
+count in the gated suite comes from `tracemalloc`, `gc.get_objects`, or
+`sys.getsizeof`, so all three price Python objects and the references among them.
+A mapping, or a buffer a C extension owns, is a constant-size shell at every one
+of them however large its backing grows, and an anonymous mapping never reaches
+the allocator `tracemalloc` traces. Observing that needs a resident-set reading
+taken from outside the interpreter, and nothing in this repository takes one. The
+graded claim is therefore about the delivery's Python-level working set — which
+is what all of Parallax's own storage is — rather than about the process's
+memory.
