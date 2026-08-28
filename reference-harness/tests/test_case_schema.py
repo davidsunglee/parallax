@@ -1491,8 +1491,19 @@ def _streamed_write_step() -> dict[str, Any]:
     return doc
 
 
+def _streamed_step_including_a_level() -> dict[str, Any]:
+    # A streamed step states its roots and nothing under them: `expectRows` is its
+    # own content oracle, and a level below the roots reaches no step-level oracle
+    # at all — the include is refused on its own, before any observable is stated.
+    doc = _streamed_scenario_step_case()
+    doc["when"]["scenario"][0]["objectQuery"]["includes"] = [
+        {"segments": [{"rel": "Position.legs"}]}
+    ]
+    return doc
+
+
 def _streamed_step_stating_relationship_contents() -> dict[str, Any]:
-    # What a streamed step materializes below its roots is graded nowhere.
+    # The same refusal reached from the observable's side.
     doc = _streamed_scenario_step_case()
     doc["when"]["scenario"][0]["objectQuery"]["includes"] = [
         {"segments": [{"rel": "Position.legs"}]}
@@ -1579,6 +1590,7 @@ REJECTED_CASES = {
     "streamed-write-sequence": _streamed_write_sequence,
     "streamed-step-without-a-group": _streamed_step_without_a_group,
     "streamed-write-step": _streamed_write_step,
+    "streamed-step-including-a-level": _streamed_step_including_a_level,
     "streamed-step-stating-relationship-contents": _streamed_step_stating_relationship_contents,
     "streamed-step-zero-page-size": _streamed_step_zero_page_size,
     "streamed-step-naming-a-representation": _streamed_step_naming_a_representation,

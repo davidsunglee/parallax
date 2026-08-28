@@ -514,9 +514,10 @@ def _scenario_read_schedule(case: case_format.Case, model: Metamodel) -> list[_R
     observation spanning EVERY read it made, because its ``expectRows`` are the
     roots the whole delivery published: each page is a result set of its own and
     the terminal empty page contributes none, so the observation is their
-    concatenation. Such a step declares no includes, which is what makes every
-    one of its reads a root page — the level partition a deep fetch would need
-    has no second source here. A
+    concatenation. Such a step declares no includes — the format refuses one
+    structurally (`m-case-format` *Streamed read steps*) — which is what makes
+    every one of its reads a root page, the level partition a deep fetch would
+    need having no second source here. A
     write step contributes the
     RESOLVING READS its keyed verbs owe (`m-case-format` *Resolving reads a write
     owes*), which grade nothing here — the values they publish are graded by the

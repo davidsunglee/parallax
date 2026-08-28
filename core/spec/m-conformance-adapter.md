@@ -454,11 +454,14 @@ steps*) is satisfied the same way, inside the unit of work its `uow` group runs
 in: the adapter opens its own streamed read over that step's `objectQuery` at
 that step's `batchSize`, drains it, and reports the delivery's own statements
 under the step's pointer — every page's, in execution order — exactly as an
-ordinary find step reports its one. What the delivery published is what the
-step's `expectRows` grades, and it is also the evidence a later write step
-naming that step with `on` settles against: an adapter resolving such a write
-from anything but the observation its own delivery recorded fails the case on
-the gate that write binds.
+ordinary find step reports its one. The roots the delivery publishes are what
+the step's `expectRows` states, and they are the evidence a later write step
+naming that step with `on` settles against. The envelope carries **no per-step
+row channel**: an adapter reports what the delivery *executed* and what the
+write it licensed *emitted*, never the values the delivery handed over. So the
+observable that holds an adapter to its own delivery is that write's **gate** —
+resolving it from anything but the observation that delivery recorded binds a
+generation the delivery never published, and the case fails there.
 
 Under `compile`, a case carrying a `stream` member anywhere is **always**
 run-only: its later pages bind coordinates read off an earlier page's result,

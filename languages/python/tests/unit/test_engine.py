@@ -10,6 +10,7 @@ reading and the engine's failure modes are pinned too.
 from __future__ import annotations
 
 import contextlib
+import copy
 import dataclasses
 import datetime as dt
 import decimal
@@ -790,9 +791,11 @@ def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_i
     # write left. Both writes address account 1 and neither is resolved from case
     # state: the first gates on the version delivery one published for a root it
     # handed over on a page since released, the second on the version delivery
-    # two published for the same key. An implementation filing one slot per key
-    # rather than one per observed state cannot tell the two apart and gates both
-    # on whichever ran last.
+    # two published for the same key. Each write here names the delivery that ran
+    # most recently before it, so what this pins is that a delivery's roots ARE
+    # evidence and that a second reading of a delivered key files a second
+    # observed state; the test below moves `on` alone, where reading the group's
+    # latest observation and reading the named delivery's diverge.
     port = _ScriptedPort(
         read_rows=[
             [_account(1, "Ada", "100.00", 1), _account(2, "Linus", "250.00", 1)],
@@ -819,6 +822,32 @@ def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_i
     ]
     assert run.round_trips == 6
     assert len(port.writes) == 2
+
+
+def test_run_scenario_case_settles_on_the_named_delivery_rather_than_the_latest_one() -> None:
+    # The observation a write settles against is the one the delivery it NAMES
+    # recorded, never the group's most recent reading of the key: with
+    # `m-unit-work-030`'s second write moved onto the FIRST delivery, the state it
+    # reaches for is the one that delivery published — and the first write already
+    # spent it, so this write is refused rather than gated on the version the
+    # SECOND delivery observed. An implementation holding one observation per key,
+    # or resolving a write from the group's latest reading, emits a `version = 2`
+    # gate here and commits.
+    document = copy.deepcopy(dict(_case("m-unit-work-030").document))
+    cast("list[dict[str, Any]]", cast("dict[str, Any]", document["when"])["scenario"])[3]["on"] = 0
+    port = _ScriptedPort(
+        read_rows=[
+            [_account(1, "Ada", "100.00", 1), _account(2, "Linus", "250.00", 1)],
+            [_account(3, "Grace", "10.00", 1)],
+            [_account(1, "Ada", "125.00", 2), _account(2, "Linus", "250.00", 1)],
+            [_account(3, "Grace", "10.00", 1)],
+        ]
+    )
+
+    with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
+        engine.run_scenario_case(
+            dataclasses.replace(_case("m-unit-work-030"), document=document), "postgres", port
+        )
 
 
 _ORDER_1_ROW: Row = {
