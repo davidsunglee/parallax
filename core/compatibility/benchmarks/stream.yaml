@@ -5,12 +5,13 @@
 # `floor(N / B) + 1` root statements and `ceil(N / B) * L` child statements — the
 # `1 + L` deep-fetch ceiling applied ONCE PER PAGE. What is declared here is that
 # count and the page statements behind it, not a delivery: like every fixture in
-# this directory this one carries golden SQL rather than an Object Query, so the
-# reference harness replays the list and counts it. A language target running the
-# same result through its OWN delivery is what the count then grades — one that
-# silently stopped paging, or that started re-fetching per root, misses it even if
-# its wall time improved. `deep-fetch.yaml` guards the same ceiling for one eager
-# read; this guards it for a delivery, and adds the page arithmetic on top.
+# this directory this one carries golden SQL rather than an Object Query, so
+# nothing here names the read an implementation issues, and the reference harness
+# replays the authored list and counts that. The declared count meets an
+# implementation's own only through the adapter's `benchmark` command, which
+# reports `roundTrips` beside this `expectRoundTrips`. `deep-fetch.yaml` declares
+# the same ceiling for one eager read; this declares it for a delivery, and adds
+# the page arithmetic on top.
 #
 # The three workloads are the same 20 roots at three page sizes, which is what
 # makes the page size legible as a TRADE rather than as a setting: 9, 6, and 3

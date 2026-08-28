@@ -4,55 +4,77 @@ A streamed read exists to make the Parallax-owned working set independent of the
 total number of roots. `m-snapshot-read` *What a delivery costs* states the bound
 in three layers — one page's sealed graph at `O(P_B)`, the current root's merge
 and classification at `O(G_max)`, and its construction or Wire unwind at
-`O(G_max)` — and names three exclusions. This suite is the instrument for the
-whole bound and for both exclusions, in both namespaces.
+`O(G_max)` — and names three exclusions. This suite is the instrument for all
+three layers and for two of the three exclusions, in both namespaces.
 
-**Two of the three layers are priced separately; the middle one is graded by its
-RELEASE.** A page graph and a published root are both alive at the sample point
-and each carries its own coefficient, so the census prices them apart. The merge
-between them is not alive at any point a sample can be taken from outside the
-delivery — it is built and dropped inside one publication — and it borrows the
-page graph's own arrays rather than copying them, so even held deliberately its
-closure is dominated by structure the first layer has already been charged for.
-What is stated about it here is therefore what the spec's release column states
-and what a sample between two roots can settle: no merge survives the root it
-published. A merge kept for the page, or kept past its root, fails that at every
-point of the grid; a merge whose peak exceeds one root while it lives is what no
-instrument outside the delivery separates from the page it was scoped from.
+**The three layers, and how each is priced.** The page graph and the published
+root are both alive at a point a census can be taken from outside the delivery,
+and each carries its own coefficient, so the census prices those two apart. The
+merge between them is alive at no such point — it is built and dropped inside one
+publication — so it is priced as a PEAK instead, over a region opened at one root
+and closed at the next: the largest that region ever held, over what was already
+alive when it opened. That reading cannot separate the merge from the
+construction it feeds, since neither is alive when the other can be sampled and
+both are `O(G_max)`; what it separates is the pair from the page they were cut
+from. Both halves of the middle layer's contract are therefore read — that it
+does not survive the root it published, by the census between two roots, and that
+its peak is one root's own graph rather than the page's, by the region.
 
-**Six readings, each its own statement.** Page graphs do not accumulate with the
-result. A delivery holds one page graph and one published root at a time, and the
-survivor census says so in arithmetic rather than in prose: it is exactly affine
-in the page's own node population and the published root's, with **no term in the
-total result size and none in how far the delivery has got**. The two exclusions
-are demonstrated rather than asserted — a caller retaining every root reproduces
-the `O(N)` growth the bound declines to prevent, and a writing loop's buffer
-grows with the page size and stops there.
+**Seven readings, each its own statement.** Page graphs do not accumulate with
+the result. A delivery holds one page graph and one published root at a time, and
+the survivor census says so in arithmetic rather than in prose: it is exactly
+affine in the page's own node population and the published root's, with **no term
+in the total result size and none in how far the delivery has got**. Publishing
+one root peaks at that root's own graph, exactly independent of the result and of
+the position, growing with the fan-out and not with the page. And two of the
+three exclusions are demonstrated rather than asserted — a caller retaining every
+root reproduces the `O(N)` growth the bound declines to prevent, and a writing
+loop's buffer grows with the page size and stops there.
 
-**The exclusions are what make the first four readings mean anything.** A bound
+**The third exclusion has no executable witness here, by construction.** What the
+database and its driver hold for a delivery — server-side cursors, connection
+buffers, a driver's own result-set materialization — is outside the bound and
+outside every window below: the port these readings run against answers each page
+from a counter, so there is nothing of a driver's for any of them to see. A real
+port that read the whole result before answering the first page would leave every
+figure here unchanged, which is the exclusion restated as a property of the
+instrument rather than demonstrated by it.
+
+**The exclusions are what make the retention readings mean anything.** A bound
 that excluded nothing would be a claim about the caller's program rather than
 about Parallax, so the price of one root comes from the retaining arm — what one
 root of THIS graph costs on THIS interpreter — and the streamed arm has to come
 in under one of them across nine times as many roots.
 
 **The census is pinned as exact counts rather than fitted, and that is what sees
-a constant.** Every byte reading here is a DIFFERENCE — one result size against
-another, one position against another — so a page graph held one page too long
-cancels out of all of them and is invisible to the instrument that measures
-bytes. The census is the reading that is not a difference: its coefficients are
-literals, every one of them names what it counts, and a second live page graph
-fails it at every point of the grid.
+a constant.** Every byte reading in the first measurement is a DIFFERENCE — one
+result size against another, one position against another — so a page graph held
+one page too long cancels out of all of them and is invisible to the instrument
+that measures bytes. The census is the reading that is not a difference: its
+coefficients are literals, every one of them names what it counts, and a second
+live page graph fails it at every point of the grid.
 
-**The census is read four ways, because counting Parallax's own objects is blind
+**The census is read five ways, because counting Parallax's own objects is blind
 where the bound is weakest.** A page graph or a root is a kind Parallax defines
 and is counted; a built-in `list` the delivery banks one item into per PAGE is
 not, and past the first page it adds no survivor of any kind — while every byte
-reading here compares two arms standing at the same position, which is to say
-having read the same number of pages. So the counts are taken over every survivor
-whatever defined its type, over the REFERENCES those survivors hold, and from the
-heap's side over what a holder older than the window took. The reference count is
-the one that prices a page: two sample positions differ by the pages between them,
-and pages grow with `N`.
+difference in the first measurement compares two arms standing at the same
+position, which is to say having read the same number of pages. So the census is
+taken over every survivor whatever defined its type, over the REFERENCES those
+survivors hold, from the heap's side over what a holder older than the window
+took, and in BYTES over what the survivors and everything untracked they hold
+weigh. The last two are the ones that price a page: two sample positions differ
+by the pages between them, and pages grow with `N`. A container gaining one
+reference per page moves the reference count; a buffer gaining bytes per page
+gains neither an object nor a reference and moves only the byte reading.
+
+**What the seven readings still do not prove.** Nothing here sees an untracked
+value a holder that PREDATES the measurement window accumulated: the survivor
+sample cannot reach it, and the byte reading walks outwards from survivors alone.
+Nothing here sees a transient smaller than the region it is allocated in — a peak
+is a maximum, so an allocation below the publication's own high-water is not the
+high-water however it scales. And the second and third layers are priced together
+rather than apart, for the reason given above.
 
 Every reading reads a whole interpreter, so each runs in one of its own behind
 ``in_a_child_interpreter`` and the class is CI's rather than the merge gate's.
@@ -69,10 +91,13 @@ import sys
 import tracemalloc
 from collections.abc import Callable, Sequence
 from decimal import Decimal
+from itertools import pairwise
 from typing import Any, Final, NamedTuple, cast
 
 from memory_instruments import (
     Seam,
+    Span,
+    high_water,
     in_a_child_interpreter,
     live_graph,
     retained,
@@ -129,6 +154,11 @@ what a delivery holds is what it holds at every point of the same delivery."""
 _TENFOLD: Final = 10
 """The factor between the two result sizes every independence reading is taken
 at."""
+
+_MID_PAGE: Final = 3
+"""The position the peak reading advances FROM when the page size is what varies.
+Not a multiple of any page size in the grid, so the root whose publication is
+measured never begins a page and no page read falls inside the region."""
 
 
 def _order_row(order_id: int) -> Row:
@@ -348,6 +378,32 @@ def _paused(namespace: _Namespace, total: int, *, batch_size: int, fanout: int, 
     return seam
 
 
+def _advancing(namespace: _Namespace, total: int, *, batch_size: int, fanout: int, at: int) -> Span:
+    """A delivery run to position ``at``, with the publication of the NEXT root
+    alone inside the measured region.
+
+    The middle layer of the bound is never alive at a point a census can be taken
+    from outside the delivery — it is built and dropped inside one publication —
+    so the region rather than a sample point is what can price it. ``at`` is never
+    the position a page starts at, so no page read falls inside the region and
+    what it covers is the merge, the classification, and the construction of one
+    root over a page graph that was already sealed when it opened.
+    """
+
+    def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
+        database = Database(cast("DbPort", _GeneratingPort(total, fanout)), ORDERS_MODEL)
+        with namespace.opener(database, batch_size) as stream:
+            roots = iter(stream)
+            for _ in range(at):
+                next(roots)
+            opened()
+            root = next(roots)
+            closed()
+            del root
+
+    return span
+
+
 def _writing(total: int, *, batch_size: int, at: int, writes: bool) -> Seam:
     """A participating delivery of ``total`` roots whose loop writes every root,
     sampled at position ``at`` with that page's writes still buffered.
@@ -384,8 +440,8 @@ def _defined_by_parallax(kind: type) -> bool:
 
 
 class _Live(NamedTuple):
-    """What a running delivery holds, read four ways from one sample, because
-    each answers what the other three cannot.
+    """What a running delivery holds, read five ways from one sample, because each
+    answers what the other four cannot.
 
     ``parallax`` is what Parallax's own structure costs, and ``tracked`` is every
     survivor whatever defined its type, so anything the delivery banks in a
@@ -396,18 +452,60 @@ class _Live(NamedTuple):
     by one for every page it has read. ``inbound`` is the same reading from the
     other end, and the only one that sees a holder OLDER than the window: what a
     pre-existing registry took is counted where it points rather than where it is
-    held.
+    held. ``held`` is the one reading in bytes, and it exists because a container
+    can grow without gaining either an object or a reference: a ``bytearray`` a
+    delivery extends by one byte per page is not a survivor at all — the collector
+    does not track it — points at nothing, and is held by the same frame at every
+    position, so the four counts read identical while its allocation grows with
+    the pages.
 
-    All four are counts of structure rather than readings of an allocator, so all
-    four are exact — and none of them sees what a holder that predates the window
-    keeps of values the collector never tracked, which is what the byte readings
-    are taken beside them for.
+    The four counts are exact, and ``held`` is exact for a different reason worth
+    stating: it is a sum over the STRUCTURE rather than over the heap, so nothing
+    in it depends on whether the interpreter happened to share a value.
     """
 
     parallax: int
     tracked: int
     references: int
     inbound: int
+    held: int
+
+
+def _held_bytes(survivors: Sequence[object]) -> int:
+    """What ``survivors`` and everything untracked they hold weigh, counting a
+    value once per reference to it.
+
+    The blind spot of every count beside it. :func:`gc.get_objects` answers only
+    what the collector tracks, so a ``bytearray``, ``bytes``, ``str``, or tuple of
+    such things is no survivor however large it grew, and a container's own
+    referent count says nothing about the bytes inside it. Walking outwards from
+    each survivor through its untracked referents is what reaches them, and
+    ``sys.getsizeof`` is what prices them.
+
+    Counted by REFERENCE rather than by identity, deliberately. Whether two equal
+    integers or two equal strings are one object is the interpreter's business —
+    CPython shares small ints, so the same walk over the same structure reaches a
+    different number of distinct objects according to which values it happens to
+    hold — while how many times the structure points at a value of that size is
+    the structure's own. Deduplicating by identity makes this reading move with
+    the ordinals a delivery has reached; not deduplicating makes it a function of
+    the shape alone.
+
+    The walk stops at every tracked object, which is what keeps it bounded and
+    acyclic: an untracked object can hold only untracked objects, so nothing it
+    reaches can point back at it, and everything tracked is already counted by the
+    survivor sample or belongs to the heap that predates the window.
+    """
+    total = 0
+    pending: list[object] = []
+    for survivor in survivors:
+        total += sys.getsizeof(survivor)
+        pending.extend(held for held in gc.get_referents(survivor) if not gc.is_tracked(held))
+    while pending:
+        obj = pending.pop()
+        total += sys.getsizeof(obj)
+        pending.extend(held for held in gc.get_referents(obj) if not gc.is_tracked(held))
+    return total
 
 
 def _census(seam: Seam) -> tuple[_Live, dict[str, int]]:
@@ -425,6 +523,7 @@ def _census(seam: Seam) -> tuple[_Live, dict[str, int]]:
         len(graph.survivors),
         sum(len(gc.get_referents(obj)) for obj in graph.survivors),
         graph.inbound,
+        _held_bytes(graph.survivors),
     )
     return live, counts
 
@@ -578,15 +677,18 @@ def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -
     # directly so a failure names which of them broke. Ten times the roots is the
     # same census; nearly twice as far into the same delivery is the same census.
     #
-    # Read four ways rather than as the Parallax-owned count alone, because the
-    # count above is blind in a direction only this reading covers. `list` is not
-    # a kind Parallax defines, so a delivery banking one item per PAGE adds no
-    # Parallax-owned survivor and adds no survivor of any kind past the first —
-    # and at a FIXED position every byte difference here is between two arms that
-    # have read the same number of pages, so nothing in bytes sees it either. It
-    # is the reference count that does: the two positions differ by the pages
-    # between them, and a delivery holding one thing per page holds more at the
-    # second. Growth in the number of pages is growth in `N`.
+    # Read five ways rather than as the Parallax-owned count alone, because that
+    # count is blind in two directions only this reading covers, and each of them
+    # needs a different arm. `list` is not a kind Parallax defines, so a delivery
+    # banking one item per PAGE adds no Parallax-owned survivor and adds no
+    # survivor of any kind past the first; the references those survivors hold are
+    # what see it. A buffer the delivery extends by a byte per page adds no
+    # survivor and no reference either, and is not even tracked — the bytes the
+    # survivors and everything untracked they hold weigh are what see that one.
+    # Neither is visible in the byte DIFFERENCES of the first measurement, whose
+    # two arms always stand at the same position and so have read the same number
+    # of pages. Here the positions differ by the pages between them, and growth in
+    # the number of pages is growth in `N`.
     defined_in: set[str] = set()
     for namespace in _NAMESPACES:
         near = _census(_paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT))
@@ -611,6 +713,62 @@ def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -
     # view of its own — and a set neither lane reaches would be a name nothing
     # here still produces.
     assert defined_in == _SOURCES, _SOURCES - defined_in
+
+
+@in_a_child_interpreter
+def test_publishing_one_root_peaks_at_that_roots_graph_and_not_at_the_pages() -> None:
+    # The middle layer, priced at its PEAK rather than at its release. Everything
+    # the census can say about the merge is that it is gone by the time a sample
+    # can be taken between two roots; how large it ever was is a high-water mark
+    # inside one publication, and this is the region that contains it.
+    #
+    # Four statements, and each is a difference or a comparison rather than a
+    # level, because a byte total is machine-relative and nothing here is read as
+    # a verdict on one. The peak is EXACTLY equal at ten times the roots and
+    # exactly equal at two positions of the same delivery, so a merge carrying any
+    # term in the result or in how far the delivery has got fails it outright. It
+    # moves with the fan-out, which is what makes `G_max` a real term rather than
+    # an absent one. And what widening the PAGE moves it by stays under what one
+    # more child of the same root does — a merge scoped to the page it was cut
+    # from, rather than to the root it publishes, is dominated by the page term
+    # instead and fails there.
+    tracemalloc.start()
+    try:
+        for namespace in _NAMESPACES:
+            near = high_water(
+                _advancing(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT)
+            )
+            larger = high_water(
+                _advancing(namespace, _LARGE * _TENFOLD, batch_size=_BATCH, fanout=_FANOUT, at=_AT)
+            )
+            further = high_water(
+                _advancing(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_FURTHER)
+            )
+            assert near == larger, (namespace.name, near, larger)
+            assert near == further, (namespace.name, near, further)
+            by_fanout = [
+                high_water(
+                    _advancing(namespace, _LARGE, batch_size=_BATCH, fanout=fanout, at=_MID_PAGE)
+                )
+                for fanout in _FANOUTS
+            ]
+            by_page = [
+                high_water(
+                    _advancing(
+                        namespace, _LARGE, batch_size=batch_size, fanout=_FANOUT, at=_MID_PAGE
+                    )
+                )
+                for batch_size in _PAGE_SIZES
+            ]
+            one_more_child = min(later - earlier for earlier, later in pairwise(by_fanout))
+            assert one_more_child > 0, (namespace.name, by_fanout)
+            assert max(by_page) - min(by_page) < one_more_child, (
+                namespace.name,
+                by_page,
+                by_fanout,
+            )
+    finally:
+        tracemalloc.stop()
 
 
 @in_a_child_interpreter
