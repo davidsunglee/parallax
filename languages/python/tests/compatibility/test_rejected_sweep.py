@@ -45,7 +45,9 @@ class _RefusingPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         raise AssertionError("a rejected-case run must not open a transaction")
 
 

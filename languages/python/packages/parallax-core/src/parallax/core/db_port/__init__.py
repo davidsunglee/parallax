@@ -3,7 +3,8 @@
 The abstract runtime database port: the execution interface the layers above the
 seam call to run compiled SQL and demarcate transactions. It names
 ``execute`` (row-oriented), ``execute_write`` (affected-row count), and
-``transaction`` (callback reporting a :data:`TransactionOutcome`) — and nothing
+``transaction`` (callback reporting a :data:`TransactionOutcome`, at an
+optionally requested isolation) — and nothing
 more. The port depends on nothing
 application-specific (no driver, no concrete database), so any layer may hold it
 without acquiring a database dependency. Concrete adapters (`parallax.postgres`)
@@ -166,7 +167,9 @@ class DbPort(Protocol):
         """Run a DML statement and return the driver's affected-row count."""
         ...
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         """Run ``body`` inside one database transaction and report how it ended.
 
         Commit on the body's normal return, roll back on any exception it raises,
@@ -175,5 +178,14 @@ class DbPort(Protocol):
         decide whether the work may be retried and whether the connection is still
         trustworthy. No boundary failure is raised; the caller consumes the outcome
         and decides what its own caller sees.
+
+        ``isolation`` is the transaction isolation the caller asked this boundary
+        to open at, named in the concrete database's own vocabulary and carried
+        through unchanged; ``None`` asks for nothing and leaves whatever the
+        adapter or its driver already defaults to. The port neither validates the
+        value nor promises what any value means, so an implementation that cannot
+        open a boundary as asked reports that failure rather than opening one at
+        another level. The setting is the BOUNDARY's rather than the connection's:
+        it governs this transaction alone and no later one on the same connection.
         """
         ...

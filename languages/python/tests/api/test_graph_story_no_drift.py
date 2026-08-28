@@ -208,7 +208,7 @@ class _CannedPort:
         raise AssertionError("a read-only graph story issues no DML")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a read-only graph story opens no transaction")
 
@@ -218,7 +218,9 @@ class _TransactingCannedPort(_CannedPort):
     its refusal is a write verb's. ``execute_write`` still refuses, which is the
     guard that matters: the verb rejects the value before anything is buffered."""
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
 
@@ -585,6 +587,7 @@ class _RecordingDatabase(Database):
         retries: int | None = None,
         concurrency: Concurrency | None = None,
         retry_optimistic_conflicts: bool | None = None,
+        isolation: str | None = None,
     ) -> T:
         def recording(tx: Transaction) -> T:
             return fn(cast("Transaction", _RecordingTransaction(tx, self.queries)))
@@ -595,6 +598,7 @@ class _RecordingDatabase(Database):
             retries=retries,
             concurrency=concurrency,
             retry_optimistic_conflicts=retry_optimistic_conflicts,
+            isolation=isolation,
         )
 
 

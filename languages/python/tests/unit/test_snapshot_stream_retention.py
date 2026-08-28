@@ -110,7 +110,7 @@ class _GeneratingPort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
 

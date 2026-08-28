@@ -46,7 +46,7 @@ class _NoProvisioningPort:
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T]
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a rejected-case run must not open a transaction")
 

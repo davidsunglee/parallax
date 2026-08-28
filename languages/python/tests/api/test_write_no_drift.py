@@ -284,7 +284,9 @@ class _RecordingPort:
         self.ops.append(("write", sql, tuple(binds)))
         return 1
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         self.ops.append(("begin",))
         outcome = body_outcome(self, body)
         self.ops.append(("commit",) if isinstance(outcome, Committed) else ("rollback",))

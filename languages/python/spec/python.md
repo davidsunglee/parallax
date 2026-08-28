@@ -21,7 +21,7 @@ never something an application developer hand-writes.
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 31 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
-| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public query-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
+| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public query-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; a portable isolation vocabulary and graded isolation semantics (§5 passes a requested level through unexamined); handle-level default concurrency override; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
 
 ```json
@@ -3045,6 +3045,28 @@ or descriptor authoring form and performs no audit stamping.
   connection over a model that composes no Entity Class (Typed only), then this
   call's own arguments; the read gate and the deferred-Feature refusal follow at
   context entry, before any I/O.
+- **Stability is per page, and a `tx.stream` loop that writes can be its own
+  concurrent writer.** `m-snapshot-read` states the whole rule; what it means
+  for this surface is that a loop mutating the member its query ordered by moves
+  its own roots across the position the delivery already passed, and a root
+  moved past that position is delivered again:
+
+  ```python
+  # at risk — the loop rewrites the member it ordered by
+  with tx.stream(Order.where(Order.active).order_by(Order.status), batch_size=100) as orders:
+      for order in orders:
+          tx.update(order.edit(status="done"))
+
+  # immune — an undeclared orderBy orders by the primary key, which no write moves
+  with tx.stream(Order.where(Order.active), batch_size=100) as orders:
+      for order in orders:
+          tx.update(order.edit(status="done"))
+  ```
+
+  Delivery is also per ATTEMPT: `db.transact` may re-execute its callback, a
+  root already consumed cannot be recalled, and the re-execution opens a fresh
+  stream that delivers from the beginning — so a per-root effect owes the same
+  retry-safety every other effect inside that callback owes.
 
 ### Invalid stored data
 
@@ -3186,12 +3208,13 @@ or descriptor authoring form and performs no audit stamping.
 ## 5. Transactions and writes
 
 - **Demarcation construct.** Callback-only:
-  `db.transact(fn, *, retries: int | None = None, concurrency: Literal["locking", "optimistic"] | None = None, retry_optimistic_conflicts: bool | None = None)`.
+  `db.transact(fn, *, retries: int | None = None, concurrency: Literal["locking", "optimistic"] | None = None, retry_optimistic_conflicts: bool | None = None, isolation: str | None = None)`.
   Every option is **sentinel-backed** so an omitted option is distinguishable
   from an explicitly passed value: `None` (the default) means *apply the
   outermost defaults when this call opens the transaction — `retries=10`,
-  `concurrency="optimistic"`, `retry_optimistic_conflicts=False` — and inherit
-  the active transaction's settings when this call joins one*. The closure
+  `concurrency="optimistic"`, `retry_optimistic_conflicts=False`, and no
+  isolation request at all — and inherit the active transaction's settings when
+  this call joins one*. The closure
   receives the Parallax Transaction (`def fn(tx): ...`),
   `tx.find(query)` reads inside the transaction (participating according to each
   Entity's Effective Concurrency Strategy), and the call returns the callback's
@@ -3437,9 +3460,32 @@ These feature tests do not claim the deferred `benchmark` command or general
   its observation-bound gate, while an unversioned Non-Temporal Entity falls
   back to the dialect's shared read lock. `locking` forces that shared-lock,
   ungated strategy for every lockable Entity. One transaction may therefore use
-  optimistic concurrency for one Entity and Locking for another. Connections open
-  at the database's default isolation (READ COMMITTED); no isolation knob is
-  exposed.
+  optimistic concurrency for one Entity and Locking for another.
+- **`isolation` is carried, never interpreted.** `db.transact(...,
+  isolation=...)` names the isolation the outermost boundary opens at, in the
+  concrete database's own vocabulary, and the value reaches
+  `DbPort.transaction` unchanged; omitting it requests nothing and leaves the
+  connection at whatever the adapter or its driver already defaults to (READ
+  COMMITTED on Postgres), which is what every call that names no level gets.
+  The parameter is an unvalidated `str` rather than a `Literal` on purpose: a
+  closed set of names would BE the portable vocabulary this target defers (§1),
+  so Parallax promises that the requested value arrived and nothing about what
+  any value means. The database is the authority — a level it will not accept
+  fails the boundary, which is terminal for the same reason any begin failure
+  is. The level is a property of a boundary at the moment it opens, so it joins
+  on the same terms as the other three options — omit to inherit, repeat the
+  active value to be accepted, name a different one for
+  `TransactionOptionConflictError` before the joined callback runs — and a
+  boundary opened with no level refuses a joining call that names one. Every
+  physical attempt of one invocation opens at the same requested level, so a
+  retried callback never silently runs at a weaker one. There is no
+  handle-level, connection-level, or environment default: the setting is
+  transaction-scoped, because a connection setting is only a default for later
+  transactions and a long read is exactly the case wanting a different level
+  from the rest of an application. `tx.stream` therefore inherits its
+  transaction's level and `db.stream` carries no isolation option at all — a
+  caller wanting one database snapshot across a whole delivery streams inside
+  `db.transact`.
 - **Buffering, flush, and read-your-own-writes.** Writes buffer in the unit of
   work and flush at commit, combined and batched per `m-batch-write` (multi-row
   INSERT collapse, per-key UPDATE batching, IN-list DELETE collapse) and

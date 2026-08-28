@@ -13,7 +13,7 @@ maps to it; the port is proven by each language's
 The port names an
 `execute(sql, binds, documentReads) → rows` /
 `executeWrite(sql, binds) → affected-row count` /
-`transaction(body)` contract and nothing more. `execute` is row/result oriented;
+`transaction(body, isolation?)` contract and nothing more. `execute` is row/result oriented;
 DML that needs write-outcome classification uses `executeWrite` and **MUST NOT**
 append dialect-specific row-returning clauses merely to infer an affected count.
 `documentReads` is the compiled read's ordered sequence of adjacent zero-based
@@ -45,6 +45,20 @@ callback value, propagates a triggering error after successful rollback, and
 preserves both triggering and rollback errors when rollback fails. The outcome
 is not public provenance and transaction begin, commit, and rollback remain
 outside Database Call accounting.
+
+`isolation` is optional and, when present, is the isolation the caller asked
+**this** boundary to open at, spelled in the concrete database's own vocabulary.
+The port defines no portable vocabulary of levels and grades no level's
+behavior: it carries the requested value to the adapter unchanged, and an
+adapter applies it to the transaction it is about to open. Two rules make the
+option meaningful rather than advisory. It is **boundary-scoped**, never
+connection-scoped — a session default would outlive the transaction that asked
+for it and silently govern the next one — and an adapter that cannot open a
+boundary at the requested isolation **reports a boundary failure** rather than
+opening one at a different level, because a request silently downgraded is
+indistinguishable from one honored. Absence asks for nothing and leaves whatever
+the adapter or its driver already defaults to, which is what every caller that
+names no isolation gets.
 
 For each `documentReads` pair, the adapter reads both cells before building the
 managed row. The presence ordinal MUST immediately precede the document ordinal

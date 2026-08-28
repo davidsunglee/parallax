@@ -1188,10 +1188,12 @@ class _CountingPort(NoIoPort):
         self._lock = threading.Lock()
         self.begins = 0
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         with self._lock:
             self.begins += 1
-        return super().transaction(body)
+        return super().transaction(body, isolation=isolation)
 
 
 @in_a_child_interpreter

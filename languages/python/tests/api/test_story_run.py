@@ -193,6 +193,7 @@ class _CountingDatabase(Database):
         retries: int | None = None,
         concurrency: Concurrency | None = None,
         retry_optimistic_conflicts: bool | None = None,
+        isolation: str | None = None,
     ) -> T:
         return self._counted(
             lambda: super(_CountingDatabase, self).transact(
@@ -200,6 +201,7 @@ class _CountingDatabase(Database):
                 retries=retries,
                 concurrency=concurrency,
                 retry_optimistic_conflicts=retry_optimistic_conflicts,
+                isolation=isolation,
             )
         )
 
@@ -1194,13 +1196,13 @@ class _StatementCapturePort:
     def execute_write(self, sql: str, binds: Any) -> int:
         return self._inner.execute_write(sql, binds)
 
-    def transaction(self, body: Any) -> Any:
+    def transaction(self, body: Any, *, isolation: str | None = None) -> Any:
         statements = self.statements
 
         def wrapped(conn: Any) -> Any:
             return body(_StatementCapturePort(conn, statements=statements))
 
-        return self._inner.transaction(wrapped)
+        return self._inner.transaction(wrapped, isolation=isolation)
 
 
 def test_statement_capture_forwards_document_read_metadata() -> None:

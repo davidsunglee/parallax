@@ -964,7 +964,9 @@ class _AbandoningPort(RecordingPort):
     balance is a property of the activity's shape, not of any port's discipline.
     """
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         self.ops.append(("begin",))
         body_outcome(self, body)
         raise RuntimeError("the port gave up")

@@ -270,7 +270,9 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
             cursor.execute(sql.encode(), adapt_binds(binds))
             return cursor.rowcount
 
-    def transaction[T](self, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
         """Run ``body`` in one transaction and report which boundary phase decided
         the outcome.
 
@@ -297,12 +299,26 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         exception that escapes it: begin, commit, and rollback would arrive
         indistinguishable, and a rollback failure — which psycopg's context logs
         and discards — would not arrive at all.
+
+        A requested ``isolation`` is part of opening the boundary rather than
+        part of the work inside it: it is applied to the transaction just begun,
+        before the body sees a port, so it governs this transaction alone and
+        leaves the connection's own default untouched for the next one. Postgres
+        is the authority on the value — this adapter neither validates the level
+        nor maps it — so a level it will not accept ends the boundary
+        :class:`~parallax.core.db_port.BeginFailed`: nothing was attempted, and a
+        request silently downgraded to a level the caller did not ask for is
+        worse than one refused.
         """
         boundary = self._connection.transaction()
         try:
             boundary.__enter__()
         except psycopg.Error as exc:
             return BeginFailed(boundary_failure(exc))
+        if isolation is not None:
+            unopened = self._at_isolation(isolation, boundary=boundary)
+            if unopened is not None:
+                return unopened
         try:
             value = body(self)
         except BaseException as raised:
@@ -312,6 +328,40 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         except psycopg.Error as exc:
             return self._undone(CommitFailed(boundary_failure(exc)), boundary=None)
         return Committed(value)
+
+    def _at_isolation(
+        self,
+        isolation: str,
+        *,
+        boundary: contextlib.AbstractContextManager[psycopg.Transaction],
+    ) -> BeginFailed | None:
+        """Ask the transaction just begun for ``isolation``, or report it unopened.
+
+        Postgres accepts a level only as a transaction's first statement, which
+        is what makes this part of opening the boundary rather than of the work
+        inside it. The level is the caller's own spelling and reaches the
+        database unexamined: the port promises that the requested value arrived
+        and nothing about what any value means, so the database is what accepts
+        or refuses it.
+
+        A refusal leaves a transaction that began and did nothing. Undoing it is
+        this adapter's business rather than the caller's, and the outcome
+        reported is the one for a boundary that never opened — nothing ran, so
+        there is nothing to retry and nothing for a caller to undo. A connection
+        too broken to undo an empty transaction is discarded rather than handed
+        back, since what it would run next is unknown.
+        """
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(f"set transaction isolation level {isolation}".encode())
+        except psycopg.Error as exc:
+            try:
+                boundary.__exit__(type(exc), exc, exc.__traceback__)
+                self._connection.rollback()
+            except psycopg.Error:
+                self._discard()
+            return BeginFailed(boundary_failure(exc))
+        return None
 
     def _undone(
         self,
