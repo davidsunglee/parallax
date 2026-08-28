@@ -3073,20 +3073,30 @@ or descriptor authoring form and performs no audit stamping.
 - **The memory bound is gated as a SHAPE and reported as a number.**
   `m-snapshot-read` *What a delivery costs* bounds the Parallax-owned working set
   at `O(P_B + G_max)` with three named exclusions; this target grades that in the
-  `cost` class (§10), as seven measurements over `tests/unit/`'s memory
+  `cost` class (§10), as eight measurements over `tests/unit/`'s memory
   instruments. What is asserted there is a survivor census with no term in the
   result size and no term in how far the delivery has got, with the page graph and
   the published root counted separately; the census is read five ways — over
   Parallax's own survivors, over every survivor whatever defined its type, over
-  the references they hold, over what a holder older than the window took, and in
-  bytes over the survivors and everything untracked they hold — so a per-PAGE
-  retention fails it whether what grows is objects, references, or the bytes
-  inside one container. The middle layer is priced as a peak over the region one
-  root's publication occupies, which the census cannot reach because nothing of
-  it is alive when a sample can be taken. Two of the three exclusions are
-  demonstrated rather than claimed; the third — what the database and its driver
-  hold — has no witness here, because the port these readings run against answers
-  each page from a counter and holds nothing a driver would.
+  the references they hold, over what a holder older than the window took of
+  them, and in bytes over the survivors and everything untracked they hold — so a
+  per-PAGE retention hanging off what the delivery published fails it whether what
+  grows is objects, references, or the bytes inside one container. All five walk
+  outwards from the window's own survivors, so the independence claim is made
+  again over the WHOLE PROCESS, as three totals with no baseline: every tracked
+  object, every reference they hold, and what they and everything untracked they
+  reach weigh, equal across arms that differ only in the result size or the
+  position reached. That reading needs no survivor to start at, which is what puts
+  a holder older than the window — an implementation-owned registry banking one
+  already-existing value per page — inside the claim rather than beside it. The
+  middle layer is priced as a peak over the region one root's publication
+  occupies, which the census cannot reach because nothing of it is alive when a
+  sample can be taken; that peak is exactly equal across a thirty-two-fold spread
+  of page sizes, which is the layer's own bound rather than a tolerance on it. Two
+  of the three exclusions are demonstrated rather than claimed; the third — what
+  the database and its driver hold — has no witness here, because the port these
+  readings run against answers each page from a counter and holds nothing a driver
+  would.
   What is not asserted anywhere is a byte total: `just
   python-report-stream-overhead` prints one, reading
   `languages/python/docs/stream-baseline.md`, and belongs to no aggregate for the

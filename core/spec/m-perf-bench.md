@@ -72,9 +72,11 @@ Each workload declares its golden SQL as an ordered list of `{sql, binds}`
 case's `then.statements` — each entry's `sql` is a dialect-keyed map and its
 `binds` are authored inline) and an **`iterations`** count (how many times the
 harness repeats it to gather a stable timing sample). A workload **MAY** declare an
-**`expectRoundTrips`** count — the database round trips it should cost — so the
-benchmark doubles as a *round-trip regression check* (a deep-fetch workload that
-silently regressed to N+1 would blow its declared round-trip count). A workload
+**`expectRoundTrips`** count — the database round trips a conforming run of it
+owes. That count is arithmetic the fixture exports, not a reading it takes: no
+field of a workload names the read an implementation issues, so it meets a run
+only where the run reports its own count beside it through the adapter's
+`benchmark` command. A workload
 **MAY** instead declare **`kind: cache-hit`** — a repeated find an implementation
 serves from its query cache at **zero** round trips (`expectRoundTrips: 0`),
 listing no `statements` — so the query-mix fixture measures the query-cache
@@ -105,9 +107,10 @@ For each workload the harness measures and reports:
 
 - **wall-time percentiles** — `p50` and `p95` over the workload's iterations (a
   single mean hides tail latency; percentiles are the comparable metric);
-- **database round trips** — the count of statements actually issued (the
-  round-trip discipline that `m-deep-fetch` / `m-unit-work` guarantee, measured
-  rather than asserted);
+- **database round trips** — the count of statements the run issued, reported by
+  the implementation beside the workload's declared count, so the round-trip
+  discipline `m-deep-fetch` / `m-unit-work` guarantee is carried in the report
+  rather than left to the wall-clock figures alone;
 - **memory** — **peak** and **steady** resident set over the run (cache/index
   footprint is a first-class cost for a cache-centric framework).
 
@@ -155,10 +158,15 @@ gameable*:
 - **Same workloads, same data.** Every language runs the identical fixtures
   against the identical (deterministically generated) dataset at the identical
   scale, so a number means the same thing everywhere.
-- **Round trips are measured, not assumed.** A workload's `expectRoundTrips`
-  catches an implementation that "got faster" by quietly breaking the N+1 or
-  cache-hit guarantee — the round-trip count would diverge from the declared one,
-  failing the check even if wall-time improved.
+- **Round trips are declared, and a run reports its own.** A workload's
+  `expectRoundTrips` is the count a conforming run of it owes; the adapter's
+  `benchmark` command carries the count the run issued beside it, and
+  `roundTripsOk` is that comparison. So an implementation that "got faster" by
+  quietly breaking the N+1 or cache-hit guarantee reports the higher count and
+  fails the comparison even where wall-time improved. What the comparison is not
+  is an independent observation of the implementation: no field of a workload
+  names the read to issue, so which statements a workload becomes — and the
+  counting of them — are the implementation's own.
 - **Percentiles, not means.** Reporting `p50`/`p95` makes tail latency visible, so
   an implementation cannot hide a slow path behind a fast average.
 - **Memory is reported alongside time.** A space/time trade is visible rather than

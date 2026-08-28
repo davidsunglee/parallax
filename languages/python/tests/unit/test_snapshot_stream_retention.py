@@ -12,24 +12,26 @@ root are both alive at a point a census can be taken from outside the delivery,
 and each carries its own coefficient, so the census prices those two apart. The
 merge between them is alive at no such point — it is built and dropped inside one
 publication — so it is priced as a PEAK instead, over a region opened at one root
-and closed at the next: the largest that region ever held, over what was already
-alive when it opened. That reading cannot separate the merge from the
-construction it feeds, since neither is alive when the other can be sampled and
-both are `O(G_max)`; what it separates is the pair from the page they were cut
-from. Both halves of the middle layer's contract are therefore read — that it
-does not survive the root it published, by the census between two roots, and that
-its peak is one root's own graph rather than the page's, by the region.
+and closed at the next: how far the process rose inside that region over the
+level it opened at. That reading cannot separate the merge from the construction
+it feeds, since neither is alive when the other can be sampled and both are
+`O(G_max)`; what it separates is the pair from the page they were cut from. Both
+halves of the middle layer's contract are therefore read — that it does not
+survive the root it published, by the census between two roots, and that its peak
+is one root's own graph rather than the page's, by the region.
 
-**Seven readings, each its own statement.** Page graphs do not accumulate with
+**Eight readings, each its own statement.** Page graphs do not accumulate with
 the result. A delivery holds one page graph and one published root at a time, and
 the survivor census says so in arithmetic rather than in prose: it is exactly
 affine in the page's own node population and the published root's, with **no term
-in the total result size and none in how far the delivery has got**. Publishing
-one root peaks at that root's own graph, exactly independent of the result and of
-the position, growing with the fan-out and not with the page. And two of the
-three exclusions are demonstrated rather than asserted — a caller retaining every
-root reproduces the `O(N)` growth the bound declines to prevent, and a writing
-loop's buffer grows with the page size and stops there.
+in the total result size and none in how far the delivery has got**. Nothing
+anywhere in the process moves with either, which is the same claim taken over the
+whole heap instead of over the delivery's own survivors. Publishing one root
+peaks at that root's own graph, exactly independent of the result, of the
+position, and of the page, and rising sublinearly per node with the fan-out. And
+two of the three exclusions are demonstrated rather than asserted — a caller
+retaining every root reproduces the `O(N)` growth the bound declines to prevent,
+and a writing loop's buffer grows with the page size and stops there.
 
 **The third exclusion has no executable witness here, by construction.** What the
 database and its driver hold for a delivery — server-side cursors, connection
@@ -54,27 +56,37 @@ that measures bytes. The census is the reading that is not a difference: its
 coefficients are literals, every one of them names what it counts, and a second
 live page graph fails it at every point of the grid.
 
-**The census is read five ways, because counting Parallax's own objects is blind
-where the bound is weakest.** A page graph or a root is a kind Parallax defines
-and is counted; a built-in `list` the delivery banks one item into per PAGE is
-not, and past the first page it adds no survivor of any kind — while every byte
-difference in the first measurement compares two arms standing at the same
-position, which is to say having read the same number of pages. So the census is
-taken over every survivor whatever defined its type, over the REFERENCES those
-survivors hold, from the heap's side over what a holder older than the window
-took, and in BYTES over what the survivors and everything untracked they hold
-weigh. The last two are the ones that price a page: two sample positions differ
-by the pages between them, and pages grow with `N`. A container gaining one
-reference per page moves the reference count; a buffer gaining bytes per page
-gains neither an object nor a reference and moves only the byte reading.
+**The census is read five ways, and all five begin at the window's own
+survivors.** A page graph or a root is a kind Parallax defines and is counted; a
+built-in `list` the delivery banks one item into per PAGE is not, and past the
+first page it adds no survivor of any kind. So the census is taken over every
+survivor whatever defined its type, over the REFERENCES those survivors hold,
+from the heap's side over what a holder older than the window took FROM the
+survivors, and in BYTES over what the survivors and everything untracked they
+hold weigh. What every one of them shares is where the walk starts, and it is the
+delivery's own live structure: a container gaining one reference per page moves
+the reference count and a buffer gaining bytes per page moves the byte reading,
+but only because both hang off something the delivery published.
 
-**What the seven readings still do not prove.** Nothing here sees an untracked
-value a holder that PREDATES the measurement window accumulated: the survivor
-sample cannot reach it, and the byte reading walks outwards from survivors alone.
-Nothing here sees a transient smaller than the region it is allocated in — a peak
-is a maximum, so an allocation below the publication's own high-water is not the
-high-water however it scales. And the second and third layers are priced together
-rather than apart, for the reason given above.
+**Which is why the independence claim is made over the whole process instead.**
+A holder created BEFORE the measurement window, appending one already-existing
+value per page, is outside every arm above and outside every byte DIFFERENCE
+here, since the window it would have to be born in is the one it predates. The
+whole-heap reading has no window: it counts every tracked object in the process,
+every reference each of them holds, and what they and everything untracked they
+reach weigh, as three totals compared across arms that differ in exactly one
+thing. That is what makes "nothing grows with `N`" a statement about the
+implementation rather than about what a sample could reach — and it is why every
+value the fixtures produce is fixed-width, because a total will move for a longer
+string as readily as for a leak.
+
+**What the eight readings still do not prove.** Nothing here sees a transient
+smaller than the region it is allocated in — a high-water mark is a maximum, so an
+allocation that never takes the process above an earlier moment of the same
+publication is invisible however it scales, which is why the page grid the peak
+is read across is thirty-two-fold rather than convenient. Nothing here sees what
+a real driver holds, for the reason given above. And the second and third layers
+are priced together rather than apart, for the reason given above that too.
 
 Every reading reads a whole interpreter, so each runs in one of its own behind
 ``in_a_child_interpreter`` and the class is CI's rather than the merge gate's.
@@ -103,6 +115,7 @@ from memory_instruments import (
     retained,
     serve_one_measurement,
     warmed,
+    whole_heap,
 )
 
 from _support.db_port import body_outcome
@@ -155,16 +168,51 @@ _TENFOLD: Final = 10
 """The factor between the two result sizes every independence reading is taken
 at."""
 
-_MID_PAGE: Final = 3
-"""The position the peak reading advances FROM when the page size is what varies.
-Not a multiple of any page size in the grid, so the root whose publication is
-measured never begins a page and no page read falls inside the region."""
+_EARLY: Final = 2
+"""The position the peak reading advances FROM when the page size or the fan-out
+is what varies.
+
+Inside the first page at every page size the grids below use, so the root whose
+publication is measured never begins one and no page read ever falls inside the
+region — which is what lets those grids reach page sizes far larger than the
+position, at the cost of two roots per run rather than a page's worth."""
+
+_PEAK_PAGES: Final = (4, 8, 16, 32, 64, 128)
+"""The page sizes the publication peak is read across.
+
+Thirty-two-fold, deliberately, and far wider than the census grid. The reading is
+a MAXIMUM, so a page-sized term inside the region is invisible while it stays
+under the region's own high-water; widening the page until such a term would have
+to exceed that high-water is the only thing that closes the gap, and at this
+spread anything above a handful of bytes per page root does."""
+
+_PEAK_FANOUTS: Final = (1, 2, 3, 4, 6, 8, 12, 16)
+"""The fan-outs it is read across beside them.
+
+Wide enough that the SHAPE of the growth in ``G_max`` is readable and not merely
+its sign: what a publication costs per node has to fall across all of it, and a
+region carrying a term quadratic in the node count makes it rise instead. How
+small a quadratic term that catches is set by the widest pair — at these two it
+is a few pointers per node PAIR, and anything under that is below the grid's own
+resolution."""
+
+_PEAK_ROOTS: Final = _LARGE * _TENFOLD
+"""Roots in the result the peak grid runs against, so the widest page above is a
+full page of that size rather than the whole result."""
 
 
 def _order_row(order_id: int) -> Row:
+    """One row of the read, with every value the SAME SIZE at every ordinal.
+
+    The whole-heap census is a total rather than a difference, so a name that got
+    a digit longer at a later position would move it for a reason that is not
+    retention. Zero-padding is what keeps the only difference between two arms
+    the one the reading is about; the integer members need none, since every
+    ordinal these fixtures reach is one CPython digit wide.
+    """
     return {
         "id": order_id,
-        "name": f"order-{order_id}",
+        "name": f"order-{order_id:06d}",
         "sku": "A-100",
         "qty": 5,
         "price": Decimal("10.50"),
@@ -186,7 +234,7 @@ def _item_row(item_id: int, order_id: int) -> Row:
 def _account_row(account_id: int) -> Row:
     return {
         "id": account_id,
-        "owner": f"owner-{account_id}",
+        "owner": f"owner-{account_id:06d}",
         "balance": Decimal("100.00"),
         "version": 1,
     }
@@ -450,9 +498,9 @@ class _Live(NamedTuple):
     count can see: one container is one object however many things it points at,
     so a delivery keeping one item per PAGE moves no count at all and moves this
     by one for every page it has read. ``inbound`` is the same reading from the
-    other end, and the only one that sees a holder OLDER than the window: what a
-    pre-existing registry took is counted where it points rather than where it is
-    held. ``held`` is the one reading in bytes, and it exists because a container
+    other end: what a holder OLDER than the window took OF THE SURVIVORS is
+    counted where it points rather than where it is held. ``held`` is the one
+    reading in bytes, and it exists because a container
     can grow without gaining either an object or a reference: a ``bytearray`` a
     delivery extends by one byte per page is not a survivor at all — the collector
     does not track it — points at nothing, and is held by the same frame at every
@@ -462,6 +510,12 @@ class _Live(NamedTuple):
     The four counts are exact, and ``held`` is exact for a different reason worth
     stating: it is a sum over the STRUCTURE rather than over the heap, so nothing
     in it depends on whether the interpreter happened to share a value.
+
+    All five begin at the window's own survivors, which is the limit of what any
+    of them can be a statement about: what the DELIVERY holds. A holder that
+    predates the window, banking values that predate it too, is reachable from no
+    survivor and is outside all five, which is why the independence claim is made
+    over the whole process instead.
     """
 
     parallax: int
@@ -480,7 +534,8 @@ def _held_bytes(survivors: Sequence[object]) -> int:
     such things is no survivor however large it grew, and a container's own
     referent count says nothing about the bytes inside it. Walking outwards from
     each survivor through its untracked referents is what reaches them, and
-    ``sys.getsizeof`` is what prices them.
+    ``sys.getsizeof`` is what prices them — the survivors being where the walk
+    starts, and therefore the limit of what it can price.
 
     Counted by REFERENCE rather than by identity, deliberately. Whether two equal
     integers or two equal strings are one object is the interpreter's business —
@@ -689,6 +744,11 @@ def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -
     # two arms always stand at the same position and so have read the same number
     # of pages. Here the positions differ by the pages between them, and growth in
     # the number of pages is growth in `N`.
+    #
+    # Every arm of this reading starts from the window's own survivors, so what it
+    # states is about the delivery's own live structure and about nothing else. A
+    # holder that predates the window is behind the measurement below, which needs
+    # no survivor sample to reach one.
     defined_in: set[str] = set()
     for namespace in _NAMESPACES:
         near = _census(_paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT))
@@ -716,22 +776,70 @@ def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -
 
 
 @in_a_child_interpreter
+def test_nothing_in_the_process_grows_with_the_result_or_the_position() -> None:
+    # The same two independence readings taken over the WHOLE PROCESS, which is
+    # what makes them a claim about the implementation rather than about the
+    # delivery's own survivors. Every arm of the census above begins at an object
+    # the window created, so a holder that existed BEFORE the window is outside
+    # all of them: it is no survivor, a reference it took may point at an object
+    # older than the window too, and a buffer it banked bytes into is reachable
+    # from nothing that sample can start at. A module-level container an
+    # implementation appended one existing value to per page would move nothing up
+    # there and everything here.
+    #
+    # Three totals, no baseline, and exact equality rather than a tolerance. The
+    # arms differ in exactly one thing each — ten times the roots at one position,
+    # and a later position of one result — and every value the fixture produces is
+    # the same width at every ordinal, so nothing but retention can move a total.
+    # All three are handed over together because a total prices whoever is holding
+    # what, including this measurement: taken one call at a time, each reading
+    # would count the ones already bound beside it.
+    #
+    # Each arm is warmed by two hundred runs before its reading, which is also
+    # what gives the reading its reach: a term paid once per PAGE has been paid by
+    # every one of those runs by the time the sample is taken, so two arms differ
+    # by the pages of two hundred deliveries rather than of one.
+    for namespace in _NAMESPACES:
+        near, larger, further = whole_heap(
+            _paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT),
+            _paused(namespace, _LARGE * _TENFOLD, batch_size=_BATCH, fanout=_FANOUT, at=_AT),
+            _paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_FURTHER),
+        )
+        assert near == larger, (namespace.name, near, larger)
+        assert near == further, (namespace.name, near, further)
+
+
+@in_a_child_interpreter
 def test_publishing_one_root_peaks_at_that_roots_graph_and_not_at_the_pages() -> None:
     # The middle layer, priced at its PEAK rather than at its release. Everything
     # the census can say about the merge is that it is gone by the time a sample
-    # can be taken between two roots; how large it ever was is a high-water mark
-    # inside one publication, and this is the region that contains it.
+    # can be taken between two roots; how far the process ever rose while it
+    # existed is a high-water mark inside one publication, and this is the region
+    # that contains it.
     #
-    # Four statements, and each is a difference or a comparison rather than a
-    # level, because a byte total is machine-relative and nothing here is read as
-    # a verdict on one. The peak is EXACTLY equal at ten times the roots and
-    # exactly equal at two positions of the same delivery, so a merge carrying any
-    # term in the result or in how far the delivery has got fails it outright. It
-    # moves with the fan-out, which is what makes `G_max` a real term rather than
-    # an absent one. And what widening the PAGE moves it by stays under what one
-    # more child of the same root does — a merge scoped to the page it was cut
-    # from, rather than to the root it publishes, is dominated by the page term
-    # instead and fails there.
+    # Four statements, and each is an equality or an ordering rather than a level,
+    # because a byte total is machine-relative and nothing here is read as a
+    # verdict on one.
+    #
+    # The peak is EXACTLY equal at ten times the roots and exactly equal at two
+    # positions of the same delivery, so a publication carrying any term in the
+    # result or in how far the delivery has got fails it outright.
+    #
+    # It is EXACTLY equal across a thirty-two-fold spread of page sizes, which is
+    # the layer's own bound and not an approximation of it: `m-snapshot-read`
+    # gives the page to the first layer alone, so the correct reading here is
+    # equality, and a tolerance of one child would have accepted the eight bytes
+    # per page node a projection-indexed array costs. The spread is wide rather
+    # than convenient because this reading is a maximum and a page term smaller
+    # than the region's own high-water is invisible; at this spread nothing above
+    # a handful of bytes per page root can stay under it.
+    #
+    # It rises with the fan-out, which is what makes `G_max` a real term rather
+    # than an absent one — and what it costs PER NODE falls across the whole
+    # fan-out grid, which is what separates `O(G_max)` from any bound above it:
+    # a region carrying an `O(G_max**2)` term costs more per node the more nodes
+    # it has, so the sign of that slope is the shape of the bound and not merely
+    # its direction.
     tracemalloc.start()
     try:
         for namespace in _NAMESPACES:
@@ -746,26 +854,32 @@ def test_publishing_one_root_peaks_at_that_roots_graph_and_not_at_the_pages() ->
             )
             assert near == larger, (namespace.name, near, larger)
             assert near == further, (namespace.name, near, further)
-            by_fanout = [
-                high_water(
-                    _advancing(namespace, _LARGE, batch_size=_BATCH, fanout=fanout, at=_MID_PAGE)
-                )
-                for fanout in _FANOUTS
-            ]
             by_page = [
                 high_water(
                     _advancing(
-                        namespace, _LARGE, batch_size=batch_size, fanout=_FANOUT, at=_MID_PAGE
+                        namespace, _PEAK_ROOTS, batch_size=batch_size, fanout=_FANOUT, at=_EARLY
                     )
                 )
-                for batch_size in _PAGE_SIZES
+                for batch_size in _PEAK_PAGES
             ]
-            one_more_child = min(later - earlier for earlier, later in pairwise(by_fanout))
-            assert one_more_child > 0, (namespace.name, by_fanout)
-            assert max(by_page) - min(by_page) < one_more_child, (
+            assert len(set(by_page)) == 1, (namespace.name, _PEAK_PAGES, by_page)
+            by_fanout = [
+                high_water(
+                    _advancing(namespace, _PEAK_ROOTS, batch_size=_BATCH, fanout=fanout, at=_EARLY)
+                )
+                for fanout in _PEAK_FANOUTS
+            ]
+            assert all(later > earlier for earlier, later in pairwise(by_fanout)), (
                 namespace.name,
-                by_page,
                 by_fanout,
+            )
+            per_node = [
+                peak / (1 + fanout) for peak, fanout in zip(by_fanout, _PEAK_FANOUTS, strict=True)
+            ]
+            assert all(later < earlier for earlier, later in pairwise(per_node)), (
+                namespace.name,
+                by_fanout,
+                per_node,
             )
     finally:
         tracemalloc.stop()

@@ -20,6 +20,16 @@ layout, that layout itself by reference to the schema that owns it, and the
 accumulated issues. It clones no member payload: a merged node's member row IS
 the winning projection's row.
 
+**Every one of those is sized by what the merge REACHES, never by the graph's own
+projection array, and that is a bound rather than an economy.** A graph narrowed
+to one root shares the arrays of the whole graph it was cut from — narrowing them
+would cost the copy the narrowing exists to avoid — so a merge over one root of a
+page is handed a projection index space as wide as the page. Anything here
+allocated against that width would carry the page into a per-root cost, which is
+exactly what `m-snapshot-read` gives to the page's own layer and to no other. The
+projection-to-allocation mapping is therefore keyed rather than indexed, and a
+projection nothing reached has no entry.
+
 Two passes over one order. Pass 1 walks roots in first-encounter preorder,
 assigning each logical node its zero-based allocation index and recording the
 first projection to carry each view. Pass 2 is the caller's own
@@ -65,8 +75,6 @@ from parallax.snapshot.materialize._views import MergedViewLayout
 
 __all__ = ["GraphMerge", "merge_graph_input"]
 
-_UNREACHED = -1
-
 
 class GraphMerge:
     """One sealed graph's merge state: allocation order, roots, and winners.
@@ -93,7 +101,7 @@ class GraphMerge:
         self._rows = rows
         self._winner: list[int] = []
         self._logical: dict[int, int] = {}
-        self._resolved = [_UNREACHED] * len(rows.layouts)
+        self._resolved: dict[int, int] = {}
         self._issues: list[tuple[StoredDataIssueInput, ...]] = []
         self._view_layouts: list[MergedViewLayout] = []
         invalid_roots: list[InvalidRootInput] = []
@@ -151,8 +159,8 @@ class GraphMerge:
         """
         resolved: dict[int, T] = {}
         for projection, value in by_projection.items():
-            index = self._resolved[projection]
-            if index != _UNREACHED:
+            index = self._resolved.get(projection)
+            if index is not None:
                 resolved.setdefault(index, value)
         return resolved
 
@@ -195,7 +203,7 @@ class GraphMerge:
     # ----------------------------------------------------------------------- #
 
     def _walk(self, projection: int, winners: list[list[object]]) -> None:
-        if self._resolved[projection] != _UNREACHED:
+        if projection in self._resolved:
             return
         rows = self._rows
         logical = rows.logical_ids[projection]
