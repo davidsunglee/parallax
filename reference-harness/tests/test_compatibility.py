@@ -131,6 +131,14 @@ _RESIDENT_EXTRACTIONS = {
 }
 
 
+# The same extraction under a target m-dialect does NOT give `nights`, spelled so
+# that it orders the fixture's values exactly as the declared target does.
+_RETARGETED_RESIDENT_CAST = {
+    "postgres": "cast(jsonb_extract_path_text(t0.payload, ?) as decimal(18, 2))",
+    "mariadb": "cast(json_value(t0.payload, ?) as decimal(18, 2))",
+}
+
+
 def _respell_resident_pages(case: Case, was: str, now: str) -> None:
     """Rewrite every continuing page of the resident case, each dialect its own way."""
     for entry in _statements(case)[1:]:
@@ -389,6 +397,30 @@ def test_a_resident_comparison_that_dropped_its_cast_is_refused(provider) -> Non
         run_case(case, provider)
 
 
+def test_a_resident_comparison_under_ANOTHER_cast_target_is_refused(provider) -> None:
+    """A cast is graded down to the target m-dialect's table names for the type.
+
+    The damaged pages still cast, and to a target that orders the fixture's
+    `nights` exactly as the declared one does — so they select the same rows, hand
+    the next page the same cursor, and bind what a correct page binds. Nothing
+    downstream of the statement can tell them apart: only the target itself says
+    which type the comparison claims to be in.
+    """
+    case = _damaged(_DOCUMENT_RESIDENT)
+    for entry in _statements(case)[1:]:
+        entry["sql"] = {
+            dialect: sql.replace(
+                f"{_RESIDENT_EXTRACTIONS[dialect][0]} <", f"{_RETARGETED_RESIDENT_CAST[dialect]} <"
+            ).replace(
+                f"{_RESIDENT_EXTRACTIONS[dialect][0]} =", f"{_RETARGETED_RESIDENT_CAST[dialect]} ="
+            )
+            for dialect, sql in entry["sql"].items()
+        }
+
+    with pytest.raises(CaseFailure, match="seeks .*, not "):
+        run_case(case, provider)
+
+
 def test_a_resident_page_binding_the_wrong_path_first_is_refused(provider) -> None:
     """Which member an extraction reads is a BIND, so the paths are graded as binds.
 
@@ -557,7 +589,7 @@ def test_a_document_resident_sort_key_seeks_through_its_own_extraction() -> None
 
     order = _continuation_order(case, query, entity, "postgres")
     assert [(term.column, term.compared, term.tested, term.path_binds) for term in order] == [
-        ("score", "cast(payload extraction)", "payload extraction", ("score",)),
+        ("score", "cast(payload extraction as bigint)", "payload extraction", ("score",)),
         ("id", "id", "id", ()),
     ]
     assert [term.path_binds for term in _continuation_order(case, query, entity, "mariadb")] == [
@@ -567,10 +599,32 @@ def test_a_document_resident_sort_key_seeks_through_its_own_extraction() -> None
 
     seek = _composed_seek(order, (7, 1))
     assert _render_seek(seek.node) == (
-        "(cast(payload extraction) < ? or payload extraction is null "
-        "or (cast(payload extraction) = ? and id > ?))"
+        "(cast(payload extraction as bigint) < ? or payload extraction is null "
+        "or (cast(payload extraction as bigint) = ? and id > ?))"
     )
     assert seek.binds == ("score", 7, "score", "score", 7, 1)
+
+
+def test_a_document_resident_sort_key_at_a_SHARED_TABLE_position_is_derived() -> None:
+    """One Structured Column is what a resident Sort Key needs, not a concrete position.
+
+    The read is at a table-per-hierarchy root narrowed to one subtype, which is
+    the ordering m-object-query admits over a subtype's own member. Every branch
+    of that family shares the root's Table, so the member is resident in exactly
+    one Structured Column and the extraction that seeks it has one spelling —
+    which abstractness alone would have refused.
+    """
+    case = _damaged("m-inheritance-123-document-layout-tph-broad-read")
+    query = case.object_query
+    query["narrowTo"] = ["parallax.compatibility.CardPayment"]
+    query["orderBy"] = [{"attr": "parallax.compatibility.CardPayment.detail"}]
+    entity = case.model.entity(query["target"])
+
+    order = _continuation_order(case, query, entity, "postgres")
+    assert [(term.column, term.compared, term.tested, term.path_binds) for term in order] == [
+        ("detail", "payload extraction", "payload extraction", ("detail",)),
+        ("id", "id", "id", ()),
+    ]
 
 
 def test_a_document_resident_sort_key_at_a_TABLELESS_position_is_refused() -> None:
