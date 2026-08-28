@@ -1,0 +1,102 @@
+# A Continuation Order over DOCUMENT-RESIDENT Sort Keys seeks through the same
+# extraction seam an ordinary predicate does (m-snapshot-read x m-storage-layout x
+# m-sql x m-dialect), on Postgres AND MariaDB.
+#
+# Residence is a physical fact the Continuation Order never learns: the order is
+# still the authored Sort Keys then the primary key, and the seek is still the
+# lexicographic remainder over ordinary comparisons and null checks. What changes
+# is that a member inside a Structured Column has no Column to name, so every one
+# of its occurrences lowers to the dialect's extraction and binds a Document Path
+# ahead of its own coordinate — on the ordering term, on each comparison, and on
+# each null check. A page here binds sixteen values where the same order over
+# Columns would bind four.
+#
+# The two resident terms divide the extraction's two forms. `destination` is a
+# `string`, whose canonical document spelling already orders as text, so it
+# compares as the bare extraction. `nights` is an `int32`, whose document form is
+# a JSON number with no fixed integer width, so it compares under the declared
+# type's cast (m-dialect) — `"10"` sorts below `"9"` as text, which would put trip
+# 52 ahead of trip 53 inside the Bergen tie and hand page 3 a coordinate page 2
+# never delivered. `id` is the appended primary key and the one Column in the
+# order, so a single statement carries both spellings side by side.
+#
+# A NULL CHECK is spelled against the BARE extraction even where the comparison
+# beside it casts: `nights is null` is the presence question the cast does not
+# change, and both dialects answer it for a missing key and for an explicit JSON
+# null alike (m-storage-layout-021 measures that).
+#
+# Both resident terms are nullable, so no continuing page hoists a leading range:
+# with the nulls placed after a non-null coordinate, "after" is two disjoint
+# ranges and no single comparison covers both. That is what the leading branch
+# `<destination> < ? or <destination> is null` says instead. The SECOND term's
+# own two-way branch is grouped — `(<destination> = ? and (<nights> < ? or
+# <nights> is null))` — because it ties with the term above it: ungrouped, `and`
+# would bind tighter than `or` and the branch would admit every null-`nights`
+# trip in the table regardless of destination, re-delivering roots the stream had
+# already published.
+#
+# Both terms descend, which is what keeps the two dialects' ordering tails plain:
+# MariaDB places NULLs last on `desc` natively while Postgres needs the
+# `nulls last` suffix (m-dialect *Null Placement*), so neither statement carries a
+# rank term and the seek is identical on both, being ordinary comparisons and null
+# checks over each dialect's own extraction.
+#
+# Pages of 1 over 3 roots: {51}, then {53} seeking past (Oslo, 3, 51), then {52}
+# seeking past (Bergen, 7, 53), then the empty terminal statement seeking past
+# (Bergen, 1, 52) — a full final page proves nothing, so exhaustion costs one more
+# root statement. Four root statements, no includes, and the delivered graph is
+# the eager read's own.
+model: models/document-layout.yaml
+tags: [m-snapshot-read, m-storage-layout, m-object-query, m-sql, m-dialect, stream, streamed-delivery, orderBy, ordering, nullable, json, document-layout, cast, graph, materialization, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed read's keyset seek - each continuing root statement binds the Document Path and the Continuation Order coordinate of every term, read off the root the previous page delivered last"
+when:
+  objectQuery:
+    target: parallax.compatibility.Trip
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.Trip.destination
+        direction: desc
+      - attr: parallax.compatibility.Trip.nights
+        direction: desc
+  stream:
+    batchSize: 1
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 order by jsonb_extract_path_text(t0.payload, ?) desc nulls last, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last, t0.id asc limit ?
+        mariadb: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 order by json_value(t0.payload, ?) desc, cast(json_value(t0.payload, ?) as signed) desc, t0.id asc limit ?
+      binds:
+        postgres: [destination, nights, 1]
+        mariadb: ['$.destination', '$.nights', 1]
+    - sql:
+        postgres: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 where (jsonb_extract_path_text(t0.payload, ?) < ? or jsonb_extract_path_text(t0.payload, ?) is null or (jsonb_extract_path_text(t0.payload, ?) = ? and (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) < ? or jsonb_extract_path_text(t0.payload, ?) is null)) or (jsonb_extract_path_text(t0.payload, ?) = ? and cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? and t0.id > ?)) order by jsonb_extract_path_text(t0.payload, ?) desc nulls last, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last, t0.id asc limit ?
+        mariadb: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 where (json_value(t0.payload, ?) < ? or json_value(t0.payload, ?) is null or (json_value(t0.payload, ?) = ? and (cast(json_value(t0.payload, ?) as signed) < ? or json_value(t0.payload, ?) is null)) or (json_value(t0.payload, ?) = ? and cast(json_value(t0.payload, ?) as signed) = ? and t0.id > ?)) order by json_value(t0.payload, ?) desc, cast(json_value(t0.payload, ?) as signed) desc, t0.id asc limit ?
+      binds:
+        postgres: [destination, Oslo, destination, destination, Oslo, nights, 3, nights, destination, Oslo, nights, 3, 51, destination, nights, 1]
+        mariadb: ['$.destination', Oslo, '$.destination', '$.destination', Oslo, '$.nights', 3, '$.nights', '$.destination', Oslo, '$.nights', 3, 51, '$.destination', '$.nights', 1]
+    - sql:
+        postgres: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 where (jsonb_extract_path_text(t0.payload, ?) < ? or jsonb_extract_path_text(t0.payload, ?) is null or (jsonb_extract_path_text(t0.payload, ?) = ? and (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) < ? or jsonb_extract_path_text(t0.payload, ?) is null)) or (jsonb_extract_path_text(t0.payload, ?) = ? and cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? and t0.id > ?)) order by jsonb_extract_path_text(t0.payload, ?) desc nulls last, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last, t0.id asc limit ?
+        mariadb: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 where (json_value(t0.payload, ?) < ? or json_value(t0.payload, ?) is null or (json_value(t0.payload, ?) = ? and (cast(json_value(t0.payload, ?) as signed) < ? or json_value(t0.payload, ?) is null)) or (json_value(t0.payload, ?) = ? and cast(json_value(t0.payload, ?) as signed) = ? and t0.id > ?)) order by json_value(t0.payload, ?) desc, cast(json_value(t0.payload, ?) as signed) desc, t0.id asc limit ?
+      binds:
+        postgres: [destination, Bergen, destination, destination, Bergen, nights, 7, nights, destination, Bergen, nights, 7, 53, destination, nights, 1]
+        mariadb: ['$.destination', Bergen, '$.destination', '$.destination', Bergen, '$.nights', 7, '$.nights', '$.destination', Bergen, '$.nights', 7, 53, '$.destination', '$.nights', 1]
+    - sql:
+        postgres: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 where (jsonb_extract_path_text(t0.payload, ?) < ? or jsonb_extract_path_text(t0.payload, ?) is null or (jsonb_extract_path_text(t0.payload, ?) = ? and (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) < ? or jsonb_extract_path_text(t0.payload, ?) is null)) or (jsonb_extract_path_text(t0.payload, ?) = ? and cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? and t0.id > ?)) order by jsonb_extract_path_text(t0.payload, ?) desc nulls last, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last, t0.id asc limit ?
+        mariadb: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 where (json_value(t0.payload, ?) < ? or json_value(t0.payload, ?) is null or (json_value(t0.payload, ?) = ? and (cast(json_value(t0.payload, ?) as signed) < ? or json_value(t0.payload, ?) is null)) or (json_value(t0.payload, ?) = ? and cast(json_value(t0.payload, ?) as signed) = ? and t0.id > ?)) order by json_value(t0.payload, ?) desc, cast(json_value(t0.payload, ?) as signed) desc, t0.id asc limit ?
+      binds:
+        postgres: [destination, Bergen, destination, destination, Bergen, nights, 1, nights, destination, Bergen, nights, 1, 52, destination, nights, 1]
+        mariadb: ['$.destination', Bergen, '$.destination', '$.destination', Bergen, '$.nights', 1, '$.nights', '$.destination', Bergen, '$.nights', 1, 52, '$.destination', '$.nights', 1]
+  referenceSql:
+    postgres: select id, traveler_id, payload ->> 'destination' as destination, cast(payload ->> 'nights' as integer) as nights from trip
+    mariadb: select id, traveler_id, json_value(payload, '$.destination') as destination, cast(json_value(payload, '$.nights') as signed) as nights from trip
+  graph:
+    Trip:
+      - { id: 51, travelerId: 1, destination: Oslo, nights: 3 }
+      - { id: 53, travelerId: 2, destination: Bergen, nights: 7 }
+      - { id: 52, travelerId: 1, destination: Bergen, nights: 1 }
+  roundTrips: 4

@@ -458,6 +458,52 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         ),
     ),
     _SeekCase(
+        id="nullable-term-BELOW-the-leading-one",
+        order_by=(OrderKey(attr=_ORDER_NAME), OrderKey(attr=_ORDER_SKU)),
+        coordinates=((_ORDER_NAME, "Ada"), (_ORDER_SKU, "A-100"), (_ORDER_ID, 1)),
+        order=(OrderKey(attr=_ORDER_NAME), OrderKey(attr=_ORDER_SKU), _APPENDED),
+        seek=And(
+            operands=(
+                Comparison(op="greaterThanEquals", attr=_ORDER_NAME, value="Ada"),
+                Group(
+                    operand=Or(
+                        operands=(
+                            Comparison(op="greaterThan", attr=_ORDER_NAME, value="Ada"),
+                            Group(
+                                operand=And(
+                                    operands=(
+                                        Comparison(op="eq", attr=_ORDER_NAME, value="Ada"),
+                                        Group(
+                                            operand=Or(
+                                                operands=(
+                                                    Comparison(
+                                                        op="greaterThan",
+                                                        attr=_ORDER_SKU,
+                                                        value="A-100",
+                                                    ),
+                                                    NullCheck(op="isNull", attr=_ORDER_SKU),
+                                                )
+                                            )
+                                        ),
+                                    )
+                                )
+                            ),
+                            Group(
+                                operand=And(
+                                    operands=(
+                                        Comparison(op="eq", attr=_ORDER_NAME, value="Ada"),
+                                        Comparison(op="eq", attr=_ORDER_SKU, value="A-100"),
+                                        Comparison(op="greaterThan", attr=_ORDER_ID, value=1),
+                                    )
+                                )
+                            ),
+                        )
+                    )
+                ),
+            )
+        ),
+    ),
+    _SeekCase(
         id="authored-key-descending",
         order_by=(
             OrderKey(attr=_ORDER_ACTIVE, direction="asc"),
@@ -544,6 +590,37 @@ def test_a_nullable_leading_term_carries_no_hoisted_range() -> None:
     assert isinstance(hoisted.predicate, And)
     assert hoisted.predicate.operands[0] == Comparison(
         op="greaterThanEquals", attr=_ORDER_NAME, value="Ada"
+    )
+
+
+def test_a_nullable_terms_own_two_way_branch_stays_inside_the_ties_above_it() -> None:
+    # The seek is a cross-language golden, so a branch's grouping is part of what
+    # it says rather than a rendering choice. A nullable term under Nulls Last is
+    # strictly after its coordinate OR null; below the leading term that pair sits
+    # beside the ties it advances within, and `and` binds tighter than `or`, so an
+    # ungrouped pair would leave `sku is null` a disjunct of the WHOLE seek —
+    # admitting every null-`sku` order whatever its name, which is a root the
+    # delivery has published already or will publish again.
+    plan = _planned(
+        ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME), OrderKey(attr=_ORDER_SKU))
+    )
+    node = plan.after(
+        _coordinate_map(ORDERS, ((_ORDER_NAME, "Ada"), (_ORDER_SKU, "A-100"), (_ORDER_ID, 1))),
+        limit=2,
+    )
+    compiled = compile_read(
+        node.predicate,
+        ORDERS,
+        POSTGRES,
+        entity_of(ORDERS, "Order"),
+        order_by=node.order_by,
+        limit=node.limit,
+    )
+    assert compiled.statement.sql.endswith(
+        "where t0.name >= ? and (t0.name > ? "
+        "or (t0.name = ? and (t0.sku > ? or t0.sku is null)) "
+        "or (t0.name = ? and t0.sku = ? and t0.id > ?)) "
+        "order by t0.name asc, t0.sku asc, t0.id asc limit ?"
     )
 
 
