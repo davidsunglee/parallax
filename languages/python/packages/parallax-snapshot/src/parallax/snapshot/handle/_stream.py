@@ -42,10 +42,16 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.temporal_read import Pin, query_pin
+from parallax.core.temporal_read import (
+    Pin,
+    TemporalReadError,
+    milestone_edge_of,
+    query_pin,
+    scans_an_axis,
+)
 from parallax.snapshot._read_result import FindResult
 from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._read import ResultPublication, declaring_metadata
+from parallax.snapshot.handle._read import ResultPublication, declaring_metadata, edge_pin
 from parallax.snapshot.materialize import InvalidData, InvalidDataError
 from parallax.snapshot.materialize._graph import root_members, root_scoped
 
@@ -154,6 +160,7 @@ class SnapshotStream[T]:
         "_activity",
         "_batch_size",
         "_failure",
+        "_milestones",
         "_model",
         "_node",
         "_open_stream",
@@ -183,6 +190,7 @@ class SnapshotStream[T]:
         self._state: _State = _CREATED
         self._plan: continuation.ContinuationPlan | None = None
         self._pin: Pin = Pin()
+        self._milestones: EntityMetadata | None = None
         self._activity: SnapshotStreamActivity = INERT
         self._failure: BaseException | None = None
 
@@ -200,8 +208,13 @@ class SnapshotStream[T]:
         self._require(_ENTER_ONCE, _CREATED)
         preflight(self._node, model=self._model.meta, form="graph")
         entity = self._entity()
+        declaring = declaring_metadata(self._model.meta, entity.identity)
         self._plan = continuation.plan(entity, self._node, self._model.meta)
-        self._pin = query_pin(self._node, declaring_metadata(self._model.meta, entity.identity))
+        if scans_an_axis(self._node):
+            self._milestones = declaring
+            self._pin = Pin()
+        else:
+            self._pin = query_pin(self._node, declaring)
         self._activity = self._open_stream(
             self._node.target, self._publication.interface, self._batch_size
         ).__enter__()
@@ -257,7 +270,12 @@ class SnapshotStream[T]:
         """The query's OWN lowered as-of coordinates, available before the first
         page: a stream computes them from the query rather than from a result,
         and every page's sealed graph carries the identical pin, so no page can
-        revise what the caller was already told."""
+        revise what the caller was already told.
+
+        A milestone-set delivery answers the EMPTY pin, exactly as the whole
+        result of the same query does: a scan is not a pin, and each root of one
+        stands at its own milestone edge rather than at a coordinate the delivery
+        holds."""
         self._require(_IN_SCOPE, _OPEN, _DRAINING)
         return self._pin
 
@@ -351,7 +369,7 @@ class SnapshotStream[T]:
             page = self._page_read(node, self._activity.batch())
             delivered = 0
             for position, members in enumerate(root_members(page.graph)):
-                root = self._published(page, position, ordinal=emitted + position)
+                root = self._published(page, position, members, ordinal=emitted + position)
                 delivered += 1
                 if not checked and isinstance(root, InvalidData):
                     raise InvalidDataError((cast("InvalidData[object]", root),))
@@ -363,20 +381,47 @@ class SnapshotStream[T]:
             if delivered < size or (limit is not None and emitted >= limit):
                 return
 
-    def _published(self, page: FindResult, position: int, *, ordinal: int) -> object:
+    def _published(
+        self,
+        page: FindResult,
+        position: int,
+        members: Mapping[AttributeIdentity, object] | None,
+        *,
+        ordinal: int,
+    ) -> object:
         """The one root at ``position`` of ``page``, published on its own.
 
         The page graph is shared INPUT rather than a publication unit: scoping it
         to one root is what keeps a relationship from reading as loaded on this
         root only because a neighbour in the same page reached it.
+
+        A milestone-set root is scoped at its OWN edge rather than at the page's
+        pin, which is the whole of what makes a page of milestones a milestone
+        page: the pin overrides on the scoped graph and flows through the merge to
+        the node exactly as a whole-result milestone graph's own sealed pin does.
         """
         roots = self._publication.roots_of(
-            root_scoped(page.graph, position),
+            root_scoped(page.graph, position, pin=self._edge_pin(members)),
             page.includes,
             ordinal_offset=ordinal,
             sources=page.sources,
         )
         return roots[0]
+
+    def _edge_pin(self, members: Mapping[AttributeIdentity, object] | None) -> Pin | None:
+        """The edge pin one milestone-set root stands at, from its own members.
+
+        Absent for every single-instant read, whose roots stand at the page
+        graph's own pin, and for a milestone root whose As-Of Axis starts did not
+        decode — which is the same root the plan can continue from no further, so
+        the delivery ends at it whatever pin it was published under.
+        """
+        if self._milestones is None or members is None:
+            return None
+        try:
+            return edge_pin(milestone_edge_of(self._milestones, members))
+        except TemporalReadError:
+            return None
 
 
 class _Delivery(Iterator[object]):

@@ -30,13 +30,15 @@ from _transact_support import RecordingPort, account_db, db_for, deadlock
 
 from _support import mirrored_models as mm
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
+from parallax.conformance.story_models import POSITION_MODEL, Position
 from parallax.core import LATEST
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.unit_work import ObservedStateKey, RetainedObservation
+from parallax.core.object_query import TX_TIME, VALID_TIME
+from parallax.core.unit_work import ObservedStateKey, RetainedObservation, instructions
 from parallax.snapshot import SnapshotStream, SnapshotStreamStateError
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot.handle import Transaction, TransactionTimePinReadOnlyError
 from parallax.snapshot.materialize import source_hint_of
 
 _UPDATE_SQL = POSTGRES.to_driver_sql(
@@ -315,3 +317,59 @@ def test_a_retried_callback_opens_a_fresh_stream_and_observes_the_roots_again() 
     assert opened[0] is not opened[1]
     with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
         _ = opened[0].pin
+
+
+# --------------------------------------------------------------------------- #
+# A streamed milestone root is a historical view: read-only, both namespaces.  #
+# --------------------------------------------------------------------------- #
+_POSITION_MILESTONES: tuple[Row, ...] = (
+    {
+        "pos_id": 1,
+        "acct_num": "A",
+        "val": Decimal("90.00"),
+        "from_z": _TX_START,
+        "thru_z": _INFINITY,
+        "in_z": _TX_START,
+        "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+    },
+    {
+        "pos_id": 1,
+        "acct_num": "A",
+        "val": Decimal("200.00"),
+        "from_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+        "thru_z": _INFINITY,
+        "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+        "out_z": _INFINITY,
+    },
+)
+
+
+def _milestone_query() -> Any:
+    return Position.where(Position.id == 1).history(TX_TIME).history(VALID_TIME)
+
+
+def test_a_streamed_milestone_root_is_read_only_in_both_namespaces() -> None:
+    # Every milestone stands at a FINITE Transaction-Time edge, so a delivered
+    # milestone root is the Transaction-Time past and no keyed verb rewrites it.
+    # The two namespaces refuse it for the two reasons each has: the Typed node
+    # carries the edge as its own lifecycle pin, and the Wire node carries no
+    # provenance at all, a milestone-set read retaining none — which is exactly
+    # what the whole-result read of the same query publishes.
+    typed_port = RecordingPort(row_queue=[list(_POSITION_MILESTONES), []])
+    wire_port = RecordingPort(row_queue=[list(_POSITION_MILESTONES), []])
+
+    def typed(tx: Transaction) -> None:
+        with tx.stream(_milestone_query(), batch_size=2) as stream:
+            root = next(iter(stream))
+        with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+            tx.update(root.edit(value=Decimal("1.00")))
+
+    def wire(tx: Transaction) -> None:
+        with tx.wire.stream(_milestone_query(), batch_size=2) as stream:
+            root = next(iter(stream))
+        assert source_hint_of(root) is None
+        with pytest.raises(instructions.WriteInstructionError, match="no such provenance"):
+            tx.wire.update(root, {"value": "1.00"})
+
+    db_for(POSITION_MODEL, typed_port).transact(typed)
+    db_for(POSITION_MODEL, wire_port).transact(wire)

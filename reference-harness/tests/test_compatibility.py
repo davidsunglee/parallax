@@ -440,6 +440,76 @@ def test_a_resident_page_binding_the_wrong_path_first_is_refused(provider) -> No
 
 
 # --------------------------------------------------------------------------
+# The milestone edge: a streamed milestone set's own third order component
+# (m-snapshot-read "Streamed delivery")
+#
+# A milestone-set read puts every milestone of one key in the result at once, so
+# the primary key stops separating roots and the edge is what does. The two
+# refusals below are the two ways a delivery can get that wrong while still
+# reaching plausible rows: seeking past the key alone, which crosses a boundary
+# inside one object's own history, and continuing from a coordinate that is a
+# milestone of the right object but not the one the page ended on.
+# --------------------------------------------------------------------------
+
+_HISTORY_BOUNDARY = "m-snapshot-read-036-stream-history-page-boundary"
+_MILESTONE_EDGE_PINS = "m-snapshot-read-037-stream-milestone-edge-pins"
+
+
+def test_a_milestone_page_seeking_past_the_key_alone_is_refused(provider) -> None:
+    """A page that dropped the edge from its seek still reaches real rows.
+
+    Damaged this way, page 2 asks for everything after line 1000 rather than
+    after line 1000's FIRST milestone, which is exactly the skip the edge exists
+    to prevent — and the rows it returns are a legal suffix of the result, so
+    nothing about the page itself looks wrong. What refuses it is that the seek
+    is derived from the Continuation Order, whose last term is the edge.
+    """
+    case = _damaged(_HISTORY_BOUNDARY)
+    for entry in _statements(case)[1:]:
+        entry["sql"] = {
+            dialect: sql.replace(
+                "and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?))", "and t0.id > ?"
+            )
+            for dialect, sql in entry["sql"].items()
+        }
+        entry["binds"] = [entry["binds"][0], entry["binds"][1], entry["binds"][-1]]
+
+    with pytest.raises(CaseFailure, match="root binds"):
+        run_case(case, provider)
+
+
+def test_a_milestone_page_continuing_from_another_milestone_is_refused(provider) -> None:
+    """The coordinate is the edge of the root the previous page ENDED on.
+
+    Every bind here names a real milestone of the object the page is continuing
+    through, and the damaged page still returns rows in the right order — it
+    simply resumes from the wrong rectangle. Only the derivation says which.
+    """
+    case = _damaged(_MILESTONE_EDGE_PINS)
+    binds = _statements(case)[2]["binds"]
+    binds[7] = _statements(case)[1]["binds"][7]
+
+    with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
+        run_case(case, provider)
+
+
+def test_a_streamed_milestone_graph_claiming_the_wrong_root_is_refused(provider) -> None:
+    """`then.graphs` states which milestone each DELIVERED root stands at.
+
+    Moving one root between two declared graphs leaves the delivery, its pages,
+    and its seek coordinates untouched, and the two graphs still hold every root
+    exactly once between them. What refuses it is the pin partition: a root is
+    grouped by the edge it was published at, not by the entry that names it.
+    """
+    case = _damaged(_HISTORY_BOUNDARY)
+    graphs = case.then["graphs"]
+    graphs[1]["graph"]["InvoiceLine"].append(graphs[0]["graph"]["InvoiceLine"].pop())
+
+    with pytest.raises(CaseFailure, match="assembled graph"):
+        run_case(case, provider)
+
+
+# --------------------------------------------------------------------------
 # The same oracle at the member's SECOND placement: a streamed scenario READ
 # step (m-case-format "Streamed read steps")
 #

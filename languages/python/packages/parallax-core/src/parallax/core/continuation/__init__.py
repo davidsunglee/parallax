@@ -27,8 +27,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Literal, cast
 
+from parallax.core.base import normalize_instant
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -156,45 +158,69 @@ class ContinuationPlan:
         return (_hoist(lead, coordinates[0]), remainder)
 
     def _coordinate(self, term: _Term, last_root: Mapping[AttributeIdentity, object]) -> Scalar:
-        """``term``'s own coordinate off the last delivered root.
+        """``term``'s own coordinate off the last delivered root, as a literal.
 
-        A Continuation Order member holds one of `m-predicate`'s neutral scalar
-        types even though a projection's values are typed as plain ``object``;
-        the cast reflects that runtime invariant rather than widening the
-        comparison node's own typed-literal contract. A member the root does not
-        carry — one whose stored value no conforming member could hold — leaves
-        nothing bindable to continue from, so it is refused by name rather than
-        paged past.
+        A projection holds each member as its declared type's own carrier, while
+        a comparison binds `m-predicate`'s neutral literal for it, so an instant
+        — the carrier the milestone edge puts in every milestone-set order — is
+        rendered to the canonical UTC ISO-8601 spelling every other instant bind
+        in the system carries. Every other carrier the order reaches already IS
+        its literal, and the cast reflects that runtime invariant rather than
+        widening the comparison node's own typed-literal contract.
+
+        A member the root does not carry — one whose stored value no conforming
+        member could hold — leaves nothing bindable to continue from, so it is
+        refused by name rather than paged past.
         """
         if term.identity not in last_root:
             raise ContinuationError(
                 f"{term.identity.name}: the Continuation Order names a member the delivered "
                 "root does not carry"
             )
-        return cast("Scalar", last_root[term.identity])
+        value = last_root[term.identity]
+        if isinstance(value, datetime):
+            return normalize_instant(value).isoformat()
+        return cast("Scalar", value)
 
 
 def plan(entity: EntityMetadata, query: ObjectQueryNode, model: Metamodel) -> ContinuationPlan:
     """``query``'s page plan against ``model``, in its Continuation Order.
 
     The Continuation Order is the query's authored Sort Keys in the precedence it
-    declares, followed by ``entity``'s family-declared primary key ascending
-    unless a Sort Key already named it. The key is total, immutable, and
-    non-nullable, so the composed order is total and no two roots tie in it.
+    declares, followed by ``entity``'s family-declared primary key ascending and
+    then — for a milestone-set (``history`` / ``asOfRange``) read — the milestone
+    edge ascending, each appended only where no Sort Key already named it.
 
-    A milestone-set (``history`` / ``asOfRange``) read is refused: one primary
-    key stands behind several result roots there, so paging on an order ending in
-    the key would skip or duplicate at a page boundary.
+    The primary key alone is total for a single-instant read, where one key
+    stands behind one result root. A milestone-set read returns one root per
+    milestone, so several roots share one key and the key is no longer total by
+    itself; what separates them is the milestone each stands at, which is the
+    family's own As-Of Axis starts in canonical axis rank — Valid Time before
+    Transaction Time. Every one of those is an ordinary Attribute, so the edge
+    lowers and seeks exactly as an authored Sort Key does.
     """
-    if scans_an_axis(query):
-        raise ContinuationError(
-            f"{query.target.canonical}: a milestone-set read has no streamed page order yet"
-        )
-    key = _family_key(entity, model)
+    root = _family_root(entity, model)
     terms = [_term(sort_key, model) for sort_key in query.order_by]
-    if all(term.identity != key for term in terms):
-        terms.append(_term(OrderKey(attr=_reference(key), direction="asc"), model))
+    for identity in (_family_key(root), *_milestone_edge(root, query)):
+        if all(term.identity != identity for term in terms):
+            terms.append(_term(OrderKey(attr=_reference(identity), direction="asc"), model))
     return ContinuationPlan(query, tuple(terms))
+
+
+def _milestone_edge(root: EntityMetadata, query: ObjectQueryNode) -> tuple[AttributeIdentity, ...]:
+    """The Attributes a milestone-set read's roots stand at, in canonical axis rank.
+
+    Empty for a read that scans no axis, whose roots are one per primary key and
+    therefore already totally ordered by it. A scan puts every milestone of a key
+    in the result at once, and each milestone's own coordinate is its As-Of Axis
+    start (`m-temporal-read`'s edge) — the from-instant that lies inside its own
+    half-open interval and so distinguishes it from every other milestone of the
+    same key.
+    """
+    if not scans_an_axis(query):
+        return ()
+    axes = sorted(root.declared_as_of_axes, key=lambda axis: axis.dimension.value)
+    return tuple(axis.start_attribute for axis in axes)
 
 
 def _remainder(terms: tuple[_Term, ...], coordinates: tuple[Scalar, ...]) -> PredicateNode:
@@ -318,19 +344,27 @@ def _reference(identity: AttributeIdentity) -> str:
     return f"{identity.entity.canonical}.{identity.name}"
 
 
-def _family_key(entity: EntityMetadata, model: Metamodel) -> AttributeIdentity:
-    """``entity``'s family-declared primary-key Attribute.
+def _family_root(entity: EntityMetadata, model: Metamodel) -> EntityMetadata:
+    """The Entity whose declaration carries ``entity``'s family-wide facts.
 
-    The physical primary key is family-wide and root-owned (`m-inheritance`), so
-    a subtype position resolves it through its family root rather than through
-    its own locally empty declaration. It is exactly one Attribute: `m-metamodel`
-    refuses a composite key outright, which is what makes the LAST term of every
-    Continuation Order one bindable value rather than a tuple.
+    The primary key and the As-Of Axes are both family-wide and root-owned
+    (`m-inheritance`), so a subtype position resolves either through its family
+    root rather than through its own locally empty declaration.
     """
     position = inheritance_view(model).entity(entity.identity)
     root = entity if position is None else model.entity(position.root)
     if root is None:  # pragma: no cover - a resolved position always names a declared root
         raise ContinuationError(f"{entity.identity.canonical}: the model declares no family root")
+    return root
+
+
+def _family_key(root: EntityMetadata) -> AttributeIdentity:
+    """``root``'s primary-key Attribute.
+
+    It is exactly one Attribute: `m-metamodel` refuses a composite key outright,
+    which is what makes each Continuation Order's key term one bindable value
+    rather than a tuple.
+    """
     key = [
         attribute.identity
         for attribute in root.declared_attributes

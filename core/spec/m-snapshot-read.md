@@ -275,12 +275,25 @@ format argument.
 Roots arrive in the **Continuation Order**: a deterministic total order the
 delivery derives rather than an Object Query clause. It is composed the same way
 for every read — the query's authored Sort Keys, in the precedence the query
-declares, then the primary key **ascending** unless a Sort Key already named it.
-Every term is an ordinary Sort Key resolved at the query's own result position
-(`m-object-query`), so an authored one is carried exactly as authored, absent
-direction and Null Placement included, and the appended key is one Attribute
-(`m-metamodel` admits no composite primary key). The key is total, so the
-composed order is total and no two roots tie in it.
+declares, then the primary key **ascending**, and then, for a milestone-set
+(`history` / `asOfRange`) read, the **milestone edge** ascending — each appended
+term omitted where a Sort Key already named it. Every term is an ordinary Sort
+Key resolved at the query's own result position (`m-object-query`), so an
+authored one is carried exactly as authored, absent direction and Null Placement
+included, and the appended key is one Attribute (`m-metamodel` admits no
+composite primary key).
+
+The primary key alone is total for a single-instant read, where one key stands
+behind one result root. A milestone-set read returns one root per milestone, so
+several roots share one key and the key no longer separates them; what does is
+the milestone each stands at, which is the family's own As-Of Axis starts in
+canonical axis rank — Valid Time before Transaction Time. A milestone's edge is
+unique within its key by construction (`m-temporal-read`: a from-instant lies
+inside its own half-open interval, and two milestones of one key do not overlap
+on every axis at once), so the composed order is total for every read shape and
+no two roots tie in it. Every declared axis contributes, whether the query
+scanned it or pinned it: a pin selects one coordinate on that axis and leaves
+the other free to vary across the milestones the scan returns.
 
 A page after the first carries the query's own predicate conjoined with a
 **seek** admitting exactly the roots the Continuation Order places after the one
@@ -326,9 +339,14 @@ than it asked for proves exhaustion; a full one does not, so exhaustion costs on
 more root statement returning nothing — unless a declared `limit` was already
 delivered in full, which proves it without asking.
 
+Delivery adds no capability and removes none. A query a whole-result read may not
+execute is equally unexecutable streamed — a `history` read carrying `includes`
+is the staged `snapshot-history-includes` feature above, and is refused the same
+way and at the same point whichever delivery the caller asked for.
+
 ### Where a stream diverges from a whole-result read
 
-Three divergences, and they apply identically to every representation.
+Four divergences, and they apply identically to every representation.
 
 - **Sharing narrows to root-local.** A row two result roots both reach is one
   node per root, where a whole-result read may answer one node for both. The
@@ -342,12 +360,27 @@ Three divergences, and they apply identically to every representation.
   first `n` roots. The stream is strictly more specified — nothing a
   whole-result read promised is broken — but the two answer differently, and
   that is a property of the delivery rather than of the query.
+- **A milestone set arrives in the Continuation Order rather than grouped by
+  milestone.** A whole-result `history` / `asOfRange` read answers one graph per
+  milestone, in chronological edge order, with every root of one milestone
+  together. A stream has no graphs to group into: it delivers roots one at a
+  time, in the Continuation Order, and each root stands at its **own** edge pin —
+  the same pin the whole-result read gives the graph that root would have
+  belonged to. The two agree wherever the orders agree, which is every read that
+  declares no `orderBy`: there the Continuation Order is the key then the edge,
+  and within one key that is the chronological edge rank itself. They part only
+  where an authored `orderBy` spans several keys' histories, which the eager form
+  ranks by milestone first and the stream by the authored key first. A
+  milestone-set delivery answers the **empty** pin for itself, exactly as the
+  whole result of the same query does — a scan is not a pin — and, exactly as the
+  whole result does, retains no write evidence: every milestone root stands at a
+  finite Transaction-Time edge and is read-only through every keyed verb.
 - **A root that did not decode a Continuation Order member ends the delivery.**
   Only decoded values are bindable, so such a root supplies no coordinate for
   the term that names the member and nothing to continue from. The primary key
   is always in the Continuation Order, which makes a root whose own key did not
-  decode the case every stream has; an authored Sort Key over any other member
-  puts that member under the same rule. The rule is stated
+  decode the case every stream has; an authored Sort Key over any other member,
+  and a milestone-set read's own edge, put those members under the same rule. The rule is stated
   positionally-independent — *a stream cannot continue past a root that did not
   decode every Continuation Order member* — precisely so the page size cannot
   change it: the same stored row may not be survivable at one page size and

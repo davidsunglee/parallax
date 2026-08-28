@@ -1,0 +1,71 @@
+# A streamed history delivers every milestone once, whatever page boundary falls
+# inside one object's own history (m-snapshot-read *Streamed delivery*): the
+# Continuation Order carries the MILESTONE EDGE after the primary key, so a page
+# continues from the milestone the previous page ended on rather than from its key.
+#
+# Invoice 100's lines are a milestone SET of three roots over two keys: line 1000
+# corrected 50.00 -> 75.00, so it stands at two Transaction-Time milestones
+# ([2024-01-01, 2024-04-01) and [2024-04-01, infinity)), and line 1001 stands at
+# one ([2024-01-01, infinity)) — models/invoice.yaml. At `batchSize: 1` EVERY page
+# boundary falls inside line 1000's own history, which is the boundary an order
+# ending in the primary key cannot cross: page 2 would seek `id > 1000` and skip
+# the 75.00 milestone entirely, delivering two roots for a three-milestone set.
+# The order here is `id asc, in_z asc`, so page 2 seeks `id >= 1000 and (id > 1000
+# or (id = 1000 and in_z > 2024-01-01))` and reaches it.
+#
+# The delivery is three full pages plus the terminal empty root statement — a full
+# final page proves nothing, so exhaustion costs one more statement that returns
+# no root. `then.graphs` states the milestone set the delivery published: each
+# root stands at its OWN edge pin, so the two declared pins partition all three
+# roots — 2024-01-01 claims one milestone of each line, 2024-04-01 the corrected
+# line-1000 milestone — exactly as the whole-result read of the same query
+# (m-snapshot-read-013's shape) states them.
+model: models/invoice.yaml
+tags: [m-snapshot-read, m-object-query, m-temporal-read, stream, streamed-delivery, temporal, history, edge-pinned, graph, audit-only, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed read's keyset seek - each continuing root statement binds the Continuation Order coordinates of the root the previous page delivered last, which for a milestone-set read are that milestone's own key and edge"
+when:
+  objectQuery:
+    target: parallax.compatibility.InvoiceLine
+    predicate:
+      eq:
+        attr: parallax.compatibility.InvoiceLine.invoiceId
+        value: 100
+    temporal:
+      transaction-time:
+        history: {}
+  stream:
+    batchSize: 1
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? order by t0.id asc, t0.in_z asc limit ?
+        mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? order by t0.id asc, t0.in_z asc limit ?
+      binds: [100, 1]
+    - sql:
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
+        mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
+      binds: [100, 1000, 1000, 1000, "2024-01-01T00:00:00+00:00", 1]
+    - sql:
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
+        mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
+      binds: [100, 1000, 1000, 1000, "2024-04-01T00:00:00+00:00", 1]
+    - sql:
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
+        mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
+      binds: [100, 1001, 1001, 1001, "2024-01-01T00:00:00+00:00", 1]
+  referenceSql: select id, invoice_id, amount, in_z, out_z from invoice_line where invoice_id = 100
+  graphs:
+    - pin: { transaction-time: "2024-01-01T00:00:00+00:00" }
+      graph:
+        InvoiceLine:
+          - { id: 1000, invoiceId: 100, amount: 50.00, txStart: "2024-01-01T00:00:00+00:00", txEnd: "2024-04-01T00:00:00+00:00" }
+          - { id: 1001, invoiceId: 100, amount: 25.00, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
+    - pin: { transaction-time: "2024-04-01T00:00:00+00:00" }
+      graph:
+        InvoiceLine:
+          - { id: 1000, invoiceId: 100, amount: 75.00, txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
+  roundTrips: 4

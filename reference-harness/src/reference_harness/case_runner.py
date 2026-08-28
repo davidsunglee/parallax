@@ -3361,7 +3361,33 @@ def _continuation_order(
         terms.append(
             _direct_term(_primary_key_column(root), direction="asc", nulls="last", nullable=False)
         )
+    named = {term.column for term in terms}
+    for column in _milestone_edge_columns(query, root):
+        if column not in named:
+            terms.append(_direct_term(column, direction="asc", nulls="last", nullable=False))
     return terms
+
+
+def _scans_an_axis(query: dict[str, Any]) -> bool:
+    """Whether *query* is a milestone-set read — one root per milestone."""
+    return any(
+        isinstance(selection, _HistorySelection | _AsOfRangeSelection)
+        for selection in _query_temporal_selections(query).values()
+    )
+
+
+def _milestone_edge_columns(query: dict[str, Any], root: Entity) -> list[str]:
+    """The from-columns a milestone-set read's Continuation Order ends in.
+
+    Empty for every single-instant read, whose roots are one per primary key.
+    A scan puts every milestone of a key in the result at once, so the key stops
+    separating roots and each milestone's own edge — its As-Of Axis starts in
+    canonical rank, whichever axis the query scanned — is what does
+    (`m-snapshot-read`).
+    """
+    if not _scans_an_axis(query):
+        return []
+    return [axis["start_column"] for axis in root.temporal_runtime_axes]
 
 
 def _seek_splice(first_page_sql: str, later_page_sql: str) -> tuple[int, int]:
@@ -3782,6 +3808,21 @@ def _stream_page(
     return _StreamPage(root_rows=root_rows, nodes=nodes, consumed=executed.consumed)
 
 
+def _binds_equal(authored: list[Any], derived: list[Any]) -> bool:
+    """Whether an authored bind list and a derived one name the same values.
+
+    Compared value by value rather than as two lists, because a coordinate the
+    delivery read back off a row carries its own host type while the golden
+    authors that value's portable literal — an instant most of all, which the
+    milestone edge puts in every milestone-set page's seek.
+    """
+    if len(authored) != len(derived):
+        return False
+    return all(
+        _scalars_equal(left, right, None) for left, right in zip(authored, derived, strict=True)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _StreamDelivery:
     """What one streamed delivery published: its root rows, and the graph nodes
@@ -3887,9 +3928,7 @@ def _deliver_stream(case: Case, db: DatabaseProvider, source: str) -> _StreamDel
                 *carried_binds[seek_bind_position:],
                 requested,
             ]
-        if [_coerce_identity_key(bind) for bind in authored] != [
-            _coerce_identity_key(bind) for bind in expected_binds
-        ]:
+        if not _binds_equal(authored, expected_binds):
             raise CaseFailure(
                 f"{case.path.name}: {source} ({dialect}) page {page + 1} root binds "
                 f"{authored!r} != {expected_binds!r}. A page binds the query's own binds "
@@ -3938,21 +3977,34 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
     The delivery itself — the page partition and the three properties derived
     from it — is :func:`_deliver_stream`'s; what this adds is the case-level
     result oracle a `read` shape carries. The published roots are the
-    concatenation of the pages', compared to ``then.graph`` exactly as an eager
-    read's are, and to the independent ``then.referenceSql`` row set beside it.
+    concatenation of the pages', compared to the case's own result member exactly
+    as an eager read's are, and to the independent ``then.referenceSql`` row set
+    beside it.
+
+    A milestone-set delivery states ``then.graphs`` instead, and is graded by the
+    same partition oracle the eager milestone-set read is: a delivery publishes
+    roots rather than graphs, each standing at its own edge pin, so the graphs are
+    recovered from the delivered roots' own edge coordinates and every
+    disjointness rule the eager form states holds unchanged.
     """
     dialect = db.dialect
     query = case.object_query
     delivered = _deliver_stream(case, db, "then.statements")
     root_entity = case.model.entity(query["target"])
-    assembled = {root_entity.name: delivered.nodes}
-    expected = case.expected_graph or {}
-    if not _graphs_equal(assembled, expected, case.model):
-        raise CaseFailure(
-            f"{case.path.name}: delivered graph != then.graph.\n"
-            f"  delivered: {assembled!r}\n"
-            f"  expected:  {expected!r}"
+    graph_specs = case.expected_graphs
+    if graph_specs is not None:
+        _assert_milestone_partition(
+            case, root_entity, delivered.root_rows, delivered.nodes, graph_specs
         )
+    else:
+        assembled = {root_entity.name: delivered.nodes}
+        expected = case.expected_graph or {}
+        if not _graphs_equal(assembled, expected, case.model):
+            raise CaseFailure(
+                f"{case.path.name}: delivered graph != then.graph.\n"
+                f"  delivered: {assembled!r}\n"
+                f"  expected:  {expected!r}"
+            )
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
@@ -4018,6 +4070,31 @@ def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
                 f"  golden:    {root_rows!r}"
             )
 
+    _assert_milestone_partition(
+        case,
+        root_entity,
+        root_rows,
+        [_graph_node(case.model, root_entity, row) for row in root_rows],
+        graph_specs,
+    )
+
+
+def _assert_milestone_partition(
+    case: Case,
+    root_entity: Entity,
+    root_rows: list[dict[str, Any]],
+    nodes: list[dict[str, Any]],
+    graph_specs: list[dict[str, Any]],
+) -> None:
+    """Assert ``then.graphs`` against milestone rows and the nodes built from them.
+
+    Shared by the two ways a milestone set reaches a result: one whole read that
+    materializes a graph per milestone, and one streamed delivery that publishes
+    each milestone root on its own at its own edge pin. What `then.graphs` states
+    is the same either way — which milestones the read reached and what each
+    carries — so the partition, its disjointness, and the per-graph comparison are
+    one oracle, and ``nodes`` is positionally aligned with ``root_rows``.
+    """
     # An as-of attribute's from-column is the edge coordinate a pin keys on (per axis,
     # keyed by the ATTRIBUTE name the pin uses — `transaction-time` / `valid-time`).
     from_column_by_attr = {
@@ -4054,7 +4131,10 @@ def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
         group = [
             index
             for index, row in enumerate(root_rows)
-            if all(str(row.get(from_column_by_attr[name])) == date for name, date in pin.items())
+            if all(
+                _scalars_equal(row.get(from_column_by_attr[name]), date, None)
+                for name, date in pin.items()
+            )
         ]
         if not group:
             raise CaseFailure(
@@ -4074,9 +4154,7 @@ def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
             )
         for index in group:
             owner[index] = gi
-        assembled = {
-            root_entity.name: [_graph_node(case.model, root_entity, root_rows[i]) for i in group]
-        }
+        assembled = {root_entity.name: [nodes[i] for i in group]}
         if not _graphs_equal(assembled, expected, case.model):
             raise CaseFailure(
                 f"{case.path.name}: then.graphs[{gi}] (pin {pin!r}) assembled graph "

@@ -22,22 +22,36 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 from _transact_support import ACCOUNT, NoIoPort, RecordingPort, db_for
 
-from parallax.conformance.story_models import ORDERS_MODEL, Order, OrderStatus
+from parallax.conformance.graph_models import POLICY_MODEL, Policy
+from parallax.conformance.story_models import (
+    ORDERS_MODEL,
+    POSITION_MODEL,
+    Order,
+    OrderStatus,
+    Position,
+)
 from parallax.core.db_port import Row
+from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.object_query._fluent import ObjectQuery
+from parallax.core.temporal_read import Edge, Pin
 from parallax.snapshot import (
+    DeferredFeatureError,
     InvalidData,
     InvalidDataError,
     QueryTargetError,
     SnapshotStreamStateError,
     WireEntity,
+    edge_of,
+    pin_of,
 )
+from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.materialize import source_hint_of
 
 _UTC = dt.UTC
 
@@ -610,3 +624,216 @@ def test_a_stream_that_failed_answers_nothing_further() -> None:
             list(stream)
         with pytest.raises(SnapshotStreamStateError, match="single-pass"):
             iter(stream)
+
+
+# --------------------------------------------------------------------------- #
+# Milestone streaming: the Continuation Order's third component, and the pin   #
+# every published root stands at.                                              #
+# --------------------------------------------------------------------------- #
+def _position_row(*, value: str, valid_start: dt.datetime, tx_start: dt.datetime) -> Row:
+    return {
+        "pos_id": 1,
+        "acct_num": "A",
+        "val": Decimal(value),
+        "from_z": valid_start,
+        "thru_z": _INFINITY,
+        "in_z": tx_start,
+        "out_z": _INFINITY,
+    }
+
+
+_INFINITY = dt.datetime(9999, 12, 31, tzinfo=_UTC)
+_JANUARY = dt.datetime(2024, 1, 1, tzinfo=_UTC)
+_APRIL = dt.datetime(2024, 4, 1, tzinfo=_UTC)
+_JUNE = dt.datetime(2024, 6, 1, tzinfo=_UTC)
+
+# `models/position.yaml`'s own rectangle history, one root per milestone: the
+# original belief, the rectangle-split head, and the corrected value. The first
+# two TIE on the Valid-Time start and part on the Transaction-Time one, which is
+# the tie depth the edge's own lexicographic seek exists for.
+_MILESTONES: Final[tuple[Row, ...]] = (
+    _position_row(value="90.00", valid_start=_JANUARY, tx_start=_JANUARY),
+    _position_row(value="100.00", valid_start=_JANUARY, tx_start=_APRIL),
+    _position_row(value="200.00", valid_start=_JUNE, tx_start=_APRIL),
+)
+
+
+def _positions(port: RecordingPort) -> Database:
+    return db_for(POSITION_MODEL, port)
+
+
+def _all_milestones() -> ObjectQuery[Position, Position]:
+    return Position.where(Position.id == 1).history(TX_TIME).history(VALID_TIME)
+
+
+def _milestone_pages(*, size: int) -> RecordingPort:
+    pages = [list(_MILESTONES[start : start + size]) for start in range(0, len(_MILESTONES), size)]
+    if len(_MILESTONES) % size == 0:
+        pages.append([])
+    return _pages(*pages)
+
+
+@pytest.mark.parametrize("size", [1, 2, 3], ids=lambda size: f"batch-{size}")
+def test_a_streamed_milestone_set_publishes_every_milestone_at_its_own_edge_pin(
+    size: int,
+) -> None:
+    # A page graph is shared input and a milestone page is that page plus a pin
+    # per root: each published root stands at its OWN milestone's from-instant on
+    # both axes, never at the page's own pin and never at another milestone's —
+    # at every page size, because the pin is a property of the root rather than
+    # of the page it arrived in.
+    with _positions(_milestone_pages(size=size)).stream(_all_milestones(), batch_size=size) as (
+        stream
+    ):
+        assert stream.pin == Pin()
+        roots = list(stream)
+    assert [root.value for root in roots] == [
+        Decimal("90.00"),
+        Decimal("100.00"),
+        Decimal("200.00"),
+    ]
+    assert [pin_of(root) for root in roots] == [
+        Pin(valid_time=_JANUARY, tx_time=_JANUARY),
+        Pin(valid_time=_JANUARY, tx_time=_APRIL),
+        Pin(valid_time=_JUNE, tx_time=_APRIL),
+    ]
+    assert [edge_of(root) for root in roots] == [
+        Edge(valid_time=_JANUARY, tx_time=_JANUARY),
+        Edge(valid_time=_JANUARY, tx_time=_APRIL),
+        Edge(valid_time=_JUNE, tx_time=_APRIL),
+    ]
+
+
+def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() -> None:
+    # The page statements the delivery actually ran: the key is constant across
+    # the whole result, so an order ending in it would seek `pos_id > 1` and
+    # deliver ONE root. What each continuing page binds is the previous root's
+    # own milestone, in the canonical instant spelling.
+    port = _milestone_pages(size=1)
+    with _positions(port).stream(_all_milestones(), batch_size=1) as stream:
+        assert len(list(stream)) == 3
+    binds = [op[2] for op in _reads(port)]
+    assert binds == [
+        (1, 1),
+        (
+            1,
+            1,
+            1,
+            1,
+            "2024-01-01T00:00:00+00:00",
+            1,
+            "2024-01-01T00:00:00+00:00",
+            "2024-01-01T00:00:00+00:00",
+            1,
+        ),
+        (
+            1,
+            1,
+            1,
+            1,
+            "2024-01-01T00:00:00+00:00",
+            1,
+            "2024-01-01T00:00:00+00:00",
+            "2024-04-01T00:00:00+00:00",
+            1,
+        ),
+        (
+            1,
+            1,
+            1,
+            1,
+            "2024-06-01T00:00:00+00:00",
+            1,
+            "2024-06-01T00:00:00+00:00",
+            "2024-04-01T00:00:00+00:00",
+            1,
+        ),
+    ]
+
+
+def test_a_streamed_milestone_set_delivers_what_the_whole_result_read_does() -> None:
+    # `find_history` groups milestones into one graph each and ranks the graphs
+    # Valid-Time-first; with no authored `orderBy` the Continuation Order is the
+    # key then that same edge, so a single object's streamed history IS the eager
+    # edge rank — same roots, same order, same pin on each, and the same absence
+    # of retained write evidence, a milestone view being read-only either way.
+    eager = _positions(_pages(list(_MILESTONES))).find(_all_milestones())
+    with _positions(_milestone_pages(size=1)).stream(_all_milestones(), batch_size=1) as stream:
+        streamed = list(stream)
+    published = eager.results()
+    assert [root.value for root in streamed] == [root.value for root in published]
+    assert [pin_of(root) for root in streamed] == [pin_of(root) for root in published]
+    assert eager.pin == Pin()
+    assert [_retained(root) for root in streamed] == [None, None, None]
+    assert [_retained(root) for root in published] == [None, None, None]
+
+
+def _retained(node: object) -> object:
+    """One Typed node's own retained Source Hint, or ``None`` where it kept none."""
+    state = snapshot_state_of(node)
+    return None if state is None else state.source
+
+
+def test_a_wire_streamed_milestone_root_retains_no_more_than_its_typed_peer() -> None:
+    # The two namespaces answer one delivery. A Wire node keeps its whole
+    # provenance — the pin included — in its Source Hint rather than in lifecycle
+    # state, so a hint carrying the QUERY's coordinates would make a Wire-streamed
+    # historical root writable where its Typed peer is refused.
+    with _positions(_milestone_pages(size=2)).wire.stream(
+        _all_milestones(), batch_size=2
+    ) as stream:
+        roots = [_entity(root) for root in stream]
+    assert [root["value"] for root in roots] == ["90.00", "100.00", "200.00"]
+    assert [source_hint_of(root) for root in roots] == [None, None, None]
+
+
+def test_a_streamed_history_with_includes_is_refused_before_any_io() -> None:
+    # Delivery adds no capability: history with includes is the staged
+    # `snapshot-history-includes` feature, refused by the same gate at the same
+    # point whichever delivery the caller asked for.
+    query = (
+        Policy.where(Policy.id == 1).history(TX_TIME).history(VALID_TIME).include(Policy.coverages)
+    )
+    with (
+        pytest.raises(DeferredFeatureError, match="snapshot-history-includes"),
+        Database(NoIoPort(), POLICY_MODEL).stream(query, batch_size=2),
+    ):
+        pass  # pragma: no cover - the gate refuses at scope entry
+
+
+def test_a_milestone_root_whose_edge_did_not_decode_ends_the_delivery() -> None:
+    # The keyless-root rule reaches the edge, because the edge is a Continuation
+    # Order member: a root carrying its key but not its milestone supplies no
+    # coordinate for the terms the seek binds, so the delivery publishes it and
+    # then refuses to continue — and it is published at no edge pin of its own,
+    # there being no milestone to name.
+    broken = {**_MILESTONES[0], "in_z": None}
+    port = _pages([broken, _MILESTONES[1]], [])
+    delivered: list[object] = []
+    with (
+        _positions(port).stream(_all_milestones(), batch_size=2) as stream,
+        pytest.raises(SnapshotStreamStateError, match="cursorless-root"),
+    ):
+        for root in stream.checked():
+            delivered.append(root)
+    assert len(delivered) == 1
+    record = cast("InvalidData[object]", delivered[0])
+    assert isinstance(record, InvalidData)
+    assert record.data is None
+
+
+def test_a_milestone_root_whose_key_did_not_decode_stands_at_no_edge() -> None:
+    # The other half of the same rule, and the one shape that answers no member
+    # at all: a root whose own primary key did not decode stands behind no
+    # projection, so there is nothing to read a milestone off and nothing to
+    # continue from either.
+    port = _pages([{**_MILESTONES[0], "pos_id": None}, _MILESTONES[1]], [])
+    delivered: list[object] = []
+    with (
+        _positions(port).stream(_all_milestones(), batch_size=2) as stream,
+        pytest.raises(SnapshotStreamStateError, match="cursorless-root"),
+    ):
+        for root in stream.checked():
+            delivered.append(root)
+    assert len(delivered) == 1
+    assert isinstance(delivered[0], InvalidData)

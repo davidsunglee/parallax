@@ -98,7 +98,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, compile_read
-from parallax.core.temporal_read import Edge, Pin, milestone_edge, query_pin
+from parallax.core.temporal_read import Edge, Pin, milestone_edge, query_pin, scans_an_axis
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot._read_result import (
     FindResult,
@@ -488,8 +488,32 @@ def find(
     return FindResult(
         graph=builder.seal(root_refs, pin),
         includes=_include_tree(plan_.levels),
-        sources=retain_evidence(meta, observations, ledger=ledger, pin=pin),
+        sources=_retained(meta, query, observations, ledger=ledger, pin=pin),
     )
+
+
+def _retained(
+    meta: Metamodel,
+    query: ObjectQueryNode,
+    observations: ReadObservations,
+    *,
+    ledger: ObservationLedger | None,
+    pin: Pin,
+) -> ReadSources:
+    """What ``query``'s rows retain for the write side.
+
+    Nothing at all for a MILESTONE-SET read, which is what
+    :func:`find_history` retains for the same query: a scan stands at no single
+    coordinate, so the pin every hint would carry names none of the milestones
+    the rows are — and each of those rows is at a finite Transaction-Time edge
+    and read-only through every keyed verb anyway. Retaining the query's own
+    coordinate instead would make a streamed milestone writable where the whole
+    result of the same query is not, which is a difference the delivery is not
+    allowed to make.
+    """
+    if scans_an_axis(query):
+        return MappingProxyType({})
+    return retain_evidence(meta, observations, ledger=ledger, pin=pin)
 
 
 @dataclass(frozen=True, slots=True)
@@ -723,7 +747,7 @@ def find_history(
             milestone.builder.import_projection(ROOT_LEVEL, stage.graph, staged_ref)
         )
     graphs = tuple(
-        milestone.builder.seal(tuple(milestone.roots), _edge_pin(edge))
+        milestone.builder.seal(tuple(milestone.roots), edge_pin(edge))
         for edge, milestone in sorted(milestones.items(), key=lambda entry: entry[1].rank)
     )
     return HistoryFindResult(graphs=graphs)
@@ -1127,7 +1151,7 @@ def _edge_sort_key(entity: EntityMetadata, row: Row) -> tuple[object, ...]:
     return tuple(row[_start_column(entity, axis)] for axis in ordered)
 
 
-def _edge_pin(edge: Edge) -> Pin:
+def edge_pin(edge: Edge) -> Pin:
     """One milestone's own edge, rendered as a :class:`Pin` (spec §3: each
     milestone-set root is edge-pinned at its own milestone's from-instant).
 

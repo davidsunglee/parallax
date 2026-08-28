@@ -718,6 +718,25 @@ def _stored_data_issues_read_case() -> dict[str, Any]:
     }
 
 
+def _streamed_milestone_graphs_case() -> dict[str, Any]:
+    """A streamed milestone-set read: `when.stream` beside `then.graphs`.
+
+    A milestone-set read is delivered one root at a time exactly as any other
+    read is — its Continuation Order carries the milestone edge after the key —
+    and its result is the same per-milestone partition its eager peer states.
+    """
+    doc = _streamed_read_case()
+    doc["when"]["objectQuery"]["temporal"] = {"transaction-time": {"history": {}}}
+    doc["then"].pop("graph")
+    doc["then"]["graphs"] = [
+        {
+            "pin": {"transaction-time": "2024-01-01T00:00:00Z"},
+            "graph": {"Order": [{"id": 1}]},
+        }
+    ]
+    return doc
+
+
 VALID_CASES = {
     "read": _read_case,
     "writeSequence": _write_sequence_case,
@@ -736,6 +755,7 @@ VALID_CASES = {
     "concurrencySuccess": _concurrency_success_case,
     "boundary": _boundary_case,
     "read-graphs": _graphs_read_case,
+    "read-streamed-graphs": _streamed_milestone_graphs_case,
     "read-stored-data-issues": _stored_data_issues_read_case,
     "rejected-query": _rejected_query_case,
     "rejected-declaring-its-zero-cost": _rejected_case_declaring_zero_round_trips,
@@ -1443,13 +1463,6 @@ def _streamed_beside_rows() -> dict[str, Any]:
     return doc
 
 
-def _streamed_beside_milestone_graphs() -> dict[str, Any]:
-    doc = _streamed_read_case()
-    doc["then"].pop("graph")
-    doc["then"]["graphs"] = [{"pin": {"transaction-time": "2024-01-01T00:00:00Z"}, "graph": {}}]
-    return doc
-
-
 def _streamed_write_sequence() -> dict[str, Any]:
     doc = _write_sequence_case()
     doc["when"]["stream"] = {"batchSize": 2}
@@ -1586,7 +1599,6 @@ REJECTED_CASES = {
     "streamed-fractional-page-size": _streamed_fractional_page_size,
     "streamed-naming-a-representation": _streamed_naming_a_representation,
     "streamed-beside-rows": _streamed_beside_rows,
-    "streamed-beside-milestone-graphs": _streamed_beside_milestone_graphs,
     "streamed-write-sequence": _streamed_write_sequence,
     "streamed-step-without-a-group": _streamed_step_without_a_group,
     "streamed-write-step": _streamed_write_step,

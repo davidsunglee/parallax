@@ -165,6 +165,7 @@ __all__ = [
     "run_rejected_case",
     "run_scenario_case",
     "run_stream_case",
+    "run_streamed_graphs_case",
     "run_write_sequence_case",
     "wire_row",
     "wire_value",
@@ -763,10 +764,6 @@ def run_stream_case(
     equivalence is stated where it can be executed, in each language's API
     Conformance Suite.
 
-    The roots are accumulated for reporting, which is the harness's memory rather
-    than a claim about production's: what the caller grades is the roots the
-    delivery published, and that needs the whole delivery in hand.
-
     Its statements and round trips come off the delivered lifecycle exactly as
     every other lane's do: a Snapshot Stream publishes one Stream Batch per page
     and every page's Database Calls under it, and each of those carries the
@@ -778,9 +775,66 @@ def run_stream_case(
     model = models.accepted_model_of(domain)
     if not _is_single_graph(query):
         raise EngineError(
-            f"{case.path.name}: a streamed read scanned a milestone AXIS — a milestone set is "
-            "not ordered by the root's own key and so has no keyset continuation"
+            f"{case.path.name}: a streamed `then.graph` case read a milestone SET — "
+            "a milestone-set delivery asserts `then.graphs`"
         )
+    roots, observed = _wire_delivery(case, query, domain, port, dialect_name, lifecycle)
+    return (
+        _read_emissions(observed),
+        {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
+        observed.round_trips,
+        _stored_data_records(roots),
+    )
+
+
+def run_streamed_graphs_case(
+    case: case_format.Case,
+    dialect_name: str,
+    port: DbPort,
+    lifecycle: LifecycleRun | None = None,
+) -> tuple[list[Emission], list[dict[str, object]], int]:
+    """Run a streamed milestone-set read and report its per-milestone graphs.
+
+    :func:`run_stream_case`'s milestone peer, standing to it exactly as
+    :func:`run_graphs_case` stands to :func:`run_graph_case`. The delivery is the
+    same one — production's streamed read at the case's declared page size — and
+    what differs is the observation it is reported as: a milestone-set delivery
+    publishes one root per milestone, each standing at its own edge pin, so the
+    `{pin, graph}` entries are recovered from those pins rather than from a second
+    read per milestone.
+    """
+    query = _read_query(case)
+    domain = load_case_domain_model(case)
+    model = models.accepted_model_of(domain)
+    if _is_single_graph(query):
+        raise EngineError(
+            f"{case.path.name}: a streamed `then.graphs` case read a single instant — "
+            "a single-instant delivery asserts `then.graph`"
+        )
+    roots, observed = _wire_delivery(case, query, domain, port, dialect_name, lifecycle)
+    root_key = _graph_root_key(query.target.canonical, model)
+    entity = _declaring_metadata(model, query.target.canonical)
+    graphs_wire: list[dict[str, object]] = [
+        {"pin": _wire_pin(pin), "graph": {root_key: milestone_roots}}
+        for pin, milestone_roots in _milestone_groups(entity, roots)
+    ]
+    return _read_emissions(observed), graphs_wire, observed.round_trips
+
+
+def _wire_delivery(
+    case: case_format.Case,
+    query: ObjectQueryNode,
+    domain: DomainModel,
+    port: DbPort,
+    dialect_name: str,
+    lifecycle: LifecycleRun | None,
+) -> tuple[list[object], LifecycleObservation]:
+    """One streamed Wire delivery of ``query``, drained, and what it ran.
+
+    The roots are accumulated for reporting, which is the harness's memory rather
+    than a claim about production's: what the caller grades is the roots the
+    delivery published, and that needs the whole delivery in hand.
+    """
     dialect = dialect_for(dialect_name)
     observed = lifecycle_run(lifecycle).observation()
     db = handle.Database(port, domain, dialect=dialect, lifecycle_provider=observed.provider)
@@ -790,12 +844,7 @@ def run_stream_case(
             roots.extend(delivery.checked())
     except _STREAM_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-    return (
-        _read_emissions(observed),
-        {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
-        observed.round_trips,
-        _stored_data_records(roots),
-    )
+    return roots, observed
 
 
 def run_graphs_case(
@@ -860,6 +909,40 @@ def _milestone_partition(
             partitions.append((pin, []))
         partitions[-1][1].append(_graph_root(root))
     return partitions
+
+
+def _milestone_groups(
+    entity: EntityMetadata, roots: Sequence[object]
+) -> list[tuple[Pin, list[Row | None]]]:
+    """One streamed milestone-set delivery grouped back into its own graphs.
+
+    Deliberately NOT :func:`_milestone_partition`'s adjacency rule. A delivery
+    arrives in the Continuation Order — the key, then the edge — so two roots of
+    one milestone are adjacent only when they share a key, and a milestone
+    several objects stand at reaches the caller in as many runs as there are
+    objects. Grouping globally is what a whole-result read's own executor does,
+    which is why the same `then.graphs` states both.
+
+    The entries are ordered by edge rank, Valid Time before Transaction Time, for
+    the same reason: what a milestone-set result states is which milestones the
+    read reached, and ordering the entries by an order the delivery happens to
+    have visited them in would make the observation depend on the page size the
+    member exists to say nothing about.
+    """
+    groups: dict[Pin, list[Row | None]] = {}
+    for root in roots:
+        groups.setdefault(_root_pin(entity, root), []).append(_graph_root(root))
+    return sorted(groups.items(), key=lambda entry: _edge_rank(entity, entry[0]))
+
+
+def _edge_rank(entity: EntityMetadata, pin: Pin) -> tuple[object, ...]:
+    """One milestone's chronological rank: its coordinates in canonical axis order."""
+    coordinates = {
+        TemporalDimension.VALID_TIME: pin.valid_time,
+        TemporalDimension.TRANSACTION_TIME: pin.tx_time,
+    }
+    axes = sorted(entity.declared_as_of_axes, key=lambda axis: axis.dimension.value)
+    return tuple(coordinates[axis.dimension] for axis in axes)
 
 
 def _root_pin(entity: EntityMetadata, root: object) -> Pin:

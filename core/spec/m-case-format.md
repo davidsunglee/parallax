@@ -614,10 +614,9 @@ surface's, so an implementation satisfies a streamed case through whichever
 streamed read it exposes; two surfaces over one materialization are `m-wire`'s
 subject, not this one's.
 
-`when.stream` is admitted **only beside `then.graph`**. `then.rows` has no
-streamed peer — a values-lane read publishes no roots to deliver one at a time —
-and a milestone-set `then.graphs` read is not streamable, because a milestone set
-is not keyset-ordered by the root's own key.
+`when.stream` is admitted beside `then.graph` and beside `then.graphs`, and never
+beside `then.rows`, which has no streamed peer — a values-lane read publishes no
+roots to deliver one at a time.
 
 The member has a **second placement**: a scenario READ step (*Streamed read
 steps*, below). It means one thing in both — this read is delivered one root at a
@@ -647,15 +646,25 @@ Three properties of that list are graded independently of the SQL text:
   first binds the Continuation Order coordinates of the root the previous page
   delivered last — one per term of that order. This is what makes a streamed case
   `query-result-dependent` even when it declares no includes at all (see *Compile
-  eligibility*, below).
+  eligibility*, below). A milestone-set read's order carries the milestone edge
+  after the key, so its coordinates include each declared axis's own start
+  instant, bound in the canonical instant spelling every other instant bind
+  carries.
 - **Exhaustion is proven, not assumed.** A page shorter than the size it
   requested ends the delivery. A **full** final page does not, so it is followed
   by one more root statement that returns nothing — unless a declared `limit` was
   already delivered in full, which ends the delivery without it.
 
-`then.graph` is the roots an **eager** read of the same Object Query publishes, in
-the same order: `batchSize` changes neither membership nor order nor what a root
-carries, so a streamed case needs no authoring form of its own for its result. A
+The result member is the one the same Object Query carries unstreamed, stating
+the same thing: `batchSize` changes neither membership nor order nor what a root
+carries, so a streamed case needs no authoring form of its own for its result.
+`then.graph` is the roots an **eager** read publishes, in the same order.
+`then.graphs` is a **streamed milestone-set read** (*Milestone-set graphs*,
+above), whose roots the delivery publishes one at a time, each standing at its
+own edge pin: the graphs are recovered by partitioning the delivered roots by
+that pin under the same pairwise-disjointness rule the eager form states, so what
+the two forms assert is one milestone set either way. A
+
 **batch-size pair** — two cases sharing one model, one `when.objectQuery`, and one
 `then.graph`, differing only in `batchSize` and in the physical observations that
 follow from it — is how the corpus proves that invariance, on the file-based
