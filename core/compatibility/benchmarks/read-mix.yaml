@@ -2,8 +2,8 @@
 #
 # Loads a GENERATED dataset — 1,000 `Account` rows from the `accounts-sequential`
 # recipe — then runs four read workloads, each declaring its per-dialect SQL, binds,
-# and `iterations`. An OPTIONAL `expectRoundTrips` makes the benchmark double as a
-# round-trip regression check:
+# and `iterations`. An OPTIONAL `expectRoundTrips` states how many statements the
+# workload authors, so the report carries a statement count beside every timing:
 #   - point-read (200):         a single PK lookup            — expectRoundTrips 1
 #   - range-read (100):         a bounded balance range scan  — expectRoundTrips 1
 #   - aggregate-group-by (100): a count/sum over the dataset  — (no round-trip bound)
@@ -43,6 +43,6 @@ workloads:
           mariadb: select count(*) n, sum(t0.balance) total from account t0
   - name: point-read-cached
     kind: cache-hit
-    note: the SAME point-read issued again — a query-cache HIT costs ZERO round trips (served from the cache). Pairs with `point-read` (the miss) so the hit/miss distinction is a measured round-trip regression guard. A cache-hit workload lists no golden SQL; the reference harness has no cache, so it runs nothing and records 0 trips, proving the methodology end-to-end.
+    note: the SAME point-read issued again — a query-cache HIT costs ZERO round trips (served from the cache). Pairs with `point-read` (the miss) so the report carries the hit's zero beside the miss's measured cost. A cache-hit workload lists no golden SQL, so a run executes nothing and records 0 trips — that zero is this fixture's own declaration of what a hit costs rather than a reading of any query cache, and what it proves is the methodology end-to-end.
     iterations: 200
     expectRoundTrips: 0

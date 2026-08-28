@@ -574,9 +574,9 @@ def _held_bytes(survivors: Sequence[object]) -> int:
     survivor sample or belongs to the heap that predates the window.
 
     What it cannot price is storage a survivor merely points at.
-    :func:`sys.getsizeof` is what each type reports about ITSELF, so a mapping or
-    an extension-owned buffer weighs its shell here however large its backing
-    grows.
+    :func:`sys.getsizeof` is what each type reports about ITSELF, so an
+    ``mmap.mmap`` or an extension-owned buffer weighs its shell here however large
+    its backing grows.
     """
     total = 0
     pending: list[object] = []

@@ -182,7 +182,8 @@ def test_every_workload_declares_iterations_and_golden() -> None:
 
 def test_deep_fetch_round_trips_match_statement_count() -> None:
     # A multi-statement deep-fetch workload's expectRoundTrips MUST equal its
-    # statement count — the round-trip regression guard the harness enforces.
+    # statement count — the fixture/report consistency the harness enforces, since
+    # a run executes the authored list and counts what it issued.
     fixture = yaml.safe_load((BENCHMARKS_ROOT / "deep-fetch.yaml").read_text(encoding="utf-8"))
     for workload in fixture["workloads"]:
         statements = _statements(workload, "postgres")

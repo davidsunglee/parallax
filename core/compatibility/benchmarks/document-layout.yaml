@@ -9,18 +9,19 @@
 # path every case uses, so the document each row stores is the codec's rather than
 # this file's.
 #
-# Three workloads, each with `expectRoundTrips`, so the fixture doubles as a
-# round-trip regression check rather than only a wall-time reading:
+# Three workloads, each with `expectRoundTrips`, so the report carries a statement
+# count beside every timing rather than a wall-time reading alone:
 #
 #   - document-path-filter (200): a scalar path predicate through the typed-cast seam
 #   - instance-read (200):        the whole document projected once and fanned out
 #   - patch-update (100):         a two-assignment patch, ONE statement
 #
-# `patch-update` is the one that fails loudly on a regression rather than merely
-# reading slower: an implementation that reverted to read-modify-write of the whole
-# Structured Column would issue a SELECT before its UPDATE and take two round trips
-# where the contract takes one, which `expectRoundTrips: 1` refuses even when the
-# wall time looks fine.
+# `patch-update` is the one whose count carries the most meaning: the contract's
+# patch is ONE statement, where a read-modify-write of the whole Structured Column
+# would issue a SELECT before its UPDATE and cost two. This fixture authors the
+# one-statement shape and prices it, so `expectRoundTrips: 1` records what a
+# conforming patch costs; what refuses the two-statement shape is the corpus's
+# golden statements for the layout.
 #
 # Its `displayName` value carries the `$i` iteration sentinel INSIDE the JSON text,
 # so each repeat writes a distinct value and an engine that skips a physically

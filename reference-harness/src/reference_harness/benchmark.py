@@ -10,8 +10,9 @@ DQ10). For each benchmark fixture under ``core/compatibility/benchmarks/`` it:
 3. runs each workload's golden SQL ``iterations`` times against the real
    database, timing every run;
 4. records wall-time ``p50``/``p95``, the database round trips actually issued
-   (checked against ``expectRoundTrips`` when declared — the round-trip
-   regression guard), and peak/steady process memory;
+   (checked against ``expectRoundTrips`` when declared, which keeps a fixture's
+   declared arithmetic consistent with the statements it authors rather than
+   grading a target's read), and peak/steady process memory;
 5. writes ``report.json`` (and prints a compact summary).
 
 Run::
@@ -272,11 +273,11 @@ def _run_workload(workload: dict[str, Any], db: DatabaseProvider) -> dict[str, A
     is_cache_hit = workload.get("kind") == "cache-hit"
     is_write = workload.get("kind") == "write"
     if is_cache_hit:
-        # A query-cache HIT issues NO database round trip: an implementation serves
-        # the repeated find from its query cache. The reference harness has no
-        # cache, so it executes nothing and records 0 round trips — the methodology
-        # witness for `expectRoundTrips: 0`, a cache-hit regression guard for the
-        # implementations that DO cache.
+        # A cache-hit workload declares no statements, so a run of it executes
+        # nothing and records 0 round trips — the methodology witness for
+        # `expectRoundTrips: 0`. That zero is the fixture's own declaration of what
+        # a query-cache hit costs a caching implementation, not a reading of any
+        # cache: none is consulted here and no read is issued.
         statements: list[str] = []
     else:
         statements = _statements(workload, dialect)
@@ -318,8 +319,8 @@ def _run_workload(workload: dict[str, Any], db: DatabaseProvider) -> dict[str, A
         if round_trips != expect:
             raise BenchmarkError(
                 f"workload {workload.get('name')!r} issued {round_trips} round "
-                f"trip(s) but expectRoundTrips is {expect} (a round-trip "
-                f"regression — e.g. a deep fetch that fell back to N+1)."
+                f"trip(s) but expectRoundTrips is {expect} (the fixture's declared "
+                f"count disagrees with the statements it authors)."
             )
     return result
 

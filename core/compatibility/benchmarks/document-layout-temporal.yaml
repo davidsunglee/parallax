@@ -11,13 +11,13 @@
 #     chain writes two statements and a rectangle split writes four, whatever the
 #     member count.
 #
-# Three workloads, each with `expectRoundTrips`, so a regression fails loudly rather
-# than only reading slower:
+# Three workloads, each with `expectRoundTrips`, so the report carries a statement
+# count beside every timing rather than a wall-time reading alone:
 #
 #   - predecessor-resolve (200): the read that materializes one current milestone,
-#     carrying the Structured Column the observation retains — ONE statement. An
-#     implementation that fetched the raw document with a read of its own would take
-#     two round trips here where the contract takes one.
+#     carrying the Structured Column the observation retains — ONE statement, where
+#     an implementation that fetched the raw document with a read of its own would
+#     cost two.
 #   - milestone-chain (100):     close the current milestone, then insert the
 #     successor carrying one whole document — TWO statements.
 #   - rectangle-split (100):     inactivate the Latest rectangle, then insert head,
