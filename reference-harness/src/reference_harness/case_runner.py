@@ -94,12 +94,14 @@ from .storage_layout import (
     ColumnSlot,
     ColumnTier,
     DocumentPath,
+    MemberAddress,
     PositionBranch,
     PositionColumn,
     PositionLayoutView,
     RelationalDocument,
     TableLayout,
     ValueObjectContributor,
+    member_address,
     position_projection,
     position_view,
     validate_storage_layout,
@@ -1790,14 +1792,20 @@ class _DocumentMember(NamedTuple):
     Column: where it sits in the document and — for a leaf — the declared type its
     stored spelling decodes through.
 
-    ``name`` identifies the member and ``column`` only spells it: a member inside a
-    document claims no Column, so its spelling is free to collide with the Column a
-    direct member really holds."""
+    ``address`` identifies the member — by its declaring owner, so two disjoint
+    inheritance siblings sharing a Table may reuse a member name and still be told
+    apart — and ``column`` only spells it: a member inside a document claims no
+    Column, so its spelling is free to collide with the Column a direct member
+    really holds."""
 
-    name: str
+    address: MemberAddress
     column: str
     path: tuple[str, ...]
     type_spelling: str | None
+
+    @property
+    def name(self) -> str:
+        return self.address.path[0]
 
 
 class _DocumentAssignment(NamedTuple):
@@ -1821,9 +1829,11 @@ def _document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[_Do
     Answers ``("", ())`` for a conventional ``Columns`` entity, which is what makes
     the fan-out below inert rather than conditional at its call sites. Residency
     comes from the independently compiled Member Placements, never from the
-    declaration: a one-segment Document Path over the Structured Column is a
-    document-resident top-level member, and a longer one addresses a leaf inside an
-    occurrence, which the occurrence's own document already carries.
+    declaration, and each member is asked for at its own address: a Table shared by
+    disjoint inheritance siblings holds a placement per declaration, so the member
+    one of them reaches under a reused name is the one its own declaration owns. A
+    leaf inside an occurrence is addressed under that occurrence and is left to the
+    occurrence's own document, which already carries it.
     """
     layout = case.model.storage_layout.table(entity.table)
     if layout is None:
@@ -1833,29 +1843,24 @@ def _document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[_Do
     )
     if slot is None:
         return "", ()
-    resident = {
-        address.path[0]: placement.path
-        for address, placement in layout.placements.items()
-        if len(address.path) == 1 and isinstance(placement, DocumentPath) and placement.slot == slot
-    }
-    members = [
-        _DocumentMember(
-            attribute["name"],
-            attribute["column"],
-            resident[attribute["name"]],
-            attribute["type"],
-        )
-        for attribute in entity.attributes
-        if attribute["name"] in resident
-    ]
-    members.extend(
-        _DocumentMember(
-            occurrence["name"], occurrence["column"], resident[occurrence["name"]], None
-        )
-        for occurrence in entity.value_objects
-        if occurrence["name"] in resident
+    family = Family(case.model.entity_defs)
+
+    def resident(declaration: dict[str, Any], type_spelling: str | None) -> _DocumentMember | None:
+        address = member_address(family, entity.canonical_name, declaration["name"])
+        placement = layout.placement(address)
+        if not (isinstance(placement, DocumentPath) and placement.slot == slot):
+            return None
+        return _DocumentMember(address, declaration["column"], placement.path, type_spelling)
+
+    declared = (
+        *((attribute, attribute["type"]) for attribute in entity.attributes),
+        *((occurrence, None) for occurrence in entity.value_objects),
     )
-    return slot.column, tuple(members)
+    return slot.column, tuple(
+        member
+        for declaration, type_spelling in declared
+        if (member := resident(declaration, type_spelling)) is not None
+    )
 
 
 def _materialize_target_document_layout(
@@ -3034,16 +3039,19 @@ class _ContinuationTerm:
     nullable: bool
 
 
-def _document_resident_members(case: Case, entity: Entity) -> set[str]:
-    return {member.name for member in _document_layout_members(case, entity)[1]}
+def _document_resident_members(case: Case, entity: Entity) -> set[MemberAddress]:
+    return {member.address for member in _document_layout_members(case, entity)[1]}
 
 
-def _read_document_resident_members(case: Case, query: dict[str, Any]) -> set[str]:
+def _read_document_resident_members(case: Case, query: dict[str, Any]) -> set[MemberAddress]:
     """Every member a Table *query* reads carries inside a document instead.
 
-    Named rather than spelled: residence is a property of the member a Sort Key
+    Addressed rather than spelled: residence is a property of the member a Sort Key
     names, and a member inside a document claims no Column, so a direct member is
-    free to hold the very Column a resident one would have been spelled with.
+    free to hold the very Column a resident one would have been spelled with. Two
+    disjoint siblings may reuse a member name over one Table, so the name alone is
+    not that member either — only the declaring owner tells one sibling's resident
+    member from the other's Column.
 
     Residence belongs to a Table's own layout, so an abstract position holds none
     of its own: a table-per-concrete-subtype root is TABLELESS, and a member every
@@ -3077,12 +3085,14 @@ def _continuation_order(case: Case, query: dict[str, Any], root: Entity) -> list
     """
     terms: list[_ContinuationTerm] = []
     names_the_key = False
+    family = Family(case.model.entity_defs)
     resident = _read_document_resident_members(case, query)
     for key in query.get("orderBy", []):
         class_name, _, name = key["attr"].rpartition(".")
         entity = case.model.entity(class_name)
         attribute = entity.attribute_by_name(name)
-        if name in resident | _document_resident_members(case, entity):
+        address = member_address(family, entity.canonical_name, name)
+        if address in resident | _document_resident_members(case, entity):
             raise CaseFailure(
                 f"{case.path.name}: the Continuation Order names the document-resident member "
                 f"{key['attr']}, whose every extraction binds a Document Path this oracle "
@@ -3293,21 +3303,25 @@ def _seek_node(expression: Expr) -> _SeekNode:
 
 
 def _null_test(expression: Expr, *, negate: bool) -> str | None:
-    """*expression* as the one null-test leaf a seek composes, or ``None`` if it is
-    not a null test.
+    """*expression* as the one null-test leaf a seek composes, or ``None`` where it
+    is not a leaf the composed side could have built.
 
     A negated null test has two production spellings — `x is not null` and
-    `not x is null` — and a dialect may parse either into the other's tree, so the
+    `not x is null` — and a dialect may parse either into the other's tree, so ONE
     negation is folded into the leaf rather than left as a junction the composed
-    side never builds.
+    side never builds. A SECOND negation is not folded: a Continuation Order
+    composes no negation at any depth, so `not x is not null` is drift, and
+    cancelling the pair would admit it wherever a dialect happens to parse the
+    inner `not` into the null test itself.
     """
     while isinstance(expression, exp.Paren):
         expression = expression.this
     if not (isinstance(expression, exp.Is) and isinstance(expression.expression, exp.Null)):
         return None
-    if expression.args.get("negate"):
-        negate = not negate
-    return f"{_seek_member(expression.this)} is {'not ' if negate else ''}null"
+    if negate and expression.args.get("negate"):
+        return None
+    negated = negate or bool(expression.args.get("negate"))
+    return f"{_seek_member(expression.this)} is {'not ' if negated else ''}null"
 
 
 def _seek_member(expression: Expr) -> str:
@@ -4862,7 +4876,7 @@ def _entity_document(
     """
     document: dict[str, Any] = {}
     for member in resident:
-        name = member.path[0]
+        name = member.name
         if member.type_spelling is None:
             occurrence = entity.value_object_by_name(name)
             if name in row:
@@ -4914,7 +4928,7 @@ def _document_assignments(
     _column, resident = _document_layout_members(case, entity)
     assignments: list[_DocumentAssignment] = []
     for member in resident:
-        name = member.path[0]
+        name = member.name
         if name not in row:
             continue
         value = row[name]

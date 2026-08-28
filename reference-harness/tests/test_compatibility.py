@@ -34,6 +34,7 @@ from reference_harness.case_runner import (
     _refuse_a_drifting_page,
     run_case,
 )
+from reference_harness.inheritance import validate_family
 from reference_harness.providers import available_dialects, provider_for
 from reference_harness.storage_layout import validate_storage_layout
 
@@ -309,6 +310,34 @@ def test_a_continuing_page_negating_its_seek_is_refused(provider) -> None:
         run_case(case, provider)
 
 
+_NULLS_FIRST_TERMS = [
+    _ContinuationTerm(column="sku", direction="asc", nulls="first", nullable=True),
+    _ContinuationTerm(column="id", direction="asc", nulls="last", nullable=False),
+]
+_NULLS_FIRST_PAGE = (
+    "select t0.id, t0.sku from orders t0 order by t0.sku asc nulls first, t0.id asc limit ?"
+)
+
+
+def _grade_a_page_past_a_null(case: Case, dialect: str, non_nulls: str, ties: str) -> None:
+    """Grade the page continuing past a null `sku`, its two null tests spelled as given.
+
+    Under Nulls First the null coordinate is followed by the non-nulls and by the
+    ties it has not delivered yet, so the seek is one disjunction over exactly the
+    two null tests this splices in.
+    """
+    continuing = (
+        f"select t0.id, t0.sku from orders t0 where ({non_nulls} or "
+        f"({ties} and t0.id > ?)) order by t0.sku asc nulls first, t0.id asc limit ?"
+    )
+    _refuse_a_drifting_page(
+        _PageText(case, dialect, 1, _NULLS_FIRST_PAGE, continuing),
+        _NULLS_FIRST_TERMS,
+        (None, 4),
+        {},
+    )
+
+
 def test_either_production_spelling_of_a_negated_null_check_is_accepted() -> None:
     """A valid continuation is accepted however its null check is written.
 
@@ -319,20 +348,27 @@ def test_either_production_spelling_of_a_negated_null_check_is_accepted() -> Non
     graded as an expression must accept either on either dialect.
     """
     case = _damaged(_NULLABLE_PLACEMENT)
-    terms = [
-        _ContinuationTerm(column="sku", direction="asc", nulls="first", nullable=True),
-        _ContinuationTerm(column="id", direction="asc", nulls="last", nullable=False),
-    ]
-    first = "select t0.id, t0.sku from orders t0 order by t0.sku asc nulls first, t0.id asc limit ?"
     for spelling in ("t0.sku is not null", "not t0.sku is null"):
-        continuing = (
-            f"select t0.id, t0.sku from orders t0 where ({spelling} or "
-            f"(t0.sku is null and t0.id > ?)) order by t0.sku asc nulls first, t0.id asc limit ?"
-        )
         for dialect in ("postgres", "mariadb"):
-            _refuse_a_drifting_page(
-                _PageText(case, dialect, 1, first, continuing), terms, (None, 4), {}
-            )
+            _grade_a_page_past_a_null(case, dialect, spelling, "t0.sku is null")
+
+
+def test_a_DOUBLY_negated_null_check_is_refused_on_either_dialect() -> None:
+    """One negation is a spelling of the leaf; two are a shape the order never composes.
+
+    The damaged page selects exactly the rows a correct one selects — `not sku is
+    not null` is `sku is null` — and binds exactly what a correct page binds, so
+    only the composed Boolean shape tells them apart, and a Continuation Order
+    composes no negation at any depth. sqlglot hands the dialects different trees
+    for it: Postgres a `not` over a negated null test, MariaDB a `not` over a
+    `not`. Folding the pair away rather than one negation would accept the
+    Postgres tree and refuse the MariaDB one, making the same text's verdict
+    depend on which parser read it.
+    """
+    case = _damaged(_NULLABLE_PLACEMENT)
+    for dialect in ("postgres", "mariadb"):
+        with pytest.raises(CaseFailure, match="seeks .*, not "):
+            _grade_a_page_past_a_null(case, dialect, "t0.sku is not null", "not t0.sku is not null")
 
 
 def test_a_direct_sort_key_spelled_like_a_document_member_is_accepted() -> None:
@@ -357,6 +393,47 @@ def test_a_direct_sort_key_spelled_like_a_document_member_is_accepted() -> None:
     entity = case.model.entity(query["target"])
 
     assert [term.column for term in _continuation_order(case, query, entity)] == ["score"]
+
+
+def test_a_sort_key_a_TPH_SIBLING_keeps_in_a_Column_of_its_own_is_accepted() -> None:
+    """Disjoint siblings may reuse a member name, and each keeps its own placement.
+
+    `m-inheritance` lets disjoint branches declare the same member name, and the
+    two Payment siblings here both declare `code` over the one shared Table:
+    CardPayment's is document-resident, while CashPayment's is a Relationship Join
+    endpoint and so keeps the Column `b_code`. Both placements live in that one
+    Table keyed by their declaring owners, so a CashPayment read ordered by `code`
+    orders by a real Column that no extraction reaches — which only the owner
+    distinguishes, the name and the document path being CardPayment's too.
+    """
+    case = _damaged("m-inheritance-124-document-layout-tph-sibling-path-reuse")
+    siblings = {definition["name"]: definition for definition in case.model.entity_defs}
+    siblings["CardPayment"]["attributes"].append(
+        {"name": "code", "type": "string", "maxLength": 32, "nullable": True}
+    )
+    siblings["CashPayment"]["attributes"].append(
+        {"name": "code", "type": "int64", "column": "b_code", "nullable": True}
+    )
+    siblings["CashPayment"]["relationships"] = [
+        {
+            "name": "trip",
+            "cardinality": "many-to-one",
+            "join": {
+                "source": "code",
+                "target": {"entity": "parallax.compatibility.Trip", "attribute": "id"},
+            },
+        }
+    ]
+    validate_storage_layout(case.model.entity_defs)
+    validate_family({"entities": case.model.entity_defs})
+
+    query = {
+        "target": "parallax.compatibility.CashPayment",
+        "orderBy": [{"attr": "parallax.compatibility.CashPayment.code"}],
+    }
+    entity = case.model.entity(query["target"])
+
+    assert [term.column for term in _continuation_order(case, query, entity)] == ["b_code", "id"]
 
 
 def test_a_document_resident_sort_key_is_refused_rather_than_mis_derived() -> None:
