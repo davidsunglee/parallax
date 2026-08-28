@@ -606,6 +606,20 @@ _OBSERVED_GENERATION_REASON: Final[str] = (
     "exists because the corpus holds instructions rather than values"
 )
 
+_STREAMED_EVIDENCE_REASON: Final[str] = (
+    "the observed-generation witness above, over STREAMED deliveries rather than finds: "
+    "what it adds is that the delivery a root arrived through decides nothing about the "
+    "write it licenses. A developer writes it by holding a value the stream handed over, "
+    "which is `tx.stream` plus `tx.update` and states nothing an idiomatic story could "
+    "make its own claim — the reference exists because the corpus holds instructions "
+    "rather than values, and the page partition each step authors is the same thing "
+    "`_STREAMED_DELIVERY_REASON` records for the read-shape lane. Both halves are graded "
+    "for real elsewhere: the run sweep drives the case's own deliveries against real "
+    "Postgres and compares every page's statement and every gate's binds, and the "
+    "evidence contract the surface adds on top is graded against the shipped surface by "
+    "`tests/unit/test_transaction_streams.py`"
+)
+
 # Remaining active cases under graph and inheritance modules use case-scoped
 # reasons grouped by identical justification.
 
@@ -1317,6 +1331,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-022": _OBSERVED_STATE_COALESCING_REASON,
     "m-unit-work-023": _OBSERVED_STATE_COALESCING_REASON,
     "m-unit-work-024": _OBSERVED_GENERATION_REASON,
+    "m-unit-work-030": _STREAMED_EVIDENCE_REASON,
     "m-unit-work-025": _OBSERVED_STATE_COALESCING_REASON,
     "m-unit-work-026": _OBJECT_CLAIM_COALESCING_REASON,
     "m-unit-work-027": _OBJECT_CLAIM_COALESCING_REASON,

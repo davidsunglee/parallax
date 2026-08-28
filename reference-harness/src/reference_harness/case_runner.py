@@ -39,7 +39,7 @@ from sqlglot.errors import SqlglotError
 from sqlglot.expressions.core import Expr
 
 from . import errors, portable_literal, serde
-from .case import Case, Entity, Model, conflict_write_rows
+from .case import Case, Entity, Model, conflict_write_rows, step_as_read
 from .data_loader import load_model
 from .ddl_builder import (
     contributor_types,
@@ -527,7 +527,10 @@ def _assert_scenario_sql_bookkeeping(case: Case) -> None:
 
     Scenario SQL is stored below each step rather than at ``then``.  The same
     per-dialect coverage rules therefore apply independently at that location,
-    and a read oracle must correspond to exactly one golden read statement.
+    and a read oracle must correspond to the golden read it is the naive
+    spelling of: one statement for an ordinary find, and a STREAMED step's whole
+    page list for one delivery (`m-case-format` *Streamed read steps*), whose
+    naive oracle answers the roots every page of it published.
     """
     if not case.is_scenario:
         return
@@ -549,10 +552,11 @@ def _assert_scenario_sql_bookkeeping(case: Case) -> None:
         reference_sql = step.get("referenceSql")
         if reference_sql is None:
             continue
-        if len(entries) != 1:
+        if not entries or (len(entries) != 1 and "stream" not in step):
             raise CaseFailure(
-                f"{case.path.name}: when.scenario[{index}] referenceSql needs exactly one "
-                "golden read statement"
+                f"{case.path.name}: when.scenario[{index}] referenceSql needs the golden read "
+                "it is the naive spelling of — exactly one statement for an ordinary find, "
+                "and a streamed step's own pages for one delivery"
             )
         if not isinstance(reference_sql, dict):
             continue
@@ -3727,14 +3731,30 @@ def _stream_page(
     return _StreamPage(root_rows=root_rows, nodes=nodes, consumed=executed.consumed)
 
 
-def _assert_stream(case: Case, db: DatabaseProvider) -> None:
-    """Execute a streamed read page by page and assert the delivery it authored.
+@dataclass(frozen=True, slots=True)
+class _StreamDelivery:
+    """What one streamed delivery published: its root rows, and the graph nodes
+    assembled from them, concatenated across every page in delivery order."""
 
-    A streamed case's ``then.statements`` is the pages' own ``1 + L`` groups
-    concatenated (`m-case-format` *Streamed reads*), so the page partition has to
-    be recovered before anything can be graded against it: each page's root
-    statement is executed, its child levels consume as much of the remaining list
-    as the page's own roots reach, and the next page starts where that stopped.
+    root_rows: list[dict[str, Any]]
+    nodes: list[dict[str, Any]]
+
+
+def _deliver_stream(case: Case, db: DatabaseProvider, source: str) -> _StreamDelivery:
+    """Execute a streamed delivery page by page and assert the pages it authored.
+
+    A streamed statement list is the pages' own ``1 + L`` groups concatenated
+    (`m-case-format` *Streamed reads*), so the page partition has to be recovered
+    before anything can be graded against it: each page's root statement is
+    executed, its child levels consume as much of the remaining list as the
+    page's own roots reach, and the next page starts where that stopped.
+
+    ``case`` is the READ this delivery belongs to, which in the member's second
+    placement is a scenario step presented as one
+    (:func:`~reference_harness.case.step_as_read`); ``source`` names where that
+    read authored its pages — ``then.statements``, or the step's own
+    ``statements`` — so one oracle grades both placements and a failure still
+    points at the list it read.
 
     Four properties are then derived independently of the authored SQL, so a
     delivery that reached the right rows the wrong way fails rather than passing
@@ -3766,18 +3786,20 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
     every continuing page is the first page's statement with one conjunct
     spliced in, spelling the seek its own coordinates compose.
 
-    The published roots are the concatenation of the pages', compared to
-    ``then.graph`` exactly as an eager read's are, because a page size changes
-    neither membership nor order nor what a root carries.
+    The published roots are the concatenation of the pages', which is what the
+    caller compares to its own result oracle, because a page size changes neither
+    membership nor order nor what a root carries.
     """
     dialect = db.dialect
     query = case.object_query
-    statements = case.golden_statements(dialect)
-    entries = [(sql, case.statement_binds(index, dialect)) for index, sql in enumerate(statements)]
+    batch_size = case.batch_size
+    entries = [
+        (sql, case.statement_binds(index, dialect))
+        for index, sql in enumerate(case.golden_statements(dialect))
+    ]
     steps = _fetch_steps(case.model, query) if _query_has_includes(query) else []
     root_entity = case.model.entity(query["target"])
     terms = _continuation_order(case, query, root_entity, dialect)
-    batch_size = case.batch_size
     limit = query.get("limit")
 
     nodes: list[dict[str, Any]] = []
@@ -3791,7 +3813,7 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
     while True:
         if index >= len(entries):
             raise CaseFailure(
-                f"{case.path.name}: then.statements ({dialect}) ends after {page} page(s), "
+                f"{case.path.name}: {source} ({dialect}) ends after {page} page(s), "
                 f"but the delivery is not exhausted — the last page returned a FULL "
                 f"{batch_size} root(s), which proves nothing. Author the root statement "
                 f"that returns none, or a final page shorter than the size it asked for."
@@ -3818,7 +3840,7 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
             _coerce_identity_key(bind) for bind in expected_binds
         ]:
             raise CaseFailure(
-                f"{case.path.name}: then.statements ({dialect}) page {page + 1} root binds "
+                f"{case.path.name}: {source} ({dialect}) page {page + 1} root binds "
                 f"{authored!r} != {expected_binds!r}. A page binds the query's own binds "
                 f"and — after the first page — the seek past the Continuation Order "
                 f"coordinates of the root the previous page delivered LAST, spliced in "
@@ -3851,12 +3873,28 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
 
     if index != len(entries):
         raise CaseFailure(
-            f"{case.path.name}: then.statements ({dialect}) lists {len(entries) - index} "
+            f"{case.path.name}: {source} ({dialect}) lists {len(entries) - index} "
             f"statement(s) after the delivery ended. A stream stops at its first short "
             f"page, so nothing follows it."
         )
 
-    assembled = {root_entity.name: nodes}
+    return _StreamDelivery(root_rows=root_rows, nodes=nodes)
+
+
+def _assert_stream(case: Case, db: DatabaseProvider) -> None:
+    """Execute a streamed READ CASE and assert the delivery its `then` states.
+
+    The delivery itself — the page partition and the three properties derived
+    from it — is :func:`_deliver_stream`'s; what this adds is the case-level
+    result oracle a `read` shape carries. The published roots are the
+    concatenation of the pages', compared to ``then.graph`` exactly as an eager
+    read's are, and to the independent ``then.referenceSql`` row set beside it.
+    """
+    dialect = db.dialect
+    query = case.object_query
+    delivered = _deliver_stream(case, db, "then.statements")
+    root_entity = case.model.entity(query["target"])
+    assembled = {root_entity.name: delivered.nodes}
     expected = case.expected_graph or {}
     if not _graphs_equal(assembled, expected, case.model):
         raise CaseFailure(
@@ -3868,12 +3906,12 @@ def _assert_stream(case: Case, db: DatabaseProvider) -> None:
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
         reference_rows = _materialize_family_variant(case, db.query(reference_sql))
-        root_projection = [_project_like(row, root_rows) for row in reference_rows]
-        if not _rows_equal(root_projection, root_rows, case.tolerance):
+        root_projection = [_project_like(row, delivered.root_rows) for row in reference_rows]
+        if not _rows_equal(root_projection, delivered.root_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql root rows != the delivered root rows.\n"
                 f"  reference: {reference_rows!r}\n"
-                f"  delivered: {root_rows!r}"
+                f"  delivered: {delivered.root_rows!r}"
             )
 
 
@@ -8318,6 +8356,11 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
     applies on the provider's autocommit connection, a rolled-back write opens
     its OWN single-step session, and a find reads on the autocommit
     connection.
+
+    A read step carrying `stream` (`m-case-format` *Streamed read steps*) is the
+    one step whose golden SQL is not one statement: its list is a whole
+    delivery's pages, graded page by page by :func:`_deliver_stream`, and the
+    rows it observes are every root that delivery published.
     """
     dialect = db.dialect
     root_entity = _scenario_root_entity(case)
@@ -8426,13 +8469,29 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 raise CaseFailure(
                     f"{case.path.name}: scenario[{index}] find step resolved no read entity"
                 )
-            if pairs:
+            if "stream" in step:
+                # A STREAMED read step (`m-case-format` *Streamed read steps*): the
+                # step's own statements are the delivery's pages, so the whole list is
+                # handed to the delivery oracle rather than one statement being taken
+                # off the front of it. It reads THROUGH the group's own held session
+                # for the same reason every grouped find does, which is also what makes
+                # each page observe the writes the group buffered before it. What it
+                # publishes is what `expectRows` grades: the roots the delivery handed
+                # over, page after page, which are the values a later write settles
+                # against.
+                reader: Any = session if session is not None else db
+                rows = _deliver_stream(
+                    step_as_read(case, step), reader, f"scenario[{index}].statements"
+                ).root_rows
+                _assert_scenario_reference_sql(case, reader, index, step, rows)
+                includes = None
+            elif pairs:
                 # A DB-touching step: m-unit-work finds are single-statement, so the round-trip
                 # count is one; execute it and capture the rows. GROUPED, it reads THROUGH the
                 # group's own held session (read-your-own-writes, mid-transaction); ungrouped,
                 # it reads on the provider's autocommit connection, exactly as before.
                 statement, stmt_binds = pairs[0]
-                reader: Any = session if session is not None else db
+                reader = session if session is not None else db
                 rows = _query_rows(case, reader, statement, stmt_binds)
                 # GROUPED, the oracle runs on the SAME held session as the golden read
                 # above (`reader`) rather than the top-level `db`: after an uncommitted

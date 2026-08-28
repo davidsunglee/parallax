@@ -772,6 +772,55 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     assert port.commits == 1 and port.rollbacks == 0
 
 
+def _account(identifier: int, owner: str, balance: str, version: int) -> Row:
+    return {
+        "id": identifier,
+        "owner": owner,
+        "balance": decimal.Decimal(balance),
+        "version": version,
+    }
+
+
+def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_its_root() -> None:
+    # `m-unit-work-030`: a grouped read step carrying `stream` runs through
+    # `tx.wire.stream` at its declared page size, and each write settles against
+    # the generation the DELIVERY it names published. The scripted port answers
+    # the four pages the two deliveries read — {1, 2} then {3}, twice, with
+    # account 1 at version 2 the second time round, which is the state the first
+    # write left. Both writes address account 1 and neither is resolved from case
+    # state: the first gates on the version delivery one published for a root it
+    # handed over on a page since released, the second on the version delivery
+    # two published for the same key. An implementation filing one slot per key
+    # rather than one per observed state cannot tell the two apart and gates both
+    # on whichever ran last.
+    port = _ScriptedPort(
+        read_rows=[
+            [_account(1, "Ada", "100.00", 1), _account(2, "Linus", "250.00", 1)],
+            [_account(3, "Grace", "10.00", 1)],
+            [_account(1, "Ada", "125.00", 2), _account(2, "Linus", "250.00", 1)],
+            [_account(3, "Grace", "10.00", 1)],
+        ]
+    )
+
+    run = engine.run_scenario_case(_case("m-unit-work-030"), "postgres", port)
+
+    assert [e.case_pointer for e in run.emissions] == [
+        "/scenario/0/objectQuery",
+        "/scenario/0/objectQuery",
+        "/scenario/1/write",
+        "/scenario/2/objectQuery",
+        "/scenario/2/objectQuery",
+        "/scenario/3/write",
+    ]
+    assert [binds for _sql, binds in port.reads] == [(2,), (2, 2), (2,), (2, 2)]
+    assert [e.binds for e in run.emissions if e.case_pointer.endswith("write")] == [
+        (125.00, 2, 1, 1),
+        (175.00, 3, 1, 2),
+    ]
+    assert run.round_trips == 6
+    assert len(port.writes) == 2
+
+
 _ORDER_1_ROW: Row = {
     "id": 1,
     "name": "Ada",
@@ -6998,6 +7047,22 @@ def test_run_stream_case_refuses_a_page_size_that_is_not_a_positive_int() -> Non
     case = _doctored(_STREAM_CASE_ID, stream={"batchSize": 0})
     with pytest.raises(engine.EngineError, match="positive integer"):
         engine.run_stream_case(case, "postgres", FakeDbPort([]))
+
+
+def test_run_stream_case_refuses_a_case_declaring_no_delivery() -> None:
+    # The streamed entry point is dispatched on the member's presence, so a case
+    # reaching it without one is a mis-authored corpus rather than an eager read.
+    # It is refused by name rather than falling back to a page size nobody asked
+    # for — which would report a delivery the case never stated.
+    case = _load_case(_STREAM_CASE_ID)
+    when = cast("Mapping[str, Any]", case.document["when"])
+    document = dict(case.document)
+    document["when"] = {key: value for key, value in when.items() if key != "stream"}
+
+    with pytest.raises(engine.EngineError, match=re.escape("declares `when.stream.batchSize`")):
+        engine.run_stream_case(
+            dataclasses.replace(case, document=document), "postgres", FakeDbPort([])
+        )
 
 
 def test_run_stream_case_refuses_a_milestone_set_read() -> None:

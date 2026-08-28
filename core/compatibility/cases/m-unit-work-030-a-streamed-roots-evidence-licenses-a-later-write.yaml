@@ -1,0 +1,113 @@
+# A root a STREAM delivered is evidence exactly as a root a find returned is, and
+# the write it licenses is the same write (m-unit-work "The ledger admits multiple
+# observed states for one Entity and primary key"; m-case-format *Streamed read
+# steps* / *Settling against a grouped find*).
+#
+# The streamed peer of m-unit-work-024, and the corpus's own statement of the
+# claim that ticket-level acceptance turns on: claim scope is derived structurally
+# from evidence data, never from the value it travelled on, so which DELIVERY a
+# root arrived through must not change what it licenses. The unit of work reads
+# every account twice as a paged delivery and writes account 1 after each reading,
+# naming the delivery its value came from.
+#   step 0 stream: `batchSize: 2` over three accounts — page 1 returns {1, 2} and
+#                  page 2 seeks past id 2 and returns {3}, one root short of the
+#                  two it asked for, which is what ends the delivery. Account 1
+#                  arrives on the FIRST page, so by the time step 1 runs the page
+#                  it came on is long gone: a page is not the scope its evidence
+#                  hangs on.
+#   step 1 write : `balance = 125.00`, naming step 0 — gated on the version THAT
+#                  delivery observed (1), advancing to 2. Still buffered when step
+#                  2 opens.
+#   step 2 stream: the second delivery force-flushes that intent before its FIRST
+#                  page's statement and then observes the fresh state, so page 1
+#                  returns account 1 at 125.00 / version 2. Its pages are the same
+#                  two statements: a page size and a Continuation Order are
+#                  properties of the query, not of what the rows hold.
+#   step 3 write : `balance = 175.00`, naming step 2 — gated on version 2. Naming
+#                  step 0 here would gate on version 1, which the row has left, and
+#                  the write would affect zero rows; an implementation filing one
+#                  slot per key rather than one per observed state cannot tell the
+#                  two deliveries apart and settles both writes against whichever
+#                  ran last.
+# The case is `run-only` twice over (query-result-dependent): every continuing page
+# binds the primary key of the root the page before it delivered last, and every
+# gate binds a version a delivery returned.
+model: models/account.yaml
+tags: [m-unit-work, m-opt-lock, m-snapshot-read, m-sql, observed-state, stream, streamed-delivery, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed delivery's keyset seek binds the previous page's last root, and each write's gate binds the observed version the delivery it names returned"
+when:
+  scenario:
+    - uow: two-deliveries
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          all: {}
+      stream:
+        batchSize: 2
+      roundTrips: 2
+      note: the first delivery — two pages, the second one root short of the size it asked for
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 order by t0.id asc limit ?
+          binds: [2]
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id > ? order by t0.id asc limit ?
+          binds: [2, 2]
+      referenceSql: select id, owner, balance, version from account
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+    - uow: two-deliveries
+      "on": 0
+      write:
+        - mutation: update
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 1, balance: 125.00 }
+      roundTrips: 1
+      note: settle against the FIRST delivery — the gate binds the version it published for a root it delivered on a page since released
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: [125.00, 2, 1, 1]
+    - uow: two-deliveries
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          all: {}
+      stream:
+        batchSize: 2
+      roundTrips: 2
+      note: the second delivery — its first page force-flushes the pending intent and then observes account 1 at generation two
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 order by t0.id asc limit ?
+          binds: [2]
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id > ? order by t0.id asc limit ?
+          binds: [2, 2]
+      referenceSql: select id, owner, balance, version from account
+      expectRows:
+        - { id: 1, owner: Ada, balance: 125.00, version: 2 }
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+    - uow: two-deliveries
+      "on": 2
+      write:
+        - mutation: update
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 1, balance: 175.00 }
+      roundTrips: 1
+      note: settle against the SECOND delivery — the gate binds version 2; naming step 0 would gate on a version the row has left
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: [175.00, 3, 1, 2]
+then:
+  roundTrips: 6
