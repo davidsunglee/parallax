@@ -67,14 +67,18 @@ from parallax.core.entity import (
 )
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import cataloged_model, class_index
-from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
+from parallax.core.execution_lifecycle import ExecutionLifecycleProvider, ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
+    ActivityTarget,
     InstalledLifecycle,
+    SnapshotStreamActivity,
+    StreamBatchActivity,
     TransactionAttemptActivity,
     WriteBatchActivity,
     installed_lifecycle,
     open_read_root,
+    open_snapshot_stream_root,
     open_transaction_root,
     refuse_reentry,
 )
@@ -504,17 +508,38 @@ class Database:
         """
         check_batch_size(batch_size)
         return SnapshotStream(
-            node, self._connected.model, publication, self._page, batch_size=batch_size
+            node,
+            self._connected.model,
+            publication,
+            self._page,
+            self._stream_root,
+            batch_size=batch_size,
         )
 
-    def _page(self, node: ObjectQueryNode) -> FindResult:
-        """One page of a standalone stream: the ordinary find executor.
+    def _stream_root(
+        self, target: ActivityTarget, interface: ReadInterface, batch_size: int
+    ) -> SnapshotStreamActivity:
+        """One standalone stream's own Root Execution.
+
+        A stream outside any transaction is an outermost Handle operation, so it
+        owns its root exactly as a standalone read owns its Read root.
+        """
+        return open_snapshot_stream_root(
+            self._lifecycle, target=target, interface=interface, batch_size=batch_size
+        )
+
+    def _page(self, node: ObjectQueryNode, batch: StreamBatchActivity) -> FindResult:
+        """One page of a standalone stream: the ordinary find executor, inside
+        the page's own Stream Batch.
 
         A page IS an eager read of a bounded root query, so the executor is the
         one :meth:`find` runs and the `1 + L` ceiling applies to the page
-        exactly as it applies to a whole eager result.
+        exactly as it applies to a whole eager result. Nothing precedes the batch
+        here — a standalone stream flushes nothing — so it opens where the page
+        begins.
         """
-        return find(node, self._connected.model, self._dialect, self._port, calls=INERT)
+        with batch as calls:
+            return find(node, self._connected.model, self._dialect, self._port, calls=calls)
 
     def _read(self, node: ObjectQueryNode, publication: ResultPublication) -> Snapshot[Any]:
         """One non-transactional read of ``node``, published through

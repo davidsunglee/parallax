@@ -1100,7 +1100,7 @@ def test_an_envelope_reporting_no_lifecycle_has_nothing_to_walk() -> None:
 
 
 def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
-    """Every case authoring the oracle, named: the six `m-execution-lifecycle`
+    """Every case authoring the oracle, named: the seven `m-execution-lifecycle`
     cases and the one optimistic-lock success whose resolving read makes it the
     corpus witness for a Database Call that names no golden statement."""
     authored = []
@@ -1119,5 +1119,6 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-execution-lifecycle-004-retry-then-commit.yaml",
         "m-execution-lifecycle-005-retry-exhaustion.yaml",
         "m-execution-lifecycle-006-joined-invocation.yaml",
+        "m-execution-lifecycle-007-streamed-delivery.yaml",
         "m-opt-lock-006-success.yaml",
     ]

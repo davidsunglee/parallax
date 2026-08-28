@@ -179,36 +179,6 @@ def _is_streamed(case: case_format.Case) -> bool:
     return isinstance(when, dict) and "stream" in when
 
 
-class _ExecutedPort:
-    """A pass-through ``m-db-port`` decorator recording each statement as EXECUTED.
-
-    A streamed read publishes no Database Call activity, so its envelope carries
-    an empty `emissions` list (m-conformance-adapter) and the statements it ran
-    are observable only here. What the port sees is the DRIVER's own text, and
-    recovering the canonical spelling from it is the one direction nothing may
-    travel — so the goldens are translated OUTWARD instead, through the same
-    :meth:`Dialect.to_driver_sql` production lowered them with, and compared in
-    the driver's space.
-    """
-
-    def __init__(self, inner: Any) -> None:
-        self._inner = inner
-        self.executed: list[tuple[str, list[Any]]] = []
-
-    def execute(
-        self, sql: str, binds: Any, document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[dict[str, Any]]:
-        self.executed.append((sql, list(binds)))
-        return self._inner.execute(sql, binds, document_reads)
-
-    def execute_write(self, sql: str, binds: Any) -> int:
-        self.executed.append((sql, list(binds)))
-        return self._inner.execute_write(sql, binds)
-
-    def transaction(self, body: Callable[[Any], Any], *, isolation: str | None = None) -> Any:
-        return self._inner.transaction(body, isolation=isolation)
-
-
 # A page's root statement carries the page's own bound; a child level inside one
 # never does, a page size bounding root positions and never the rows a level
 # gathers (`m-snapshot-read`).
@@ -250,35 +220,6 @@ def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) ->
     return positions
 
 
-def _grade_streamed_statements(
-    case: case_format.Case, executed: list[tuple[str, list[Any]]]
-) -> None:
-    """The delivery's own statements against the pages the case authored.
-
-    Graded positionally and exactly, unlike an eager read's child levels: a
-    streamed case authors the whole page partition, and a page's root binds — its
-    predicate binds, its seek coordinates, and the size it asked for — are
-    positional by construction, so a delivery that permuted them would be
-    delivering a different read. A child level inside a page keeps the ordinary
-    gathered-key rule, its `IN` list being the distinct keys that page's own
-    roots reached in an order nothing pins.
-    """
-    dialect = dialect_for("postgres")
-    authored = _read_golden_statements(case)
-    golden = [(dialect.to_driver_sql(sql), wire_binds(binds)) for sql, binds in authored]
-    assert len(executed) == len(golden), (case.case_id, executed, golden)
-    roots = _stream_root_positions(case, [sql for sql, _binds in authored])
-    for index, ((ran_sql, ran_binds), (golden_sql, golden_binds)) in enumerate(
-        zip(executed, golden, strict=True)
-    ):
-        assert ran_sql == golden_sql, (case.case_id, ran_sql, golden_sql)
-        observed_binds = wire_binds(ran_binds)
-        if index in roots:
-            assert observed_binds == golden_binds, (case.case_id, ran_binds, golden_binds)
-        else:
-            assert Counter(observed_binds) == Counter(golden_binds), (case.case_id, ran_binds)
-
-
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
 def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     model = engine.load_case_metamodel(case)
@@ -286,28 +227,32 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
     provisioner.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
-    streamed = _is_streamed(case)
-    port = _ExecutedPort(provisioner.port) if streamed else provisioner.port
-    envelope = adapter.run_case(case.path, "postgres", port)
+    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
     doc = case_document(case)
     then = doc.get("then", {})
     golden_statements = _read_golden_statements(case)
-    if streamed:
-        assert envelope["emissions"] == []
-        _grade_streamed_statements(case, cast("_ExecutedPort", port).executed)
-        golden_statements = []
     emissions = envelope["emissions"]
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
+    # Which emissions carry user-authored binds: an eager read's is its one root
+    # statement, and a streamed delivery's is every page's, each of which binds
+    # its predicate, the coordinates it continues from, and the size it asked
+    # for. A page's own child levels stay gathered, exactly as an eager read's
+    # are.
+    roots = (
+        _stream_root_positions(case, [sql for sql, _binds in golden_statements])
+        if _is_streamed(case)
+        else {0}
+    )
     for index, (emission, (golden_sql, golden_binds)) in enumerate(
         zip(emissions, golden_statements, strict=True)
     ):
         assert emission["sql"] == golden_sql, (case.case_id, emission)
         observed_binds = wire_binds(emission["binds"])
         expected_binds = wire_binds(golden_binds)
-        if index == 0:
+        if index in roots:
             # The root statement's binds are user-authored (never gathered), so
             # their order is defined and exact.
             assert observed_binds == expected_binds, (case.case_id, emission)

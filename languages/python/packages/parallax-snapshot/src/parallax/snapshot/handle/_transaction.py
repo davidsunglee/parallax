@@ -50,8 +50,8 @@ from parallax.core.entity import (
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
-    INERT,
     InstalledLifecycle,
+    StreamBatchActivity,
     TransactionAttemptActivity,
     refuse_reentry,
 )
@@ -670,9 +670,16 @@ class Transaction:
         """One participating stream of ``node``, published through
         ``publication`` — the whole composition both read interfaces run."""
         check_batch_size(batch_size)
-        return SnapshotStream(node, self._model, publication, self._page, batch_size=batch_size)
+        return SnapshotStream(
+            node,
+            self._model,
+            publication,
+            self._page,
+            self._attempt.snapshot_stream,
+            batch_size=batch_size,
+        )
 
-    def _page(self, node: ObjectQueryNode) -> FindResult:
+    def _page(self, node: ObjectQueryNode, batch: StreamBatchActivity) -> FindResult:
         """One page of a participating stream: a find inside the force-flush.
 
         The flush is per page rather than once at entry for two reasons that
@@ -682,18 +689,26 @@ class Transaction:
         would grow with the result, which is the unbounded growth a stream
         exists to remove. An empty buffer costs one truthiness check, so a
         read-only loop pays nothing.
+
+        The Stream Batch opens INSIDE that flush, which is what makes the
+        dependency batch the page forces out an ordered SIBLING of it under the
+        same attempt rather than a scope containing it
+        (`m-execution-lifecycle`).
         """
-        return self._uow.read(
-            lambda: find(
+        return self._uow.read(lambda: self._paged(node, batch))
+
+    def _paged(self, node: ObjectQueryNode, batch: StreamBatchActivity) -> FindResult:
+        """One page's own activity: execute and seal, inside the page's batch."""
+        with batch as calls:
+            return find(
                 node,
                 self._model,
                 self._dialect,
                 self._conn,
                 preference=self._uow.settings.concurrency,
                 ledger=self._uow,
-                calls=INERT,
+                calls=calls,
             )
-        )
 
     def _read(self, node: ObjectQueryNode, publication: ResultPublication) -> Snapshot[Any]:
         """One participating read of ``node``, published through ``publication`` —

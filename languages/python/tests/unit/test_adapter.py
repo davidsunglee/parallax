@@ -850,9 +850,12 @@ def test_run_case_streamed_observation_reports_the_delivered_roots() -> None:
     # `when.stream` routes ahead of the result member, through `run_stream_case`
     # and the shipped streamed read — three pages at `batchSize: 2` over four
     # roots, the third returning nothing because a full final page proves no
-    # exhaustion. The envelope carries the delivered graph and the round trips
-    # the delivery cost; its `emissions` are EMPTY, because a Snapshot Stream
-    # publishes no Database Call activity for an engine to read statements off.
+    # exhaustion. The envelope carries the delivered graph, the round trips the
+    # delivery cost, and one emission per page: a Snapshot Stream publishes a
+    # Stream Batch per page and that page's Database Calls under it, so the
+    # statements come off the delivered lifecycle exactly as every other lane's
+    # do. The seek is what shows they are the DELIVERY's rather than an eager
+    # read's — page 2 continues from the id page 1 delivered last.
     port = _QueuePort(
         [
             [_order(1, "Ada"), _order(2, "Linus")],
@@ -863,7 +866,11 @@ def test_run_case_streamed_observation_reports_the_delivered_roots() -> None:
     envelope = adapter.run_case(_STREAM_CASE, "postgres", port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
-    assert envelope["emissions"] == []
+    assert [emission["binds"] for emission in envelope["emissions"]] == [
+        [1, 2, 3, 42, 2],
+        [1, 2, 3, 42, 2, 2],
+        [1, 2, 3, 42, 42, 2],
+    ]
     assert envelope["observations"]["roundTrips"] == 3
     assert [root["id"] for root in envelope["observations"]["graph"]["Order"]] == [1, 2, 3, 42]
     assert "storedDataIssues" not in envelope["observations"]

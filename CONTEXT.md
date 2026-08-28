@@ -546,10 +546,12 @@ participate in one Transaction Attempt without promising one database snapshot.
 _Avoid_: cursor, lazy Snapshot, result set, batch iterator
 
 **Stream Batch**:
-An Execution Activity spanning planning, lowering, Database Calls, conversion,
-and materialization of one Snapshot Stream page. It starts after any dependent
-Write Batch and finishes Completed once the whole page is ready to yield,
-including an empty terminal page, or Failed if page preparation raises.
+An Execution Activity spanning planning, lowering, Database Calls, and
+conversion of one Snapshot Stream page. It starts after any dependent Write
+Batch and finishes Completed once that page's converted result — the shared
+input its roots are published from — is ready, including an empty terminal page,
+or Failed if page preparation raises. Materializing and publishing those roots
+runs one root at a time under the parent Snapshot Stream, outside every batch.
 _Avoid_: Read, Stream Segment, caller iteration batch, retained page trace
 
 **Wire Snapshot**:
