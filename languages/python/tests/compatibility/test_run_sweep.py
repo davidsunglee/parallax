@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, Final, cast
 
 import jsonschema
@@ -487,17 +488,35 @@ def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] |
     return [step.get("expectRows") for step in steps if "objectQuery" in step]
 
 
-def _scenario_read_schedule(
-    case: case_format.Case, model: Metamodel
-) -> list[tuple[list[dict[str, Any]] | None, Callable[[Row], Row] | None]]:
-    """Every read the scenario issues, in order, paired with what grades it.
+@dataclass(frozen=True, slots=True)
+class _ReadGroup:
+    """The port result sets ONE graded row observation is assembled from.
 
-    A find step contributes ONE graded read — its declared ``expectRows``
+    ``reads`` is how many successive ``execute`` calls the observation spans, so
+    a group whose ``expected`` is ``None`` is that many reads nothing grades.
+    """
+
+    reads: int
+    expected: list[dict[str, Any]] | None
+    transform: Callable[[Row], Row] | None
+
+
+def _scenario_read_schedule(case: case_format.Case, model: Metamodel) -> list[_ReadGroup]:
+    """Every read the scenario issues, in order, grouped by what grades it.
+
+    An eager find step contributes ONE graded read — its declared ``expectRows``
     (``None`` asserts nothing) and its own row transform — plus one UNGRADED read
     per Include level after the root: a deep fetch costs ``1 + L`` reads at the
     port and ``expectRows`` states the ROOT rows alone, the child levels being
     graded by the step-graph observation an `expectGraph` step asserts instead —
-    an `access` step's, or the find's own where it states one. A
+    an `access` step's, or the find's own where it states one. A STREAMED find
+    step (`m-case-format` *Streamed read steps*) instead contributes ONE graded
+    observation spanning EVERY read it made, because its ``expectRows`` are the
+    roots the whole delivery published: each page is a result set of its own and
+    the terminal empty page contributes none, so the observation is their
+    concatenation. Such a step declares no includes, which is what makes every
+    one of its reads a root page — the level partition a deep fetch would need
+    has no second source here. A
     write step contributes the
     RESOLVING READS its keyed verbs owe (`m-case-format` *Resolving reads a write
     owes*), which grade nothing here — the values they publish are graded by the
@@ -513,18 +532,24 @@ def _scenario_read_schedule(
     authors. Compiling a bare ``all()`` read of the same target recovers exactly
     the projection metadata the executed read carried.
     """
-    schedule: list[tuple[list[dict[str, Any]] | None, Callable[[Row], Row] | None]] = []
+    schedule: list[_ReadGroup] = []
     for step in cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"]):
         if "objectQuery" not in step:
             emitted = len(cast("list[Any]", step.get("statements", [])))
-            schedule.extend([(None, None)] * (step.get("roundTrips", 1) - emitted))
+            schedule.append(_ReadGroup(step.get("roundTrips", 1) - emitted, None, None))
             continue
         entity = engine.case_entity(model, step["objectQuery"]["target"])
         compiled = compile_read(
             predicate_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
         )
-        schedule.append((step.get("expectRows"), _logical_row_transform(compiled, model)))
-        schedule.extend([(None, None)] * max(0, step.get("roundTrips", 1) - 1))
+        transform = _logical_row_transform(compiled, model)
+        reads = step.get("roundTrips", 1)
+        if "stream" in step:
+            assert not step["objectQuery"].get("includes"), (case.case_id, step)
+            schedule.append(_ReadGroup(reads, step.get("expectRows"), transform))
+            continue
+        schedule.append(_ReadGroup(1, step.get("expectRows"), transform))
+        schedule.append(_ReadGroup(max(0, reads - 1), None, None))
     return schedule
 
 
@@ -641,10 +666,18 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
     if case.shape == "scenario":
         schedule = _scenario_read_schedule(case, model)
-        assert len(port.reads) == len(schedule), (case.case_id, port.reads)
-        for observed, (expected, transform) in zip(port.reads, schedule, strict=True):
-            if expected is not None and transform is not None:
-                compare_rows([engine.wire_row(transform(row)) for row in observed], expected)
+        assert len(port.reads) == sum(group.reads for group in schedule), (
+            case.case_id,
+            port.reads,
+        )
+        cursor = 0
+        for group in schedule:
+            observed = [row for rows in port.reads[cursor : cursor + group.reads] for row in rows]
+            cursor += group.reads
+            if group.expected is not None and group.transform is not None:
+                compare_rows(
+                    [engine.wire_row(group.transform(row)) for row in observed], group.expected
+                )
         # `expectError` steps grade through the adapter's `errors` observation
         # (`m-conformance-adapter` / `errorObservation.errorClass`): one entry
         # per declaring step, in step order — and NO entry for any other

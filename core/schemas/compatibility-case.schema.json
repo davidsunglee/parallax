@@ -410,17 +410,8 @@
           }
         },
         "stream": {
-          "description": "The streamed delivery context of a read case (m-snapshot-read *Streamed delivery*): its presence makes the read STREAMED rather than eager, exactly as `when.uow.concurrency` makes a read's mode prescriptive rather than descriptive. A streamed read keyset-pages its root positions in the Continuation Order and deep-fetches one page at a time, so its `then.statements` is the concatenation of the pages' own `1 + L` groups and its `then.graph` is the roots the eager read of the same Object Query publishes, in the same order. It names no representation: delivery is the verb and the namespace stays the surface's, so an implementation satisfies the case through whichever streamed read it exposes. Sibling of the action member, never a query clause — a page size is how the client consumes the result, not part of the Object Query the corpus canonicalizes and round-trips.",
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["batchSize"],
-          "properties": {
-            "batchSize": {
-              "description": "The page size the stream requests, counted in ROOT positions and never in included relationship rows. Spelled exactly as the lifecycle event's own `batchSize` so the corpus keeps one vocabulary for a page size. A performance dial alone: it changes the pages a read costs and nothing about which roots arrive, their order, or what each carries.",
-              "type": "integer",
-              "minimum": 1
-            }
-          }
+          "description": "The streamed delivery context of a read case (m-snapshot-read *Streamed delivery*): its presence makes the read STREAMED rather than eager, exactly as `when.uow.concurrency` makes a read's mode prescriptive rather than descriptive. A streamed read keyset-pages its root positions in the Continuation Order and deep-fetches one page at a time, so its `then.statements` is the concatenation of the pages' own `1 + L` groups and its `then.graph` is the roots the eager read of the same Object Query publishes, in the same order. Sibling of the action member, never a query clause — a page size is how the client consumes the result, not part of the Object Query the corpus canonicalizes and round-trips.",
+          "$ref": "#/$defs/streamContext"
         },
         "objectQuery": {
           "description": "The canonical m-object-query document under test: one flat query naming its own queried `target` and carrying its `predicate`, `narrowTo`, `temporal`, `orderBy`, `limit`, and `includes` clauses as siblings. Present on read and rejected cases; absent on writeSequence cases. The `$ref` is the whole contract — no second hand-written pass validates it, and no envelope repeats the queried entity beside it.",
@@ -602,6 +593,14 @@
                 "then": { "required": ["objectQuery"] }
               },
               {
+                "description": "A `stream` step is a READ step inside a `uow` group that states no `expectGraph` (m-case-format *Streamed read steps*). `objectQuery`, because delivery is how a READ is consumed and a write or lifecycle-action step consumes no result. `uow`, for the reason `on` itself requires one: what a delivery retains is transaction-scoped evidence, and a scenario opens a streamed delivery to settle a later write against it. And no `expectGraph`, because what a streamed step materializes BELOW its roots is graded nowhere — admitting the member here would put a shape in the format that no executor answers, which the corpus refuses structurally rather than discovering at run time.",
+                "if": { "required": ["stream"] },
+                "then": {
+                  "required": ["objectQuery", "uow"],
+                  "not": { "required": ["expectGraph"] }
+                }
+              },
+              {
                 "description": "`expectGraph` has exactly TWO placements (m-case-format *Relationship contents at a step*), and they state different things about different graphs. On an `action: access` step it states what an ALREADY-MATERIALIZED view still holds, so it proves the VIEW survived what the steps in between did; on a READ step carrying `objectQuery.includes` it states what THAT read materialized, so it proves what the read's own connection observed — the DATABASE for an ungrouped read, and the group's mid-transaction state for one inside a `uow` group (read-your-own-writes). No other step admits it: a write step and every other action verb materialize no graph and navigate no relationship, so there is nothing for contents to belong to. The ACCESS placement names BOTH ends of the navigation it states: ONE materializing read (`on`) and the relationship it walked from that read's objects (`path`). The `on` ARRAY form spans sources at DIFFERENT lowered coordinates, and contents assembled across several such views would be a graph no single materialized view holds — so an access stating contents names the single read whose Include Paths materialized them. `path` is required for the same reason the contents are keyed by that path's TARGET entity: the path-less `access` form resolves a query-backed list's own source entity and navigates NO relationship, so it has no relationship contents to state and no accessed path an `objectQuery.includes` could cover. The READ placement requires `objectQuery.includes` for the matching reason: a read declaring none materializes root rows and no relationship at all, which `expectRows` already states, and the observable is relationship contents in both placements.",
                 "if": { "required": ["expectGraph"] },
                 "then": {
@@ -654,6 +653,10 @@
                 "type": "array",
                 "minItems": 1,
                 "items": { "type": "object" }
+              },
+              "stream": {
+                "description": "The streamed-delivery context member's SECOND placement (m-case-format *Streamed read steps*): this READ step's `objectQuery` is delivered one root at a time rather than resolved eagerly, and the step's own `statements` are the delivery's pages — each page's `1 + L` group, concatenated — so its `roundTrips` is that list's length. Its `expectRows` are the roots the delivery published across every page. This is what lets a `uow`-grouped write step name it with `on` and settle against the observation the DELIVERY recorded, which is the corpus's own statement that claim scope is derived from evidence data rather than from the value it travelled on.",
+                "$ref": "#/$defs/streamContext"
               },
               "write": {
                 "description": "Marks a WRITE step, in one of three forms (disjoint by JSON type). A legacy string LABEL (a coarse verb hint whose intent lives only in the golden SQL — a deferred migration, still carried by `m-identity-map-006/007/008/011`, `m-process-cache-003`, `m-detach-004`). A single predicate-selected `$defs/predicateWrite` instruction. Or a `$defs/bufferedWriteSequence` — the ORDERED buffer of one-or-more KEYED write instructions a single unit of work accumulates and flushes together (m-unit-work), so the step encodes every buffered mutation explicitly rather than in prose. The buffered form is a GENERAL ordered keyed buffer: it spans a single keyed write, a mixed multi-object flush (insert / update / delete of DIFFERENT objects), and the two-keyed same-object coalescing pair alike — same-object folding at flush is the runtime coalescing rule, not a structural constraint. Predicate-selected instructions inside a buffer stay deferred (keyed-only). Every structured form is the neutral requested operation the compile/run and API no-drift checks consume INDEPENDENTLY of golden SQL; golden SQL (`statements`) remains the independent expected lowering of the flush — for coalescing, one final-value write or NO DML — never the source an adapter deduces the writes from.",
@@ -1205,6 +1208,19 @@
     }
   },
   "$defs": {
+    "streamContext": {
+      "description": "The streamed-delivery context member, in either of its two placements (m-case-format *Streamed reads*): a `read` case's `when`, and a scenario READ step. It means one thing in both — the read is delivered one root at a time in the Continuation Order over keyset-paged root statements — and differs only in where the pages are authored: the case's whole `then.statements`, or the step's own `statements`. It names NO representation: delivery is the verb and the namespace stays the surface's, so an implementation satisfies it through whichever streamed read it exposes, which is why the member is closed around its one page-size field.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["batchSize"],
+      "properties": {
+        "batchSize": {
+          "description": "The page size the stream requests, counted in ROOT positions and never in included relationship rows. Spelled exactly as the lifecycle event's own `batchSize` so the corpus keeps one vocabulary for a page size. A performance dial alone: it changes the pages a read costs and nothing about which roots arrive, their order, or what each carries.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "storedDataIssueCode": {
       "description": "The closed public vocabulary of stored-data violations (m-snapshot-read). Each code names one violation a detecting seam judged without inventing a value; the first four collapse to a producible value and the rest leave the affected position unhydrated.",
       "enum": [

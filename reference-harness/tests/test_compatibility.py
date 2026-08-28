@@ -439,6 +439,84 @@ def test_a_resident_page_binding_the_wrong_path_first_is_refused(provider) -> No
         run_case(case, provider)
 
 
+# --------------------------------------------------------------------------
+# The same oracle at the member's SECOND placement: a streamed scenario READ
+# step (m-case-format "Streamed read steps")
+#
+# A streamed step's own `statements` are a whole delivery's pages, so the step
+# is graded page by page rather than as the one statement every other find step
+# lists. What the placement adds beyond the delivery itself is the evidence the
+# delivery hands over: the write that names it settles against the version THAT
+# delivery observed, which is what the two refusals below and the one above them
+# pin from three directions.
+# --------------------------------------------------------------------------
+
+_STREAMED_EVIDENCE = "m-unit-work-030-a-streamed-roots-evidence-licenses-a-later-write"
+
+
+def _steps(case: Case) -> list[dict[str, Any]]:
+    return case.when["scenario"]
+
+
+def _skip_without_a_golden(case: Case, provider) -> None:
+    """Skip where *case* authors no golden for this provider's dialect.
+
+    Every `m-unit-work` scenario states Postgres goldens alone, and a scenario
+    listing none for a dialect takes the dialect-agnostic path there — it grades
+    no delivery at all, so there is nothing on that dialect to refuse.
+    """
+    dialects = {
+        dialect
+        for step in _steps(case)
+        for entry in step.get("statements", [])
+        for dialect in entry["sql"]
+    }
+    if provider.dialect not in dialects:
+        pytest.skip(f"{case.path.stem} authors no {provider.dialect} golden")
+
+
+def test_a_streamed_step_page_seeking_from_the_wrong_root_is_refused(provider) -> None:
+    """A step's pages reach the delivery oracle, not a single-statement find path."""
+    case = _damaged(_STREAMED_EVIDENCE)
+    _skip_without_a_golden(case, provider)
+    _steps(case)[0]["statements"][1]["binds"][0] = 1
+
+    with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
+        run_case(case, provider)
+
+
+def test_a_streamed_step_ending_on_a_full_page_is_refused(provider) -> None:
+    """Dropping the short final page leaves a delivery that never proved exhaustion.
+
+    A grader taking the step's FIRST statement and stopping would accept this: the
+    remaining page still returns the two roots page 1 asked for.
+    """
+    case = _damaged(_STREAMED_EVIDENCE)
+    _skip_without_a_golden(case, provider)
+    del _steps(case)[0]["statements"][1]
+    _steps(case)[0]["roundTrips"] = 1
+    case.then["roundTrips"] = 5
+
+    with pytest.raises(CaseFailure, match="the delivery is not exhausted"):
+        run_case(case, provider)
+
+
+def test_a_write_settling_against_the_OTHER_delivery_is_refused(provider) -> None:
+    """Which delivery published the root decides the version the write gates on.
+
+    The two deliveries observe account 1 at two generations, so a write naming the
+    first one may not carry the second one's gate. This is the claim the case
+    exists for, damaged: an implementation filing one slot per key rather than one
+    per observed state cannot tell the two apart.
+    """
+    case = _damaged(_STREAMED_EVIDENCE)
+    _skip_without_a_golden(case, provider)
+    _steps(case)[3]["on"] = 0
+
+    with pytest.raises(CaseFailure, match="observed version 1, but its golden gate binds 2"):
+        run_case(case, provider)
+
+
 _NULLS_FIRST_TERMS = [
     _direct_term("sku", direction="asc", nulls="first", nullable=True),
     _direct_term("id", direction="asc", nulls="last", nullable=False),

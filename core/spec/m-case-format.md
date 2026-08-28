@@ -324,7 +324,7 @@ keeps the assertion honest across engines.
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
-| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped write step MAY additionally carry `on`, naming the read step it settles against (see *Settling against a grouped find*, below) |
+| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and a `uow`-grouped write step MAY additionally carry `on`, naming the read step it settles against (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary) |
@@ -333,7 +333,7 @@ keeps the assertion honest across engines.
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — either a standalone/table-level defect or a cross-entity family invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; `concurrency` is the resolved Concurrency Preference, not a claim that every Entity uses one strategy; descriptive |
-| `when.stream` | `when` | no | the streamed delivery of a `read` case (`{batchSize}`) — its presence makes the read streamed rather than eager, and its `batchSize` is the page size in ROOT positions; admitted only beside `then.graph` (see *Streamed reads*, below) |
+| `when.stream` | `when` or a scenario read step | no | the streamed delivery of a `read` case (`{batchSize}`) — its presence makes the read streamed rather than eager, and its `batchSize` is the page size in ROOT positions; admitted only beside `then.graph`, and in its second placement on a `uow`-grouped scenario read step whose own `statements` are the delivery's pages (see *Streamed reads* and *Streamed read steps*, below) |
 | `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `txStart` / physical `in_z` the optimistic gate binds |
 | `when.observedValidStart` | `when` | conflict | the observed milestone's `validStart` / physical `from_z` — with `when.observedTxStart` it is that milestone's own EDGE, naming the milestone the close observed instead of the close's address (see *Naming the observed milestone*, below) |
 | `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `objectQuery`; each MUST normalize and canonicalize to it |
@@ -618,6 +618,12 @@ subject, not this one's.
 streamed peer — a values-lane read publishes no roots to deliver one at a time —
 and a milestone-set `then.graphs` read is not streamable, because a milestone set
 is not keyset-ordered by the root's own key.
+
+The member has a **second placement**: a scenario READ step (*Streamed read
+steps*, below). It means one thing in both — this read is delivered one root at a
+time — and is graded by the same properties in both. What differs is only where
+the pages are authored: a `read` case's whole `then.statements`, a step's own
+`statements`.
 
 **What the case asserts is the whole delivery, page boundaries included.**
 `then.statements` is the ordered concatenation of the pages' own statement
@@ -1201,6 +1207,43 @@ above).
 A write settling against a find's result is **query-result-dependent**: the state
 it settles against is read off a row no compile lane executes, so such a case
 declares `compileEligibility: run-only` (see *Compile eligibility*).
+
+#### Streamed read steps (`stream`)
+
+A scenario READ step MAY carry the same **`stream`** context member a `read`
+case's `when` does, with the same sole field `batchSize` and the same meaning
+(*Streamed reads*, above): the step's `objectQuery` is delivered one root at a
+time in the Continuation Order over keyset-paged root statements rather than
+resolved eagerly. Its own `statements` are that delivery's pages — the ordered
+concatenation of each page's `1 + L` group, exactly as a streamed `read` case's
+`then.statements` is — so its declared `roundTrips` is the length of that list
+and the per-step count rule needs no clause of its own. The three properties
+graded independently of the SQL text are the same three, derived the same way:
+the size each page asks for, the Continuation Order coordinates each page after
+the first seeks from, and the statement a full final page costs to prove
+exhaustion. Its `expectRows` are the roots the delivery published, across every
+page, in delivery order.
+
+This placement is what makes a streamed root's **evidence** gradeable by the
+corpus rather than by one language's own tests. A `uow`-grouped write step naming
+such a step with `on` (*Settling against a grouped find*, above) settles against
+the observation the DELIVERY recorded, so a portable case states what would
+otherwise be a per-implementation claim: claim scope is derived structurally from
+evidence data rather than from the value it travelled on, and **which delivery a
+root arrived through does not change the write it licenses**. A root delivered on
+a page the stream has long since left licenses exactly what a root of the page
+still open does, and a delivery re-reading a key it already delivered files a
+second observation of it exactly as a second find does.
+
+A streamed step declares **`uow`**, for the reason `on` itself does: what a
+delivery retains is transaction-scoped evidence, and a scenario opens a streamed
+delivery to settle against it. It declares no **`expectGraph`**: what a streamed
+step materializes below its roots is graded nowhere, and the format admits no
+shape the corpus does not grade.
+
+A case carrying a streamed step is **query-result-dependent** and therefore
+`run-only` (see *Compile eligibility*), for the reason a streamed `read` case is:
+each continuing page binds coordinates read off the previous page's own result.
 
 #### Predicate-selected write instruction
 
@@ -2245,8 +2288,9 @@ of `when` + `given`, so only `run` grades it. Two criteria make a case run-only:
   off the milestone a find of its own unit of work observed (*Settling against a
   grouped find*, above), or a streamed read's **keyset seek** — a page after the
   first binds the Continuation Order coordinates of the root the previous page
-  delivered last, so **every** `when.stream` case is run-only, including one
-  declaring no includes at all. `given` fixtures are legitimate
+  delivered last, so **every** case carrying a `stream` member — a streamed
+  `read` case or a scenario carrying a streamed read step — is run-only, including
+  one declaring no includes at all. `given` fixtures are legitimate
   inputs; `then` expectations are never fed back.
 
 Eligibility is an **authored, reviewed** declaration — intent is a human judgment.

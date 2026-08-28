@@ -16,7 +16,7 @@ the single-entity cases always query).
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from functools import cached_property
 from pathlib import Path
@@ -1105,6 +1105,38 @@ def load_model(compatibility_root: Path, model_rel: str) -> Model:
     model = Model(path=model_path, descriptor=descriptor, fixtures=fixtures)
     _MODEL_CACHE[key] = model
     return model
+
+
+def step_as_read(case: Case, step: dict[str, Any]) -> Case:
+    """*step* presented as the READ case its own materialization belongs to.
+
+    A row materializer asks a case for the read it is materializing — the target
+    its Object Query names, and the projection shape its golden ``select``
+    states — because a `read` case has exactly one of each. A scenario READ step
+    has its own, and the two placements of a streamed delivery (`m-case-format`
+    *Streamed reads*) put them in different members of one case, so the step is
+    handed over in the vocabulary those materializers already speak rather than
+    each of them being taught a second place to look. Everything they read
+    BESIDE those two stays the case's own: the model, the path a failure names,
+    and the comparison tolerance.
+
+    The result is deeply frozen like any parsed case, so nothing downstream can
+    tell it apart by mutability either.
+    """
+    then: dict[str, Any] = {"statements": step.get("statements", [])}
+    if "tolerance" in case.then:
+        then["tolerance"] = case.then["tolerance"]
+    return replace(
+        case,
+        raw=_freeze(
+            {
+                "model": case.raw["model"],
+                "shape": "read",
+                "when": {key: step[key] for key in ("objectQuery", "stream") if key in step},
+                "then": then,
+            }
+        ),
+    )
 
 
 def load_case(compatibility_root: Path, case_path: Path) -> Case:

@@ -21,7 +21,7 @@ import os
 import socket
 import threading
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Final, Literal, Protocol, cast, runtime_checkable
@@ -700,9 +700,18 @@ def run_graph_case(
 _STREAM_ERRORS = (*_READ_ERRORS, ContinuationError, handle.SnapshotStreamStateError)
 
 
-def _stream_batch_size(case: case_format.Case) -> int:
-    when = case.document.get("when")
-    stream = cast("Mapping[str, object]", when).get("stream") if isinstance(when, Mapping) else None
+def _batch_size_of(carrier: Mapping[str, object], where: str) -> int | None:
+    """The page size the `stream` context member on ``carrier`` requests, or
+    ``None`` where it carries no such member and the read is therefore eager.
+
+    One reader for the member's two placements (`m-case-format` *Streamed
+    reads*): a `read` case's own ``when``, and a scenario READ step. The member
+    means one thing in both, so a page size is read one way in both, and
+    ``where`` names the placement a malformed one is reported at.
+    """
+    stream = carrier.get("stream")
+    if stream is None:
+        return None
     size = (
         cast("Mapping[str, object]", stream).get("batchSize")
         if isinstance(stream, Mapping)
@@ -710,9 +719,21 @@ def _stream_batch_size(case: case_format.Case) -> int:
     )
     if not isinstance(size, int) or isinstance(size, bool) or size < 1:
         raise EngineError(
-            f"{case.path.name}: a streamed case declares a positive integer "
-            f"`when.stream.batchSize` (got {size!r})"
+            f"{where}: a streamed delivery declares a positive integer "
+            f"`stream.batchSize` (got {size!r})"
         )
+    return size
+
+
+def _stream_batch_size(case: case_format.Case) -> int:
+    when = case.document.get("when")
+    size = (
+        _batch_size_of(cast("Mapping[str, object]", when), f"{case.path.name}: when.stream")
+        if isinstance(when, Mapping)
+        else None
+    )
+    if size is None:
+        raise EngineError(f"{case.path.name}: a streamed case declares `when.stream.batchSize`")
     return size
 
 
@@ -4157,19 +4178,30 @@ class _GroupState:
 def _published_nodes(snapshot: handle.Snapshot[handle.WireEntity]) -> tuple[handle.WireEntity, ...]:
     """Every Entity node ``snapshot`` published, each once, in walk order.
 
+    The roots come from the CHECKED view, because invalid stored data is a fact
+    about a root rather than a refusal of the read.
+    """
+    return _published_from(snapshot.checked().results())
+
+
+def _published_from(roots: Iterable[object]) -> tuple[handle.WireEntity, ...]:
+    """Every Entity node ``roots`` carry, each once, in walk order.
+
     Publication is what settles ownership: a value a caller was handed is the one
     a later keyed write may be addressed by, so the walk starts at the published
     roots and descends the values they carry rather than reading the read's own
     retained sources. A frozen Wire node is a ``dict`` and therefore unhashable,
-    which is why the visited set is identity-keyed over objects the Snapshot
-    holds for the walk's whole duration.
+    which is why the visited set is identity-keyed over objects the caller holds
+    for the walk's whole duration.
 
-    The roots come from the CHECKED view, because invalid stored data is a fact
-    about a root rather than a refusal of the read: a HYDRATABLE record's
-    collapse produced legal member values, so the node in its ``data`` is an
-    ordinary observed source and enters the walk unwrapped, while a
-    NON-HYDRATING record carries no value to publish and contributes none — which
-    is what leaves the wrapper itself unwritable.
+    How the roots ARRIVED is not among the things this reads: a Snapshot's whole
+    result and a Snapshot Stream's delivered roots walk identically, which is the
+    claim `m-unit-work-030` states in the corpus — evidence belongs to the value
+    rather than to the delivery that carried it. A HYDRATABLE record's collapse
+    produced legal member values, so the node in its ``data`` is an ordinary
+    observed source and enters the walk unwrapped, while a NON-HYDRATING record
+    carries no value to publish and contributes none — which is what leaves the
+    wrapper itself unwritable.
     """
     nodes: list[handle.WireEntity] = []
     visited: set[int] = set()
@@ -4177,7 +4209,7 @@ def _published_nodes(snapshot: handle.Snapshot[handle.WireEntity]) -> tuple[hand
         cast("handle.InvalidData[object]", root).data
         if isinstance(root, handle.InvalidData)
         else root
-        for root in snapshot.checked().results()
+        for root in roots
     ]
     cursor = 0
     while cursor < len(frontier):
@@ -4433,13 +4465,20 @@ def _run_group_step(
     lock its target Entity's own Effective Concurrency Strategy calls for, and
     retains onto each published node what a later write settles against — and
     records the nodes it published into ``state``, which this function extends
-    in place. ``observation`` is the group's own port observation, read across
-    that call to recover the statements the find step emits.
+    in place. A find step carrying `stream` (`m-case-format` *Streamed read
+    steps*) runs through ``tx.wire.stream`` at its declared page size instead,
+    and what it records is the same thing: the roots the DELIVERY published,
+    walked identically, because a value's evidence is a property of the value
+    rather than of how it arrived. ``observation`` is the group's own port
+    observation, read across either call to recover the statements the step
+    emits — for a delivery, every page's.
 
-    Returns the step's lowered emission pointer, and a find step's own read
-    output beside it: what a caller does with the rows it returned — grade them,
-    ignore them — is the caller's affair, and is the only thing the two runners
-    still do differently.
+    Returns the step's lowered emission pointer, and an eager find step's own
+    read output beside it: what a caller does with the rows it returned — grade
+    them, ignore them — is the caller's affair, and is the only thing the two
+    runners still do differently. A streamed step answers none, and owes none:
+    the only observable read off that output is the relationship contents an
+    `expectGraph` states, which the format does not admit on a streamed step.
     """
     model = context.model
     if "write" in step:
@@ -4474,8 +4513,14 @@ def _run_group_step(
             None,
         )
     mark = observation.round_trips
-    snapshot = tx.wire.find(_step_query(step))
-    nodes = _published_nodes(snapshot)
+    batch_size = _batch_size_of(step, f"/scenario/{index}/stream")
+    if batch_size is None:
+        snapshot = tx.wire.find(_step_query(step))
+        nodes = _published_nodes(snapshot)
+    else:
+        with tx.wire.stream(_step_query(step), batch_size=batch_size) as delivery:
+            nodes = _published_from(list(delivery.checked()))
+        snapshot = None
     state.finds[index] = nodes
     state.published.extend(nodes)
     return _LoweredStep(

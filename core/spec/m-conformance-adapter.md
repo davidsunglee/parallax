@@ -449,10 +449,22 @@ exposes and reports:
   **empty** `emissions` list; the statements the case authors are then graded by
   executing them, which is what the corpus runner does with every golden.
 
-Under `compile`, a `when.stream` case is **always** run-only: its later pages
-bind coordinates read off an earlier page's result, which is the
-`query-result-dependent` criterion, so the adapter answers the defined
-`status: "run-only"` envelope for one exactly as it does for a deep fetch.
+A **scenario read step** carrying `stream` (`m-case-format` *Streamed read
+steps*) is satisfied the same way, inside the unit of work its `uow` group runs
+in: the adapter opens its own streamed read over that step's `objectQuery` at
+that step's `batchSize`, drains it, and reports the delivery's own statements
+under the step's pointer — every page's, in execution order — exactly as an
+ordinary find step reports its one. What the delivery published is what the
+step's `expectRows` grades, and it is also the evidence a later write step
+naming that step with `on` settles against: an adapter resolving such a write
+from anything but the observation its own delivery recorded fails the case on
+the gate that write binds.
+
+Under `compile`, a case carrying a `stream` member anywhere is **always**
+run-only: its later pages bind coordinates read off an earlier page's result,
+which is the `query-result-dependent` criterion, so the adapter answers the
+defined `status: "run-only"` envelope for one exactly as it does for a deep
+fetch.
 
 ### Execution lifecycle (`executionLifecycle`)
 

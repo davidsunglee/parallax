@@ -1456,6 +1456,66 @@ def _streamed_write_sequence() -> dict[str, Any]:
     return doc
 
 
+def _streamed_scenario_step_case() -> dict[str, Any]:
+    """A scenario whose grouped find is delivered as a stream, and the write it
+    licenses (`m-case-format` *Streamed read steps*)."""
+    doc = _settled_write_scenario_case()
+    doc["when"]["scenario"][0]["stream"] = {"batchSize": 2}
+    doc["when"]["scenario"][0]["roundTrips"] = 2
+    doc["when"]["scenario"][0]["statements"].append(
+        {
+            "sql": {"postgres": "select t0.pos_id from position t0 where t0.pos_id > ?"},
+            "binds": [1, 2],
+        }
+    )
+    doc["then"]["roundTrips"] = 3
+    return doc
+
+
+def test_schema_accepts_a_streamed_scenario_read_step() -> None:
+    assert _is_valid(_streamed_scenario_step_case())
+
+
+def _streamed_step_without_a_group() -> dict[str, Any]:
+    # A delivery's evidence is transaction-scoped, so a streamed step outside a
+    # `uow` group has nothing to hand a later write.
+    doc = _streamed_scenario_step_case()
+    del doc["when"]["scenario"][0]["uow"]
+    return doc
+
+
+def _streamed_write_step() -> dict[str, Any]:
+    # Delivery is how a READ is consumed; a write step consumes no result.
+    doc = _streamed_scenario_step_case()
+    doc["when"]["scenario"][1]["stream"] = {"batchSize": 2}
+    return doc
+
+
+def _streamed_step_stating_relationship_contents() -> dict[str, Any]:
+    # What a streamed step materializes below its roots is graded nowhere.
+    doc = _streamed_scenario_step_case()
+    doc["when"]["scenario"][0]["objectQuery"]["includes"] = [
+        {"segments": [{"rel": "Position.legs"}]}
+    ]
+    doc["when"]["scenario"][0].pop("expectRows")
+    doc["when"]["scenario"][0]["expectGraph"] = {"Position": [{"id": 1}]}
+    return doc
+
+
+def _streamed_step_zero_page_size() -> dict[str, Any]:
+    doc = _streamed_scenario_step_case()
+    doc["when"]["scenario"][0]["stream"] = {"batchSize": 0}
+    return doc
+
+
+def _streamed_step_naming_a_representation() -> dict[str, Any]:
+    # The second placement is the same closed member: it names no representation
+    # there either.
+    doc = _streamed_scenario_step_case()
+    doc["when"]["scenario"][0]["stream"] = {"batchSize": 2, "interface": "typed"}
+    return doc
+
+
 REJECTED_CASES = {
     "write-value-step-with-golden-statements": _write_value_step_with_golden_statements,
     "write-value-step-costing-a-round-trip": _write_value_step_costing_a_round_trip,
@@ -1517,6 +1577,11 @@ REJECTED_CASES = {
     "streamed-beside-rows": _streamed_beside_rows,
     "streamed-beside-milestone-graphs": _streamed_beside_milestone_graphs,
     "streamed-write-sequence": _streamed_write_sequence,
+    "streamed-step-without-a-group": _streamed_step_without_a_group,
+    "streamed-write-step": _streamed_write_step,
+    "streamed-step-stating-relationship-contents": _streamed_step_stating_relationship_contents,
+    "streamed-step-zero-page-size": _streamed_step_zero_page_size,
+    "streamed-step-naming-a-representation": _streamed_step_naming_a_representation,
 }
 
 
