@@ -128,9 +128,9 @@ For each workload the harness measures and reports:
 - **database round trips** — the count of authored statements the run issued,
   reported beside the workload's declared count, so the statement cost of a
   workload sits in the report next to its timings rather than being left to the
-  wall-clock figures alone. It is a reported figure and not a check: what makes
-  `m-deep-fetch` / `m-unit-work` round-trip discipline binding is the
-  compatibility corpus's golden statements;
+  wall-clock figures alone. The two agreeing is a fixture-consistency check and
+  not a target-conformance one: what makes `m-deep-fetch` / `m-unit-work`
+  round-trip discipline binding is the compatibility corpus's golden statements;
 - **memory** — **peak** and **steady** resident set over the run (cache/index
   footprint is a first-class cost for a cache-centric framework).
 
