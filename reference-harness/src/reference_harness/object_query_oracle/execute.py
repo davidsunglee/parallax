@@ -454,6 +454,14 @@ def query_temporal_selections(query: Any) -> dict[str, _TemporalSelection]:
     return selections
 
 
+def scans_an_axis(query: dict[str, Any]) -> bool:
+    """Whether *query* is a milestone-set read — one root per milestone."""
+    return any(
+        isinstance(selection, _HistorySelection | _AsOfRangeSelection)
+        for selection in query_temporal_selections(query).values()
+    )
+
+
 def root_asof_pins(query: dict[str, Any]) -> dict[str, str]:
     """Map ``{dimension: coordinate}`` from the read's own ``asOf`` selections.
 

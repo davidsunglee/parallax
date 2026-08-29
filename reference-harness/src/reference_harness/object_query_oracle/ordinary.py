@@ -11,7 +11,7 @@ from ..case import Case, Entity
 from ..case_assertions import CaseFailure, rows_equal
 from ..inheritance import STRATEGY_TPCS, STRATEGY_TPH
 from ..sql_canonical import sqlglot_dialect
-from . import execute, graph, includes, materialize
+from . import execute, graph, includes, materialize, stream
 from .executor import ReadExecutor
 
 
@@ -36,7 +36,8 @@ def assert_case_read(case: Case, reader: ReadExecutor) -> None:
     # over flat rows. Delivery precedes every result member because the delivery, not
     # the member, decides how `then.statements` reads.
     if case.is_streamed:
-        raise NotImplementedError("streamed delivery")
+        _assert_stream(case, reader)
+        return
     if includes.query_has_includes(case.object_query):
         _assert_deep_fetch(case, reader)
         return
@@ -98,6 +99,53 @@ def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:
                 f"{case.path.name}: referenceSql rows != then.rows.\n"
                 f"  reference: {reference!r}\n"
                 f"  expected:  {expected!r}"
+            )
+
+
+def _assert_stream(case: Case, reader: ReadExecutor) -> None:
+    """Assert a streamed READ CASE: the delivery its pages state, then its result.
+
+    The delivery itself — the page partition and the properties derived from it —
+    is :func:`..stream.deliver_stream`'s; what this adds is the case-level result
+    oracle a `read` shape carries. The published roots are the concatenation of
+    the pages', compared to the case's own result member exactly as an eager
+    read's are, and to the independent ``then.referenceSql`` row set beside it.
+
+    A milestone-set delivery states ``then.graphs`` instead, and is graded by the
+    same partition oracle the eager milestone-set read is: a delivery publishes
+    roots rather than graphs, each standing at its own edge pin, so the graphs are
+    recovered from the delivered roots' own edge coordinates and every
+    disjointness rule the eager form states holds unchanged.
+    """
+    dialect = reader.dialect
+    delivered = stream.deliver_stream(case, reader, "then.statements")
+    root_entity = _graphs_root_entity(case)
+    graph_specs = case.expected_graphs
+    if graph_specs is not None:
+        graph.assert_milestone_partition(
+            case, root_entity, delivered.root_rows, delivered.nodes, graph_specs
+        )
+    else:
+        assembled = {root_entity.name: delivered.nodes}
+        expected = case.expected_graph or {}
+        if not graph.graphs_equal(assembled, expected, case.model):
+            raise CaseFailure(
+                f"{case.path.name}: delivered graph != then.graph.\n"
+                f"  delivered: {assembled!r}\n"
+                f"  expected:  {expected!r}"
+            )
+
+    reference_sql = case.reference_sql_for(dialect)
+    if reference_sql is not None:
+        reference = materialize.materialize_family_variant(
+            case, execute.reference_rows(reader, reference_sql)
+        )
+        root_projection = [execute.project_like(row, delivered.root_rows) for row in reference]
+        if not rows_equal(root_projection, delivered.root_rows, case.tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: referenceSql root rows != the delivered root rows.\n"
+                f"  reference: {reference!r}\n"
+                f"  delivered: {delivered.root_rows!r}"
             )
 
 
@@ -163,11 +211,12 @@ def _assert_deep_fetch(case: Case, reader: ReadExecutor) -> None:
 
 
 def _graphs_root_entity(case: Case) -> Entity:
-    """The entity a `history` / `asOfRange` graph read is rooted at.
+    """The entity a graph-publishing read is rooted at.
 
-    A milestone-set graph read (`then.graphs`) is a flat temporal read — history
-    with Includes is out of scope for both v1 slices — so the root is the read's
-    own query ``target``.
+    The eager milestone-set terminal and the streamed one both publish roots of
+    the read's own query ``target``: a milestone-set graph read (`then.graphs`) is
+    a flat temporal read — history with Includes is out of scope for both v1
+    slices — and a delivery's roots are the root level of its pages.
     """
     return case.model.entity(case.object_query["target"])
 
