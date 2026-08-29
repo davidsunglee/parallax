@@ -846,3 +846,4 @@ carry at all — needs the entry it stood for:
 - `.humanlayer/tasks/cor-47-build-python-declarations/09-deferred-ledger.md` — D-36 … D-48.
 - `.humanlayer/tasks/cor-85-typed-and-wire-apis/19-deferred-ledger.md` — D-71, D-73.
 - `.humanlayer/tasks/cor-83-stream-deep-fetch-reads-at-fixed-memory/08-deferred-ledger.md` — D-84, D-86.
+- `.humanlayer/tasks/cor-115-reference-harness-object-query-oracle/08-deferred-ledger.md` — D-55.
