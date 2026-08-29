@@ -564,11 +564,12 @@ class ScenarioReads:
 def _runner_owned(step: Mapping[str, Any]) -> str | None:
     """Why Scenario orchestration owns *step*, or ``None`` when this oracle does.
 
-    The complement of "is this a read step?", written once and on the runner's
-    side of the seam, so the classification has one authority: the runner routes
-    the closed set of kinds it owns and sends everything else here. What is stated
-    here is what those kinds are, so a step arriving that should not have is named
-    rather than mis-graded.
+    The complement of "is this a read step?": the runner routes the closed set of
+    kinds it owns and sends everything else here, and this is the oracle's own
+    reading of that same classification. The two MUST agree — so a step the runner
+    owns is named here rather than mis-graded as a read, and a kind this refuses
+    that the runner nevertheless routes here is a disagreement about the seam
+    rather than an authoring error in the case.
     """
     if "write" in step:
         return "is a write step, whose DML and lifecycle belong to Scenario orchestration."
@@ -698,14 +699,26 @@ def _step_as_read(case: Case, step: Mapping[str, Any]) -> Case:
     """*step* presented as the READ case its own materialization belongs to.
 
     A row materializer asks a case for the read it is materializing — the target
-    its Object Query names, and the projection shape its golden ``select`` states —
-    because a `read` case has exactly one of each. A Scenario read step has its
-    own, so it is handed over in the vocabulary those materializers already speak
-    rather than each of them being taught a second place to look. Everything they
-    read BESIDE those two stays the case's own: the model, the path a failure
-    names, and the comparison tolerance.
+    its Object Query names, the projection shape its golden ``select`` states, and
+    the result form that shape belongs to — because a `read` case has exactly one
+    of each. A Scenario read step has its own, so it is handed over in the
+    vocabulary those materializers already speak rather than each of them being
+    taught a second place to look. Everything they read BESIDE those three stays
+    the case's own: the model, the path a failure names, and the comparison
+    tolerance.
+
+    The form is instance-form for every step that reaches here: an observation
+    find, a resolving ``load``, and a first ``access`` are all the object lane
+    (`m-case-format` *Read result form*), and the sole row-form step read — the
+    materialized-predicate-write resolving find — sits inside a write step, which
+    Scenario orchestration owns. A read case states its lane by WHICH observation
+    member it carries, so that is how this presentation states it, and an abstract
+    table-per-concrete-subtype step is graded on projecting the top-level Value
+    Object `Document` slot its lane requires rather than on omitting it. The
+    member's CONTENTS are never read: what a step observed is graded against the
+    step's own ``expectRows`` / ``expectGraph``.
     """
-    then: dict[str, Any] = {"statements": step.get("statements", [])}
+    then: dict[str, Any] = {"statements": step.get("statements", []), "graph": {}}
     if "tolerance" in case.then:
         then["tolerance"] = case.then["tolerance"]
     return replace(

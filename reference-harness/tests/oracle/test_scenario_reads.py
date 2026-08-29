@@ -39,7 +39,8 @@ _STREAMED_EVIDENCE = "m-unit-work-030-a-streamed-roots-evidence-licenses-a-later
 _ABSTRACT_FIND = "m-inheritance-130-tph-abstract-find-licenses-concrete-update.yaml"
 _RESOLVING_READ = "m-bitemp-write-010-predicate-plain-update-materialize.yaml"
 _ONE_OBJECT_TWO_FINDS = "m-identity-map-001-same-transaction-identity.yaml"
-_TPCS_ABSTRACT_READ = "m-inheritance-050-tpcs-abstract-root-read.yaml"
+_TPCS_ROW_FORM_READ = "m-inheritance-050-tpcs-abstract-root-read.yaml"
+_TPCS_INSTANCE_FORM_READ = "m-inheritance-137-tpcs-union-vo-placeholder.yaml"
 
 
 def _order(
@@ -307,23 +308,28 @@ def test_an_abstract_target_step_publishes_familyVariant_not_the_raw_tag(
     reads.assert_step(0, ScriptedReads(results=[physical]))
 
 
-def _as_a_one_step_scenario(case: Case) -> Case:
+def _as_a_one_step_scenario(case: Case, expect_rows: list[dict[str, Any]]) -> Case:
     """A shipped `read` case restated as the Scenario step it would be authored as.
 
     A Scenario states its reads under the step and nothing at the top level, so a
-    corpus read case is the closest thing to an authored step there is: its target,
-    goldens, and expected rows move under ``when.scenario[0]`` unchanged.
+    corpus read case is the closest thing to an authored step there is: its target
+    and goldens move under ``when.scenario[0]`` unchanged. What the step observes is
+    stated separately, because a step has one observation channel — ``expectRows`` —
+    whichever result member the read case asserted it through.
     """
     read = case.raw["when"]["objectQuery"]
     statements = case.raw["then"]["statements"]
-    rows = case.raw["then"]["rows"]
     case.raw["shape"] = "scenario"
     case.raw["when"] = {
-        "scenario": [{"objectQuery": read, "statements": statements, "expectRows": rows}]
+        "scenario": [{"objectQuery": read, "statements": statements, "expectRows": expect_rows}]
     }
     case.raw["then"] = {}
     return case
 
+
+# The `union all` presence cell is aliased by ordinal for execution, and the
+# annotation pair is the eighth projection of the instance-form golden.
+_ANNOTATION_PRESENCE = "__parallax_document_presence_7"
 
 _DOCUMENT_FAMILY: list[dict[str, Any]] = [
     {
@@ -334,6 +340,8 @@ _DOCUMENT_FAMILY: list[dict[str, Any]] = [
         "amount_due": Decimal("120.00"),
         "body": None,
         "paid_amount": None,
+        _ANNOTATION_PRESENCE: False,
+        "annotation": None,
         "family_variant": "Invoice",
     },
     {
@@ -344,6 +352,8 @@ _DOCUMENT_FAMILY: list[dict[str, Any]] = [
         "amount_due": Decimal("80.00"),
         "body": None,
         "paid_amount": None,
+        _ANNOTATION_PRESENCE: False,
+        "annotation": None,
         "family_variant": "Invoice",
     },
     {
@@ -354,6 +364,8 @@ _DOCUMENT_FAMILY: list[dict[str, Any]] = [
         "amount_due": None,
         "body": "Reminder",
         "paid_amount": None,
+        _ANNOTATION_PRESENCE: True,
+        "annotation": {"author": "Ada", "priority": "high"},
         "family_variant": "Memo",
     },
     {
@@ -364,9 +376,25 @@ _DOCUMENT_FAMILY: list[dict[str, Any]] = [
         "amount_due": None,
         "body": None,
         "paid_amount": Decimal("120.00"),
+        _ANNOTATION_PRESENCE: False,
+        "annotation": None,
         "family_variant": "Receipt",
     },
 ]
+
+
+_UNPUBLISHED_COLUMNS = frozenset({_ANNOTATION_PRESENCE, "family_variant"})
+
+
+def _as_published(row: dict[str, Any]) -> dict[str, Any]:
+    """One physical `union all` row as the step's ``expectRows`` state it: the
+    execution-only presence cell gone, the branch literal materialized, and the
+    instance-form `Document` slot carried through."""
+    kept = {key: value for key, value in row.items() if key not in _UNPUBLISHED_COLUMNS}
+    return kept | {"familyVariant": row["family_variant"]}
+
+
+_DOCUMENT_FAMILY_ROWS: list[dict[str, Any]] = [_as_published(row) for row in _DOCUMENT_FAMILY]
 
 
 def test_a_table_per_concrete_subtype_step_materializes_against_its_own_read(
@@ -379,9 +407,28 @@ def test_a_table_per_concrete_subtype_step_materializes_against_its_own_read(
     and projection shape it renames `family_variant` out of — none of which a
     Scenario case carries at the top level, where a whole-case read states them.
     """
-    reads = ScenarioReads(_as_a_one_step_scenario(damaged_case(_TPCS_ABSTRACT_READ)))
+    case = _as_a_one_step_scenario(damaged_case(_TPCS_INSTANCE_FORM_READ), _DOCUMENT_FAMILY_ROWS)
+    reads = ScenarioReads(case)
 
     reads.assert_step(0, ScriptedReads(results=[_DOCUMENT_FAMILY]))
+
+
+def test_a_table_per_concrete_subtype_step_is_graded_in_the_instance_form_it_reads(
+    damaged_case: CaseLoader,
+) -> None:
+    """A step read is the object lane, so its `union all` superset carries the slot.
+
+    The two goldens are the same query in the two result forms, and they differ by
+    exactly the top-level Value Object `Document` pair rule 3 adds. The row-form one
+    an eager `then.rows` case authors is therefore not a step's golden: presented as
+    a step it is refused for the column it omits, and the refusal is reached from the
+    golden text alone, so it does not depend on a row arriving.
+    """
+    case = _as_a_one_step_scenario(damaged_case(_TPCS_ROW_FORM_READ), [])
+    reads = ScenarioReads(case)
+
+    with pytest.raises(CaseFailure, match=r"not the stable superset.*'annotation'"):
+        reads.assert_step(0, ScriptedReads(results=[[]]))
 
 
 def test_a_find_listing_sql_for_levels_its_query_declares_none_of_is_refused(
