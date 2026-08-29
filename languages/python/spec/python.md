@@ -4447,12 +4447,12 @@ remains observable rather than making Python its own oracle.
   import, keeping psycopg out of the conformance adapter's import graph.
   A profile also constitutes the runs made under its name. `run_case` takes one
   `ProfileRun` — the profile's reporting name paired with the port the case
-  executes through — and only a profile makes one: `provisioned()` opens the
-  profile's own provisioner and yields the run over the port it opened,
-  `unprovisioned()` yields the run of a `rejected`-shape case over a port that
-  refuses SQL, and `on_stand_in(port)` is the one way to pair a profile with a port
-  it did not open, for the unit tests and Docker-free sweeps that stand a double in
-  for a database. No caller that publishes an envelope from a real run names a port
+  executes through — and a run is constructed from a profile rather than from a
+  name: `provisioned()` opens the profile's own provisioner and yields the run over
+  the port it opened, `unprovisioned()` yields the run of a `rejected`-shape case
+  over a port that refuses SQL, and `on_stand_in(port)` names the substitution the
+  unit tests and Docker-free sweeps make when they stand a double in for a
+  database. No caller that publishes an envelope from a real run names a port
   at all, so a run reported under one profile beside another's database is
   unspellable rather than merely checked
   (`database-provider-test-contract.md`). The declaration itself does not travel,

@@ -31,8 +31,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 _SCHEMA = adapter_schema()
 # The declared profile these suites run under, read off the one roster rather than
 # spelled as a label. Nothing here provisions it: each run is built over the port the
-# test stands in for a database, which is the one way to pair a profile with a port
-# it did not open.
+# test stands in for a database, and says so by naming the substitution.
 _PROFILE = profile_for("pg-full")
 _READ_CASE = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
 _VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"

@@ -10,10 +10,10 @@ to the concrete adapter is deferred inside the provisioner, keeping the driver o
 of every import graph that only needs to answer which SQL a profile is spelled in.
 
 A profile also constitutes its own runs. :class:`ProfileRun` pairs the name a run
-reports under with the port it executes through, and a profile is what makes one,
-so a run reported under one profile beside a database another opened has no
-spelling here rather than being caught after the fact
-(`database-provider-test-contract.md`).
+reports under with the port it executes through, and it is constructed from a
+profile rather than from a name, so the pairing is made by the profile instead of
+checked after the fact (`database-provider-test-contract.md`). The lanes that
+publish a run name no port at all: the profile opens it.
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ class _NoProvisioningPort:
         raise AssertionError("a rejected-case run must not open a transaction")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ProfileRun:
     """One run of a declared profile: the name it reports under, and the port the
     case executes through.
@@ -90,10 +90,14 @@ class ProfileRun:
     One value rather than two arguments because a name and a port passed apart can
     disagree — a run reported under one profile while another's database executed
     it is a well-formed and false report, and two profiles sharing a dialect leave
-    nothing in the report to notice it. So the pair is constructed rather than
-    checked: :meth:`Profile.provisioned`, :meth:`Profile.unprovisioned`, and
-    :meth:`Profile.on_stand_in` are the only ways to make one, and each names the
-    profile whose port it holds.
+    nothing in the report to notice it. So a reporting name is not spellable beside
+    a port: this takes the profile itself and reads the name off it, and a run
+    reported under a name no profile answers to has no spelling here. A profile's
+    own runs — the ones a published envelope comes from — are
+    :meth:`Profile.provisioned` and :meth:`Profile.unprovisioned`, which name no
+    port at all. Pairing a profile with a port it did not open is what this
+    constructor does, and :meth:`Profile.on_stand_in` is its spelling at the call
+    sites that need it, which say so by using it.
 
     It answers no dialect of its own. What executes spells its own SQL, so the
     dialect a run is graded and reported in is read off ``port`` alone (`m-dialect`).
@@ -102,25 +106,38 @@ class ProfileRun:
     name: str
     port: DbPort
 
+    def __init__(self, profile: Profile, port: DbPort) -> None:
+        object.__setattr__(self, "name", profile.name)
+        object.__setattr__(self, "port", port)
 
-@dataclass(frozen=True, slots=True)
-class ProvisionedRun(ProfileRun):  # pragma: no cover - exercised by the Docker-backed lanes
+
+@dataclass(frozen=True, slots=True, init=False)
+class ProvisionedRun(ProfileRun):
     """A :class:`ProfileRun` over a database the profile provisioned for it.
+
+    It takes the open provisioner and reads the port off it rather than being
+    handed the two, so the database this run reports through is the one this
+    provisioner opened.
 
     Preparing that database is part of running a case, so the provider operations
     a run needs are delegated here rather than the provisioner being handed out:
-    a caller that could take the recipe back out could open a second database and
-    pair it with a different profile's name, which is the arrangement
-    :class:`ProfileRun` exists to make unspellable.
+    handing the recipe back out would give a caller that needs only the database
+    this run holds the means to open a second one.
     """
 
     _provisioner: Provisioner
 
-    def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
+    def __init__(self, profile: Profile, provisioner: Provisioner) -> None:
+        ProfileRun.__init__(self, profile, provisioner.port)
+        object.__setattr__(self, "_provisioner", provisioner)
+
+    def reset(  # pragma: no cover - exercised by the Docker-backed lanes
+        self, model: Metamodel, fixtures: Mapping[str, object]
+    ) -> None:
         """Reset the schema, apply the model-derived DDL, and load the fixtures."""
         self._provisioner.reset(model, fixtures)
 
-    def peer(self, *, autocommit: bool = True) -> DbPort:
+    def peer(self, *, autocommit: bool = True) -> DbPort:  # pragma: no cover - Docker
         """An independent second connection to the same database (provider `peer`)."""
         return self._provisioner.peer(autocommit=autocommit)
 
@@ -152,7 +169,7 @@ class Profile:
         """
         provisioner = self.provisioner()
         try:
-            yield ProvisionedRun(self.name, provisioner.port, provisioner)
+            yield ProvisionedRun(self, provisioner)
         finally:
             provisioner.close()
 
@@ -165,11 +182,11 @@ class Profile:
         only this profile's dialect, which is what the refusal is classified and
         reported under.
         """
-        return ProfileRun(self.name, _NoProvisioningPort(self.dialect))
+        return ProfileRun(self, _NoProvisioningPort(self.dialect))
 
     def on_stand_in(self, port: DbPort) -> ProfileRun:
-        """This profile's run over *port* — the one way to build a run whose
-        database this profile did not open.
+        """This profile's run over *port* — a run whose database this profile did
+        not open, named at the call site as the substitution it is.
 
         It exists for the callers that stand a double in for a database: unit tests
         driving the adapter core through a scripted port, and the Docker-free
@@ -179,7 +196,7 @@ class Profile:
         one reaches a run through :meth:`provisioned` or :meth:`unprovisioned` and
         names no port at all.
         """
-        return ProfileRun(self.name, port)
+        return ProfileRun(self, port)
 
 
 PROFILES: Final[tuple[Profile, ...]] = (Profile("pg-full", Provisioner),)

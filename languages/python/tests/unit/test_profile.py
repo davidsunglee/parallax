@@ -23,6 +23,7 @@ from parallax.conformance.profile import (
     PROFILES,
     Profile,
     ProfileRun,
+    ProvisionedRun,
     profile_dialects,
     profile_for,
 )
@@ -73,7 +74,7 @@ class _StandInPort:
 
 
 def test_a_run_pairs_the_profiles_reporting_name_with_the_port_it_runs_through() -> None:
-    # The pairing is what a run is reported from, and only a profile makes one, so
+    # The pairing is what a run is reported from, and a profile is what makes one, so
     # the name an envelope carries and the port that produced it cannot be a pair
     # some caller assembled. It answers no dialect of its own — what executes does.
     profile = profile_for("pg-full")
@@ -82,6 +83,30 @@ def test_a_run_pairs_the_profiles_reporting_name_with_the_port_it_runs_through()
     assert isinstance(run, ProfileRun)
     assert (run.name, run.port) == (profile.name, port)
     assert not hasattr(run, "dialect")
+
+
+def test_a_run_cannot_be_spelled_from_a_reporting_name_beside_a_port() -> None:
+    # What makes the pairing constructed rather than checked: a run takes the profile
+    # itself, so there is no argument position a caller can put a borrowed name in.
+    # A name is read off the profile handed over, never accepted beside the port.
+    with pytest.raises(AttributeError):
+        ProfileRun("pg-full", _StandInPort())  # type: ignore[arg-type]
+
+
+class _StandInProvisioner:
+    """A provisioner double: it opens nothing and answers the port it was given."""
+
+    def __init__(self, port: DbPort) -> None:
+        self.port = port
+
+
+def test_a_provisioned_run_reads_its_port_off_the_provisioner_that_opened_it() -> None:
+    # The other half of the same rule: a provisioned run is handed the open
+    # provisioner rather than a port beside it, so the database it reports through
+    # cannot be one some other recipe opened.
+    port = _StandInPort()
+    run = ProvisionedRun(profile_for("pg-full"), _StandInProvisioner(port))  # type: ignore[arg-type]
+    assert (run.name, run.port) == ("pg-full", port)
 
 
 def test_an_unprovisioned_run_answers_this_profiles_dialect_and_refuses_sql() -> None:
