@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Iterator
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,7 @@ _DB_SKIPS: list[str] = []
 
 # The designated entry points to a live database. A test reaching one by any other
 # route would be classified `dbfree` while needing a container.
-_DATABASE_FIXTURES = frozenset({"provisioner"})
+_DATABASE_FIXTURES = frozenset({"profile_run"})
 
 # What marks an item as needing an interpreter no other test shares, spelled as
 # `tests/unit/memory_instruments.py` sets it. This module loads before any surface
@@ -78,33 +79,37 @@ def profile() -> Profile:
     """The declared matrix profile the database-backed lane runs (spec §6).
 
     Resolving it opens nothing, so this fixture classifies no item: what needs a
-    container is the ``provisioner`` this profile declares, not the declaration.
+    container is a run of this profile, not the declaration.
     """
     return profile_for("pg-full")
 
 
 @pytest.fixture(scope="session")
-def provisioner(profile: Profile) -> Iterator[Any]:
-    """A session-scoped self-managed Testcontainers Postgres (spec §6).
+def profile_run(profile: Profile) -> Iterator[Any]:
+    """A session-scoped run of the declared profile over a self-managed
+    Testcontainers Postgres (spec §6).
 
-    Built through the declared profile, so the recipe the database-backed lane
-    runs is the declaration itself rather than a parallel wiring of it.
+    The profile provisions it and pairs its own reporting name with the port it
+    opened, so the database-backed lane runs the declaration itself rather than a
+    parallel wiring of it, and a case run here cannot be reported under a profile
+    that did not open it.
 
     Skips the database-backed lane with a reason (never silently) when Docker or
     the provider cannot be brought up; the ``python-check-db`` CI job fails on any
     such skip, so a green CI run has exercised every database-backed check.
     """
+    opened = ExitStack()
     try:
-        instance = profile.provisioner()
+        run = opened.enter_context(profile.provisioned())
     except Exception as exc:
         reason = f"Testcontainers Postgres unavailable: {type(exc).__name__}: {exc}"
         record_db_skip(reason)
         pytest.skip(reason)
         return
     try:
-        yield instance
+        yield run
     finally:
-        instance.close()
+        opened.close()
 
 
 def pytest_terminal_summary(terminalreporter: Any) -> None:

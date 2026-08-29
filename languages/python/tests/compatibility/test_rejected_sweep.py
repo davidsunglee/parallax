@@ -2,9 +2,9 @@
 `rejected` cases).
 
 A rejected case executes no SQL and touches no database (m-case-format "Rejected
-cases"): grading its `run` envelope needs no provisioner, so — unlike
+cases"): grading its `run` envelope needs no provisioning, so — unlike
 `test_run_sweep.py`, whose every test function threads the Testcontainers
-`provisioner` fixture — this sweep runs entirely in-process. `when.objectQuery` /
+`profile_run` fixture — this sweep runs entirely in-process. `when.objectQuery` /
 `when.model` / `when.write` inputs are all exercised end-to-end (the
 `when.write` half via `validate_write`): the classified
 `rejectedRule` observation is compared against the case's own
@@ -33,11 +33,11 @@ from parallax.core.db_port import DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 
 _SCHEMA = adapter_schema()
-# The name of the declared profile a rejected `run` is requested under, read off the
-# one roster. Nothing here provisions it: the refusing port below stands in for the
-# container the shape never needs, and the envelope still names the profile the
-# request was made against.
-_PROFILE = profile_for("pg-full").name
+# The declared profile a rejected `run` is requested under, read off the one roster.
+# Nothing here provisions it: the refusing port below stands in for the container the
+# shape never needs, and the envelope still names the profile the request was made
+# against.
+_PROFILE = profile_for("pg-full")
 _REACHABLE_REJECTED = [c for c in sweep.reachable_cases() if c.shape == "rejected"]
 
 
@@ -72,7 +72,7 @@ def _when_kind(case: case_format.Case) -> str:
 
 @pytest.mark.parametrize("case", _REACHABLE_REJECTED, ids=[c.case_id for c in _REACHABLE_REJECTED])
 def test_rejected_sweep(case: case_format.Case) -> None:
-    envelope = adapter.run_case(case.path, _PROFILE, _RefusingPort())
+    envelope = adapter.run_case(case.path, _PROFILE.on_stand_in(_RefusingPort()))
     jsonschema.validate(envelope, _SCHEMA)
 
     assert envelope["status"] == "ok", envelope

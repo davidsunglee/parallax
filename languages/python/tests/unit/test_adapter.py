@@ -21,17 +21,19 @@ from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import adapter, case_format, engine
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
-from parallax.conformance.profile import profile_for
+from parallax.conformance.profile import Profile, profile_for
+from parallax.conformance.provision import Provisioner
 from parallax.core.base import PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 
 _SCHEMA = adapter_schema()
-# The name a `run` reports, read off the one roster rather than spelled as a label:
-# these suites hand their own port, so what is under test is the reporting name a
-# declared profile carries, not a lane that gets provisioned.
-_PROFILE = profile_for("pg-full").name
+# The declared profile these suites run under, read off the one roster rather than
+# spelled as a label. Nothing here provisions it: each run is built over the port the
+# test stands in for a database, which is the one way to pair a profile with a port
+# it did not open.
+_PROFILE = profile_for("pg-full")
 _READ_CASE = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
 _VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"
 _SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-roundtrip.yaml"
@@ -165,17 +167,19 @@ def test_run_case_unsupported_for_an_out_of_claim_dialect() -> None:
     # `run` is asked for a profile, never for a dialect, so the dialect the claim
     # filters on is the one the PORT will execute in — a run cannot be classified
     # against a spelling other than the one it would have produced.
-    envelope = adapter.run_case(_READ_CASE, _PROFILE, _UnclaimedDialectPort())
+    envelope = adapter.run_case(_READ_CASE, _PROFILE.on_stand_in(_UnclaimedDialectPort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-dialect"
 
 
 def test_run_case_unsupported_for_a_profile_the_roster_does_not_declare() -> None:
-    # A name is only a request: any string satisfies the schema's `profileName`
-    # pattern, so the roster is what the contract refuses against, and it refuses
-    # before the case is read or the port is touched.
-    envelope = adapter.run_case(_READ_CASE, "invented-profile", _FakePort())
+    # A run is constructed by a profile, but a `Profile` is constructible without
+    # being declared, and any name satisfies the schema's `profileName` pattern. So
+    # the roster is still what the contract refuses against, and it refuses before
+    # the case is read or the port is touched.
+    undeclared = Profile("invented-profile", Provisioner)
+    envelope = adapter.run_case(_READ_CASE, undeclared.on_stand_in(_FakePort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-profile"
@@ -202,13 +206,13 @@ def test_compile_dispatch_refuses_a_conflict_case_missing_its_run_only_declarati
 
 
 def test_run_case_ok_through_a_fake_port() -> None:
-    envelope = adapter.run_case(_VO_READ_CASE, _PROFILE, _FakePort())
+    envelope = adapter.run_case(_VO_READ_CASE, _PROFILE.on_stand_in(_FakePort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     # The envelope answers two different questions: which adapter configuration
     # was asked for, and which spelling actually executed. The second is read off
     # the port rather than echoed back from the request.
-    assert envelope["profile"] == _PROFILE
+    assert envelope["profile"] == _PROFILE.name
     assert envelope["dialect"] == "postgres"
     assert envelope["observations"]["rows"] == [{"id": 1, "name": "Ada"}]
     assert envelope["observations"]["roundTrips"] == 1
@@ -249,7 +253,7 @@ def test_run_case_conflict_reports_affected_rows_and_table_state() -> None:
     # into the schema's one `affectedRows` observation slot, plus
     # `tableState` when the case authors it.
     case_path = case_format.default_cases_dir() / "m-opt-lock-006-success.yaml"
-    envelope = adapter.run_case(case_path, _PROFILE, _AccountWritePort())
+    envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_AccountWritePort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["affectedRows"] == 1
@@ -266,7 +270,7 @@ def test_run_case_scenario_reports_round_trips_and_the_rows_its_read_step_publis
     # `stepRows` entry (m-conformance-adapter) — at the READ step's own pointer,
     # never the write step's, and carrying the row the find published rather than
     # anything the write buffered.
-    envelope = adapter.run_case(_SCENARIO_CASE, _PROFILE, _WritePort())
+    envelope = adapter.run_case(_SCENARIO_CASE, _PROFILE.on_stand_in(_WritePort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
@@ -284,7 +288,7 @@ def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
     # (m-conformance-adapter "write-sequence cases report tableState"); the fake
     # port answers every read with its canned row, so every orders-model table
     # reports it here — the run sweep grades real state against then.tableState.
-    envelope = adapter.run_case(_WRITE_SEQUENCE_CASE, _PROFILE, _WritePort())
+    envelope = adapter.run_case(_WRITE_SEQUENCE_CASE, _PROFILE.on_stand_in(_WritePort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
@@ -336,7 +340,7 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
     # The adapter returns MANAGED values (Decimal / time / UUID / date / bytes);
     # the conformance boundary renders them to canonical wire form so the run
     # envelope is JSON-serializable (m-core-001 previously broke `json.dumps`).
-    envelope = adapter.run_case(_SCALAR_READ_CASE, _PROFILE, _ManagedPort())
+    envelope = adapter.run_case(_SCALAR_READ_CASE, _PROFILE.on_stand_in(_ManagedPort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     (row,) = envelope["observations"]["rows"]
@@ -361,7 +365,7 @@ def test_run_case_error_on_an_engine_gap() -> None:
     # this lane still reports a loud `run-failed` error rather than silently
     # mishandling it (a real port drives this case successfully, `test_run_
     # sweep.py::test_write_run_sweep`, Docker-gated).
-    envelope = adapter.run_case(_ENGINE_GAP_CASE, _PROFILE, _FakePort())
+    envelope = adapter.run_case(_ENGINE_GAP_CASE, _PROFILE.on_stand_in(_FakePort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "error"
     assert envelope["diagnostics"][0]["code"] == "run-failed"
@@ -412,7 +416,7 @@ class _PositionPort:
 
 
 def test_run_case_grades_a_scenario_expect_error_through_the_errors_observation() -> None:
-    envelope = adapter.run_case(_PIN_READ_ONLY_CASE, _PROFILE, _PositionPort())
+    envelope = adapter.run_case(_PIN_READ_ONLY_CASE, _PROFILE.on_stand_in(_PositionPort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["roundTrips"] == 1
@@ -486,7 +490,9 @@ def test_run_case_grades_the_managed_pin_case_end_to_end_under_a_scoped_claim() 
     # the write-raising port and the single find emission prove the refused
     # mutation emitted no DML.
     envelope = adapter.run_case(
-        _TX_PAST_READ_ONLY_CASE, _PROFILE, _BalancePort(), claim=_TX_PAST_READ_ONLY_CLAIM
+        _TX_PAST_READ_ONLY_CASE,
+        _PROFILE.on_stand_in(_BalancePort()),
+        claim=_TX_PAST_READ_ONLY_CLAIM,
     )
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
@@ -502,7 +508,7 @@ def test_the_public_snapshot_claim_still_classifies_the_managed_pin_case_out() -
     # filter: its `m-identity-map` module tag) — the deferred managed
     # lifecycle is graded only through the scoped test claim above, never by
     # widening `SNAPSHOT_CLAIM`.
-    envelope = adapter.run_case(_TX_PAST_READ_ONLY_CASE, _PROFILE, _BalancePort())
+    envelope = adapter.run_case(_TX_PAST_READ_ONLY_CASE, _PROFILE.on_stand_in(_BalancePort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-module"
@@ -512,7 +518,7 @@ def test_scenario_lane_without_expect_error_is_still_dispatched_out() -> None:
     compile_envelope = adapter.compile_case(_ACCESS_WITNESS_CASE, "postgres")
     assert compile_envelope["status"] == "error"
     assert "api-conformance" in compile_envelope["diagnostics"][0]["message"]
-    run_envelope = adapter.run_case(_ACCESS_WITNESS_CASE, _PROFILE, _NeverCalledPort())
+    run_envelope = adapter.run_case(_ACCESS_WITNESS_CASE, _PROFILE.on_stand_in(_NeverCalledPort()))
     assert run_envelope["status"] == "error"
     assert "api-conformance" in run_envelope["diagnostics"][0]["message"]
 
@@ -610,7 +616,7 @@ def test_run_case_error_reports_the_classification() -> None:
     # The final trigger statement raises; the envelope reports the neutral
     # category + preserved native code (the schema amendment this increment adds).
     port = _TriggerPort(raise_on=2, failure=_unique_violation())
-    envelope = adapter.run_case(_ERROR_CASE, _PROFILE, port)
+    envelope = adapter.run_case(_ERROR_CASE, _PROFILE.on_stand_in(port))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
@@ -626,13 +632,13 @@ def test_run_case_error_reports_the_classification() -> None:
 
 def test_run_case_error_rejects_a_premature_raise() -> None:
     port = _TriggerPort(raise_on=1, failure=_unique_violation())
-    envelope = adapter.run_case(_ERROR_CASE, _PROFILE, port)
+    envelope = adapter.run_case(_ERROR_CASE, _PROFILE.on_stand_in(port))
     assert envelope["status"] == "error"
     assert "raised before the final statement" in envelope["diagnostics"][0]["message"]
 
 
 def test_run_case_error_rejects_a_trigger_that_does_not_raise() -> None:
-    envelope = adapter.run_case(_ERROR_CASE, _PROFILE, _TriggerPort(raise_on=None))
+    envelope = adapter.run_case(_ERROR_CASE, _PROFILE.on_stand_in(_TriggerPort(raise_on=None)))
     assert envelope["status"] == "error"
     assert "did not raise" in envelope["diagnostics"][0]["message"]
 
@@ -640,7 +646,7 @@ def test_run_case_error_rejects_a_trigger_that_does_not_raise() -> None:
 def test_run_case_error_rejects_an_unclassified_failure() -> None:
     unclassified = DatabaseError(category=None, native_code=None, message="connection torn down")
     port = _TriggerPort(raise_on=2, failure=unclassified)
-    envelope = adapter.run_case(_ERROR_CASE, _PROFILE, port)
+    envelope = adapter.run_case(_ERROR_CASE, _PROFILE.on_stand_in(port))
     assert envelope["status"] == "error"
     assert "unclassified" in envelope["diagnostics"][0]["message"]
 
@@ -648,7 +654,9 @@ def test_run_case_error_rejects_an_unclassified_failure() -> None:
 def test_run_case_error_concurrency_names_the_provider_lane() -> None:
     # A two-connection choreography cannot run on the single-connection adapter
     # port; the envelope classifies it to the provider contract proof.
-    envelope = adapter.run_case(_ERROR_CONCURRENCY_CASE, _PROFILE, _TriggerPort(raise_on=None))
+    envelope = adapter.run_case(
+        _ERROR_CONCURRENCY_CASE, _PROFILE.on_stand_in(_TriggerPort(raise_on=None))
+    )
     assert envelope["status"] == "error"
     assert "provider contract proof" in envelope["diagnostics"][0]["message"]
 
@@ -667,7 +675,9 @@ def test_boundary_case_names_the_api_conformance_lane() -> None:
     compile_envelope = adapter.compile_case(_BOUNDARY_CASE, "postgres")
     assert compile_envelope["status"] == "run-only"
     assert compile_envelope["diagnostics"][0]["code"] == "compile-run-only"
-    run_envelope = adapter.run_case(_BOUNDARY_CASE, _PROFILE, _TriggerPort(raise_on=None))
+    run_envelope = adapter.run_case(
+        _BOUNDARY_CASE, _PROFILE.on_stand_in(_TriggerPort(raise_on=None))
+    )
     assert run_envelope["status"] == "error"
     assert "api-conformance" in run_envelope["diagnostics"][0]["message"]
 
@@ -719,7 +729,7 @@ def test_compile_case_rejected_shape_is_shape_intrinsic_run_only() -> None:
 
 
 def test_run_case_rejected_query_reports_the_classified_rule() -> None:
-    envelope = adapter.run_case(_REJECTED_QUERY_CASE, _PROFILE, _NeverCalledPort())
+    envelope = adapter.run_case(_REJECTED_QUERY_CASE, _PROFILE.on_stand_in(_NeverCalledPort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert envelope["emissions"] == []
@@ -730,7 +740,7 @@ def test_run_case_rejected_query_reports_the_classified_rule() -> None:
 
 
 def test_run_case_rejected_model_reports_the_classified_rule() -> None:
-    envelope = adapter.run_case(_REJECTED_MODEL_CASE, _PROFILE, _NeverCalledPort())
+    envelope = adapter.run_case(_REJECTED_MODEL_CASE, _PROFILE.on_stand_in(_NeverCalledPort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
@@ -740,7 +750,7 @@ def test_run_case_rejected_model_reports_the_classified_rule() -> None:
 
 
 def test_run_case_rejected_write_reports_the_classified_rule() -> None:
-    envelope = adapter.run_case(_REJECTED_WRITE_CASE, _PROFILE, _NeverCalledPort())
+    envelope = adapter.run_case(_REJECTED_WRITE_CASE, _PROFILE.on_stand_in(_NeverCalledPort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert envelope["emissions"] == []
@@ -813,7 +823,7 @@ def test_run_case_graph_observation_reports_the_assembled_graph() -> None:
             ],
         ]
     )
-    envelope = adapter.run_case(_GRAPH_CASE, _PROFILE, port)
+    envelope = adapter.run_case(_GRAPH_CASE, _PROFILE.on_stand_in(port))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert envelope["observations"]["roundTrips"] == 2
@@ -840,7 +850,7 @@ def test_run_case_graph_observation_reports_the_positions_a_read_classified() ->
             [],
         ]
     )
-    envelope = adapter.run_case(_GRAPH_CASE_CLASSIFIED, _PROFILE, port)
+    envelope = adapter.run_case(_GRAPH_CASE_CLASSIFIED, _PROFILE.on_stand_in(port))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     (record,) = envelope["observations"]["storedDataIssues"]
@@ -875,7 +885,7 @@ def test_run_case_graph_observation_omits_classification_when_every_position_con
             ],
         ]
     )
-    envelope = adapter.run_case(_GRAPH_CASE_CONFORMING, _PROFILE, port)
+    envelope = adapter.run_case(_GRAPH_CASE_CONFORMING, _PROFILE.on_stand_in(port))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert "storedDataIssues" not in envelope["observations"]
@@ -916,7 +926,7 @@ def test_run_case_streamed_observation_reports_the_delivered_roots() -> None:
             [],
         ]
     )
-    envelope = adapter.run_case(_STREAM_CASE, _PROFILE, port)
+    envelope = adapter.run_case(_STREAM_CASE, _PROFILE.on_stand_in(port))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert [emission["binds"] for emission in envelope["emissions"]] == [
@@ -956,7 +966,7 @@ def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> N
             ]
         ]
     )
-    envelope = adapter.run_case(_GRAPHS_CASE, _PROFILE, port)
+    envelope = adapter.run_case(_GRAPHS_CASE, _PROFILE.on_stand_in(port))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert envelope["observations"]["roundTrips"] == 1
@@ -1023,7 +1033,7 @@ def test_run_case_runs_a_genuine_batch_collapse_write() -> None:
             {"id": 11, "owner": "Omar", "balance": Decimal("20.00")},
         ],
     )
-    envelope = adapter.run_case(case_path, _PROFILE, port)
+    envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(port))
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["roundTrips"] == 3
     assert port.writes == 2
@@ -1038,7 +1048,7 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> No
     # rather than refusing. The registry UPDATE's `{increment: 3}` marker
     # folds into a self-referential `next_val = next_val + ?` SET.
     case_path = case_format.default_cases_dir() / "m-pk-gen-008-sequence-batch-partial.yaml"
-    envelope = adapter.run_case(case_path, _PROFILE, _WritePort())
+    envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_WritePort()))
     assert envelope["status"] == "ok", envelope
     # The registry UPDATE + two independent Pass INSERTs (never one collapsed
     # multi-row INSERT — the id list is derived, not authored).
@@ -1072,7 +1082,7 @@ class _AccountPort:
 
 def test_a_case_authoring_the_oracle_gets_the_stream_its_run_delivered() -> None:
     case_path = case_format.default_cases_dir() / "m-execution-lifecycle-001-standalone-read.yaml"
-    envelope = adapter.run_case(case_path, _PROFILE, _AccountPort())
+    envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_AccountPort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["executionLifecycle"] == {
@@ -1134,7 +1144,7 @@ def test_a_lifecycle_index_naming_a_different_statement_is_an_adapter_error() ->
 
     case_path = case_format.default_cases_dir() / "m-execution-lifecycle-001-standalone-read.yaml"
     with mock.patch.object(adapter, "_run", _drifted):
-        envelope = adapter.run_case(case_path, _PROFILE, _AccountPort())
+        envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_AccountPort()))
     assert envelope["status"] == "error", envelope
     assert "would name a different statement" in envelope["diagnostics"][0]["message"]
 
@@ -1143,7 +1153,7 @@ def test_a_case_authoring_no_oracle_reports_no_lifecycle_observation() -> None:
     # The stream a run delivers is reported where a case asks for it and
     # nowhere else: an observed key a case left unasserted is one the corpus
     # comparator would have to be told to ignore.
-    envelope = adapter.run_case(_VO_READ_CASE, _PROFILE, _FakePort())
+    envelope = adapter.run_case(_VO_READ_CASE, _PROFILE.on_stand_in(_FakePort()))
     assert set(envelope["observations"]) == {"rows", "roundTrips"}
 
 
@@ -1201,7 +1211,7 @@ def test_run_case_scenario_reports_a_step_graph_for_an_access_step() -> None:
     # observations*): an `access` step declaring `expectGraph` publishes one
     # `stepGraphs` entry at its own pointer, beside `roundTrips`, and the envelope
     # still validates against the adapter schema.
-    envelope = adapter.run_case(_INCLUDE_SCENARIO_CASE, _PROFILE, _OrderWithItemsPort())
+    envelope = adapter.run_case(_INCLUDE_SCENARIO_CASE, _PROFILE.on_stand_in(_OrderWithItemsPort()))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["roundTrips"] == 2

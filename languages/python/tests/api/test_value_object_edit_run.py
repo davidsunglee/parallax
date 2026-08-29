@@ -48,10 +48,10 @@ unpopulated, so it is absent from the document rather than stored as null — th
 state every assertion below weighs its own stored document against."""
 
 
-def _connect_and_seed(provisioner: Any, observed: LifecycleObservation | None = None) -> Database:
-    provisioner.reset(model_of(_CUSTOMER), {})
+def _connect_and_seed(profile_run: Any, observed: LifecycleObservation | None = None) -> Database:
+    profile_run.reset(model_of(_CUSTOMER), {})
     provider = None if observed is None else observed.provider
-    db = connect(provisioner.port, _CUSTOMER, lifecycle_provider=provider)
+    db = connect(profile_run.port, _CUSTOMER, lifecycle_provider=provider)
     db.transact(
         lambda tx: tx.insert(
             Customer(
@@ -68,8 +68,8 @@ def _connect_and_seed(provisioner: Any, observed: LifecycleObservation | None = 
     return db
 
 
-def _stored_address(provisioner: Any) -> object:
-    state = engine.read_table_state(provisioner.port, model_of(_CUSTOMER))
+def _stored_address(profile_run: Any) -> object:
+    state = engine.read_table_state(profile_run.port, model_of(_CUSTOMER))
     (row,) = state["customer"]
     return row["address"]
 
@@ -81,9 +81,9 @@ def _address_of(customer: Customer) -> CustomerAddress:
 
 
 def test_an_edited_occurrence_stores_what_it_names_and_carries_the_rest(
-    provisioner: Any,
+    profile_run: Any,
 ) -> None:
-    db = _connect_and_seed(provisioner)
+    db = _connect_and_seed(profile_run)
 
     def relocate(tx: Transaction) -> CustomerAddress:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
@@ -93,7 +93,7 @@ def test_an_edited_occurrence_stores_what_it_names_and_carries_the_rest(
 
     published = db.transact(relocate)
 
-    assert _stored_address(provisioner) == {
+    assert _stored_address(profile_run) == {
         "street": "Storgata 1",
         "city": "Bergen",
         "phones": [{"type": "home", "number": "1"}],
@@ -102,9 +102,9 @@ def test_an_edited_occurrence_stores_what_it_names_and_carries_the_rest(
 
 
 def test_an_edited_occurrence_replaces_a_nested_and_a_plural_member_whole(
-    provisioner: Any,
+    profile_run: Any,
 ) -> None:
-    db = _connect_and_seed(provisioner)
+    db = _connect_and_seed(profile_run)
 
     def replace(tx: Transaction) -> None:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
@@ -119,7 +119,7 @@ def test_an_edited_occurrence_replaces_a_nested_and_a_plural_member_whole(
 
     db.transact(replace)
 
-    assert _stored_address(provisioner) == {
+    assert _stored_address(profile_run) == {
         "street": "Storgata 1",
         "city": "Oslo",
         "geo": {"country": "NO", "point": {"lat": 59.5, "lon": 10.75}},
@@ -128,9 +128,9 @@ def test_an_edited_occurrence_replaces_a_nested_and_a_plural_member_whole(
 
 
 def test_edits_compose_and_leave_every_value_they_derive_from_untouched(
-    provisioner: Any,
+    profile_run: Any,
 ) -> None:
-    db = _connect_and_seed(provisioner)
+    db = _connect_and_seed(profile_run)
 
     def compose(tx: Transaction) -> tuple[CustomerAddress, CustomerAddress]:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
@@ -142,7 +142,7 @@ def test_edits_compose_and_leave_every_value_they_derive_from_untouched(
 
     published, intermediate = db.transact(compose)
 
-    assert _stored_address(provisioner) == {
+    assert _stored_address(profile_run) == {
         "street": "Nedre gate 2",
         "city": "Bergen",
         "phones": [{"type": "home", "number": "1"}],
@@ -163,10 +163,10 @@ def _away_and_back(address: CustomerAddress) -> CustomerAddress:
     "derive", [_change_free, _away_and_back], ids=["change-free", "away-and-back"]
 )
 def test_an_occurrence_carrying_no_net_change_writes_nothing(
-    provisioner: Any, derive: Callable[[CustomerAddress], CustomerAddress]
+    profile_run: Any, derive: Callable[[CustomerAddress], CustomerAddress]
 ) -> None:
     observed = LifecycleObservation()
-    db = _connect_and_seed(provisioner, observed)
+    db = _connect_and_seed(profile_run, observed)
     seeded = observed.round_trips
 
     def rewrite(tx: Transaction) -> None:
@@ -176,4 +176,4 @@ def test_an_occurrence_carrying_no_net_change_writes_nothing(
     db.transact(rewrite)
 
     assert [call for call in observed.calls[seeded:] if call.kind == "write"] == []
-    assert _stored_address(provisioner) == _SEEDED_ADDRESS
+    assert _stored_address(profile_run) == _SEEDED_ADDRESS

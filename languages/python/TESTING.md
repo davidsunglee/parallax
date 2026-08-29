@@ -82,15 +82,18 @@ All three are session-scoped and defined in `tests/conftest.py`.
 | Fixture | Live database? | Yields |
 |---|---|---|
 | `profile` | no | The declared matrix profile the database-backed lane runs (`pg-full`) |
-| `provisioner` | **yes** | A self-managed Testcontainers Postgres and an open adapter connection |
+| `profile_run` | **yes** | That profile's own run: a self-managed Testcontainers Postgres, paired with the name the run reports under |
 | `wheelhouse` | no | A directory of freshly built wheels plus a package-name-to-wheel map |
 
 `profile` resolves a declaration and opens nothing, so it classifies no item; it
-is what `provisioner` is built through, and what a database-backed test names
+is what `profile_run` is opened by, and what a database-backed test names
 when it needs the dialect its run executed in. Requesting it alone leaves an item
 `dbfree`.
 
-`provisioner` is the only route to a live database, and
+`profile_run` is what the profile provisions for itself, so a test never names a
+port: it resets through the run, executes through `run.port`, and hands the run
+itself to `adapter.run_case`, which reports the profile that opened the database it
+executed against. It is the only route to a live database, and
 `tools/check_database_access.py` is what keeps it so: it fails when any module
 under `tests/` calls a seam that starts a container or opens a connection
 anywhere but inside that fixture. When Docker or the provider cannot be brought
@@ -110,12 +113,12 @@ Three classes, and every collected item carries exactly one.
 | Cost | `cost` | It reads the whole interpreter, so it needs one no other test shares | `just python-test-cost` |
 
 No marker is ever written beside a test. `tests/conftest.py`'s collection hook
-adds one to every item, chosen by what that item requires — `provisioner` in its
+adds one to every item, chosen by what that item requires — `profile_run` in its
 resolved fixture closure for `db`, the `in_a_child_interpreter` boundary on its
 function for `cost` — so the label covers indirect requests, is decided per item
 rather than per file, and can be neither missing nor doubled. Requiring both is a
 contradiction the hook fails on rather than an order of precedence. Deleting
-`provisioner` from a test's signature, or the boundary from its definition,
+`profile_run` from a test's signature, or the boundary from its definition,
 reclassifies that test.
 
 `tools/check_database_access.py` and `tools/check_instrument_access.py` are what

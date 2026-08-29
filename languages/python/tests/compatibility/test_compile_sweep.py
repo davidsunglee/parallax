@@ -38,10 +38,10 @@ pytestmark = pytest.mark.compile_sweep
 
 _REACHABLE = sweep.reachable_cases()
 _SCHEMA = adapter_schema()
-# The name of the declared profile the lane-dispatch check below makes its `run`
-# request under, read off the one roster; nothing here provisions it, because the
-# case is refused before a database is needed.
-_PROFILE = profile_for("pg-full").name
+# The declared profile the lane-dispatch check below makes its `run` request under,
+# read off the one roster; nothing here provisions it, because the case is refused
+# before a database is needed, so the run is built over a stand-in port.
+_PROFILE = profile_for("pg-full")
 
 
 class _RefusingPort:
@@ -315,7 +315,7 @@ def test_scenario_lane_dispatch_is_honest() -> None:
         # `run` answers the SAME lane-honest error, never executing SQL: the port
         # it is handed answers only the dialect the case would have been classified
         # and run under, and raises on any attempt to use it.
-        run_envelope = adapter.run_case(case.path, _PROFILE, _RefusingPort())
+        run_envelope = adapter.run_case(case.path, _PROFILE.on_stand_in(_RefusingPort()))
         assert run_envelope["status"] == "error", (case.case_id, run_envelope)
     for case in engine_graded:
         assert case.case_id in WRITE_EXERCISED, case.case_id

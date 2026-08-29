@@ -41,10 +41,10 @@ from parallax.snapshot import connect
 _CASE_ID = "m-execution-lifecycle-001"
 
 
-def _seeded(provisioner: Any) -> Any:
+def _seeded(profile_run: Any) -> Any:
     case = next(case for case in case_format.load_cases() if case.case_id == _CASE_ID)
-    provisioner.reset(engine.load_case_metamodel(case), case_fixtures(case))
-    return provisioner.port
+    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    return profile_run.port
 
 
 class _Declining:
@@ -62,9 +62,9 @@ class _Declining:
         self.reported.append(error)
 
 
-def test_a_provider_observes_one_read_root_against_a_real_database(provisioner: Any) -> None:
+def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: Any) -> None:
     recorder = RecordingLifecycleProvider()
-    db = connect(_seeded(provisioner), MODELS["account"], lifecycle_provider=recorder)
+    db = connect(_seeded(profile_run), MODELS["account"], lifecycle_provider=recorder)
 
     account = db.find(Account.where(Account.id == 2)).result()
     assert account.balance == Decimal("250.00")
@@ -89,9 +89,9 @@ def test_a_provider_observes_one_read_root_against_a_real_database(provisioner: 
     assert not hasattr(account, "execution")
 
 
-def test_two_reads_through_one_handle_are_two_independent_roots(provisioner: Any) -> None:
+def test_two_reads_through_one_handle_are_two_independent_roots(profile_run: Any) -> None:
     recorder = RecordingLifecycleProvider()
-    db = connect(_seeded(provisioner), MODELS["account"], lifecycle_provider=recorder)
+    db = connect(_seeded(profile_run), MODELS["account"], lifecycle_provider=recorder)
     db.find(Account.where(Account.id == 2)).result()
     db.find(Account.where(Account.id == 2)).result()
 
@@ -103,18 +103,18 @@ def test_two_reads_through_one_handle_are_two_independent_roots(provisioner: Any
     assert [event.sequence for event in second.events] == [1, 2, 3, 4]
 
 
-def test_a_declining_provider_changes_nothing_about_the_query(provisioner: Any) -> None:
+def test_a_declining_provider_changes_nothing_about_the_query(profile_run: Any) -> None:
     provider = _Declining()
-    db = connect(_seeded(provisioner), MODELS["account"], lifecycle_provider=provider)
+    db = connect(_seeded(profile_run), MODELS["account"], lifecycle_provider=provider)
 
     assert db.find(Account.where(Account.id == 2)).result().balance == Decimal("250.00")
     assert [execution.kind for execution in provider.opened] == ["READ"]
     assert provider.reported == []
 
 
-def test_the_joined_usage_guide_story_runs_against_a_real_database(provisioner: Any) -> None:
+def test_the_joined_usage_guide_story_runs_against_a_real_database(profile_run: Any) -> None:
     shape = execution_lifecycle_stories.a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
-        _seeded(provisioner), MODELS["account"]
+        _seeded(profile_run), MODELS["account"]
     )
     # One outermost operation is one root, however many joined calls it makes,
     # and a joined call runs no attempt of its own.

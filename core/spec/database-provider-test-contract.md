@@ -154,6 +154,13 @@ The recipe the profile names must be what actually runs the matrix. A declaratio
 some other wiring duplicates is a name, not a profile: the recipe and any
 command surface that selects a profile must resolve the same declaration.
 
+A run reported under a profile must execute through a database that profile's own
+recipe opened. A reporting name and a database paired by whoever happens to hold
+both produce a well-formed report of a run that did not happen, and two profiles
+sharing a dialect leave nothing in the report to tell it from a true one. So the
+pairing must be constructed by the profile rather than checked afterwards: what a
+run is asked for is a profile, never a database.
+
 A full profile runs every case in the claimed slice for that dialect. A partial
 profile is first-class only when its omissions are explicit. In particular, a
 second dialect with incomplete `m-case-format` coverage must classify cases whose

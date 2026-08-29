@@ -88,10 +88,10 @@ def _seed_branch(db: Database, *, id: int = 1) -> None:
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("concurrency", _MODES)
 def test_audit_only_stale_web_edit_updates_the_displayed_milestone(
-    provisioner: Any, concurrency: Concurrency
+    profile_run: Any, concurrency: Concurrency
 ) -> None:
-    provisioner.reset(model_of(_BALANCE), {})
-    db = connect(provisioner.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
+    profile_run.reset(model_of(_BALANCE), {})
+    db = connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
     _seed_balance(db)
 
     node, edge = render_balance_milestone(db, id=1)  # RENDER time
@@ -108,7 +108,7 @@ def test_audit_only_stale_web_edit_updates_the_displayed_milestone(
 
 @pytest.mark.parametrize("concurrency", _MODES)
 def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
-    provisioner: Any, concurrency: Concurrency
+    profile_run: Any, concurrency: Concurrency
 ) -> None:
     # A concurrent writer chains a replacement BETWEEN the render and the
     # submit, so the submit's own read of the CURRENT milestone answers an edge
@@ -116,13 +116,13 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
     # authors anything -- the earlier of the two points staleness surfaces at,
     # and the one no gate and no lock can cover, because it happened before the
     # transaction started.
-    provisioner.reset(model_of(_BALANCE), {})
-    db = connect(provisioner.port, _BALANCE, clock=ScriptedClock([_I1, _I3]))
+    profile_run.reset(model_of(_BALANCE), {})
+    db = connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I3]))
     _seed_balance(db)
 
     _node, edge = render_balance_milestone(db, id=1)  # RENDER time -- the stale edge
 
-    peer_db = connect(provisioner.peer(), _BALANCE, clock=ScriptedClock([_I2]))
+    peer_db = connect(profile_run.peer(), _BALANCE, clock=ScriptedClock([_I2]))
 
     def concurrent_write(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
@@ -141,15 +141,15 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
 
 @pytest.mark.parametrize("concurrency", _MODES)
 def test_a_submit_that_pins_the_transported_edge_is_read_only(
-    provisioner: Any, concurrency: Concurrency
+    profile_run: Any, concurrency: Concurrency
 ) -> None:
     # Why the recipe compares rather than pins, written out by hand because no
     # recipe does this: a submit that REPLAYS the transported edge as a pin reads
     # a milestone whose Transaction-Time coordinate is finite, and that view is
     # read-only in either mode. The copy derived from it carries the same pin, so
     # the refusal lands at the verb, before any DML.
-    provisioner.reset(model_of(_BALANCE), {})
-    db = connect(provisioner.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
+    profile_run.reset(model_of(_BALANCE), {})
+    db = connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
     _seed_balance(db)
     _node, edge = render_balance_milestone(db, id=1)
 
@@ -168,10 +168,10 @@ def test_a_submit_that_pins_the_transported_edge_is_read_only(
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("concurrency", _MODES)
 def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(
-    provisioner: Any, concurrency: Concurrency
+    profile_run: Any, concurrency: Concurrency
 ) -> None:
-    provisioner.reset(model_of(_BRANCH), {})
-    db = connect(provisioner.port, _BRANCH, clock=ScriptedClock([_I1, _I2]))
+    profile_run.reset(model_of(_BRANCH), {})
+    db = connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I1, _I2]))
     _seed_branch(db)
 
     node, edge = render_branch_milestone(db, id=1)  # RENDER time
@@ -196,21 +196,21 @@ def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(
 
 @pytest.mark.parametrize("concurrency", _MODES)
 def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
-    provisioner: Any, concurrency: Concurrency
+    profile_run: Any, concurrency: Concurrency
 ) -> None:
     # A concurrent writer chains a replacement rectangle BETWEEN the render and
     # the submit. The submit's Valid-Time pin still selects the rectangle the
     # form displayed, but its Transaction-Time axis reads that rectangle's
     # CURRENT milestone, whose edge is the concurrent writer's -- so the
     # comparison refuses the stale submit before it authors anything.
-    provisioner.reset(model_of(_BRANCH), {})
-    db = connect(provisioner.port, _BRANCH, clock=ScriptedClock([_I1, _I3]))
+    profile_run.reset(model_of(_BRANCH), {})
+    db = connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I1, _I3]))
     _seed_branch(db)
 
     _node, edge = render_branch_milestone(db, id=1)  # RENDER time — the stale edge
 
     # An independent second connection commits a REAL chaining update first.
-    peer_port = provisioner.peer()
+    peer_port = profile_run.peer()
     peer_db = connect(peer_port, _BRANCH, clock=ScriptedClock([_I2]))
 
     def concurrent_write(tx: Transaction) -> None:
