@@ -18,6 +18,7 @@ refused for.
 from __future__ import annotations
 
 import functools
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
@@ -374,7 +375,7 @@ def _hop_tag_binds(family: Family, effective_set: list[str]) -> list[Any]:
 
 
 def guarded_parents(
-    case: Case, step: FetchStep, parents: list[dict[str, Any]]
+    case: Case, step: FetchStep, parents: Sequence[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """The parent rows a path-root guard admits into *step* (m-deep-fetch).
 
@@ -386,7 +387,7 @@ def guarded_parents(
     position, so a root read that projects no variant cannot be guarded at all.
     """
     if step.root_guard is None:
-        return parents
+        return list(parents)
     admitted = set(step.root_guard)
     for row in parents:
         if "familyVariant" not in row:
@@ -528,7 +529,7 @@ def execute_fetch_levels(
     source: str,
     query: dict[str, Any],
     steps: list[FetchStep],
-    root_rows: list[dict[str, Any]],
+    root_rows: Sequence[dict[str, Any]],
     levels: list[tuple[str, list[Any]]],
 ) -> _ExecutedLevels:
     """Execute one Object Query's child levels and bucket each hop's rows by parent key.

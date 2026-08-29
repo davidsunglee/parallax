@@ -66,20 +66,17 @@ def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:
     # contribution, while history contributes no predicate or bind.
     _assert_temporal_only_union_binds(case, dialect)
 
-    golden_rows = execute.query_rows(case, reader, golden, case.statement_binds(0, dialect))
-    # Relational Document Layout (m-storage-layout / m-sql): the golden projects the
-    # shared Structured Column once and the row-form result is the scalars it
-    # carries, under the names a Column of each would have had.
-    golden_rows = materialize.materialize_target_tph_document_layout(
-        case, golden_rows, include_value_objects=False
+    # The seam derives the whole logical result from the physical rows: the
+    # Relational Document Layout fan-out under the names a Column of each would
+    # have had (m-storage-layout / m-sql), and `familyVariant` from the tag
+    # metadata map rather than from any projected column (m-inheritance / m-sql,
+    # resolved Q6). Its row-form reading of this case is what leaves the Value
+    # Object occurrences out.
+    golden_rows = materialize.materialize_read(
+        case, execute.query_rows(case, reader, golden, case.statement_binds(0, dialect))
     )
     expected = case.expected_rows
     tolerance = case.tolerance
-
-    # Abstract-target inheritance read oracle (m-inheritance / m-sql, resolved Q6):
-    # the golden SQL projects the RAW tag column; `familyVariant` is materialized
-    # from the tag metadata map, never projected as SQL.
-    golden_rows = materialize.materialize_family_variant(case, golden_rows)
 
     if not rows_equal(golden_rows, expected, tolerance):
         raise CaseFailure(
@@ -90,10 +87,9 @@ def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
-        reference = materialize.materialize_target_tph_document_layout(
-            case, execute.reference_rows(reader, reference_sql), include_value_objects=False
+        reference = materialize.materialize_read(
+            case, execute.reference_rows(reader, reference_sql)
         )
-        reference = materialize.materialize_family_variant(case, reference)
         if not rows_equal(reference, expected, tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != then.rows.\n"
@@ -137,7 +133,7 @@ def _assert_stream(case: Case, reader: ReadExecutor) -> None:
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
-        reference = materialize.materialize_family_variant(
+        reference = materialize.materialize_read(
             case, execute.reference_rows(reader, reference_sql)
         )
         root_projection = [execute.project_like(row, delivered.root_rows) for row in reference]
@@ -171,12 +167,9 @@ def _assert_deep_fetch(case: Case, reader: ReadExecutor) -> None:
     # concrete subtype into `familyVariant` exactly as a flat abstract read does —
     # both because the graph's root nodes carry it and because a path-root guard
     # selects the participating roots by it.
-    root_rows = materialize.materialize_target_tph_document_layout(
-        case,
-        execute.query_rows(case, reader, statements[0], case.statement_binds(0, dialect)),
-        include_value_objects=True,
+    root_rows = materialize.materialize_read(
+        case, execute.query_rows(case, reader, statements[0], case.statement_binds(0, dialect))
     )
-    root_rows = materialize.materialize_family_variant(case, root_rows)
 
     levels = [
         (statements[index], case.statement_binds(index, dialect))
@@ -198,7 +191,7 @@ def _assert_deep_fetch(case: Case, reader: ReadExecutor) -> None:
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
-        reference = materialize.materialize_family_variant(
+        reference = materialize.materialize_read(
             case, execute.reference_rows(reader, reference_sql)
         )
         root_projection = [execute.project_like(row, root_rows) for row in reference]
@@ -237,6 +230,15 @@ def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
     carries no child levels: a graph node authored with a nested relationship key
     would fail the value comparison, since the root-only assembly carries only the
     root projection.
+
+    A milestone is a whole object at an instant, so its roots are materialized by
+    the same seam every other terminal's are: an abstract-target milestone read
+    publishes each milestone's own ``familyVariant`` and its Structured Column's
+    members, never the storage they were derived from. Its NODES are then narrowed
+    per variant exactly as a single-statement graph's are, a declared graph being
+    the same instance-form member either way; the roots themselves stay unnarrowed,
+    because the pins key on edge coordinates and the independent oracle grades the
+    whole milestone row set.
     """
     dialect = reader.dialect
     statements = case.golden_statements(dialect)
@@ -244,13 +246,17 @@ def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
     root_entity = _graphs_root_entity(case)
 
     # Level 0: the single history / asOfRange query — every milestone in one round trip.
-    root_rows = execute.query_rows(case, reader, statements[0], case.statement_binds(0, dialect))
+    root_rows = materialize.materialize_read(
+        case, execute.query_rows(case, reader, statements[0], case.statement_binds(0, dialect))
+    )
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
         reference = [
             execute.project_like(row, root_rows)
-            for row in execute.reference_rows(reader, reference_sql)
+            for row in materialize.materialize_read(
+                case, execute.reference_rows(reader, reference_sql)
+            )
         ]
         if not rows_equal(reference, root_rows, case.tolerance):
             raise CaseFailure(
@@ -259,11 +265,12 @@ def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
                 f"  golden:    {root_rows!r}"
             )
 
+    narrowed = materialize.narrow_to_variant_columns(case, root_rows)
     graph.assert_milestone_partition(
         case,
         root_entity,
         root_rows,
-        [graph.graph_node(case.model, root_entity, row) for row in root_rows],
+        [graph.graph_node(case, root_entity, row) for row in narrowed],
         graph_specs,
     )
 
@@ -295,15 +302,15 @@ def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
     (golden,) = case.golden_statements(dialect)
     entity = case.model.entity(case.object_query["target"])
 
-    # `familyVariant` materialization happens on the RAW rows (also what the
-    # referenceSql identity check below compares against — the matched ROW SET,
-    # unrelated to per-variant field narrowing); the per-variant COLUMN narrowing
-    # is a separate, graph-assembly-only step.
-    rows = graph.instance_form_root_rows(
-        case, reader, entity, golden, case.statement_binds(0, dialect)
+    # The seam publishes the unnarrowed rows, which is what the referenceSql
+    # identity check below compares against — the matched ROW SET, unrelated to
+    # per-variant field narrowing. The per-variant COLUMN narrowing is a separate,
+    # graph-assembly-only step.
+    rows = materialize.materialize_read(
+        case, execute.query_rows(case, reader, golden, case.statement_binds(0, dialect))
     )
     narrowed = materialize.narrow_to_variant_columns(case, rows)
-    assembled = {entity.name: [graph.graph_node(case.model, entity, row) for row in narrowed]}
+    assembled = {entity.name: [graph.graph_node(case, entity, row) for row in narrowed]}
 
     expected = case.expected_graph or {}
     if not graph.graphs_equal(assembled, expected, case.model):
@@ -320,7 +327,7 @@ def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
         # RAW tag column too (it is an independently-formulated but otherwise
         # equivalent selection); materialize familyVariant on it the same way,
         # so this identity check compares apples to apples (m-inheritance).
-        reference = materialize.materialize_family_variant(
+        reference = materialize.materialize_read(
             case, execute.reference_rows(reader, reference_sql)
         )
         if not rows_equal(reference, identity_rows, case.tolerance):

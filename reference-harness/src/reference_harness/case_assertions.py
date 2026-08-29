@@ -127,8 +127,8 @@ def _row_matches(left: dict[str, Any], right: dict[str, Any], tolerance: Decimal
 
 
 def rows_equal(
-    left: list[dict[str, Any]],
-    right: list[dict[str, Any]],
+    left: Sequence[dict[str, Any]],
+    right: Sequence[dict[str, Any]],
     tolerance: Decimal | None = None,
     *,
     ordered: bool = False,

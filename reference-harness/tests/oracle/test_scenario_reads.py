@@ -24,6 +24,7 @@ import pytest
 from reference_harness.case import Case
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.object_query_oracle import ScenarioReads
+from reference_harness.object_query_oracle import materialize as oracle_materialize
 
 from .conftest import ScriptedReads
 
@@ -1265,3 +1266,136 @@ def test_a_driver_exception_from_a_step_propagates_unchanged(corpus_case: CaseLo
 
     with pytest.raises(RuntimeError, match="connection reset by peer"):
         reads.assert_step(0, ScriptedReads(results=[boom]))
+
+
+# --- what a step publishes ----------------------------------------------------
+
+_DOCUMENT_LAYOUT_ROW_FORM_READ = "m-storage-layout-017-document-layout-provisioned-read.yaml"
+
+# Every member the layout moved into the shared `payload` Column, occurrences
+# included, so a row's Structured Column carries both lanes at once.
+_TRAVELER_DOCUMENTS: list[dict[str, Any]] = [
+    {
+        "id": 1,
+        "payload": {
+            "displayName": "Ada",
+            "score": 7,
+            "joinedOn": "2026-01-15",
+            "note": "north wing",
+            "address": {"city": "Oslo", "geo": {"country": "NO"}},
+            "tags": [{"label": "founder"}],
+        },
+    },
+    {
+        "id": 2,
+        "payload": {
+            "displayName": "Bo",
+            "score": 30,
+            "joinedOn": "2025-12-31",
+            "address": {"city": "Bergen", "geo": {"country": "NO"}},
+            "tags": [],
+        },
+    },
+    {
+        "id": 3,
+        "payload": {
+            "displayName": "Cyd",
+            "score": None,
+            "joinedOn": None,
+            "note": None,
+            "address": None,
+            "tags": [],
+        },
+    },
+]
+
+
+def _resolving_a_predicate_write_over_a_document_layout(case: Case) -> Case:
+    """A shipped row-form document-layout read made a predicate write's own resolve.
+
+    The corpus authors no predicate write over a document-mapped Entity, so the
+    pairing is fabricated in a private copy: the find's own target and canonical
+    predicate written by the step after it, and the target's primary key marked as
+    its optimistic-lock member — the one model fact that decides whether such a
+    write must resolve its rows before it writes them, and the one that leaves the
+    compiled layout untouched, every member staying inside the shared Column.
+    """
+    query = case.raw["when"]["objectQuery"]
+    case.raw["shape"] = "scenario"
+    case.raw["when"] = {
+        "scenario": [
+            {
+                "objectQuery": query,
+                "statements": case.raw["then"]["statements"],
+                "expectRows": case.raw["then"]["rows"],
+                "roundTrips": 1,
+            },
+            {
+                "write": {
+                    "mutation": "delete",
+                    "target": {"entity": query["target"], "predicate": query["predicate"]},
+                },
+                "roundTrips": 1,
+            },
+        ]
+    }
+    case.raw["then"] = {}
+    case.model.descriptor["entities"][0]["attributes"][0]["optimisticLocking"] = True
+    return case
+
+
+def test_a_row_form_step_read_publishes_no_value_object_occurrence(
+    damaged_case: CaseLoader,
+) -> None:
+    """A step's result FORM decides which members its Structured Column fans out.
+
+    The sole row-form step read is a materializing predicate write's resolve, and
+    row form asks for the Attributes alone (`m-case-format` *Read result form*), so
+    the `address` and `tags` occurrences stored beside them in the same document
+    stay inside it. What the step publishes is the scalars, under the names a
+    Column of each would have had.
+    """
+    case = _resolving_a_predicate_write_over_a_document_layout(
+        damaged_case(_DOCUMENT_LAYOUT_ROW_FORM_READ)
+    )
+
+    ScenarioReads(case).assert_step(0, ScriptedReads(results=[_TRAVELER_DOCUMENTS]))
+
+
+def test_a_step_publishing_rows_that_skipped_the_seam_is_refused(
+    corpus_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retained observation holds what its step published, and refuses anything else.
+
+    Standing in for a future path that assembles the materialization sequence
+    itself: the sequence's last step is replaced by a pass-through, and the
+    observation refuses the rows at construction rather than retaining storage a
+    later reuse, access, or identity check would be graded against.
+    """
+    monkeypatch.setattr(
+        oracle_materialize,
+        "materialize_variant_owner_node",
+        lambda _case, _entity, row: dict(row),
+    )
+    reads = ScenarioReads(corpus_case(_POPULATED_LIST))
+
+    with pytest.raises(TypeError, match="did not come through the materialization seam"):
+        reads.assert_step(0, ScriptedReads(results=[_ORDERS]))
+
+
+def test_a_load_whose_source_step_observed_nothing_is_refused(damaged_case: CaseLoader) -> None:
+    """A read verb publishes objects, so the position they stand at must be resolvable.
+
+    A `load` walks a relationship from the object an earlier step named, and reads
+    that step's position out of the CASE. A source step that states no read — a
+    write, or a lifecycle action — names no position for the walk to start from, so
+    the rows its statements returned would be published standing nowhere.
+    """
+    case = damaged_case(_POPULATED_LIST)
+    source = _steps(case)[0]
+    del source["objectQuery"]
+    source["write"] = {"mutation": "insert", "target": {"entity": "parallax.compatibility.Order"}}
+    reads = ScenarioReads(case)
+
+    with pytest.raises(CaseFailure, match="resolved no entity for the rows"):
+        reads.assert_step(1, ScriptedReads(results=[_ALL_ITEMS]))
