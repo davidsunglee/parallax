@@ -14,15 +14,15 @@ constants — while *calling* one of the seams below opens a socket. Each call's
 target is resolved through the importing module's own bindings, so a local name
 that merely looks like a seam is not one, and a seam reached under an alias
 still is — including a local name the module first binds to a seam and calls
-afterwards, through any of the forms Python binds a name with, however many names
-the binding passed through, and through any container it was stored in and taken
-back out of. A declared matrix profile reaches a seam through a member rather than
-an importable name — naming the provisioner it opens, and opening it itself — so
-those members are matched by name as well, on any receiver:
-the member is matched rather than resolved, so a call the rule cannot type is
-reported rather than trusted. That direction is deliberate — a false report is a
-loud failure a reader resolves, while the state this guard exists to catch is
-silent on any host with Docker.
+afterwards, through any of the forms that bind a name to a value, a ``match``
+capture as much as an assignment, however many names the binding passed through,
+and through any container it was stored in and taken back out of. A declared
+matrix profile reaches a seam through a member rather than an importable name —
+naming the provisioner it opens, and opening it itself — so those members are
+matched by name as well, on any receiver: the member is matched rather than
+resolved, so a call the rule cannot type is reported rather than trusted. That
+direction is deliberate — a false report is a loud failure a reader resolves,
+while the state this guard exists to catch is silent on any host with Docker.
 
 The rule follows a value through this module's own bindings and stops at a call
 boundary: a seam handed to a function or returned out of one is beyond it, because
@@ -247,14 +247,34 @@ def _bound_names(target: ast.expr) -> list[str]:
     return []
 
 
+def _pattern_names(pattern: ast.pattern) -> list[str]:
+    """Every name *pattern* captures, at any depth.
+
+    A capture nested in a sequence, mapping, class, or alternative pattern holds
+    part of the subject rather than the whole, which the rule cannot tell apart, so
+    every capture is bound to the subject: a subject holding an acquisition is one
+    wherever a pattern captures it.
+    """
+    names: list[str] = []
+    for node in ast.walk(pattern):
+        if isinstance(node, ast.MatchAs | ast.MatchStar) and node.name is not None:
+            names.append(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+            names.append(node.rest)
+    return names
+
+
 def _value_bindings(node: ast.AST) -> list[tuple[list[str], ast.expr]]:
     """The names *node* binds and the expression it binds them to, for every form
-    Python's grammar binds a name with.
+    that binds a name to an expression this module can read.
 
     The enumeration is the point: assignment, annotation, walrus, iteration,
-    ``with``, comprehension, and parameter defaults are one rule, so a seam reached
-    by rewriting the binding into a form the rule had not enumerated is not an
-    escape but an omission.
+    ``with``, comprehension, ``match`` capture, and parameter defaults are one
+    rule, so a seam reached by rewriting the binding into a form the rule had not
+    enumerated is not an escape but an omission. The forms deliberately outside it
+    bind no expression a seam could reach: an import binds a dotted path, which
+    :func:`_imported_names` resolves instead, and ``def``, ``class``, ``type``, and
+    ``except ... as`` bind a definition or a raised exception.
     """
     if isinstance(node, ast.Assign):
         return [([name for t in node.targets for name in _bound_names(t)], node.value)]
@@ -264,6 +284,8 @@ def _value_bindings(node: ast.AST) -> list[tuple[list[str], ast.expr]]:
         return [(_bound_names(node.target), node.iter)]
     if isinstance(node, ast.withitem) and node.optional_vars is not None:
         return [(_bound_names(node.optional_vars), node.context_expr)]
+    if isinstance(node, ast.Match):
+        return [(_pattern_names(case.pattern), node.subject) for case in node.cases]
     if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef | ast.Lambda):
         positional = [*node.args.posonlyargs, *node.args.args]
         defaulted = positional[len(positional) - len(node.args.defaults) :]
@@ -313,8 +335,9 @@ def seam_calls(tree: ast.Module) -> list[tuple[int, str]]:
     A call is one when its target resolves to a declared seam, when it calls a
     declared seam member — the indirection a scope's recipe reaches a seam through
     when what names it is a declared value rather than an import — or when it calls
-    a local name the module bound to either, through any binding form and however
-    many names and containers the binding passed through on the way.
+    a local name the module bound to either, through any of the forms
+    :func:`_value_bindings` enumerates and however many names and containers the
+    binding passed through on the way.
 
     A value that leaves through a call — passed as an argument, or returned out of
     one — is outside the rule: what a callee does with a seam is not decidable from
