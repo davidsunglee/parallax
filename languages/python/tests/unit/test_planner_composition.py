@@ -56,9 +56,15 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from _transact_support import NEW_ROW, RecordingPort, account_db, new_account
+from _transact_support import NEW_ROW, account_db, new_account
 
 from _support import mirrored_models as mm
+from _support.db_port import (
+    Read,
+    ScriptedPort,
+    Transact,
+    Write,
+)
 from _support.repo import REPO_ROOT
 from parallax.conformance import case_format, engine
 from parallax.core.dialect import Dialect
@@ -261,7 +267,7 @@ def test_the_database_lane_plans_every_ingress_through_one_factory_planner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen = _watch("Database", monkeypatch)
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
     database = account_db(port)
 
     def body(tx: Transaction) -> None:
@@ -303,7 +309,7 @@ def test_the_composition_root_wires_the_audit_port_to_the_neutral_strategy(
     # assertions cover, and a stamp that never varies survives every comparison
     # of two writes to each other.
     seen = _watch("Database", monkeypatch)
-    account_db(RecordingPort())
+    account_db(ScriptedPort())
 
     assert seen.built, "connecting built no planner, so this grades no wiring"
     assert all(built.audit is NO_AUDIT for built in seen.built)
@@ -352,8 +358,10 @@ def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
     case = case_format.load_case(_CASES / "m-opt-lock-006-success.yaml")
     emissions, _affected, _state, _round_trips = engine.run_conflict_case(
         case,
-        RecordingPort(
-            rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]
+        ScriptedPort(
+            Read(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]),
+            Transact(Write()),
+            Read(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]),
         ),
     )
 

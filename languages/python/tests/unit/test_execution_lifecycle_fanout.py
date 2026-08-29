@@ -19,9 +19,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from _transact_support import ACCOUNT, FIXED, NEW_ROW, RecordingPort
+from _transact_support import ACCOUNT, FIXED, NEW_ROW
 
 from _support import mirrored_models as mm
+from _support.db_port import (
+    Read,
+    ScriptedPort,
+)
+from parallax.core.db_port import DbPort
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -102,7 +107,7 @@ def _handler(*children: Any) -> ExecutionLifecycleHandler:
     return opened
 
 
-def _db(port: RecordingPort, provider: Any) -> Database:
+def _db(port: DbPort, provider: Any) -> Database:
     return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
@@ -181,7 +186,7 @@ def test_a_child_opening_failure_aborts_the_root_and_discards_what_opened() -> N
     first = _Child("first")
     failing = _Child("second", opening_failure=RuntimeError("the exporter is not configured"))
     later = _Child("third")
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort()
     db = _db(port, FanoutLifecycleProvider([first, failing, later]))
 
     with pytest.raises(ExecutionLifecycleProviderError):
@@ -190,7 +195,7 @@ def test_a_child_opening_failure_aborts_the_root_and_discards_what_opened() -> N
     # the child after the failure is never asked at all.
     assert first.handlers[0].seen == []
     assert later.opened == []
-    assert port.ops == []
+    assert port.calls == []
 
 
 def test_an_ordinarily_failing_child_is_quarantined_alone() -> None:
@@ -313,7 +318,7 @@ def test_a_report_about_the_composite_itself_reaches_every_composed_provider() -
 
 def test_a_fan_out_installed_through_connect_observes_a_whole_read() -> None:
     children = [_Child("metrics"), _Child("tracing")]
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     db = _db(port, FanoutLifecycleProvider(children))
     db.find(mm.Account.where(mm.Account.id == 7)).result()
 

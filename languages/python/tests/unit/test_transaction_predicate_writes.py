@@ -14,7 +14,6 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
-from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
@@ -29,14 +28,23 @@ from _transact_support import (
     PERSON,
     RATE,
     WHERE_POSITION_META,
-    NoIoPort,
-    RecordingPort,
     WherePosition,
     account_db,
 )
 
 from _support import inheritance_models as im
 from _support import mirrored_models as mm
+from _support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    RollbackCall,
+    ScriptedPort,
+    Transact,
+    Write,
+    WriteCall,
+)
 from parallax.conformance import case_format, engine
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
@@ -58,7 +66,7 @@ from parallax.core import (
 )
 from parallax.core.base import INFINITY, DocumentValue, InstantError, PresentDocument, SqlNull
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, JsonDocument, Row
+from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen import LoweredStatement
@@ -278,21 +286,21 @@ _NESTED_READLESS_META = DomainModel(NestedReadlessVoyage)
 # no-op elimination + the atomic-unit buffering, ADR 0014).                    #
 # --------------------------------------------------------------------------- #
 def test_readless_update_where_buffers_one_statement_no_read() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
 
     Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
-    assert port.ops == [
-        ("begin",),
-        ("write", POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Ada", 1)),
-        ("commit",),
+    assert port.calls == [
+        BeginCall(),
+        WriteCall(POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Ada", 1)),
+        CommitCall(),
     ]
 
 
 def test_readless_document_many_assignment_is_refused_before_write_sql() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -303,11 +311,11 @@ def test_readless_document_many_assignment_is_refused_before_write_sql() -> None
     with pytest.raises(WriteRejectedError) as raised:
         Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED)).transact(fn)
     assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
-    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+    assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
 
 def test_readless_nested_document_many_assignment_is_refused_before_write_sql() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -324,7 +332,7 @@ def test_readless_nested_document_many_assignment_is_refused_before_write_sql() 
         Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED)).transact(fn)
     assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
     assert "route.segment.stops" in str(raised.value)
-    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+    assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
 
 def test_nested_document_many_detection_follows_only_authored_occurrences() -> None:
@@ -342,7 +350,7 @@ def test_nested_document_many_detection_follows_only_authored_occurrences() -> N
 
 
 def test_readless_document_scalar_assignment_still_reaches_planning() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -351,20 +359,20 @@ def test_readless_document_scalar_assignment_still_reaches_planning() -> None:
         )
 
     Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED)).transact(fn)
-    assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
+    assert [type(op) for op in port.calls] == [BeginCall, WriteCall, CommitCall]
 
 
 def test_readless_delete_where_buffers_one_statement_no_read() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1))
 
     Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
-    assert port.ops == [
-        ("begin",),
-        ("write", POSTGRES.to_driver_sql("delete from person where id = ?"), (1,)),
-        ("commit",),
+    assert port.calls == [
+        BeginCall(),
+        WriteCall(POSTGRES.to_driver_sql("delete from person where id = ?"), (1,)),
+        CommitCall(),
     ]
 
 
@@ -377,7 +385,7 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
     # emits_the_entity_layout_slot_selection`'s own insert-side proof).
     # Eligibility is untouched: the target is still unversioned and
     # non-temporal, so the write stays readless.
-    forward_port = RecordingPort()
+    forward_port = ScriptedPort(Transact(Write()))
 
     def forward(tx: Transaction) -> None:
         tx.update_where(
@@ -388,7 +396,7 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
 
     Database.connect(forward_port, ORDERS, clock=FixedClock(FIXED)).transact(forward)
 
-    reordered_port = RecordingPort()
+    reordered_port = ScriptedPort(Transact(Write()))
 
     def reordered(tx: Transaction) -> None:
         tx.update_where(
@@ -399,20 +407,19 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
 
     Database.connect(reordered_port, ORDERS, clock=FixedClock(FIXED)).transact(reordered)
 
-    assert forward_port.ops == reordered_port.ops
-    assert forward_port.ops == [
-        ("begin",),
-        (
-            "write",
+    assert forward_port.calls == reordered_port.calls
+    assert forward_port.calls == [
+        BeginCall(),
+        WriteCall(
             POSTGRES.to_driver_sql("update orders set name = ?, price = ? where id = ?"),
             ("Hopper", Decimal("9.99"), 100),
         ),
-        ("commit",),
+        CommitCall(),
     ]
 
 
 def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
@@ -420,7 +427,7 @@ def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:
     with pytest.raises(QueryDefinitionError) as caught:
         Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
-    assert not any(op[0] == "write" for op in port.ops)
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_where_verb_rejects_an_inheritance_family_target() -> None:
@@ -428,7 +435,7 @@ def test_where_verb_rejects_an_inheritance_family_target() -> None:
     # composition step accepts it and the family rejection is what refuses the
     # write — which is the point: a set-based write over an inheritance family is
     # unsupported whatever it assigns.
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -437,7 +444,7 @@ def test_where_verb_rejects_an_inheritance_family_target() -> None:
 
     with pytest.raises(inheritance.InheritanceError, match="subtype-write-set-based-unsupported"):
         Database.connect(port, PAYMENT, clock=FixedClock(FIXED)).transact(fn)
-    assert not any(op[0] in ("read", "write") for op in port.ops)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
 def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
@@ -448,7 +455,7 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
     # canonical instruction the conformance engine hands `validate_instruction`
     # carries no query to compose with, and still classifies the family first
     # (`test_write_instructions.py`).
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -458,11 +465,11 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
     with pytest.raises(QueryDefinitionError, match=r"Payment\.amount") as caught:
         Database.connect(port, PAYMENT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
-    assert not any(op[0] in ("read", "write") for op in port.ops)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
 def test_an_assignment_bearing_verb_requires_an_assignment() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id == 1))
@@ -470,11 +477,11 @@ def test_an_assignment_bearing_verb_requires_an_assignment() -> None:
     with pytest.raises(QueryDefinitionError, match="at least one assignment") as caught:
         Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
-    assert not any(op[0] in ("read", "write") for op in port.ops)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
 def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -486,11 +493,11 @@ def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
     with pytest.raises(QueryDefinitionError, match="assigned twice") as caught:
         Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
-    assert not any(op[0] in ("read", "write") for op in port.ops)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
 def test_bitemporal_where_verb_requires_valid_from() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -502,7 +509,7 @@ def test_bitemporal_where_verb_requires_valid_from() -> None:
 
 
 def test_audit_only_where_verb_forbids_valid_from() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.id == 1), valid_from=FIXED)
@@ -512,7 +519,7 @@ def test_audit_only_where_verb_forbids_valid_from() -> None:
 
 
 def test_non_temporal_where_verb_forbids_valid_from() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -527,11 +534,16 @@ def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest() -> Non
     # m-opt-lock-014's own shape: TWO resolved rows, one already equal to the
     # assigned value (skipped: no DML, no version advance), one genuinely
     # changed (one gated per-row UPDATE).
-    port = RecordingPort(
-        rows=[
-            {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
-            {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
-        ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                rows=[
+                    {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
+                    {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
+                ]
+            ),
+            Write(),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -540,9 +552,9 @@ def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest() -> Non
         )
 
     account_db(port).transact(fn, concurrency="optimistic")
-    kinds = [op[0] for op in port.ops]
-    assert kinds == ["begin", "read", "write", "commit"]
-    write_sql, write_binds = port.ops[2][1], port.ops[2][2]
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, CommitCall]
+    (written,) = (call for call in port.calls if isinstance(call, WriteCall))
+    write_sql, write_binds = written.sql, written.binds
     assert write_sql == POSTGRES.to_driver_sql(
         "update account set balance = ?, version = ? where id = ? and version = ?"
     )
@@ -552,50 +564,56 @@ def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest() -> Non
 def test_materializing_delete_where_writes_every_resolved_row() -> None:
     # m-opt-lock-015's own shape: delete has no assignment equality to test,
     # so every resolved row writes — N always equals the resolved-row count.
-    port = RecordingPort(
-        rows=[
-            {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
-            {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
-        ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                rows=[
+                    {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
+                    {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
+                ]
+            ),
+            Write(times=2),
+        )
     )
 
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Account.where(mm.Account.balance < 200))
 
     account_db(port).transact(fn, concurrency="optimistic")
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2
-    assert writes[0][2] == (1, 1)
-    assert writes[1][2] == (3, 1)
+    assert writes[0].binds == (1, 1)
+    assert writes[1].binds == (3, 1)
 
 
 def test_materializing_write_with_zero_resolved_rows_writes_nothing() -> None:
     # `m-batch-write` requires zero resolved rows to produce zero keyed writes.
     # A materializing write that resolves nothing still commits
     # cleanly, with no keyed writes at all.
-    port = RecordingPort(rows=[])
+    port = ScriptedPort(Transact(Read(rows=[])))
 
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Account.where(mm.Account.balance < 0))
 
     account_db(port).transact(fn)
-    assert port.ops == [("begin",), ("read", port.ops[1][1], port.ops[1][2]), ("commit",)]
-    assert not any(op[0] == "write" for op in port.ops)
+    (resolving,) = (call for call in port.calls if isinstance(call, ReadCall))
+    assert port.calls == [BeginCall(), resolving, CommitCall()]
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_a_failed_resolving_read_propagates_as_the_call_it_made() -> None:
     # A materializing predicate write reaches the database to resolve its
     # predicate, and a resolve that comes back with a failure is still the call
     # this write made: nothing reinterprets it on the way out.
-    class _FailingReadPort(RecordingPort):
-        def execute(
-            self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
-        ) -> list[Row]:
-            raise DatabaseError(
-                category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
+    port = ScriptedPort(
+        Transact(
+            Read(
+                raises=DatabaseError(
+                    category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
+                )
             )
-
-    port = _FailingReadPort()
+        )
+    )
 
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Account.where(mm.Account.balance < 0))
@@ -634,21 +652,21 @@ def test_materializing_terminate_where_over_an_audit_only_target() -> None:
     # observed-`in_z` candidate binds only under the Optimistic strategy, which
     # `~parallax.core.opt_lock.effective_strategy` reaches for a
     # Transaction-Time target under the default preference alone).
-    port = RecordingPort(rows=_two_terminate_rows())
+    port = ScriptedPort(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
 
     Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn, concurrency="locking")
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2  # one Transaction-Time-only close per resolved row, no chain
     close_sql = POSTGRES.to_driver_sql(
         "update balance set out_z = ? where bal_id = ? and out_z = ?"
     )
-    assert writes[0][1] == close_sql
-    assert writes[0][2] == ("2024-06-01T00:00:00+00:00", 1, "infinity")
-    assert writes[1][1] == close_sql
-    assert writes[1][2] == ("2024-06-01T00:00:00+00:00", 2, "infinity")
+    assert writes[0].sql == close_sql
+    assert writes[0].binds == ("2024-06-01T00:00:00+00:00", 1, "infinity")
+    assert writes[1].sql == close_sql
+    assert writes[1].binds == ("2024-06-01T00:00:00+00:00", 2, "infinity")
 
 
 def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurrency() -> None:
@@ -657,26 +675,26 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
     # resolved row's own close carries THAT row's own observed `in_z`, in
     # resolved-row order, mirroring the corpus's `m-txtime-write-006` gated-
     # close shape (`m-value-object-047`'s own re-gated step 2).
-    port = RecordingPort(rows=_two_terminate_rows())
+    port = ScriptedPort(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
 
     Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn, concurrency="optimistic")
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2
     gated_sql = POSTGRES.to_driver_sql(
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
-    assert writes[0][1] == gated_sql
-    assert writes[0][2] == (
+    assert writes[0].sql == gated_sql
+    assert writes[0].binds == (
         "2024-06-01T00:00:00+00:00",
         1,
         "infinity",
         dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
     )
-    assert writes[1][1] == gated_sql
-    assert writes[1][2] == (
+    assert writes[1].sql == gated_sql
+    assert writes[1].binds == (
         "2024-06-01T00:00:00+00:00",
         2,
         "infinity",
@@ -688,16 +706,21 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
     # `txtime_write.plan` chains the instruction's OWN authored FULL row —
     # never a separate observed payload — so materialization must merge the
     # resolved row's own unassigned scalar payload (acct_num) forward itself.
-    port = RecordingPort(
-        rows=[
-            {
-                "bal_id": 1,
-                "acct_num": "A",
-                "val": Decimal("150.00"),
-                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "out_z": INFINITY,
-            }
-        ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                rows=[
+                    {
+                        "bal_id": 1,
+                        "acct_num": "A",
+                        "val": Decimal("150.00"),
+                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                        "out_z": INFINITY,
+                    }
+                ]
+            ),
+            Write(times=2),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -706,9 +729,9 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
         )
 
     Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2  # close then chain
-    chain_sql, chain_binds = writes[1][1], writes[1][2]
+    chain_sql, chain_binds = writes[1].sql, writes[1].binds
     assert chain_sql == POSTGRES.to_driver_sql(
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
     )
@@ -724,16 +747,21 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
     # the chained row when the caller does not itself reassign it. The
     # projection that makes this possible is the temporal target's own complete
     # Predecessor Row, which its close-only sibling records just the same.
-    port = RecordingPort(
-        rows=[
-            {
-                "id": 1,
-                "name": "Nordic Foods",
-                "address": PresentDocument({"city": "Bergen"}),
-                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "out_z": INFINITY,
-            }
-        ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                rows=[
+                    {
+                        "id": 1,
+                        "name": "Nordic Foods",
+                        "address": PresentDocument({"city": "Bergen"}),
+                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                        "out_z": INFINITY,
+                    }
+                ]
+            ),
+            Write(times=2),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -742,15 +770,15 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
         )
 
     Database.connect(port, _WHERE_LEDGER_META, clock=FixedClock(FIXED)).transact(fn)
-    reads = [op for op in port.ops if op[0] == "read"]
-    writes = [op for op in port.ops if op[0] == "write"]
-    assert reads[0][1] == POSTGRES.to_driver_sql(
+    reads = [op for op in port.calls if isinstance(op, ReadCall)]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert reads[0].sql == POSTGRES.to_driver_sql(
         "select t0.id, t0.name, t0.in_z, t0.out_z, not t0.address is null, "
         "t0.address from where_ledger t0 "
         "where t0.id = ? and t0.out_z = ?"
     )
     assert len(writes) == 2  # close then chain
-    chain_sql, chain_binds = writes[1][1], writes[1][2]
+    chain_sql, chain_binds = writes[1].sql, writes[1].binds
     assert chain_sql == POSTGRES.to_driver_sql(
         "insert into where_ledger(id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)"
     )
@@ -764,16 +792,21 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
 
 
 def test_materializing_update_where_carries_an_encoded_scalar_in_the_predecessor() -> None:
-    port = RecordingPort(
-        rows=[
-            {
-                "id": 1,
-                "name": "old",
-                "payload_hex": "0a1b",
-                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "out_z": INFINITY,
-            }
-        ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                rows=[
+                    {
+                        "id": 1,
+                        "name": "old",
+                        "payload_hex": "0a1b",
+                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                        "out_z": INFINITY,
+                    }
+                ]
+            ),
+            Write(times=2),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -783,9 +816,9 @@ def test_materializing_update_where_carries_an_encoded_scalar_in_the_predecessor
         )
 
     Database.connect(port, _WHERE_BINARY_LEDGER_META, clock=FixedClock(FIXED)).transact(fn)
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2
-    assert b"\x0a\x1b" in cast("tuple[object, ...]", writes[1][2])
+    assert b"\x0a\x1b" in writes[1].binds
 
 
 def test_materializing_update_where_document_layout_patches_the_retained_document() -> None:
@@ -800,15 +833,20 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
         "charterCode": "NB-118",
         "manifest": {"cargo": "grain", "sealNumber": "S-4021"},
     }
-    port = RecordingPort(
-        rows=[
-            {
-                "id": 1,
-                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "out_z": INFINITY,
-                "payload": PresentDocument(stored),
-            }
-        ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                rows=[
+                    {
+                        "id": 1,
+                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                        "out_z": INFINITY,
+                        "payload": PresentDocument(stored),
+                    }
+                ]
+            ),
+            Write(times=2),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -817,15 +855,15 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
         )
 
     Database.connect(port, _WHERE_VOYAGE_META, clock=FixedClock(FIXED)).transact(fn)
-    reads = [op for op in port.ops if op[0] == "read"]
-    writes = [op for op in port.ops if op[0] == "write"]
-    assert reads[0][1] == POSTGRES.to_driver_sql(
+    reads = [op for op in port.calls if isinstance(op, ReadCall)]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert reads[0].sql == POSTGRES.to_driver_sql(
         "select t0.id, t0.in_z, t0.out_z, not t0.payload is null, "
         "t0.payload from where_voyage t0 "
         "where t0.id = ? and t0.out_z = ?"
     )
     assert len(writes) == 2  # close then chain
-    chain_sql, chain_binds = writes[1][1], writes[1][2]
+    chain_sql, chain_binds = writes[1].sql, writes[1].binds
     assert chain_sql == POSTGRES.to_driver_sql(
         "insert into where_voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)"
     )
@@ -857,17 +895,22 @@ def test_materializing_terminate_where_document_layout_binds_a_carried_document_
         "terms": {"clause": "standard", "sealNumber": "S-4021"},
         "stops": [{"port": "Kristiansand", "berth": "7"}],
     }
-    port = RecordingPort(
-        rows=[
-            {
-                "id": 1,
-                "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "thru_z": INFINITY,
-                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "out_z": INFINITY,
-                "payload": PresentDocument(stored),
-            }
-        ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                rows=[
+                    {
+                        "id": 1,
+                        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                        "thru_z": INFINITY,
+                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                        "out_z": INFINITY,
+                        "payload": PresentDocument(stored),
+                    }
+                ]
+            ),
+            Write(times=2),
+        )
     )
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
@@ -875,9 +918,9 @@ def test_materializing_terminate_where_document_layout_binds_a_carried_document_
         tx.terminate_where(WhereCharter.where(WhereCharter.id == 1), valid_from=valid_from)
 
     Database.connect(port, _WHERE_CHARTER_META, clock=FixedClock(FIXED)).transact(fn)
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2  # close + head only (no tail)
-    head_binds = cast("tuple[object, ...]", writes[1][2])
+    head_binds = writes[1].binds
     carried = cast("JsonDocument", head_binds[-1]).value
     assert carried == stored
     # Equality alone does not settle it: a read-only mapping compares equal to its
@@ -900,7 +943,7 @@ def _position_row() -> Row:
 
 
 def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
-    port = RecordingPort(rows=[_position_row()])
+    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=3)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -913,12 +956,12 @@ def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 3  # close + head (old) + new tail
 
 
 def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
-    port = RecordingPort(rows=[_position_row()])
+    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=2)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -927,12 +970,12 @@ def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2  # close + head only (no tail)
 
 
 def test_materializing_update_until_where_over_a_bitemporal_target() -> None:
-    port = RecordingPort(rows=[_position_row()])
+    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -947,12 +990,12 @@ def test_materializing_update_until_where_over_a_bitemporal_target() -> None:
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 4  # close + head + middle + tail
 
 
 def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
-    port = RecordingPort(rows=[_position_row()])
+    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=3)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -964,7 +1007,7 @@ def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 3  # close + head + tail (no middle)
 
 
@@ -975,7 +1018,9 @@ def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
     # own multi-row pins -- N resolved rows -> 3*N keyed writes, no cross-row
     # elision (`m-opt-lock.md` "Predicate-selected writes materialize when
     # observations are needed").
-    port = RecordingPort(rows=[_position_row(), {**_position_row(), "id": 2}])
+    port = ScriptedPort(
+        Transact(Read(rows=[_position_row(), {**_position_row(), "id": 2}]), Write(times=6))
+    )
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -989,7 +1034,7 @@ def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 6  # 2 resolved rows * (close + head + tail)
 
 
@@ -1015,7 +1060,7 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
     # observed prior rectangle"; `m-value-object` "the document rides every
     # chained/split row whole" — never decomposed).
     address: dict[str, DocumentValue] = {"city": "Helsinki"}
-    port = RecordingPort(rows=[_rectangle_row(address=address)])
+    port = ScriptedPort(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=3)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1028,12 +1073,12 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
     Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    reads = [op for op in port.ops if op[0] == "read"]
-    writes = [op for op in port.ops if op[0] == "write"]
-    assert "t0.address" in cast("str", reads[0][1])  # the need-sensitive projection fired
+    reads = [op for op in port.calls if isinstance(op, ReadCall)]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
     assert len(writes) == 3  # close + head (old) + new tail
-    head_binds = cast("tuple[object, ...]", writes[1][2])
-    tail_binds = cast("tuple[object, ...]", writes[2][2])
+    head_binds = writes[1].binds
+    tail_binds = writes[2].binds
     assert head_binds[-1] == JsonDocument(address)  # head: OLD value, unreassigned document
     assert tail_binds[-1] == JsonDocument(address)  # new tail: NEW value, SAME document
     assert tail_binds[2] == Decimal("300.00")  # the assigned scalar column DOES take the new value
@@ -1047,7 +1092,7 @@ def test_materializing_update_until_where_bitemporal_carries_the_value_object_on
     # resolved row's own `address` forward, whole, since the caller reassigns
     # only `value` — the document is never decomposed at any chain slot.
     address: dict[str, DocumentValue] = {"city": "Tampere"}
-    port = RecordingPort(rows=[_rectangle_row(address=address)])
+    port = ScriptedPort(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=4)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -1062,11 +1107,11 @@ def test_materializing_update_until_where_bitemporal_carries_the_value_object_on
     Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 4  # close + head + middle + tail
-    head_binds = cast("tuple[object, ...]", writes[1][2])
-    middle_binds = cast("tuple[object, ...]", writes[2][2])
-    tail_binds = cast("tuple[object, ...]", writes[3][2])
+    head_binds = writes[1].binds
+    middle_binds = writes[2].binds
+    tail_binds = writes[3].binds
     assert head_binds[-1] == JsonDocument(address)
     assert middle_binds[-1] == JsonDocument(address)
     assert tail_binds[-1] == JsonDocument(address)
@@ -1086,7 +1131,7 @@ def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -
     # prior rectangle"; `m-value-object` "the document rides every
     # chained/split row whole".
     address: dict[str, DocumentValue] = {"city": "Oslo"}
-    port = RecordingPort(rows=[_rectangle_row(address=address)])
+    port = ScriptedPort(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=2)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1095,11 +1140,11 @@ def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -
     Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    reads = [op for op in port.ops if op[0] == "read"]
-    writes = [op for op in port.ops if op[0] == "write"]
-    assert "t0.address" in cast("str", reads[0][1])  # the need-sensitive projection fired
+    reads = [op for op in port.calls if isinstance(op, ReadCall)]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
     assert len(writes) == 2  # close + head only (no tail)
-    head_binds = cast("tuple[object, ...]", writes[1][2])
+    head_binds = writes[1].binds
     assert head_binds[-1] == JsonDocument(address)  # head: the OLD value's document, whole
 
 
@@ -1111,7 +1156,7 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
     # BOTH chain the resolved row's OLD payload forward
     # (`bitemp_write.plan`), so the document rides both, whole.
     address: dict[str, DocumentValue] = {"city": "Tampere"}
-    port = RecordingPort(rows=[_rectangle_row(address=address)])
+    port = ScriptedPort(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=3)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -1123,12 +1168,12 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
     Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    reads = [op for op in port.ops if op[0] == "read"]
-    writes = [op for op in port.ops if op[0] == "write"]
-    assert "t0.address" in cast("str", reads[0][1])  # the need-sensitive projection fired
+    reads = [op for op in port.calls if isinstance(op, ReadCall)]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
     assert len(writes) == 3  # close + head + tail (no middle)
-    head_binds = cast("tuple[object, ...]", writes[1][2])
-    tail_binds = cast("tuple[object, ...]", writes[2][2])
+    head_binds = writes[1].binds
+    tail_binds = writes[2].binds
     assert head_binds[-1] == JsonDocument(address)
     assert tail_binds[-1] == JsonDocument(address)
 
@@ -1141,16 +1186,21 @@ def test_materializing_terminate_where_audit_only_observes_the_whole_document() 
     # Predecessor Row (`m-unit-work`) whatever the topology does with it —
     # completeness is a property of the observation, not of the verb
     # (`m-value-object-047`, the corpus witness).
-    port = RecordingPort(
-        rows=[
-            {
-                "id": 1,
-                "name": "Nordic Foods",
-                "address": PresentDocument({"city": "Bergen"}),
-                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "out_z": INFINITY,
-            }
-        ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                rows=[
+                    {
+                        "id": 1,
+                        "name": "Nordic Foods",
+                        "address": PresentDocument({"city": "Bergen"}),
+                        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                        "out_z": INFINITY,
+                    }
+                ]
+            ),
+            Write(),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -1159,11 +1209,11 @@ def test_materializing_terminate_where_audit_only_observes_the_whole_document() 
     Database.connect(port, _WHERE_LEDGER_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    reads = [op for op in port.ops if op[0] == "read"]
-    writes = [op for op in port.ops if op[0] == "write"]
-    assert "t0.address" in cast("str", reads[0][1])
+    reads = [op for op in port.calls if isinstance(op, ReadCall)]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert "t0.address" in reads[0].sql
     assert len(writes) == 1  # the close alone — nothing carries the document forward
-    assert JsonDocument({"city": "Bergen"}) not in cast("tuple[object, ...]", writes[0][2])
+    assert JsonDocument({"city": "Bergen"}) not in writes[0].binds
 
 
 # --------------------------------------------------------------------------- #
@@ -1174,8 +1224,10 @@ def test_materializing_terminate_where_audit_only_observes_the_whole_document() 
 # declared value object.                                                       #
 # --------------------------------------------------------------------------- #
 def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_row() -> None:
-    port = RecordingPort(
-        rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}])
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -1189,7 +1241,7 @@ def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_ro
     )
     # No DML and no version advance: the reassigned document is IDENTICAL to
     # the resolved row's own stored value, so the row is eliminated entirely.
-    assert [op[0] for op in port.ops] == ["begin", "read", "commit"]
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
 def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds() -> None:
@@ -1202,7 +1254,7 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     def rows() -> list[Row]:
         return [{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
 
-    typed_port = RecordingPort(rows=rows())
+    typed_port = ScriptedPort(Transact(Read(rows=rows())))
 
     def typed(tx: Transaction) -> None:
         tx.update_where(
@@ -1213,12 +1265,12 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     Database.connect(typed_port, _WHERE_ROSTER_META, clock=FixedClock(FIXED)).transact(
         typed, concurrency="optimistic"
     )
-    assert [op[0] for op in typed_port.ops] == ["begin", "read", "commit"]
+    assert [type(op) for op in typed_port.calls] == [BeginCall, ReadCall, CommitCall]
 
     # The same value spelled as the rendered document `set` equally accepts, which
     # reaches the comparison without a Value Object's own serialization filling the
     # member in on the way.
-    document_port = RecordingPort(rows=rows())
+    document_port = ScriptedPort(Transact(Read(rows=rows())))
 
     def document(tx: Transaction) -> None:
         tx.update_where(
@@ -1229,7 +1281,7 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     Database.connect(document_port, _WHERE_ROSTER_META, clock=FixedClock(FIXED)).transact(
         document, concurrency="optimistic"
     )
-    assert [op[0] for op in document_port.ops] == ["begin", "read", "commit"]
+    assert [type(op) for op in document_port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
 def test_no_op_comparison_normalizes_production_encoded_one_and_many_assignments() -> None:
@@ -1268,7 +1320,7 @@ def test_no_op_comparison_normalizes_production_encoded_one_and_many_assignments
 
 
 def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op() -> None:
-    port = RecordingPort(rows=[{"id": 1, "version": 1, "payload_hex": "0a1b"}])
+    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "version": 1, "payload_hex": "0a1b"}])))
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -1279,12 +1331,15 @@ def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op
     Database.connect(port, _WHERE_BINARY_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    assert [op[0] for op in port.ops] == ["begin", "read", "commit"]
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
 def test_materializing_versioned_update_where_gates_a_changed_value_object_row() -> None:
-    port = RecordingPort(
-        rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]),
+            Write(),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -1296,17 +1351,19 @@ def test_materializing_versioned_update_where_gates_a_changed_value_object_row()
     Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 1
-    assert writes[0][1] == POSTGRES.to_driver_sql(
+    assert writes[0].sql == POSTGRES.to_driver_sql(
         "update where_subscriber set address = ?, version = ? where id = ? and version = ?"
     )
-    assert writes[0][2] == (JsonDocument({"city": "Oslo"}), 2, 1, 1)
+    assert writes[0].binds == (JsonDocument({"city": "Oslo"}), 2, 1, 1)
 
 
 def test_materializing_predicate_write_refuses_an_invalid_direct_version() -> None:
-    port = RecordingPort(
-        rows=[{"id": 1, "version": "bad", "address": PresentDocument({"city": "Bergen"})}]
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "version": "bad", "address": PresentDocument({"city": "Bergen"})}])
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -1319,15 +1376,18 @@ def test_materializing_predicate_write_refuses_an_invalid_direct_version() -> No
         Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
-    assert [op[0] for op in port.ops] == ["begin", "read", "rollback"]
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, RollbackCall]
 
 
 def test_materializing_versioned_update_where_projects_only_the_assigned_value_object() -> None:
     # Minimal-read discipline: the resolving read projects the ASSIGNED
     # document (`address`) only -- never `profile`, the entity's OTHER
     # declared value object, which this `update_where` never touches.
-    port = RecordingPort(
-        rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]),
+            Write(),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -1339,8 +1399,8 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
     Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    reads = [op for op in port.ops if op[0] == "read"]
-    assert reads[0][1] == POSTGRES.to_driver_sql(
+    reads = [op for op in port.calls if isinstance(op, ReadCall)]
+    assert reads[0].sql == POSTGRES.to_driver_sql(
         "select t0.id, t0.version, not t0.address is null, t0.address "
         "from where_subscriber t0 where t0.id = ?"
     )
@@ -1349,7 +1409,7 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
 def test_materializing_update_until_where_rejects_an_equal_window_bound() -> None:
     # No resolving read ever fires — the window rejects at build, before any
     # buffering (`buffer_predicate`, before `_materialize_predicate_write`).
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1364,11 +1424,13 @@ def test_materializing_update_until_where_rejects_an_equal_window_bound() -> Non
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
-    assert not any(op[0] in ("read", "write") for op in port.ops)  # never reached the resolve
+    assert not any(
+        isinstance(op, (ReadCall, WriteCall)) for op in port.calls
+    )  # never reached the resolve
 
 
 def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)  # BEFORE valid_from — reversed
 
@@ -1381,14 +1443,16 @@ def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
-    assert not any(op[0] in ("read", "write") for op in port.ops)  # never reached the resolve
+    assert not any(
+        isinstance(op, (ReadCall, WriteCall)) for op in port.calls
+    )  # never reached the resolve
 
 
 def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None:
     # A bound of no datetime type is no `m-core` instant, and the shared window
     # gate answers it with that module's own class rather than with a bare
     # assertion — the same verdict the keyed verbs answer the same value with.
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_until_where(
@@ -1402,7 +1466,7 @@ def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
-    assert not any(op[0] in ("read", "write") for op in port.ops)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
 def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
@@ -1411,8 +1475,8 @@ def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
     # own `WriteInstructionError` rather than a complaint about the missing
     # half's type. A non-temporal target admits no `valid_from` to supply at all,
     # which is how such a call reaches the gate with one bound.
-    account = RecordingPort()
-    position = RecordingPort()
+    account = ScriptedPort(Transact())
+    position = ScriptedPort(Transact())
 
     def absent_valid_from(tx: Transaction) -> None:
         tx.update_until_where(
@@ -1435,8 +1499,8 @@ def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
         Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             absent_until, concurrency="optimistic"
         )
-    assert not any(op[0] in ("read", "write") for op in account.ops)
-    assert not any(op[0] in ("read", "write") for op in position.ops)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in account.calls)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in position.calls)
 
 
 # --------------------------------------------------------------------------- #
@@ -1454,7 +1518,7 @@ def test_update_where_rejects_an_ordered_query_end_to_end() -> None:
         tx.update_where(query, mm.Person.name.set("Ada"))
 
     with pytest.raises(QueryDefinitionError) as caught:
-        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -1465,7 +1529,7 @@ def test_delete_where_rejects_an_ordered_query_end_to_end() -> None:
         tx.delete_where(query)
 
     with pytest.raises(QueryDefinitionError) as caught:
-        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -1481,7 +1545,9 @@ def test_a_where_verb_never_classifies_deferred_execution_features() -> None:
         tx.delete_where(query)
 
     with pytest.raises(QueryDefinitionError) as caught:
-        Database.connect(NoIoPort(), POLICY_MODEL, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedPort(Transact()), POLICY_MODEL, clock=FixedClock(FIXED)).transact(
+            fn
+        )
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -1493,7 +1559,7 @@ def test_update_where_refuses_a_target_the_connected_model_does_not_declare() ->
         tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
 
     with pytest.raises(QueryTargetError) as caught:
-        Database.connect(NoIoPort(), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-target-not-in-model"
 
 
@@ -1510,7 +1576,7 @@ def test_update_where_refuses_an_inverted_between_window_before_any_sql() -> Non
         tx.update_where(mm.Person.where(mm.Person.id.between(10, 1)), mm.Person.name.set("Ada"))
 
     with pytest.raises(ModelRejectedError) as caught:
-        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.rule == "between-bounds-inverted"
 
 
@@ -1521,7 +1587,7 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
         tx.delete_where(mm.Person.where(mm.Passport.number == "X"))  # pyright: ignore[reportArgumentType]
 
     with pytest.raises(ModelRejectedError) as caught:
-        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.rule == "attribute-outside-active-position"
 
 
@@ -1588,7 +1654,9 @@ def test_a_temporal_bound_is_judged_before_an_invalid_predicate(
         _bounded_write(tx, WherePosition.where(WherePosition.id.between(10, 1)), valid_from, until)
 
     with pytest.raises(expected) as caught:
-        Database.connect(NoIoPort(), WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedPort(Transact()), WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).transact(fn)
     if rule is not None:
         assert cast("ModelRejectedError", caught.value).rule == rule
 
@@ -1615,14 +1683,14 @@ def test_an_unrenderable_bound_is_refused_before_any_buffering(
     # whether the target's profile admits a bound at all, so an unrenderable one
     # is refused before the instruction exists — and therefore before the
     # buffering seam, the resolving read, and every statement.
-    port = RecordingPort(rows=[])
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         _bounded_write(tx, WherePosition.where(WherePosition.id == 1), valid_from, until)
 
     with pytest.raises(expected):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
-    assert port.ops == [("begin",), ("rollback",)]
+    assert port.calls == [BeginCall(), RollbackCall()]
 
 
 def test_a_non_utc_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> None:
@@ -1630,7 +1698,7 @@ def test_a_non_utc_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> No
     # gate's own canonical literals, so a
     # bound authored at a NON-UTC offset lands in the rectangle split as the
     # same instant in UTC, never as the caller's spelling.
-    port = RecordingPort(rows=[_position_row()])
+    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def fn(tx: Transaction) -> None:
         _bounded_write(
@@ -1643,9 +1711,9 @@ def test_a_non_utc_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> No
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 4  # close + head + middle + tail
-    middle_binds = cast("tuple[object, ...]", writes[2][2])
+    middle_binds = writes[2].binds
     assert "2024-07-01T00:00:00+00:00" in middle_binds  # the authored `valid_from`, in UTC
     assert "2024-09-01T00:00:00+00:00" in middle_binds  # the authored `until`, in UTC
 
@@ -1672,7 +1740,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     # through this same seam. Refusing that belongs to the instruction serde;
     # what belongs here is that no Parallax code path ever produces such a
     # value.
-    idle = RecordingPort(rows=[_position_row()])
+    idle = ScriptedPort(Transact())
 
     def unrenderable(tx: Transaction) -> None:
         tx.update_until_where(
@@ -1684,9 +1752,9 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
 
     with pytest.raises(InstantError):
         Database.connect(idle, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(unrenderable)
-    assert idle.ops == [("begin",), ("rollback",)]
+    assert idle.calls == [BeginCall(), RollbackCall()]
 
-    typed_port = RecordingPort(rows=[_position_row()])
+    typed_port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def typed(tx: Transaction) -> None:
         tx.update_until_where(
@@ -1700,7 +1768,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
         typed, concurrency="optimistic"
     )
 
-    seam_port = RecordingPort(rows=[_position_row()])
+    seam_port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def wire(tx: Transaction) -> None:
         tx.wire.update_until_where(
@@ -1716,9 +1784,9 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     Database.connect(seam_port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         wire, concurrency="optimistic"
     )
-    typed_writes = [op for op in typed_port.ops if op[0] == "write"]
+    typed_writes = [op for op in typed_port.calls if isinstance(op, WriteCall)]
     assert len(typed_writes) == 4  # close + head + middle + tail
-    assert typed_writes == [op for op in seam_port.ops if op[0] == "write"]
+    assert typed_writes == [op for op in seam_port.calls if isinstance(op, WriteCall)]
 
 
 def _bounded_write(
@@ -1792,7 +1860,7 @@ def test_the_engines_readless_predicate_ingress_refuses_before_any_statement(
     # target-shape gate, so the refusal happens inside the transaction the lane
     # opened and nothing but demarcation reaches the wire. Unjudged, the
     # instruction would merely buffer and the call would return.
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     with pytest.raises(ValueError, match=re.escape(message)):
         engine._run_readless_predicate_write(  # pyright: ignore[reportPrivateUsage] - the conformance engine's own readless predicate-write ingress
             port,
@@ -1804,7 +1872,7 @@ def test_the_engines_readless_predicate_ingress_refuses_before_any_statement(
             LifecycleRun(),
             rollback=False,
         )
-    assert port.ops == [("begin",), ("rollback",)]
+    assert port.calls == [BeginCall(), RollbackCall()]
 
 
 @pytest.mark.parametrize(
@@ -1837,7 +1905,7 @@ def test_the_engines_materializing_predicate_ingress_refuses_before_it_resolves(
 # instruction is merely buffered and the call returns — the planner's flush-time
 # refusal would come later, and never at all on the abandoned transaction here.
 # And the materializing one reaches the resolving read, real SQL on the caller's
-# connection, which `port.ops` then shows.
+# connection, which `port.calls` then shows.
 @pytest.mark.parametrize(
     ("model", "entity", "temporal"),
     [(PAYMENT, "CardPayment", False), (RATE, "DepositRate", True)],
@@ -1854,7 +1922,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
         "entity": entity,
         "predicate": {"eq": {"attr": f"{entity}.id", "value": 1}},
     }
-    port = RecordingPort(rows=[])
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(
@@ -1864,7 +1932,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
                 tx.wire.terminate_where(target, valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC))
             else:
                 tx.wire.delete_where(target)
-        assert port.ops == [("begin",)]
+        assert port.calls == [BeginCall()]
         raise _Abandon
 
     with pytest.raises(_Abandon):
@@ -1874,7 +1942,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
 # The ingress's second refusal, driven the same way: a milestone verb the
 # target's temporal profile does not admit. `Account` is versioned and
 # non-temporal, so the instruction MATERIALIZES — without a refusal it reaches
-# the resolving read (real SQL, which `port.ops` would show) and then settles as
+# the resolving read (real SQL, which `port.calls` would show) and then settles as
 # an ordinary versioned update that consumes each matched row's version while
 # dropping the window the caller bounded. A zero-match resolve would not even
 # reach that: it buffers no group, so the flush would refuse nothing at all.
@@ -1904,7 +1972,7 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
         "valid_from": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "until": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
     }
-    port = RecordingPort(rows=[])
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match=message):
@@ -1915,7 +1983,7 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
                     tx.wire.terminate_where(target)
                 case _:
                     tx.wire.terminate_until_where(target, **window)
-        assert port.ops == [("begin",)]
+        assert port.calls == [BeginCall()]
         raise _Abandon
 
     with pytest.raises(_Abandon):
@@ -1927,7 +1995,7 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
 # DIRECTLY with an instruction nothing measured. Without the seam's own
 # `inheritance.reject_predicate_write` the bitemporal family instruction reaches
 # `_materialize_predicate_write`'s resolving read — real SQL on the caller's
-# connection, which `port.ops` then shows — so deleting that call fails here and
+# connection, which `port.calls` then shows — so deleting that call fails here and
 # nowhere else.
 def test_the_buffering_seam_refuses_an_unvalidated_inheritance_family_instruction() -> None:
     instruction = instructions.deserialize(
@@ -1940,7 +2008,7 @@ def test_the_buffering_seam_refuses_an_unvalidated_inheritance_family_instructio
         }
     )
     assert isinstance(instruction, PredicateWrite)
-    port = RecordingPort(rows=[])
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(
@@ -1953,7 +2021,7 @@ def test_the_buffering_seam_refuses_an_unvalidated_inheritance_family_instructio
                 instruction,
                 tx._attempt,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
             )
-        assert port.ops == [("begin",)]
+        assert port.calls == [BeginCall()]
         raise _Abandon
 
     with pytest.raises(_Abandon):
@@ -1966,7 +2034,7 @@ def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
     # pending writes, so a refused predicate write must be refused before
     # `uow.read` and before `uow.buffer` — otherwise an invalid write flushes
     # a valid one.
-    port = RecordingPort(rows=[_position_row()])
+    port = ScriptedPort(Transact())
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1977,7 +2045,7 @@ def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
                 WherePosition.value.set(Decimal("300.00")),
                 valid_from=valid_from,
             )
-        assert port.ops == [("begin",)]
+        assert port.calls == [BeginCall()]
         raise _Abandon
 
     with pytest.raises(_Abandon):
@@ -1990,18 +2058,18 @@ class _Abandon(Exception):
 
 
 # --------------------------------------------------------------------------- #
-# Both closed predicate refusals precede adapter access, proven by a port that #
-# raises on any call rather than by a recorded absence. `RecordingPort` above  #
-# proves an op was never appended; `NoIoPort` proves the connection was never  #
-# touched, which is the stronger reading of "before Unit of Work or adapter    #
-# access" and the one the refusals' own contract states.                       #
+# Both closed predicate refusals precede adapter access, proven by a boundary  #
+# whose script holds no statement rather than by a recorded absence. An empty  #
+# recording says a call was never made; an empty script says a call would have #
+# failed at the call, which is the stronger reading of "before Unit of Work or #
+# adapter access" and the one the refusals' own contract states.               #
 # --------------------------------------------------------------------------- #
 def test_query_not_mutation_compatible_precedes_every_adapter_call() -> None:
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
 
     with pytest.raises(QueryDefinitionError) as caught:
-        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -2012,7 +2080,7 @@ def test_query_assignment_target_mismatch_precedes_every_adapter_call() -> None:
         )
 
     with pytest.raises(QueryDefinitionError) as caught:
-        Database.connect(NoIoPort(), PAYMENT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedPort(Transact()), PAYMENT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
 
 
@@ -2035,25 +2103,29 @@ def test_materializing_where_shortfall_in_locking_mode_is_a_stale_write() -> Non
     # materialized group emits under the Locking strategy is ungated, so a
     # zero-row shortfall is the non-retriable stale write and the whole unit of
     # work rolls back.
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}],
-        write_affected=0,
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
+            Write(affected=0),
+        )
     )
 
     with pytest.raises(StaleWriteError, match="Account"):
         account_db(port).transact(_update_balance_where, concurrency="locking")
-    assert [op[0] for op in port.ops] == ["begin", "read", "write", "rollback"]
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, RollbackCall]
 
 
 def test_materializing_where_shortfall_in_optimistic_mode_is_a_lock_conflict() -> None:
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}],
-        write_affected=0,
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
+            Write(affected=0),
+        )
     )
 
     with pytest.raises(OptimisticLockConflictError):
         account_db(port).transact(_update_balance_where, concurrency="optimistic")
-    assert [op[0] for op in port.ops] == ["begin", "read", "write", "rollback"]
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, RollbackCall]
 
 
 def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in() -> None:
@@ -2063,25 +2135,26 @@ def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in
     # assertion that carries the re-execution contract; the second `begin` and
     # the `commit` alone are also true of an attempt that reused the first
     # attempt's materialization.
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    resolved = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedPort(
+        Transact(Read(rows=resolved), Write(affected=0)),
+        Transact(Read(rows=resolved), Write(affected=1)),
     )
-    port.write_affected_queue = [0, 1]
 
     account_db(port).transact(
         _update_balance_where, concurrency="optimistic", retry_optimistic_conflicts=True
     )
-    assert [op[0] for op in port.ops] == [
-        "begin",
-        "read",
-        "write",
-        "rollback",
-        "begin",
-        "read",
-        "write",
-        "commit",
+    assert [type(op) for op in port.calls] == [
+        BeginCall,
+        ReadCall,
+        WriteCall,
+        RollbackCall,
+        BeginCall,
+        ReadCall,
+        WriteCall,
+        CommitCall,
     ]
-    reads = [op for op in port.ops if op[0] == "read"]
+    reads = [op for op in port.calls if isinstance(op, ReadCall)]
     assert reads[0] == reads[1]
 
 
@@ -2093,8 +2166,13 @@ def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in
 # inside it.                                                                    #
 # --------------------------------------------------------------------------- #
 def test_a_group_refuses_a_later_keyed_write_of_a_state_it_selected() -> None:
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}],
+                times=2,
+            )
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -2112,11 +2190,12 @@ def test_a_group_refuses_a_later_keyed_write_of_a_state_it_selected() -> None:
 
 
 def test_a_group_leaves_a_keyed_write_of_an_unselected_state_alone() -> None:
-    port = RecordingPort(
-        row_queue=[
-            [{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}],
-            [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}],
-        ]
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]),
+            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
+            Write(times=2),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -2128,4 +2207,4 @@ def test_a_group_leaves_a_keyed_write_of_an_unselected_state_alone() -> None:
         tx.update(node.edit(balance=Decimal("125.00")))
 
     account_db(port).transact(fn)
-    assert len([op for op in port.ops if op[0] == "write"]) == 2
+    assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2

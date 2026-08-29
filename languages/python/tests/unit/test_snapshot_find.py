@@ -17,9 +17,12 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _transact_support import ACCOUNT, PERSON, NoIoPort
+from _transact_support import ACCOUNT, PERSON
 
 from _support import mirrored_models as mm
+from _support.db_port import (
+    RefusingPort,
+)
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import models, read_models
 from parallax.conformance import vo_models as vo
@@ -625,8 +628,8 @@ def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None
     # query unanswerable is the CONNECTED model, which is why the refusal is a
     # RuntimeError and why it names neither the query nor the model. Preflight
     # resolves the target before anything else, so the port is never touched:
-    # `NoIoPort` raises on any read or write.
-    db = handle.Database.connect(NoIoPort(), ACCOUNT)
+    # A refusing port raises on any read or write.
+    db = handle.Database.connect(RefusingPort(), ACCOUNT)
     with pytest.raises(QueryTargetError) as caught:
         db.find(mm.Person.where(mm.Person.id == 1))
     assert caught.value.code == "query-target-not-in-model"
@@ -635,9 +638,9 @@ def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None
 def test_db_find_refuses_a_deferred_execution_feature_by_name() -> None:
     # `.history()` with `.include(...)` is a VALID query the implementation has
     # not built yet, so the refusal names the Feature rather than calling the
-    # query wrong. `NoIoPort` raises on any read or write: classification runs
+    # query wrong. A refusing port raises on any read or write: classification runs
     # before SQL generation, connection acquisition, and adapter access alike.
-    db = handle.Database.connect(NoIoPort(), POLICY_MODEL)
+    db = handle.Database.connect(RefusingPort(), POLICY_MODEL)
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
@@ -665,7 +668,7 @@ def test_result_shaping_clauses_do_not_hide_a_deferred_feature() -> None:
     # Ordering and a cap are siblings of the two clauses the deferral is read
     # off, so neither can stand between them: a deferral is a property of the
     # read, never of how its rows are shaped afterwards.
-    db = handle.Database.connect(NoIoPort(), POLICY_MODEL)
+    db = handle.Database.connect(RefusingPort(), POLICY_MODEL)
     query = (
         Policy.where(Policy.all)
         .history(TX_TIME)
@@ -684,7 +687,7 @@ def test_an_undeclared_target_outranks_a_deferred_feature() -> None:
     # step 3, so the connected model's inability to answer at all is what
     # surfaces — a deferral result is never exposed for a query the model does
     # not even declare a target for.
-    db = handle.Database.connect(NoIoPort(), ACCOUNT)
+    db = handle.Database.connect(RefusingPort(), ACCOUNT)
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
@@ -765,7 +768,7 @@ def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None
     # The counterpart the single translation exists to keep separate: a refusal
     # raised before any graph was being built is never re-classified as a
     # materialization failure.
-    db = handle.Database.connect(NoIoPort(), ACCOUNT)
+    db = handle.Database.connect(RefusingPort(), ACCOUNT)
     with pytest.raises(QueryTargetError):
         db.find(Policy.where(Policy.all).as_of(valid_time=LATEST))
 

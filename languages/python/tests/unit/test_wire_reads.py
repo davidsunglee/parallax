@@ -26,9 +26,11 @@ from typing import Any, cast
 import pytest
 from _metamodel_support import Declaration, key, source
 from _snapshot_graph_support import documents_of, identity_of, layout_of
-from _transact_support import NoIoPort
 
-from _support.db_port import body_outcome
+from _support.db_port import (
+    RefusingPort,
+    body_outcome,
+)
 from _support.document_reads import fold_mapping_rows
 from _support.sql import compile_read
 from parallax.conformance import class_models, models
@@ -643,7 +645,7 @@ def test_the_constructor_door_classifies_the_same_way_connect_does() -> None:
 
 def test_a_classless_connection_serves_wire_and_refuses_typed_before_any_io() -> None:
     with pytest.raises(handle.SnapshotConnectionError):
-        handle.Database(NoIoPort(), ORDERS).find(cast("Any", Gadget.where(Gadget.id == 1)))
+        handle.Database(RefusingPort(), ORDERS).find(cast("Any", Gadget.where(Gadget.id == 1)))
     # The capability the same connection DOES hold is an executed read, not a
     # reachable namespace: the Wire lane needs no Entity Class, so it runs.
     served = handle.Database(QueuePort([[_order_row()]]), ORDERS)

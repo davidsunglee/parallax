@@ -20,12 +20,19 @@ from types import MethodType
 from typing import Any, Final
 
 import pytest
-from _transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS, RecordingPort
+from _transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS
 
 from _support import mirrored_models as mm
+from _support.db_port import (
+    Read,
+    ReadCall,
+    ScriptedPort,
+    Transact,
+    Write,
+)
 from parallax.conformance import read_models
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, DocumentReadOrdinals, Row
+from parallax.core.db_port import Bind, DbPort, DocumentReadOrdinals, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution_lifecycle import (
     CausedFailure,
@@ -80,7 +87,7 @@ class _StaticTarget:
 ACCOUNT_TARGET: Final = _StaticTarget()
 
 
-def _db(port: RecordingPort, provider: Any, model: Any = ACCOUNT) -> Database:
+def _db(port: DbPort, provider: Any, model: Any = ACCOUNT) -> Database:
     return connect(port, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
@@ -90,7 +97,7 @@ def _transitions(events: tuple[ExecutionEvent, ...]) -> list[str]:
 
 def test_a_typed_find_brackets_its_one_database_call() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
     (root,) = recorder.roots
@@ -121,7 +128,7 @@ def test_a_typed_find_brackets_its_one_database_call() -> None:
 
 def test_the_call_borrows_the_exact_statement_the_port_ran() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
     (root,) = recorder.roots
     started, finished = root.events[1], root.events[3 - 1]
@@ -130,7 +137,8 @@ def test_the_call_borrows_the_exact_statement_the_port_ran() -> None:
     # Started and Finished repeat ONE borrowed value — neither its text nor its
     # binds are copied — and it is the canonical statement the port received.
     assert finished.statement is started.statement
-    assert POSTGRES_DRIVER_SQL(started.statement.sql) == port.ops[0][1]
+    (executed,) = (call for call in port.calls if isinstance(call, ReadCall))
+    assert POSTGRES_DRIVER_SQL(started.statement.sql) == executed.sql
     assert started.statement.binds == (7,)
 
 
@@ -140,7 +148,7 @@ def POSTGRES_DRIVER_SQL(sql: str) -> str:
 
 def test_the_unlocked_standalone_statement_is_what_the_call_names() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
     (root,) = recorder.roots
     call = root.events[1]
@@ -171,7 +179,7 @@ def test_a_duration_excludes_the_handler_time_around_it() -> None:
             raise AssertionError("no handler failed")
 
     handler = _SlowHandler()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     _db(port, _Provider(handler)).find(mm.Account.where(mm.Account.id == 7)).result()
     finished = handler.events[2]
     assert isinstance(finished, DatabaseCallFinished)
@@ -188,7 +196,7 @@ def _busy_wait_ms(milliseconds: int) -> None:
 
 def test_a_deep_fetch_level_is_a_second_call_under_the_same_read() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(row_queue=[[_ORDER_ROW], [_ITEM_ROW]])
+    port = ScriptedPort(Read(rows=[_ORDER_ROW]), Read(rows=[_ITEM_ROW]))
     _db(port, recorder, ORDERS).wire.find(
         {
             "target": "Order",
@@ -214,7 +222,7 @@ def test_a_deep_fetch_level_is_a_second_call_under_the_same_read() -> None:
 
 def test_the_wire_and_values_lanes_name_their_own_interface() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW], times=2))
     db = _db(port, recorder)
     db.wire.find({"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 7}}})
     db.read_rows(
@@ -231,9 +239,8 @@ def test_the_wire_and_values_lanes_name_their_own_interface() -> None:
 
 def test_a_failed_call_finishes_both_activities_and_names_its_cause() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
     failure = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
-    port.read_faults.append(failure)
+    port = ScriptedPort(Read(raises=failure))
     with pytest.raises(DatabaseError):
         _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
@@ -265,7 +272,7 @@ def test_a_failure_after_the_call_completed_is_the_reads_own() -> None:
     # Materialization fails after every call came back, so the Read failed
     # DIRECTLY: proximity to a completed call attributes nothing.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[{"bal_id": 1, "acct_num": "A-1", "val": Decimal("5.00")}])
+    port = ScriptedPort(Read(rows=[{"bal_id": 1, "acct_num": "A-1", "val": Decimal("5.00")}]))
     with pytest.raises(SnapshotMaterializationError):
         _db(port, recorder, read_models.BALANCE_MODEL).find(
             read_models.Balance.where(read_models.Balance.id == 1)
@@ -314,11 +321,11 @@ def test_a_read_refused_by_preflight_creates_no_root() -> None:
     # Deterministic public preflight precedes the root: an invalid target
     # creates no descriptor, calls no Provider, and reaches no port.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort()
     with pytest.raises(QueryTargetError):
         _db(port, recorder).wire.find({"target": "NoSuchEntity", "predicate": {"all": {}}})
     assert recorder.roots == ()
-    assert port.ops == []
+    assert port.calls == []
 
 
 def test_the_default_path_constructs_nothing_lifecycle_shaped(
@@ -337,7 +344,7 @@ def test_the_default_path_constructs_nothing_lifecycle_shaped(
 
         monkeypatch.setattr(activity_module, name, counting)
 
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     connect(port, ACCOUNT, clock=FixedClock(FIXED)).find(
         mm.Account.where(mm.Account.id == 7)
     ).result()
@@ -439,11 +446,16 @@ class _Borrowing:
     def write_completed(self, affected_rows: int, /) -> None: ...
 
 
-class _ReturningPort(RecordingPort):
-    """A port that keeps the exact list object each read returned."""
+class _ReturningPort(ScriptedPort):
+    """A port that keeps the exact list object each read returned.
 
-    def __init__(self, *, rows: list[Row]) -> None:
-        super().__init__(rows=rows)
+    Identity is what the assertion needs — a borrowing activity must hold the
+    very list the port answered with — and a recording of values cannot report
+    it, so this one script consumer keeps its own.
+    """
+
+    def __init__(self, *script: Read | Write | Transact) -> None:
+        super().__init__(*script)
         self.returned: list[list[Row]] = []
 
     def execute(
@@ -510,7 +522,7 @@ def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
     openings = _recorded_openings(monkeypatch)
     compilations = _recorded_compilations(monkeypatch)
 
-    port = _ReturningPort(rows=[NEW_ROW])
+    port = _ReturningPort(Read(rows=[NEW_ROW]))
     connect(port, ACCOUNT, clock=FixedClock(FIXED)).find(
         mm.Account.where(mm.Account.id == 7)
     ).result()
@@ -527,4 +539,5 @@ def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
     assert borrowing.rows is port.returned[0]
     # The borrowed statement is the one the port ran, not merely the one the
     # compilation produced: the two together leave a re-lowered spelling nowhere.
-    assert POSTGRES_DRIVER_SQL(statement.sql) == port.ops[0][1]
+    (executed,) = (call for call in port.calls if isinstance(call, ReadCall))
+    assert POSTGRES_DRIVER_SQL(statement.sql) == executed.sql

@@ -27,14 +27,18 @@ from _layout_twin_columns import LayoutTwinItem as ColumnsItem
 from _layout_twin_document import DOCUMENT_TWIN
 from _layout_twin_document import LayoutTwinItem as DocumentItem
 from _snapshot_graph_support import GraphFixture, invalid_record
-from _transact_support import ACCOUNT, RecordingPort
+from _transact_support import ACCOUNT
 
 from _support import mirrored_models as mm
+from _support.db_port import (
+    Read,
+    ScriptedPort,
+)
 from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import LATEST, DomainModel
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -221,7 +225,8 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
 # Publication: what a classified root delivers.                                #
 # --------------------------------------------------------------------------- #
 def _customer(row: dict[str, object]) -> InvalidData[object]:
-    port = RecordingPort(rows=[row])
+    document = PresentDocument(cast("Any", row["address"]))
+    port = ScriptedPort(Read(rows=[{**row, "address": document}]))
     database = connect(port, vo.CUSTOMER_MODEL)
     return invalid_record(database.find(vo.Customer.where(vo.Customer.id == 1)).checked().result())
 
@@ -260,7 +265,7 @@ def test_a_non_hydrating_root_publishes_no_data() -> None:
 
 
 def _balance(row: dict[str, object]) -> InvalidData[object]:
-    port = RecordingPort(rows=[row])
+    port = ScriptedPort(Read(rows=[row]))
     database = connect(port, read_models.BALANCE_MODEL)
     query = read_models.Balance.where(read_models.Balance.id == 1).as_of(tx_time=LATEST)
     return invalid_record(database.find(query).checked().result())
@@ -295,7 +300,7 @@ def test_a_temporal_root_whose_milestone_did_not_decode_locates_no_edge() -> Non
 
 def test_a_versioned_root_whose_version_did_not_decode_locates_no_version() -> None:
     row: dict[str, object] = {"id": 1, "owner": "Ada", "balance": Decimal("1.00"), "version": "x"}
-    database = connect(RecordingPort(rows=[row]), ACCOUNT)
+    database = connect(ScriptedPort(Read(rows=[row])), ACCOUNT)
     published = invalid_record(
         database.find(mm.Account.where(mm.Account.id == 1)).checked().result()
     )
@@ -326,7 +331,7 @@ def _published(
     model: DomainModel, query: object, rows: Sequence[Sequence[Row]]
 ) -> InvalidData[Any]:
     """One twin member's published record for a scripted two-level read."""
-    database = connect(RecordingPort(row_queue=rows), model)
+    database = connect(ScriptedPort(*(Read(rows=result) for result in rows)), model)
     record = database.find(cast("Any", query)).checked().result()
     assert isinstance(record, InvalidData), model
     return cast("InvalidData[Any]", record)
@@ -346,16 +351,28 @@ def _twin_records(
             COLUMNS_TWIN,
             ColumnsItem.where(ColumnsItem.id == 1).include(ColumnsItem.children),
             (
-                [{"id": 1, "profile": profile}],
-                [{"id": 11, "item_id": 1, "profile": child_profile}],
+                [{"id": 1, "profile": PresentDocument(cast("Any", profile))}],
+                [
+                    {
+                        "id": 11,
+                        "item_id": 1,
+                        "profile": PresentDocument(cast("Any", child_profile)),
+                    }
+                ],
             ),
         ),
         _published(
             DOCUMENT_TWIN,
             DocumentItem.where(DocumentItem.id == 1).include(DocumentItem.children),
             (
-                [{"id": 1, "payload": {"profile": profile}}],
-                [{"id": 11, "item_id": 1, "payload": {"profile": child_profile}}],
+                [{"id": 1, "payload": PresentDocument({"profile": cast("Any", profile)})}],
+                [
+                    {
+                        "id": 11,
+                        "item_id": 1,
+                        "payload": PresentDocument({"profile": cast("Any", child_profile)}),
+                    }
+                ],
             ),
         ),
     )

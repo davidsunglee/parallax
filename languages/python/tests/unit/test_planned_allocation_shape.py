@@ -28,9 +28,15 @@ from collections.abc import Mapping
 from decimal import Decimal
 
 import pytest
-from _transact_support import RecordingPort, account_db
+from _transact_support import account_db
 
 from _support import mirrored_models as mm
+from _support.db_port import (
+    Read,
+    ScriptedPort,
+    Transact,
+    Write,
+)
 from parallax.core.unit_work import KeyedMutation, KeyedWrite
 from parallax.snapshot.handle import Transaction
 
@@ -64,7 +70,7 @@ def test_materialization_constructs_no_keyed_write_regardless_of_row_count(
     during_materialization: dict[int, int] = {}
     for row_count in (5, 800):
         constructed.clear()
-        port = RecordingPort(rows=_resolved_rows(row_count))
+        port = ScriptedPort(Transact(Read(rows=_resolved_rows(row_count)), Write(times=row_count)))
 
         def fn(tx: Transaction, row_count: int = row_count) -> None:
             tx.update_where(

@@ -20,8 +20,13 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from _transact_support import RecordingPort, account_db, new_account
+from _transact_support import account_db, new_account
 
+from _support.db_port import (
+    ScriptedPort,
+    Transact,
+    Write,
+)
 from _support.repo import REPO_ROOT
 from parallax.conformance import case_format, engine
 from parallax.core.dialect import POSTGRES
@@ -81,7 +86,7 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
 
 
 def test_a_transaction_result_publishes_no_write_plan() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact(Write()))
 
     def body(tx: Transaction) -> None:
         tx.insert(new_account())

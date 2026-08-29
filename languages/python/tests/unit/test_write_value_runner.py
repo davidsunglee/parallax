@@ -16,13 +16,21 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from _transact_support import FIXED, NoIoPort, RecordingPort
+from _transact_support import FIXED
 
+from _support.db_port import (
+    Read,
+    ReadCall,
+    RefusingPort,
+    ScriptedPort,
+    Transact,
+    WriteCall,
+)
 from parallax.conformance import case_format, vo_models, write_value_runner
 from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
-from parallax.core.base import PresentDocument
-from parallax.core.db_port import Row
+from parallax.core.base import SQL_NULL, PresentDocument
+from parallax.core.db_port import DbPort, Row
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction
@@ -38,7 +46,7 @@ _TARGET_ROW: Row = {
 }
 
 
-def _db(port: RecordingPort) -> Database:
+def _db(port: DbPort) -> Database:
     return connect(port, ACCOUNT_MODEL, clock=FixedClock(FIXED))
 
 
@@ -47,7 +55,7 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
     case: case_format.Case,
 ) -> None:
     steps = write_value_runner.write_value_steps(case)
-    port = RecordingPort(rows=[_TARGET_ROW])
+    port = ScriptedPort(Transact(Read(rows=[_TARGET_ROW], times=len(steps))))
     another = AnotherSource(ACCOUNT_MODEL, port)
 
     def fn(tx: Transaction) -> list[str | None]:
@@ -61,7 +69,7 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
     # steps*), so the count the case declares is the count the port recorded.
     # The recorded operations are what makes that provable with no database at
     # all.
-    flushed = [op for op in port.ops if op[0] == "write"]
+    flushed = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(flushed) == write_value_runner.declared_round_trips(case)
 
 
@@ -83,12 +91,14 @@ def test_the_value_no_read_produced_is_arranged_without_touching_the_adapter() -
     # `unmanaged` is the one provenance no managed read produces, so arranging it
     # reaches no port at all. The other two are reads, each through the source
     # whose provenance the token names.
-    unreachable = AnotherSource(ACCOUNT_MODEL, NoIoPort())
+    unreachable = AnotherSource(ACCOUNT_MODEL, RefusingPort())
 
     def fn(tx: Transaction) -> Account:
         return write_value_runner.value_of("unmanaged", tx, unreachable)
 
-    value = Database.connect(NoIoPort(), ACCOUNT_MODEL, clock=FixedClock(FIXED)).transact(fn)
+    value = Database.connect(
+        ScriptedPort(Transact()), ACCOUNT_MODEL, clock=FixedClock(FIXED)
+    ).transact(fn)
     assert isinstance(value, Account)
 
 
@@ -98,12 +108,12 @@ def test_the_second_source_materializes_from_a_read_and_recognizes_its_own() -> 
     # recognizes its own. A sibling source over the same store claims nothing of
     # this one's, which is what makes recognition per-source rather than a test
     # for managed-ness in general.
-    port = RecordingPort(rows=[_TARGET_ROW])
+    port = ScriptedPort(Read(rows=[_TARGET_ROW]))
     another = AnotherSource(ACCOUNT_MODEL, port)
 
     (value,) = another.find(Account.where(Account.id == write_value_runner.TARGET_ID))
 
-    assert [op[0] for op in port.ops] == ["read"]
+    assert [type(op) for op in port.calls] == [ReadCall]
     assert (value.id, value.owner, value.balance) == (
         write_value_runner.TARGET_ID,
         "Linus",
@@ -118,7 +128,7 @@ def test_the_second_source_refuses_a_deep_fetch_before_reading() -> None:
     # It populates no relationship view, so a query asking for one is refused at
     # the query rather than read and then answered without its levels — and the
     # raising port proves the refusal precedes the read.
-    another = AnotherSource(ORDERS_MODEL, NoIoPort())
+    another = AnotherSource(ORDERS_MODEL, RefusingPort())
 
     with pytest.raises(ValueError, match="flat graphs only"):
         another.find(Order.where(Order.id == 1).include(Order.items))
@@ -167,7 +177,7 @@ def test_a_case_whose_total_disagrees_with_its_steps_is_loud() -> None:
 
 
 def test_an_unrecognized_provenance_token_is_loud() -> None:
-    port = RecordingPort(rows=[_TARGET_ROW])
+    port = ScriptedPort(Transact())
     another = AnotherSource(ACCOUNT_MODEL, port)
 
     def fn(tx: Transaction) -> Account:
@@ -194,7 +204,7 @@ def test_an_unrecognized_provenance_token_is_loud() -> None:
 def test_a_graded_mismatch_is_loud_in_either_direction(
     step: write_value_runner.WriteValueStep, message: str
 ) -> None:
-    port = RecordingPort(rows=[_TARGET_ROW])
+    port = ScriptedPort(Transact(Read(rows=[_TARGET_ROW])))
     another = AnotherSource(ACCOUNT_MODEL, port)
 
     def fn(tx: Transaction) -> str | None:
@@ -212,21 +222,23 @@ def test_the_second_source_builds_its_own_value_objects_at_every_depth() -> None
     # materializer's private drive. The recursive composite is what states it —
     # a top-level One, a nested One, and a nested Many, each at a depth the walk
     # has to reach on its own.
-    port = RecordingPort(
-        rows=[
-            {
-                "id": 7,
-                "name": "Ada",
-                "address": PresentDocument(
-                    {
-                        "street": "1 Park Ave",
-                        "city": "Oslo",
-                        "geo": {"country": "NO", "elevation": 10.5, "point": None},
-                        "phones": [{"type": "home", "number": "555"}],
-                    }
-                ),
-            }
-        ]
+    port = ScriptedPort(
+        Read(
+            rows=[
+                {
+                    "id": 7,
+                    "name": "Ada",
+                    "address": PresentDocument(
+                        {
+                            "street": "1 Park Ave",
+                            "city": "Oslo",
+                            "geo": {"country": "NO", "elevation": 10.5, "point": None},
+                            "phones": [{"type": "home", "number": "555"}],
+                        }
+                    ),
+                }
+            ]
+        )
     )
     another = AnotherSource(vo_models.CUSTOMER_MODEL, port)
 
@@ -245,7 +257,7 @@ def test_the_second_source_leaves_an_unstored_occurrence_out_of_what_it_builds()
     # The complement, and the one the positional row makes worth stating: a
     # column the row holds no document in reads as absence, and absence is an
     # entry the writer never receives rather than a record holding nothing.
-    port = RecordingPort(rows=[{"id": 8, "name": "Bo", "address": None}])
+    port = ScriptedPort(Read(rows=[{"id": 8, "name": "Bo", "address": SQL_NULL}]))
     another = AnotherSource(vo_models.CUSTOMER_MODEL, port)
 
     (value,) = another.find(vo_models.Customer.where(vo_models.Customer.id == 8))
