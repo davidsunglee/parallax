@@ -15,6 +15,12 @@ Each provider exposes:
 * ``query(sql, binds)`` — execute a read and return rows as ordered dicts.
 * ``execute(sql, binds)`` — execute a write (DML) and return the affected count.
 
+An accepted Object Query observation reads through a narrower view of the same
+surface — ``dialect`` and ``query`` alone are
+:class:`..object_query_oracle.ReadExecutor`, which a provider and a session from
+``open_session()`` both satisfy structurally, so the read oracle cannot tell one
+from the other.
+
 The **two-node** seam supports cross-process cache coherence:
 ``open_peer()`` yields a second, INDEPENDENT connection to the SAME database,
 modeling a peer application server (node B) alongside the provider's own

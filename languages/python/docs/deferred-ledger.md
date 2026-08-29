@@ -61,27 +61,6 @@ makes both `position` and the returned names canonical, and the prior question i
 whether an unused export should exist at all. Both are unwitnessed: no `rejected`
 corpus model declares a namespace.
 
-### D-55 — The reference harness grades a scenario find's `expectRows` against the raw projected row, disagreeing with `m-case-format` for a family target
-
-*Low — narrows what a corpus case may assert, never produces a wrong pass.*
-**Owned by the reference harness, not this target**, kept because Python work
-surfaced it and nothing else tracks it. Relates to `reference-harness`
-`case_runner._materialize_family_variant`.
-
-**What.** `m-case-format` (*Read result form*) states that a scenario observation
-find is **instance-form**, and the Python run sweep grades it that way. The
-harness grades that step's `expectRows` against the raw projected row instead.
-The two agree except for a **family target**, where the projection and the
-materialized instance differ.
-
-**Why it is deferred rather than fixed.** The one case needing an abstract-root
-find inside a `uow` group worked around the gap by having that find assert no
-rows of its own, with the row assertion carried by the concrete verify read that
-follows — so the case is correct and complete, and nothing is mis-graded. Closing
-the gap means threading a step's own target and golden projection into
-`_materialize_family_variant`, which is harness work outside any Python-target
-ticket.
-
 ### D-56 — A table-per-concrete-subtype union-all read cannot run inside a transaction whose target resolves to the Locking strategy
 
 *Low — one concurrency mode of a legal read shape is unreachable from
@@ -138,12 +117,13 @@ read case's own top-level `then.graph` leaves", and "a deep-fetch or snapshot
 CHILD level's graph node shape (`m-snapshot-read-012`'s narrowed-vs-broad
 diamond, for example) is a distinct, already-established convention this decision
 does not touch; reconciling the two … is left open for a follow-up." Reconciling
-it moves the corpus AND the reference harness's `_assert_deep_fetch` grader,
-whose node registry is deliberately keyed per view, so it is a
-core-specification decision rather than an adapter one. Until it is taken, the
-Python run sweep grades everything else these eleven assert — every level's SQL
-and binds, the round-trip count — and withholds the `then.graph` comparison
-alone (`tests/compatibility/test_run_sweep.py._CHILD_LEVEL_GRAPH_SHAPE_DEFERRED`).
+it moves the corpus AND the reference harness's deep-fetch grader
+(`reference_harness.object_query_oracle.graph.assemble_graph`), whose node
+registry is deliberately keyed per view, so it is a core-specification decision
+rather than an adapter one. Until it is taken, the Python run sweep grades
+everything else these eleven assert — every level's SQL and binds, the
+round-trip count — and withholds the `then.graph` comparison alone
+(`tests/compatibility/test_run_sweep.py._CHILD_LEVEL_GRAPH_SHAPE_DEFERRED`).
 
 **What that leaves ungraded.** Nine of the eleven carry a graph story
 (`parallax.conformance.graph_stories`), so `tests/api/test_story_run.py` still
@@ -782,9 +762,10 @@ put it above what that phase could take, and it is raised rather than
 half-landed. Phase 4a's groundwork holds — both executors drive a delivery page
 by page inside a scenario step's own unit of work, so the hook has one loop to
 hang on in each — and the plumbing on top of it is small: the harness's
-`_deliver_stream` page loop and the engine's delivery loop each gain one call
-site, and the page oracle needs no change at all, because it derives the page
-partition and the seek from the rows the delivery actually returned.
+`object_query_oracle.stream.deliver_stream` page loop and the engine's delivery
+loop each gain one call site, and the page oracle needs no change at all,
+because it derives the page partition and the seek from the rows the delivery
+actually returned.
 
 **What Phase 7 established about the remaining cost, so it is not re-derived.**
 The plumbing is not the work; two normative sub-decisions are, and each is a
@@ -836,6 +817,7 @@ prose.
 - **D-51** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P6, item 6d. A defining to-one whose foreign key sits on the target side.
 - **D-52** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). The silent unbinding it describes was already gone: [COR-89](https://linear.app/flimflam/issue/COR-89/let-an-operation-reference-name-a-namespaced-entity-and-migrate-the) made `targets(model)` register canonical spellings unconditionally and every serialized surface emit `identity.canonical`, so no in-tree producer can supply an ambiguous one. What COR-51 added is classification at the external-producer boundary — `unit_work.instructions._entity` and `snapshot.handle._read._metadata` both raise `reference-ambiguous-entity-name` — so a spelling arriving from outside is one refusal naming both candidates rather than a missing observation binding.
 - **D-54** → fixed. A subtype's Pydantic field for a member it inherits is the declaring class's own — same default, same requiredness, at every depth — as `python.md` §2's realization-technique paragraph states. Class creation empties the inherited names out of the namespace it hands Pydantic and restores them once the class exists, so Pydantic's own inheritance path supplies each field; the entry's `Tug()` now raises for its missing required members, and a family whose root declares a Value Object occurrence can hydrate a subtype at all, which the undeep-copyable expression made impossible.
+- **D-55** → closed by [COR-115](https://linear.app/flimflam/issue/COR-115/reference-harness-object-query-oracle). The harness work the entry said no Python-target ticket could carry: a Scenario read step is presented as the read it is and materialized by `reference_harness.object_query_oracle`, so a family-target find publishes `familyVariant` rather than the raw tag or branch literal, and an instance-form step projects its `Document` slots. The per-variant narrowing stays deliberately absent — `m-case-format` scopes that node shape to a read case's own `then.graph` leaves, and a step publishes the specified positional superset.
 - **D-57** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). `_identity_row` applies `serialize_member`, so all three Entity Row Codec operations carry one form; `python.md` §5 states that uniform contract in place of the asymmetry, and no golden moved, because a primary key is structurally a scalar Attribute that `serialize_member` passes through unchanged.
 - **D-58** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout) Phase 4. The holistic decision was taken rather than postponed, and it is neither shape alone: the merged graph keeps graph-local node identity, and the Wire read renders a FINITE value tree by unwinding the requested include tree (`parallax.snapshot.materialize._wire`), so a back-reference terminates because the tree strictly shrinks rather than because a cycle detector fired. Aliasing survives the tree — positions reaching one merged node under one subtree answer the identical frozen object — so the cost this entry accepted in advance (one logical node materializing as distinct objects) is not paid, and `then.graph` grades JSON-renderable values directly. Bounded-memory streaming is the one part left, and [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory) carries it: what it revisits is graph-level node uniqueness, not the wire shape this settled.
 - **D-60** → closed by this claim, and the module it named is since retired (ADR 0060): `MODULE_SCOPE` carries `parallax.core.execution_lifecycle`, the generated `[tool.importlinter]` block contracts it, and `core/spec/modules.md` carries `m-snapshot-read --> m-execution-lifecycle`. One consequence the entry did not foresee outlived the rename: the module reaches `m-sql`, so mapping the tag to `parallax.snapshot.materialize` would put SQL generation inside the closure of the grant `parallax.snapshot.handle._materializer` holds, dissolving the containment that child scope exists for. The tag therefore maps to `parallax.snapshot._read_result` — the scope that actually names the lifecycle seam — while `parallax.snapshot.materialize` carries the remaining `m-snapshot-read` edges as a support row.

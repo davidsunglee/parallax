@@ -28,7 +28,12 @@ src/reference_harness/
 ├── data_loader.py     # load fixture rows
 ├── dep_graph_check.py # parse modules.md; assert DAG + legal direction
 ├── matrix.py          # emit the compatibility-matrix report (implementations x databases)
-├── case_runner.py     # the layered assertion engine
+├── case_assertions.py # CaseFailure + the comparison primitives the runner and oracle share
+├── case_runner.py     # the layered assertion engine: case-shape routing, provisioning,
+│                      #   rejected, writes, conflict, concurrency, coherence, and the
+│                      #   Unit Work Scenario's step order and transaction lifecycle
+├── object_query_oracle/ # every accepted Object Query observation, behind three names:
+│                        #   assert_case_read, ScenarioReads, ReadExecutor
 ├── gate_graph.py      # resolve the orchestrator's command graph: roles, classes, closures
 ├── show_gates.py      # render the resolved command graph
 ├── check_gates.py     # fail when that graph breaks core/spec/language-testing.md
@@ -39,10 +44,12 @@ src/reference_harness/
 ├── check_database_access.py  # live database access stays inside the designated fixture
 └── providers/
     ├── __init__.py    # the DatabaseProvider protocol (the seam)
+    ├── mariadb.py     # Testcontainers MariaDB provider (dialect = "mariadb")
     └── postgres.py    # Testcontainers Postgres provider (dialect = "postgres")
 tests/
 ├── conftest.py            # shared fixtures; derives each item's dbfree/db scheduling class
 ├── contract_tools/        # the language-contract diagnostics' own tests
+├── oracle/                # the read oracle's own tests, on a scripted read executor
 └── test_compatibility.py  # pytest: discover cases, run each through run_case per provider
 ```
 
@@ -62,7 +69,7 @@ uv run ruff check .
 uv run basedpyright
 uv run python -m reference_harness.check_database_access
 uv run pytest -m dbfree   # no database provider is reached
-uv run pytest -m db       # boots Postgres via Testcontainers (Docker required)
+uv run pytest -m db       # boots every selected provider via Testcontainers (Docker required)
 uv run python -m reference_harness.matrix ../core/compatibility
 uv run python -m reference_harness.show_gates ..
 uv run python -m reference_harness.check_gates ..
