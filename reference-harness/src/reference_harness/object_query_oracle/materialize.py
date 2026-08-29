@@ -15,7 +15,9 @@ JSON codec from :mod:`..document_codec`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
+from decimal import Decimal
 from typing import Any, NamedTuple
 
 import sqlglot
@@ -92,6 +94,39 @@ def _materialized_row(row: dict[str, Any]) -> MaterializedRow:
             consumed_value_object_columns=set(row.consumed_value_object_columns),
         )
     return MaterializedRow(dict(row))
+
+
+def reference_identity_row(row: dict[str, Any]) -> dict[str, Any]:
+    """*row* reduced to the identity a ``referenceSql`` oracle can be compared to.
+
+    An undecoded Value Object occurrence is dropped, because the independent
+    oracle selects the matched row SET rather than re-deriving the document; an
+    occurrence a projection already consumed stays, since the column then carries a
+    materialized value rather than the raw blob.
+    """
+    if not isinstance(row, MaterializedRow):
+        return dict(row)
+    return {
+        key: value
+        for key, value in row.items()
+        if key not in row.value_object_columns or key in row.consumed_value_object_columns
+    }
+
+
+def coerce_identity_key(value: Any) -> Any:
+    """Coerce a DB / expected scalar to an exact hashable identity-key form.
+
+    Used only by deep-fetch key gathering, bucket lookup, and node identity.
+    Projected graph values must keep their original types so graph equality can
+    compare numerics exactly via :func:`..case_assertions.scalars_equal`.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Decimal):
+        return int(value) if value % 1 == 0 else value
+    if isinstance(value, float):
+        return Decimal(str(value))
+    return value
 
 
 # --- the read's family position ---------------------------------------------
@@ -226,7 +261,7 @@ def _document_value(document: Any, path: tuple[str, ...]) -> Any:
     return current
 
 
-def _materialize_document_layout(
+def materialize_document_layout(
     case: Case,
     entity: Entity,
     rows: list[dict[str, Any]],
@@ -282,7 +317,7 @@ def _materialize_document_layout(
 def _materialize_target_document_layout(
     case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
 ) -> list[dict[str, Any]]:
-    """:func:`_materialize_document_layout` over the case's own read target.
+    """:func:`materialize_document_layout` over the case's own read target.
 
     A top-level read's rows belong to its query's own ``target``; a deep fetch's
     child level does not, which is why the entity is an argument there and resolved
@@ -291,7 +326,7 @@ def _materialize_target_document_layout(
     target_name = case.object_query.get("target")
     if not isinstance(target_name, str):
         return rows
-    return _materialize_document_layout(
+    return materialize_document_layout(
         case,
         case.model.entity(target_name),
         rows,
@@ -330,7 +365,7 @@ def materialize_target_tph_document_layout(
         if not isinstance(variant, str):
             materialized.append(row)
             continue
-        (decoded,) = _materialize_document_layout(
+        (decoded,) = materialize_document_layout(
             case,
             case.model.entity(variant),
             [row],
@@ -432,6 +467,176 @@ def _materialize_tph_family_variant(
         new_row["familyVariant"] = variant
         materialized.append(new_row)
     return materialized
+
+
+def materialize_hop_variant(
+    case: Case,
+    row: dict[str, Any],
+    *,
+    view_key: str,
+    tag_column: str,
+    variant_map: Mapping[Any, str],
+) -> dict[str, Any]:
+    """Replace a polymorphic deep-fetch child row's raw tag column with ``familyVariant``.
+
+    The table-per-hierarchy analogue of :func:`materialize_family_variant` for a
+    deep-fetch hop: a polymorphic view projects the raw tag column so the concrete
+    subtype name can be derived; this pops it and inserts ``familyVariant``. A tag
+    value that maps to no concrete subtype is a loud failure. The hop states its own
+    facts — its attach key, its tag column, and the family's tag map — rather than
+    handing over the fetch step it belongs to, because the hop is the caller's
+    vocabulary and the derivation is this module's.
+    """
+    new_row = dict(row)
+    if tag_column not in new_row:
+        raise CaseFailure(
+            f"{case.path.name}: polymorphic hop {view_key} does not project the tag "
+            f"column {tag_column!r}; familyVariant cannot be materialized (m-inheritance)."
+        )
+    tag_value = new_row.pop(tag_column)
+    variant = variant_map.get(tag_value)
+    if variant is None:
+        raise CaseFailure(
+            f"{case.path.name}: hop {view_key} tag value {tag_value!r} maps to no "
+            f"concrete subtype (tag metadata {sorted(variant_map)})."
+        )
+    new_row["familyVariant"] = variant
+    return new_row
+
+
+def narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Narrow each row of an INSTANCE-FORM abstract-target read to its own concrete
+    variant's declared columns (m-case-format "Read targeting", the instance-form
+    per-variant node shape).
+
+    A materialized instance carries only its own branch's members — its inherited
+    chain plus its own declared attributes — never a sibling branch's null-padded
+    column: a `Dog` node has no `indoor` key to be null. Row-form (`then.rows`)
+    keeps the full concrete-superset row unchanged (:func:`materialize_family_variant`
+    alone); this ADDITIONAL narrowing applies only where a row already carries a
+    materialized ``familyVariant`` (a no-op for a concrete-target read, or a
+    non-inheritance entity, whose rows carry none).
+    """
+    family = Family(case.model.entity_defs)
+    narrowed: list[dict[str, Any]] = []
+    for row in rows:
+        variant = row.get("familyVariant")
+        if not isinstance(variant, str):
+            narrowed.append(row)
+            continue
+        own_columns = set(position_projection(case.model.storage_layout, family, [variant]))
+        own_columns.update(
+            member.column for member in document_layout_members(case, case.model.entity(variant))[1]
+        )
+        narrowed.append(
+            MaterializedRow(
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key == "familyVariant" or key in own_columns
+                },
+                value_object_columns=(
+                    dict(row.value_object_columns) if isinstance(row, MaterializedRow) else None
+                ),
+                consumed_value_object_columns=(
+                    set(row.consumed_value_object_columns)
+                    if isinstance(row, MaterializedRow)
+                    else None
+                ),
+            )
+        )
+    return narrowed
+
+
+# --- Value Object occurrences -----------------------------------------------
+
+
+def project_value_object(occurrence: dict[str, Any], decoded: Any) -> Any:
+    """Project a decoded document slot to its DECLARED value-object shape.
+
+    The projection answers one occurrence's own value once its parent has decided
+    the position exists at all (:func:`project_members`):
+
+    * a ``one`` member is a nested object when the slot is a JSON object, else
+      ``None`` — a SQL-NULL column, a JSON ``null``, and a non-object intermediate
+      all collapse the composite (m-document-codec);
+    * a ``many`` member is the collection of its element projections when the
+      slot is a JSON array of objects, else ``[]``, because a ``many`` has no
+      absent state: an omitted key, a JSON ``null``, and ``[]`` are three stored
+      spellings of one zero value. A non-array, and an array holding any
+      non-object element, are one wrong-kind ``many`` AT THE OCCURRENCE
+      POSITION — the whole collection collapses and no element is projected, so
+      a conforming sibling element never survives a malformed one
+      (m-document-codec).
+
+    Element order within a ``many`` member is semantic (m-value-object), so this
+    projection preserves JSON document order and metadata-aware graph comparison
+    checks those elements positionally.
+    """
+    if occurrence.get("multiplicity", "one") == "many":
+        if isinstance(decoded, list) and all(isinstance(element, dict) for element in decoded):
+            return [project_members(occurrence, element) for element in decoded]
+        return []
+    if isinstance(decoded, dict):
+        return project_members(occurrence, decoded)
+    return None
+
+
+def project_members(occurrence: dict[str, Any], obj: Any) -> dict[str, Any]:
+    """Build the declared-member projection of one value-object document object.
+
+    Undeclared keys are omitted and each declared member the document HOLDS is
+    decoded by its declared type (:func:`decode_leaf`) rather than copied out,
+    because the document stores the codec's portable spelling. Which declared
+    members become keys is not decided here: this projection realizes the read
+    contract (m-snapshot-read "What a materialized value carries") and is graded
+    against a language implementation of the same contract, so each position where a
+    key survives a document that did not hold it is read from there rather than
+    restated (:func:`_publishes_when_omitted`). The one position that runs the other
+    way has no case here, because :func:`decode_leaf` raises on an undecodable leaf
+    instead of classifying it. What the projection adds of its own is the decoding
+    alone, which is why a stored state a hydration rule collapses projects that
+    collapse whole rather than element by element.
+    """
+    source = obj if isinstance(obj, dict) else {}
+    node: dict[str, Any] = {}
+    for attribute in occurrence.get("attributes", []):
+        if attribute["name"] in source:
+            node[attribute["name"]] = decode_leaf(attribute["type"], source[attribute["name"]])
+    for nested in occurrence.get("valueObjects", []):
+        if _publishes_when_omitted(nested) or nested["name"] in source:
+            node[nested["name"]] = project_value_object(nested, source.get(nested["name"]))
+    return node
+
+
+def _publishes_when_omitted(nested: dict[str, Any]) -> bool:
+    return nested.get("multiplicity", "one") == "many" or not nested.get("nullable", False)
+
+
+def materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, Any]:
+    """A read row with its top-level value-object columns decoded + projected.
+
+    Scalar columns pass through under their result-column name; each declared
+    top-level value object's document column is decoded and replaced by its
+    declared projection, keyed by the value-object name. A value-object column
+    the golden SELECT did not project is left untouched (no synthetic null).
+    """
+    node = dict(row)
+    for occurrence in entity.value_objects:
+        column = occurrence["column"]
+        if column not in node:
+            continue
+        raw = (
+            row.value_object_columns[column]
+            if isinstance(row, MaterializedRow) and column in row.value_object_columns
+            else node.pop(column)
+        )
+        if column in node and (
+            not isinstance(row, MaterializedRow) or column not in row.consumed_value_object_columns
+        ):
+            node.pop(column)
+        node[occurrence["name"]] = project_value_object(occurrence, decode_stored(raw))
+    return node
 
 
 # --- the table-per-concrete-subtype `union all` -----------------------------

@@ -7,11 +7,11 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
-from ..case import Case
+from ..case import Case, Entity
 from ..case_assertions import CaseFailure, rows_equal
 from ..inheritance import STRATEGY_TPCS, STRATEGY_TPH
 from ..sql_canonical import sqlglot_dialect
-from . import execute, materialize
+from . import execute, graph, includes, materialize
 from .executor import ReadExecutor
 
 
@@ -37,12 +37,15 @@ def assert_case_read(case: Case, reader: ReadExecutor) -> None:
     # the member, decides how `then.statements` reads.
     if case.is_streamed:
         raise NotImplementedError("streamed delivery")
-    if case.object_query.get("includes"):
-        raise NotImplementedError("deep fetch")
+    if includes.query_has_includes(case.object_query):
+        _assert_deep_fetch(case, reader)
+        return
     if case.expected_graphs is not None:
-        raise NotImplementedError("milestone-set graphs")
+        _assert_graphs(case, reader)
+        return
     if case.expected_graph is not None:
-        raise NotImplementedError("single-statement graph")
+        _assert_single_statement_graph(case, reader)
+        return
     _assert_flat_equivalence(case, reader)
 
 
@@ -95,6 +98,187 @@ def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:
                 f"{case.path.name}: referenceSql rows != then.rows.\n"
                 f"  reference: {reference!r}\n"
                 f"  expected:  {expected!r}"
+            )
+
+
+def _assert_deep_fetch(case: Case, reader: ReadExecutor) -> None:
+    """Assert an Include-bearing read: one root statement, one per level, one graph.
+
+    The contract proven here is N+1 elimination: the root plus at most one
+    statement per relationship level, never one per parent. Every level is
+    instance-form and fans its own Structured Column out into its own members, so
+    what a node CARRIES follows the layout while the join columns the levels are
+    keyed on stay direct under either one.
+
+    The independent ``referenceSql`` oracle grades the ROOT row set alone: a deep
+    fetch's assembled graph is the thing under test, and a second naive statement
+    for it would be a second assembly rather than an independent formulation.
+    """
+    dialect = reader.dialect
+    query = case.object_query
+    statements = case.golden_statements(dialect)
+    steps = includes.fetch_steps(case.model, query)
+
+    # Level 0: the root query. An abstract-target root resolves each row's own
+    # concrete subtype into `familyVariant` exactly as a flat abstract read does —
+    # both because the graph's root nodes carry it and because a path-root guard
+    # selects the participating roots by it.
+    root_rows = materialize.materialize_target_tph_document_layout(
+        case,
+        execute.query_rows(case, reader, statements[0], case.statement_binds(0, dialect)),
+        include_value_objects=True,
+    )
+    root_rows = materialize.materialize_family_variant(case, root_rows)
+
+    levels = [
+        (statements[index], case.statement_binds(index, dialect))
+        for index in range(1, len(statements))
+    ]
+    executed = includes.execute_fetch_levels(
+        case, reader, "then.statements", query, steps, root_rows, levels
+    )
+    includes.refuse_unused_levels(case, "then.statements", dialect, executed, len(levels))
+
+    assembled = graph.assemble_graph(case, query, steps, root_rows, executed.children_by_hop)
+    expected = case.expected_graph or {}
+    if not graph.graphs_equal(assembled, expected, case.model):
+        raise CaseFailure(
+            f"{case.path.name}: assembled graph != then.graph.\n"
+            f"  assembled: {assembled!r}\n"
+            f"  expected:  {expected!r}"
+        )
+
+    reference_sql = case.reference_sql_for(dialect)
+    if reference_sql is not None:
+        reference = materialize.materialize_family_variant(
+            case, execute.reference_rows(reader, reference_sql)
+        )
+        root_projection = [execute.project_like(row, root_rows) for row in reference]
+        if not rows_equal(root_projection, root_rows, case.tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: referenceSql root rows != then.statements root rows.\n"
+                f"  reference: {reference!r}\n"
+                f"  golden:    {root_rows!r}"
+            )
+
+
+def _graphs_root_entity(case: Case) -> Entity:
+    """The entity a `history` / `asOfRange` graph read is rooted at.
+
+    A milestone-set graph read (`then.graphs`) is a flat temporal read — history
+    with Includes is out of scope for both v1 slices — so the root is the read's
+    own query ``target``.
+    """
+    return case.model.entity(case.object_query["target"])
+
+
+def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
+    """Assert a `history` / `asOfRange` read's per-milestone edge-pinned graphs.
+
+    The single root statement returns the FULL milestone set in one query. Each
+    ``then.graphs`` entry declares a milestone ``pin`` — its OWN edge coordinate
+    (the milestone's from-instant per as-of axis), never a shared root pin — and
+    the graph materialized at it, so ``history`` yields one independently
+    edge-pinned graph per milestone and ``asOfRange`` one per overlapping
+    milestone. ``referenceSql`` independently cross-checks the whole milestone set,
+    and the partition rules themselves live in :func:`..graph.assert_milestone_partition`
+    because a streamed delivery reaches the same interpretation.
+
+    History with deep-fetch Includes is out of scope for both v1 slices, so a graph
+    carries no child levels: a graph node authored with a nested relationship key
+    would fail the value comparison, since the root-only assembly carries only the
+    root projection.
+    """
+    dialect = reader.dialect
+    statements = case.golden_statements(dialect)
+    graph_specs = case.expected_graphs or []
+    root_entity = _graphs_root_entity(case)
+
+    # Level 0: the single history / asOfRange query — every milestone in one round trip.
+    root_rows = execute.query_rows(case, reader, statements[0], case.statement_binds(0, dialect))
+
+    reference_sql = case.reference_sql_for(dialect)
+    if reference_sql is not None:
+        reference = [
+            execute.project_like(row, root_rows)
+            for row in execute.reference_rows(reader, reference_sql)
+        ]
+        if not rows_equal(reference, root_rows, case.tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: referenceSql rows != then.statements milestone rows.\n"
+                f"  reference: {reference!r}\n"
+                f"  golden:    {root_rows!r}"
+            )
+
+    graph.assert_milestone_partition(
+        case,
+        root_entity,
+        root_rows,
+        [graph.graph_node(case.model, root_entity, row) for row in root_rows],
+        graph_specs,
+    )
+
+
+def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
+    """Assert a top-level ``then.graph`` read with no Includes and no milestone set.
+
+    Two independently-conditional kinds of case route here, and either, both, or
+    neither may apply:
+
+    * **A value-object graph read** (m-value-object): the single golden statement
+      projects the owning entity including its structured-document column(s), and
+      each row's occurrence column decodes into its declared nested to-one /
+      to-many projection — the proof that nested values arrive WITH the owner
+      rather than through a deep fetch. A no-op for an entity that declares no
+      value objects.
+    * **An abstract-target inheritance read** (m-inheritance): additionally
+      materializes ``familyVariant`` through the same oracle the row-form path
+      uses, and then narrows each node to its own concrete variant's declared
+      columns — the instance-form per-variant node shape, distinct from row-form's
+      unnarrowed superset. A no-op for a concrete-target read.
+
+    A ``referenceSql`` oracle independently pins the matched row SET, identity
+    columns only with the value-object columns stripped, so the filter that
+    selected the rows is checked by a different formulation without routing the
+    JSON document through row comparison.
+    """
+    dialect = reader.dialect
+    (golden,) = case.golden_statements(dialect)
+    entity = case.model.entity(case.object_query["target"])
+
+    # `familyVariant` materialization happens on the RAW rows (also what the
+    # referenceSql identity check below compares against — the matched ROW SET,
+    # unrelated to per-variant field narrowing); the per-variant COLUMN narrowing
+    # is a separate, graph-assembly-only step.
+    rows = graph.instance_form_root_rows(
+        case, reader, entity, golden, case.statement_binds(0, dialect)
+    )
+    narrowed = materialize.narrow_to_variant_columns(case, rows)
+    assembled = {entity.name: [graph.graph_node(case.model, entity, row) for row in narrowed]}
+
+    expected = case.expected_graph or {}
+    if not graph.graphs_equal(assembled, expected, case.model):
+        raise CaseFailure(
+            f"{case.path.name}: materialized graph != then.graph.\n"
+            f"  assembled: {assembled!r}\n"
+            f"  expected:  {expected!r}"
+        )
+
+    reference_sql = case.reference_sql_for(dialect)
+    if reference_sql is not None:
+        identity_rows = [materialize.reference_identity_row(row) for row in rows]
+        # An abstract-target inheritance read's naive reference SQL projects the
+        # RAW tag column too (it is an independently-formulated but otherwise
+        # equivalent selection); materialize familyVariant on it the same way,
+        # so this identity check compares apples to apples (m-inheritance).
+        reference = materialize.materialize_family_variant(
+            case, execute.reference_rows(reader, reference_sql)
+        )
+        if not rows_equal(reference, identity_rows, case.tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: referenceSql rows != golden rows (identity).\n"
+                f"  reference: {reference!r}\n"
+                f"  expected:  {identity_rows!r}"
             )
 
 
