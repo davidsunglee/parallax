@@ -15,10 +15,11 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
+from _second_dialect import BACKTICKED
 from _transact_support import ACCOUNT
 
 from _support import mirrored_models as mm
-from _support.db_port import BACKTICKED, body_outcome
+from _support.db_port import body_outcome
 from parallax.conformance import engine
 from parallax.conformance.boundary_runner import FaultInjectingPort
 from parallax.core.db_port import DbPort, DeclaresDialect, DocumentReadOrdinals, Row
