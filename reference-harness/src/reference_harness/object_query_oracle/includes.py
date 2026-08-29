@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from ..case import Case, Entity, Model
-from ..case_assertions import CaseFailure
+from ..case_assertions import CaseFailure, coerce_identity_key
 from ..inheritance import (
     STRATEGY_TPH,
     Family,
@@ -563,7 +563,7 @@ def execute_fetch_levels(
         parent_col = column_of(step.parent_entity, step.parent_attr)
         parent_keys = sorted(
             {
-                materialize.coerce_identity_key(parent[parent_col])
+                coerce_identity_key(parent[parent_col])
                 for parent in parents
                 if parent.get(parent_col) is not None
             }
@@ -589,7 +589,7 @@ def execute_fetch_levels(
         rest = list(raw_authored[len(parent_keys) :])
         tag_slice = rest[: len(step.tag_binds)]
         asof_suffix = rest[len(step.tag_binds) :]
-        if sorted(materialize.coerce_identity_key(bind) for bind in in_slice) != parent_keys:
+        if sorted(coerce_identity_key(bind) for bind in in_slice) != parent_keys:
             raise CaseFailure(
                 f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
                 f"({step.view_key}) IN-list binds {in_slice!r} != gathered parent "
@@ -664,7 +664,7 @@ def execute_fetch_levels(
         child_col = column_of(step.child_entity, step.child_attr)
         bucket: dict[Any, list[dict[str, Any]]] = {}
         for row in child_rows:
-            bucket.setdefault(materialize.coerce_identity_key(row[child_col]), []).append(row)
+            bucket.setdefault(coerce_identity_key(row[child_col]), []).append(row)
         children_by_step[step.hop_key] = bucket
         statement_index += 1
 

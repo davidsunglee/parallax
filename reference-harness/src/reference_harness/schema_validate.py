@@ -572,8 +572,8 @@ def _step_position(
     ``None`` means the position is undecidable here rather than absent. A write
     step or a boundary verb holds no queried node; an out-of-range or missing
     ``on`` is the runtime ``on`` rules'
-    (:func:`~reference_harness.case_runner._assert_action_on`) to report rather
-    than this check's to restate; and a step reachable from itself resolves
+    (:func:`~reference_harness.case_assertions.assert_step_on_sources`) to report
+    rather than this check's to restate; and a step reachable from itself resolves
     nowhere, which the cycle guard answers rather than looping.
     """
     if index in visited or not 0 <= index < len(steps):

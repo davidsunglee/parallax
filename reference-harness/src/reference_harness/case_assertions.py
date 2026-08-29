@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any
 
 from . import portable_literal
+from .case import Case
 
 
 class CaseFailure(AssertionError):
@@ -149,3 +150,49 @@ def rows_equal(
     return multiset_matches(
         left, right, lambda row, candidate: _row_matches(row, candidate, tolerance)
     )
+
+
+def coerce_identity_key(value: Any) -> Any:
+    """Coerce a DB / expected scalar to an exact hashable identity-key form.
+
+    Identity lives in a separate key space from value comparison: a bucket key, a
+    hop dedup key, and a primary-key identity must be exactly equal and hashable,
+    while a projected value must keep the type it was read at so
+    :func:`scalars_equal` can compare it exactly.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Decimal):
+        return int(value) if value % 1 == 0 else value
+    if isinstance(value, float):
+        return Decimal(str(value))
+    return value
+
+
+def assert_step_on_sources(case: Case, step_index: int, step: Mapping[str, Any]) -> None:
+    """Validate that a Scenario step's ``on`` names real earlier steps.
+
+    Every index in ``on`` — a single int, or an array of coordinate-group
+    sources — MUST be ``>= 0``, strictly EARLIER than this step, and, for the
+    array form, UNIQUE. ``on`` is OPTIONAL on the boundary verbs (``flush`` /
+    ``commit`` / ``abort``), which target the unit of work rather than a prior
+    object; when a boundary step DOES carry one — a ``flush`` documenting its
+    buffered write — the same checks apply, which is why this rule is stated once
+    for every kind of step rather than once per owner.
+    """
+    if "on" not in step:
+        return
+    on = step["on"]
+    indices = list(on) if isinstance(on, list) else [on]
+    if isinstance(on, list) and len(set(indices)) != len(indices):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{step_index}].on {on!r} names a DUPLICATE source; "
+            f"a coordinate-grouped action references each source at most once."
+        )
+    for source in indices:
+        if not 0 <= source < step_index:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{step_index}].on references step {source!r}, "
+                f"which is not a real EARLIER step (0 <= source < {step_index}); an action "
+                f"targets the result of a prior step."
+            )

@@ -19,19 +19,18 @@ from typing import Any, cast
 
 import pytest
 
-from reference_harness.case import discover_cases, load_model
+from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
     _assert_conflict_input,
-    _assert_temporal_only_union_binds,
     _assert_write_input_columns,
     _assert_write_step_count,
     _has_temporal_gate,
     _read_table,
-    _read_temporal_selections,
     _write_column_order,
 )
 from reference_harness.ddl_builder import contributor_types, ddl_for
+from reference_harness.object_query_oracle import assert_case_read
 from reference_harness.storage_layout import derived_primary_key_index
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -764,14 +763,42 @@ def test_tpcs_temporal_close_routed_to_wrong_table_is_rejected() -> None:
         _assert_write_input_columns(case, "postgres")
 
 
+class _RefusedRead(Exception):
+    """Raised by a reader that must never be reached."""
+
+
+class _NoReads:
+    """A reader that refuses every statement, so only pre-query grading can pass.
+
+    The temporal-only bind oracle is a pre-query refusal: it grades the binds the
+    golden's branches carry before a statement runs. Driving it through
+    ``assert_case_read`` with a reader that raises therefore reads either way —
+    a ``CaseFailure`` means the binds were refused, and this exception escaping
+    unwrapped means they were accepted AND that no database work preceded the
+    verdict.
+    """
+
+    dialect = "postgres"
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        raise _RefusedRead
+
+
+def _temporal_selections(case: Case) -> set[str]:
+    return set(case.object_query.get("temporal", {}))
+
+
 def test_tpcs_temporal_union_read_per_branch_temporal_selection_binds() -> None:
     # m-inheritance-093: the temporal abstract `union all` read carries the per-branch
     # selection binds — Valid-Time-first [b, b, infinity], repeated in alphabetical
     # branch order. The oracle derives them from the complete canonical selections.
     case = _inheritance_case("m-inheritance-093")
-    assert set(_read_temporal_selections(case)) == {"valid-time", "transaction-time"}
-    _assert_temporal_only_union_binds(case, "postgres")  # must not raise
-    _assert_temporal_only_union_binds(case, "mariadb")  # the shared binds hold per dialect
+    assert _temporal_selections(case) == {"valid-time", "transaction-time"}
+    for dialect in ("postgres", "mariadb"):  # the shared binds hold per dialect
+        reader = _NoReads()
+        reader.dialect = dialect
+        with pytest.raises(_RefusedRead):
+            assert_case_read(case, reader)
 
 
 @pytest.mark.parametrize(
@@ -828,8 +855,9 @@ def test_tpcs_temporal_only_union_variants_compose(
     per_branch = [*valid_binds, *tx_binds]
     case.then["statements"][0]["binds"] = [*per_branch, *per_branch]
 
-    assert set(_read_temporal_selections(case)) == {"valid-time", "transaction-time"}
-    _assert_temporal_only_union_binds(case, "postgres")
+    assert _temporal_selections(case) == {"valid-time", "transaction-time"}
+    with pytest.raises(_RefusedRead):
+        assert_case_read(case, _NoReads())
 
 
 def test_tpcs_temporal_union_oracle_does_not_derive_user_predicate_binds() -> None:
@@ -839,7 +867,8 @@ def test_tpcs_temporal_union_oracle_does_not_derive_user_predicate_binds() -> No
     }
     case.then["statements"][0]["binds"] = []
 
-    _assert_temporal_only_union_binds(case, "postgres")
+    with pytest.raises(_RefusedRead):
+        assert_case_read(case, _NoReads())
 
 
 def test_tpcs_temporal_union_oracle_does_not_derive_result_shaping_binds() -> None:
@@ -847,7 +876,8 @@ def test_tpcs_temporal_union_oracle_does_not_derive_result_shaping_binds() -> No
     case.object_query["limit"] = 1
     case.then["statements"][0]["binds"] = []
 
-    _assert_temporal_only_union_binds(case, "postgres")
+    with pytest.raises(_RefusedRead):
+        assert_case_read(case, _NoReads())
 
 
 def test_tpcs_temporal_union_read_corrupt_temporal_selection_bind_is_rejected() -> None:
@@ -856,7 +886,7 @@ def test_tpcs_temporal_union_read_corrupt_temporal_selection_bind_is_rejected() 
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.then["statements"][0]["binds"][3] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
-        _assert_temporal_only_union_binds(case, "postgres")
+        assert_case_read(case, _NoReads())
 
 
 def test_tpcs_temporal_union_read_dropped_branch_binds_is_rejected() -> None:
@@ -864,10 +894,11 @@ def test_tpcs_temporal_union_read_dropped_branch_binds_is_rejected() -> None:
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.then["statements"][0]["binds"] = case.then["statements"][0]["binds"][:3]
     with pytest.raises(CaseFailure):
-        _assert_temporal_only_union_binds(case, "postgres")
+        assert_case_read(case, _NoReads())
 
 
 def test_non_temporal_tpcs_union_read_temporal_bind_oracle_is_noop() -> None:
     # The temporal bind oracle is a no-op on a NON-temporal TPCS abstract union read.
     case = _inheritance_case("m-inheritance-050")
-    _assert_temporal_only_union_binds(case, "postgres")  # must not raise (returns early)
+    with pytest.raises(_RefusedRead):  # returns early, so the read is reached
+        assert_case_read(case, _NoReads())

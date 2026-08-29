@@ -11,7 +11,6 @@ is exercised end-to-end against real Postgres by the compatibility suite.
 from __future__ import annotations
 
 import copy
-import datetime as dt
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,20 +19,15 @@ from typing import Any
 import pytest
 
 from reference_harness.case import Case, Entity, Model, discover_cases, load_model
-from reference_harness.case_assertions import CaseFailure
+from reference_harness.case_assertions import CaseFailure, assert_step_on_sources
 from reference_harness.case_runner import (
-    _assert_action_on,
     _assert_scenario,
     _assert_scenario_count_consistency,
     _assert_scenario_normalization,
-    _assert_scenario_reference_sql,
     _assert_scenario_settled_write,
     _assert_scenario_source_finds,
     _assert_scenario_sql_bookkeeping,
     _assert_settled_version_binds,
-    _relationship_path_target,
-    _reuse_prior_rows,
-    _scenario_step_read_entity,
     _scenario_uow_groups,
     _uow_group_is_doomed,
 )
@@ -208,48 +202,6 @@ def test_scenario_total_mismatch_is_rejected() -> None:
         _assert_scenario_count_consistency(case, "postgres")
 
 
-# --- per-scenario read reference SQL -----------------------------------------
-
-
-class _ReferenceDb:
-    dialect = "postgres"
-
-    def __init__(self, rows: list[dict[str, object]]) -> None:
-        self.rows = rows
-        self.calls: list[tuple[str, list[object]]] = []
-
-    def query(self, statement: str, binds: Sequence[object] = ()) -> list[dict[str, object]]:
-        self.calls.append((statement, list(binds)))
-        return self.rows
-
-
-def test_scenario_read_reference_sql_is_a_bind_free_naive_oracle() -> None:
-    case = copy.deepcopy(_scenario_by_id("m-opt-lock-003"))
-    step = case.scenario[0]
-    step["referenceSql"] = "select id from account where balance < 200.00"
-    expected = [{"id": 1}, {"id": 3}]
-    db = _ReferenceDb(expected)
-
-    _assert_scenario_reference_sql(case, db, 0, step, expected)  # type: ignore[arg-type]
-
-    assert db.calls == [("select id from account where balance < 200.00", [])]
-
-
-def test_scenario_read_reference_sql_mismatch_fails_loudly() -> None:
-    case = copy.deepcopy(_scenario_by_id("m-opt-lock-003"))
-    step = case.scenario[0]
-    step["referenceSql"] = "select id from account where balance < 200.00"
-
-    with pytest.raises(CaseFailure, match="referenceSql rows != golden rows"):
-        _assert_scenario_reference_sql(
-            case,
-            _ReferenceDb([]),  # type: ignore[arg-type]
-            0,
-            step,
-            [{"id": 1}],
-        )
-
-
 def test_scenario_reference_sql_map_must_cover_its_golden_dialects() -> None:
     case = copy.deepcopy(_scenario_by_id("m-opt-lock-003"))
     case.scenario[0]["referenceSql"] = {"mariadb": "select id from account"}
@@ -266,147 +218,58 @@ def test_scenario_read_golden_sql_must_be_canonical() -> None:
         _assert_scenario_normalization(case, "postgres")
 
 
-# --- zero-round-trip reuse: loud failure vs the ONE legitimate empty case -------
+# --- step `on` validation: earlier, in-range, unique ----------------------------
 #
-# `_reuse_prior_rows` must fail LOUDLY when a zero-round-trip step names a source
-# that does not resolve (an empty reuse would let its identity / expectRows
-# assertion pass vacuously), while still permitting the query-backed list
-# CONSTRUCTION that has not resolved yet (m-op-list-001 step 0 — no named source,
-# no non-empty assertion).
+# Every kind of step that carries `on` answers to the same rule, so it is stated
+# once in the shared assertion vocabulary and pinned here on the boundary verbs
+# this module still routes.
 
 
 def _any_case():
-    """A discovered case whose `path.name` the reuse / on helpers cite in errors."""
+    """A discovered case whose `path.name` the `on` rule cites in its errors."""
     return next(iter(_scenario_cases()))
 
 
-def test_reuse_prior_rows_permits_unresolved_construction() -> None:
-    # A construction step (m-op-list-001 step 0): roundTrips 0, no golden SQL, no
-    # named source, and asserts nothing — it reuses the empty set until first access.
-    construction = {
-        "objectQuery": {"target": "Order", "predicate": {"all": {}}},
-        "roundTrips": 0,
-    }
-    assert _reuse_prior_rows(_any_case(), construction, 0, []) == []
-
-
-def test_reuse_prior_rows_raises_on_unresolved_named_source() -> None:
-    # A re-access whose `on` names a step that does not exist yet: the pre-refactor
-    # loud failure, restored — never a silent empty reuse.
-    step = {"action": "access", "on": 5, "roundTrips": 0}
-    with pytest.raises(CaseFailure):
-        _reuse_prior_rows(_any_case(), step, 1, [[{"id": 1}]])
-
-
-def test_reuse_prior_rows_raises_on_forward_same_object_as() -> None:
-    # `sameObjectAs` pointing at the current (or a later) step cannot resolve to an
-    # EARLIER result; the reuse MUST fail loudly rather than return [].
-    step = {"action": "access", "on": 0, "sameObjectAs": 2, "roundTrips": 0}
-    with pytest.raises(CaseFailure):
-        _reuse_prior_rows(_any_case(), step, 2, [[{"id": 1}], []])
-
-
-def test_reuse_prior_rows_rejects_construction_asserting_rows() -> None:
-    # A no-source zero-round-trip step that asserts NON-EMPTY rows is not a valid
-    # construction — a construction resolves no rows yet, so this fails loudly.
-    step = {
-        "objectQuery": {"target": "Order", "predicate": {"all": {}}},
-        "roundTrips": 0,
-        "expectRows": [{"id": 1}],
-    }
-    with pytest.raises(CaseFailure):
-        _reuse_prior_rows(_any_case(), step, 0, [])
-
-
-# --- action `on` validation: earlier, in-range, unique --------------------------
-
-
-def test_assert_action_on_accepts_earlier_unique_indices() -> None:
-    # A coordinate-grouped load over two earlier sources, one statement group each.
+def test_step_on_sources_accepts_earlier_unique_indices() -> None:
+    # A coordinate-grouped load over two earlier sources.
     step = {"action": "load", "on": [0, 1], "path": "lines", "roundTrips": 2}
-    pairs = [("select ...", [1]), ("select ...", [2])]
-    _assert_action_on(_any_case(), 2, step, pairs)  # must not raise
+    assert_step_on_sources(_any_case(), 2, step)  # must not raise
 
 
-def test_assert_action_on_rejects_forward_or_self_index() -> None:
+def test_step_on_sources_rejects_forward_or_self_index() -> None:
     # `on` must name an EARLIER step — a self / forward index is an authoring error.
-    step = {"action": "load", "on": 2, "path": "items", "roundTrips": 1}
+    step = {"action": "flush", "on": 2, "roundTrips": 0}
     with pytest.raises(CaseFailure):
-        _assert_action_on(_any_case(), 2, step, [("select ...", [])])
+        assert_step_on_sources(_any_case(), 2, step)
 
 
-def test_assert_action_on_rejects_duplicate_index() -> None:
+def test_step_on_sources_rejects_duplicate_index() -> None:
     # The array form is unique — a source is referenced at most once.
     step = {"action": "load", "on": [0, 0], "path": "lines", "roundTrips": 1}
     with pytest.raises(CaseFailure):
-        _assert_action_on(_any_case(), 2, step, [("select ...", [])])
+        assert_step_on_sources(_any_case(), 2, step)
 
 
-def test_assert_action_on_rejects_more_groups_than_sources() -> None:
-    # A coordinate-grouped load must not run MORE statement groups than the sources
-    # it references — every executed group is accounted for by a referenced source.
-    step = {"action": "load", "on": [0, 1], "path": "lines", "roundTrips": 3}
-    pairs = [("select ...", [1]), ("select ...", [2]), ("select ...", [3])]
-    with pytest.raises(CaseFailure):
-        _assert_action_on(_any_case(), 2, step, pairs)
+# --- observables on a step whose verb observes no rows --------------------------
 
 
-# --- per-step read-entity resolution (value-object decode uses the RIGHT entity) ---
-#
-# `_assert_scenario` decodes each step's rows with the entity that step actually
-# read — a find's own query `target`, a load / access path's terminal entity, a
-# path-less query-backed-list access's source entity — so a value-object-bearing child
-# materializes with its OWN composite schema, never the scenario root's. These pin
-# the resolver on the real corpus scenarios that exercise each shape.
+def test_a_non_read_action_step_declaring_a_row_observable_is_refused() -> None:
+    """A verb that publishes nothing has nothing to compare, so a claim about its
+    rows is refused rather than skipped.
 
+    Grading one would mean reading what an earlier read retained, which belongs to
+    the read oracle and never crosses back. Refusing it keeps that boundary from
+    being reintroduced by a future case rather than only by today's corpus, in
+    which every observable-bearing action step is a read verb.
+    """
+    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-010"))
+    source = case.scenario[0]
+    mutate = next(step for step in case.scenario if step.get("action") == "mutate")
+    mutate["expectRows"] = list(source["expectRows"])
+    db = _FakeGroupedDb(top_responses=[[dict(row) for row in source["expectRows"]]])
 
-def test_relationship_path_target_walks_each_hop() -> None:
-    # A single hop lands on the relationship's target; a dotted multi-hop path walks
-    # each hop to the terminal entity whose value-object schema decodes the rows.
-    case = _scenario_by_id("m-deep-fetch-015")
-    order = case.model.entity("Order")
-    assert _relationship_path_target(case, order, "items").name == "OrderItem"
-    assert _relationship_path_target(case, order, "items.statuses").name == "OrderStatus"
-
-
-def test_scenario_find_step_read_entity_is_its_own_query_target() -> None:
-    # A read step decodes with its query's own `target`, not the scenario root.
-    case = _scenario_by_id("m-deep-fetch-015")
-    entity = _scenario_step_read_entity(case, case.scenario[0], [])
-    assert entity is not None and entity.name == "Order"
-
-
-def test_scenario_load_step_read_entity_walks_the_relationship_path() -> None:
-    # m-deep-fetch-015 step 1: `load` of `items.statuses` from the step-0 orders ->
-    # the terminal OrderStatus, whose value-object schema decodes its rows.
-    case = _scenario_by_id("m-deep-fetch-015")
-    entity = _scenario_step_read_entity(case, case.scenario[1], [case.model.entity("Order")])
-    assert entity is not None and entity.name == "OrderStatus"
-
-
-def test_scenario_coordinate_grouped_load_resolves_from_first_source() -> None:
-    # m-deep-fetch-014 step 2: `load` of `lines` over an ARRAY `on: [0, 1]` (two
-    # pinned invoice views) -> the terminal InvoiceLine, resolved from the first
-    # source (the grouped coordinates share one source entity).
-    case = _scenario_by_id("m-deep-fetch-014")
-    invoice = case.model.entity("Invoice")
-    entity = _scenario_step_read_entity(case, case.scenario[2], [invoice, invoice])
-    assert entity is not None and entity.name == "InvoiceLine"
-
-
-def test_scenario_operation_list_access_resolves_the_list_entity() -> None:
-    # m-op-list-001 step 1: a path-LESS `access` of the step-0 constructed list ->
-    # the list's own (source) entity, Order.
-    case = _scenario_by_id("m-op-list-001")
-    entity = _scenario_step_read_entity(case, case.scenario[1], [case.model.entity("Order")])
-    assert entity is not None and entity.name == "Order"
-
-
-def test_scenario_non_read_action_step_reads_no_entity() -> None:
-    # A boundary / DML action (flush / commit / mutate) observes no rows, so it
-    # resolves no read entity and decodes nothing.
-    case = _any_case()
-    assert _scenario_step_read_entity(case, {"action": "flush", "roundTrips": 0}, []) is None
+    with pytest.raises(CaseFailure, match="only the read verbs"):
+        _assert_scenario(case, db)  # type: ignore[arg-type]
 
 
 # --- `uow` scenario-step grouping --------------------------------------------
@@ -1490,622 +1353,3 @@ def test_settled_write_admits_a_transaction_time_only_target() -> None:
 
     with pytest.raises(CaseFailure):
         _assert_scenario_settled_write(_transaction_time_only_settled_case(on=1), "postgres")
-
-
-# --- Include Paths on a scenario read step (`m-snapshot-read` composition) ----
-#
-# A snapshot graph issues no SQL after materialization, so an `access` step's
-# `expectGraph` states contents its SOURCE read fetched. That makes two things
-# DB-free-testable here: that a read step carrying `objectQuery.includes`
-# executes EVERY level its query declares, one statement per level and each keyed
-# by the previous level's gathered parents, and that the retained per-hop buckets
-# survive an intervening step and grade loudly at any depth. Real execution
-# against both dialects is `test_compatibility.py`'s job.
-
-_ORDER_1_ROW: dict[str, Any] = {
-    "id": 1,
-    "name": "Ada",
-    "sku": "A-100",
-    "qty": 5,
-    "price": 10.50,
-    "active": True,
-    "ordered_on": dt.date(2024, 1, 5),
-}
-
-# `Order.items` declares `id desc`, so the level returns 12 before 11 — the order
-# the declared-ordering oracle independently derives.
-_ORDER_1_ITEM_ROWS: list[dict[str, Any]] = [
-    {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1, "shipped_on": dt.date(2024, 2, 15)},
-    {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
-]
-
-
-def _include_scenario_db() -> _FakeGroupedDb:
-    return _FakeGroupedDb(
-        top_responses=[[dict(_ORDER_1_ROW)], [dict(r) for r in _ORDER_1_ITEM_ROWS]]
-    )
-
-
-def test_scenario_include_read_executes_every_level_before_a_later_access() -> None:
-    case = _scenario_by_id("m-snapshot-read-016")
-    db = _include_scenario_db()
-
-    _assert_scenario(case, db)  # type: ignore[arg-type]
-
-    assert [call[1].split(" from ")[1].split(" ")[0] for call in db.top_calls] == [
-        "orders",
-        "order_item",
-    ], "the read step runs its ROOT level and its include level, in that order"
-    assert db.top_calls[1][2] == [1], "the child level is keyed by the gathered parent key"
-    assert db.sessions == [], "an ungrouped scenario opens no held session"
-
-
-def test_scenario_access_expect_graph_rejects_a_corrupted_leaf() -> None:
-    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
-    case.scenario[2]["expectGraph"]["OrderItem"][0]["sku"] = "WRONG"
-
-    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
-        _assert_scenario(case, _include_scenario_db())  # type: ignore[arg-type]
-
-
-def test_scenario_access_expect_graph_rejects_an_unincluded_relationship() -> None:
-    # `statuses` is a real Order relationship the step-0 read never included, so
-    # its contents were never materialized and no access can state them.
-    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
-    case.scenario[2]["path"] = "statuses"
-    case.scenario[2]["expectGraph"] = {"OrderStatus": []}
-
-    with pytest.raises(CaseFailure, match="did not include 'statuses'"):
-        _assert_scenario(case, _include_scenario_db())  # type: ignore[arg-type]
-
-
-def test_scenario_access_expect_graph_refuses_a_multi_source_on() -> None:
-    # The `on` ARRAY form spans sources at different lowered coordinates, so the
-    # contents gathered across them are a graph no one materialized view holds. An
-    # access stating contents names the single read that materialized them, and a
-    # set is refused rather than silently resolved to its first element.
-    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
-    case.scenario[2]["on"] = [0]
-
-    with pytest.raises(CaseFailure, match="names ONE read"):
-        _assert_scenario(case, _include_scenario_db())  # type: ignore[arg-type]
-
-
-# `OrderItem.statuses` declares `code asc`, so each item's bucket returns its own
-# statuses in that order — the second hop of the 1 -> N -> N path.
-_ORDER_1_ITEM_STATUS_ROWS: list[dict[str, Any]] = [
-    {"id": 202, "order_id": 1, "order_item_id": 11, "code": "PACKED"},
-    {"id": 201, "order_id": 1, "order_item_id": 11, "code": "PICKED"},
-    {"id": 203, "order_id": 1, "order_item_id": 12, "code": "PICKED"},
-]
-
-_MULTI_LEVEL_STATEMENTS: list[dict[str, Any]] = [
-    {
-        "sql": {
-            "postgres": "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, "
-            "t0.ordered_on from orders t0 where t0.id = ?"
-        },
-        "binds": [1],
-    },
-    {
-        "sql": {
-            "postgres": "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on "
-            "from order_item t0 where t0.order_id in (?) order by t0.id desc"
-        },
-        "binds": [1],
-    },
-    {
-        "sql": {
-            "postgres": "select t0.id, t0.order_id, t0.order_item_id, t0.code "
-            "from order_status t0 where t0.order_item_id in (?, ?) order by t0.code asc"
-        },
-        "binds": [11, 12],
-    },
-]
-
-
-def _multi_level_include_case():
-    """`m-snapshot-read-016`'s shape over the 1 -> N -> N path.
-
-    The source read includes `Order.items -> OrderItem.statuses`, so it runs three
-    levels and retains a bucket per HOP; the access then states the contents of the
-    DEEPER hop, which only a retained second-level bucket can answer.
-    """
-    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
-    read, _mutate, access = case.scenario
-    read["objectQuery"]["includes"] = [
-        {
-            "segments": [
-                {"rel": "parallax.compatibility.Order.items"},
-                {"rel": "parallax.compatibility.OrderItem.statuses"},
-            ]
-        }
-    ]
-    read["statements"] = copy.deepcopy(_MULTI_LEVEL_STATEMENTS)
-    read["roundTrips"] = 3
-    access["path"] = "items.statuses"
-    access["expectGraph"] = {
-        "OrderStatus": [
-            {"id": 203, "orderId": 1, "orderItemId": 12, "code": "PICKED"},
-            {"id": 202, "orderId": 1, "orderItemId": 11, "code": "PACKED"},
-            {"id": 201, "orderId": 1, "orderItemId": 11, "code": "PICKED"},
-        ]
-    }
-    case.then["roundTrips"] = 3
-    return case
-
-
-def _multi_level_include_db() -> _FakeGroupedDb:
-    return _FakeGroupedDb(
-        top_responses=[
-            [dict(_ORDER_1_ROW)],
-            [dict(row) for row in _ORDER_1_ITEM_ROWS],
-            [dict(row) for row in _ORDER_1_ITEM_STATUS_ROWS],
-        ]
-    )
-
-
-def test_scenario_include_read_executes_a_multi_level_path_keyed_level_by_level() -> None:
-    db = _multi_level_include_db()
-
-    _assert_scenario(_multi_level_include_case(), db)  # type: ignore[arg-type]
-
-    assert [call[1].split(" from ")[1].split(" ")[0] for call in db.top_calls] == [
-        "orders",
-        "order_item",
-        "order_status",
-    ], "every declared level runs, in path order, and nothing beyond them"
-    assert [call[2] for call in db.top_calls] == [[1], [1], [11, 12]], (
-        "each level is keyed by the parents the PREVIOUS level gathered, so the "
-        "second hop's IN list is the item keys rather than the root key"
-    )
-    assert db.sessions == [], "an ungrouped scenario opens no held session"
-
-
-def test_scenario_access_over_a_hop_carries_each_parents_own_deeper_bucket() -> None:
-    # Retention is per HOP and per PARENT: an access over the FIRST hop answers item
-    # nodes each carrying the statuses of that item alone. A retention that pooled
-    # the deeper level would hand both items all three status rows.
-    case = _multi_level_include_case()
-    case.scenario[2]["path"] = "items"
-    case.scenario[2]["expectGraph"] = {
-        "OrderItem": [
-            {
-                "id": 12,
-                "orderId": 1,
-                "sku": "B-200",
-                "quantity": 1,
-                "shippedOn": dt.date(2024, 2, 15),
-                "statuses": [{"id": 203, "orderId": 1, "orderItemId": 12, "code": "PICKED"}],
-            },
-            {
-                "id": 11,
-                "orderId": 1,
-                "sku": "A-100",
-                "quantity": 2,
-                "shippedOn": None,
-                "statuses": [
-                    {"id": 202, "orderId": 1, "orderItemId": 11, "code": "PACKED"},
-                    {"id": 201, "orderId": 1, "orderItemId": 11, "code": "PICKED"},
-                ],
-            },
-        ]
-    }
-    db = _multi_level_include_db()
-
-    _assert_scenario(case, db)  # type: ignore[arg-type]
-
-    assert len(db.top_calls) == 3, "the access itself issues nothing"
-
-
-def _loaded_null_to_one_case():
-    """An include over a to-one hop that reaches no row: the view is loaded and null.
-
-    `m-case-format` authors a to-one member as a single node or null, so the access
-    states `null` as the whole contents its source read materialized — the state a
-    key the read never included could not be told apart from otherwise.
-    """
-    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
-    read, mutate, access = case.scenario
-    read["objectQuery"] = {
-        "target": "parallax.compatibility.OrderItem",
-        "predicate": {"eq": {"attr": "parallax.compatibility.OrderItem.id", "value": 11}},
-        "includes": [{"segments": [{"rel": "parallax.compatibility.OrderItem.order"}]}],
-    }
-    read["statements"] = [
-        {
-            "sql": {
-                "postgres": "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on "
-                "from order_item t0 where t0.id = ?"
-            },
-            "binds": [11],
-        },
-        {
-            "sql": {
-                "postgres": "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, "
-                "t0.ordered_on from orders t0 where t0.id in (?)"
-            },
-            "binds": [1],
-        },
-    ]
-    read["expectRows"] = [
-        {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None}
-    ]
-    mutate["set"] = {"sku": "Z-999"}
-    access["path"] = "order"
-    access["expectGraph"] = {"Order": [None]}
-    return case
-
-
-def _loaded_null_to_one_db() -> _FakeGroupedDb:
-    return _FakeGroupedDb(top_responses=[[dict(_ORDER_1_ITEM_ROWS[1])], []])
-
-
-def test_scenario_access_states_a_loaded_null_to_one_view() -> None:
-    db = _loaded_null_to_one_db()
-
-    _assert_scenario(_loaded_null_to_one_case(), db)  # type: ignore[arg-type]
-
-    assert len(db.top_calls) == 2, "the access over the null view issues nothing"
-
-
-def test_scenario_access_keeps_a_loaded_null_distinct_from_a_node() -> None:
-    case = _loaded_null_to_one_case()
-    case.scenario[2]["expectGraph"] = {"Order": [{"id": 1}]}
-
-    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
-        _assert_scenario(case, _loaded_null_to_one_db())  # type: ignore[arg-type]
-
-
-def _null_branch_before_a_deeper_hop_case():
-    """A dotted path whose FIRST hop is the loaded-null to-one branch.
-
-    The read includes `OrderItem.order -> Order.items`, and the item's `order` view
-    is loaded null, so that branch's deeper level saw an EMPTY parent set and
-    fetched nothing (`m-deep-fetch`). The access over the whole path therefore
-    reaches no node at all — an empty answer, not a relationship the read left
-    unincluded.
-    """
-    case = _loaded_null_to_one_case()
-    read, _mutate, access = case.scenario
-    read["objectQuery"]["includes"] = [
-        {
-            "segments": [
-                {"rel": "parallax.compatibility.OrderItem.order"},
-                {"rel": "parallax.compatibility.Order.items"},
-            ]
-        }
-    ]
-    access["path"] = "order.items"
-    access["expectGraph"] = {"OrderItem": []}
-    return case
-
-
-def test_scenario_access_over_a_null_branch_reaches_no_deeper_node() -> None:
-    db = _loaded_null_to_one_db()
-
-    _assert_scenario(_null_branch_before_a_deeper_hop_case(), db)  # type: ignore[arg-type]
-
-    assert len(db.top_calls) == 2, "the null branch's own deeper level issues nothing"
-
-
-# One status belongs to a line item and one to the order alone (`orderItemId` is
-# nullable), so the `statuses -> orderItem` hop holds a real node beside a
-# loaded-null one.
-_ORDER_1_STATUS_ROWS: list[dict[str, Any]] = [
-    {"id": 201, "order_id": 1, "order_item_id": 11, "code": "PICKED"},
-    {"id": 204, "order_id": 1, "order_item_id": None, "code": "OPEN"},
-]
-
-
-def _fanned_out_terminal_null_case():
-    """A path whose LAST hop is a to-one reaching null on one of the fanned parents.
-
-    `Order.statuses -> OrderStatus.orderItem` fans out at the first hop, so the
-    access answers the terminal nodes it reached: the status without a line item
-    contributes none, exactly as its own deeper levels would see an empty parent
-    set.
-    """
-    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
-    read, _mutate, access = case.scenario
-    read["objectQuery"]["includes"] = [
-        {
-            "segments": [
-                {"rel": "parallax.compatibility.Order.statuses"},
-                {"rel": "parallax.compatibility.OrderStatus.orderItem"},
-            ]
-        }
-    ]
-    read["statements"] = [
-        copy.deepcopy(_MULTI_LEVEL_STATEMENTS[0]),
-        {
-            "sql": {
-                "postgres": "select t0.id, t0.order_id, t0.order_item_id, t0.code "
-                "from order_status t0 where t0.order_id in (?)"
-            },
-            "binds": [1],
-        },
-        {
-            "sql": {
-                "postgres": "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on "
-                "from order_item t0 where t0.id in (?)"
-            },
-            "binds": [11],
-        },
-    ]
-    read["roundTrips"] = 3
-    access["path"] = "statuses.orderItem"
-    access["expectGraph"] = {
-        "OrderItem": [
-            {
-                "id": 11,
-                "orderId": 1,
-                "sku": "A-100",
-                "quantity": 2,
-                "shippedOn": None,
-            }
-        ]
-    }
-    case.then["roundTrips"] = 3
-    return case
-
-
-def _fanned_out_terminal_null_db() -> _FakeGroupedDb:
-    return _FakeGroupedDb(
-        top_responses=[
-            [dict(_ORDER_1_ROW)],
-            [dict(row) for row in _ORDER_1_STATUS_ROWS],
-            [dict(_ORDER_1_ITEM_ROWS[1])],
-        ]
-    )
-
-
-def test_scenario_access_over_a_fan_out_omits_a_terminal_null() -> None:
-    _assert_scenario(_fanned_out_terminal_null_case(), _fanned_out_terminal_null_db())  # type: ignore[arg-type]
-
-
-def test_scenario_access_over_a_fan_out_still_grades_the_node_it_reached() -> None:
-    case = _fanned_out_terminal_null_case()
-    case.scenario[2]["expectGraph"]["OrderItem"][0]["sku"] = "WRONG"
-
-    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
-        _assert_scenario(case, _fanned_out_terminal_null_db())  # type: ignore[arg-type]
-
-
-def _all_to_one_null_branch_case():
-    """A dotted ALL-TO-ONE path whose first hop is loaded null.
-
-    Nothing fans out, so the access answers one terminal per root and the branch
-    that reached no row IS that terminal: `null`, which `m-case-format` authors as
-    the whole contents of a to-one member.
-    """
-    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-016"))
-    read, mutate, access = case.scenario
-    read["objectQuery"] = {
-        "target": "parallax.compatibility.OrderStatus",
-        "predicate": {"eq": {"attr": "parallax.compatibility.OrderStatus.id", "value": 204}},
-        "includes": [
-            {
-                "segments": [
-                    {"rel": "parallax.compatibility.OrderStatus.orderItem"},
-                    {"rel": "parallax.compatibility.OrderItem.order"},
-                ]
-            }
-        ],
-    }
-    read["statements"] = [
-        {
-            "sql": {
-                "postgres": "select t0.id, t0.order_id, t0.order_item_id, t0.code "
-                "from order_status t0 where t0.id = ?"
-            },
-            "binds": [204],
-        }
-    ]
-    read["roundTrips"] = 1
-    read["expectRows"] = [dict(_ORDER_1_STATUS_ROWS[1])]
-    mutate["set"] = {"code": "CLOSED"}
-    access["path"] = "orderItem.order"
-    access["expectGraph"] = {"Order": [None]}
-    case.then["roundTrips"] = 1
-    return case
-
-
-def test_scenario_access_over_an_all_to_one_path_keeps_a_terminal_null() -> None:
-    db = _FakeGroupedDb(top_responses=[[dict(_ORDER_1_STATUS_ROWS[1])]])
-
-    _assert_scenario(_all_to_one_null_branch_case(), db)  # type: ignore[arg-type]
-
-    assert len(db.top_calls) == 1, "neither level of the null branch has a parent to key on"
-
-
-def test_scenario_access_over_an_all_to_one_path_keeps_null_distinct_from_a_node() -> None:
-    case = _all_to_one_null_branch_case()
-    case.scenario[2]["expectGraph"] = {"Order": [{"id": 1}]}
-
-    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
-        _assert_scenario(case, _FakeGroupedDb(top_responses=[[dict(_ORDER_1_STATUS_ROWS[1])]]))  # type: ignore[arg-type]
-
-
-def test_scenario_access_expect_graph_rejects_a_corrupted_deep_leaf() -> None:
-    case = _multi_level_include_case()
-    case.scenario[2]["expectGraph"]["OrderStatus"][0]["code"] = "WRONG"
-
-    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
-        _assert_scenario(case, _multi_level_include_db())  # type: ignore[arg-type]
-
-
-def test_scenario_access_expect_graph_rejects_a_dropped_deep_node() -> None:
-    # A second-level bucket the retention lost would answer fewer nodes, so the
-    # oracle must reject a graph missing one of the deeper hop's rows.
-    case = _multi_level_include_case()
-    case.scenario[2]["expectGraph"]["OrderStatus"].pop()
-
-    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
-        _assert_scenario(case, _multi_level_include_db())  # type: ignore[arg-type]
-
-
-def test_scenario_read_step_may_not_list_a_level_its_query_declares_none_of() -> None:
-    # A step's listed statements are the levels its own query declares: a listed
-    # statement past them is SQL nobody executes, while the step's declared round
-    # trips still count the call it never made.
-    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-010"))
-    case.scenario[0]["statements"].append(
-        {"sql": {"postgres": "select t0.id from order_item t0"}, "binds": []}
-    )
-
-    with pytest.raises(CaseFailure, match="declares no `includes`"):
-        _assert_scenario(case, _FakeGroupedDb(top_responses=[[dict(_ORDER_1_ROW)]]))  # type: ignore[arg-type]
-
-
-# --- A persisting write between the include read and the access ---------------
-#
-# The composition arm (`m-snapshot-read-018`): a write step parks an empty result
-# slot and no retained view of its own, so a later access still resolves the
-# buckets its SOURCE read filled. What that makes DB-free-testable is the
-# retention itself — that the intervening step neither disturbs the buckets nor
-# shifts the `on` index that names them — and that the write's DML really runs.
-# Whether the DATABASE then holds something else is `test_compatibility.py`'s job,
-# and is exactly what the case's own fixture arranges.
-
-_ORDER_3_ROW: dict[str, Any] = {
-    "id": 3,
-    "name": "ada",
-    "sku": "A-300",
-    "qty": 15,
-    "price": 30.25,
-    "active": False,
-    "ordered_on": dt.date(2024, 3, 15),
-}
-
-
-def _loaded_empty_write_db() -> _FakeGroupedDb:
-    # Order 3 owns no line items, so the include level runs and returns nothing.
-    return _FakeGroupedDb(top_responses=[[dict(_ORDER_3_ROW)], []])
-
-
-def test_scenario_write_step_between_an_include_read_and_an_access_keeps_the_buckets() -> None:
-    case = _scenario_by_id("m-snapshot-read-018")
-    db = _loaded_empty_write_db()
-
-    _assert_scenario(case, db)  # type: ignore[arg-type]
-
-    assert [call[0] for call in db.top_calls] == ["query", "query", "execute"], (
-        "the read's two levels run, then the write's DML — and the access runs nothing"
-    )
-    assert db.top_calls[2][1].startswith("insert into order_item"), (
-        "the write step really executes its golden DML"
-    )
-
-
-def test_scenario_write_step_does_not_shift_the_access_source_index() -> None:
-    # A write parks its own slot so `on: 0` still names the read. Pointing the
-    # access at the WRITE step instead must not silently resolve to the read's
-    # buckets: that step materialized no view, so there are no contents to state.
-    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-018"))
-    case.scenario[2]["on"] = 1
-    case.scenario[2]["sameObjectAs"] = 1
-
-    with pytest.raises(CaseFailure, match="names no navigated `path` on a source read"):
-        _assert_scenario(case, _loaded_empty_write_db())  # type: ignore[arg-type]
-
-
-def test_scenario_loaded_empty_access_rejects_a_stated_node() -> None:
-    # The loaded-EMPTY arm has teeth only if a non-empty expectation fails: an
-    # implementation that answered the row the write inserted, or one that refilled
-    # the view from the table, would state a node here.
-    case = copy.deepcopy(_scenario_by_id("m-snapshot-read-018"))
-    case.scenario[2]["expectGraph"]["OrderItem"] = [
-        {"id": 31, "orderId": 3, "sku": "C-300", "quantity": 7, "shippedOn": None}
-    ]
-
-    with pytest.raises(CaseFailure, match="relationship contents != expectGraph"):
-        _assert_scenario(case, _loaded_empty_write_db())  # type: ignore[arg-type]
-
-
-# --- `expectGraph` on a READ step (`m-unit-work-029`) -------------------------
-#
-# The observable's other placement. A grouped find's own levels run on the
-# GROUP's held session, so what its graph states is what THAT transaction
-# observes — which is what makes read-your-own-writes across a relationship
-# authorable at all. DB-free that is testable as three things: the levels really
-# run on the session rather than the top-level connection, the graph assembled
-# from that step's OWN buckets is what grades, and a read carrying no Include
-# Path is refused rather than passing on an empty graph.
-
-_ORDER_ITEM_13_ROW: dict[str, Any] = {
-    "id": 13,
-    "order_id": 1,
-    "sku": "D-130",
-    "quantity": 6,
-    "shipped_on": None,
-}
-
-
-def _ryow_relationship_db() -> _FakeGroupedDb:
-    # One session for the whole group: the first find's two levels, then — after
-    # the write's own DML — the second find's two, whose item level answers the
-    # row the insert added and the sku the update rewrote.
-    rewritten = dict(_ORDER_1_ITEM_ROWS[1]) | {"sku": "Rewritten"}
-    return _FakeGroupedDb(
-        session_responses=[
-            [
-                [dict(_ORDER_1_ROW)],
-                [dict(r) for r in _ORDER_1_ITEM_ROWS],
-                [dict(_ORDER_1_ROW)],
-                [dict(_ORDER_ITEM_13_ROW), dict(_ORDER_1_ITEM_ROWS[0]), rewritten],
-            ]
-        ]
-    )
-
-
-def test_scenario_grouped_include_read_runs_its_levels_on_the_groups_own_session() -> None:
-    case = _scenario_by_id("m-unit-work-029")
-    db = _ryow_relationship_db()
-
-    _assert_scenario(case, db)  # type: ignore[arg-type]
-
-    assert len(db.sessions) == 1, "the whole group shares ONE session"
-    session = db.sessions[0]
-    assert [call[0] for call in session.calls] == [
-        "query",
-        "query",
-        "execute",
-        "execute",
-        "query",
-        "query",
-    ], "both levels of both finds and both DML statements run on the held session"
-    assert session.committed is True
-    assert db.top_calls == [], "no step of a fully-grouped scenario touches the top-level db"
-
-
-def test_scenario_read_step_expect_graph_rejects_a_corrupted_leaf() -> None:
-    case = copy.deepcopy(_scenario_by_id("m-unit-work-029"))
-    case.scenario[2]["expectGraph"]["Order"][0]["items"][0]["sku"] = "WRONG"
-
-    with pytest.raises(CaseFailure, match="materialized graph != expectGraph"):
-        _assert_scenario(case, _ryow_relationship_db())  # type: ignore[arg-type]
-
-
-def test_scenario_read_step_expect_graph_grades_the_step_that_declares_it() -> None:
-    # Each find states its OWN graph, so the pre-write step cannot be satisfied by
-    # the post-write contents: an executor that answered every step from one
-    # materialization would pass one of the two and fail the other.
-    case = copy.deepcopy(_scenario_by_id("m-unit-work-029"))
-    case.scenario[0]["expectGraph"] = copy.deepcopy(case.scenario[2]["expectGraph"])
-
-    with pytest.raises(CaseFailure, match=r"scenario\[0\] materialized graph != expectGraph"):
-        _assert_scenario(case, _ryow_relationship_db())  # type: ignore[arg-type]
-
-
-def test_scenario_read_step_expect_graph_refuses_a_read_that_included_nothing() -> None:
-    # The read placement states the relationships that read materialized, and a
-    # read declaring no Include Path materialized none. The schema refuses the
-    # shape; the executor refuses it too rather than grading an empty graph.
-    case = copy.deepcopy(_scenario_by_id("m-unit-work-029"))
-    del case.scenario[0]["objectQuery"]["includes"]
-    del case.scenario[0]["statements"][1]
-    case.scenario[0]["roundTrips"] = 1
-
-    with pytest.raises(CaseFailure, match="carries no `objectQuery.includes`"):
-        _assert_scenario(case, _ryow_relationship_db())  # type: ignore[arg-type]

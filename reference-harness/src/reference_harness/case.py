@@ -16,6 +16,7 @@ the single-entity cases always query).
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import cached_property
@@ -552,6 +553,42 @@ def conflict_write_rows(attempt: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(raw, list):
         return list(raw)
     return [raw]
+
+
+def entry_bind_values(entry: Mapping[str, Any], dialect: str) -> list[Any]:
+    """One golden statement entry's binds for *dialect* (default ``[]``).
+
+    A flat array is dialect-agnostic and answers for every dialect; a map is keyed
+    by dialect, covering exactly the dialects its own ``sql`` map declares. Both
+    forms are authorable wherever a golden statement is, because a document
+    mutation's path bind differs between the two dialects while the value bind
+    beside it does not (m-dialect).
+    """
+    binds = entry.get("binds", [])
+    return list(binds[dialect]) if isinstance(binds, dict) else list(binds)
+
+
+def entry_pairs(entries: Any, dialect: str) -> list[tuple[str, list[Any]]]:
+    """The ``(sql, binds)`` pairs a ``statements`` entry list declares for *dialect*.
+
+    Every per-step SQL location — a Scenario step, a coherence step, a conflict
+    attempt, a concurrency round — carries its golden SQL as an ordered list of
+    ``{sql, binds}`` entries, mirroring the top-level ``then.statements``. Binds
+    ride inline on their own entry, so the two are read together rather than
+    paired positionally.
+
+    An entry whose ``sql`` map does not declare *dialect* contributes nothing: a
+    step lists golden SQL per dialect, and a dialect it was never lowered for has
+    no statement to run.
+    """
+    if not isinstance(entries, list):
+        return []
+    pairs: list[tuple[str, list[Any]]] = []
+    for entry in entries:
+        sql = entry.get("sql") if isinstance(entry, dict) else None
+        if isinstance(sql, dict) and dialect in sql:
+            pairs.append((sql[dialect], entry_bind_values(entry, dialect)))
+    return pairs
 
 
 @dataclass(frozen=True)
