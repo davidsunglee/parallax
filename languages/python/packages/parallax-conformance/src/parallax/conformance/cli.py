@@ -12,53 +12,15 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Final
 
 from parallax.conformance import adapter, case_format
 from parallax.conformance.profile import profile_for
-from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
-from parallax.core.dialect import Dialect
 
 __all__ = ["main"]
 
 _EXIT: Final[dict[str, int]] = {"ok": 0, "unsupported": 10, "run-only": 11, "error": 1}
-
-
-class _NoProvisioningPort:
-    """A `DbPort` that raises if touched — the CLI's structural proof that a
-    `rejected`-shape ``run`` never provisions and never executes SQL
-    (m-conformance-adapter): ``run`` of a rejected case is
-    dispatched with THIS port instead of a Docker-backed one, so a future
-    regression that makes the rejected lane reach the port fails loudly rather
-    than silently starting a container.
-
-    It still reports a dialect, because what it refuses is executing SQL rather
-    than answering metadata: the run it stands in for names the dialect its
-    rejection is classified under, and reading that off a port must not depend
-    on the port being usable.
-    """
-
-    def __init__(self, dialect: Dialect) -> None:
-        self.dialect = dialect
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[DocumentReadOrdinals] = (),
-    ) -> list[Row]:  # pragma: no cover
-        del binds, document_reads
-        raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
-
-    def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        raise AssertionError("a rejected-case run must not open a transaction")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -99,9 +61,8 @@ def _run_self_managed(
     The profile is resolved first and resolving it opens nothing, so a name no
     profile declares is refused as `unsupported` before a case is even read — the
     same guard an out-of-claim dialect gets under `compile`. The profile then
-    supplies both halves the run needs: the provisioner that opens the adapter, and
-    the dialect that adapter executes in, which is read off its class rather than
-    out of a container.
+    constitutes the run itself: this function names no port, so the profile the
+    envelope reports and the database the case executed against cannot come apart.
 
     A `rejected`-shape case is provisioning-free by contract
     (m-conformance-adapter): its run answer is the classified
@@ -119,17 +80,14 @@ def _run_self_managed(
     if diagnostic is not None:
         return adapter.unsupported("run", diagnostic)
     if case.shape == "rejected":
-        return adapter.run_case(case_path, profile.name, _NoProvisioningPort(profile.dialect))
+        return adapter.run_case(case_path, profile.unprovisioned())
 
     from parallax.conformance import engine, provision
 
-    provisioner = profile.provisioner()
-    try:
+    with profile.provisioned() as run:
         meta = engine.load_case_metamodel(case)
-        provisioner.reset(meta, provision.load_fixtures(str(case.document["model"])))
-        return adapter.run_case(case_path, profile.name, provisioner.port)
-    finally:
-        provisioner.close()
+        run.reset(meta, provision.load_fixtures(str(case.document["model"])))
+        return adapter.run_case(case_path, run)
 
 
 def main(argv: list[str] | None = None) -> int:

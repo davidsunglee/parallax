@@ -22,7 +22,7 @@ from parallax.conformance._lifecycle_observation import (
     execution_lifecycle_observation,
 )
 from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
-from parallax.conformance.profile import PROFILES
+from parallax.conformance.profile import PROFILES, ProfileRun
 from parallax.core.db_port import DbPort
 
 __all__ = [
@@ -427,40 +427,44 @@ def compile_case(
 
 def run_case(
     case_path: str | Path,
-    profile: str,
-    port: DbPort,
+    run: ProfileRun,
     claim: Claim = SNAPSHOT_CLAIM,
     adapter: Adapter = ADAPTER,
 ) -> Envelope:
-    """Run one case (read / scenario / writeSequence) through ``port`` and report its
-    emissions and observations.
+    """Run one case (read / scenario / writeSequence) through ``run``'s port and
+    report its emissions and observations.
 
-    ``profile`` is the reporting name of the declared matrix profile this run was
-    asked for, and a name ``PROFILES`` does not declare is answered ``unsupported``
-    before anything is read or executed — so the CLI and the in-process sweeps alike
-    reach the one roster rather than each vouching for its own request. The name
-    crosses rather than the declaration because a declaration answers a dialect, and
-    a signature holding a port derives the dialect from the port alone. That
-    dialect is read off ``port``, so the envelope reports the spelling the case was
-    actually executed in and the classification grades that same spelling. Reading it
-    requires no connection — a port that refuses SQL still answers its dialect
-    (`m-db-port`).
+    ``run`` pairs the reporting name of the declared matrix profile with the port
+    the case executes through, and only a profile makes one, so the ``profile`` this
+    reports and the database that produced it are the same declaration by
+    construction rather than by a check that two same-dialect profiles would pass
+    either way. A name ``PROFILES`` does not declare is still answered
+    ``unsupported`` before anything is read or executed: a profile is constructible
+    without being declared, so the roster is what the CLI and the in-process sweeps
+    alike are refused against.
+
+    The declaration itself does not cross, because a declaration answers a dialect
+    and a signature holding a port derives the dialect from the port alone. That
+    dialect is read off ``run.port``, so the envelope reports the spelling the case
+    was actually executed in and the classification grades that same spelling.
+    Reading it requires no connection — a port that refuses SQL still answers its
+    dialect (`m-db-port`).
     """
-    if profile not in {declared.name for declared in PROFILES}:
-        diagnostic = Diagnostic("unsupported-profile", f"unknown profile {profile!r}")
+    if run.name not in {declared.name for declared in PROFILES}:
+        diagnostic = Diagnostic("unsupported-profile", f"unknown profile {run.name!r}")
         return _non_ok("run", "unsupported", diagnostic, adapter)
     case = case_format.load_case(Path(case_path))
-    dialect = port.dialect.name
+    dialect = run.port.dialect.name
     diagnostic = classify("run", dialect, case, claim)
     if diagnostic is not None:
         return _non_ok("run", "unsupported", diagnostic, adapter)
     lifecycle = LifecycleRun()
     try:
-        emissions, observations = _run(case, port, lifecycle)
+        emissions, observations = _run(case, run.port, lifecycle)
         _report_execution_lifecycle(case, observations, lifecycle, emissions)
     except engine.EngineError as exc:
         return _non_ok("run", "error", Diagnostic("run-failed", str(exc)), adapter)
     envelope = _common("run", "ok", adapter)
     envelope["emissions"] = [e.to_json() for e in emissions]
     envelope["observations"] = observations
-    return _echo(envelope, case, dialect, profile)
+    return _echo(envelope, case, dialect, run.name)

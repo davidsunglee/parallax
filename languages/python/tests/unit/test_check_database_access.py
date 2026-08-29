@@ -24,11 +24,12 @@ def _minimal_tree(root: Path) -> None:
     """A tests root the guard finds clean: the designated fixture, acquiring the
     database through the declared profile, and a classifier designating exactly it."""
     (root / "conftest.py").write_text(
-        "_DATABASE_FIXTURES = frozenset({'provisioner'})\n"
+        "_DATABASE_FIXTURES = frozenset({'profile_run'})\n"
         "\n"
         "\n"
-        "def provisioner(profile):\n"
-        "    yield profile.provisioner()\n"
+        "def profile_run(profile):\n"
+        "    with profile.provisioned() as run:\n"
+        "        yield run\n"
     )
 
 
@@ -79,6 +80,17 @@ def test_a_profiles_provisioner_member_is_a_seam_however_the_profile_was_reached
         "from parallax.conformance.profile import profile_for\n"
         "profile_for('pg-full').provisioner()\n"
     ) == [".provisioner()"]
+
+
+def test_a_profile_provisioning_itself_is_a_seam() -> None:
+    # A profile opens its own declared provisioner to constitute a run, so that
+    # form acquires a database as surely as naming the provisioner and calling it.
+    assert _seams("profile.provisioned()\n") == [".provisioned()"]
+    assert _seams(
+        "from parallax.conformance.profile import profile_for\n"
+        "with profile_for('pg-full').provisioned() as run:\n"
+        "    run.reset(model, {})\n"
+    ) == [".provisioned()"]
 
 
 def test_a_seam_bound_to_a_local_name_and_called_through_it_is_found() -> None:
@@ -199,7 +211,7 @@ def test_every_declared_seam_names_a_callable() -> None:
     assert access.unresolved_seams() == ()
 
 
-def test_every_declared_profile_reaches_a_seam_through_its_provisioner_member() -> None:
+def test_every_declared_profile_holds_a_seam_on_a_declared_member() -> None:
     assert access.unbacked_profiles() == ()
 
 
@@ -250,7 +262,7 @@ def test_a_seam_call_outside_the_designated_fixture_is_a_violation(tmp_path: Pat
     (finding,) = access.audit(tmp_path)
     assert finding.path == "test_rogue.py"
     assert finding.line == 5
-    assert "provisioner" in finding.message
+    assert access.ENTRY_POINT_FIXTURE in finding.message
 
 
 def test_a_seam_call_elsewhere_in_the_designated_module_is_a_violation(tmp_path: Path) -> None:
@@ -269,7 +281,7 @@ def test_a_seam_call_elsewhere_in_the_designated_module_is_a_violation(tmp_path:
 
 
 def test_a_missing_designated_fixture_is_a_violation(tmp_path: Path) -> None:
-    (tmp_path / "conftest.py").write_text("_DATABASE_FIXTURES = frozenset({'provisioner'})\n")
+    (tmp_path / "conftest.py").write_text("_DATABASE_FIXTURES = frozenset({'profile_run'})\n")
     (finding,) = access.audit(tmp_path)
     assert "is not defined here" in finding.message
 
@@ -278,7 +290,7 @@ def test_a_classifier_designating_a_different_fixture_is_a_violation(tmp_path: P
     _minimal_tree(tmp_path)
     conftest = tmp_path / "conftest.py"
     conftest.write_text(
-        conftest.read_text().replace("frozenset({'provisioner'})", "frozenset({'other'})")
+        conftest.read_text().replace("frozenset({'profile_run'})", "frozenset({'other'})")
     )
     (finding,) = access.audit(tmp_path)
     assert access.CLASSIFIER_CONSTANT in finding.message

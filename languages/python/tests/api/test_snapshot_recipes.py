@@ -74,10 +74,10 @@ def _seed_orders(db: Database) -> None:
 
 
 def test_a_to_one_relationship_takes_its_three_declared_runtime_states(
-    provisioner: Any,
+    profile_run: Any,
 ) -> None:
-    provisioner.reset(model_of(_ORDERS), {})
-    db = connect(provisioner.port, _ORDERS)
+    profile_run.reset(model_of(_ORDERS), {})
+    db = connect(profile_run.port, _ORDERS)
     _seed_orders(db)
 
     included, unincluded = read_to_one_relationship_states(db)
@@ -106,10 +106,10 @@ def test_a_to_one_relationship_takes_its_three_declared_runtime_states(
 
 
 def test_a_table_per_hierarchy_family_materializes_its_declared_concretes(
-    provisioner: Any,
+    profile_run: Any,
 ) -> None:
-    provisioner.reset(model_of(_PAYMENT), {})
-    db = connect(provisioner.port, _PAYMENT)
+    profile_run.reset(model_of(_PAYMENT), {})
+    db = connect(profile_run.port, _PAYMENT)
     db.transact(
         lambda tx: (
             tx.insert(CardPayment(id=1, amount=Decimal("200.00"), card_network="visa")),
@@ -130,10 +130,10 @@ def test_a_table_per_hierarchy_family_materializes_its_declared_concretes(
 
 
 def test_a_table_per_concrete_subtype_family_materializes_its_declared_concretes(
-    provisioner: Any,
+    profile_run: Any,
 ) -> None:
-    provisioner.reset(model_of(_DOCUMENT), {})
-    db = connect(provisioner.port, _DOCUMENT)
+    profile_run.reset(model_of(_DOCUMENT), {})
+    db = connect(profile_run.port, _DOCUMENT)
     db.transact(
         lambda tx: (
             tx.insert(
@@ -195,15 +195,15 @@ def _seed_streamed_orders(db: Database, count: int) -> None:
 
 
 def test_a_streamed_delivery_answers_the_same_result_at_every_page_size(
-    provisioner: Any,
+    profile_run: Any,
 ) -> None:
     # The recipe's own claim, against real Postgres: `batch_size` is a dial and
     # nothing else. Seven roots at three page sizes — one that divides the result,
     # one that does not, and one larger than the whole of it — must agree on the
     # summed child quantities and on the roots' order, which is the Continuation
     # Order the delivery derived from a query that declared none.
-    provisioner.reset(model_of(_ORDERS), {})
-    db = connect(provisioner.port, _ORDERS)
+    profile_run.reset(model_of(_ORDERS), {})
+    db = connect(profile_run.port, _ORDERS)
     _seed_streamed_orders(db, 7)
 
     readings = [stream_a_result_one_root_at_a_time(db, page) for page in (2, 3, 16)]
@@ -214,12 +214,12 @@ def test_a_streamed_delivery_answers_the_same_result_at_every_page_size(
     assert readings[2] == readings[0]
 
 
-def test_a_streamed_delivery_is_scope_bound_and_single_pass(provisioner: Any) -> None:
+def test_a_streamed_delivery_is_scope_bound_and_single_pass(profile_run: Any) -> None:
     # What the recipe's `with` block is for, stated as the two refusals a caller
     # earns by leaving it: there is no whole-result accessor to reach for, and a
     # delivery hands its roots to one view, once.
-    provisioner.reset(model_of(_ORDERS), {})
-    db = connect(provisioner.port, _ORDERS)
+    profile_run.reset(model_of(_ORDERS), {})
+    db = connect(profile_run.port, _ORDERS)
     _seed_streamed_orders(db, 3)
 
     with db.stream(Order.where(Order.all), batch_size=2) as orders:
@@ -231,14 +231,14 @@ def test_a_streamed_delivery_is_scope_bound_and_single_pass(provisioner: Any) ->
         escaped.pin  # noqa: B018 - the access itself is the assertion
 
 
-def test_a_participating_delivery_writes_every_root_exactly_once(provisioner: Any) -> None:
+def test_a_participating_delivery_writes_every_root_exactly_once(profile_run: Any) -> None:
     # The transactional recipe against real Postgres: a loop that reads and writes
     # through one unit of work credits each account once, whatever the page size,
     # because the Continuation Order over an unordered query is the primary key and
     # no write moves one. The committed rows are what says so, read back after the
     # boundary rather than from the values the loop held.
-    provisioner.reset(model_of(_ACCOUNT), {})
-    db = connect(provisioner.port, _ACCOUNT)
+    profile_run.reset(model_of(_ACCOUNT), {})
+    db = connect(profile_run.port, _ACCOUNT)
     db.transact(
         lambda tx: [
             tx.insert(Account(id=n, owner=f"owner-{n}", balance=Decimal("100.00")))

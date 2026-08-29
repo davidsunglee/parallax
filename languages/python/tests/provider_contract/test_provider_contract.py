@@ -41,63 +41,63 @@ def _grade_case() -> Any:
     return load_case(default_cases_dir() / "m-descriptor-001-quoted-reserved-identifier.yaml")
 
 
-def test_reset_apply_ddl_load_fixtures_and_query(provisioner: Any) -> None:
+def test_reset_apply_ddl_load_fixtures_and_query(profile_run: Any) -> None:
     case = _grade_case()
     meta = engine.load_case_metamodel(case)
-    provisioner.reset(meta, provision.load_fixtures(str(case.document["model"])))
-    rows = provisioner.port.execute('select t0.id, t0."order", t0.label from grade t0', [])
+    profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
+    rows = profile_run.port.execute('select t0.id, t0."order", t0.label from grade t0', [])
     assert len(rows) == 3
     assert {r["label"] for r in rows} == {"low", "mid", "high"}
 
 
-def test_exec_affected_rows_matched_and_unmatched(provisioner: Any) -> None:
+def test_exec_affected_rows_matched_and_unmatched(profile_run: Any) -> None:
     case = _grade_case()
     meta = engine.load_case_metamodel(case)
-    provisioner.reset(meta, provision.load_fixtures(str(case.document["model"])))
-    matched = provisioner.port.execute_write(
+    profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
+    matched = profile_run.port.execute_write(
         "update grade set label = %s where id = %s", ["top", 3]
     )
     assert matched == 1
-    unmatched = provisioner.port.execute_write(
+    unmatched = profile_run.port.execute_write(
         "update grade set label = %s where id = %s", ["x", 99]
     )
     assert unmatched == 0
 
 
-def test_scalar_read_returns_managed_values(provisioner: Any) -> None:
-    (row,) = provisioner.port.execute("select 1 as one, 'x'::text as who", [])
+def test_scalar_read_returns_managed_values(profile_run: Any) -> None:
+    (row,) = profile_run.port.execute("select 1 as one, 'x'::text as who", [])
     assert row == {"one": 1, "who": "x"}
 
 
 def test_live_structured_document_reads_preserve_sql_null_and_json_null(
-    provisioner: Any,
+    profile_run: Any,
 ) -> None:
     sql = "select false as present, null::jsonb as document union all select true, 'null'::jsonb"
-    assert provisioner.port.execute(sql, [], document_reads=((0, 1),)) == [
+    assert profile_run.port.execute(sql, [], document_reads=((0, 1),)) == [
         {"document": SQL_NULL},
         {"document": PresentDocument(None)},
     ]
-    assert provisioner.port.execute(
+    assert profile_run.port.execute(
         "select null::jsonb as sql_null, 'null'::jsonb as json_null", []
     ) == [{"sql_null": None, "json_null": None}]
 
     for binary in (False, True):
-        with provisioner.port.connection.cursor(binary=binary) as cursor:
+        with profile_run.port.connection.cursor(binary=binary) as cursor:
             cursor.execute(b"select 'null'::jsonb")
             assert cursor.fetchone() == (adapter_module._PRESENT_JSON_NULL,)  # pyright: ignore[reportPrivateUsage]
 
 
-def test_transaction_commits_and_reports_the_body_value(provisioner: Any) -> None:
+def test_transaction_commits_and_reports_the_body_value(profile_run: Any) -> None:
     case = _grade_case()
     meta = engine.load_case_metamodel(case)
-    provisioner.reset(meta, provision.load_fixtures(str(case.document["model"])))
+    profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
 
     def body(port: Any) -> str:
         port.execute_write("update grade set label = %s where id = %s", ["committed", 1])
         return "done"
 
-    assert provisioner.port.transaction(body) == Committed("done")
-    (row,) = provisioner.port.execute("select t0.label from grade t0 where t0.id = %s", [1])
+    assert profile_run.port.transaction(body) == Committed("done")
+    (row,) = profile_run.port.execute("select t0.label from grade t0 where t0.id = %s", [1])
     assert row["label"] == "committed"
 
 
@@ -105,7 +105,7 @@ def _after(_port: Any) -> str:
     return "after"
 
 
-def test_a_boundary_opens_at_the_requested_isolation(provisioner: Any) -> None:
+def test_a_boundary_opens_at_the_requested_isolation(profile_run: Any) -> None:
     # The passthrough proved on the shipped adapter path rather than on a fake
     # connection: the level the caller named is the level the database reports
     # for the transaction the callback is running in. What no level MEANS is
@@ -117,21 +117,21 @@ def test_a_boundary_opens_at_the_requested_isolation(provisioner: Any) -> None:
         (row,) = port.execute("show transaction_isolation", [])
         observed.append(str(row["transaction_isolation"]))
 
-    assert provisioner.port.transaction(body, isolation="serializable") == Committed(None)
-    assert provisioner.port.transaction(body) == Committed(None)
+    assert profile_run.port.transaction(body, isolation="serializable") == Committed(None)
+    assert profile_run.port.transaction(body) == Committed(None)
     assert observed == ["serializable", "read committed"]
 
     # The value is delimited rather than composed into the statement, so a
     # string carrying further transaction modes is one value Postgres refuses
     # instead of a clause it honours: the boundary never opens, and the level
     # the next one reports is untouched by it.
-    injected = provisioner.port.transaction(body, isolation="serializable, read only")
+    injected = profile_run.port.transaction(body, isolation="serializable, read only")
     assert isinstance(injected, BeginFailed)
-    assert provisioner.port.transaction(body) == Committed(None)
+    assert profile_run.port.transaction(body) == Committed(None)
     assert observed == ["serializable", "read committed", "read committed"]
 
 
-def test_a_refused_isolation_reports_a_boundary_that_never_opened(provisioner: Any) -> None:
+def test_a_refused_isolation_reports_a_boundary_that_never_opened(profile_run: Any) -> None:
     # A boundary that could not open as asked opens at no other level: the
     # callback never runs, so nothing was attempted, and the connection is still
     # usable for the next boundary — which is what separates this outcome from
@@ -141,18 +141,18 @@ def test_a_refused_isolation_reports_a_boundary_that_never_opened(provisioner: A
     def never_runs(_port: Any) -> None:
         ran.append("body")
 
-    outcome = provisioner.port.transaction(never_runs, isolation="not a level")
+    outcome = profile_run.port.transaction(never_runs, isolation="not a level")
     assert isinstance(outcome, BeginFailed)
     assert isinstance(outcome.error, DatabaseError)
     assert outcome.error.native_code == "22023"
     assert ran == []
-    assert provisioner.port.transaction(_after) == Committed("after")
+    assert profile_run.port.transaction(_after) == Committed("after")
 
 
-def test_exec_rolled_back_leaves_no_effect(provisioner: Any) -> None:
+def test_exec_rolled_back_leaves_no_effect(profile_run: Any) -> None:
     case = _grade_case()
     meta = engine.load_case_metamodel(case)
-    provisioner.reset(meta, provision.load_fixtures(str(case.document["model"])))
+    profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
 
     class _Rollback(Exception):
         pass
@@ -161,12 +161,12 @@ def test_exec_rolled_back_leaves_no_effect(provisioner: Any) -> None:
         port.execute_write("update grade set label = %s where id = %s", ["ghost", 2])
         raise _Rollback
 
-    outcome = provisioner.port.transaction(body)
+    outcome = profile_run.port.transaction(body)
     assert isinstance(outcome, RolledBack)
     trigger = outcome.trigger
     assert isinstance(trigger, CallbackRaised)
     assert isinstance(trigger.error, _Rollback)
-    (row,) = provisioner.port.execute("select t0.label from grade t0 where t0.id = %s", [2])
+    (row,) = profile_run.port.execute("select t0.label from grade t0 where t0.id = %s", [2])
     assert row["label"] == "mid"
 
 
@@ -191,11 +191,11 @@ def _terminate(executioner: Any, victim: Any) -> None:
 
 
 @pytest.mark.adapter_smoke
-def test_transaction_reports_a_boundary_that_never_began(provisioner: Any) -> None:
+def test_transaction_reports_a_boundary_that_never_began(profile_run: Any) -> None:
     # A closed connection is the reachable begin failure. What makes it distinct
     # from every other unhappy outcome is that the callback never runs, so there
     # is nothing to undo and nothing to re-execute.
-    port = provisioner.peer()
+    port = profile_run.peer()
     port.close()
     ran: list[str] = []
 
@@ -209,11 +209,11 @@ def test_transaction_reports_a_boundary_that_never_began(provisioner: Any) -> No
 
 
 @pytest.mark.adapter_smoke
-def test_transaction_reports_a_commit_failure_as_rolled_back(provisioner: Any) -> None:
+def test_transaction_reports_a_commit_failure_as_rolled_back(profile_run: Any) -> None:
     # A DEFERRABLE INITIALLY DEFERRED unique constraint is checked at COMMIT, so
     # the duplicate the body inserts succeeds as a statement and the durability
     # call is what fails — the one failure no `execute_write` can report.
-    port = provisioner.peer()
+    port = profile_run.peer()
     for statement in provision.reset_statements():
         port.execute_write(statement, [])
     port.execute_write(
@@ -238,13 +238,13 @@ def test_transaction_reports_a_commit_failure_as_rolled_back(provisioner: Any) -
 
 @pytest.mark.adapter_smoke
 def test_transaction_reports_a_rollback_that_could_not_undo_the_callbacks_failure(
-    provisioner: Any,
+    profile_run: Any,
 ) -> None:
     class _Rollback(Exception):
         pass
 
-    port = provisioner.peer()
-    executioner = provisioner.peer()
+    port = profile_run.peer()
+    executioner = profile_run.peer()
 
     def body(conn: Any) -> None:
         _terminate(executioner, conn)
@@ -262,10 +262,10 @@ def test_transaction_reports_a_rollback_that_could_not_undo_the_callbacks_failur
 
 @pytest.mark.adapter_smoke
 def test_transaction_reports_a_rollback_that_could_not_undo_a_failed_commit(
-    provisioner: Any,
+    profile_run: Any,
 ) -> None:
-    port = provisioner.peer()
-    executioner = provisioner.peer()
+    port = profile_run.peer()
+    executioner = profile_run.peer()
 
     def body(conn: Any) -> str:
         _terminate(executioner, conn)
@@ -282,7 +282,7 @@ def test_transaction_reports_a_rollback_that_could_not_undo_a_failed_commit(
 
 
 @pytest.mark.adapter_smoke
-def test_deadlock_is_reraised_as_a_retriable_database_error(provisioner: Any) -> None:
+def test_deadlock_is_reraised_as_a_retriable_database_error(profile_run: Any) -> None:
     """A genuine two-connection `40P01` surfaces above the port as a neutral
     ``DatabaseError`` — the adapter's own translation-boundary contract.
 
@@ -304,14 +304,14 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(provisioner: Any) ->
     (`is_retriable`, `violates_unique_index`, the preserved driver `message`),
     a provider-contract obligation the case format has no vocabulary for.
     """
-    port = provisioner.port
+    port = profile_run.port
     for statement in provision.reset_statements():
         port.execute_write(statement, [])
     port.execute_write("create table gauge (id integer primary key, v integer)", [])
     port.execute_write("insert into gauge (id, v) values (1, 0), (2, 0)", [])
 
-    a = provisioner.peer(autocommit=False)
-    b = provisioner.peer(autocommit=False)
+    a = profile_run.peer(autocommit=False)
+    b = profile_run.peer(autocommit=False)
     victims: list[DatabaseError] = []
     record = threading.Lock()
 

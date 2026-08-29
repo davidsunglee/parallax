@@ -17,7 +17,8 @@ still is — including a local name the module first binds to a seam and calls
 afterwards, through any of the forms Python binds a name with, however many names
 the binding passed through, and through any container it was stored in and taken
 back out of. A declared matrix profile reaches a seam through a member rather than
-an importable name, so that member is matched by name as well, on any receiver:
+an importable name — naming the provisioner it opens, and opening it itself — so
+those members are matched by name as well, on any receiver:
 the member is matched rather than resolved, so a call the rule cannot type is
 reported rather than trusted. That direction is deliberate — a false report is a
 loud failure a reader resolves, while the state this guard exists to catch is
@@ -33,7 +34,7 @@ boundary is where a syntactic rule stops being able to tell the two apart.
 
 Four structural facts are checked with it, because the rule is vacuous without
 them: every declared seam must still name an importable callable, every declared
-profile must still reach one through a declared seam member, the designated
+profile must still hold one on a declared seam member, the designated
 fixture must exist, and the classifier's own designated set must name exactly it.
 
 Usage
@@ -59,7 +60,7 @@ _TOOL = "tools/check_database_access.py"
 TESTS_ROOT = Path(__file__).resolve().parents[1] / "tests"
 
 ENTRY_POINT_MODULE = "conftest.py"
-ENTRY_POINT_FIXTURE = "provisioner"
+ENTRY_POINT_FIXTURE = "profile_run"
 CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"
 
 # Fully qualified callables that acquire a live database. Constructing the
@@ -76,12 +77,12 @@ DATABASE_SEAMS: frozenset[str] = frozenset(
 )
 
 # Members through which a declared value reaches one of the seams above. A matrix
-# profile names the provisioner it opens, so the designated fixture and the `run`
-# command surface both acquire a database as ``<profile>.provisioner()`` — a call
-# with no importable name of its own for the dotted resolution to reach. Such a
+# profile names the provisioner it opens and opens it itself, so a database is
+# acquired as ``<profile>.provisioner()`` or as ``<profile>.provisioned()`` — calls
+# with no importable name of their own for the dotted resolution to reach. Such a
 # call is matched by member name instead, and `unbacked_profiles` keeps that match
-# honest by requiring every declared profile to still reach a seam through one.
-SEAM_MEMBERS: frozenset[str] = frozenset({"provisioner"})
+# honest by requiring every declared profile to still hold a seam on one of them.
+SEAM_MEMBERS: frozenset[str] = frozenset({"provisioned", "provisioner"})
 
 
 @dataclass(frozen=True)
@@ -171,12 +172,16 @@ def unresolved_seams() -> tuple[str, ...]:
 
 
 def unbacked_profiles() -> tuple[str, ...]:
-    """Every declared profile reaching no seam through a :data:`SEAM_MEMBERS` member.
+    """Every declared profile holding no declared seam on a :data:`SEAM_MEMBERS`
+    member.
 
     A member is matched by name rather than resolved, so it guards nothing unless
     the profiles still acquire their database through one. A provisioner renamed,
     replaced by something uncallable, or moved out of :data:`DATABASE_SEAMS` would
-    otherwise leave the audit matching a member no acquisition goes through.
+    otherwise leave the audit matching a member no acquisition goes through. One
+    backed member is enough: the others are further forms of opening what it
+    declares — a profile provisioning itself opens the class it holds — and a form
+    that opens something is a method rather than a class this can resolve.
     """
     from parallax.conformance.profile import PROFILES
 

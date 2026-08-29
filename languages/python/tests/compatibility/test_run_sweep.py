@@ -224,13 +224,13 @@ def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) ->
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
-def test_run_sweep(case: case_format.Case, profile: Profile, provisioner: Any) -> None:
+def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -> None:
     model = engine.load_case_metamodel(case)
     from parallax.conformance import provision
 
-    provisioner.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
+    profile_run.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
-    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
+    envelope = adapter.run_case(case.path, profile_run)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
     # The envelope names the profile this lane declares and reports the dialect the
@@ -449,7 +449,7 @@ def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] |
 
 
 @pytest.mark.parametrize("case", _WRITE_CASES, ids=[c.case_id for c in _WRITE_CASES])
-def test_write_run_sweep(case: case_format.Case, profile: Profile, provisioner: Any) -> None:
+def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -> None:
     """Run each keyed unit-of-work write case end-to-end against a reset database.
 
     An UNGROUPED scenario write commits (or, `rollback: true`, aborts) as its own
@@ -466,9 +466,9 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, provisioner: 
     table for table.
     """
     model = engine.load_case_metamodel(case)
-    provisioner.reset(model, case_fixtures(case))
+    profile_run.reset(model, case_fixtures(case))
 
-    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
+    envelope = adapter.run_case(case.path, profile_run)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -786,7 +786,7 @@ def test_grade_step_rows_accepts_an_eager_step_whose_rows_arrived_reordered() ->
     _grade_step_rows(case, model, eager, envelope)
 
 
-def test_run_scenario_case_pairs_a_materializing_write_spelled_bare(provisioner: Any) -> None:
+def test_run_scenario_case_pairs_a_materializing_write_spelled_bare(profile_run: Any) -> None:
     """Production pairs a materializing predicate write with its resolving find by
     ENTITY, not by spelling.
 
@@ -799,14 +799,14 @@ def test_run_scenario_case_pairs_a_materializing_write_spelled_bare(provisioner:
     """
     case = next(c for c in _WRITE_CASES if c.case_id == _STEP_ROWS_ORACLE_CASE)
     model = engine.load_case_metamodel(case)
-    provisioner.reset(model, case_fixtures(case))
+    profile_run.reset(model, case_fixtures(case))
     document = deepcopy(dict(case.document))
     steps = cast("list[dict[str, Any]]", cast("dict[str, Any]", document["when"])["scenario"])
     canonical = cast("str", steps[1]["objectQuery"]["target"])
     steps[1]["objectQuery"]["target"] = canonical.rpartition(".")[2]
     assert steps[1]["objectQuery"]["target"] != canonical
 
-    run = engine.run_scenario_case(dataclasses.replace(case, document=document), provisioner.port)
+    run = engine.run_scenario_case(dataclasses.replace(case, document=document), profile_run.port)
 
     assert run.round_trips == case_document(case)["then"]["roundTrips"]
     assert [entry["at"] for entry in run.step_rows] == ["/scenario/0", "/scenario/3"]
@@ -875,7 +875,7 @@ _INTERLEAVED_CASES = _reachable_interleaved_uow_group_cases()
 
 
 @pytest.mark.parametrize("case", _INTERLEAVED_CASES, ids=[c.case_id for c in _INTERLEAVED_CASES])
-def test_interleaved_uow_group_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: Any) -> None:
     """`m-opt-lock-012`'s own dedicated entry point:
     the two-group optimistic-lock race, run over a REAL peer connection
     (`engine.run_interleaved_scenario_case`), never through `adapter.run_case`
@@ -898,10 +898,10 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, provisioner: An
     verify find would observe account 9 — this is what catches it.
     """
     model = engine.load_case_metamodel(case)
-    provisioner.reset(model, case_fixtures(case))
+    profile_run.reset(model, case_fixtures(case))
 
     emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
-        case, provisioner.port, lambda: provisioner.peer()
+        case, profile_run.port, lambda: profile_run.peer()
     )
 
     golden_statements = write_golden_statements(case)
@@ -936,7 +936,7 @@ _ERROR_CASES = _reachable_error_cases()
 
 
 @pytest.mark.parametrize("case", _ERROR_CASES, ids=[c.case_id for c in _ERROR_CASES])
-def test_error_run_sweep(case: case_format.Case, profile: Profile, provisioner: Any) -> None:
+def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -> None:
     """Run each single-connection m-db-error case against a reset real database.
 
     The authored trigger DML executes in order; the final statement raises a real
@@ -951,9 +951,9 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, provisioner: 
     doc = case_document(case)
     given = cast("dict[str, Any]", doc.get("given") or {})
     fixtures = provision.load_fixtures(str(doc["model"])) if given.get("fixtures") else {}
-    provisioner.reset(model, fixtures)
+    profile_run.reset(model, fixtures)
 
-    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
+    envelope = adapter.run_case(case.path, profile_run)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -1057,7 +1057,7 @@ def _conflict_golden_statements(
 
 
 @pytest.mark.parametrize("case", _CONFLICT_CASES, ids=[c.case_id for c in _CONFLICT_CASES])
-def test_conflict_run_sweep(case: case_format.Case, profile: Profile, provisioner: Any) -> None:
+def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -> None:
     """Run each `conflict`-shape case against a reset real database.
 
     The single-attempt form (`m-opt-lock-005/006/013`) grades the golden write's
@@ -1075,9 +1075,9 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, provisione
     whose write is refused authors none, since the unit of work rolls back.
     """
     model = engine.load_case_metamodel(case)
-    provisioner.reset(model, case_fixtures(case))
+    profile_run.reset(model, case_fixtures(case))
 
-    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
+    envelope = adapter.run_case(case.path, profile_run)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -1159,7 +1159,7 @@ _RUN_ONLY_WRITE_SEQUENCE_CASES = _reachable_run_only_write_sequence_cases()
     "case", _RUN_ONLY_WRITE_SEQUENCE_CASES, ids=[c.case_id for c in _RUN_ONLY_WRITE_SEQUENCE_CASES]
 )
 def test_run_only_write_sequence_run_sweep(
-    case: case_format.Case, profile: Profile, provisioner: Any
+    case: case_format.Case, profile: Profile, profile_run: Any
 ) -> None:
     """Run each run-only pk-gen `sequence`-strategy writeSequence case end to end
     against a reset real database — the SAME grading `test_write_run_sweep` applies
@@ -1168,9 +1168,9 @@ def test_run_only_write_sequence_run_sweep(
     (`test_write_run_sweep`'s `WRITE_EXERCISED` set couples compile-time grading in
     too, which a run-only member would fail)."""
     model = engine.load_case_metamodel(case)
-    provisioner.reset(model, case_fixtures(case))
+    profile_run.reset(model, case_fixtures(case))
 
-    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
+    envelope = adapter.run_case(case.path, profile_run)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -1234,7 +1234,7 @@ _CONCURRENCY_CASES = _reachable_concurrency_rounds_cases()
 
 
 @pytest.mark.parametrize("case", _CONCURRENCY_CASES, ids=[c.case_id for c in _CONCURRENCY_CASES])
-def test_concurrency_rounds(case: case_format.Case, profile: Profile, provisioner: Any) -> None:
+def test_concurrency_rounds(case: case_format.Case, profile: Profile, profile_run: Any) -> None:
     """Run one `when.concurrency` case's rounds over two independently-held
     peer sessions and grade its own shape's assertion.
 
@@ -1251,12 +1251,12 @@ def test_concurrency_rounds(case: case_format.Case, profile: Profile, provisione
     model = engine.load_case_metamodel(case)
     from parallax.conformance import provision
 
-    provisioner.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
+    profile_run.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
     rounds = concurrency_runner.parse_rounds(case, profile.dialect.name)
     isolation = "serializable" if case.case_id in _SERIALIZABLE_ISOLATION_CASES else None
     run = concurrency_runner.run_rounds(
-        rounds, lambda: provisioner.peer(autocommit=False), isolation=isolation
+        rounds, lambda: profile_run.peer(autocommit=False), isolation=isolation
     )
 
     if case.shape == "error":

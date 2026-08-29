@@ -1,9 +1,10 @@
 """The declared matrix profiles (`parallax.conformance.profile`).
 
-A profile is resolved by name out of one declaration and reports the dialect its
-adapter executes in. Everything here runs without a container and without a
-connection, which is the property the profile exists to have: the claim `describe`
-publishes is derived from these, so deriving it must not need a database.
+A profile is resolved by name out of one declaration, reports the dialect its
+adapter executes in, and constitutes the runs made under its name. Everything here
+runs without a container and without a connection, which is the property the profile
+exists to have: the claim `describe` publishes is derived from these, so deriving it
+must not need a database.
 """
 
 from __future__ import annotations
@@ -11,14 +12,23 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
 
 import pytest
+from _second_dialect import BACKTICKED
 
 from _support.repo import PY_ROOT, canonical_snapshot_claim
 from parallax.conformance.claim import SNAPSHOT_CLAIM
-from parallax.conformance.profile import PROFILES, Profile, profile_dialects, profile_for
+from parallax.conformance.profile import (
+    PROFILES,
+    Profile,
+    ProfileRun,
+    profile_dialects,
+    profile_for,
+)
 from parallax.conformance.provision import Provisioner
-from parallax.core.dialect import POSTGRES
+from parallax.core.db_port import DbPort, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter
 
 
@@ -40,6 +50,64 @@ def test_a_profile_reports_its_adapters_dialect_without_a_connection() -> None:
     assert profile.adapter is PostgresAdapter
     assert profile.dialect is PostgresAdapter.dialect
     assert profile.dialect is POSTGRES
+
+
+class _StandInPort:
+    """An `m-db-port` standing in for a database: it answers a dialect of its own
+    and refuses every execution."""
+
+    dialect: Dialect = BACKTICKED
+
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
+        raise AssertionError(f"the stand-in port executes nothing: {sql!r}")
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        raise AssertionError(f"the stand-in port executes nothing: {sql!r}")
+
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
+        raise AssertionError("the stand-in port opens nothing")
+
+
+def test_a_run_pairs_the_profiles_reporting_name_with_the_port_it_runs_through() -> None:
+    # The pairing is what a run is reported from, and only a profile makes one, so
+    # the name an envelope carries and the port that produced it cannot be a pair
+    # some caller assembled. It answers no dialect of its own — what executes does.
+    profile = profile_for("pg-full")
+    port = _StandInPort()
+    run = profile.on_stand_in(port)
+    assert isinstance(run, ProfileRun)
+    assert (run.name, run.port) == (profile.name, port)
+    assert not hasattr(run, "dialect")
+
+
+def test_an_unprovisioned_run_answers_this_profiles_dialect_and_refuses_sql() -> None:
+    # A `rejected`-shape run is provisioning-free by contract: it still has to be
+    # classified and reported under the dialect it would have executed in, and
+    # reading that off the port must not need the port to be usable.
+    run = profile_for("pg-full").unprovisioned()
+    assert run.name == "pg-full"
+    assert run.port.dialect is POSTGRES
+    with pytest.raises(AssertionError, match="must not execute SQL"):
+        run.port.execute("select 1", [])
+    with pytest.raises(AssertionError, match="must not execute SQL"):
+        run.port.execute_write("update t set a = 1", [])
+    with pytest.raises(AssertionError, match="must not open a transaction"):
+        run.port.transaction(lambda _port: None)
+
+
+def test_an_unprovisioned_run_starts_no_container() -> None:
+    probed = _probe(
+        "import json, sys\n"
+        "from parallax.conformance.profile import profile_for\n"
+        "run = profile_for('pg-full').unprovisioned()\n"
+        "print(json.dumps({'testcontainers': 'testcontainers' in sys.modules,"
+        " 'dialect': run.port.dialect.name, 'profile': run.name}))\n"
+    )
+    assert probed == {"testcontainers": False, "dialect": "postgres", "profile": "pg-full"}
 
 
 def test_profile_dialects_are_the_dialects_some_profile_runs() -> None:

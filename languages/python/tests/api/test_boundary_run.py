@@ -59,9 +59,9 @@ def _make_body(
 
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
 def test_boundary_case_runs_through_the_shipped_surface(
-    case: case_format.Case, provisioner: Any
+    case: case_format.Case, profile_run: Any
 ) -> None:
-    provisioner.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
     meta = MODELS[Path(case.model).stem]
 
     uow = boundary_runner.boundary_uow(case)
@@ -70,7 +70,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     outcome = boundary_runner.outcome(case)
     persistent = fault is not None and outcome != "committed"
 
-    port = FaultInjectingPort(provisioner.port, fault=fault, persistent=persistent)
+    port = FaultInjectingPort(profile_run.port, fault=fault, persistent=persistent)
     # What the boundary did is observable only WHILE it runs: a failing
     # invocation answers no result, and nothing it returns describes what its
     # attempts did (`m-execution-lifecycle` — observability is transient and
@@ -84,7 +84,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # `Database` (the real adapter directly, no `FaultInjectingPort`): it is
     # out-of-band housekeeping, not part of the boundary mechanism under test,
     # and driving it through the SAME `port` would arm the fault against it.
-    verify_db = connect(provisioner.port, meta)
+    verify_db = connect(profile_run.port, meta)
     raise_after = fault is None and outcome == "aborted"
     body = _make_body(actions, raise_after=raise_after, db=db)
 

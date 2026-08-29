@@ -58,7 +58,7 @@ _CURRENT_ROWS = (
 _CLOSED_ROWS = "select from_z from position where out_z <> 'infinity' order by from_z"
 
 
-def test_an_optimistic_close_settles_against_the_rectangle_it_read(provisioner: Any) -> None:
+def test_an_optimistic_close_settles_against_the_rectangle_it_read(profile_run: Any) -> None:
     # A key carrying a retroactive rectangle beside its current one — what an
     # earlier correction leaves behind — is read latest, read again at a
     # Valid-Time instant inside the retroactive rectangle to compare against, and
@@ -71,8 +71,8 @@ def test_an_optimistic_close_settles_against_the_rectangle_it_read(provisioner: 
     # matches one row, and reports success. Which row was closed is therefore the
     # only observable that separates the two outcomes, and it needs a real
     # database to read.
-    provisioner.reset(model_of(_POSITION), {})
-    db = connect(provisioner.port, _POSITION, clock=ScriptedClock([_T1, _T2, _T3]))
+    profile_run.reset(model_of(_POSITION), {})
+    db = connect(profile_run.port, _POSITION, clock=ScriptedClock([_T1, _T2, _T3]))
 
     db.transact(
         lambda tx: tx.insert_until(
@@ -90,10 +90,10 @@ def test_an_optimistic_close_settles_against_the_rectangle_it_read(provisioner: 
 
     db.transact(correct, concurrency="optimistic")
 
-    closed = provisioner.port.execute(_CLOSED_ROWS, [])
+    closed = profile_run.port.execute(_CLOSED_ROWS, [])
     assert [row["from_z"] for row in closed] == [_V2]
 
-    current_rows = provisioner.port.execute(_CURRENT_ROWS, [])
+    current_rows = profile_run.port.execute(_CURRENT_ROWS, [])
     assert [(row["from_z"], row["valid_end"], row["val"]) for row in current_rows] == [
         (_V1, _V2, Decimal("50.00")),
         (_V2, _V3, Decimal("100.00")),

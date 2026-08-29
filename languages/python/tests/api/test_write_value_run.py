@@ -33,16 +33,16 @@ _CASE_IDS = [case.case_id for case in _CASES]
 
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
 def test_write_value_case_runs_through_the_shipped_verbs(
-    case: case_format.Case, provisioner: Any
+    case: case_format.Case, profile_run: Any
 ) -> None:
-    provisioner.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
     model = MODELS[Path(case.model).stem]
     observed = LifecycleObservation()
-    db = connect(provisioner.port, model, lifecycle_provider=observed.provider)
+    db = connect(profile_run.port, model, lifecycle_provider=observed.provider)
     # A `anotherSource` value is read through this second managed source, which
     # materializes and recognizes its own independently of the Snapshot lifecycle
     # the verbs under test write through.
-    another = AnotherSource(model, provisioner.port)
+    another = AnotherSource(model, profile_run.port)
     steps = write_value_runner.write_value_steps(case)
 
     def fn(tx: Transaction) -> list[str | None]:

@@ -4435,8 +4435,8 @@ remains observable rather than making Python its own oracle.
   dialect is read back off that adapter's class, so it is answerable with no
   container and no connection, and no profile can name a dialect its adapter does
   not execute in. The `pg-full` sweep resolves that declaration rather than
-  restating it: `tests/conftest.py`'s `provisioner` fixture is built through the
-  profile, and the per-dialect goldens it grades against are keyed by the
+  restating it: `tests/conftest.py`'s `profile_run` fixture is the profile's own
+  provisioning, and the per-dialect goldens it grades against are keyed by the
   profile's own dialect. The conformance CLI resolves the same declaration —
   `parallax-conformance run --case <case> --profile pg-full` provisions through the
   profile and reports both the profile it ran and the dialect the container's
@@ -4445,15 +4445,25 @@ remains observable rather than making Python its own oracle.
   (`parallax.conformance.claim`), so a claimed dialect is one some profile
   actually runs; the derivation reaches the concrete adapter through a deferred
   import, keeping psycopg out of the conformance adapter's import graph.
-  The `run` lane refuses a profile `PROFILES` does not declare wherever it is
-  entered: the CLI answers `unsupported-profile` before a case is read, and
-  `run_case` checks the reporting name it is handed against the same roster before
-  reading the case, so a Docker-free sweep cannot stamp an undeclared label into an
-  otherwise valid envelope either. The name travels rather than the declaration
-  because a declaration answers a dialect, and `run_case` already holds the port it
-  derives one from. `tests/unit/test_profile.py` pins the lookup, its refusal of
-  an undeclared name, the dialect resolved with nothing constructed, and both
-  import-graph facts.
+  A profile also constitutes the runs made under its name. `run_case` takes one
+  `ProfileRun` — the profile's reporting name paired with the port the case
+  executes through — and only a profile makes one: `provisioned()` opens the
+  profile's own provisioner and yields the run over the port it opened,
+  `unprovisioned()` yields the run of a `rejected`-shape case over a port that
+  refuses SQL, and `on_stand_in(port)` is the one way to pair a profile with a port
+  it did not open, for the unit tests and Docker-free sweeps that stand a double in
+  for a database. No caller that publishes an envelope from a real run names a port
+  at all, so a run reported under one profile beside another's database is
+  unspellable rather than merely checked
+  (`database-provider-test-contract.md`). The declaration itself does not travel,
+  because a declaration answers a dialect and a signature holding a port derives the
+  dialect from the port alone. The `run` lane still refuses a profile `PROFILES`
+  does not declare wherever it is entered — a `Profile` is constructible without
+  being declared — so the CLI answers `unsupported-profile` before a case is read
+  and `run_case` refuses the run's reporting name against the same roster before
+  reading the case. `tests/unit/test_profile.py` pins the lookup, its refusal of
+  an undeclared name, the dialect resolved with nothing constructed, what each
+  constructor pairs, and both import-graph facts.
 - **Commands and skip reporting.** Every collected item carries exactly one
   scheduling marker — `dbfree`, `db`, or `cost` — added at collection from what
   the item requires: `db` when its fixture closure reaches the session-scoped
