@@ -17,9 +17,8 @@ from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any
 
-from . import portable_literal
+from . import multiset, portable_literal
 from .case import Case
-from .multiset import multiset_matches
 
 
 class CaseFailure(AssertionError):
@@ -126,7 +125,7 @@ def rows_equal(
             _row_matches(row, candidate, tolerance)
             for row, candidate in zip(left, right, strict=True)
         )
-    return multiset_matches(
+    return multiset.multiset_matches(
         left, right, lambda row, candidate: _row_matches(row, candidate, tolerance)
     )
 

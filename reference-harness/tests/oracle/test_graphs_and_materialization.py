@@ -852,10 +852,10 @@ def test_a_published_row_cannot_be_minted_by_holding_the_class() -> None:
     """Provenance is the derivation, so the class alone does not confer it.
 
     Standing in for a future path that would rather stamp a row than run the
-    sequence: the constructor demands a token only the materialization entry
-    points hold, so a consumer that reached the class mints nothing.
+    sequence: the constructor demands a token the materialization module keeps
+    private, so a consumer that reached the class mints nothing.
     """
-    with pytest.raises(CaseFailure, match="minted by this module's materialization entry"):
+    with pytest.raises(CaseFailure, match="minted with a token this module keeps"):
         oracle_materialize.PublishedRow({"id": 1}, object())
 
 
