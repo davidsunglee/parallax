@@ -114,7 +114,7 @@ def test_a_seam_reached_through_a_chain_of_local_names_is_found() -> None:
     ) == ["reference_harness.providers.provider_for"]
 
 
-def test_every_form_that_binds_a_name_binds_it_to_the_acquisition_it_holds() -> None:
+def test_every_form_that_binds_a_name_to_a_value_binds_it_to_the_acquisition() -> None:
     # Enumerating the binding forms is what stops the rule being escaped by rewriting
     # the binding rather than the acquisition: unpacking, iteration, `with`, a
     # comprehension, and a parameter default all bind a name the same way `=` does.
@@ -126,6 +126,26 @@ def test_every_form_that_binds_a_name_binds_it_to_the_acquisition_it_holds() -> 
     assert _seams(source + "with provider_for as boot:\n    boot('pg')\n") == found
     assert _seams(source + "[boot('pg') for boot in (provider_for,)]\n") == found
     assert _seams(source + "def rogue(boot=provider_for):\n    boot('pg')\n") == found
+
+
+def test_a_match_capture_binds_the_subject_it_captures() -> None:
+    # A capture pattern is a binding like any other, and one that binds part of the
+    # subject cannot be told from one binding the whole, so every capture in every
+    # case holds the subject: nesting the capture is not a way out either.
+    source = "from reference_harness.providers import provider_for\n"
+    found = ["reference_harness.providers.provider_for"]
+    assert _seams(source + "match provider_for:\n    case boot:\n        boot('pg')\n") == found
+    assert (
+        _seams(source + "match provider_for:\n    case object() as boot:\n        boot('pg')\n")
+        == found
+    )
+    assert _seams(source + "match [provider_for]:\n    case [boot]:\n        boot('pg')\n") == found
+    assert (
+        _seams(
+            source + "match {'boot': provider_for}:\n    case {**rest}:\n        rest['boot']()\n"
+        )
+        == found
+    )
 
 
 def test_a_seam_stored_in_a_container_and_taken_back_out_is_found() -> None:

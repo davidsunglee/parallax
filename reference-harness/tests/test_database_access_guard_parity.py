@@ -49,6 +49,7 @@ _SHARED_ANALYSER = (
     "_entry_point_span",
     "_imported_names",
     "_local_aliases",
+    "_pattern_names",
     "_resolved_target",
     "_resolves_to_callable",
     "_value_bindings",
