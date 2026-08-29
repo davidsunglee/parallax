@@ -40,6 +40,7 @@ class _StreamPage:
 def _stream_page(
     case: Case,
     reader: ReadExecutor,
+    source: str,
     query: dict[str, Any],
     steps: list[includes.FetchStep],
     root_entity: Entity,
@@ -68,9 +69,7 @@ def _stream_page(
         include_value_objects=True,
     )
     root_rows = materialize.materialize_family_variant(case, root_rows)
-    executed = includes.execute_fetch_levels(
-        case, reader, "then.statements", query, steps, root_rows, levels
-    )
+    executed = includes.execute_fetch_levels(case, reader, source, query, steps, root_rows, levels)
     assembled = graph.assemble_graph(case, query, steps, root_rows, executed.children_by_hop)
     nodes = assembled.get(root_entity.name, [])
     return _StreamPage(root_rows=root_rows, nodes=nodes, consumed=executed.consumed)
@@ -205,22 +204,22 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
             )
         if composed is not None:
             seek.refuse_a_drifting_page(
-                seek.PageText(case, dialect, page, first_root_sql, root_sql),
+                seek.PageText(case, dialect, source, page, first_root_sql, root_sql),
                 composed,
                 cursor,
                 seek_shapes,
             )
 
         executed = _stream_page(
-            case, reader, query, steps, root_entity, root_sql, authored, entries[index:]
+            case, reader, source, query, steps, root_entity, root_sql, authored, entries[index:]
         )
         index += executed.consumed
         delivered = len(executed.root_rows)
         if delivered > requested:
             raise CaseFailure(
-                f"{case.path.name}: page {page + 1} returned {delivered} root(s) for a "
-                f"requested {requested}. A page size bounds the root positions a page "
-                f"delivers."
+                f"{case.path.name}: {source} ({dialect}) page {page + 1} returned "
+                f"{delivered} root(s) for a requested {requested}. A page size bounds the "
+                f"root positions a page delivers."
             )
         nodes.extend(executed.nodes)
         root_rows.extend(executed.root_rows)

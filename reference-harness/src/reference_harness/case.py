@@ -16,7 +16,7 @@ the single-entity cases always query).
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import cached_property
 from pathlib import Path
@@ -274,22 +274,27 @@ class FrozenList(list[Any]):
         return thawed
 
 
-def _freeze(value: Any) -> Any:
+def frozen_view(value: Any) -> Any:
     """Recursively wrap *value*'s ``dict``/``list`` nodes in read-only views.
 
-    Applied once, at parse time, to a whole document. The recursion is what makes
-    the freeze load-bearing: ``inheritance._merge_ancestry_attributes`` splices
-    the *original* ancestor attribute dicts into the list it returns, and
-    ``resolve_effective_definition`` returns a non-inheritance entity's definition
-    unchanged — so an aliased inner node left mutable would keep the whole graph
-    writable through a side door. Scalars (including ``str``) are returned as-is.
+    Applied once, at parse time, to a whole document, and again by whoever
+    assembles a document of its own for a :class:`Case` to carry — what a
+    :class:`Case` holds is deeply immutable however it was built, so nothing
+    downstream can tell a synthesized one apart by mutability.
+
+    The recursion is what makes the freeze load-bearing:
+    ``inheritance._merge_ancestry_attributes`` splices the *original* ancestor
+    attribute dicts into the list it returns, and ``resolve_effective_definition``
+    returns a non-inheritance entity's definition unchanged — so an aliased inner
+    node left mutable would keep the whole graph writable through a side door.
+    Scalars (including ``str``) are returned as-is.
     """
     if isinstance(value, (FrozenDict, FrozenList)):
         return value
     if isinstance(value, dict):
-        return FrozenDict({key: _freeze(item) for key, item in value.items()})
+        return FrozenDict({key: frozen_view(item) for key, item in value.items()})
     if isinstance(value, list):
-        return FrozenList(_freeze(item) for item in value)
+        return FrozenList(frozen_view(item) for item in value)
     return value
 
 
@@ -1094,49 +1099,17 @@ def load_model(compatibility_root: Path, model_rel: str) -> Model:
         return cached
 
     model_path = (root / model_rel).resolve()
-    descriptor = _freeze(derive_temporal_structure(_load_yaml(model_path)))
+    descriptor = frozen_view(derive_temporal_structure(_load_yaml(model_path)))
 
     fixtures_path = root / "fixtures" / f"{model_path.stem}.yaml"
     fixtures: dict[str, list[dict[str, Any]]] = FrozenDict()
     if fixtures_path.is_file():
         loaded = _load_yaml(fixtures_path)
         if loaded:
-            fixtures = _freeze(loaded)
+            fixtures = frozen_view(loaded)
     model = Model(path=model_path, descriptor=descriptor, fixtures=fixtures)
     _MODEL_CACHE[key] = model
     return model
-
-
-def step_as_read(case: Case, step: dict[str, Any]) -> Case:
-    """*step* presented as the READ case its own materialization belongs to.
-
-    A row materializer asks a case for the read it is materializing — the target
-    its Object Query names, and the projection shape its golden ``select``
-    states — because a `read` case has exactly one of each. A scenario READ step
-    has its own, and the two placements of a streamed delivery (`m-case-format`
-    *Streamed reads*) put them in different members of one case, so the step is
-    handed over in the vocabulary those materializers already speak rather than
-    each of them being taught a second place to look. Everything they read
-    BESIDE those two stays the case's own: the model, the path a failure names,
-    and the comparison tolerance.
-
-    The result is deeply frozen like any parsed case, so nothing downstream can
-    tell it apart by mutability either.
-    """
-    then: dict[str, Any] = {"statements": step.get("statements", [])}
-    if "tolerance" in case.then:
-        then["tolerance"] = case.then["tolerance"]
-    return replace(
-        case,
-        raw=_freeze(
-            {
-                "model": case.raw["model"],
-                "shape": "read",
-                "when": {key: step[key] for key in ("objectQuery", "stream") if key in step},
-                "then": then,
-            }
-        ),
-    )
 
 
 def load_case(compatibility_root: Path, case_path: Path) -> Case:
@@ -1152,7 +1125,7 @@ def load_case(compatibility_root: Path, case_path: Path) -> Case:
     if cached is not None:
         return cached
 
-    raw = _freeze(_load_yaml(resolved_case_path))
+    raw = frozen_view(_load_yaml(resolved_case_path))
     model = load_model(root, raw["model"])
     case = Case(path=resolved_case_path, raw=raw, model=model)
     _CASE_CACHE[key] = case

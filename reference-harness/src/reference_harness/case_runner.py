@@ -37,7 +37,7 @@ from sqlglot.errors import SqlglotError
 from sqlglot.expressions.core import Expr
 
 from . import errors, serde
-from .case import Case, Entity, Model, conflict_write_rows, step_as_read
+from .case import Case, Entity, Model, conflict_write_rows, frozen_view
 from .case_assertions import CaseFailure, multiset_matches, rows_equal, scalars_equal
 from .data_loader import load_model
 from .ddl_builder import (
@@ -3725,8 +3725,8 @@ def _deliver_stream(case: Case, db: DatabaseProvider, source: str) -> _StreamDel
     page's own roots reach, and the next page starts where that stopped.
 
     ``case`` is the READ this delivery belongs to, which in the member's second
-    placement is a scenario step presented as one
-    (:func:`~reference_harness.case.step_as_read`); ``source`` names where that
+    placement is a scenario step presented as one (:func:`_step_as_read`);
+    ``source`` names where that
     read authored its pages — ``then.statements``, or the step's own
     ``statements`` — so one oracle grades both placements and a failure still
     points at the list it read.
@@ -7787,6 +7787,35 @@ def _scenario_root_entity(case: Case) -> Entity:
     return case.model.root_entity
 
 
+def _step_as_read(case: Case, step: dict[str, Any]) -> Case:
+    """*step* presented as the READ case its own materialization belongs to.
+
+    A row materializer asks a case for the read it is materializing — the target
+    its Object Query names, and the projection shape its golden ``select``
+    states — because a `read` case has exactly one of each. A scenario READ step
+    has its own, and the two placements of a streamed delivery (`m-case-format`
+    *Streamed reads*) put them in different members of one case, so the step is
+    handed over in the vocabulary those materializers already speak rather than
+    each of them being taught a second place to look. Everything they read
+    BESIDE those two stays the case's own: the model, the path a failure names,
+    and the comparison tolerance.
+    """
+    then: dict[str, Any] = {"statements": step.get("statements", [])}
+    if "tolerance" in case.then:
+        then["tolerance"] = case.then["tolerance"]
+    return replace(
+        case,
+        raw=frozen_view(
+            {
+                "model": case.raw["model"],
+                "shape": "read",
+                "when": {key: step[key] for key in ("objectQuery", "stream") if key in step},
+                "then": then,
+            }
+        ),
+    )
+
+
 # Action-step verbs in the m-case-format lifecycle vocabulary. The DML verbs
 # COMMIT their buffered golden SQL (a `flush` materializes pending writes, a
 # `mergeBack` / `commit` reconciles at the boundary); the READ verbs execute a
@@ -8471,7 +8500,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # against.
                 reader: Any = session if session is not None else db
                 rows = _deliver_stream(
-                    step_as_read(case, step), reader, f"scenario[{index}].statements"
+                    _step_as_read(case, step), reader, f"scenario[{index}].statements"
                 ).root_rows
                 _assert_scenario_reference_sql(case, reader, index, step, rows)
                 rows = _materialize_step_family_variant(case, step, rows)
