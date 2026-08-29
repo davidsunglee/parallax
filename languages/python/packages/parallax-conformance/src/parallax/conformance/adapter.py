@@ -435,13 +435,14 @@ def run_case(
     report its emissions and observations.
 
     ``run`` pairs the reporting name of the declared matrix profile with the port
-    the case executes through, and only a profile makes one, so the ``profile`` this
-    reports and the database that produced it are the same declaration by
-    construction rather than by a check that two same-dialect profiles would pass
-    either way. A name ``PROFILES`` does not declare is still answered
-    ``unsupported`` before anything is read or executed: a profile is constructible
-    without being declared, so the roster is what the CLI and the in-process sweeps
-    alike are refused against.
+    the case executes through, and it is built from a profile rather than from a
+    name, so on the lanes that publish an envelope — where the profile also opens
+    the port — the ``profile`` this reports and the database that produced it are
+    the same declaration by construction rather than by a check that two
+    same-dialect profiles would pass either way. A name ``PROFILES`` does not
+    declare is still answered ``unsupported`` before anything is read or executed:
+    a profile is constructible without being declared, so the roster is what the
+    CLI and the in-process sweeps alike are refused against.
 
     The declaration itself does not cross, because a declaration answers a dialect
     and a signature holding a port derives the dialect from the port alone. That
