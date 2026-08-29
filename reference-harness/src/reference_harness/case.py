@@ -591,6 +591,15 @@ def entry_pairs(entries: Any, dialect: str) -> list[tuple[str, list[Any]]]:
     return pairs
 
 
+def entry_statements(entries: Any, dialect: str) -> list[str]:
+    """The per-dialect golden SQL texts of a ``statements`` entry list (empty if none).
+
+    The statement half of :func:`entry_pairs`, for the lanes that grade a step's SQL
+    without its binds — normalization, canonicality, and statement counting.
+    """
+    return [sql for sql, _binds in entry_pairs(entries, dialect)]
+
+
 @dataclass(frozen=True)
 class Case:
     """A parsed compatibility case bound to its model + fixtures."""

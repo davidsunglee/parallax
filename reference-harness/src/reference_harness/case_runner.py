@@ -27,6 +27,12 @@ read-shaped case and ``ScenarioReads.assert_step`` for a Scenario's read steps.
 This module states a case and an executor, or a step index and a reader, and
 nothing about delivery strategy, retained observations, or read intent.
 
+What a golden WRITE statement must be for the neutral input it renders is
+:mod:`write_plan`'s, for every lane that authors one. This module composes a
+lane's own ordered steps and states each write it grades; how a row resolves to
+columns, what a close addresses, which column gates or routes, and how a rendered
+statement is taken apart are decided there.
+
 It deliberately **never compiles a query to SQL** — that is the job of a
 real implementation, graded against the golden SQL.
 """
@@ -41,18 +47,22 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
-import sqlglot
-from sqlglot import exp
-from sqlglot.expressions.core import Expr
-
 from . import errors, serde
-from .case import Case, Entity, Model, conflict_write_rows, entry_bind_values, entry_pairs
+from .case import (
+    Case,
+    Entity,
+    Model,
+    conflict_write_rows,
+    entry_bind_values,
+    entry_pairs,
+    entry_statements,
+)
 from .case_assertions import (
     CaseFailure,
     assert_step_on_sources,
     coerce_identity_key,
     rows_equal,
-    scalars_equal,
+    write_value_equal,
 )
 from .data_loader import load_model
 from .ddl_builder import (
@@ -68,13 +78,11 @@ from .inheritance import (
     WRITE_REJECTED_RULES,
     Family,
     query_position,
-    tag_of,
     validate_family,
     validate_query_inheritance,
 )
 from .keyed_write_validate import (
     KEYED_WRITE_REJECTED_RULES,
-    states_framework_marker,
     undeclared_row_members,
     validate_keyed_write,
 )
@@ -91,7 +99,6 @@ from .predicate_write_validate import (
     validate_predicate_write,
 )
 from .providers import DatabaseProvider
-from .sql_canonical import sqlglot_dialect
 from .sql_normalize import normalize
 from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
@@ -99,13 +106,30 @@ from .storage_layout import (
 from .storage_layout import (
     ColumnContributor,
     ColumnTier,
-    DocumentMember,
     TableLayout,
     validate_storage_layout,
 )
 from .temporal_selection_validate import normalize_authored_temporal_selections
-from .temporality import TEMPORAL_DIMENSION_RANK, derive_temporal_structure, temporal_axes
+from .temporality import derive_temporal_structure, temporal_axes
 from .value_object_resolve import REJECTED_RULES, RejectionError
+from .write_plan import (
+    MILESTONE_COORDINATE_KEYS,
+    OPENING_MUTATIONS,
+    ObjectAddress,
+    assert_inheritance_write_routing,
+    assert_write_values,
+    classify_write_row,
+    close_address_binds,
+    has_temporal_gate,
+    has_version_gate,
+    is_existing_row_statement,
+    parse_insert_columns,
+    parse_set_columns,
+    statement_object,
+    tag,
+    unit_resolving_reads,
+    version_column,
+)
 from .write_validate import undeclared_members, validate_subtype_write, validate_write
 
 
@@ -147,19 +171,6 @@ ALL_REJECTED_RULES = (
 # rounds) carries its golden SQL as an ordered list of `{sql, binds}` statement
 # entries, mirroring the top-level `then.statements`. Binds are attached to their
 # statement structurally — there is no positional pairing convention to interpret.
-
-
-def _entry_statements(entries: Any, dialect: str) -> list[str]:
-    """The per-dialect golden SQL texts of a `statements` entry list (empty if none)."""
-    if not isinstance(entries, list):
-        return []
-    return [
-        entry["sql"][dialect]
-        for entry in entries
-        if isinstance(entry, dict)
-        and isinstance(entry.get("sql"), dict)
-        and dialect in entry["sql"]
-    ]
 
 
 def _entry_binds(entries: Any, index: int, dialect: str) -> list[Any]:
@@ -920,80 +931,6 @@ def _authored_many_path(occurrence: dict[str, Any], authored: object) -> tuple[s
 # --- write sequences (m-txtime-write) ---------------------------------------------------
 
 
-# The mutations that OPEN a row with no prior state to close: the unbounded
-# `insert` and its Valid-Time-bounded `insertUntil` sibling. Such an entry
-# resolves no source — there is no row for a read to return — and on a temporal
-# target it opens a rectangle rather than splitting one.
-_OPENING_MUTATIONS = ("insert", "insertUntil")
-
-# The keyed write mutations a public verb states. `cascadeDelete` is deliberately
-# absent: it is not a Keyed Mutation, no verb states it, and an entry writing one
-# therefore resolves no source.
-_KEYED_MUTATIONS = (
-    *_OPENING_MUTATIONS,
-    "update",
-    "delete",
-    "terminate",
-    "updateUntil",
-    "terminateUntil",
-)
-
-
-def _entry_entity(case: Case, entry: dict[str, Any]) -> Entity:
-    """The Entity one write entry targets, resolved from the spelling it authored
-    — canonical or an unambiguous bare local name, which name one Entity."""
-    return case.model.entity(entry.get("entity", ""))
-
-
-def _entry_object_keys(case: Case, entry: dict[str, Any]) -> list[tuple[str, tuple[Any, ...]]]:
-    """Which object each of ``entry``'s rows names, by its declared primary key.
-
-    The entity's flattened definition carries the family's key, so a concrete
-    subtype resolves the same key its root declares, and each object is named by
-    the CANONICAL Entity spelling, so two entries spelling one target differently
-    name one object rather than two.
-    """
-    entity = _entry_entity(case, entry)
-    names = [a["name"] for a in entity.attributes if a.get("primaryKey")]
-    return [
-        (entity.canonical_name, tuple(repr(row.get(name)) for name in names))
-        for row in entry.get("rows", [])
-    ]
-
-
-def _unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
-    """The resolving reads ONE choreography unit owes: one per target Entity whose
-    existing-row keyed writes address a row this unit did not itself open.
-
-    A keyed write verb is addressed and licensed by a value a read published, so
-    a unit writing against existing state reads it first — once per Entity,
-    resolving every row of that Entity the unit addresses, because a read
-    interleaved between two writes would force-flush the first and destroy the
-    batch collapse the goldens pin. Three kinds of entry owe nothing: an insert
-    OPENS its row, a row an earlier entry of the same unit opened is
-    read-your-own-writes, and an entry carrying a DB-computed write marker states
-    the framework's own bookkeeping, which no public verb accepts.
-
-    Targets are counted by their canonical spelling, so two entries naming one
-    Entity two ways owe one read between them.
-    """
-    opened: set[tuple[str, tuple[Any, ...]]] = set()
-    needed: set[str] = set()
-    for entry in entries:
-        mutation = entry.get("mutation")
-        if mutation in _OPENING_MUTATIONS:
-            opened.update(_entry_object_keys(case, entry))
-            continue
-        if mutation not in _KEYED_MUTATIONS:
-            continue
-        entity = _entry_entity(case, entry)
-        if states_framework_marker(entity, entry):
-            continue
-        if any(key not in opened for key in _entry_object_keys(case, entry)):
-            needed.add(entity.canonical_name)
-    return len(needed)
-
-
 def _assert_write_step_count(case: Case, dialect: str) -> None:
     """The DML statement count MUST equal the sum of the steps' declared counts,
     and the round trips MUST be that plus every resolving read the sequence owes.
@@ -1003,7 +940,7 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
     MUST equal the number of then.statements for the dialect. ``roundTrips``
     counts every call that reached the database, so it is that total plus one
     resolving read per entry writing against existing state
-    (:func:`_unit_resolving_reads`) — the read a keyed write verb's source
+    (:func:`write_plan.unit_resolving_reads`) — the read a keyed write verb's source
     requires, which is work the framework genuinely does.
     """
     statements = case.golden_statements(dialect)
@@ -1014,7 +951,7 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
             f"statement(s) but the writeSequence declares {step_total} "
             f"(sum of per-step statement counts). They MUST be equal."
         )
-    reads = sum(_unit_resolving_reads(case, [entry]) for entry in case.write_sequence)
+    reads = sum(unit_resolving_reads(case, [entry]) for entry in case.write_sequence)
     if len(statements) + reads != case.round_trips:
         raise CaseFailure(
             f"{case.path.name}: then.statements ({dialect}) has {len(statements)} DML "
@@ -1039,21 +976,6 @@ _PLAIN_SPLIT_MUTATIONS = ("update", "terminate")
 # for the window itself.
 _TERMINATE_MUTATIONS = ("terminate", "terminateUntil")
 
-# The ONE reserved observation control key a case write row may spell
-# (`compatibility-case.schema.json` `$defs/writeRow`). Which (target, mutation)
-# pair is entitled to spell it is :func:`_observation_refusal`'s answer — one
-# shared `writeRow` definition spans every authoring location, so the schema
-# cannot express it.
-_VERSION_OBSERVATION_KEY = "observedVersion"
-
-# The two halves of an observed milestone's own EDGE coordinate. Neither is a
-# write-row key in any authoring location: a temporal write observes a whole
-# predecessor milestone, which no flat row cell can name, so both ride beside the
-# write, at `when.observedTxStart` / `when.observedValidStart` — and, on a retry
-# attempt, `observedTxStart` alone, since the edge form is single-attempt only
-# (`m-case-format`). Named here so a row that spells one is refused by the rule
-# rather than by the generic "not a member" diagnosis.
-_MILESTONE_COORDINATE_KEYS = ("observedTxStart", "observedValidStart")
 
 # The milestone close a temporal conflict case writes. Not a `writeSequence`
 # verb: a conflict close is shaped by `when.mutation`-less close authoring, and
@@ -1067,14 +989,6 @@ def _is_bitemporal(entity: Entity) -> bool:
     milestone rectangle split (close + chain), not the audit-only close-and-open."""
     axes = {dim.get("dimension") for dim in entity.temporal_runtime_axes}
     return {"valid-time", "transaction-time"} <= axes
-
-
-def _as_of_axes(entity: Entity) -> list[dict[str, Any]]:
-    """*entity*'s As-Of Axes in canonical dimension rank (Valid Time first)."""
-    return sorted(
-        entity.temporal_runtime_axes,
-        key=lambda axis: TEMPORAL_DIMENSION_RANK[axis["dimension"]],
-    )
 
 
 def _is_computed_marker(value: Any) -> bool:
@@ -1152,189 +1066,6 @@ def _is_self_increment(statement: str, column: str) -> bool:
     return re.search(pattern, statement, re.IGNORECASE) is not None
 
 
-def _observation_refusal(entity: Entity, mutation: str) -> str | None:
-    """Why a write row against *entity* under *mutation* may not spell the reserved
-    ``observedVersion`` control key — ``None`` when that pair is the ONE the case
-    vocabulary entitles to spell it.
-
-    This is the whole licensing rule `m-unit-work`'s "Absence is structural"
-    states, restated by the case schema's own ``observedVersion`` prose ("absent
-    on a versioned insert and on a non-versioned write"), and it is TOTAL over
-    every (target, mutation) pair a case can author. A VERSIONED, NON-TEMPORAL
-    update or delete may spell the key; nothing else may:
-
-    - a TEMPORAL target's write observes a whole predecessor MILESTONE, which no
-      flat row cell can name, and a close's Transaction-Time gate is authored
-      beside the write (``when.observedTxStart`` or the attempt's own field,
-      `m-case-format`) rather than inside the row;
-    - an INSERT opens a row rather than writing against one, so an observed
-      version names a milestone that does not yet exist;
-    - an UNVERSIONED non-temporal target has no version to observe, so an
-      observed version on it is evidence about nothing.
-
-    Deciding it HERE, at the one seam every ① row is classified through, is what
-    keeps the neutral grader's table the same table the conformance engine
-    enforces: a consumer that merely ignores the value it was handed accepts a
-    case the engine refuses, and the two implementations then disagree about
-    which cases the corpus even admits.
-    """
-    if entity.is_temporal:
-        return (
-            f"a temporal row spells no {_VERSION_OBSERVATION_KEY!r} (m-unit-work: a temporal "
-            f"write observes a whole predecessor milestone, which no flat row cell can name, "
-            f"and a close's observed `in_z` gate rides beside the write)"
-        )
-    if mutation in _OPENING_MUTATIONS:
-        return (
-            f"an insert row spells no {_VERSION_OBSERVATION_KEY!r} (m-unit-work: inserts have "
-            f"no observation — an observed version names the milestone a write against an "
-            f"EXISTING row observed)"
-        )
-    if _version_column(entity) is None:
-        return (
-            f"an unversioned row spells no {_VERSION_OBSERVATION_KEY!r} (m-unit-work: "
-            f"unversioned Non-Temporal writes have no observation — there is no observed "
-            f"version for it to name)"
-        )
-    return None
-
-
-def _classify_write_row(
-    case: Case, entity: Entity, row: dict[str, Any], *, mutation: str, opening: bool
-) -> tuple[dict[str, Any], Any, dict[str, Any], Any]:
-    """Classify a flat attribute-named ① row against *entity*'s metamodel.
-
-    Mirrors the fixture loader's attribute→column resolution. Every key is either
-    the reserved control key ``observedVersion`` — admitted only where
-    :func:`_observation_refusal` entitles this (*entity*, *mutation*) pair to
-    spell it, so an unobservable row is refused HERE rather than accepted and
-    discarded by whichever consumer has no use for it — an ENTITY ATTRIBUTE name,
-    or a
-    top-level VALUE-OBJECT name (a bad key raises :class:`CaseFailure`, so the
-    neutral input can't silently name a non-member); the primary-key attribute's
-    value is split into the pk, every other attribute AND every value object into
-    the domain ``set`` — all keyed by physical column. A value object resolves to
-    its single structured-document column and its value is the WHOLE document
-    (m-value-object): it binds atomically as one document value at its Document-tier
-    slot, never decomposed into path-level binds. Because that role is resolved
-    HERE (from the entity's declared members), a value-object column's value is ALWAYS
-    literal document content downstream — never a DB-computed marker
-    (``computed`` / ``increment``), even when the document is marker-SHAPED; marker
-    interpretation applies only to a scalar-attribute column (see
-    :func:`_document_columns`).
-
-    A value object's ① value is the occurrence's neutral write input, so it is
-    ENCODED here (``document_codec``) rather than taken as the document. That is what
-    makes the golden bind graded rather than trusted: the harness derives the document
-    a conforming writer must produce from the case's own member values, and
-    :func:`_assert_write_values` compares it to the authored bind — so a leaf spelled
-    any other way fails the case instead of surviving it. An OPENING statement
-    additionally binds every `many` occurrence's column whether ① names it or not:
-    absence and the empty array are one logical zero state (m-value-object).
-
-    Under Relational Document Layout the members the layout moved inside the shared
-    Structured Column resolve to THAT one column rather than to columns of their own,
-    and their derived value depends on what the statement does with them: an opening
-    statement writes the whole document, so they are composed into it here, while a
-    revising one patches only the assigned paths and takes them from
-    :func:`_document_assignments` instead. ``opening`` is therefore the caller's
-    answer, from the step's own mutation, and never inferred from the row.
-    """
-    pk_columns = {a["column"] for a in entity.attributes if a.get("primaryKey")}
-    layout_document = case.model.storage_layout.document(entity.canonical_name)
-    document_column, resident = layout_document.column, layout_document.members
-    resident_columns = {member.column for member in resident}
-    columns: dict[str, Any] = {}
-    set_columns: dict[str, Any] = {}
-    pk_value: Any = None
-    observed_version: Any = None
-    for key, value in row.items():
-        if key in _MILESTONE_COORDINATE_KEYS:
-            raise CaseFailure(
-                f"{case.path.name}: {entity.name} {mutation!r}: a write row spells no {key!r} "
-                f"(m-case-format: an observed milestone's own edge coordinate rides beside the "
-                f"write, at `when.observedTxStart` / `when.observedValidStart`, or an "
-                f"attempt's own `observedTxStart`; a writeRow reserves "
-                f"{_VERSION_OBSERVATION_KEY!r} alone and every other key names an entity member)"
-            )
-        if key == _VERSION_OBSERVATION_KEY:
-            refusal = _observation_refusal(entity, mutation)
-            if refusal is not None:
-                raise CaseFailure(f"{case.path.name}: {entity.name} {mutation!r}: {refusal}")
-            observed_version = value
-            continue
-        try:
-            column = entity.attribute_by_name(key)["column"]
-        except KeyError:
-            # Not an attribute — a value object binds as ONE document at its
-            # Document-tier slot (m-value-object); the neutral input names it
-            # like a scalar attribute and its value is the whole document.
-            try:
-                value_object = entity.value_object_by_name(key)
-            except KeyError as exc:
-                raise CaseFailure(
-                    f"{case.path.name}: writeSequence row key {key!r} is not an attribute "
-                    f"or value object of {entity.name} — the neutral write input speaks "
-                    f"ATTRIBUTE / value-object names, not columns."
-                ) from exc
-            column = value_object["column"]
-            if column not in resident_columns:
-                value = encode_document(value_object, value)
-        if column in resident_columns:
-            continue  # the Structured Column carries it; composed below
-        columns[column] = value
-        if column in pk_columns:
-            pk_value = value
-        else:
-            set_columns[column] = value
-    if opening:
-        # A `many` occurrence with a Column of its own binds on every opening
-        # statement whether or not the row names it: absence and the empty array are
-        # one logical zero state, so an unnamed `many` stores `[]` (m-value-object) —
-        # the same answer the codec composes for one inside a document.
-        for value_object in entity.value_objects:
-            column = value_object["column"]
-            if value_object.get("multiplicity", "one") != "many" or column in resident_columns:
-                continue
-            if value_object["name"] not in row:
-                columns[column] = encode_document(value_object, [])
-                set_columns[column] = columns[column]
-    if document_column and opening:
-        # The Structured Column binds on EVERY opening statement, including one for
-        # an Entity whose members are all direct: it is `NOT NULL` and every governed
-        # row carries a document, the empty object included (m-storage-layout).
-        document = _entity_document(case, entity, resident, row)
-        columns[document_column] = document
-        set_columns[document_column] = document
-    return columns, pk_value, set_columns, observed_version
-
-
-def _entity_document(
-    case: Case, entity: Entity, resident: tuple[DocumentMember, ...], row: dict[str, Any]
-) -> dict[str, Any]:
-    """The complete Structured Column document one opening ① row implies.
-
-    Composed over EVERY document-resident member rather than only the named ones,
-    because presence is the codec's classification: an omitted key stays absent, an
-    authored null becomes JSON null, and a ``many`` occurrence always contributes its
-    array. Members are emitted in canonical placement order — every attribute, then
-    every occurrence — so one set of member values yields exactly one document.
-    """
-    document: dict[str, Any] = {}
-    for member in resident:
-        name = member.name
-        if member.type_spelling is None:
-            occurrence = entity.value_object_by_name(name)
-            if name in row:
-                document[name] = encode_document(occurrence, row[name])
-            elif occurrence.get("multiplicity", "one") == "many":
-                document[name] = []
-            continue
-        if name in row:
-            document[name] = encode_leaf(member.type_spelling, row[name])
-    return document
-
-
 def _document_path_bind(path: tuple[str, ...], dialect: str) -> str:
     """The bind addressing *path* inside a document mutation, per dialect.
 
@@ -1402,240 +1133,6 @@ def _document_assignment_binds(
     return binds
 
 
-def _version_column(entity: Entity) -> str | None:
-    """The physical column of an entity's explicit optimistic-lock version, or None.
-
-    A VERSIONED entity carries an attribute-level ``optimisticLocking: true`` version
-    (m-opt-lock); the value advance (``initial 1`` / ``observed + 1``) and gate are DERIVED,
-    so the column never appears in the neutral write input (①). A temporal entity
-    locks via its Transaction-Time ``in_z`` timestamp and declares no such attribute.
-    """
-    for attribute in entity.attributes:
-        if attribute.get("optimisticLocking"):
-            return attribute["column"]
-    return None
-
-
-def _tag(entity: Entity) -> tuple[str, Any] | None:
-    """The (column, value) a table-per-hierarchy INSERT writes, or None (m-inheritance).
-
-    A TABLE-PER-HIERARCHY concrete subtype maps to a shared table discriminated by
-    the root's ``tag`` column; the value THIS subtype's rows carry is its
-    ``tagValue``. On a write that column is FRAMEWORK-DERIVED — set from the declared
-    ``tagValue``, never carried in the neutral write input (①), exactly as the version
-    column's advance is derived. A TABLE-PER-CONCRETE-SUBTYPE subtype has its own
-    table and no tag (``tagValue`` is absent, m-inheritance), so this returns
-    ``None`` and the write is an ordinary single-table write. The concrete subtype's
-    flattened definition (:func:`inheritance.resolve_effective_definition`) carries
-    both the resolved root ``tag`` column and the subtype's own ``tagValue``.
-    """
-    return tag_of(entity.runtime_facts)
-
-
-def _close_address_binds(case: Case, entity: Entity, pk: Any, valid_end: Any) -> list[Any]:
-    """The binds a milestone close's ADDRESS carries, in rendered predicate order.
-
-    A close addresses the ONE stored milestone it means to close, and that address is
-    identical in both concurrency modes: the primary key, the table-per-hierarchy tag
-    GUARD that rides the identity predicates right after it (m-inheritance), then one
-    exclusive upper bound PER As-Of Axis in canonical dimension rank. The
-    Transaction-Time end is invariantly the open bound, because only a
-    Transaction-Time-current milestone is closable; the Valid-Time end is the observed
-    rectangle's OWN end, which may be finite — a key plus the open Transaction-Time
-    bound alone would select every disjoint current rectangle of that key
-    (`m-bitemp-write`). An optimistic gate is appended AFTER the address, never woven
-    into it.
-    """
-    tag = _tag(entity)
-    binds: list[Any] = [pk] if tag is None else [pk, tag[1]]
-    for axis in _as_of_axes(entity):
-        if axis["dimension"] != "valid-time":
-            binds.append(axis.get("infinity", "infinity"))
-            continue
-        if valid_end is None:
-            raise CaseFailure(
-                f"{case.path.name}: a Bitemporal close of {entity.name} carries no observed "
-                f"Valid-Time end — the address needs one exclusive upper bound per As-Of "
-                f"Axis, and only the Transaction-Time one is invariant."
-            )
-        binds.append(valid_end)
-    return binds
-
-
-def _primary_key_columns(entity: Entity) -> list[str]:
-    """The physical primary-key column(s) of *entity* (its flattened definition)."""
-    return [a["column"] for a in entity.attributes if a.get("primaryKey")]
-
-
-def _is_existing_row_statement(statement: str) -> bool:
-    """True for an existing-row write (UPDATE / DELETE), False for an INSERT.
-
-    A table-per-hierarchy existing-row statement carries the tag guard; an INSERT
-    derives the tag COLUMN instead. This classifies by the leading verb so it covers
-    the milestone TEMPORAL closes / inactivations (an ``update <table> set out_z = ?
-    …``, m-txtime-write / m-bitemp-write) alongside the plain non-temporal
-    ``update`` / ``delete`` — both are existing-row writes that MUST carry the guard,
-    while the chained milestone INSERTs are not.
-    """
-    head = statement.lstrip().lower()
-    return head.startswith("update ") or head.startswith("delete ")
-
-
-def _assert_inheritance_write_routing(
-    case: Case,
-    entity: Entity,
-    step_statements: list[str],
-    step_binds: list[list[Any]],
-    dialect: str,
-) -> None:
-    """Assert an inheritance write's golden DML routes and guards correctly.
-
-    A no-op on a non-inheritance entity. For a TABLE-PER-HIERARCHY concrete subtype
-    every EXISTING-ROW statement in the step — a plain ``update`` / ``delete`` OR a
-    milestone TEMPORAL close / inactivation (m-txtime-write / m-bitemp-write) — MUST
-    carry the tag GUARD among the identity predicates, canonically right after the
-    primary key (m-inheritance, m-sql); a chained milestone INSERT derives the tag
-    COLUMN instead (cross-checked by :func:`_assert_insert_statement` /
-    :func:`_assert_temporal_input`). For a TABLE-PER-CONCRETE-SUBTYPE concrete subtype
-    every write (insert / close / delete) MUST target the subtype's OWN table (no
-    shared table, no tag).
-
-    Both facts are read off the golden's PARSE for the executing *dialect*, never off
-    its text: the physical table and the guarded columns are rendered quoted where
-    they are reserved or otherwise non-simple, and the quote character itself diverges
-    per dialect (`m-dialect`).
-    """
-    tag = _tag(entity)
-    if tag is not None:  # table-per-hierarchy concrete subtype
-        for statement, binds in zip(step_statements, step_binds, strict=True):
-            if _is_existing_row_statement(statement):
-                _assert_existing_row_tag_guard(case, entity, statement, binds, dialect)
-        return
-    if entity.role == "concrete-subtype":  # table-per-concrete-subtype (tag is None)
-        for statement in step_statements:
-            _assert_concrete_table_routing(case, entity, statement, dialect)
-
-
-def _assert_existing_row_tag_guard(
-    case: Case, entity: Entity, statement: str, binds: list[Any], dialect: str
-) -> None:
-    """A table-per-hierarchy existing-row write carries the tag guard after the PK.
-
-    The tag guard is the ``<tag.column> = ?`` equality joining the identity predicates
-    immediately after the primary-key equality (m-inheritance / m-sql; resolved Q9),
-    and its ``?`` binds the concrete subtype's ``tagValue`` — framework-derived, so it
-    is pinned to the model, never authored. The optimistic version gate, when present,
-    still binds LAST (after the tag).
-
-    Both halves are read off the statement's own parse — the guard's shape from the
-    predicate's first two conjuncts (:func:`_existing_row_write`), its bind position
-    from the scanned placeholder count (:func:`_predicate_bind_offset`) — because a
-    literal ``<pk> = ? and <tag> = ?`` fragment finds neither a quoted physical column
-    nor a legally reformatted predicate, and a textual ``?`` count includes the ones
-    inside string literals and quoted identifiers, which bind nothing.
-    """
-    tag_column, tag_value = _tag(entity)  # type: ignore[misc]
-    pk_columns = _primary_key_columns(entity)
-    if len(pk_columns) != 1:  # the inheritance families key on a single-column pk (`id`)
-        return
-    write = _existing_row_write(statement, dialect)
-    offset = _predicate_bind_offset(statement)
-    guarded = (
-        write is not None
-        and len(write.conjuncts) > 1
-        and _gates_on(write.conjuncts[0], pk_columns[0])
-        and _gates_on(write.conjuncts[1], tag_column)
-    )
-    if not guarded or offset is None:
-        raise CaseFailure(
-            f"{case.path.name}: a table-per-hierarchy existing-row write of "
-            f"{entity.name} MUST carry the tag guard immediately after the primary-key "
-            f"equality (`{pk_columns[0]} = ? and {tag_column} = ?`), not found in golden "
-            f"{statement!r}."
-        )
-    # The pk equality opens the predicate and binds one placeholder, so the tag's own
-    # bind lands one past it — after the SET placeholders, before any opt-lock gate,
-    # in either concurrency mode.
-    tag_bind_index = offset + 1
-    if tag_bind_index >= len(binds) or not _write_value_equal(tag_value, binds[tag_bind_index]):
-        actual = binds[tag_bind_index] if tag_bind_index < len(binds) else "<missing>"
-        raise CaseFailure(
-            f"{case.path.name}: the tag guard binds {actual!r} at position "
-            f"{tag_bind_index}, but concrete subtype {entity.name}'s tagValue is "
-            f"{tag_value!r} (the tag is framework-derived, never authored)."
-        )
-
-
-def _assert_concrete_table_routing(
-    case: Case, entity: Entity, statement: str, dialect: str
-) -> None:
-    """A table-per-concrete-subtype write targets the subtype's OWN table.
-
-    There is no shared table and no tag column (m-inheritance), so the concrete
-    subtype is selected by WHICH table the DML targets: an insert / delete of that
-    subtype MUST name its own table. The golden's target is compared to the model by
-    the identifier it SPELLS (:func:`_dml_target`, :func:`_names`), so a reserved
-    physical table routes correctly under the quoting each dialect renders it with.
-    """
-    target = _dml_target(statement, dialect)
-    if target is None:
-        raise CaseFailure(
-            f"{case.path.name}: could not read the DML target table from golden {statement!r}."
-        )
-    if not _names(target, entity.table):
-        raise CaseFailure(
-            f"{case.path.name}: a table-per-concrete-subtype write of {entity.name} MUST "
-            f"target its own table {entity.table!r} (no shared table), but the golden "
-            f"targets {target.sql(dialect=sqlglot_dialect(dialect))}: {statement!r}."
-        )
-
-
-def _bytes_to_hex(value: Any) -> Any:
-    """Render a ``bytes`` / ``memoryview`` value as lowercase hex text, else unchanged.
-
-    The neutral write input (①) authors a ``bytes`` column as its wire form — a
-    lowercase hex STRING (a ``bytes`` object is not a JSON type the write-row schema
-    admits), while the golden bind carries the raw bytes (a ``!!binary`` tag). Both
-    collapse to the same lowercase hex text here so ① ↔ golden cross-checking and
-    table-state read-back compare a ``bytes`` column dialect-agnostically.
-    """
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return bytes(value).hex()
-    return value
-
-
-def _write_value_equal(left: Any, right: Any) -> bool:
-    """Scalar equality for an ① value vs a golden bind, tolerant of date/bytes encoding.
-
-    A date/timestamp authored QUOTED in ① (a string) must match the golden bind
-    that PyYAML parsed from an UNQUOTED token into a ``date`` / ``datetime`` object;
-    compare their ISO string forms once the exact-Decimal comparison declines. A
-    ``bytes`` column is authored as a hex STRING in ① but as raw ``!!binary`` bytes
-    in the golden bind, so both are normalized to lowercase hex first.
-    """
-    left = _bytes_to_hex(left)
-    right = _bytes_to_hex(right)
-    if scalars_equal(left, right, None):
-        return True
-    return str(left) == str(right)
-
-
-def _assert_write_values(
-    case: Case, expected: list[Any], actual: list[Any], statement: str
-) -> None:
-    if len(expected) != len(actual):
-        raise CaseFailure(
-            f"{case.path.name}: the neutral write input supplies {len(expected)} write "
-            f"value(s) but the golden binds carry {len(actual)} for {statement!r}."
-        )
-    for want, got in zip(expected, actual, strict=True):
-        if not _write_value_equal(want, got):
-            raise CaseFailure(
-                f"{case.path.name}: neutral write input value {want!r} != golden bind "
-                f"{got!r} for {statement!r}."
-            )
-
-
 def _assert_carried_document(
     case: Case, derived: Any, golden: Any, statement: str, path: str = ""
 ) -> None:
@@ -1687,137 +1184,27 @@ def _assert_carried_value(case: Case, derived: Any, golden: Any, statement: str,
         for index, (element, golden_element) in enumerate(zip(derived, golden, strict=True)):
             _assert_carried_value(case, element, golden_element, statement, f"{path}[{index}]")
         return
-    if not _write_value_equal(derived, golden):
+    if not write_value_equal(derived, golden):
         raise CaseFailure(
             f"{case.path.name}: neutral write input value {derived!r} != golden document key "
             f"{path!r} value {golden!r} for {statement!r}."
         )
 
 
-def _parse_insert_columns(case: Case, statement: str) -> list[str]:
-    """The columns an INSERT names: the parenthesised list following its target table.
+def _golden_set_columns(case: Case, statement: str) -> list[str]:
+    """The columns a golden UPDATE assigns, refusing a statement that assigns none.
 
-    Read through :func:`_sql_scan` for the same reason its `set`-clause sibling is: a
-    quoted identifier may itself carry a bracket or a comma, and neither is syntax
-    there.
+    The write lanes reach this having already decided the step emits an UPDATE, so
+    a statement with no `set` clause is an unparseable golden rather than the
+    ordinary "assigns nothing" answer :func:`write_plan.parse_set_columns` gives a
+    caller that has not.
     """
-    columns = _insert_column_list(statement)
+    columns = parse_set_columns(statement)
     if columns is None:
-        raise CaseFailure(
-            f"{case.path.name}: could not parse the INSERT column list from golden {statement!r}."
-        )
-    return [column.strip() for column in _top_level_commas(columns)]
-
-
-def _insert_column_list(statement: str) -> str | None:
-    """The text between the parentheses that follow an INSERT's target table, or
-    ``None`` when the statement is not an INSERT or opens no such list."""
-    if not _keyword_at(statement.lstrip().lower(), 0, "insert"):
-        return None
-    opened: int | None = None
-    for index, char, depth in _sql_scan(statement):
-        if char == "(" and depth == 1 and opened is None:
-            opened = index + 1
-        elif char == ")" and depth == 0 and opened is not None:
-            return statement[opened:index]
-    return None
-
-
-def _parse_set_columns(case: Case, statement: str) -> list[str]:
-    clause = _set_clause(statement)
-    if clause is None:
         raise CaseFailure(
             f"{case.path.name}: could not parse the SET clause from golden {statement!r}."
         )
-    return [_assigned_column(piece) for piece in _top_level_commas(clause)]
-
-
-def _sql_scan(sql: str) -> Iterator[tuple[int, str, int]]:
-    """Each character of *sql* OUTSIDE a quoted identifier or string literal, with
-    its index and its bracket depth.
-
-    Every reader that takes a golden statement apart by COLUMN goes through here —
-    an INSERT's column list, an UPDATE's `set` clause, its assignments, and each
-    assignment's own `=` — because a column name is any nonempty string and a
-    dialect quotes one that is reserved or otherwise non-simple (`m-dialect`): a
-    comma, a bracket, an `=`, and the word `where` can each sit inside an
-    identifier, and none of them is syntax there.
-    """
-    quote = ""
-    depth = 0
-    for index, char in enumerate(sql):
-        if quote:
-            if char == quote:
-                quote = ""
-            continue
-        if char in "\"`'":
-            quote = char
-            continue
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-        yield index, char, depth
-
-
-def _keyword_at(lowered: str, index: int, keyword: str) -> bool:
-    """Whether *keyword* occupies a whole word at *index* of a lowercased statement."""
-    if not lowered.startswith(keyword, index):
-        return False
-    before = lowered[index - 1] if index else " "
-    after = lowered[index + len(keyword) :][:1] or " "
-    return not _word_char(before) and not _word_char(after)
-
-
-def _word_char(char: str) -> bool:
-    return char.isalnum() or char == "_"
-
-
-def _set_clause(statement: str) -> str | None:
-    """An UPDATE's `set` clause: what sits between its own `set` and `where` keywords.
-
-    Both delimiters are read at bracket depth zero and outside quotes, so neither a
-    subquery's own keyword nor a column named `set` or `where` — legal, and quoted
-    for exactly that reason — delimits the clause.
-    """
-    lowered = statement.lower()
-    start: int | None = None
-    for index, _char, depth in _sql_scan(statement):
-        if depth:
-            continue
-        if start is None:
-            if _keyword_at(lowered, index, "set"):
-                start = index + len("set")
-        elif _keyword_at(lowered, index, "where"):
-            return statement[start:index].strip()
-    return None
-
-
-def _assigned_column(assignment: str) -> str:
-    """The column one `set` term names: what sits left of its own top-level `=`."""
-    for index, char, depth in _sql_scan(assignment):
-        if char == "=" and depth == 0:
-            return assignment[:index].strip()
-    return assignment.strip()
-
-
-def _top_level_commas(clause: str) -> list[str]:
-    """*clause* split on the commas that separate its assignments.
-
-    A `set` term's right-hand side may itself be a call taking commas — the
-    document mutation expression is nested `jsonb_set` calls on Postgres and one
-    N-pair `json_set` on MariaDB (m-dialect) — so only a comma at bracket depth
-    zero ends an assignment. A comma inside a quoted identifier or a string literal
-    ends nothing at all: `set "payload,archive" = ?` is one assignment, not two.
-    """
-    parts: list[str] = []
-    start = 0
-    for index, char, depth in _sql_scan(clause):
-        if char == "," and depth == 0:
-            parts.append(clause[start:index])
-            start = index + 1
-    parts.append(clause[start:])
-    return parts
+    return columns
 
 
 def _assert_write_input_columns(case: Case, dialect: str) -> None:
@@ -1865,12 +1252,12 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # opened it (`m-txtime-write` / `m-bitemp-write`), so its ① is an opening
         # row even under `update` / `terminate`.
         classified = [
-            _classify_write_row(
+            classify_write_row(
                 case,
                 entity,
                 row,
                 mutation=mutation,
-                opening=mutation in _OPENING_MUTATIONS or entity.is_temporal,
+                opening=mutation in OPENING_MUTATIONS or entity.is_temporal,
             )
             for row in rows
         ]
@@ -1910,7 +1297,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             _assert_insert_input(case, entity, classified, step_statements, step_binds)
         elif mutation in ("delete", "cascadeDelete"):
             _assert_delete_input(case, classified, step_binds)
-        elif _version_column(entity) is not None:
+        elif version_column(entity) is not None:
             _assert_versioned_update_input(
                 case,
                 entity,
@@ -1937,7 +1324,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # the subtype's own table. A no-op on a non-inheritance entity and on a chained
         # INSERT (whose tag COLUMN is cross-checked by _assert_insert_statement /
         # _assert_temporal_input).
-        _assert_inheritance_write_routing(case, entity, step_statements, step_binds, dialect)
+        assert_inheritance_write_routing(case, entity, step_statements, step_binds, dialect)
         stmt_index += count
 
 
@@ -1950,7 +1337,7 @@ def _assert_insert_input(
 ) -> None:
     if not step_statements:
         return
-    version_col = _version_column(entity)
+    version_col = version_column(entity)
     # A pk-gen `sequence` insert step emits one single-row INSERT per allocated id
     # (statements == rows); a set-based batched insert (m-batch-write-001) is one multi-row INSERT.
     per_row = len(step_statements) == len(classified) and len(step_statements) > 1
@@ -1976,20 +1363,22 @@ def _assert_insert_statement(
     statement: str,
     binds: list[Any],
 ) -> None:
-    golden_columns = _parse_insert_columns(case, statement)
+    golden_columns = parse_insert_columns(case, statement)
     order = _write_column_order(case, entity)
     domain = [c for c in order if any(c in cols for cols, *_ in classified)]
     # A TABLE-PER-HIERARCHY insert writes the tag column from the concrete subtype's
     # tagValue (m-inheritance) — a FRAMEWORK-DERIVED column, never carried in ① —
     # slotted at its Discriminator-tier position, exactly as the version column is derived.
-    tag = _tag(entity)
-    if tag is not None and tag[0] in domain:
+    discriminator = tag(entity)
+    if discriminator is not None and discriminator[0] in domain:
         raise CaseFailure(
             f"{case.path.name}: the neutral write input (①) carries the tag "
-            f"column {tag[0]!r}, which a table-per-hierarchy write derives from "
+            f"column {discriminator[0]!r}, which a table-per-hierarchy write derives from "
             f"the concrete subtype's tagValue (m-inheritance), never authored."
         )
-    emitted = [c for c in order if c in domain or (tag is not None and c == tag[0])]
+    emitted = [
+        c for c in order if c in domain or (discriminator is not None and c == discriminator[0])
+    ]
     # A VERSIONED insert appends the framework-owned version column with the DERIVED
     # initial value `1` (never authored in ①, so it is not in the row's columns).
     present = [*emitted, version_col] if version_col is not None else emitted
@@ -1998,7 +1387,7 @@ def _assert_insert_statement(
             f"{case.path.name}: the golden INSERT column list {golden_columns} != the "
             f"columns the neutral write input resolves to {present} (Table Layout order, "
             f"present attributes"
-            f"{' + derived tag' if tag is not None else ''}"
+            f"{' + derived tag' if discriminator is not None else ''}"
             f"{' + derived version' if version_col is not None else ''})."
         )
     # A DB-computed marker is a SCALAR-ATTRIBUTE-only interpretation (m-value-object):
@@ -2020,20 +1409,20 @@ def _assert_insert_statement(
         # above); the remaining LITERAL columns' values are the trailing binds.
         literal_columns = [c for c in domain if c not in computed]
         expected = [cols[column] for cols, *_ in classified for column in literal_columns]
-        _assert_write_values(case, expected, binds[len(binds) - len(expected) :], statement)
+        assert_write_values(case, expected, binds[len(binds) - len(expected) :], statement)
         return
     expected: list[Any] = []
     for cols, *_ in classified:
         for column in emitted:
-            if tag is not None and column == tag[0]:
+            if discriminator is not None and column == discriminator[0]:
                 # The tag's bind is the concrete subtype's tagValue, DERIVED
                 # from the model (m-inheritance), never an ① literal.
-                expected.append(tag[1])
+                expected.append(discriminator[1])
             else:
                 expected.append(cols[column])
         if version_col is not None:
             expected.append(1)  # derived initial version (m-opt-lock baseline), never authored
-    _assert_write_values(case, expected, binds, statement)
+    assert_write_values(case, expected, binds, statement)
 
 
 def _assert_versioned_update_input(
@@ -2065,7 +1454,7 @@ def _assert_versioned_update_input(
     row. The version Column stays a plain assignment after it, because an explicit
     optimistic-lock Attribute keeps a Column of its own under either layout.
     """
-    version_col = _version_column(entity)
+    version_col = version_column(entity)
     document_column = case.model.storage_layout.document(entity.canonical_name).column
     assignments = (
         [_document_assignments(case, entity, row) for row in rows] if document_column else []
@@ -2078,7 +1467,7 @@ def _assert_versioned_update_input(
         step_binds,
         strict=True,
     ):
-        golden_set = _parse_set_columns(case, statement)
+        golden_set = _golden_set_columns(case, statement)
         set_present = [
             c
             for c in _write_column_order(case, entity)
@@ -2107,12 +1496,12 @@ def _assert_versioned_update_input(
         # GUARD among the identity predicates — canonically right after the primary key
         # (m-inheritance, m-sql; resolved Q9). The optimistic gate still binds LAST, so
         # the tag value slots between the pk and the observed-version gate.
-        tag = _tag(entity)
-        if tag is not None:
-            expected.append(tag[1])
+        discriminator = tag(entity)
+        if discriminator is not None:
+            expected.append(discriminator[1])
         if mode == "optimistic":
             expected.append(observed)  # the optimistic gate bind — always LAST
-        _assert_write_values(case, expected, binds, statement)
+        assert_write_values(case, expected, binds, statement)
 
 
 def _assert_update_input(
@@ -2160,7 +1549,7 @@ def _assert_update_input(
         if column not in document_columns and _increment_marker(set_cols[column]) is not None
     }
     for statement in step_statements:
-        golden_set = _parse_set_columns(case, statement)
+        golden_set = _golden_set_columns(case, statement)
         if golden_set != set_present:
             raise CaseFailure(
                 f"{case.path.name}: the golden SET column list {golden_set} != the domain "
@@ -2195,14 +1584,14 @@ def _assert_update_input(
             strict=True,
         ):
             expected = expected_values(set_cols, patches)
-            _assert_write_values(case, expected, binds[: len(expected)], statement)
+            assert_write_values(case, expected, binds[: len(expected)], statement)
         return
     _assert_uniform_assignments(case, entity, classified, assignments)
     first_set = classified[0][2] if classified else {}
     expected = expected_values(first_set, assignments[0] if assignments else ())
     binds = step_binds[0] if step_binds else []
     statement = step_statements[0] if step_statements else ""
-    _assert_write_values(case, expected, binds[: len(expected)], statement)
+    assert_write_values(case, expected, binds[: len(expected)], statement)
 
 
 def _assert_uniform_assignments(
@@ -2257,7 +1646,7 @@ def _assert_delete_input(
         # or extra bind (not the weaker "every pk appears somewhere", which tolerated all
         # three): the golden's binds MUST equal the pk list one-for-one and in order.
         if len(binds) != len(pk_values) or any(
-            not _write_value_equal(pk, bind) for pk, bind in zip(pk_values, binds, strict=False)
+            not write_value_equal(pk, bind) for pk, bind in zip(pk_values, binds, strict=False)
         ):
             raise CaseFailure(
                 f"{case.path.name}: the collapsed DELETE binds {binds} MUST equal the "
@@ -2266,7 +1655,7 @@ def _assert_delete_input(
             )
         return
     for binds in step_binds:
-        if not any(_write_value_equal(pk, bind) for pk in pk_values for bind in binds):
+        if not any(write_value_equal(pk, bind) for pk in pk_values for bind in binds):
             raise CaseFailure(
                 f"{case.path.name}: the neutral write input pk value(s) {pk_values} appear "
                 f"in none of the DELETE binds {binds}."
@@ -2295,7 +1684,7 @@ def _assert_temporal_input(
     ``end_column = infinity``; a close (``update`` step 1 / ``terminate``) binds
     ``[instant, pk, infinity]`` — sets ``end_column = instant`` addressed on the one
     Transaction-Time-current milestone, which on a single axis is the pk plus
-    ``end_column = infinity`` alone (:func:`_close_address_binds`); an ``update``
+    ``end_column = infinity`` alone (:func:`write_plan.close_address_binds`); an ``update``
     chains a second full-row insert carrying the row's columns.
 
     A BITEMPORAL step never reaches this cross-check's close: a two-axis
@@ -2340,11 +1729,11 @@ def _assert_temporal_input(
     # it at its Discriminator-tier slot and the close GUARDS on it right after the pk, exactly
     # as the non-temporal concrete-subtype write does. `None` for a table-per-concrete-
     # subtype / non-inheritance entity (an ordinary single-table milestone write).
-    tag = _tag(entity)
+    discriminator = tag(entity)
     document_column = case.model.storage_layout.document(entity.canonical_name).column
 
     def assert_open(statement: str, binds: list[Any]) -> None:
-        golden_columns = _parse_insert_columns(case, statement)
+        golden_columns = parse_insert_columns(case, statement)
         if golden_columns != full_columns:
             raise CaseFailure(
                 f"{case.path.name}: the golden temporal INSERT column list {golden_columns} != "
@@ -2356,13 +1745,13 @@ def _assert_temporal_input(
             if column in derived_starts
             else infinity
             if column in derived_ends
-            else tag[1]
-            if (tag is not None and column == tag[0])
+            else discriminator[1]
+            if (discriminator is not None and column == discriminator[0])
             else columns.get(column)
             for column in full_columns
         ]
         if not document_column or len(binds) != len(expected):
-            _assert_write_values(case, expected, binds, statement)
+            assert_write_values(case, expected, binds, statement)
             return
         # Under Relational Document Layout a chained milestone's Structured Column
         # is the predecessor's own document with the mutation's changes patched
@@ -2371,7 +1760,7 @@ def _assert_temporal_input(
         # supersedes, and `then.tableState` is what grades that it did.
         position = full_columns.index(document_column)
         _assert_carried_document(case, expected[position], binds[position], statement)
-        _assert_write_values(
+        assert_write_values(
             case,
             [*expected[:position], *expected[position + 1 :]],
             [*binds[:position], *binds[position + 1 :]],
@@ -2386,10 +1775,10 @@ def _assert_temporal_input(
         # close is: a gated one appends the observed milestone's `in_z` LAST, and the
         # gate's bind is reconstructed from the case's own history rather than
         # authored on the step (:func:`_observed_milestone_start`).
-        expected = [at, *_close_address_binds(case, entity, pk, None)]
-        if _has_temporal_gate(statement, transaction_time["start_column"], dialect):
+        expected = [at, *close_address_binds(case, entity, pk, None)]
+        if has_temporal_gate(statement, transaction_time["start_column"], dialect):
             expected.append(_observed_milestone_start(case, entity, step, pk))
-        _assert_write_values(case, expected, binds, statement)
+        assert_write_values(case, expected, binds, statement)
 
     mutation = step["mutation"]
     if mutation == "insert":
@@ -2434,7 +1823,7 @@ def _assert_until_input(
     supplies:
 
       * the inactivating close (the ``update … set out_z = ? where …`` statement) binds
-        ``[at, …address…]`` (:func:`_close_address_binds`) — the observed rectangle's
+        ``[at, …address…]`` (:func:`write_plan.close_address_binds`) — the observed rectangle's
         own Valid-Time end then the invariant Transaction-Time infinity, IDENTICAL in
         both concurrency modes. A GATED close (`m-bitemp-write-008`, optimistic)
         appends the observed rectangle's ``in_z`` LAST. Neither coordinate is present
@@ -2487,7 +1876,7 @@ def _assert_until_input(
             f"Valid-Time window start (`validFrom` → {from_z}), which discriminates the "
             f"chained rows."
         )
-    if mutation in _OPENING_MUTATIONS:
+    if mutation in OPENING_MUTATIONS:
         observed = None
         expected_windows = [(valid_from, until)]
     else:
@@ -2501,8 +1890,8 @@ def _assert_until_input(
     for statement, binds in zip(step_statements, step_binds, strict=True):
         if "insert into" in statement.lower():
             # A chained milestone opens at fresh Transaction Time [at, infinity).
-            _assert_write_values(case, [at], [binds[in_z_pos]], statement)
-            _assert_write_values(case, [infinity], [binds[out_z_pos]], statement)
+            assert_write_values(case, [at], [binds[in_z_pos]], statement)
+            assert_write_values(case, [infinity], [binds[out_z_pos]], statement)
             chained_windows.append((binds[from_z_pos], binds[thru_z_pos]))
             continue
         if observed is None:
@@ -2515,8 +1904,8 @@ def _assert_until_input(
         # so a close with spurious trailing binds fails as a mismatch rather than being
         # tolerated as gated, and a gated one pairs its single trailing predicate with
         # EXACTLY one trailing bind.
-        expected = [at, *_close_address_binds(case, entity, pk, observed.valid_end)]
-        gated = _has_temporal_gate(statement, in_z, dialect)
+        expected = [at, *close_address_binds(case, entity, pk, observed.valid_end)]
+        gated = has_temporal_gate(statement, in_z, dialect)
         if gated:
             expected.append(observed.tx_start)
         placeholders = statement.count("?")
@@ -2528,7 +1917,7 @@ def _assert_until_input(
                 f"the address `pk [and tag = ?] and {thru_z} = ? and {out_z} = ?`, and a "
                 f"gated close appends the single `and {in_z} = ?` gate."
             )
-        _assert_write_values(case, expected, binds, statement)
+        assert_write_values(case, expected, binds, statement)
 
     _assert_split_successor_windows(case, expected_windows, chained_windows)
 
@@ -2540,7 +1929,7 @@ def _assert_split_successor_windows(
 ) -> None:
     """The chained INSERTs' Valid-Time windows are exactly the derived successors."""
     matched = len(expected_windows) == len(chained_windows) and all(
-        _write_value_equal(want_start, got_start) and _write_value_equal(want_end, got_end)
+        write_value_equal(want_start, got_start) and write_value_equal(want_end, got_end)
         for (want_start, want_end), (got_start, got_end) in zip(
             expected_windows, chained_windows, strict=False
         )
@@ -2617,10 +2006,10 @@ def _edge_named_rectangle(
     matched = [
         row
         for row in entity.rows
-        if _write_value_equal(row.get(key_member), pk)
-        and _write_value_equal(row.get(tx_axis.end.name), open_bound)
-        and _write_value_equal(row.get(valid_axis.start.name), valid_start)
-        and _write_value_equal(row.get(tx_axis.start.name), tx_start)
+        if write_value_equal(row.get(key_member), pk)
+        and write_value_equal(row.get(tx_axis.end.name), open_bound)
+        and write_value_equal(row.get(valid_axis.start.name), valid_start)
+        and write_value_equal(row.get(tx_axis.start.name), tx_start)
     ]
     if len(matched) != 1:
         raise CaseFailure(
@@ -2652,10 +2041,10 @@ def _prior_steps_for_key(
         if prior["entity"] != current_step["entity"]:
             continue
         prior_keys = [
-            _classify_write_row(case, entity, row, mutation=prior["mutation"], opening=True)[1]
+            classify_write_row(case, entity, row, mutation=prior["mutation"], opening=True)[1]
             for row in prior.get("rows", [])
         ]
-        if any(_write_value_equal(prior_pk, pk) for prior_pk in prior_keys):
+        if any(write_value_equal(prior_pk, pk) for prior_pk in prior_keys):
             yield prior
 
 
@@ -2682,8 +2071,8 @@ def _observed_milestone_start(case: Case, entity: Entity, step: dict[str, Any], 
         open_rows = [
             row
             for row in entity.rows
-            if _write_value_equal(row.get(key_member), pk)
-            and _write_value_equal(row.get(tx_axis.end.name), "infinity")
+            if write_value_equal(row.get(key_member), pk)
+            and write_value_equal(row.get(tx_axis.end.name), "infinity")
         ]
         if len(open_rows) == 1:
             current = open_rows[0].get(tx_axis.start.name)
@@ -2741,7 +2130,7 @@ def _current_rectangles(
     rectangles: tuple[_Rectangle, ...] = ()
     for prior in _prior_steps_for_key(case, entity, current_step, pk):
         valid_from, until, at = prior.get("validFrom"), prior.get("until"), prior.get("at")
-        if prior["mutation"] in _OPENING_MUTATIONS:
+        if prior["mutation"] in OPENING_MUTATIONS:
             opened = _Rectangle(valid_from, infinity if until is None else until, at)
             rectangles = (*rectangles, opened)
             continue
@@ -2749,29 +2138,6 @@ def _current_rectangles(
             return ()
         rectangles = _split_successors(prior["mutation"], rectangles[0], valid_from, until, at)
     return rectangles
-
-
-def _has_temporal_gate(statement: str, in_z: str, dialect: str) -> bool:
-    """True when a milestone close's SQL carries the OPTIMISTIC gate predicate.
-
-    Address and gate are separate facts (`m-bitemp-write` "Address and gate are
-    separate"): every close renders the same address in either mode, and an optimistic
-    one APPENDS the observed Transaction-Time start (``and <in_z> = ?``) last. The gate
-    signature is therefore that predicate as the predicate's LAST conjunct, so the
-    address's own ``<out_z> = ?`` is never mistaken for it and a close that weaves the
-    observed start into the address instead of appending it is reported UNGATED and
-    fails on arity rather than passing as a well-formed gated close. A close is then
-    never mis-read as gated on the strength of a longer bind row alone, nor on a gate
-    predicate that binds anywhere but last.
-
-    The temporal peer of :func:`_has_version_gate`, and projected out of the same
-    parsed statement (:func:`_existing_row_write`) for the same reasons: a reserved
-    physical interval column is rendered QUOTED in the executing dialect's own quote
-    character (`m-dialect`), and a nested ``SELECT``'s trailing predicate is a conjunct
-    of that query rather than of this one.
-    """
-    write = _existing_row_write(statement, dialect)
-    return write is not None and _gates_on(write.conjuncts[-1], in_z)
 
 
 def _conflict_versioned_entity(case: Case) -> Entity | None:
@@ -2783,7 +2149,7 @@ def _conflict_versioned_entity(case: Case) -> Entity | None:
     and carries a different ① (see :func:`_assert_temporal_conflict_input`).
     """
     for entity in case.model.entities:
-        if _version_column(entity) is not None:
+        if version_column(entity) is not None:
             return entity
     return None
 
@@ -2856,7 +2222,7 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
     if entity is None:
         _assert_temporal_conflict_input(case, dialect)
         return
-    version_col = _version_column(entity)
+    version_col = version_column(entity)
     mutation = case.conflict_mutation
     if case.attempts:
         for index, attempt in enumerate(case.attempts):
@@ -2920,7 +2286,7 @@ def _assert_versioned_conflict_input(
             f"statement, but {len(statements)} were listed."
         )
     statement = statements[0]
-    _, pk, set_cols, observed = _classify_write_row(
+    _, pk, set_cols, observed = classify_write_row(
         case, entity, write, mutation=mutation, opening=False
     )
     if observed is None:
@@ -2936,7 +2302,7 @@ def _assert_versioned_conflict_input(
         pk,
     ]
     gated = case.concurrency_mode == "optimistic"
-    gate_rendered = version_col is not None and _has_version_gate(statement, version_col, dialect)
+    gate_rendered = version_col is not None and has_version_gate(statement, version_col, dialect)
     if gate_rendered != gated:
         raise CaseFailure(
             f"{case.path.name}: the golden {mutation.upper()} ({pointer}) "
@@ -2945,7 +2311,7 @@ def _assert_versioned_conflict_input(
         )
     if gated:
         expected.append(observed)
-    _assert_write_values(case, expected, binds, statement)
+    assert_write_values(case, expected, binds, statement)
 
 
 def _conflict_set_binds(
@@ -2975,7 +2341,7 @@ def _conflict_set_binds(
                 f"carries only the pk and observedVersion."
             )
         return []
-    golden_set = _parse_set_columns(case, statement)
+    golden_set = _golden_set_columns(case, statement)
     set_present = [c for c in _write_column_order(case, entity) if c in set_cols]
     expected_cols = [*set_present, version_col]
     if golden_set != expected_cols:
@@ -3020,18 +2386,18 @@ def _assert_observed_edge_entitlement(case: Case, entity: Entity | None) -> None
     observing = [
         pointer
         for pointer, source in sources
-        if any(key in source for key in _MILESTONE_COORDINATE_KEYS)
+        if any(key in source for key in MILESTONE_COORDINATE_KEYS)
     ]
     if not observing:
         return
     if entity is None:
         raise CaseFailure(
             f"{case.path.name}: a NON-temporal conflict target has no milestone to observe, "
-            f"so it may author neither of {sorted(_MILESTONE_COORDINATE_KEYS)} "
+            f"so it may author neither of {sorted(MILESTONE_COORDINATE_KEYS)} "
             f"({', '.join(observing)})."
         )
     if attempts:
-        stranded = sorted(key for key in _MILESTONE_COORDINATE_KEYS if key in case.when)
+        stranded = sorted(key for key in MILESTONE_COORDINATE_KEYS if key in case.when)
         if stranded:
             raise CaseFailure(
                 f"{case.path.name}: the root `when` authors {stranded} beside `attempts` — a "
@@ -3144,7 +2510,7 @@ def _assert_temporal_conflict_close(
     """Cross-check one temporal-close attempt's ① binds against its golden close.
 
     A close sets ``out_z = at`` on the milestone its ADDRESS selects
-    (:func:`_close_address_binds`); an optimistic close appends the ``and in_z = ?``
+    (:func:`write_plan.close_address_binds`); an optimistic close appends the ``and in_z = ?``
     gate bound to ``observedTxStart``, so the derived binds are ``[at, …address…,
     (observedTxStart if gated)]``. A TABLE-PER-HIERARCHY concrete subtype's close ALSO
     carries the tag GUARD among the identity predicates, immediately after the primary
@@ -3183,7 +2549,7 @@ def _assert_temporal_conflict_close(
     valid_time = next(
         (a for a in entity.temporal_runtime_axes if a["dimension"] == "valid-time"), None
     )
-    _, pk, set_cols, _ = _classify_write_row(
+    _, pk, set_cols, _ = classify_write_row(
         case, entity, write, mutation=_CLOSE_MUTATION, opening=False
     )
     edge_named = observed_valid_start is not None
@@ -3204,8 +2570,8 @@ def _assert_temporal_conflict_close(
         valid_end = None
     else:
         valid_end = set_cols[valid_time["end_column"]]
-    expected = [at, *_close_address_binds(case, entity, pk, valid_end)]
-    gate_rendered = _has_temporal_gate(
+    expected = [at, *close_address_binds(case, entity, pk, valid_end)]
+    gate_rendered = has_temporal_gate(
         statements[0],
         next(a for a in entity.temporal_runtime_axes if a["dimension"] == "transaction-time")[
             "start_column"
@@ -3227,8 +2593,8 @@ def _assert_temporal_conflict_close(
                 f"derived from it."
             )
         expected.append(observed_tx_start)  # the optimistic in_z gate bind
-    _assert_write_values(case, expected, binds, statements[0])
-    _assert_inheritance_write_routing(case, entity, statements, [binds], dialect)
+    assert_write_values(case, expected, binds, statements[0])
+    assert_inheritance_write_routing(case, entity, statements, [binds], dialect)
 
 
 def _table_layout(case: Case, table: str) -> TableLayout:
@@ -3313,7 +2679,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
 
 def _step_statements(step: dict[str, Any], dialect: str) -> list[str]:
     """The ordered golden SQL statements a scenario step lists for *dialect*."""
-    return _entry_statements(step.get("statements"), dialect)
+    return entry_statements(step.get("statements"), dialect)
 
 
 def _scenario_has_golden(case: Case, dialect: str) -> bool:
@@ -3338,7 +2704,7 @@ def _scenario_step_resolving_reads(case: Case, step: dict[str, Any]) -> int:
     """The resolving reads ONE scenario step owes beside the SQL it lists.
 
     An UNGROUPED write step is its own choreography unit, so it owes what any
-    unit owes (:func:`_unit_resolving_reads`). A GROUPED one owes none of its
+    unit owes (:func:`write_plan.unit_resolving_reads`). A GROUPED one owes none of its
     own: its group's find steps are what publish the values it settles against,
     and those finds already declare their own round trips (`m-case-format`
     *Resolving reads a write owes*). A find step owes none either — a read IS
@@ -3346,7 +2712,7 @@ def _scenario_step_resolving_reads(case: Case, step: dict[str, Any]) -> int:
     """
     if "write" not in step or isinstance(step.get("uow"), str):
         return 0
-    return _unit_resolving_reads(case, _scenario_write_entries(step))
+    return unit_resolving_reads(case, _scenario_write_entries(step))
 
 
 def _assert_scenario_count_consistency(case: Case, dialect: str) -> None:
@@ -3470,7 +2836,7 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
     derives.
 
     An entry is aligned with its golden by the OBJECT each statement itself
-    addresses (:func:`_statement_object`), never by the order the buffer names
+    addresses (:func:`write_plan.statement_object`), never by the order the buffer names
     objects in: a flush dependency-orders its surviving writes so a parent is
     inserted before and deleted after the children referencing it (`m-unit-work`
     *the planning pipeline*, `m-case-format` *foreign-key-ordered at flush*), so
@@ -3497,7 +2863,7 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
         settling = [
             (_statement_object(case, index, statement, binds, dialect), statement, binds)
             for statement, binds in entry_pairs(step.get("statements"), dialect)
-            if _is_existing_row_statement(statement)
+            if is_existing_row_statement(statement)
         ]
         origin = case.scenario[step["on"]]
         aligned: set[int] = set()
@@ -3505,11 +2871,11 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
             entity = case.model.entity(entry["entity"])
             row = _sole_settled_row(case, index, entity, entry)
             temporal = bool(temporal_axes(entity.runtime_facts))
-            _, pk, _set_cols, _observed = _classify_write_row(
+            _, pk, _set_cols, _observed = classify_write_row(
                 case, entity, row, mutation=entry["mutation"], opening=temporal
             )
             statement, binds = _settled_statement(case, index, entity, pk, settling, aligned)
-            _assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
+            assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
             if not temporal:
                 _assert_settled_version_binds(
                     case, entity, index, origin, pk, binds, statement, dialect
@@ -3518,11 +2884,11 @@ def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
             observed = _settled_milestone(case, entity, index, origin, pk)
             expected = [
                 entry.get("at"),
-                *_close_address_binds(case, entity, pk, observed.valid_end),
+                *close_address_binds(case, entity, pk, observed.valid_end),
             ]
             if case.concurrency_mode == "optimistic":
                 expected.append(observed.tx_start)
-            _assert_write_values(case, expected, binds, statement)
+            assert_write_values(case, expected, binds, statement)
         if len(aligned) != len(settling):
             raise CaseFailure(
                 f"{case.path.name}: scenario[{index}] carries {len(settling) - len(aligned)} "
@@ -3537,7 +2903,7 @@ def _settled_statement(
     index: int,
     entity: Entity,
     pk: Any,
-    settling: Sequence[tuple[_ObjectAddress, str, list[Any]]],
+    settling: Sequence[tuple[ObjectAddress, str, list[Any]]],
     aligned: set[int],
 ) -> tuple[str, list[Any]]:
     """The golden statement one settled entry's OBJECT survives as, with the binds
@@ -3557,9 +2923,9 @@ def _settled_statement(
     matches = [
         position
         for position, (address, _statement, _binds) in enumerate(settling)
-        if _names(address.table, entity.table)
-        and _names(address.key_column, _pk_column(entity))
-        and _write_value_equal(address.key, pk)
+        if address.names_table(entity.table)
+        and address.names_key_column(_pk_column(entity))
+        and write_value_equal(address.key, pk)
     ]
     if not matches:
         raise CaseFailure(
@@ -3579,69 +2945,25 @@ def _settled_statement(
     return statement, binds
 
 
-class _ObjectAddress(NamedTuple):
-    """Which object an existing-row statement writes: the identifiers its DML names
-    the target table and the key column with, and the primary-key value its identity
-    predicate binds.
-
-    Table and key together ARE an Object Key — Entity Identity plus primary-key
-    values (`m-unit-work`). Every structural Table has exactly one mapping owner
-    (`m-storage-layout`) and object identity normalizes to the inheritance family
-    (`m-identity-map`), so a table names ONE Entity Identity: a table-per-hierarchy
-    family's shared table names that family, a table-per-concrete-subtype table its
-    own subtype, and no two objects share a table and a primary key. Which concrete
-    subtype of a shared table a golden claims is the one thing the address cannot
-    say, so the settled lane grades it separately
-    (:func:`_assert_inheritance_write_routing`).
-    """
-
-    table: exp.Identifier
-    key_column: exp.Identifier
-    key: Any
-
-
 def _statement_object(
     case: Case, index: int, statement: str, binds: list[Any], dialect: str
-) -> _ObjectAddress:
-    """The object *statement* addresses, read off the statement's own address.
+) -> ObjectAddress:
+    """The object a settled scenario step's *statement* addresses.
 
-    Every existing-row write renders one address shape: the DML names the target
-    table and the predicate LEADS with the primary-key equality, which the
-    table-per-hierarchy tag guard, the temporal bounds, and the optimistic gate
-    then follow in that order (`m-sql`, `m-inheritance`, `m-opt-lock`). The key's
-    bind is therefore the predicate's first placeholder, and every placeholder
-    before it belongs to the `set` clause.
+    A settled write addresses the ONE object it survives as, so a golden here that
+    renders no bound key address is a defect of the case rather than a statement
+    with nothing to say — which is why the address is required at this step and
+    optional to :func:`write_plan.statement_object`.
     """
-    write = _existing_row_write(statement, dialect)
-    key_column = _bound_equality_identifier(write.conjuncts[0]) if write is not None else None
-    offset = _predicate_bind_offset(statement)
-    if write is None or key_column is None or offset is None or offset >= len(binds):
+    address = statement_object(statement, binds, dialect)
+    if address is None:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] carries an existing-row golden whose "
             f"predicate does not open with a bound key equality for {dialect}: "
             f"{statement!r} — a settled write addresses the ONE object it survives as, "
             f"and its key leads that address."
         )
-    return _ObjectAddress(write.table, key_column, binds[offset])
-
-
-def _predicate_bind_offset(statement: str) -> int | None:
-    """How many binds precede the outer predicate's own first placeholder, or None
-    when the statement carries no outer predicate.
-
-    Scanned through :func:`_sql_scan` for the reason every reader that takes a
-    golden apart by position is: a `?` inside a string literal binds nothing, and a
-    `where` inside a quoted identifier or a subquery opens no predicate of this
-    statement's own.
-    """
-    lowered = statement.lower()
-    preceding = 0
-    for position, char, depth in _sql_scan(statement):
-        if depth == 0 and _keyword_at(lowered, position, "where"):
-            return preceding
-        if char == "?":
-            preceding += 1
-    return None
+    return address
 
 
 def _assert_settled_version_binds(
@@ -3681,22 +3003,22 @@ def _assert_settled_version_binds(
     physical column may be reserved or otherwise non-simple, and the golden then
     quotes it exactly as the generated DML does (`m-dialect`).
     """
-    version_column = _version_column(entity)
-    if version_column is None:
+    version_col = version_column(entity)
+    if version_col is None:
         return
-    observed = _settled_generation(case, entity, index, origin, pk, version_column)
+    observed = _settled_generation(case, entity, index, origin, pk, version_col)
     if case.concurrency_mode == "optimistic" and (
-        not binds or not _write_value_equal(binds[-1], observed)
+        not binds or not write_value_equal(binds[-1], observed)
     ):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] settles {entity.name} against a find that "
             f"observed version {observed!r}, but its golden gate binds "
             f"{binds[-1] if binds else None!r}."
         )
-    if _set_clause(statement) is None:
+    assigned = parse_set_columns(statement)
+    if assigned is None:
         return
-    assigned = _parse_set_columns(case, statement)
-    spelling = quote_identifier(version_column, dialect)
+    spelling = quote_identifier(version_col, dialect)
     if spelling not in assigned:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] settles a versioned {entity.name} update "
@@ -3705,7 +3027,7 @@ def _assert_settled_version_binds(
         )
     position = assigned.index(spelling)
     advanced = binds[position] if position < len(binds) else None
-    if not _write_value_equal(advanced, observed + 1):
+    if not write_value_equal(advanced, observed + 1):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] settles {entity.name} against a find that "
             f"observed version {observed!r}, but its golden advances the version to "
@@ -3747,7 +3069,7 @@ def _settled_observed_row(
     matched = [
         row
         for row in observed_rows
-        if _write_value_equal(row.get(key_column), pk)
+        if write_value_equal(row.get(key_column), pk)
         and _row_is_variant_of(case, entity, row, variant_columns)
     ]
     if len(matched) != 1:
@@ -3811,9 +3133,9 @@ def _row_is_variant_of(
     projects no discriminator, because every row it returns is already the queried
     subtype's.
     """
-    tag = _tag(entity)
-    if tag is not None and tag[0] in row:
-        return _write_value_equal(row[tag[0]], tag[1])
+    discriminator = tag(entity)
+    if discriminator is not None and discriminator[0] in row:
+        return write_value_equal(row[discriminator[0]], discriminator[1])
     for column in variant_columns:
         if column in row:
             return row[column] == Family(case.model.entity_defs).variant_spelling(
@@ -4147,144 +3469,6 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             _finish_uow_group(case, index, label, group_states, dialect)
 
 
-def _has_version_gate(statement: str, version_col: str, dialect: str) -> bool:
-    """True when a versioned write's OUTER predicate gates on the optimistic version.
-
-    The optimistic golden write appends ``and <version> = ?`` to its keyed predicate
-    (m-opt-lock). Two other places name the same column and are NOT that gate: an
-    ``UPDATE``'s own ``SET`` clause, which carries the framework-derived advance in
-    BOTH modes, and any nested ``SELECT``'s own ``WHERE`` — which is why the gate is
-    projected out of the parsed statement (:func:`_existing_row_write`) rather than
-    scanned for. A statement that is no existing-row write carries no gate.
-    """
-    write = _existing_row_write(statement, dialect)
-    return write is not None and any(_gates_on(operand, version_col) for operand in write.conjuncts)
-
-
-def _dml_target(statement: str, dialect: str) -> exp.Identifier | None:
-    """The identifier *statement* names its target table with, or None when it is no
-    table-targeting DML for *dialect*.
-
-    The one reader of WHICH TABLE a write lands in, covering the ``INSERT`` that
-    :func:`_existing_row_write` does not: table-per-concrete-subtype routing asks it of
-    every statement a write emits, because there the table IS the concrete subtype
-    (`m-inheritance`). Taken from the parse so the identifier keeps its own quoting,
-    which is what decides whether the spelling is the model's table (:func:`_names`) —
-    a reserved or otherwise non-simple physical name is rendered QUOTED (`m-dialect`).
-    """
-    with contextlib.suppress(sqlglot.ParseError):
-        return _dml_target_of(sqlglot.parse_one(statement, read=sqlglot_dialect(dialect)))
-    return None
-
-
-def _dml_target_of(tree: Expr) -> exp.Identifier | None:
-    """The target-table identifier of an already-parsed ``INSERT`` / ``UPDATE`` /
-    ``DELETE``, or None for any other statement.
-
-    An ``INSERT`` carries its table inside the column-list schema; the existing-row
-    verbs name it directly.
-    """
-    if not isinstance(tree, (exp.Insert, exp.Update, exp.Delete)):
-        return None
-    target = tree.this
-    if isinstance(target, exp.Schema):
-        target = target.this
-    if not isinstance(target, exp.Table) or not isinstance(target.this, exp.Identifier):
-        return None
-    return target.this
-
-
-class _ExistingRowWrite(NamedTuple):
-    """The outer keyed DML a golden statement is: the identifier its ``UPDATE`` /
-    ``DELETE`` names the target table with, and its own top-level predicate
-    conjuncts."""
-
-    table: exp.Identifier
-    conjuncts: tuple[Expr, ...]
-
-
-def _existing_row_write(statement: str, dialect: str) -> _ExistingRowWrite | None:
-    """*statement* read as the existing-row write it is, or None when it is not one.
-
-    The ONE reader of that grammar, which each consumer projects its own fact out of
-    — which object the statement addresses (:func:`_statement_object`), whether it
-    gates on the optimistic version (:func:`_has_version_gate`) — so what counts as
-    an existing-row write, and what an unparseable or non-DML statement answers,
-    is decided in one place for all of them.
-
-    Read through the grammar rather than by pattern, because a reserved physical
-    table or column is rendered QUOTED (`m-dialect`), the last ` where ` in the text
-    may belong to a subquery, and a subquery's own predicate is a conjunct of the
-    inner ``SELECT`` rather than of this one (:func:`_conjuncts`). A statement that
-    does not parse for *dialect*, that is not an ``UPDATE`` / ``DELETE`` of a table,
-    or that carries no outer predicate is no existing-row write: it addresses no
-    object and gates on nothing.
-    """
-    with contextlib.suppress(sqlglot.ParseError):
-        tree = sqlglot.parse_one(statement, read=sqlglot_dialect(dialect))
-        if not isinstance(tree, (exp.Update, exp.Delete)):
-            return None
-        table, where = _dml_target_of(tree), tree.args.get("where")
-        if table is not None and isinstance(where, exp.Where):
-            return _ExistingRowWrite(table, tuple(_conjuncts(where.this)))
-    return None
-
-
-def _conjuncts(predicate: Expr) -> Iterator[Expr]:
-    """*predicate*'s own top-level ``AND`` operands, parentheses flattened.
-
-    A subquery yields as ONE opaque operand: its own predicate is a conjunct of the
-    inner ``SELECT``, never of this one, which is exactly the distinction a text scan
-    cannot make.
-    """
-    if isinstance(predicate, exp.And):
-        yield from _conjuncts(predicate.left)
-        yield from _conjuncts(predicate.right)
-    elif isinstance(predicate, exp.Paren):
-        yield from _conjuncts(predicate.this)
-    else:
-        yield predicate
-
-
-def _gates_on(operand: Expr, column: str) -> bool:
-    """Whether *operand* is the ``<column> = ?`` equality a gate renders."""
-    bound = _bound_equality_identifier(operand)
-    return bound is not None and _names(bound, column)
-
-
-def _bound_equality_identifier(operand: Expr) -> exp.Identifier | None:
-    """The identifier a ``<column> = ?`` conjunct names its column with, or None for
-    any other operand.
-
-    The one predicate shape both a gate and an address are written in, either way
-    round, taken from the parse so the identifier keeps its own quoting — which is
-    what decides whether the spelling is the model's column (:func:`_names`).
-    """
-    if not isinstance(operand, exp.EQ):
-        return None
-    left, right = operand.left, operand.right
-    if isinstance(right, exp.Column) and isinstance(left, exp.Placeholder):
-        left, right = right, left
-    if isinstance(left, exp.Column) and isinstance(right, exp.Placeholder):
-        return left.this if isinstance(left.this, exp.Identifier) else None
-    return None
-
-
-def _names(identifier: exp.Identifier, declared: str) -> bool:
-    """Whether *identifier*, as a golden spells it, is the physical *declared* name.
-
-    A QUOTED identifier keeps exactly the name it spells — quoting is what a
-    reserved or otherwise non-simple physical name is rendered with, and the
-    normalizer preserves it (`m-dialect`) — while an UNQUOTED one is folded by the
-    database, so it names *declared* whenever the two differ only in case.
-    Lowercasing both sides instead would read a quoted ``"Order"`` and a bare
-    ``order``, two names one model may declare separately, as one identifier.
-    """
-    return identifier.name == declared or (
-        not identifier.quoted and identifier.name.lower() == declared.lower()
-    )
-
-
 def _assert_scenario_conflict_abort(
     case: Case,
     index: int,
@@ -4314,16 +3498,14 @@ def _assert_scenario_conflict_abort(
             f"`updatedRows != 1` is the conflict signal. A conflict-abort scenario MUST "
             f"declare a != 1 count (0 for a stale-version gate)."
         )
-    version_col = _version_column(_scenario_root_entity(case))
+    version_col = version_column(_scenario_root_entity(case))
     if version_col is None:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] declares a conflict abort but the "
             f"entity carries no optimistic-lock version column to gate on."
         )
     gated = [
-        (sql, affected)
-        for sql, affected in executed
-        if _has_version_gate(sql, version_col, dialect)
+        (sql, affected) for sql, affected in executed if has_version_gate(sql, version_col, dialect)
     ]
     if len(gated) != 1:
         raise CaseFailure(
@@ -4420,7 +3602,7 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
 
 def _attempt_statements(attempt: dict[str, Any], dialect: str) -> list[str]:
     """The golden write statement(s) a retry attempt lists for *dialect*."""
-    return _entry_statements(attempt.get("statements"), dialect)
+    return entry_statements(attempt.get("statements"), dialect)
 
 
 def _conflict_retry_has_golden(case: Case, dialect: str) -> bool:
@@ -4510,7 +3692,7 @@ def _error_statements(case: Case, dialect: str) -> list[str]:
         for node in ("A", "B"):
             step = rnd.get(node)
             if isinstance(step, dict):
-                statements.extend(_entry_statements(step.get("statements"), dialect))
+                statements.extend(entry_statements(step.get("statements"), dialect))
     return statements
 
 
@@ -4713,7 +3895,7 @@ def _concurrency_statements(case: Case, dialect: str) -> list[str]:
         for node in ("A", "B"):
             step = rnd.get(node)
             if isinstance(step, dict):
-                statements.extend(_entry_statements(step.get("statements"), dialect))
+                statements.extend(entry_statements(step.get("statements"), dialect))
     return statements
 
 
@@ -4855,7 +4037,7 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
 
 def _coherence_step_statements(step: dict[str, Any], dialect: str) -> list[str]:
     """The ordered golden SQL statements a coherence step lists for *dialect*."""
-    return _entry_statements(step.get("statements"), dialect)
+    return entry_statements(step.get("statements"), dialect)
 
 
 def _coherence_has_golden(case: Case, dialect: str) -> bool:

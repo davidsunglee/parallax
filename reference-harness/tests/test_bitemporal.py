@@ -25,13 +25,13 @@ from reference_harness.case_runner import (
     _assert_conflict_input,
     _assert_write_input_columns,
     _assert_write_step_count,
-    _has_temporal_gate,
     _read_table,
     _write_column_order,
 )
 from reference_harness.ddl_builder import contributor_types, ddl_for
 from reference_harness.object_query_oracle import assert_case_read
 from reference_harness.storage_layout import derived_primary_key_index
+from reference_harness.write_plan import has_temporal_gate
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -350,10 +350,10 @@ def test_has_temporal_gate_requires_the_transaction_start_column_itself() -> Non
     address_only = "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
     gated = f"{address_only} and in_z = ?"
     valid_start_decoy = f"{address_only} and from_z = ?"
-    assert _has_temporal_gate(gated, "in_z", "postgres")
-    assert not _has_temporal_gate(address_only, "in_z", "postgres")
-    assert not _has_temporal_gate(valid_start_decoy, "in_z", "postgres")
-    assert not _has_temporal_gate(gated, "min_z", "postgres")
+    assert has_temporal_gate(gated, "in_z", "postgres")
+    assert not has_temporal_gate(address_only, "in_z", "postgres")
+    assert not has_temporal_gate(valid_start_decoy, "in_z", "postgres")
+    assert not has_temporal_gate(gated, "min_z", "postgres")
 
 
 def test_has_temporal_gate_reads_the_close_under_each_dialects_own_quoting() -> None:
@@ -370,9 +370,9 @@ def test_has_temporal_gate_reads_the_close_under_each_dialects_own_quoting() -> 
         "update position set `out_z` = ? "
         "where `pos_id` = ? and `thru_z` = ? and `out_z` = ? and `in_z` = ?"
     )
-    assert _has_temporal_gate(postgres, "in_z", "postgres")
-    assert _has_temporal_gate(mariadb, "in_z", "mariadb")
-    assert not _has_temporal_gate(postgres, "IN_Z", "postgres")
+    assert has_temporal_gate(postgres, "in_z", "postgres")
+    assert has_temporal_gate(mariadb, "in_z", "mariadb")
+    assert not has_temporal_gate(postgres, "IN_Z", "postgres")
 
 
 def test_has_temporal_gate_requires_the_gate_predicate_to_be_TRAILING() -> None:
@@ -386,11 +386,11 @@ def test_has_temporal_gate_requires_the_gate_predicate_to_be_TRAILING() -> None:
     woven = (
         "update position set out_z = ? where pos_id = ? and in_z = ? and thru_z = ? and out_z = ?"
     )
-    assert not _has_temporal_gate(woven, "in_z", "postgres")
+    assert not has_temporal_gate(woven, "in_z", "postgres")
     trailing = (
         "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
     )
-    assert _has_temporal_gate(trailing, "in_z", "postgres")
+    assert has_temporal_gate(trailing, "in_z", "postgres")
 
 
 def test_close_weaving_the_gate_into_the_address_is_rejected() -> None:
@@ -426,9 +426,9 @@ def test_close_gating_on_the_valid_time_start_instead_of_in_z_is_rejected() -> N
     _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
     close = case.then["statements"][1]
     authored = close["sql"]["postgres"]
-    assert _has_temporal_gate(authored, "in_z", "postgres")  # authored is the gated shape
+    assert has_temporal_gate(authored, "in_z", "postgres")  # authored is the gated shape
     decoy = authored.replace("and in_z = ?", "and from_z = ?")
-    assert not _has_temporal_gate(decoy, "in_z", "postgres")  # the decoy is NOT gated
+    assert not has_temporal_gate(decoy, "in_z", "postgres")  # the decoy is NOT gated
     close["sql"]["postgres"] = decoy  # binds unchanged — still the five gated binds
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
@@ -446,12 +446,12 @@ def test_gated_close_with_extra_placeholder_arity_mismatch_is_rejected() -> None
     _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
     close = case.then["statements"][1]
     authored = close["sql"]["postgres"]
-    assert _has_temporal_gate(authored, "in_z", "postgres")
+    assert has_temporal_gate(authored, "in_z", "postgres")
     assert authored.count("?") == 5 and len(close["binds"]) == 5
     # The surplus predicate rides BEFORE the gate, so the gate still binds last.
     close["sql"]["postgres"] = authored.replace(" and in_z = ?", " and from_z = ? and in_z = ?")
     assert close["sql"]["postgres"].count("?") == 6
-    assert _has_temporal_gate(close["sql"]["postgres"], "in_z", "postgres")  # still gated-shaped
+    assert has_temporal_gate(close["sql"]["postgres"], "in_z", "postgres")  # still gated-shaped
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
 

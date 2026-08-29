@@ -29,7 +29,10 @@ src/reference_harness/
 ├── dep_graph_check.py # parse modules.md; assert DAG + legal direction
 ├── matrix.py          # emit the compatibility-matrix report (implementations x databases)
 ├── multiset.py        # order-insensitive matching under a caller's own comparison
-├── case_assertions.py # CaseFailure + the comparison primitives the runner and oracle share
+├── case_assertions.py # CaseFailure + the comparison primitives the grading seams share
+├── write_plan.py      # write grading: what a golden write statement must be for the
+│                      #   neutral input it renders — row classification, bind
+│                      #   correlation, close addresses, gates, and inheritance routing
 ├── case_runner.py     # the layered assertion engine: case-shape routing, provisioning,
 │                      #   rejected, writes, conflict, concurrency, coherence, and the
 │                      #   Unit Work Scenario's step order and transaction lifecycle
