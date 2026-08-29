@@ -1335,6 +1335,14 @@ _Avoid_: unmanaged entity, insert entity
 
 ### Conformance And Scope
 
+**Unit Work Scenario**:
+An ordered compatibility case that composes reads, buffered writes, and
+managed-object lifecycle actions across explicitly grouped Unit Work scopes.
+Each step may depend on earlier published results and states its own observable;
+the Scenario as a whole proves ordering, identity, transaction lifecycle, and
+write-settlement behavior that no isolated operation can establish.
+_Avoid_: SQL script, scenario runner, test workflow, transaction script
+
 **Feature**:
 A named behavior within a module, identified by a feature tag on the compatibility cases that exercise it. Features are finer-grained than modules: a module names a whole behavior, while a Conformance Slice cuts the corpus at feature granularity — claiming some features of a module while deferring others.
 _Avoid_: capability, sub-module, facet
