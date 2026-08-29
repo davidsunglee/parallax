@@ -354,11 +354,25 @@ def load_fixtures(model_ref: str) -> dict[str, object]:
 class Provisioner:  # pragma: no cover - exercised by the Docker provider / conformance lanes
     """A session-scoped Testcontainers Postgres with the simple per-case reset path."""
 
+    @classmethod
+    def adapter(cls) -> type[PostgresAdapter]:
+        """The database adapter class this provisioner opens.
+
+        Declared here, beside the container image and the driver options the
+        connection is opened with, so nothing else restates which adapter runs:
+        a profile reads its dialect back off this class without constructing a
+        provisioner, a container, or a connection. The import is deferred like
+        this module's other reaches into the driver, so naming the adapter costs
+        no psycopg import until something asks for it.
+        """
+        from parallax.postgres import PostgresAdapter
+
+        return PostgresAdapter
+
     def __init__(self) -> None:
         from testcontainers.community.postgres import PostgresContainer
 
         from parallax.conformance import constants
-        from parallax.postgres import PostgresAdapter
 
         self._container = PostgresContainer(constants.POSTGRES_IMAGE)
         self._container.start()
@@ -374,7 +388,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         # cache-invalidation quirk, not a Parallax-level concern; an ordinary
         # long-lived application connection against one stable schema keeps
         # the default).
-        self._adapter = PostgresAdapter.connect(
+        self._adapter = self.adapter().connect(
             self._conninfo, autocommit=True, prepare_threshold=None
         )
         self._peers: list[PostgresAdapter] = []
@@ -394,9 +408,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         statements. Tracked for teardown; also usable as a manual
         ``execRolledBack`` connection.
         """
-        from parallax.postgres import PostgresAdapter
-
-        peer = PostgresAdapter.connect(self._conninfo, autocommit=autocommit)
+        peer = self.adapter().connect(self._conninfo, autocommit=autocommit)
         self._peers.append(peer)
         return peer
 
@@ -407,12 +419,13 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         objects; the adapter recognizes it at its boundary and binds the driver's
         native structured-document type, so no psycopg bind mechanics leak here.
         """
+        dialect = self._adapter.dialect
         for statement in reset_statements():
             self._adapter.execute_write(statement, [])
-        for statement in schema_statements(model):
+        for statement in schema_statements(model, dialect):
             self._adapter.execute_write(statement, [])
-        for sql, binds in fixture_statements(model, fixtures):
-            self._adapter.execute_write(POSTGRES.to_driver_sql(sql), binds)
+        for sql, binds in fixture_statements(model, fixtures, dialect):
+            self._adapter.execute_write(dialect.to_driver_sql(sql), binds)
 
     def close(self) -> None:
         for peer in self._peers:

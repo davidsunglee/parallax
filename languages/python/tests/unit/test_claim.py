@@ -22,7 +22,6 @@ def test_snapshot_claim_capabilities_match_slices_md() -> None:
 def test_claim_capabilities_include_and_exclude_shape() -> None:
     claim = Claim(
         modules=("m-core",),
-        dialects=("postgres",),
         case_shapes=("read",),
         include=("slice-x",),
         exclude=("skip-me",),
@@ -35,7 +34,6 @@ def test_claim_capabilities_include_and_exclude_shape() -> None:
 def test_claim_capabilities_omit_empty_case_tags() -> None:
     claim = Claim(
         modules=("m-core",),
-        dialects=("postgres",),
         case_shapes=("read",),
         include=(),
         exclude=(),

@@ -115,7 +115,6 @@ def test_classify_names_the_first_failed_filter(
 def test_classify_exclude_filter() -> None:
     claim = Claim(
         modules=("m-predicate",),
-        dialects=("postgres",),
         case_shapes=("read",),
         include=("slice-snapshot-1",),
         exclude=("aggregation",),
@@ -408,7 +407,6 @@ _TX_PAST_READ_ONLY_CASE = (
 # the case's own routing (its module tags, shape, and slice tag).
 _TX_PAST_READ_ONLY_CLAIM = Claim(
     modules=("m-identity-map", "m-temporal-read"),
-    dialects=("postgres",),
     case_shapes=("scenario",),
     include=("slice-managed-1",),
     exclude=(),
