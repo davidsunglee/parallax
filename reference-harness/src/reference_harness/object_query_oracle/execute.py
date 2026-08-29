@@ -391,6 +391,19 @@ def reference_rows(reader: ReadExecutor, sql: str) -> list[dict[str, Any]]:
     return reader.query(sql)
 
 
+def project_like(row: dict[str, Any], template_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep only the columns the golden root projection carries.
+
+    An independent oracle states its own naive SELECT, so it may project more than
+    the golden read's roots do; what it is graded on is the root set the golden
+    published, not the columns a second formulation chose to carry.
+    """
+    if not template_rows:
+        return row
+    keep = set(template_rows[0])
+    return {key: value for key, value in row.items() if key in keep}
+
+
 # --- Temporal Selection -----------------------------------------------------
 
 # Canonical as-of dimension order: Valid Time precedes Transaction Time in both the
@@ -439,6 +452,44 @@ def query_temporal_selections(query: Any) -> dict[str, TemporalSelection]:
         elif tag == "history":
             selections[dimension] = HistorySelection()
     return selections
+
+
+def root_asof_pins(query: dict[str, Any]) -> dict[str, str]:
+    """Map ``{dimension: coordinate}`` from the read's own ``asOf`` selections.
+
+    A dimension absent here defaults to the child's own ``latest`` value at
+    propagation time, and a SCANNED dimension (``history`` / ``asOfRange``) pins
+    nothing: it selects a milestone set rather than a coordinate. Empty when the
+    root is unpinned.
+    """
+    return {
+        dimension: selection.coordinate
+        for dimension, selection in query_temporal_selections(query).items()
+        if isinstance(selection, AsOfSelection)
+    }
+
+
+def expected_pin_suffix(child_entity: Entity, pins: Mapping[str, str]) -> list[Any]:
+    """The as-of binds a temporal child level MUST carry, after its IN-list.
+
+    Per dimension, in canonical order (Valid Time, then Transaction Time): the
+    propagated value is the root pin for that dimension, or the child's own
+    ``default`` (``latest``) when the root did not pin it. ``latest`` lowers to the
+    single equality bind (the axis's ``infinity``); a finite instant lowers to the
+    half-open range's two binds ``[D, D]``. A non-temporal child yields ``[]``.
+    """
+    by_axis = {axis["dimension"]: axis for axis in child_entity.temporal_runtime_axes}
+    suffix: list[Any] = []
+    for dimension in _CANONICAL_AXIS_ORDER:
+        axis = by_axis.get(dimension)
+        if axis is None:
+            continue
+        coordinate = pins.get(dimension, axis.get("default", "latest"))
+        if coordinate == "latest":
+            suffix.append(axis["infinity"])
+        else:
+            suffix.extend([coordinate, coordinate])
+    return suffix
 
 
 def expected_temporal_suffix(
