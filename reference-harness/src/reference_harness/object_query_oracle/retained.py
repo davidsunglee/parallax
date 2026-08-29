@@ -38,7 +38,7 @@ class StepIncludes:
     query: dict[str, Any]
     steps: list[includes.FetchStep]
     root_rows: list[materialize.PublishedRow]
-    children_by_hop: dict[includes.HopKey, dict[Any, list[dict[str, Any]]]]
+    children_by_hop: dict[includes.HopKey, dict[Any, list[materialize.PublishedRow]]]
 
 
 @dataclass(frozen=True, slots=True)

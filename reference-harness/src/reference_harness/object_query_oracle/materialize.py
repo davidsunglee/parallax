@@ -13,11 +13,14 @@ document is fanned out at the concrete variant a row names, so the variant must
 already be resolved, and each derivation's own absence is invisible until the one
 after it runs. So the sequence is offered whole, once per kind of position a row
 can stand at — :func:`materialize_read` for the position an Object Query names,
-:func:`materialize_navigated` for one a relationship declaration reached — and the
-steps it is composed of are private. What comes back is a :class:`PublishedRow`,
-which is what the consumers of a published row accept, so a path assembling the
-sequence itself fails where it would have published rather than silently
-publishing storage.
+:func:`materialize_navigated` for one a relationship declaration reached, and
+:func:`materialize_hop_level` for one level of a deep fetch — and the steps it is
+composed of are private. What comes back is a :class:`PublishedRow`, whose
+constructor only those entry points can reach and which is what the consumers of a
+published row accept, so a path assembling the sequence itself fails where it
+would have published rather than silently publishing storage. A step that runs
+AFTER an entry point projects what it published and demands that provenance on
+the way in, so nothing gains it by being projected.
 
 The physical facts themselves are never re-derived here: family topology comes
 from :mod:`..inheritance`, column placement from :mod:`..storage_layout`, and the
@@ -83,6 +86,15 @@ class _MaterializedRow(dict[str, Any]):
         self.consumed_value_object_columns = consumed_value_object_columns or set()
 
 
+_SEAM = object()
+"""The token :class:`PublishedRow`'s constructor demands.
+
+It is module-private, so holding the class is not enough to stamp a row with the
+provenance its consumers check for: the entry points below, which ARE the
+derivations that provenance stands for, are the only places one can be minted.
+"""
+
+
 class PublishedRow(_MaterializedRow):
     """A row that reached its logical result through this module's seam.
 
@@ -93,6 +105,26 @@ class PublishedRow(_MaterializedRow):
     """
 
     __slots__ = ()
+
+    def __init__(
+        self,
+        values: dict[str, Any],
+        seam: object,
+        *,
+        value_object_columns: dict[str, Any] | None = None,
+        consumed_value_object_columns: set[str] | None = None,
+    ) -> None:
+        if seam is not _SEAM:
+            raise CaseFailure(
+                "a published row is minted by this module's materialization entry "
+                "points alone, because the provenance stands for the derivation they "
+                "run; a row assembled anywhere else has not been through it."
+            )
+        super().__init__(
+            values,
+            value_object_columns=value_object_columns,
+            consumed_value_object_columns=consumed_value_object_columns,
+        )
 
 
 def _materialized_row(row: dict[str, Any]) -> _MaterializedRow:
@@ -113,10 +145,31 @@ def _published(row: dict[str, Any]) -> PublishedRow:
     if isinstance(row, _MaterializedRow):
         return PublishedRow(
             dict(row),
+            _SEAM,
             value_object_columns=dict(row.value_object_columns),
             consumed_value_object_columns=set(row.consumed_value_object_columns),
         )
-    return PublishedRow(dict(row))
+    return PublishedRow(dict(row), _SEAM)
+
+
+def _refuse_an_unpublished_row(case: Case, step: str, row: Mapping[str, Any]) -> None:
+    """Refuse a later projection step's input that never came through the seam.
+
+    A step AFTER the sequence projects what a read published rather than publishing
+    anything itself, so its input carries the provenance already. A row that does
+    not is one the sequence never ran for: the fan-out that would have replaced its
+    stored document with the members it holds, or the derivation that would have
+    consumed its branch carrier, may simply not have happened — and projecting it
+    would hand that storage on under the provenance of a published row.
+    """
+    if isinstance(row, PublishedRow):
+        return
+    raise CaseFailure(
+        f"{case.path.name}: {step} projects a row a read PUBLISHED, but this one did "
+        f"not come through the materialization seam (materialize_read / "
+        f"materialize_navigated / materialize_hop_level), so it may still carry the "
+        f"storage those derivations take out."
+    )
 
 
 def reference_identity_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -200,7 +253,7 @@ def materialize_navigated(
     """
     return [
         _published(
-            materialize_document_layout(
+            _materialize_document_layout(
                 case,
                 variant_entity(case.model, entity, row),
                 [row],
@@ -208,6 +261,55 @@ def materialize_navigated(
             )[0]
         )
         for row in _materialize_navigated_family_variant(case, entity, rows)
+    ]
+
+
+def materialize_hop_level(
+    case: Case,
+    entity: Entity,
+    rows: list[dict[str, Any]],
+    *,
+    view_key: str,
+    tag_column: str | None,
+    variant_map: Mapping[Any, str],
+) -> list[PublishedRow]:
+    """The rows one level of a deep fetch publishes.
+
+    A hop reaches its position by following an Include Path segment, so like a
+    navigated position it carries no Object Query and its own level golden fixes
+    the projection shape. What it does carry, and a navigated position does not, is
+    a RESOLVED concrete set: *tag_column* is the shared-table discriminator a
+    polymorphic table-per-hierarchy hop projects, stated beside the family's
+    *variant_map* rather than re-derived here, and is ``None`` for a hop that
+    resolves to one concrete or to a non-inheritance target. The hop states those
+    facts because they are the level's own; the derivation over them is this
+    module's, which is why the level is materialized here rather than assembled
+    step by step by the caller that planned it.
+
+    Navigating is instance-form, and a polymorphic level's document fan-out is
+    taken per row at the concrete that row's own derived ``familyVariant`` names.
+    """
+    if tag_column is None:
+        return [
+            _published(row)
+            for row in _materialize_document_layout(case, entity, rows, include_value_objects=True)
+        ]
+    at_their_variant = [
+        _materialize_hop_variant(
+            case, row, view_key=view_key, tag_column=tag_column, variant_map=variant_map
+        )
+        for row in rows
+    ]
+    return [
+        _published(
+            _materialize_document_layout(
+                case,
+                case.model.entity(row["familyVariant"]),
+                [row],
+                include_value_objects=True,
+            )[0]
+        )
+        for row in at_their_variant
     ]
 
 
@@ -398,7 +500,7 @@ def _document_value(document: Any, path: tuple[str, ...]) -> Any:
     return current
 
 
-def materialize_document_layout(
+def _materialize_document_layout(
     case: Case,
     entity: Entity,
     rows: list[dict[str, Any]],
@@ -457,7 +559,7 @@ def materialize_document_layout(
 def _materialize_target_document_layout(
     case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool, widened: frozenset[str]
 ) -> list[dict[str, Any]]:
-    """:func:`materialize_document_layout` over the case's own read target.
+    """:func:`_materialize_document_layout` over the case's own read target.
 
     A top-level read's rows belong to its query's own ``target``; a deep fetch's
     child level does not, which is why the entity is an argument there and resolved
@@ -466,7 +568,7 @@ def _materialize_target_document_layout(
     target_name = case.object_query.get("target")
     if not isinstance(target_name, str):
         return rows
-    return materialize_document_layout(
+    return _materialize_document_layout(
         case,
         case.model.entity(target_name),
         rows,
@@ -506,7 +608,7 @@ def _materialize_target_tph_document_layout(
         if not isinstance(variant, str):
             materialized.append(row)
             continue
-        (decoded,) = materialize_document_layout(
+        (decoded,) = _materialize_document_layout(
             case,
             case.model.entity(variant),
             [row],
@@ -637,7 +739,7 @@ def _with_family_variant(
     return row
 
 
-def materialize_hop_variant(
+def _materialize_hop_variant(
     case: Case,
     row: dict[str, Any],
     *,
@@ -670,7 +772,7 @@ def _materialize_navigated_family_variant(
     A relationship reaches its target by declaration, so the position carries no
     Object Query and its own family fixes the concrete set — there is no ``narrowTo``
     to read and no whole-read superset to assert, the level's own golden being what
-    fixes the projection shape (:func:`materialize_hop_variant`, the eager
+    fixes the projection shape (:func:`_materialize_hop_variant`, the eager
     counterpart). A position resolving to ONE concrete already names its variant and
     carries no branch carrier at all; a multi-concrete one is polymorphic under both
     strategies, publishing ``familyVariant`` from a table-per-hierarchy tag or from
@@ -735,10 +837,14 @@ def narrow_to_variant_columns(case: Case, rows: list[PublishedRow]) -> list[Publ
     alone); this ADDITIONAL narrowing applies only where a row already carries a
     materialized ``familyVariant`` (a no-op for a concrete-target read, or a
     non-inheritance entity, whose rows carry none).
+
+    Narrowing projects what a read published rather than publishing anything, so
+    each row arrives with that provenance and leaves carrying it forward.
     """
     family = Family(case.model.entity_defs)
     narrowed: list[PublishedRow] = []
     for row in rows:
+        _refuse_an_unpublished_row(case, "per-variant column narrowing", row)
         variant = row.get("familyVariant")
         if not isinstance(variant, str):
             narrowed.append(row)
@@ -754,6 +860,7 @@ def narrow_to_variant_columns(case: Case, rows: list[PublishedRow]) -> list[Publ
                     for key, value in row.items()
                     if key == "familyVariant" or key in own_columns
                 },
+                _SEAM,
                 value_object_columns=dict(row.value_object_columns),
                 consumed_value_object_columns=set(row.consumed_value_object_columns),
             )
@@ -868,7 +975,7 @@ def variant_entity(model: Model, entity: Entity, row: dict[str, Any]) -> Entity:
         return entity
 
 
-def materialize_variant_owner_node(case: Case, entity: Entity, row: dict[str, Any]) -> PublishedRow:
+def materialize_variant_owner_node(case: Case, entity: Entity, row: PublishedRow) -> PublishedRow:
     """:func:`_materialize_owner_node` against the concrete Entity *row* names itself.
 
     A Value Object occurrence is decoded and projected against the Entity that
@@ -878,11 +985,14 @@ def materialize_variant_owner_node(case: Case, entity: Entity, row: dict[str, An
     written by another version of the application would reach the logical result
     (`m-document-codec`).
 
-    The decode is the LAST step of the sequence, so it is where a row that skipped
-    an earlier one is still recognizable: it refuses a row standing at a
-    polymorphic position that still carries the branch carrier
-    ``familyVariant`` is derived from.
+    The decode PROJECTS a row an entry point above already published rather than
+    publishing one of its own, so it demands that provenance and carries it
+    forward. It is also the last step of the sequence, so it is where a row that
+    skipped an earlier one is still recognizable: it refuses a row standing at a
+    polymorphic position that still carries the branch carrier ``familyVariant`` is
+    derived from.
     """
+    _refuse_an_unpublished_row(case, "the owner-node decode", row)
     _refuse_a_carried_branch(case, entity, row)
     return _published(_materialize_owner_node(variant_entity(case.model, entity, row), row))
 
