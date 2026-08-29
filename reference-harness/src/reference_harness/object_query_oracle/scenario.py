@@ -783,7 +783,8 @@ def _widened_documents(case: Case, step_index: int) -> frozenset[str]:
     if not _resolves_a_materializing_write(case, step_index):
         return frozenset()
     written = case.model.entity(case.scenario[step_index + 1]["write"]["target"]["entity"])
-    column, members = materialize.document_layout_members(case, written)
+    document = case.model.storage_layout.document(written.canonical_name)
+    column, members = document.column, document.members
     if not column:
         return frozenset()
     occurrences = frozenset(member.name for member in members if member.type_spelling is None)

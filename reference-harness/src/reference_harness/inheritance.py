@@ -36,6 +36,7 @@ DDL and write derivation.
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .naming import default_column_name
@@ -511,6 +512,50 @@ class Family:
             self._render_key(self.defs.canonical_key(name))
             for name in sorted(concretes, key=identity)
         ]
+
+
+# --- the family position a query reads --------------------------------------
+
+
+@dataclass(frozen=True)
+class QueryPosition:
+    """The abstract family node a query reads, with the family it belongs to.
+
+    *target* keeps the QUERY's own spelling of that position — every :class:`Family`
+    lookup resolves an unambiguous local alias itself, so carrying the authored
+    spelling keeps a consumer's diagnostics in the case's own words.
+    """
+
+    family: Family
+    target: str
+    strategy: str | None
+
+
+def query_position(query: Any, entity_defs: list[dict[str, Any]]) -> QueryPosition | None:
+    """Classify *query*'s target position: the abstract family node it reads, or
+    ``None`` for every other read.
+
+    One classifier for every consumer whose behavior turns on the distinction,
+    because they all ask the same question of the same field. An ABSTRACT position
+    resolves over more than one concrete subtype, so its SQL partitions per branch
+    and its result carries a variant tag (`m-sql`); a CONCRETE-target read — and any
+    read of a non-inheritance entity — carries neither, having already named the one
+    variant it returns. What differs between consumers is only the storage
+    *strategy* they then project that behavior from.
+
+    Abstractness is read off the definition's inheritance role, which only a family
+    participant carries, so a non-inheritance target answers ``None`` by the same
+    test.
+    """
+    target = query.get("target") if isinstance(query, dict) else None
+    if not isinstance(target, str):
+        return None
+    family = Family(entity_defs)
+    if target not in family.defs:
+        return None
+    if not is_abstract(family.defs[target]):
+        return None
+    return QueryPosition(family, target, family.strategy_of(target))
 
 
 def _entity_defs(descriptor: dict[str, Any]) -> list[dict[str, Any]]:

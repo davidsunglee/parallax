@@ -21,6 +21,7 @@ from .inheritance import (
     Family,
     effective_column,
     inheritance_of,
+    resolve_effective_definition,
     role_of,
 )
 from .naming import default_column_name
@@ -146,6 +147,42 @@ class DocumentPath:
 
 type MemberPlacement = DirectColumn | DocumentPath
 """Where one logical member of one Table lives."""
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentMember:
+    """One member a Relational Document Layout keeps inside the shared Structured
+    Column: where it sits in the document and — for a leaf — the declared type its
+    stored spelling decodes through.
+
+    ``address`` identifies the member — by its declaring owner, so two disjoint
+    inheritance siblings sharing a Table may reuse a member name and still be told
+    apart — and ``column`` only spells it: a member inside a document claims no
+    Column, so its spelling is free to collide with the Column a direct member
+    really holds.
+    """
+
+    address: MemberAddress
+    column: str
+    path: tuple[str, ...]
+    type_spelling: str | None
+
+    @property
+    def name(self) -> str:
+        return self.address.path[0]
+
+
+@dataclass(frozen=True, slots=True)
+class EntityDocument:
+    """One Entity's Structured Column and the top-level members it carries.
+
+    An Entity whose Table carries no Structured Column — and a rowless position
+    mapped to no Table at all — answers the empty document, which is what makes a
+    consumer's document fan-out inert rather than conditional at its call sites.
+    """
+
+    column: str
+    members: tuple[DocumentMember, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1075,6 +1112,77 @@ def _compile_layout(
     )
 
 
+_EMPTY_DOCUMENT = EntityDocument("", ())
+
+
+def _entity_document(
+    family: Family,
+    layout: TableLayout,
+    entity: str,
+    effective: dict[str, Any],
+) -> EntityDocument:
+    """*entity*'s Structured Column and the top-level members it keeps inside it.
+
+    Residency comes from the independently compiled Member Placements, never from
+    the declaration, and each member is asked for at its own address: a Table shared
+    by disjoint inheritance siblings holds a placement per declaration, so the member
+    one of them reaches under a reused name is the one its own declaration owns. A
+    leaf inside an occurrence is addressed under that occurrence and is left to the
+    occurrence's own document, which already carries it.
+    """
+    slot = next(
+        (slot for slot in layout.columns if isinstance(slot.contributor, RelationalDocument)), None
+    )
+    if slot is None:
+        return _EMPTY_DOCUMENT
+
+    def resident(declaration: dict[str, Any], type_spelling: str | None) -> DocumentMember | None:
+        address = member_address(family, entity, declaration["name"])
+        placement = layout.placement(address)
+        if not (isinstance(placement, DocumentPath) and placement.slot == slot):
+            return None
+        return DocumentMember(address, effective_column(declaration), placement.path, type_spelling)
+
+    declared = (
+        *((attribute, attribute["type"]) for attribute in effective.get("attributes") or []),
+        *((occurrence, None) for occurrence in effective.get("valueObjects") or []),
+    )
+    return EntityDocument(
+        slot.column,
+        tuple(
+            member
+            for declaration, type_spelling in declared
+            if (member := resident(declaration, type_spelling)) is not None
+        ),
+    )
+
+
+def _compile_documents(
+    index: _ModelIndex,
+    by_table: Mapping[str, TableLayout],
+) -> dict[str, EntityDocument]:
+    """Every Entity's document, keyed by canonical identity.
+
+    Asked of the Entity's own effective Table, so a rowless position that maps to
+    one — a table-per-hierarchy root — answers for the Structured Column its family
+    shares, while a tableless one answers the empty document.
+    """
+    definitions = list(index.definitions)
+    documents: dict[str, EntityDocument] = {}
+    for definition in definitions:
+        identity = _identity(definition)
+        effective = (
+            resolve_effective_definition(definitions, identity)
+            if inheritance_of(definition) is not None
+            else definition
+        )
+        layout = by_table.get(effective.get("table", ""))
+        if layout is None:
+            continue
+        documents[identity] = _entity_document(index.family, layout, identity, effective)
+    return documents
+
+
 @dataclass(frozen=True, slots=True)
 class StorageLayout:
     """The model's bounded immutable Table, Entity, and position layout graph.
@@ -1088,6 +1196,7 @@ class StorageLayout:
     tables: tuple[TableLayout, ...]
     _tables: Mapping[str, TableLayout] = field(repr=False, compare=False)
     _entities: Mapping[str, EntityLayoutView] = field(repr=False, compare=False)
+    _documents: Mapping[str, EntityDocument] = field(repr=False, compare=False)
     _families: Mapping[str, _FamilyFacts] = field(repr=False, compare=False)
 
     def __deepcopy__(self, memo: dict[int, Any]) -> StorageLayout:
@@ -1100,6 +1209,10 @@ class StorageLayout:
     def entity(self, entity: str) -> EntityLayoutView | None:
         """Return one concrete row owner's layout selection, or absent."""
         return self._entities.get(entity)
+
+    def document(self, entity: str) -> EntityDocument:
+        """Return the Structured Column ``entity``'s rows carry and its members."""
+        return self._documents.get(entity, _EMPTY_DOCUMENT)
 
     def position(self, concrete_entities: Sequence[str]) -> PositionLayoutView | None:
         """Build a query-scoped view for one canonical effective concrete set."""
@@ -1329,6 +1442,7 @@ def compile_storage_layout(
         tables=layouts,
         _tables=MappingProxyType({layout.table: layout for layout in layouts}),
         _entities=MappingProxyType({view.entity: view for view in entity_views}),
+        _documents=MappingProxyType(_compile_documents(index, by_table)),
         _families=MappingProxyType({facts.root: facts for facts in family_facts}),
     )
 

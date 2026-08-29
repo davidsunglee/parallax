@@ -67,7 +67,7 @@ from .inheritance import (
     STRATEGY_TPCS,
     WRITE_REJECTED_RULES,
     Family,
-    is_abstract,
+    query_position,
     tag_of,
     validate_family,
     validate_query_inheritance,
@@ -99,11 +99,8 @@ from .storage_layout import (
 from .storage_layout import (
     ColumnContributor,
     ColumnTier,
-    DocumentPath,
-    MemberAddress,
-    RelationalDocument,
+    DocumentMember,
     TableLayout,
-    member_address,
     validate_storage_layout,
 )
 from .temporal_selection_validate import normalize_authored_temporal_selections
@@ -640,67 +637,6 @@ def _apply_given(case: Case, db: DatabaseProvider) -> None:
         db.execute(entry["sql"], list(entry.get("binds", [])))
 
 
-class _AbstractFamilyPosition(NamedTuple):
-    """The abstract family node a query reads, with the family it belongs to.
-
-    *target* keeps the QUERY's own spelling of that position — every :class:`Family`
-    lookup resolves an unambiguous local alias itself, so carrying the authored
-    spelling keeps a consumer's diagnostics in the case's own words.
-    """
-
-    family: Family
-    target: str
-    strategy: str | None
-
-
-def _abstract_family_position(case: Case, query: Any) -> _AbstractFamilyPosition | None:
-    """Classify *query*'s target position: the abstract family node it reads, or
-    ``None`` for every other read.
-
-    One classifier for every consumer whose behavior turns on the distinction,
-    because they all ask the same question of the same field. An ABSTRACT position
-    resolves over more than one concrete subtype, so its SQL partitions per branch
-    and its result carries a variant tag (`m-sql`); a CONCRETE-target read — and any
-    read of a non-inheritance entity — carries neither, having already named the one
-    variant it returns. What differs between consumers is only the storage
-    *strategy* they then project that behavior from.
-
-    Abstractness is read off the definition's inheritance role, which only a family
-    participant carries, so a non-inheritance target answers ``None`` by the same
-    test.
-    """
-    target = query.get("target") if isinstance(query, dict) else None
-    if not isinstance(target, str):
-        return None
-    family = Family(case.model.entity_defs)
-    if target not in family.defs:
-        return None
-    if not is_abstract(family.defs[target]):
-        return None
-    return _AbstractFamilyPosition(family, target, family.strategy_of(target))
-
-
-class _DocumentMember(NamedTuple):
-    """One member a Relational Document Layout keeps inside the shared Structured
-    Column: where it sits in the document and — for a leaf — the declared type its
-    stored spelling decodes through.
-
-    ``address`` identifies the member — by its declaring owner, so two disjoint
-    inheritance siblings sharing a Table may reuse a member name and still be told
-    apart — and ``column`` only spells it: a member inside a document claims no
-    Column, so its spelling is free to collide with the Column a direct member
-    really holds."""
-
-    address: MemberAddress
-    column: str
-    path: tuple[str, ...]
-    type_spelling: str | None
-
-    @property
-    def name(self) -> str:
-        return self.address.path[0]
-
-
 class _DocumentAssignment(NamedTuple):
     """One independently derived assigned Document Path and the complete encoded
     value that lands there.
@@ -714,46 +650,6 @@ class _DocumentAssignment(NamedTuple):
 
     path: tuple[str, ...]
     value: Any
-
-
-def _document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[_DocumentMember, ...]]:
-    """*entity*'s Structured Column and the top-level members it carries.
-
-    Answers ``("", ())`` for a conventional ``Columns`` entity, which is what makes
-    the fan-out below inert rather than conditional at its call sites. Residency
-    comes from the independently compiled Member Placements, never from the
-    declaration, and each member is asked for at its own address: a Table shared by
-    disjoint inheritance siblings holds a placement per declaration, so the member
-    one of them reaches under a reused name is the one its own declaration owns. A
-    leaf inside an occurrence is addressed under that occurrence and is left to the
-    occurrence's own document, which already carries it.
-    """
-    layout = case.model.storage_layout.table(entity.table)
-    if layout is None:
-        return "", ()
-    slot = next(
-        (slot for slot in layout.columns if isinstance(slot.contributor, RelationalDocument)), None
-    )
-    if slot is None:
-        return "", ()
-    family = Family(case.model.entity_defs)
-
-    def resident(declaration: dict[str, Any], type_spelling: str | None) -> _DocumentMember | None:
-        address = member_address(family, entity.canonical_name, declaration["name"])
-        placement = layout.placement(address)
-        if not (isinstance(placement, DocumentPath) and placement.slot == slot):
-            return None
-        return _DocumentMember(address, declaration["column"], placement.path, type_spelling)
-
-    declared = (
-        *((attribute, attribute["type"]) for attribute in entity.attributes),
-        *((occurrence, None) for occurrence in entity.value_objects),
-    )
-    return slot.column, tuple(
-        member
-        for declaration, type_spelling in declared
-        if (member := resident(declaration, type_spelling)) is not None
-    )
 
 
 # The projected output column that carries the table-per-concrete-subtype
@@ -1345,7 +1241,8 @@ def _classify_write_row(
     answer, from the step's own mutation, and never inferred from the row.
     """
     pk_columns = {a["column"] for a in entity.attributes if a.get("primaryKey")}
-    document_column, resident = _document_layout_members(case, entity)
+    layout_document = case.model.storage_layout.document(entity.canonical_name)
+    document_column, resident = layout_document.column, layout_document.members
     resident_columns = {member.column for member in resident}
     columns: dict[str, Any] = {}
     set_columns: dict[str, Any] = {}
@@ -1413,7 +1310,7 @@ def _classify_write_row(
 
 
 def _entity_document(
-    case: Case, entity: Entity, resident: tuple[_DocumentMember, ...], row: dict[str, Any]
+    case: Case, entity: Entity, resident: tuple[DocumentMember, ...], row: dict[str, Any]
 ) -> dict[str, Any]:
     """The complete Structured Column document one opening ① row implies.
 
@@ -1474,7 +1371,7 @@ def _document_assignments(
     reaching inside it. Order is the layout's, not the row's, because both
     dialects' mutation expressions apply left to right (`m-dialect`).
     """
-    _column, resident = _document_layout_members(case, entity)
+    resident = case.model.storage_layout.document(entity.canonical_name).members
     assignments: list[_DocumentAssignment] = []
     for member in resident:
         name = member.name
@@ -2169,7 +2066,7 @@ def _assert_versioned_update_input(
     optimistic-lock Attribute keeps a Column of its own under either layout.
     """
     version_col = _version_column(entity)
-    document_column, _resident = _document_layout_members(case, entity)
+    document_column = case.model.storage_layout.document(entity.canonical_name).column
     assignments = (
         [_document_assignments(case, entity, row) for row in rows] if document_column else []
     )
@@ -2237,7 +2134,7 @@ def _assert_update_input(
     `set` clause names, and in what order — is unchanged, because a document
     assignment is still one column assignment.
     """
-    document_column, resident = _document_layout_members(case, entity)
+    document_column = case.model.storage_layout.document(entity.canonical_name).column
     assignments = (
         [_document_assignments(case, entity, row) for row in rows] if document_column else []
     )
@@ -2444,7 +2341,7 @@ def _assert_temporal_input(
     # as the non-temporal concrete-subtype write does. `None` for a table-per-concrete-
     # subtype / non-inheritance entity (an ordinary single-table milestone write).
     tag = _tag(entity)
-    document_column, _resident = _document_layout_members(case, entity)
+    document_column = case.model.storage_layout.document(entity.canonical_name).column
 
     def assert_open(statement: str, binds: list[Any]) -> None:
         golden_columns = _parse_insert_columns(case, statement)
@@ -3884,11 +3781,11 @@ def _origin_variant_columns(case: Case, origin: dict[str, Any]) -> tuple[str, ..
     settled write whose find observed exactly the row it names.
 
     Which position is abstract is asked of the same classifier materialization asks
-    (:func:`_abstract_family_position`), so one rule in this harness decides whether
-    a read's rows carry a variant — of *origin*'s own query, because that is the read
-    whose rows are being interrogated.
+    (:func:`~reference_harness.inheritance.query_position`), so one rule in this
+    harness decides whether a read's rows carry a variant — of *origin*'s own query,
+    because that is the read whose rows are being interrogated.
     """
-    position = _abstract_family_position(case, origin.get("objectQuery"))
+    position = query_position(origin.get("objectQuery"), case.model.entity_defs)
     if position is None:
         return ()
     if position.strategy == STRATEGY_TPCS:
