@@ -24,7 +24,6 @@ from _authored_storage_support import answering_for_instance_state, stored_state
 from _transact_support import (
     BALANCE,
     PERSON,
-    RecordingPort,
     account_db,
     balance_row,
     db_for,
@@ -33,9 +32,20 @@ from _transact_support import (
 from pydantic import BaseModel
 
 from _support import mirrored_models as mm
+from _support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    ScriptedPort,
+    Transact,
+    Write,
+    WriteCall,
+)
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
 from parallax.core import Attr, Entity, attr
+from parallax.core.base import PresentDocument
 from parallax.core.entity import (
     EntityDefinitionError,
     EntityGraphWriter,
@@ -61,6 +71,8 @@ _ACCOUNT_ROW: dict[str, object] = {
     "balance": Decimal("100.00"),
     "version": 4,
 }
+
+_ACCOUNT_READ = Read(rows=[_ACCOUNT_ROW])
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
@@ -70,15 +82,13 @@ def _typed_hint(node: object) -> object:
     return state.source
 
 
-def _account_port(rows: list[dict[str, object]] | None = None) -> RecordingPort:
-    return RecordingPort(rows=[dict(row) for row in (rows or [_ACCOUNT_ROW])])
-
-
 # --------------------------------------------------------------------------- #
 # What a source value carries.                                                #
 # --------------------------------------------------------------------------- #
 def test_a_typed_node_carries_the_state_its_row_observed() -> None:
-    node = account_db(_account_port()).find(mm.Account.where(mm.Account.id == 1)).result()
+    node = (
+        account_db(ScriptedPort(_ACCOUNT_READ)).find(mm.Account.where(mm.Account.id == 1)).result()
+    )
     hint = _typed_hint(node)
     assert hint is not None
     assert cast("Any", hint).observation.key == VersionedStateKey(cast("Any", hint).object_key, 4)
@@ -90,7 +100,7 @@ def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() 
     # fact living on that object, so a second copy would keep licensing writes
     # after the flush that spent the first. Both reads participate and the typed
     # source stays live across the second, which is what makes them one state.
-    port = RecordingPort(row_queue=([dict(_ACCOUNT_ROW)], [dict(_ACCOUNT_ROW)]))
+    port = ScriptedPort(Transact(Read(rows=[dict(_ACCOUNT_ROW)], times=2)))
 
     def fn(tx: Transaction) -> tuple[object, object]:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -108,7 +118,9 @@ def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() 
 # Claim transfer and stripping.                                               #
 # --------------------------------------------------------------------------- #
 def test_entity_edit_transfers_the_sources_claim_to_the_derived_value() -> None:
-    node = account_db(_account_port()).find(mm.Account.where(mm.Account.id == 1)).result()
+    node = (
+        account_db(ScriptedPort(_ACCOUNT_READ)).find(mm.Account.where(mm.Account.id == 1)).result()
+    )
     edited = node.edit(balance=Decimal("125.00"))
     assert _typed_hint(edited) is _typed_hint(node)
 
@@ -116,7 +128,11 @@ def test_entity_edit_transfers_the_sources_claim_to_the_derived_value() -> None:
 def test_wire_copy_answers_the_same_value_and_therefore_the_same_claim() -> None:
     import copy as copy_module
 
-    node = account_db(_account_port()).wire.find(mm.Account.where(mm.Account.id == 1)).result()
+    node = (
+        account_db(ScriptedPort(_ACCOUNT_READ))
+        .wire.find(mm.Account.where(mm.Account.id == 1))
+        .result()
+    )
     assert isinstance(node, WireEntity)
     for copied in (cast("Any", node).copy(), copy_module.copy(node), copy_module.deepcopy(node)):
         assert copied is node
@@ -127,7 +143,11 @@ def test_plain_dict_conversion_strips_a_wire_nodes_keyed_source_status() -> None
     # The hint rides a slot rather than a mapping entry, so a plain conversion
     # carries none of it: what comes out is ordinary domain data, which is
     # exactly what it is.
-    node = account_db(_account_port()).wire.find(mm.Account.where(mm.Account.id == 1)).result()
+    node = (
+        account_db(ScriptedPort(_ACCOUNT_READ))
+        .wire.find(mm.Account.where(mm.Account.id == 1))
+        .result()
+    )
     assert isinstance(node, WireEntity)
     converted = dict(node)
     assert converted == dict(node.items())
@@ -298,7 +318,9 @@ def test_pickling_a_typed_node_is_refused_while_it_carries_lifecycle_state() -> 
     # caller never learned it had. So the door refuses, and it refuses with the
     # language's own pickling error rather than a Parallax one — a caller
     # pickling a graph is inside `pickle`, not inside this framework.
-    node = account_db(_account_port()).find(mm.Account.where(mm.Account.id == 1)).result()
+    node = (
+        account_db(ScriptedPort(_ACCOUNT_READ)).find(mm.Account.where(mm.Account.id == 1)).result()
+    )
 
     with pytest.raises(pickle.PicklingError) as refusal:
         pickle.dumps(node)
@@ -312,7 +334,9 @@ def test_a_materialized_node_nested_in_what_is_pickled_is_refused_too() -> None:
     # Being the pickle's root is not what the refusal is about: `pickle`'s own
     # dispatch asks every object it writes for the same entry point, so a node
     # buried in a container refuses the whole dump.
-    node = account_db(_account_port()).find(mm.Account.where(mm.Account.id == 1)).result()
+    node = (
+        account_db(ScriptedPort(_ACCOUNT_READ)).find(mm.Account.where(mm.Account.id == 1)).result()
+    )
 
     with pytest.raises(pickle.PicklingError):
         pickle.dumps({"accounts": [node]})
@@ -321,7 +345,9 @@ def test_a_materialized_node_nested_in_what_is_pickled_is_refused_too() -> None:
 def test_pickling_an_edited_copy_that_kept_the_claim_is_refused_too() -> None:
     # An edit transfers the claim, so the derived value is a materialized node's
     # equal in everything the refusal is about.
-    node = account_db(_account_port()).find(mm.Account.where(mm.Account.id == 1)).result()
+    node = (
+        account_db(ScriptedPort(_ACCOUNT_READ)).find(mm.Account.where(mm.Account.id == 1)).result()
+    )
     edited = node.edit(balance=Decimal("125.00"))
     assert _typed_hint(edited) is _typed_hint(node)
 
@@ -343,7 +369,9 @@ def test_a_value_object_of_a_materialized_graph_round_trips() -> None:
     # Only an Entity node can carry lifecycle state, so the refusal reaches no
     # Value Object — including one a read published, which is ordinary domain
     # data the moment it is held on its own.
-    port = RecordingPort(rows=[{"id": 1, "name": "Ada", "address": {"street": "Main"}}])
+    port = ScriptedPort(
+        Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"street": "Main"})}])
+    )
     customer = (
         connect(port, vo.CUSTOMER_MODEL).find(vo.Customer.where(vo.Customer.id == 1)).result()
     )
@@ -511,7 +539,7 @@ def test_a_pickle_written_before_the_refusal_existed_still_loads() -> None:
     # ordinary domain data they always described — a value the write verbs then
     # refuse for having lost its provenance, which is the same answer they gave
     # such a value before.
-    port = _account_port()
+    port = ScriptedPort(_ACCOUNT_READ, Transact())
     db = account_db(port)
     node = db.find(mm.Account.where(mm.Account.id == 1)).result()
 
@@ -522,7 +550,7 @@ def test_a_pickle_written_before_the_refusal_existed_still_loads() -> None:
     with pytest.raises(KeyedWriteValueError) as refusal:
         db.transact(lambda tx: tx.update(restored.edit(balance=Decimal("125.00"))))
     assert refusal.value.code == "write-value-not-stored"
-    assert not any(op[0] == "write" for op in port.ops)
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 # --------------------------------------------------------------------------- #
@@ -553,7 +581,7 @@ def test_a_retained_included_child_outlives_its_released_root_and_snapshot() -> 
         "in_z": _TX_START,
         "out_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
     }
-    port = RecordingPort(row_queue=([policy_row], [coverage_row]))
+    port = ScriptedPort(Read(rows=[policy_row]), Read(rows=[coverage_row]))
     snapshot = db_for(POLICY_MODEL, port).find(
         Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
     )
@@ -570,7 +598,7 @@ def test_releasing_every_source_makes_the_transactions_index_forget_the_state() 
     # observed state no source value and no buffered write reaches disappears
     # from it on the runtime's own collection schedule, with no claim counting
     # and no scope-bound bookkeeping.
-    port = _account_port()
+    port = ScriptedPort(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> tuple[object, object]:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -591,7 +619,7 @@ def test_releasing_every_source_makes_the_transactions_index_forget_the_state() 
 # Consumption: what a successful flush spends.                                #
 # --------------------------------------------------------------------------- #
 def test_a_successful_flush_consumes_the_evidence_its_write_used() -> None:
-    port = _account_port()
+    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> object:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -606,7 +634,7 @@ def test_reusing_a_consumed_source_after_the_flush_is_refused() -> None:
     # A consumed source stays an ordinary readable value; what it no longer
     # carries is authority, because the state it observed is not the stored state
     # any more. The refusal is at the second verb, before any DML of its own.
-    port = _account_port()
+    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()), Transact())
     db = account_db(port)
 
     def fn(tx: Transaction) -> mm.Account:
@@ -622,7 +650,7 @@ def test_reusing_a_consumed_source_after_the_flush_is_refused() -> None:
     with pytest.raises(WriteEvidenceError) as refusal:
         db.transact(second)
     assert refusal.value.code == "write-evidence-consumed"
-    assert [op[0] for op in port.ops].count("write") == 1
+    assert [type(op) for op in port.calls].count(WriteCall) == 1
 
 
 def test_a_locking_source_consumed_by_a_flush_cannot_drive_a_second_write() -> None:
@@ -631,7 +659,9 @@ def test_a_locking_source_consumed_by_a_flush_cannot_drive_a_second_write() -> N
     # unit of work has itself already written past, so the participating source
     # that drove the surviving write carries no authority for a second one. The
     # dependent read in the middle is what forces that first write out.
-    port = RecordingPort(row_queue=([dict(_ACCOUNT_ROW)], [dict(_ACCOUNT_ROW)]))
+    port = ScriptedPort(
+        Transact(Read(rows=[dict(_ACCOUNT_ROW)]), Write(), Read(rows=[dict(_ACCOUNT_ROW)]))
+    )
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -642,14 +672,14 @@ def test_a_locking_source_consumed_by_a_flush_cannot_drive_a_second_write() -> N
     with pytest.raises(WriteEvidenceError) as refusal:
         account_db(port).transact(fn, concurrency="locking")
     assert refusal.value.code == "write-evidence-consumed"
-    assert [op[0] for op in port.ops].count("write") == 1
+    assert [type(op) for op in port.calls].count(WriteCall) == 1
 
 
 def test_an_intent_eliminated_before_dml_consumes_nothing() -> None:
     # An edited copy whose effective change set is empty buffers nothing and
     # issues no statement, so the evidence its source carries is still about the
     # stored state and still licenses a later write.
-    port = _account_port()
+    port = ScriptedPort(Transact(_ACCOUNT_READ))
     db = account_db(port)
 
     def fn(tx: Transaction) -> mm.Account:
@@ -659,14 +689,14 @@ def test_an_intent_eliminated_before_dml_consumes_nothing() -> None:
 
     unchanged = db.transact(fn)
     assert cast("Any", _typed_hint(unchanged)).observation.consumed is False
-    assert not any(op[0] == "write" for op in port.ops)
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_an_aborted_flush_spends_no_evidence() -> None:
     # A failed flush aborts the transaction, so nothing it wrote survives and the
     # evidence a live value carries is still about stored state — which is why
     # abort needs no restoration.
-    port = _account_port()
+    port = ScriptedPort(Transact(_ACCOUNT_READ))
     db = account_db(port)
     escaped: list[mm.Account] = []
 
@@ -688,7 +718,9 @@ def test_two_observed_versions_of_one_object_coexist_and_resolve_independently()
     # A reread that sees a NEW version is evidence about a different state, so
     # the older live value is not upgraded: it keeps the version it observed, and
     # a write from it gates on that version rather than on the fresher one.
-    port = RecordingPort(row_queue=([dict(_ACCOUNT_ROW)], [{**_ACCOUNT_ROW, "version": 7}]))
+    port = ScriptedPort(
+        Transact(Read(rows=[dict(_ACCOUNT_ROW)]), Read(rows=[{**_ACCOUNT_ROW, "version": 7}]))
+    )
     db = account_db(port)
 
     def fn(tx: Transaction) -> tuple[object, object]:
@@ -707,7 +739,7 @@ def test_a_reread_of_one_state_answers_the_evidence_the_first_read_retained() ->
     # two graph positions reaching one node do — so a flush that spends the state
     # spends it for both rather than leaving a second live value able to rewrite
     # what was just written.
-    port = RecordingPort(row_queue=([dict(_ACCOUNT_ROW)], [dict(_ACCOUNT_ROW)]))
+    port = ScriptedPort(Transact(Read(rows=[dict(_ACCOUNT_ROW)], times=2)))
 
     def fn(tx: Transaction) -> tuple[object, object]:
         first = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -725,36 +757,41 @@ def test_a_standalone_versioned_source_gates_a_later_transactions_write() -> Non
     # The default preference resolves `Account` to Optimistic, where the database
     # gate is the authority — so a value a plain `db.find` produced carries the
     # version it observed into a later transaction and no reread is issued.
-    port = _account_port()
+    port = ScriptedPort(_ACCOUNT_READ, Transact(Write()))
     db = account_db(port)
     node = db.find(mm.Account.where(mm.Account.id == 1)).result()
 
     db.transact(lambda tx: tx.update(node.edit(balance=Decimal("125.00"))))
-    assert [op[0] for op in port.ops] == ["read", "begin", "write", "commit"]
-    update = port.ops[2]
-    assert cast("tuple[object, ...]", update[2])[-1] == 4
+    assert [type(op) for op in port.calls] == [ReadCall, BeginCall, WriteCall, CommitCall]
+    (update,) = (call for call in port.calls if isinstance(call, WriteCall))
+    assert update.binds[-1] == 4
 
 
 def test_a_standalone_versioned_source_meeting_an_intervening_writer_conflicts() -> None:
     # The gate is the concurrency authority, so a stale standalone source is not
     # refused at the verb — it is admitted, and its zero-row gated UPDATE raises
     # the ordinary optimistic conflict the database discovered.
-    port = _account_port()
+    port = ScriptedPort(_ACCOUNT_READ, Transact(Write(affected=0)))
     db = account_db(port)
     node = db.find(mm.Account.where(mm.Account.id == 1)).result()
-    port.write_affected = 0
 
     with pytest.raises(OptimisticLockConflictError):
         db.transact(lambda tx: tx.update(node.edit(balance=Decimal("125.00"))))
 
 
 def test_a_standalone_temporal_source_carries_its_milestone_into_a_transaction() -> None:
-    port = RecordingPort(rows=[balance_row(in_z=_TX_START)])
+    port = ScriptedPort(Read(rows=[balance_row(in_z=_TX_START)]), Transact(Write(times=2)))
     db = db_for(BALANCE, port)
     node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
 
     db.transact(lambda tx: tx.update(node.edit(value=Decimal("9.00"))))
-    assert [op[0] for op in port.ops] == ["read", "begin", "write", "write", "commit"]
+    assert [type(op) for op in port.calls] == [
+        ReadCall,
+        BeginCall,
+        WriteCall,
+        WriteCall,
+        CommitCall,
+    ]
 
 
 def test_a_standalone_versioned_source_is_refused_under_an_explicit_locking_preference() -> None:
@@ -762,7 +799,7 @@ def test_a_standalone_versioned_source_is_refused_under_an_explicit_locking_pref
     # the shared row lock a read of the writing transaction holds. A standalone
     # `db.find` acquired none, so its retained version buys nothing here: the
     # verb refuses before buffering and before any statement is emitted.
-    port = _account_port()
+    port = ScriptedPort(_ACCOUNT_READ, Transact())
     db = account_db(port)
     node = db.find(mm.Account.where(mm.Account.id == 1)).result()
 
@@ -771,7 +808,7 @@ def test_a_standalone_versioned_source_is_refused_under_an_explicit_locking_pref
             lambda tx: tx.update(node.edit(balance=Decimal("125.00"))), concurrency="locking"
         )
     assert refusal.value.code == "write-evidence-unavailable"
-    assert not any(op[0] == "write" for op in port.ops)
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_a_standalone_unversioned_source_is_refused_under_the_default_preference() -> None:
@@ -780,14 +817,14 @@ def test_a_standalone_unversioned_source_is_refused_under_the_default_preference
     # row lock is the whole of its evidence. A standalone `db.find` holds none,
     # and there is no version for the database to settle the write against, so
     # the refusal is the only honest answer.
-    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+    port = ScriptedPort(Read(rows=[{"id": 1, "name": "Ada"}]), Transact())
     db = db_for(PERSON, port)
     node = db.find(Person.where(Person.id == 1)).result()
 
     with pytest.raises(WriteEvidenceError) as refusal:
         db.transact(lambda tx: tx.update(node.edit(name="Grace")))
     assert refusal.value.code == "write-evidence-unavailable"
-    assert not any(op[0] == "write" for op in port.ops)
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_an_unconditional_delete_is_spelled_through_the_predicate_verb() -> None:
@@ -795,11 +832,12 @@ def test_an_unconditional_delete_is_spelled_through_the_predicate_verb() -> None
     # says the unconditional intent outright rather than reaching it by building
     # a throwaway value, and an unversioned Non-Temporal target lowers it
     # readlessly to one predicate-shaped statement.
-    port = RecordingPort()
+    port = ScriptedPort(Transact(Write()))
     db_for(PERSON, port).transact(lambda tx: tx.delete_where(Person.where(Person.id == 1)))
 
-    assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
-    assert port.ops[1][2] == (1,)
+    assert [type(op) for op in port.calls] == [BeginCall, WriteCall, CommitCall]
+    (written,) = (call for call in port.calls if isinstance(call, WriteCall))
+    assert written.binds == (1,)
 
 
 # --------------------------------------------------------------------------- #
@@ -811,7 +849,9 @@ def test_a_hydratable_invalid_root_carries_its_ordinary_claim() -> None:
     # evidence any conforming node of that read would, and stays an ordinary
     # write source. Only a non-hydrating position, which has no conforming value
     # at all, carries none.
-    port = RecordingPort(rows=[{"id": 1, "name": "Ada", "address": {"city": "Berlin"}}])
+    port = ScriptedPort(
+        Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"city": "Berlin"})}])
+    )
     record = (
         connect(port, vo.CUSTOMER_MODEL)
         .find(vo.Customer.where(vo.Customer.id == 1))

@@ -20,13 +20,20 @@ is what keeps ``batch_size`` a performance dial.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping
 from decimal import Decimal
 from typing import Any, Final, cast
 
 import pytest
-from _transact_support import ACCOUNT, NoIoPort, RecordingPort, db_for
+from _transact_support import ACCOUNT, db_for
 
+from _support.db_port import (
+    Read,
+    ReadCall,
+    RefusingPort,
+    ScriptedPort,
+    Transact,
+)
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import (
     ORDERS_MODEL,
@@ -35,7 +42,7 @@ from parallax.conformance.story_models import (
     OrderStatus,
     Position,
 )
-from parallax.core.db_port import Row
+from parallax.core.db_port import DbPort, Row
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.temporal_read import Edge, Pin
@@ -86,16 +93,12 @@ def _status_row(status_id: int, order_id: int) -> Row:
     return {"id": status_id, "order_id": order_id, "order_item_id": None, "code": "NEW"}
 
 
-def _pages(*results: Sequence[Row]) -> RecordingPort:
-    return RecordingPort(row_queue=[list(result) for result in results])
-
-
-def _orders(port: RecordingPort) -> Database:
+def _orders(port: DbPort) -> Database:
     return db_for(ORDERS_MODEL, port)
 
 
-def _reads(port: RecordingPort) -> list[tuple[object, ...]]:
-    return [op for op in port.ops if op[0] == "read"]
+def _reads(port: ScriptedPort) -> list[ReadCall]:
+    return [op for op in port.calls if isinstance(op, ReadCall)]
 
 
 def _all_orders() -> ObjectQuery[Order, Order]:
@@ -119,7 +122,7 @@ def test_a_created_stream_answers_nothing_and_reaches_no_port() -> None:
     # stream answers is answered inside its own scope, `pin` included, so
     # "outside the scope, everything raises" is one rule rather than one rule
     # with an exception.
-    stream = Database(NoIoPort(), ORDERS_MODEL).stream(_all_orders())
+    stream = Database(RefusingPort(), ORDERS_MODEL).stream(_all_orders())
     with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
         _ = stream.pin
     with pytest.raises(SnapshotStreamStateError, match="single-pass"):
@@ -129,7 +132,7 @@ def test_a_created_stream_answers_nothing_and_reaches_no_port() -> None:
 
 
 def test_entering_twice_is_refused() -> None:
-    port = _pages([])
+    port = ScriptedPort()
     with (
         _orders(port).stream(_all_orders()) as stream,
         pytest.raises(SnapshotStreamStateError, match="entered exactly once"),
@@ -138,7 +141,7 @@ def test_entering_twice_is_refused() -> None:
 
 
 def test_entering_while_draining_is_refused() -> None:
-    port = _pages([_order_row(1)])
+    port = ScriptedPort(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders()) as stream:
         roots = iter(stream)
         next(roots)
@@ -149,7 +152,7 @@ def test_entering_while_draining_is_refused() -> None:
 def test_a_second_view_of_either_kind_is_refused() -> None:
     # Sharper than it strictly had to be, deliberately: a second pass over a
     # single-pass delivery is an error rather than a silent empty one.
-    port = _pages([_order_row(1)], [])
+    port = ScriptedPort(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders()) as stream:
         list(stream)
         with pytest.raises(SnapshotStreamStateError, match="single-pass"):
@@ -157,7 +160,7 @@ def test_a_second_view_of_either_kind_is_refused() -> None:
         with pytest.raises(SnapshotStreamStateError, match="single-pass"):
             stream.checked()
 
-    port = _pages([_order_row(1)], [])
+    port = ScriptedPort(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders()) as stream:
         list(stream.checked())
         with pytest.raises(SnapshotStreamStateError, match="single-pass"):
@@ -167,7 +170,7 @@ def test_a_second_view_of_either_kind_is_refused() -> None:
 
 
 def test_an_exhausted_stream_answers_nothing_further() -> None:
-    port = _pages([_order_row(1)])
+    port = ScriptedPort(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders()) as stream:
         assert _ids(iter(stream)) == [1]
         with pytest.raises(SnapshotStreamStateError, match="single-pass"):
@@ -177,7 +180,7 @@ def test_an_exhausted_stream_answers_nothing_further() -> None:
 
 
 def test_a_closed_stream_answers_nothing_at_all() -> None:
-    port = _pages([_order_row(1)])
+    port = ScriptedPort()
     stream = _orders(port).stream(_all_orders())
     with stream:
         pass
@@ -194,7 +197,7 @@ def test_an_iterator_retained_past_the_scope_reads_nothing_and_yields_nothing() 
     # its own entry point: an iterator first advanced after the scope closed
     # issues no statement, publishes no root, and leaves the closed state
     # standing rather than settling an exhausted one over it.
-    port = _pages([_order_row(1), _order_row(2)], [])
+    port = ScriptedPort()
     stream = _orders(port).stream(_all_orders(), batch_size=1)
     with stream:
         roots = iter(stream)
@@ -209,7 +212,7 @@ def test_a_partly_drained_stream_does_not_resume_past_its_scope() -> None:
     # The same rule at the harder position: the delivery is under way and the
     # generator holds a live cursor, and it still reaches no page once the scope
     # that answered it has closed.
-    port = _pages([_order_row(1)], [_order_row(2)], [])
+    port = ScriptedPort(Read(rows=[_order_row(1)]))
     stream = _orders(port).stream(_all_orders(), batch_size=1)
     with stream:
         roots = iter(stream)
@@ -225,7 +228,7 @@ def test_every_advance_past_the_scope_refuses_again_rather_than_ending(view: str
     # Each ADVANCE is an entry point of its own, so the refusal is not spent by
     # the first one that meets it: a caller looping over a retained view sees the
     # named error every time rather than an empty iteration after the first.
-    port = _pages([_order_row(1), _order_row(2)], [])
+    port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[]))
     stream = _orders(port).stream(_all_orders(), batch_size=1)
     with stream:
         roots = iter(stream) if view == "default" else stream.checked()
@@ -240,7 +243,7 @@ def test_an_exhausted_view_ends_inside_its_scope_and_refuses_outside_it() -> Non
     # Exhaustion is not a refusal: a delivery that ran out keeps answering
     # `StopIteration` while its scope stands, so the iterator protocol holds. The
     # scope rule then applies to it like everything else the stream exposes.
-    port = _pages([_order_row(1)], [])
+    port = ScriptedPort(Read(rows=[_order_row(1)]), Read(rows=[]))
     stream = _orders(port).stream(_all_orders(), batch_size=1)
     with stream:
         roots = iter(stream)
@@ -256,8 +259,8 @@ def test_the_pin_answers_before_the_first_page_and_matches_the_eager_read() -> N
     # A stream computes its pin from the query rather than from a result, so it
     # is available before a single row is read and no page can revise what the
     # caller was already told.
-    port = _pages([_order_row(1), _order_row(2)])
-    eager = _orders(_pages([_order_row(1)])).find(_all_orders())
+    port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]))
+    eager = _orders(ScriptedPort(Read(rows=[_order_row(1)]))).find(_all_orders())
     with _orders(port).stream(_all_orders(), batch_size=2) as stream:
         assert stream.pin == eager.pin
         assert _reads(port) == []
@@ -270,7 +273,7 @@ def test_the_read_gate_runs_at_entry_and_before_any_io() -> None:
     # The same gate an eager read crosses, in the same position relative to I/O:
     # a target the connected model does not declare is refused at entry, by a
     # port that raises if it is touched at all.
-    stream = Database(NoIoPort(), ACCOUNT).stream(_all_orders())
+    stream = Database(RefusingPort(), ACCOUNT).stream(_all_orders())
     with pytest.raises(QueryTargetError):
         stream.__enter__()
 
@@ -278,7 +281,7 @@ def test_the_read_gate_runs_at_entry_and_before_any_io() -> None:
 def test_the_repr_names_the_target_and_the_state_and_nothing_else() -> None:
     # A stream reports what it is and where it stands. Nothing about the page
     # plan, the cursor, or the port is readable off it.
-    stream = Database(NoIoPort(), ORDERS_MODEL).stream(_all_orders())
+    stream = Database(RefusingPort(), ORDERS_MODEL).stream(_all_orders())
     assert repr(stream) == "SnapshotStream(target='parallax.compatibility.Order', state='created')"
 
 
@@ -286,7 +289,9 @@ def test_the_repr_names_the_target_and_the_state_and_nothing_else() -> None:
 # A participating stream delivers through the transaction it was opened in.    #
 # --------------------------------------------------------------------------- #
 def test_a_participating_stream_delivers_its_roots_inside_the_transaction() -> None:
-    port = _pages([_order_row(1), _order_row(2)], [_order_row(3)])
+    port = ScriptedPort(
+        Transact(Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[_order_row(3)]))
+    )
 
     def body(tx: Transaction) -> list[int]:
         with tx.stream(_all_orders(), batch_size=2) as stream:
@@ -296,7 +301,9 @@ def test_a_participating_stream_delivers_its_roots_inside_the_transaction() -> N
 
 
 def test_a_participating_wire_stream_delivers_the_same_roots() -> None:
-    port = _pages([_order_row(1), _order_row(2)], [_order_row(3)])
+    port = ScriptedPort(
+        Transact(Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[_order_row(3)]))
+    )
 
     def body(tx: Transaction) -> list[int]:
         with tx.wire.stream(_all_orders(), batch_size=2) as stream:
@@ -306,7 +313,7 @@ def test_a_participating_wire_stream_delivers_the_same_roots() -> None:
 
 
 def test_a_participating_stream_validates_its_page_size_at_the_call() -> None:
-    port = _pages([])
+    port = ScriptedPort(Transact())
 
     def body(tx: Transaction) -> None:
         with pytest.raises(ValueError, match="positive built-in int"):
@@ -325,7 +332,7 @@ def test_a_participating_stream_validates_its_page_size_at_the_call() -> None:
 def test_a_batch_size_that_is_not_a_positive_int_is_refused_at_the_call(size: object) -> None:
     # An identity check, so nothing is coerced and `True` is not the page size 1.
     # The refusal lands at the call, before a plan or a page exists.
-    port = _pages([])
+    port = ScriptedPort()
     with pytest.raises(ValueError, match="positive built-in int"):
         _orders(port).stream(_all_orders(), batch_size=cast("int", size))
     with pytest.raises(ValueError, match="positive built-in int"):
@@ -334,10 +341,10 @@ def test_a_batch_size_that_is_not_a_positive_int_is_refused_at_the_call(size: ob
 
 
 def test_the_default_page_size_is_one_thousand_root_positions() -> None:
-    port = _pages([_order_row(1)])
+    port = ScriptedPort(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders()) as stream:
         list(stream)
-    assert cast("tuple[object, ...]", _reads(port)[0][2])[-1] == 1000
+    assert _reads(port)[0].binds[-1] == 1000
 
 
 # --------------------------------------------------------------------------- #
@@ -346,18 +353,18 @@ def test_the_default_page_size_is_one_thousand_root_positions() -> None:
 def test_a_result_with_no_roots_costs_one_statement() -> None:
     # A page with no roots gathers no parent keys, so no child level issues SQL
     # and the short page proves exhaustion in the same breath.
-    port = _pages([])
+    port = ScriptedPort(Read(rows=[]))
     with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
         assert list(stream) == []
     assert len(_reads(port)) == 1
 
 
 def test_each_nonempty_page_costs_one_plus_l_and_a_short_page_ends_the_stream() -> None:
-    port = _pages(
-        [_order_row(1), _order_row(2)],
-        [_item_row(10, 1), _item_row(11, 2)],
-        [_order_row(3)],
-        [_item_row(12, 3)],
+    port = ScriptedPort(
+        Read(rows=[_order_row(1), _order_row(2)]),
+        Read(rows=[_item_row(10, 1), _item_row(11, 2)]),
+        Read(rows=[_order_row(3)]),
+        Read(rows=[_item_row(12, 3)]),
     )
     with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
         assert _ids(iter(stream)) == [1, 2, 3]
@@ -367,10 +374,10 @@ def test_each_nonempty_page_costs_one_plus_l_and_a_short_page_ends_the_stream() 
 def test_a_full_final_page_costs_one_more_empty_root_statement() -> None:
     # A full page proves nothing about what follows it, so exhaustion costs one
     # more root statement returning nothing. That empty page is still a page.
-    port = _pages(
-        [_order_row(1), _order_row(2)],
-        [_item_row(10, 1), _item_row(11, 2)],
-        [],
+    port = ScriptedPort(
+        Read(rows=[_order_row(1), _order_row(2)]),
+        Read(rows=[_item_row(10, 1), _item_row(11, 2)]),
+        Read(rows=[]),
     )
     with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
         assert _ids(iter(stream)) == [1, 2]
@@ -380,7 +387,9 @@ def test_a_full_final_page_costs_one_more_empty_root_statement() -> None:
 def test_a_delivered_limit_ends_the_stream_without_a_further_statement() -> None:
     # A declared `limit` caps total roots and sizes the final page, so a limit
     # delivered in full is exhaustion already proved.
-    port = _pages([_order_row(1), _order_row(2)], [_item_row(10, 1), _item_row(11, 2)])
+    port = ScriptedPort(
+        Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[_item_row(10, 1), _item_row(11, 2)])
+    )
     query = _all_orders().include(Order.items).limit(2)
     with _orders(port).stream(query, batch_size=2) as stream:
         assert _ids(iter(stream)) == [1, 2]
@@ -388,21 +397,21 @@ def test_a_delivered_limit_ends_the_stream_without_a_further_statement() -> None
 
 
 def test_a_limit_narrower_than_the_page_sizes_the_page_it_caps() -> None:
-    port = _pages([_order_row(1)])
+    port = ScriptedPort(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders().limit(1), batch_size=100) as stream:
         assert _ids(iter(stream)) == [1]
-    assert cast("tuple[object, ...]", _reads(port)[0][2])[-1] == 1
+    assert _reads(port)[0].binds[-1] == 1
 
 
 def test_a_limit_wider_than_the_result_still_ends_on_the_short_page() -> None:
-    port = _pages([_order_row(1)])
+    port = ScriptedPort(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders().limit(50), batch_size=2) as stream:
         assert _ids(iter(stream)) == [1]
     assert len(_reads(port)) == 1
 
 
 def test_leaving_the_loop_early_reads_no_further_page() -> None:
-    port = _pages([_order_row(1), _order_row(2)], [_order_row(3), _order_row(4)])
+    port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]))
     with _orders(port).stream(_all_orders(), batch_size=2) as stream:
         for root in stream:
             assert root.id == 1
@@ -413,13 +422,13 @@ def test_leaving_the_loop_early_reads_no_further_page() -> None:
 def test_a_later_page_seeks_past_the_last_root_of_the_page_before_it() -> None:
     # The cursor falls out of publication: the last root delivered is what the
     # next page's own predicate binds against.
-    port = _pages([_order_row(1), _order_row(2)], [_order_row(5)])
+    port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[_order_row(5)]))
     with _orders(port).stream(_all_orders(), batch_size=2) as stream:
         assert _ids(iter(stream)) == [1, 2, 5]
     first, second = _reads(port)
-    assert "t0.id >" not in cast("str", first[1])
-    assert "t0.id >" in cast("str", second[1])
-    assert cast("tuple[object, ...]", second[2])[-2] == 2
+    assert "t0.id >" not in first.sql
+    assert "t0.id >" in second.sql
+    assert second.binds[-2] == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -429,7 +438,9 @@ def test_a_later_page_seeks_past_the_last_root_of_the_page_before_it() -> None:
 def test_the_root_sequence_is_the_same_at_every_page_size(size: int) -> None:
     rows = [_order_row(index) for index in range(1, 4)]
     pages = [rows[start : start + size] for start in range(0, len(rows), size)]
-    port = _pages(*pages)
+    if len(rows) % size == 0:
+        pages.append([])
+    port = ScriptedPort(*(Read(rows=page) for page in pages))
     with _orders(port).stream(_all_orders(), batch_size=size) as stream:
         assert _ids(iter(stream)) == [1, 2, 3]
 
@@ -437,11 +448,11 @@ def test_the_root_sequence_is_the_same_at_every_page_size(size: int) -> None:
 # --------------------------------------------------------------------------- #
 # Identity: root-local, in both namespaces.                                    #
 # --------------------------------------------------------------------------- #
-def _diamond_pages() -> RecordingPort:
-    return _pages(
-        [_order_row(1)],
-        [_item_row(10, 1)],
-        [_item_row(10, 1)],
+def _diamond_pages() -> ScriptedPort:
+    return ScriptedPort(
+        Read(rows=[_order_row(1)]),
+        Read(rows=[_item_row(10, 1)]),
+        Read(rows=[_item_row(10, 1)]),
     )
 
 
@@ -474,8 +485,8 @@ def test_a_within_root_diamond_publishes_the_same_wire_value_under_both() -> Non
     )
 
 
-def _back_reference_pages() -> RecordingPort:
-    return _pages([_order_row(1)], [_item_row(10, 1)])
+def _back_reference_pages() -> ScriptedPort:
+    return ScriptedPort(Read(rows=[_order_row(1)]), Read(rows=[_item_row(10, 1)]))
 
 
 def test_a_back_reference_closes_the_cycle_under_find_and_under_stream() -> None:
@@ -502,8 +513,10 @@ def test_a_back_reference_publishes_the_same_wire_value_under_both() -> None:
     assert cast("Mapping[str, object]", items[0]["order"])["id"] == 1
 
 
-def _shared_to_one_pages() -> RecordingPort:
-    return _pages([_status_row(1, 7), _status_row(2, 7)], [_order_row(7)])
+def _shared_to_one_pages() -> ScriptedPort:
+    return ScriptedPort(
+        Read(rows=[_status_row(1, 7), _status_row(2, 7)]), Read(rows=[_order_row(7)]), Read()
+    )
 
 
 def _shared_query() -> ObjectQuery[OrderStatus, OrderStatus]:
@@ -564,10 +577,12 @@ _CURSORLESS = [
 ]
 
 
-def _cursorless_pages(row: Callable[[], Row], position: int, *, size: int) -> RecordingPort:
+def _cursorless_pages(row: Callable[[], Row], position: int, *, size: int) -> ScriptedPort:
     rows = [_order_row(1), _order_row(2), _order_row(3)]
     rows[position] = row()
-    return _pages(*[rows[start : start + size] for start in range(0, len(rows), size)])
+    return ScriptedPort(
+        *(Read(rows=rows[start : start + size]) for start in range(0, len(rows), size))
+    )
 
 
 @pytest.mark.parametrize(("row", "query"), _CURSORLESS)
@@ -658,7 +673,7 @@ _MILESTONES: Final[tuple[Row, ...]] = (
 )
 
 
-def _positions(port: RecordingPort) -> Database:
+def _positions(port: DbPort) -> Database:
     return db_for(POSITION_MODEL, port)
 
 
@@ -666,11 +681,11 @@ def _all_milestones() -> ObjectQuery[Position, Position]:
     return Position.where(Position.id == 1).history(TX_TIME).history(VALID_TIME)
 
 
-def _milestone_pages(*, size: int) -> RecordingPort:
+def _milestone_pages(*, size: int) -> ScriptedPort:
     pages = [list(_MILESTONES[start : start + size]) for start in range(0, len(_MILESTONES), size)]
     if len(_MILESTONES) % size == 0:
         pages.append([])
-    return _pages(*pages)
+    return ScriptedPort(*(Read(rows=page) for page in pages))
 
 
 @pytest.mark.parametrize("size", [1, 2, 3], ids=lambda size: f"batch-{size}")
@@ -712,7 +727,7 @@ def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() 
     port = _milestone_pages(size=1)
     with _positions(port).stream(_all_milestones(), batch_size=1) as stream:
         assert len(list(stream)) == 3
-    binds = [op[2] for op in _reads(port)]
+    binds = [op.binds for op in _reads(port)]
     assert binds == [
         (1, 1),
         (
@@ -757,7 +772,7 @@ def test_a_streamed_milestone_set_delivers_what_the_whole_result_read_does() -> 
     # key then that same edge, so a single object's streamed history IS the eager
     # edge rank — same roots, same order, same pin on each, and the same absence
     # of retained write evidence, a milestone view being read-only either way.
-    eager = _positions(_pages(list(_MILESTONES))).find(_all_milestones())
+    eager = _positions(ScriptedPort(Read(rows=list(_MILESTONES)))).find(_all_milestones())
     with _positions(_milestone_pages(size=1)).stream(_all_milestones(), batch_size=1) as stream:
         streamed = list(stream)
     published = eager.results()
@@ -796,7 +811,7 @@ def test_a_streamed_history_with_includes_is_refused_before_any_io() -> None:
     )
     with (
         pytest.raises(DeferredFeatureError, match="snapshot-history-includes"),
-        Database(NoIoPort(), POLICY_MODEL).stream(query, batch_size=2),
+        Database(RefusingPort(), POLICY_MODEL).stream(query, batch_size=2),
     ):
         pass  # pragma: no cover - the gate refuses at scope entry
 
@@ -808,7 +823,7 @@ def test_a_milestone_root_whose_edge_did_not_decode_ends_the_delivery() -> None:
     # then refuses to continue — and it is published at no edge pin of its own,
     # there being no milestone to name.
     broken = {**_MILESTONES[0], "in_z": None}
-    port = _pages([broken, _MILESTONES[1]], [])
+    port = ScriptedPort(Read(rows=[broken, _MILESTONES[1]]))
     delivered: list[object] = []
     with (
         _positions(port).stream(_all_milestones(), batch_size=2) as stream,
@@ -827,7 +842,7 @@ def test_a_milestone_root_whose_key_did_not_decode_stands_at_no_edge() -> None:
     # at all: a root whose own primary key did not decode stands behind no
     # projection, so there is nothing to read a milestone off and nothing to
     # continue from either.
-    port = _pages([{**_MILESTONES[0], "pos_id": None}, _MILESTONES[1]], [])
+    port = ScriptedPort(Read(rows=[{**_MILESTONES[0], "pos_id": None}, _MILESTONES[1]]))
     delivered: list[object] = []
     with (
         _positions(port).stream(_all_milestones(), batch_size=2) as stream,

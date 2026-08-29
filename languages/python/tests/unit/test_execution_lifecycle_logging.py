@@ -22,9 +22,15 @@ from typing import Any, Final, get_args
 from uuid import UUID, uuid4
 
 import pytest
-from _transact_support import ACCOUNT, FIXED, NEW_ROW, RecordingPort, deadlock, new_account
+from _transact_support import ACCOUNT, FIXED, deadlock, new_account
 
+from _support.db_port import (
+    ScriptedPort,
+    Transact,
+    Write,
+)
 from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import DbPort
 from parallax.core.execution_lifecycle import (
     AttemptCommitted,
     AttemptFailure,
@@ -165,7 +171,7 @@ def _attempt_failure(*, retry_eligible: bool) -> AttemptFailure:
     return AttemptFailure("CALLBACK", _failure(), retry_eligible)
 
 
-def _db(port: RecordingPort, provider: Any) -> Database:
+def _db(port: DbPort, provider: Any) -> Database:
     return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
@@ -625,8 +631,9 @@ def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record
         logger = _logger(level)
         collected = _Collecting()
         logger.addHandler(collected)
-        port = RecordingPort(rows=[NEW_ROW])
-        port.txn_faults = [deadlock(), deadlock()]
+        port = ScriptedPort(
+            Transact(Write(), commit=deadlock()), Transact(Write(), commit=deadlock())
+        )
         db = _db(port, LoggingLifecycleProvider(logger))
         try:
             with pytest.raises(DatabaseError):
@@ -659,8 +666,7 @@ def test_a_whole_transaction_through_connect_reads_as_one_operation(
     # operator would filter on, over a retry that succeeded, from a real
     # ``db.transact``.
     logger = _logger()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.txn_faults.append(deadlock())
+    port = ScriptedPort(Transact(Write(), commit=deadlock()), Transact(Write()))
     db = _db(port, LoggingLifecycleProvider(logger))
 
     def body(tx: Transaction) -> None:

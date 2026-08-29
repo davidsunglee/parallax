@@ -34,12 +34,18 @@ from _corpus_model_support import corpus_records, formed
 from _transact_support import (
     INFINITY_INSTANT,
     WHERE_POSITION_META,
-    RecordingPort,
     WherePosition,
     db_for,
 )
 
 from _support.clock_probes import instant_at
+from _support.db_port import (
+    Read,
+    ScriptedPort,
+    Transact,
+    Write,
+    WriteCall,
+)
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core import bitemp_write, storage_layout, txtime_write
@@ -772,7 +778,11 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
     # leaves the first read's evidence intact. Driven through the developer verbs
     # rather than a hand-supplied observation because the misresolution is in how
     # the observation is resolved, which a lowering-only probe cannot see.
-    port = RecordingPort(row_queue=[[_CURRENT_RECTANGLE], [_RETROACTIVE_RECTANGLE]])
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[_CURRENT_RECTANGLE]), Read(rows=[_RETROACTIVE_RECTANGLE]), Write(times=3)
+        )
+    )
 
     def fn(tx: Transaction) -> None:
         current = tx.find(
@@ -790,15 +800,15 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
 
     db_for(WHERE_POSITION_META, port).transact(fn, concurrency=concurrency)
 
-    close, head, tail = (op for op in port.ops if op[0] == "write")
-    assert close[1:] == (
+    close, head, tail = (op for op in port.calls if isinstance(op, WriteCall))
+    assert close == WriteCall(
         POSTGRES.to_driver_sql(
             "update where_position set out_z = ? "
             f"where id = ? and thru_z = ? and out_z = ?{gate_sql}"
         ),
         ("2024-06-01T00:00:00+00:00", 1, INFINITY_INSTANT, "infinity", *gate_binds),
     )
-    assert head[2] == (
+    assert head.binds == (
         1,
         "A",
         Decimal("100.00"),
@@ -807,7 +817,7 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
         "2024-06-01T00:00:00+00:00",
         "infinity",
     )
-    assert tail[2] == (
+    assert tail.binds == (
         1,
         "A",
         Decimal("150.00"),

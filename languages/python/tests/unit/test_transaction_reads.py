@@ -15,7 +15,7 @@ import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import _mixed_strategy_model as mx
 import observation_models as om
@@ -30,8 +30,6 @@ from _transact_support import (
     INSERT_SQL,
     NEW_ROW,
     PAYMENT,
-    NoIoPort,
-    RecordingPort,
     account_db,
     balance_row,
     db_for,
@@ -41,10 +39,21 @@ from _transact_support import (
 
 from _support import inheritance_models as im
 from _support import mirrored_models as mm
+from _support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    ScriptedPort,
+    Transact,
+    Write,
+    WriteCall,
+)
 from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import LATEST, TX_TIME
+from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
@@ -121,7 +130,7 @@ def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() 
     # value's write evidence belongs to the value. What its sources lack is
     # participation, which is exactly what an effective-Locking write asks for.
     calls: list[_RecordedFind] = []
-    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    port = ScriptedPort(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(database_module, "find", _recording_find(calls))
@@ -138,7 +147,9 @@ def test_a_participating_find_stamps_its_transactions_own_participation() -> Non
     # behind it, so it hands the executor that unit of work as the ledger and
     # every source it produces carries that transaction's participation.
     calls: list[_RecordedFind] = []
-    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    port = ScriptedPort(
+        Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
+    )
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(transaction_module, "find", _recording_find(calls))
@@ -154,7 +165,9 @@ def test_a_non_hydrating_find_retains_no_evidence() -> None:
     # root licenses no later write: no conforming value exists for it, so it is
     # observed by nothing and no source stands behind it.
     calls: list[_RecordedFind] = []
-    port = RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}])
+    port = ScriptedPort(
+        Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}]))
+    )
 
     def fn(tx: Transaction) -> None:
         root = tx.find(mm.Account.where(mm.Account.id == 1)).checked().result()
@@ -190,7 +203,7 @@ def test_every_attached_level_row_retains_its_own_evidence() -> None:
         "out_z": INFINITY_INSTANT,
     }
     calls: list[_RecordedFind] = []
-    port = RecordingPort(row_queue=([policy_row], [coverage_row]))
+    port = ScriptedPort(Transact(Read(rows=[policy_row]), Read(rows=[coverage_row])))
     db = db_for(POLICY_MODEL, port)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(transaction_module, "find", _recording_find(calls))
@@ -211,31 +224,32 @@ def test_find_on_a_non_versioned_entity_retains_no_observed_state() -> None:
     # `optimisticLocking` version column (every Payment-family member) observes
     # no state at all, never raising and never retaining evidence a later write
     # could gate on.
-    port = RecordingPort(rows=[{"id": 1, "amount": Decimal("100.00"), "card_network": "Visa"}])
+    port = ScriptedPort(
+        Transact(Read(rows=[{"id": 1, "amount": Decimal("100.00"), "card_network": "Visa"}]))
+    )
 
     def fn(tx: Transaction) -> None:
         tx.find(im.CardPayment.where(im.CardPayment.id == 1)).result()
 
     db_for(PAYMENT, port).transact(fn)
-    kinds = [op[0] for op in port.ops]
-    assert kinds == ["begin", "read", "commit"]
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
 def test_find_force_flushes_pending_writes_first() -> None:
     # Read-your-own-writes: the buffered insert executes BEFORE the dependent
     # read, inside the same still-open transaction (m-unit-work-001's shape).
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Write(), Read(rows=[NEW_ROW])))
 
     def fn(tx: Transaction) -> list[mm.Account]:
         tx.insert(new_account())
         return tx.find(mm.Account.where(mm.Account.id == 7)).results()
 
     assert account_db(port).transact(fn) == [read_account()]
-    assert port.ops == [
-        ("begin",),
-        ("write", INSERT_SQL, (7, "Newton", 5.00, 1)),
-        ("read", FIND_SQL_UNLOCKED, (7,)),
-        ("commit",),
+    assert port.calls == [
+        BeginCall(),
+        WriteCall(INSERT_SQL, (7, "Newton", 5.00, 1)),
+        ReadCall(FIND_SQL_UNLOCKED, (7,)),
+        CommitCall(),
     ]
 
 
@@ -247,41 +261,40 @@ def test_find_force_flushes_pending_writes_first() -> None:
 def test_an_explicit_optimistic_preference_reads_a_versioned_entity_lock_free() -> None:
     # Explicit and omitted resolve identically, so this pins the same statement
     # every default-preference find of a versioned Entity above already renders.
-    port = RecordingPort()
+    port = ScriptedPort(Transact(Read()))
     account_db(port).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)), concurrency="optimistic"
     )
-    assert port.ops == [("begin",), ("read", FIND_SQL_UNLOCKED, (7,)), ("commit",)]
+    assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (7,)), CommitCall()]
 
 
 def test_the_locking_preference_reads_a_versioned_entity_under_the_shared_lock() -> None:
     # The workflow-level override: `locking` forces the Locking strategy onto an
     # Entity whose own facet would otherwise supply a gate.
-    port = RecordingPort()
+    port = ScriptedPort(Transact(Read()))
     account_db(port).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)), concurrency="locking"
     )
-    assert port.ops == [("begin",), ("read", FIND_SQL_LOCKED, (7,)), ("commit",)]
+    assert port.calls == [BeginCall(), ReadCall(FIND_SQL_LOCKED, (7,)), CommitCall()]
 
 
 def test_a_default_preference_read_of_an_unversioned_entity_takes_the_shared_lock() -> None:
     # The mandatory Locking fallback: an unversioned Non-Temporal family
     # supplies no gate, so `optimistic` cannot mean lock-free for it.
-    port = RecordingPort(rows=[])
+    port = ScriptedPort(Transact(Read(rows=[])))
     db_for(mx.MIXED_STRATEGY_MODEL, port).transact(
         lambda tx: tx.find(mx.ConsignmentLeg.where(mx.ConsignmentLeg.id == 1))
     )
-    assert port.ops == [
-        ("begin",),
-        (
-            "read",
+    assert port.calls == [
+        BeginCall(),
+        ReadCall(
             POSTGRES.to_driver_sql(
                 "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
                 "where t0.id = ? for share of t0"
             ),
             (1,),
         ),
-        ("commit",),
+        CommitCall(),
     ]
 
 
@@ -290,10 +303,10 @@ def test_one_default_transaction_locks_the_unversioned_level_and_not_the_version
     # strategies. The versioned root's statement carries no suffix because its
     # write gate is the authority; the unversioned level's does, because a
     # shared lock is the only correctness mechanism its family has.
-    port = RecordingPort(
-        row_queue=(
-            [{"id": 1, "total": Decimal("10.00"), "version": 1}],
-            [{"id": 5, "consignment_id": 1, "carrier": "Hansa"}],
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "total": Decimal("10.00"), "version": 1}]),
+            Read(rows=[{"id": 5, "consignment_id": 1, "carrier": "Hansa"}]),
         )
     )
     db_for(mx.MIXED_STRATEGY_MODEL, port).transact(
@@ -301,8 +314,9 @@ def test_one_default_transaction_locks_the_unversioned_level_and_not_the_version
             mx.Consignment.where(mx.Consignment.id == 1).include(mx.Consignment.legs)
         )
     )
-    assert [op[0] for op in port.ops] == ["begin", "read", "read", "commit"]
-    root_sql, level_sql = port.ops[1][1], port.ops[2][1]
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, ReadCall, CommitCall]
+    root, level = (call for call in port.calls if isinstance(call, ReadCall))
+    root_sql, level_sql = root.sql, level.sql
     assert root_sql == POSTGRES.to_driver_sql(
         "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"
     )
@@ -316,10 +330,10 @@ def test_the_locking_preference_locks_every_level_of_the_same_deep_fetch() -> No
     # The same read under the override: one preference forcing one strategy
     # onto both Entities, which is what makes the mixed result above a
     # derivation rather than a property of the model alone.
-    port = RecordingPort(
-        row_queue=(
-            [{"id": 1, "total": Decimal("10.00"), "version": 1}],
-            [{"id": 5, "consignment_id": 1, "carrier": "Hansa"}],
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "total": Decimal("10.00"), "version": 1}]),
+            Read(rows=[{"id": 5, "consignment_id": 1, "carrier": "Hansa"}]),
         )
     )
     db_for(mx.MIXED_STRATEGY_MODEL, port).transact(
@@ -328,18 +342,18 @@ def test_the_locking_preference_locks_every_level_of_the_same_deep_fetch() -> No
         ),
         concurrency="locking",
     )
-    assert cast("str", port.ops[1][1]).endswith("for share of t0")
-    assert cast("str", port.ops[2][1]).endswith("for share of t0")
+    assert all(
+        call.sql.endswith("for share of t0") for call in port.calls if isinstance(call, ReadCall)
+    )
 
 
 def test_a_standalone_find_never_locks_whatever_the_entity_declares() -> None:
     # `db.find` owns no unit of work, so there is no participation to derive a
     # strategy from and the Locking fallback cannot reach it.
-    port = RecordingPort(rows=[])
+    port = ScriptedPort(Read(rows=[]))
     db_for(mx.MIXED_STRATEGY_MODEL, port).find(mx.ConsignmentLeg.where(mx.ConsignmentLeg.id == 1))
-    assert port.ops == [
-        (
-            "read",
+    assert port.calls == [
+        ReadCall(
             POSTGRES.to_driver_sql(
                 "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
                 "where t0.id = ?"
@@ -354,16 +368,18 @@ def test_db_find_pins_an_explicit_as_of_statement() -> None:
     # `.as_of(tx_time=LATEST)` pin comes back on the returned `Snapshot`.
     from parallax.core import LATEST
 
-    port = RecordingPort(
-        rows=[
-            {
-                "bal_id": 1,
-                "acct_num": "A-1",
-                "val": Decimal("5.00"),
-                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-            }
-        ]
+    port = ScriptedPort(
+        Read(
+            rows=[
+                {
+                    "bal_id": 1,
+                    "acct_num": "A-1",
+                    "val": Decimal("5.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                    "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                }
+            ]
+        )
     )
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
     statement = mm.Balance.where(mm.Balance.id == 1).as_of(tx_time=LATEST)
@@ -379,18 +395,20 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
     from parallax.core import LATEST
     from parallax.snapshot import edge_of
 
-    port = RecordingPort(
-        rows=[
-            {
-                "id": 1,
-                "amount": Decimal("2.50"),
-                "grade": "A",
-                "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "thru_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
-                "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
-                "out_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
-            }
-        ]
+    port = ScriptedPort(
+        Read(
+            rows=[
+                {
+                    "id": 1,
+                    "amount": Decimal("2.50"),
+                    "grade": "A",
+                    "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                    "thru_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
+                    "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+                    "out_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
+                }
+            ]
+        )
     )
     rate = MODELS["rate"]
     db = Database.connect(port, rate, clock=FixedClock(FIXED))
@@ -413,7 +431,9 @@ def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
     # (`transaction-time-pin-read-only`), and no concurrency mode is a way past
     # that, because the Transaction-Time past is never rewritten. The mode
     # therefore selects nothing here, which is the point of parametrizing it.
-    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    port = ScriptedPort(
+        Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
+    )
     db = db_for(BALANCE, port)
 
     def fn(tx: Transaction) -> None:
@@ -426,14 +446,16 @@ def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
 
     with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
         db.transact(fn, concurrency=concurrency)
-    assert not any(op[0] == "write" for op in port.ops)
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
     # An OMITTED axis (the default-latest pin) licenses a locking-mode write:
     # the read observed the CURRENT milestone, so the shared read lock
     # genuinely protects the row the ungated close targets.
-    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    port = ScriptedPort(
+        Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Write())
+    )
     db = db_for(BALANCE, port)
 
     def fn(tx: Transaction) -> None:
@@ -441,9 +463,9 @@ def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
         tx.terminate(fetched)
 
     db.transact(fn, concurrency="locking")  # must not raise
-    write_ops = [op for op in port.ops if op[0] == "write"]
+    write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(write_ops) == 1
-    sql = write_ops[0][1]
+    sql = write_ops[0].sql
     assert sql == POSTGRES.to_driver_sql(
         "update balance set out_z = ? where bal_id = ? and out_z = ?"
     )
@@ -454,7 +476,11 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
     # it with the observed payload rather than dropping untouched fields. Balance
     # is Transaction-Time temporal, so the default preference resolves it to the
     # Optimistic strategy and the close binds the observed `in_z` as its gate.
-    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Write(times=2)
+        )
+    )
     db = db_for(BALANCE, port)
 
     def fn(tx: Transaction) -> None:
@@ -462,9 +488,9 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
         tx.update(fetched.edit(value=Decimal("150.00")))
 
     db.transact(fn)
-    write_ops = [op for op in port.ops if op[0] == "write"]
+    write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(write_ops) == 2  # the close, then the merged chain
-    close_sql, close_binds = write_ops[0][1], write_ops[0][2]
+    close_sql, close_binds = write_ops[0].sql, write_ops[0].binds
     assert close_sql == POSTGRES.to_driver_sql(
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
@@ -474,7 +500,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
         "infinity",
         dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
     )
-    chain_sql, chain_binds = write_ops[1][1], write_ops[1][2]
+    chain_sql, chain_binds = write_ops[1].sql, write_ops[1].binds
     assert chain_sql == POSTGRES.to_driver_sql(
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
     )
@@ -489,14 +515,14 @@ def _branch_row(*, address: dict[str, object] | None) -> Row:
         "thru_z": INFINITY_INSTANT,
         "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "out_z": INFINITY_INSTANT,
-        "address": address,
+        "address": SQL_NULL if address is None else PresentDocument(cast("Any", address)),
     }
 
 
 def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> None:
     # Rectangle splitting consumes the observed Valid-Time bounds and full payload.
     # A real find-then-update makes both facts observable in the emitted DML.
-    port = RecordingPort(rows=[_branch_row(address=None)])
+    port = ScriptedPort(Transact(Read(rows=[_branch_row(address=None)]), Write(times=3)))
     db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
@@ -507,10 +533,10 @@ def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> 
         )
 
     db.transact(fn)
-    write_ops = [op for op in port.ops if op[0] == "write"]
+    write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(write_ops) == 3  # close the rectangle, then chain head + tail
-    head_binds = cast("tuple[object, ...]", write_ops[1][2])
-    tail_binds = cast("tuple[object, ...]", write_ops[2][2])
+    head_binds = write_ops[1].binds
+    tail_binds = write_ops[2].binds
     # The HEAD rectangle runs from the OBSERVED valid_from up to the
     # mutation instant, and carries the OBSERVED name. Neither value appears
     # anywhere in the sparse edited copy, so both can only have come from the
@@ -536,7 +562,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
         "geo": {"country": "FI"},
         "phones": [],
     }
-    port = RecordingPort(rows=[_branch_row(address=address)])
+    port = ScriptedPort(Transact(Read(rows=[_branch_row(address=address)]), Write(times=3)))
     db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
@@ -547,19 +573,21 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
         )
 
     db.transact(fn)
-    write_ops = [op for op in port.ops if op[0] == "write"]
+    write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(write_ops) == 3
     # BOTH chained rectangles carry the document, not just the one whose
     # payload the edited copy supplied.
     for op in write_ops[1:]:
-        binds = cast("tuple[object, ...]", op[2])
+        binds = op.binds
         assert binds[-1] == JsonDocument(value=address), binds
 
 
 def test_a_materialized_temporal_node_still_populates_real_axis_values() -> None:
     # A materialized read passes every fetched column, so its axis fields contain
     # the row's coordinates rather than fresh-instance defaults.
-    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    port = ScriptedPort(
+        Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
+    )
     db = db_for(BALANCE, port)
     fetched = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     assert fetched.tx_start == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
@@ -589,7 +617,7 @@ def _balance_history_rows() -> list[Row]:
 def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement() -> None:
     from parallax.core import Pin
 
-    port = RecordingPort(rows=_balance_history_rows())
+    port = ScriptedPort(Read(rows=_balance_history_rows()))
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
     # `.limit(...)` after `.history()` also pins that a cap is a SIBLING clause:
     # `scans_an_axis` reads the Temporal Selection map, so no other clause can
@@ -601,7 +629,7 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 
 
 def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement() -> None:
-    port = RecordingPort(rows=_balance_history_rows())
+    port = ScriptedPort(Transact(Read(rows=_balance_history_rows())))
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
     statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)
     snapshot = db.transact(lambda tx: tx.find(statement))
@@ -616,7 +644,10 @@ def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 # --------------------------------------------------------------------------- #
 def test_stale_web_edit_balance_render_then_submit_gates_on_the_observed_edge() -> None:
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = RecordingPort(rows=[balance_row(in_z=in_z)])
+    port = ScriptedPort(
+        Read(rows=[balance_row(in_z=in_z)]),
+        Transact(Read(rows=[balance_row(in_z=in_z)]), Write(times=2)),
+    )
     db = db_for(BALANCE, port)
 
     node, edge = stale_web_edit.render_balance_milestone(db, id=1)
@@ -625,9 +656,9 @@ def test_stale_web_edit_balance_render_then_submit_gates_on_the_observed_edge() 
     assert edge.valid_time_or_none is None  # Transaction-Time-Only declares no Valid Time
 
     stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
-    write_ops = [op for op in port.ops if op[0] == "write"]
-    close_sql = cast("str", write_ops[0][1])
-    close_binds = cast("tuple[object, ...]", write_ops[0][2])
+    write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
+    close_sql = write_ops[0].sql
+    close_binds = write_ops[0].binds
     assert close_sql == POSTGRES.to_driver_sql(
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
@@ -636,7 +667,7 @@ def test_stale_web_edit_balance_render_then_submit_gates_on_the_observed_edge() 
     # and the comparison passing is what says the two coordinates agree.
     assert close_binds[-1] == in_z
     # The chained replacement row preserves fields omitted from the submitted edit.
-    chain_binds = cast("tuple[object, ...]", write_ops[1][2])
+    chain_binds = write_ops[1].binds
     assert "A-1" in chain_binds
     assert Decimal("9.00") in chain_binds
 
@@ -648,11 +679,9 @@ def test_stale_web_edit_balance_submit_refuses_a_milestone_superseded_before_the
     # authored — the earlier of the two points staleness surfaces at.
     rendered_in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     superseding_in_z = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    port = RecordingPort(
-        row_queue=[
-            [balance_row(in_z=rendered_in_z)],
-            [balance_row(in_z=superseding_in_z)],
-        ]
+    port = ScriptedPort(
+        Read(rows=[balance_row(in_z=rendered_in_z)]),
+        Transact(Read(rows=[balance_row(in_z=superseding_in_z)])),
     )
     db = db_for(BALANCE, port)
 
@@ -661,7 +690,7 @@ def test_stale_web_edit_balance_submit_refuses_a_milestone_superseded_before_the
 
     with pytest.raises(stale_web_edit.StaleMilestoneError, match="superseded"):
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
-    assert not any(op[0] == "write" for op in port.ops)
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict() -> None:
@@ -672,7 +701,10 @@ def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict(
     # window `optimistic` covers by gating and `locking` covers by holding a
     # shared read lock on the row the comparison passed on.
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = RecordingPort(rows=[balance_row(in_z=in_z)], write_affected=0)
+    port = ScriptedPort(
+        Read(rows=[balance_row(in_z=in_z)]),
+        Transact(Read(rows=[balance_row(in_z=in_z)]), Write(affected=0)),
+    )
     db = db_for(BALANCE, port)
     _node, edge = stale_web_edit.render_balance_milestone(db, id=1)
 
@@ -688,7 +720,7 @@ def _branch_milestone_row(*, from_z: dt.datetime, in_z: dt.datetime) -> Row:
         "thru_z": INFINITY_INSTANT,
         "in_z": in_z,
         "out_z": INFINITY_INSTANT,
-        "address": None,
+        "address": SQL_NULL,
     }
 
 
@@ -699,7 +731,10 @@ def test_stale_web_edit_branch_render_then_submit_pins_valid_time_only() -> None
     # is COMPARED against the rectangle's current milestone.
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     in_z = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
-    port = RecordingPort(rows=[_branch_milestone_row(from_z=from_z, in_z=in_z)])
+    port = ScriptedPort(
+        Read(rows=[_branch_milestone_row(from_z=from_z, in_z=in_z)]),
+        Transact(Read(rows=[_branch_milestone_row(from_z=from_z, in_z=in_z)]), Write(times=3)),
+    )
     db = db_for(MODELS["branch"], port)
 
     node, edge = stale_web_edit.render_branch_milestone(db, id=1)
@@ -714,18 +749,18 @@ def test_stale_web_edit_branch_render_then_submit_pins_valid_time_only() -> None
         fields={"name": "New Name"},
         valid_from=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     )
-    submit_read_binds = cast("tuple[object, ...]", [op for op in port.ops if op[0] == "read"][1][2])
+    submit_read_binds = [op for op in port.calls if isinstance(op, ReadCall)][1].binds
     # The transported Valid-Time coordinate reaches the submit read's own
     # containment terms; the Transaction-Time one never reaches a statement.
     assert from_z.isoformat() in submit_read_binds
     assert in_z.isoformat() not in submit_read_binds
-    write_ops = [op for op in port.ops if op[0] == "write"]
-    close_sql = cast("str", write_ops[0][1])
-    close_binds = cast("tuple[object, ...]", write_ops[0][2])
+    write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
+    close_sql = write_ops[0].sql
+    close_binds = write_ops[0].binds
     assert close_sql.startswith("update branch set out_z = ")
     assert in_z in close_binds  # the OBSERVED Transaction-Time coordinate gates the close
     # The correction's replacement rows carry the edited field.
-    assert any("New Name" in cast("tuple[object, ...]", op[2]) for op in write_ops[1:])
+    assert any("New Name" in op.binds for op in write_ops[1:])
 
 
 def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_read() -> None:
@@ -736,11 +771,9 @@ def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     rendered_in_z = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
     superseding_in_z = dt.datetime(2024, 2, 15, tzinfo=dt.UTC)
-    port = RecordingPort(
-        row_queue=[
-            [_branch_milestone_row(from_z=from_z, in_z=rendered_in_z)],
-            [_branch_milestone_row(from_z=from_z, in_z=superseding_in_z)],
-        ]
+    port = ScriptedPort(
+        Read(rows=[_branch_milestone_row(from_z=from_z, in_z=rendered_in_z)]),
+        Transact(Read(rows=[_branch_milestone_row(from_z=from_z, in_z=superseding_in_z)])),
     )
     db = db_for(MODELS["branch"], port)
 
@@ -755,7 +788,7 @@ def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_
             fields={"name": "New Name"},
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         )
-    assert not any(op[0] == "write" for op in port.ops)
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 # --------------------------------------------------------------------------- #
@@ -770,14 +803,14 @@ def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
         tx.find(mm.Person.where(mm.Person.id == 1))
 
     with pytest.raises(QueryTargetError) as caught:
-        Database.connect(NoIoPort(), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-target-not-in-model"
 
 
 def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity() -> None:
     # The participating path classifies through the SAME seam, so a deferred
     # Feature is refused there too — and before `uow.read`, which is what keeps
-    # `NoIoPort` untouched: a refused read never force-flushes.
+    # The boundary's own script stays empty: a refused read never force-flushes.
     def fn(tx: Transaction) -> None:
         tx.find(
             Policy.where(Policy.all)
@@ -787,13 +820,15 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
         )
 
     with pytest.raises(DeferredFeatureError) as caught:
-        Database.connect(NoIoPort(), POLICY_MODEL, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedPort(Transact()), POLICY_MODEL, clock=FixedClock(FIXED)).transact(
+            fn
+        )
     assert caught.value.code == "execution-feature-deferred"
     assert caught.value.features == ("snapshot-history-includes",)
 
 
 def test_tx_find_preflight_rejects_before_a_pending_write_can_flush() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.insert(new_account())
@@ -802,10 +837,10 @@ def test_tx_find_preflight_rejects_before_a_pending_write_can_flush() -> None:
         # The buffered insert is still pending: preflight refused ahead of
         # `uow.read`, so the force-flush that a valid read performs
         # (`test_find_force_flushes_pending_writes_first`) never ran.
-        assert port.ops == [("begin",)]
+        assert port.calls == [BeginCall()]
 
     Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
-    assert port.ops == [("begin",), ("write", INSERT_SQL, (7, "Newton", 5.00, 1)), ("commit",)]
+    assert port.calls == [BeginCall(), WriteCall(INSERT_SQL, (7, "Newton", 5.00, 1)), CommitCall()]
 
 
 # --------------------------------------------------------------------------- #
@@ -846,7 +881,11 @@ def test_an_included_temporal_nodes_own_observation_licenses_its_keyed_close() -
     # is observed under the row's own `Coverage`, which is what
     # `tx.terminate(policy.coverages[0], ...)` looks up.
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = RecordingPort(row_queue=([_policy_row(from_z)], [_coverage_row(from_z)]))
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[_policy_row(from_z)]), Read(rows=[_coverage_row(from_z)]), Write(times=2)
+        )
+    )
 
     def fn(tx: Transaction) -> None:
         policy = tx.find(
@@ -855,11 +894,9 @@ def test_an_included_temporal_nodes_own_observation_licenses_its_keyed_close() -
         tx.terminate(policy.coverages[0], valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
 
     db_for(POLICY_MODEL, port).transact(fn)
-    write_ops = [op for op in port.ops if op[0] == "write"]
-    assert cast("str", write_ops[0][1]).startswith(
-        POSTGRES.to_driver_sql("update coverage set out_z = ")
-    )
-    assert any(10 in cast("tuple[object, ...]", op[2]) for op in write_ops)
+    write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert write_ops[0].sql.startswith(POSTGRES.to_driver_sql("update coverage set out_z = "))
+    assert any(10 in op.binds for op in write_ops)
 
 
 def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update() -> None:
@@ -867,10 +904,11 @@ def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update()
     # the verb: the update's advance and its optimistic gate both come from the
     # included level's own observation, so a lookup that missed it would raise
     # `UnobservedVersionError` before any DML.
-    port = RecordingPort(
-        row_queue=(
-            [{"id": 1, "name": "V-1"}],
-            [{"id": 10, "vault_id": 1, "memo": "before", "version": 4}],
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "name": "V-1"}]),
+            Read(rows=[{"id": 10, "vault_id": 1, "memo": "before", "version": 4}]),
+            Write(),
         )
     )
 
@@ -879,11 +917,11 @@ def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update()
         tx.update(vault.slips[0].edit(memo="after"))
 
     db_for(om.VAULT_MODEL, port).transact(fn, concurrency="optimistic")
-    (write_op,) = [op for op in port.ops if op[0] == "write"]
-    assert write_op[1] == POSTGRES.to_driver_sql(
+    (write_op,) = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert write_op.sql == POSTGRES.to_driver_sql(
         "update obs_slip set memo = ?, version = ? where id = ? and version = ?"
     )
-    assert write_op[2] == ("after", 5, 10, 4)
+    assert write_op.binds == ("after", 5, 10, 4)
 
 
 def test_an_included_polymorphic_levels_concrete_is_reachable_by_a_keyed_write() -> None:
@@ -892,31 +930,34 @@ def test_an_included_polymorphic_levels_concrete_is_reachable_by_a_keyed_write()
     # table's tag column. The observation follows the ROW, so the close names
     # `Tug` and still finds it.
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = RecordingPort(
-        row_queue=(
-            [{"id": 1, "name": "F-1"}],
-            [
-                {
-                    "id": 10,
-                    "fleet_id": 1,
-                    "name": "T-1",
-                    "kind": "tug",
-                    "bollard_pull": 30,
-                    "deck_area": None,
-                    "in_z": in_z,
-                    "out_z": INFINITY_INSTANT,
-                },
-                {
-                    "id": 11,
-                    "fleet_id": 1,
-                    "name": "B-1",
-                    "kind": "barge",
-                    "bollard_pull": None,
-                    "deck_area": Decimal("120.00"),
-                    "in_z": in_z,
-                    "out_z": INFINITY_INSTANT,
-                },
-            ],
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "name": "F-1"}]),
+            Read(
+                rows=[
+                    {
+                        "id": 10,
+                        "fleet_id": 1,
+                        "name": "T-1",
+                        "kind": "tug",
+                        "bollard_pull": 30,
+                        "deck_area": None,
+                        "in_z": in_z,
+                        "out_z": INFINITY_INSTANT,
+                    },
+                    {
+                        "id": 11,
+                        "fleet_id": 1,
+                        "name": "B-1",
+                        "kind": "barge",
+                        "bollard_pull": None,
+                        "deck_area": Decimal("120.00"),
+                        "in_z": in_z,
+                        "out_z": INFINITY_INSTANT,
+                    },
+                ]
+            ),
+            Write(),
         )
     )
 
@@ -926,11 +967,11 @@ def test_an_included_polymorphic_levels_concrete_is_reachable_by_a_keyed_write()
         tx.terminate(tug)
 
     db_for(om.FLEET_MODEL, port).transact(fn)
-    (write_op,) = [op for op in port.ops if op[0] == "write"]
-    assert write_op[1] == POSTGRES.to_driver_sql(
+    (write_op,) = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert write_op.sql == POSTGRES.to_driver_sql(
         "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
     )
-    assert cast("tuple[object, ...]", write_op[2])[1:3] == (10, "tug")
+    assert write_op.binds[1:3] == (10, "tug")
 
 
 def test_an_abstract_target_roots_concrete_is_reachable_by_a_keyed_write() -> None:
@@ -939,19 +980,24 @@ def test_an_abstract_target_roots_concrete_is_reachable_by_a_keyed_write() -> No
     # the query's target would observe both under `Vessel`, which no keyed write
     # ever names.
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = RecordingPort(
-        rows=[
-            {
-                "id": 11,
-                "fleet_id": 1,
-                "name": "B-1",
-                "kind": "barge",
-                "bollard_pull": None,
-                "deck_area": Decimal("120.00"),
-                "in_z": in_z,
-                "out_z": INFINITY_INSTANT,
-            }
-        ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                rows=[
+                    {
+                        "id": 11,
+                        "fleet_id": 1,
+                        "name": "B-1",
+                        "kind": "barge",
+                        "bollard_pull": None,
+                        "deck_area": Decimal("120.00"),
+                        "in_z": in_z,
+                        "out_z": INFINITY_INSTANT,
+                    }
+                ]
+            ),
+            Write(),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -959,8 +1005,8 @@ def test_an_abstract_target_roots_concrete_is_reachable_by_a_keyed_write() -> No
         tx.terminate(barge)
 
     db_for(om.FLEET_MODEL, port).transact(fn)
-    (write_op,) = [op for op in port.ops if op[0] == "write"]
-    assert write_op[1] == POSTGRES.to_driver_sql(
+    (write_op,) = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert write_op.sql == POSTGRES.to_driver_sql(
         "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
     )
-    assert cast("tuple[object, ...]", write_op[2])[1:3] == (11, "barge")
+    assert write_op.binds[1:3] == (11, "barge")

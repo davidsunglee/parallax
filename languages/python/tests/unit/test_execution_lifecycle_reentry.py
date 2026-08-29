@@ -21,9 +21,17 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from _transact_support import ACCOUNT, FIXED, NEW_ROW, RecordingPort, new_account
+from _transact_support import ACCOUNT, FIXED, NEW_ROW, new_account
 
 from _support import mirrored_models as mm
+from _support.db_port import (
+    Read,
+    ReadCall,
+    ScriptedPort,
+    Transact,
+    Write,
+)
+from parallax.core.db_port import DbPort
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -49,7 +57,7 @@ something.
 """
 
 
-def _db(port: RecordingPort, provider: Any) -> Database:
+def _db(port: DbPort, provider: Any) -> Database:
     return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
@@ -151,7 +159,7 @@ class _Provider:
 
 
 def test_a_read_from_inside_opening_becomes_the_provider_errors_cause() -> None:
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort()
     handle: list[Database] = []
     provider = _Provider(opening=lambda: _read(handle[0]))
     db = _db(port, provider)
@@ -160,11 +168,11 @@ def test_a_read_from_inside_opening_becomes_the_provider_errors_cause() -> None:
     with pytest.raises(ExecutionLifecycleProviderError) as refusal:
         _read(db)
     assert isinstance(refusal.value.__cause__, ExecutionLifecycleReentryError)
-    assert port.ops == [], "the refusal precedes every database call, the outer read's included"
+    assert port.calls == [], "the refusal precedes every database call, the outer read's included"
 
 
 def test_a_read_from_inside_a_handler_quarantines_it_like_any_other_failure() -> None:
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     handle: list[Database] = []
     provider = _Provider(handling=lambda: _read(handle[0]))
     db = _db(port, provider)
@@ -175,12 +183,12 @@ def test_a_read_from_inside_a_handler_quarantines_it_like_any_other_failure() ->
     _read(db)
     (reported,) = provider.reported
     assert reported.diagnostic.qualified_type.endswith(".ExecutionLifecycleReentryError")
-    assert [op[0] for op in port.ops] == ["read"]
+    assert [type(op) for op in port.calls] == [ReadCall]
     assert len(provider.handlers[0].seen) == 1
 
 
 def test_a_read_from_inside_error_reporting_is_refused_and_changes_nothing() -> None:
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     handle: list[Database] = []
     provider = _Provider(
         handling=_raising(RuntimeError("the exporter queue is full")),
@@ -194,13 +202,13 @@ def test_a_read_from_inside_error_reporting_is_refused_and_changes_nothing() -> 
     # reporter's own re-entry is best effort and the read still ran.
     (refusal,) = provider.refused_while_reporting
     assert isinstance(refusal, ExecutionLifecycleReentryError)
-    assert [op[0] for op in port.ops] == ["read"]
+    assert [type(op) for op in port.calls] == [ReadCall]
 
 
 def test_the_refusal_is_per_handle_so_an_unrelated_handle_stays_usable() -> None:
-    other_port = RecordingPort(rows=[NEW_ROW])
+    other_port = ScriptedPort(Read(rows=[NEW_ROW]))
     other = _db(other_port, None)
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     provider = _Provider(handling=lambda: _read(other))
     db = _db(port, provider)
 
@@ -208,12 +216,12 @@ def test_the_refusal_is_per_handle_so_an_unrelated_handle_stays_usable() -> None
     # The handler's own read ran on the OTHER handle and was never refused, so
     # no handler failure was reported and both queries reached their ports.
     assert provider.reported == []
-    assert [op[0] for op in port.ops] == ["read"]
-    assert [op[0] for op in other_port.ops] == ["read"]
+    assert [type(op) for op in port.calls] == [ReadCall]
+    assert [type(op) for op in other_port.calls] == [ReadCall]
 
 
 def test_the_refusal_is_per_thread_so_a_handler_may_hand_work_to_another() -> None:
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW], times=2))
     handle: list[Database] = []
     escaped: list[BaseException] = []
 
@@ -238,17 +246,17 @@ def test_the_refusal_is_per_thread_so_a_handler_may_hand_work_to_another() -> No
 
 
 def test_the_state_is_cleared_however_a_lifecycle_context_is_left() -> None:
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     provider = _Provider(handling=_raising(KeyboardInterrupt()))
     db = _db(port, provider)
 
     with pytest.raises(KeyboardInterrupt):
         _read(db)
-    assert port.ops == [], "a fatal escape from delivery aborts its root before the port"
+    assert port.calls == [], "a fatal escape from delivery aborts its root before the port"
     # The delivery context was left by propagating rather than by returning, and
     # the handle is not left refusing everything after it.
     _read(db)
-    assert [op[0] for op in port.ops] == ["read"]
+    assert [type(op) for op in port.calls] == [ReadCall]
 
 
 def _database_entry_points(db: Database) -> dict[str, _Work]:
@@ -334,7 +342,7 @@ def test_every_public_entry_point_of_the_handle_and_its_transaction_refuses() ->
     # a claim about the WHOLE surface rather than about the entry points that
     # happen to be instrumented: a verb reached from a lifecycle context could
     # buffer a write, force a flush, or open a second boundary.
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Write()))
     handle: list[Database] = []
     opened: list[Transaction] = []
     refused: dict[str, list[str]] = {}

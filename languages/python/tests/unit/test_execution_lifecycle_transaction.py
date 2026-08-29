@@ -21,22 +21,39 @@ from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from _transact_support import (
     ACCOUNT,
     FIXED,
     NEW_ROW,
-    RecordingPort,
     deadlock,
     new_account,
 )
 
 from _support import mirrored_models as mm
-from _support.db_port import body_outcome
+from _support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    RollbackCall,
+    ScriptedPort,
+    Transact,
+    Write,
+    body_outcome,
+)
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort, TransactionOutcome
+from parallax.core.db_port import (
+    Bind,
+    CommitFailed,
+    Committed,
+    DbPort,
+    DocumentReadOrdinals,
+    RolledBack,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution_lifecycle import (
     AttemptCommitted,
@@ -125,7 +142,7 @@ def _increase_balance(tx: Transaction) -> None:
 # --------------------------------------------------------------------------- #
 def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
 
     def body(tx: Transaction) -> str:
         tx.insert(new_account())
@@ -166,7 +183,7 @@ def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
 
 def test_each_batch_names_the_trigger_that_forced_it() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
 
     def body(tx: Transaction) -> None:
         tx.insert(new_account())
@@ -184,7 +201,7 @@ def test_each_batch_names_the_trigger_that_forced_it() -> None:
 
 def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports() -> None:
     recorder = RecordingLifecycleProvider()
-    _db(RecordingPort(), recorder).transact(
+    _db(ScriptedPort(Transact()), recorder).transact(
         lambda _tx: None, retries=3, concurrency="locking", retry_optimistic_conflicts=True
     )
 
@@ -195,7 +212,7 @@ def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports
 
 def test_an_empty_buffer_opens_no_write_batch_at_all() -> None:
     recorder = RecordingLifecycleProvider()
-    _db(RecordingPort(rows=[NEW_ROW]), recorder).transact(
+    _db(ScriptedPort(Transact(Read(rows=[NEW_ROW]))), recorder).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result()
     )
 
@@ -214,7 +231,7 @@ def test_an_empty_buffer_opens_no_write_batch_at_all() -> None:
 
 def test_a_row_form_read_is_a_child_of_the_attempt_under_the_rows_interface() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Read(rows=[NEW_ROW])))
     query = deserialize_query(
         {"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 7}}}
     )
@@ -232,8 +249,7 @@ def test_a_row_form_read_is_a_child_of_the_attempt_under_the_rows_interface() ->
 # --------------------------------------------------------------------------- #
 def test_a_retried_invocation_holds_both_attempts_under_one_root() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort()
-    port.txn_faults = [deadlock()]
+    port = ScriptedPort(Transact(Write(), commit=deadlock()), Transact(Write()))
 
     _db(port, recorder).transact(lambda tx: tx.insert(new_account()))
 
@@ -268,8 +284,7 @@ def test_exhaustion_still_reports_the_classifier_truth_on_the_last_attempt() -> 
     # the budget: the attempt that ends the invocation was retriable and simply
     # had nothing left, which is a different fact from being non-retriable.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort()
-    port.txn_faults = [deadlock(), deadlock(), deadlock()]
+    port = ScriptedPort(*(Transact(commit=deadlock()) for _ in range(3)))
 
     with pytest.raises(DatabaseError):
         _db(port, recorder).transact(lambda _tx: None, retries=2)
@@ -297,8 +312,10 @@ def test_exhaustion_still_reports_the_classifier_truth_on_the_last_attempt() -> 
 
 def test_the_opt_in_widens_the_verdict_the_attempt_reports() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.write_affected_queue = [0, 1]
+    port = ScriptedPort(
+        Transact(Read(rows=[NEW_ROW]), Write(affected=0)),
+        Transact(Read(rows=[NEW_ROW]), Write()),
+    )
 
     _db(port, recorder).transact(_increase_balance, retry_optimistic_conflicts=True)
 
@@ -309,8 +326,7 @@ def test_the_opt_in_widens_the_verdict_the_attempt_reports() -> None:
 
 def test_without_the_opt_in_the_same_conflict_is_reported_non_eligible() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.write_affected_queue = [0, 1]
+    port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
     with pytest.raises(OptimisticLockConflictError):
         _db(port, recorder).transact(_increase_balance)
@@ -325,8 +341,7 @@ def test_without_the_opt_in_the_same_conflict_is_reported_non_eligible() -> None
 # --------------------------------------------------------------------------- #
 def test_a_begin_failure_runs_no_attempt_and_fails_the_invocation_directly() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort()
-    port.begin_faults = [deadlock()]
+    port = ScriptedPort(Transact(begin=deadlock()))
 
     with pytest.raises(DatabaseError):
         _db(port, recorder).transact(lambda _tx: pytest.fail("the callback must never run"))
@@ -342,13 +357,14 @@ def test_a_begin_failure_runs_no_attempt_and_fails_the_invocation_directly() -> 
     # a retriable CATEGORY does not make an unattempted boundary retriable.
     assert isinstance(failed.failure, DirectFailure)
     assert failed.failure.diagnostic.qualified_type == "parallax.core.db_error.DatabaseError"
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def test_a_commit_failure_is_the_commit_phase() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort()
-    port.txn_faults = [DatabaseError(category="uniqueViolation", native_code="23505", message="d")]
+    port = ScriptedPort(
+        Transact(commit=DatabaseError(category="uniqueViolation", native_code="23505", message="d"))
+    )
 
     with pytest.raises(DatabaseError):
         _db(port, recorder).transact(lambda _tx: None)
@@ -366,7 +382,7 @@ def test_a_callback_failure_is_the_callback_phase() -> None:
         raise ValueError("boom")
 
     with pytest.raises(ValueError, match="boom"):
-        _db(RecordingPort(), recorder).transact(body)
+        _db(ScriptedPort(Transact()), recorder).transact(body)
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
     assert isinstance(rolled_back, AttemptRolledBack)
@@ -379,8 +395,7 @@ def test_a_failure_in_the_final_batch_is_the_pre_commit_phase() -> None:
     # by exception identity against the pre-commit batch's own failure — not by
     # which half of the body happened to run last.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.write_affected_queue = [0]
+    port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
     with pytest.raises(OptimisticLockConflictError):
         _db(port, recorder).transact(_increase_balance)
@@ -395,8 +410,7 @@ def test_a_failure_in_a_dependency_batch_is_still_the_callback_phase() -> None:
     # failure inside it belongs to the callback: only the automatic batch after
     # the callback returned is the pre-commit phase.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(row_queue=[[NEW_ROW], [NEW_ROW]])
-    port.write_affected_queue = [0]
+    port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
     def body(tx: Transaction) -> None:
         _increase_balance(tx)
@@ -415,10 +429,11 @@ def test_a_failure_in_a_dependency_batch_is_still_the_callback_phase() -> None:
 
 def test_a_rollback_failure_reports_both_live_failures() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort()
-    port.rollback_faults = [
-        DatabaseError(category="connectionDead", native_code="08006", message="gone")
-    ]
+    port = ScriptedPort(
+        Transact(
+            rollback=DatabaseError(category="connectionDead", native_code="08006", message="gone")
+        )
+    )
 
     def body(_tx: Transaction) -> None:
         raise ValueError("boom")
@@ -448,7 +463,7 @@ def test_a_control_flow_escape_still_finishes_every_activity_it_left() -> None:
         raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):
-        _db(RecordingPort(), recorder).transact(body)
+        _db(ScriptedPort(Transact()), recorder).transact(body)
 
     root = _only(recorder)
     assert _transitions(root.events) == [
@@ -468,7 +483,7 @@ def test_a_control_flow_escape_still_finishes_every_activity_it_left() -> None:
 # --------------------------------------------------------------------------- #
 def test_a_joined_call_is_a_child_of_the_attempt_and_opens_no_attempt() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort()
+    port = ScriptedPort(Transact(Write()))
     db = _db(port, recorder)
 
     db.transact(lambda _outer: db.transact(lambda inner: inner.insert(new_account())))
@@ -495,7 +510,7 @@ def test_a_joined_call_is_a_child_of_the_attempt_and_opens_no_attempt() -> None:
     joined_finished = root.events[3]
     assert isinstance(joined_finished, TransactionInvocationFinished)
     assert joined_finished.outcome == JoinedInvocationReturned()
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def test_a_joined_callback_that_raises_is_reported_as_raising_and_nothing_more() -> None:
@@ -503,7 +518,7 @@ def test_a_joined_callback_that_raises_is_reported_as_raising_and_nothing_more()
     # still the outer attempt's, and it is that attempt which reports the
     # rollback.
     recorder = RecordingLifecycleProvider()
-    db = _db(RecordingPort(), recorder)
+    db = _db(ScriptedPort(Transact()), recorder)
 
     def inner(_tx: Transaction) -> None:
         raise ValueError("nested")
@@ -533,8 +548,7 @@ def test_a_zero_row_write_names_the_call_that_completed_as_the_cause() -> None:
     # is judged afterwards and belongs to the batch. Attribution is by the
     # enforcement bracket rather than by which call ran last.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.write_affected_queue = [0]
+    port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
     with pytest.raises(OptimisticLockConflictError):
         _db(port, recorder).transact(_increase_balance)
@@ -551,8 +565,7 @@ def test_a_zero_row_write_names_the_call_that_completed_as_the_cause() -> None:
 
 def test_a_read_that_failed_is_what_its_attempt_names() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.read_faults = [deadlock()]
+    port = ScriptedPort(Transact(Read(raises=deadlock())))
 
     with pytest.raises(DatabaseError):
         _db(port, recorder).transact(
@@ -580,9 +593,8 @@ def test_the_higher_numbered_read_reporting_one_value_is_what_the_attempt_names(
     # Which occurrence is unwinding takes no part in that: the same answer is
     # required when a handler catches the value and something else raises it.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
     fault = deadlock()
-    port.read_faults = [fault, fault]
+    port = _DrainingFaultPort(read_faults=[fault, fault])
 
     def body(tx: Transaction) -> None:
         with suppress(DatabaseError):
@@ -611,8 +623,7 @@ def test_a_join_reporting_a_value_after_the_read_it_encloses_does_not_displace_i
     # Activity ID is the lower of the two, and a second report of the value held
     # replaces the child named only on a HIGHER ID. The read stays named.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.read_faults = [deadlock()]
+    port = ScriptedPort(Transact(Read(raises=deadlock())))
     db = _db(port, recorder)
 
     def inner(tx: Transaction) -> None:
@@ -662,8 +673,7 @@ def test_neither_of_two_nested_joins_outranks_the_read_they_enclose() -> None:
     # neither takes the attribution from the read, and neither renders the
     # exception a second time on the way out.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.read_faults = [deadlock()]
+    port = ScriptedPort(Transact(Read(raises=deadlock())))
     db = _db(port, recorder)
 
     def innermost(tx: Transaction) -> None:
@@ -696,7 +706,7 @@ def test_a_flush_that_dies_in_planning_is_a_batch_that_started_and_ran_nothing()
     # A Write Batch starts BEFORE planning precisely so a planning refusal is
     # attributable to the batch rather than to the callback around it.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def body(tx: Transaction) -> None:
         tx._uow.buffer(  # pyright: ignore[reportPrivateUsage] - the only ingress that reaches an unplannable buffer
@@ -719,7 +729,7 @@ def test_a_flush_that_dies_in_planning_is_a_batch_that_started_and_ran_nothing()
     assert isinstance(batch, WriteBatchFinished)
     assert isinstance(batch.outcome, WriteBatchFailed)
     assert isinstance(batch.outcome.failure, DirectFailure)
-    assert port.ops == [("begin",), ("rollback",)]
+    assert port.calls == [BeginCall(), RollbackCall()]
 
 
 def test_a_failure_caught_and_re_raised_still_names_the_read_it_came_from() -> None:
@@ -728,8 +738,7 @@ def test_a_failure_caught_and_re_raised_still_names_the_read_it_came_from() -> N
     # that performed the raise. This is the ordinary catch / clean up / re-raise
     # shape, and naming the child is what makes the chain worth walking.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.read_faults = [deadlock()]
+    port = ScriptedPort(Transact(Read(raises=deadlock()), Read(rows=[NEW_ROW])))
 
     def body(tx: Transaction) -> None:
         with pytest.raises(DatabaseError) as caught:
@@ -773,7 +782,7 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
         error_codes=POSTGRES.error_codes,
     )
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW], dialect=dialect)
+    port = ScriptedPort(Transact(), dialect=dialect)
 
     def body(tx: Transaction) -> None:
         with suppress(ValueError):
@@ -808,11 +817,20 @@ def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:
     # its own Finished event. Eviction is what buys that here — the two failures
     # are distinct objects, and identity is all the slot matches on.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.read_faults = [
-        DatabaseError(category="deadlock", native_code="40P01", message="the stashed failure"),
-        DatabaseError(category="deadlock", native_code="40P01", message="the later failure"),
-    ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                raises=DatabaseError(
+                    category="deadlock", native_code="40P01", message="the stashed failure"
+                )
+            ),
+            Read(
+                raises=DatabaseError(
+                    category="deadlock", native_code="40P01", message="the later failure"
+                )
+            ),
+        )
+    )
 
     def body(tx: Transaction) -> None:
         with pytest.raises(DatabaseError) as stashed:
@@ -847,11 +865,20 @@ def test_a_join_re_raising_an_evicted_value_names_itself_rather_than_the_read() 
     # exception itself for the same reason: the attribution that would have lent
     # it the read's diagnostic is gone.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.read_faults = [
-        DatabaseError(category="deadlock", native_code="40P01", message="the re-raised failure"),
-        DatabaseError(category="deadlock", native_code="40P01", message="the evicting failure"),
-    ]
+    port = ScriptedPort(
+        Transact(
+            Read(
+                raises=DatabaseError(
+                    category="deadlock", native_code="40P01", message="the re-raised failure"
+                )
+            ),
+            Read(
+                raises=DatabaseError(
+                    category="deadlock", native_code="40P01", message="the evicting failure"
+                )
+            ),
+        )
+    )
     db = _db(port, recorder)
 
     def inner(tx: Transaction) -> None:
@@ -891,6 +918,52 @@ def test_a_join_re_raising_an_evicted_value_names_itself_rather_than_the_read() 
 # --------------------------------------------------------------------------- #
 # What a live activity keeps.                                                  #
 # --------------------------------------------------------------------------- #
+# The three pins below need what an immutable script cannot give them. Two
+# measure through weak references what a live activity still holds, so the port
+# must RELEASE each failure as it reports it — a script naming its faults up
+# front keeps every one of them alive and the reading becomes the script's. The
+# third hands ONE instance to two reads on purpose, to prove that a value
+# reported twice replaces the child named only on a higher Activity ID, which
+# `m-db-port`'s failure-instance rule forbids a shared double from doing.
+class _DrainingFaultPort:
+    """A port reporting failures from lists it drains, dropping each as it goes."""
+
+    dialect: Dialect = POSTGRES
+
+    def __init__(
+        self,
+        *,
+        read_faults: Sequence[DatabaseError] = (),
+        commit_faults: Sequence[DatabaseError] = (),
+    ) -> None:
+        self._read_faults = list(read_faults)
+        self._commit_faults = list(commit_faults)
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        del sql, binds, document_reads
+        if self._read_faults:
+            raise self._read_faults.pop(0)
+        return [dict(NEW_ROW)]
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        del sql, binds
+        return 1
+
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
+        del isolation
+        outcome = body_outcome(cast("DbPort", self), body)
+        if self._commit_faults and isinstance(outcome, Committed):
+            return RolledBack(CommitFailed(self._commit_faults.pop(0)))
+        return outcome
+
+
 def test_an_attempt_keeps_one_handled_failure_however_many_it_sees() -> None:
     # Two hundred handled read failures, so a collection that grew with them
     # could not hide in any floor. A weak reference is the only instrument that
@@ -898,8 +971,7 @@ def test_an_attempt_keeps_one_handled_failure_however_many_it_sees() -> None:
     # because that is a Python class — a built-in exception supports none.
     handled = 200
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
-    port.read_faults = [deadlock() for _ in range(handled)]
+    port = _DrainingFaultPort(read_faults=[deadlock() for _ in range(handled)])
     watched: list[weakref.ref[DatabaseError]] = []
 
     def body(tx: Transaction) -> None:
@@ -926,7 +998,6 @@ def test_an_invocation_keeps_one_failed_attempt_however_many_it_retries() -> Non
     # invocation is the second place a per-event collection would grow — here
     # with the retry count rather than with the failures one attempt handled.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort()
     watched: list[weakref.ref[DatabaseError]] = []
 
     def commit_failure() -> DatabaseError:
@@ -934,7 +1005,7 @@ def test_an_invocation_keeps_one_failed_attempt_however_many_it_retries() -> Non
         watched.append(weakref.ref(failure))
         return failure
 
-    port.txn_faults = [commit_failure(), commit_failure()]
+    port = _DrainingFaultPort(commit_faults=[commit_failure(), commit_failure()])
     attempts = 0
 
     def body(tx: Transaction) -> None:
@@ -956,18 +1027,35 @@ def test_an_invocation_keeps_one_failed_attempt_however_many_it_retries() -> Non
 # --------------------------------------------------------------------------- #
 # A port that breaks its own contract.                                         #
 # --------------------------------------------------------------------------- #
-class _AbandoningPort(RecordingPort):
+class _AbandoningPort:
     """A port that runs the body and then raises instead of reporting an outcome.
 
     Its contract forbids that, which is exactly why the attempt must survive it:
     balance is a property of the activity's shape, not of any port's discipline.
+    A scripted port cannot stand in, because every entry it could be given
+    reports an outcome.
     """
+
+    dialect: Dialect = POSTGRES
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        del sql, binds, document_reads
+        raise AssertionError("no read expected")
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        del sql, binds
+        raise AssertionError("no write expected")
 
     def transaction[T](
         self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
-        self.ops.append(("begin",))
-        body_outcome(self, body)
+        del isolation
+        body_outcome(cast("DbPort", self), body)
         raise RuntimeError("the port gave up")
 
 
@@ -1008,7 +1096,7 @@ def test_an_attempt_is_finished_even_when_the_port_reports_no_outcome() -> None:
 # --------------------------------------------------------------------------- #
 def test_a_transaction_with_no_provider_installed_records_nothing() -> None:
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write()))
     connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(_increase_balance)
     assert recorder.roots == ()
 
@@ -1023,17 +1111,16 @@ def test_a_declined_transaction_root_delivers_no_event() -> None:
             raise AssertionError(error)
 
     recorder = _Declining()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write()))
     _db(port, recorder).transact(_increase_balance)
-    assert port.ops[0] == ("begin",)
+    assert port.calls[0] == BeginCall()
 
 
 def test_the_attempt_started_transition_is_what_assigns_the_next_activity_id() -> None:
     # A boundary that never began consumes no activity ID, so the invocation's
     # own retry does not leave a gap nothing explains.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort()
-    port.begin_faults = [deadlock()]
+    port = ScriptedPort(Transact(begin=deadlock()))
 
     with pytest.raises(DatabaseError):
         _db(port, recorder).transact(lambda _tx: None)
@@ -1044,7 +1131,7 @@ def test_the_attempt_started_transition_is_what_assigns_the_next_activity_id() -
 
 def test_the_first_transition_a_joined_activity_makes_is_its_own_started() -> None:
     recorder = RecordingLifecycleProvider()
-    db = _db(RecordingPort(), recorder)
+    db = _db(ScriptedPort(Transact()), recorder)
     db.transact(lambda _outer: db.transact(lambda _inner: None))
 
     root = _only(recorder)
@@ -1056,7 +1143,7 @@ def test_a_refused_join_opens_no_activity_at_all() -> None:
     # preflight precedes a Read: a conflict reaches no transaction, so it is
     # observable only as the outer invocation's own failure.
     recorder = RecordingLifecycleProvider()
-    db = _db(RecordingPort(), recorder)
+    db = _db(ScriptedPort(Transact()), recorder)
 
     with pytest.raises(Exception, match="cannot join the active transaction"):
         db.transact(lambda _outer: db.transact(lambda _inner: None, retries=99))
@@ -1077,18 +1164,18 @@ def test_an_invalid_retry_bound_creates_no_root_and_reaches_no_provider() -> Non
     # Finished first, and a Provider that fails on `open` would replace the
     # argument error the caller earned with one of its own.
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort()
+    port = ScriptedPort()
 
     with pytest.raises(ValueError, match="retries must be >= 0"):
         _db(port, recorder).transact(_increase_balance, retries=-1)
 
     assert recorder.roots == ()
-    assert port.ops == []
+    assert port.calls == []
 
 
 def test_the_attempt_started_transition_carries_only_its_correlation() -> None:
     recorder = RecordingLifecycleProvider()
-    _db(RecordingPort(), recorder).transact(lambda _tx: None)
+    _db(ScriptedPort(Transact()), recorder).transact(lambda _tx: None)
 
     started = _only(recorder).events[1]
     assert isinstance(started, TransactionAttemptStarted)
@@ -1139,7 +1226,7 @@ def _quarantined_at(fail_at: int) -> tuple[_QuarantiningHandler, _SingleHandlerP
 
 def test_a_handler_quarantined_at_the_root_leaves_every_later_scope_silent() -> None:
     handler, provider = _quarantined_at(1)
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write()))
 
     # A dependency batch, a Read, and a pre-commit batch would all open here, and
     # a scope that finds delivery dead does the rest of its lifecycle work not at
@@ -1147,13 +1234,13 @@ def test_a_handler_quarantined_at_the_root_leaves_every_later_scope_silent() -> 
     assert _db(port, provider).transact(_increase_balance) is None
     assert _transitions(handler.seen) == ["TransactionInvocationStarted"]
     assert len(provider.reported) == 1
-    assert port.ops[0] == ("begin",)
-    assert port.ops[-1] == ("commit",)
+    assert port.calls[0] == BeginCall()
+    assert port.calls[-1] == CommitCall()
 
 
 def test_a_handler_quarantined_inside_a_batch_still_leaves_the_batch() -> None:
     handler, provider = _quarantined_at(3)  # invocation, attempt, then the batch
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Write()))
 
     _db(port, provider).transact(lambda tx: tx.insert(new_account()))
 
@@ -1162,12 +1249,12 @@ def test_a_handler_quarantined_inside_a_batch_still_leaves_the_batch() -> None:
         "TransactionAttemptStarted",
         "WriteBatchStarted",
     ]
-    assert port.ops[-1] == ("commit",)
+    assert port.calls[-1] == CommitCall()
 
 
 def test_a_handler_quarantined_inside_a_joined_call_still_leaves_it() -> None:
     handler, provider = _quarantined_at(3)  # invocation, attempt, then the join
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     db = _db(port, provider)
 
     db.transact(lambda _outer: db.transact(lambda _inner: None))
@@ -1177,12 +1264,12 @@ def test_a_handler_quarantined_inside_a_joined_call_still_leaves_it() -> None:
         "TransactionAttemptStarted",
         "TransactionInvocationStarted",
     ]
-    assert port.ops == [("begin",), ("commit",)]
+    assert port.calls == [BeginCall(), CommitCall()]
 
 
 def test_a_join_that_opens_after_quarantine_opens_nothing() -> None:
     handler, provider = _quarantined_at(2)  # invocation, then the attempt
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     db = _db(port, provider)
 
     db.transact(lambda _outer: db.transact(lambda _inner: None))
@@ -1191,4 +1278,4 @@ def test_a_join_that_opens_after_quarantine_opens_nothing() -> None:
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
     ]
-    assert port.ops == [("begin",), ("commit",)]
+    assert port.calls == [BeginCall(), CommitCall()]

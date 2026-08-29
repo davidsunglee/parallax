@@ -23,7 +23,7 @@ from typing import Any, cast
 
 import pytest
 from _transact_support import BALANCE as BALANCE_MODEL
-from _transact_support import WHERE_POSITION_META, RecordingPort, WherePosition, db_for
+from _transact_support import WHERE_POSITION_META, WherePosition, db_for
 
 # The module itself, not a name from it: the call-count regression below
 # monkeypatches `resolve_successors` where `_settle_temporal_group` looks it
@@ -31,6 +31,13 @@ from _transact_support import WHERE_POSITION_META, RecordingPort, WherePosition,
 import parallax.core.unit_work.write_planner as write_planner
 from _support import mirrored_models as mm
 from _support.clock_probes import CountingClock, inert_instant
+from _support.db_port import (
+    Read,
+    ScriptedPort,
+    Transact,
+    Write,
+    WriteCall,
+)
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import predicate as predicate_algebra
@@ -889,7 +896,9 @@ def _position_row(row_id: int) -> dict[str, object]:
 
 
 def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_per_row() -> None:
-    port = RecordingPort(rows=[_position_row(1), _position_row(2), _position_row(3)])
+    port = ScriptedPort(
+        Transact(Read(rows=[_position_row(1), _position_row(2), _position_row(3)]), Write(times=9))
+    )
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     clock = FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
 
@@ -901,11 +910,7 @@ def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_p
         )
 
     Database.connect(port, WHERE_POSITION_META, clock=clock).transact(fn, concurrency="optimistic")
-    writes = [
-        (cast("str", op[1]), cast("tuple[object, ...]", op[2]))
-        for op in port.ops
-        if op[0] == "write"
-    ]
+    writes = [(op.sql, op.binds) for op in port.calls if isinstance(op, WriteCall)]
     # Each resolved row settles to its own close + head + tail (three
     # statements), and the three rows' own topologies never interleave or
     # merge — the SAME per-row shape a single-row materialize proves,
@@ -937,7 +942,12 @@ def _balance_row(row_id: int, value: Decimal) -> dict[str, object]:
 
 
 def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_rest() -> None:
-    port = RecordingPort(rows=[_balance_row(1, Decimal("5.00")), _balance_row(2, Decimal("10.00"))])
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[_balance_row(1, Decimal("5.00")), _balance_row(2, Decimal("10.00"))]),
+            Write(times=2),
+        )
+    )
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -945,7 +955,7 @@ def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_r
         )
 
     db_for(BALANCE_MODEL, port).transact(fn, concurrency="optimistic")
-    writes = [op for op in port.ops if op[0] == "write"]
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
     # Row 1 already holds the assigned value and is streamed out before it
     # ever reaches a column builder; only row 2's close + chain reach the
     # driver.
@@ -953,7 +963,7 @@ def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_r
 
 
 def test_a_temporal_materializing_update_with_every_row_a_no_op_buffers_nothing() -> None:
-    port = RecordingPort(rows=[_balance_row(1, Decimal("5.00"))])
+    port = ScriptedPort(Transact(Read(rows=[_balance_row(1, Decimal("5.00"))])))
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -961,4 +971,4 @@ def test_a_temporal_materializing_update_with_every_row_a_no_op_buffers_nothing(
         )
 
     db_for(BALANCE_MODEL, port).transact(fn, concurrency="optimistic")
-    assert not any(op[0] == "write" for op in port.ops)
+    assert not any(isinstance(op, WriteCall) for op in port.calls)

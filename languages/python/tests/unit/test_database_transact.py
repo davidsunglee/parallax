@@ -27,8 +27,6 @@ from _transact_support import (
     FIXED,
     NEW_ROW,
     PERSON,
-    NoIoPort,
-    RecordingPort,
     account_db,
     db_for,
     deadlock,
@@ -37,7 +35,17 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
-from _support.db_port import body_outcome
+from _support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    RollbackCall,
+    ScriptedPort,
+    Transact,
+    Write,
+    body_outcome,
+)
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
 from parallax.core.db_error import DatabaseError
@@ -69,7 +77,7 @@ from parallax.snapshot.handle import (
 
 
 def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> str:
         tx.insert(new_account())
@@ -78,11 +86,11 @@ def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
     with pytest.raises(RuntimeError, match="boom"):
         account_db(port).transact(fn)
     # Nothing flushed: the buffered write never reached the port.
-    assert port.ops == [("begin",), ("rollback",)]
+    assert port.calls == [BeginCall(), RollbackCall()]
 
 
 def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     escaped: list[Transaction] = []
 
     def fn(tx: Transaction) -> None:
@@ -97,7 +105,7 @@ def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:
 # Join semantics: same Transaction, option conflicts, foreclosure.             #
 # --------------------------------------------------------------------------- #
 def test_join_receives_the_same_transaction_and_returns_immediately() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     db = account_db(port)
 
     def outer(tx: Transaction) -> int:
@@ -106,11 +114,11 @@ def test_join_receives_the_same_transaction_and_returns_immediately() -> None:
         return inner[1]
 
     assert db.transact(outer) == 42
-    assert port.begins == 1  # the join opened no second database transaction
+    assert port.calls.count(BeginCall()) == 1  # the join opened no second database transaction
 
 
 def test_join_with_equal_or_omitted_options_inherits() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -147,7 +155,7 @@ _CONFLICTING_JOINS: list[tuple[str, Callable[[Database], object]]] = [
 def test_join_with_a_conflicting_explicit_option_raises(
     option: str, join: Callable[[Database], object]
 ) -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -166,9 +174,9 @@ def test_join_with_a_conflicting_explicit_option_raises(
 def test_an_omitted_isolation_asks_the_port_for_nothing() -> None:
     # The sentinel is a request for nothing rather than a value Parallax would
     # supply, so the boundary opens at whatever the adapter already defaults to.
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     account_db(port).transact(lambda _tx: "ok")
-    assert port.isolations == [None]
+    assert port.calls == [BeginCall(None), CommitCall()]
 
 
 @pytest.mark.parametrize(
@@ -179,23 +187,22 @@ def test_an_explicit_isolation_reaches_the_port_unchanged(level: str) -> None:
     # grades no level's behavior, so the value the caller named is the value the
     # port is handed — including one no database would accept, which the adapter
     # and its database settle rather than this handle.
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     account_db(port).transact(lambda _tx: "ok", isolation=level)
-    assert port.isolations == [level]
+    assert port.calls == [BeginCall(level), CommitCall()]
 
 
 def test_every_retry_of_one_invocation_opens_at_the_requested_isolation() -> None:
     # The level belongs to the invocation rather than to one physical attempt:
     # a re-executed callback that silently ran at the database's default would
     # answer differently from the attempt before it.
-    port = RecordingPort()
-    port.txn_faults = [deadlock(), deadlock()]
+    port = ScriptedPort(Transact(commit=deadlock()), Transact(commit=deadlock()), Transact())
     assert account_db(port).transact(lambda _tx: "ok", isolation="serializable") == "ok"
-    assert port.isolations == ["serializable"] * 3
+    assert port.calls.count(BeginCall("serializable")) == 3
 
 
 def test_a_join_omitting_or_repeating_the_active_isolation_is_accepted() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -204,11 +211,11 @@ def test_a_join_omitting_or_repeating_the_active_isolation_is_accepted() -> None
 
     assert db.transact(outer, isolation="serializable") == "repeated"
     # Two joins, and neither opened a second boundary to re-negotiate.
-    assert port.isolations == ["serializable"]
+    assert port.calls == [BeginCall("serializable"), CommitCall()]
 
 
 def test_a_join_naming_a_different_isolation_raises_before_its_callback_runs() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -220,7 +227,7 @@ def test_a_join_naming_a_different_isolation_raises_before_its_callback_runs() -
 
 
 def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     db = account_db(port)
     ran: list[bool] = []
 
@@ -237,7 +244,7 @@ def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() ->
         db.transact(outer)
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert ran == []
-    assert port.ops == [("begin",), ("rollback",)]
+    assert port.calls == [BeginCall(), RollbackCall()]
 
 
 def _raise_inner(_tx: Transaction) -> None:
@@ -251,13 +258,13 @@ def test_a_non_transactional_find_opens_no_unit_of_work_to_participate_in() -> N
     # unit of work behind it stamps no participation and files into no index,
     # while the values it publishes still retain the state each row observed
     # (`test_transaction_reads.py` pins that half).
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     assert account_db(port).find(mm.Account.where(mm.Account.id == 7)).results() == [read_account()]
-    assert [op[0] for op in port.ops] == ["read"]
+    assert [type(op) for op in port.calls] == [ReadCall]
 
 
 def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
-    port = RecordingPort()
+    port = ScriptedPort()
     db = account_db(port)
 
     def executor(  # pragma: no cover - never flushed
@@ -287,7 +294,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
 # that object. Settled BEFORE everything the join section above pins.           #
 # --------------------------------------------------------------------------- #
 def test_an_alias_of_the_owner_joins_and_receives_the_identical_transaction() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     db = account_db(port)
     alias = db  # a second name for one object — the only thing that ever joins
 
@@ -296,11 +303,11 @@ def test_an_alias_of_the_owner_joins_and_receives_the_identical_transaction() ->
         return 42
 
     assert db.transact(outer) == 42
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def test_a_different_database_over_the_same_model_and_adapter_is_refused() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     owner = account_db(port)
     foreign = account_db(port)  # same model, same adapter, same clock; a different object
 
@@ -316,7 +323,7 @@ def test_a_different_database_over_the_same_model_and_adapter_is_refused() -> No
     # Refusing the join opened no second database transaction and did not doom
     # the outer one — nothing entered the joined frame.
     assert owner.transact(outer) == "survived"
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def _equal_account_model() -> DomainModel:
@@ -343,7 +350,7 @@ def _equal_account_model() -> DomainModel:
 
 
 def test_a_structurally_equal_model_establishes_no_ownership() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     owner = account_db(port)
     foreign = db_for(_equal_account_model(), port)
     # The two accepted models are equal entity for entity, and that buys nothing.
@@ -358,12 +365,12 @@ def test_a_structurally_equal_model_establishes_no_ownership() -> None:
 
 
 def test_the_ownership_refusal_reaches_no_adapter() -> None:
-    port = NoIoPort()
+    port = ScriptedPort(Transact())
     owner = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
     foreign = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
 
     def outer(_tx: Transaction) -> str:
-        # `NoIoPort` raises on any read or write, so returning at all is the
+        # The boundary's script holds no statement, so returning at all is the
         # proof that the refusal performed none.
         with pytest.raises(TransactionOwnershipError):
             foreign.transact(_must_not_run)
@@ -373,7 +380,7 @@ def test_the_ownership_refusal_reaches_no_adapter() -> None:
 
 
 def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> None:
-    port = RecordingPort()
+    port = ScriptedPort(Transact())
     owner = account_db(port)
     foreign = account_db(port)
 
@@ -386,7 +393,7 @@ def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> Non
         with pytest.raises(TransactionOwnershipError):
             foreign.transact(_must_not_run, retries=3)
         # Nothing beyond the outer boundary's own `begin` ever reached the port.
-        assert port.ops == [("begin",)]
+        assert port.calls == [BeginCall()]
         # Through the owner, the same conflicting option answers next…
         with pytest.raises(TransactionOptionConflictError, match="retries"):
             owner.transact(_must_not_run, retries=3)
@@ -397,35 +404,32 @@ def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> Non
 
     with pytest.raises(RollbackOnlyError):
         owner.transact(outer)
-    assert port.ops == [("begin",), ("rollback",)]
+    assert port.calls == [BeginCall(), RollbackCall()]
 
 
 # --------------------------------------------------------------------------- #
 # Bounded retry (m-auto-retry through db.transact).                            #
 # --------------------------------------------------------------------------- #
 def test_a_deadlock_is_retried_and_the_reexecution_succeeds() -> None:
-    port = RecordingPort()
-    port.txn_faults = [deadlock(), deadlock()]
+    port = ScriptedPort(Transact(commit=deadlock()), Transact(commit=deadlock()), Transact())
     assert account_db(port).transact(lambda _tx: "ok") == "ok"
-    assert port.begins == 3
+    assert port.calls.count(BeginCall()) == 3
 
 
 def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
-    port = RecordingPort()
-    port.txn_faults = [deadlock(), deadlock(), deadlock()]
+    port = ScriptedPort(*(Transact(commit=deadlock()) for _ in range(3)))
     with pytest.raises(DatabaseError) as excinfo:
         account_db(port).transact(lambda _tx: "ok", retries=2)
-    assert port.begins == 3
+    assert port.calls.count(BeginCall()) == 3
     assert excinfo.value.is_retriable  # the surfaced error is the failure itself
     assert "3 attempts (retries=2)" in "".join(excinfo.value.__notes__)
 
 
 def test_the_default_bound_is_ten_reexecutions() -> None:
-    port = RecordingPort()
-    port.txn_faults = [deadlock() for _ in range(11)]
+    port = ScriptedPort(*(Transact(commit=deadlock()) for _ in range(11)))
     with pytest.raises(DatabaseError) as excinfo:
         account_db(port).transact(lambda _tx: "ok")
-    assert port.begins == 11
+    assert port.calls.count(BeginCall()) == 11
     assert "11 attempts (retries=10)" in "".join(excinfo.value.__notes__)
 
 
@@ -434,26 +438,28 @@ def test_the_default_bound_is_ten_reexecutions() -> None:
     [("uniqueViolation", "23505"), ("lockWaitTimeout", "55P03")],
 )
 def test_non_retriable_categories_surface_after_one_attempt(category: str, native: str) -> None:
-    port = RecordingPort()
-    port.txn_faults = [DatabaseError(category=category, native_code=native, message=category)]  # type: ignore[arg-type] - parametrized str widens the DatabaseError category Literal
+    port = ScriptedPort(
+        Transact(
+            commit=DatabaseError(category=category, native_code=native, message=category)  # type: ignore[arg-type] - parametrized str widens the DatabaseError category Literal
+        )
+    )
     with pytest.raises(DatabaseError):
         account_db(port).transact(lambda _tx: "ok")
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def test_retries_zero_disables_the_loop() -> None:
-    port = RecordingPort()
-    port.txn_faults = [deadlock()]
+    port = ScriptedPort(Transact(commit=deadlock()))
     with pytest.raises(DatabaseError):
         account_db(port).transact(lambda _tx: "ok", retries=0)
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def test_negative_retries_are_rejected_before_any_attempt() -> None:
-    port = RecordingPort()
+    port = ScriptedPort()
     with pytest.raises(ValueError, match="retries must be >= 0"):
         account_db(port).transact(lambda _tx: "ok", retries=-1)
-    assert port.begins == 0
+    assert port.calls.count(BeginCall()) == 0
 
 
 def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
@@ -461,8 +467,7 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
     # callback catches it and returns normally, the commit refusal preserves the
     # cause's classification — the retry loop re-executes, and the fresh attempt
     # succeeds.
-    port = RecordingPort(rows=[NEW_ROW])
-    port.read_faults = [deadlock()]
+    port = ScriptedPort(Transact(Read(raises=deadlock())), Transact(Read(rows=[NEW_ROW])))
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -471,7 +476,7 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
         return "caught"
 
     assert db.transact(outer) == "caught"
-    assert port.begins == 2
+    assert port.calls.count(BeginCall()) == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -483,7 +488,7 @@ def _must_not_run_callback(_tx: Transaction) -> str:
     raise AssertionError("the callback runs only inside a transaction that began")
 
 
-class _RollbackFailingPort(RecordingPort):
+class _RollbackFailingPort(ScriptedPort):
     """A port whose rollback never completes, however the transaction ended.
 
     The one boundary outcome no in-memory fake reaches by accident: the callback
@@ -501,11 +506,11 @@ class _RollbackFailingPort(RecordingPort):
     def transaction[T](
         self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
-        self.ops.append(("begin",))
+        self.calls.append(BeginCall())
         outcome = body_outcome(self, body)
         if isinstance(outcome, RolledBack):
             return RollbackFailed(outcome.trigger, self.rollback_error)
-        self.ops.append(("commit",))
+        self.calls.append(CommitCall())
         return outcome
 
 
@@ -514,12 +519,11 @@ def test_a_boundary_that_never_began_surfaces_its_error_after_one_attempt() -> N
     # would be retried on any attempt that had (m-execution-lifecycle: a begin
     # failure finishes the invocation with a direct, non-retryable failure).
     never_began = deadlock()
-    port = RecordingPort()
-    port.begin_faults = [never_began]
+    port = ScriptedPort(Transact(begin=never_began))
     with pytest.raises(DatabaseError) as excinfo:
         account_db(port).transact(_must_not_run_callback)
     assert excinfo.value is never_began
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
     # The private carrier that made it terminal is not part of what a caller reads.
     assert excinfo.value.__suppress_context__
 
@@ -538,7 +542,7 @@ def test_a_failed_rollback_reports_both_live_errors_and_is_never_retried() -> No
     assert excinfo.value.triggering_error is triggering
     assert excinfo.value.rollback_error is port.rollback_error
     assert excinfo.value.__cause__ is port.rollback_error
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def test_a_failed_rollback_leaves_a_control_flow_trigger_primary() -> None:
@@ -561,8 +565,8 @@ def test_a_failed_rollback_leaves_a_control_flow_trigger_primary() -> None:
 # m-auto-retry): `retry_optimistic_conflicts` joins                           #
 # `OptimisticLockConflictError` — and no other Write Effect Error — to the    #
 # retriable set, the SAME `0`-then-`1` affected-rows transition               #
-# `m-opt-lock-009` witnesses against real Postgres, reproduced here with a    #
-# scripted `write_affected_queue` fake port.                                  #
+# `m-opt-lock-009` witnesses against real Postgres, reproduced here as one    #
+# scripted attempt per affected-row count.                                    #
 # --------------------------------------------------------------------------- #
 def _observe_and_update(tx: Transaction) -> None:
     current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
@@ -570,31 +574,37 @@ def _observe_and_update(tx: Transaction) -> None:
 
 
 def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> None:
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
+            Write(affected=0),
+        )
     )
-    port.write_affected_queue = [0]
     with pytest.raises(OptimisticLockConflictError):
         account_db(port).transact(_observe_and_update, concurrency="optimistic")
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def test_optimistic_conflict_is_auto_retried_to_success_with_the_opt_in() -> None:
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedPort(
+        Transact(Read(rows=grace), Write(affected=0)), Transact(Read(rows=grace), Write())
     )
-    port.write_affected_queue = [0, 1]
     account_db(port).transact(
         _observe_and_update, concurrency="optimistic", retry_optimistic_conflicts=True
     )
-    assert port.begins == 2  # the conflicting attempt, then the retried (successful) attempt
+    assert (
+        port.calls.count(BeginCall()) == 2
+    )  # the conflicting attempt, then the retried (successful) attempt
 
 
 def test_optimistic_conflict_opt_in_exhausts_its_bound() -> None:
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedPort(
+        *(
+            Transact(Read(rows=grace), Write(affected=0)) for _ in range(3)
+        )  # every attempt conflicts
     )
-    port.write_affected_queue = [0, 0, 0]  # persistent — every attempt conflicts
     with pytest.raises(OptimisticLockConflictError) as excinfo:
         account_db(port).transact(
             _observe_and_update,
@@ -602,7 +612,7 @@ def test_optimistic_conflict_opt_in_exhausts_its_bound() -> None:
             retries=2,
             retry_optimistic_conflicts=True,
         )
-    assert port.begins == 3
+    assert port.calls.count(BeginCall()) == 3
     assert "3 attempts (retries=2)" in "".join(excinfo.value.__notes__)
 
 
@@ -613,10 +623,9 @@ def test_optimistic_conflict_opt_in_is_inert_for_a_transient_failure() -> None:
     # RETRIABLE deadlock is classified retriable by `retriable_failure` alone
     # (the `or`'s left operand), so it never actually reaches the opt-in's own
     # predicate at all — see the NON-retriable sibling below for that.
-    port = RecordingPort()
-    port.txn_faults = [deadlock()]
+    port = ScriptedPort(Transact(commit=deadlock()), Transact())
     assert account_db(port).transact(lambda _tx: "ok", retry_optimistic_conflicts=True) == "ok"
-    assert port.begins == 2
+    assert port.calls.count(BeginCall()) == 2
 
 
 def test_optimistic_conflict_opt_in_is_inert_for_a_non_retriable_database_error() -> None:
@@ -627,13 +636,14 @@ def test_optimistic_conflict_opt_in_is_inert_for_a_non_retriable_database_error(
     # is classified non-retriable there too — the opt-in's structural
     # extension never widens the retriable set beyond the optimistic-lock
     # conflict shape itself.
-    port = RecordingPort()
-    port.txn_faults = [
-        DatabaseError(category="uniqueViolation", native_code="23505", message="dup")
-    ]
+    port = ScriptedPort(
+        Transact(
+            commit=DatabaseError(category="uniqueViolation", native_code="23505", message="dup")
+        )
+    )
     with pytest.raises(DatabaseError):
         account_db(port).transact(lambda _tx: "ok", retry_optimistic_conflicts=True)
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def test_optimistic_conflict_opt_in_is_inert_in_locking_mode() -> None:
@@ -641,13 +651,16 @@ def test_optimistic_conflict_opt_in_is_inert_in_locking_mode() -> None:
     # column" — the shared read lock, not a version check, is what makes the
     # write correct), so there is nothing for the opt-in to ever retry: a
     # single-attempt commit, `retry_optimistic_conflicts` notwithstanding.
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
+            Write(),
+        )
     )
     account_db(port).transact(
         _observe_and_update, concurrency="locking", retry_optimistic_conflicts=True
     )
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 # Every sibling below scripts `[0, 1]` (or `[2, 1]`): a second attempt WOULD
@@ -657,15 +670,17 @@ def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
     # A locking-mode versioned UPDATE renders no gate, so its zero-row shortfall
     # is the stale write: the shared read lock should have made it impossible,
     # which makes it a consistency failure no re-read resolves.
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
+            Write(affected=0),
+        )
     )
-    port.write_affected_queue = [0, 1]
     with pytest.raises(StaleWriteError):
         account_db(port).transact(
             _observe_and_update, concurrency="locking", retry_optimistic_conflicts=True
         )
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def _rename_person(tx: Transaction) -> None:
@@ -679,26 +694,27 @@ def test_missing_target_is_never_retried_even_with_the_opt_in() -> None:
     # bring them into being. The renamed value comes from this transaction's own
     # read — an unversioned target needs no observation to WRITE, but every
     # keyed update needs a value some read of this store produced.
-    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
-    port.write_affected_queue = [0, 1]
+    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write(affected=0)))
     with pytest.raises(MissingTargetError):
         db_for(PERSON, port).transact(_rename_person, retry_optimistic_conflicts=True)
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def test_cardinality_corruption_is_never_retried_even_with_the_opt_in() -> None:
     # An EXCESS over the exact count means an accepted identity, storage, or
     # lowering invariant does not hold — an invariant failure rather than a
     # concurrency outcome, so the opt-in never widens to it either.
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
+            Write(affected=2),
+        )
     )
-    port.write_affected_queue = [2, 1]
     with pytest.raises(CardinalityCorruptionError):
         account_db(port).transact(
             _observe_and_update, concurrency="optimistic", retry_optimistic_conflicts=True
         )
-    assert port.begins == 1
+    assert port.calls.count(BeginCall()) == 1
 
 
 def _observe_update_then_force_flush(tx: Transaction) -> None:
@@ -715,10 +731,11 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
     # the outermost retry loop still applies per the ORIGINAL failure's
     # category (the conflict, not a `DatabaseError`), retriable here because
     # the opt-in is set.
-    port = RecordingPort(
-        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedPort(
+        Transact(Read(rows=grace), Write(affected=0)),
+        Transact(Read(rows=grace), Write(), Read(rows=grace)),
     )
-    port.write_affected_queue = [0, 1]
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -727,4 +744,6 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
         return "caught"
 
     assert db.transact(outer, concurrency="optimistic", retry_optimistic_conflicts=True) == "caught"
-    assert port.begins == 2  # the conflicting attempt, then the retried (successful) attempt
+    assert (
+        port.calls.count(BeginCall()) == 2
+    )  # the conflicting attempt, then the retried (successful) attempt

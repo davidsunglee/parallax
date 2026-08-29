@@ -28,7 +28,15 @@ import pytest
 from pydantic import ValidationError
 
 from _support.corpus import case_document, compare_binds
-from _support.db_port import body_outcome
+from _support.db_port import (
+    BeginCall,
+    CommitCall,
+    PortCall,
+    ReadCall,
+    RollbackCall,
+    WriteCall,
+    body_outcome,
+)
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
@@ -233,14 +241,19 @@ def _seed_rows_for(story: WriteStory) -> list[Row]:
     return _SEED_ROWS_BY_MODEL.get(story.model, [])
 
 
-def _port_for(story: WriteStory) -> _RecordingPort:
-    return _RecordingPort(
+def _port_for(story: WriteStory) -> _KeyedSeedPort:
+    return _KeyedSeedPort(
         rows=_seed_rows_for(story), reads=_READ_ROWS_BY_CASE.get(story.case_id, [])
     )
 
 
-class _RecordingPort:
-    """An in-memory ``m-db-port`` recording every call in order (no Docker).
+# The kit answers a read by POSITION, and this one cannot: a story's reads are
+# told apart by which seeded row their binds name, so the number and order of
+# the reads a story issues would have to be restated here for every case in the
+# corpus — which is the drift this suite exists to catch rather than to encode.
+# The recording is the kit's.
+class _KeyedSeedPort:
+    """An in-memory ``m-db-port`` answering a read from a seeded row set.
 
     ``rows`` seeds a small keyed row set, each row's OWN PRIMARY-KEY value
     ordered FIRST in its dict (every seed row below follows this convention);
@@ -269,60 +282,51 @@ class _RecordingPort:
     dialect: Dialect = POSTGRES
 
     def __init__(self, *, rows: Sequence[Row] = (), reads: Sequence[Sequence[Row]] = ()) -> None:
-        self.ops: list[tuple[object, ...]] = []
+        self.calls: list[PortCall] = []
         self._rows = [dict(row) for row in rows]
         self._scripted = [[dict(row) for row in answer] for answer in reads]
 
     def execute(
         self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        self.ops.append(("read", sql, tuple(binds)))
+        self.calls.append(ReadCall(sql, tuple(binds)))
         if self._scripted:
             return fold_mapping_rows(self._scripted.pop(0), document_reads)
         matched = [row for row in self._rows if next(iter(row.values())) in binds]
         return fold_mapping_rows(matched or self._rows[:1], document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
-        self.ops.append(("write", sql, tuple(binds)))
+        self.calls.append(WriteCall(sql, tuple(binds)))
         return 1
 
     def transaction[T](
         self, body: Callable[[DbPort], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
-        self.ops.append(("begin",))
-        outcome = body_outcome(self, body)
-        self.ops.append(("commit",) if isinstance(outcome, Committed) else ("rollback",))
+        del isolation
+        self.calls.append(BeginCall())
+        outcome = body_outcome(cast("DbPort", self), body)
+        self.calls.append(CommitCall() if isinstance(outcome, Committed) else RollbackCall())
         return outcome
 
     def statements(self) -> list[tuple[str, tuple[object, ...]]]:
         """The executed statements (reads and writes) in wire order."""
         return [
-            (cast("str", op[1]), cast("tuple[object, ...]", op[2]))
-            for op in self.ops
-            if op[0] in ("read", "write")
+            (call.sql, call.binds) for call in self.calls if isinstance(call, (ReadCall, WriteCall))
         ]
 
     def writes(self) -> list[tuple[str, tuple[object, ...]]]:
         """The executed WRITE statements alone, in wire order (the
         writeSequence-story grading rule, below)."""
-        return [
-            (cast("str", op[1]), cast("tuple[object, ...]", op[2]))
-            for op in self.ops
-            if op[0] == "write"
-        ]
+        return [(call.sql, call.binds) for call in self.calls if isinstance(call, WriteCall)]
 
     def reads(self) -> list[tuple[str, tuple[object, ...]]]:
         """The executed READ statements alone, in wire order (the
         writeSequence-story grading rule, below)."""
-        return [
-            (cast("str", op[1]), cast("tuple[object, ...]", op[2]))
-            for op in self.ops
-            if op[0] == "read"
-        ]
+        return [(call.sql, call.binds) for call in self.calls if isinstance(call, ReadCall)]
 
     @property
     def wrote(self) -> bool:
-        return any(op[0] == "write" for op in self.ops)
+        return any(isinstance(call, WriteCall) for call in self.calls)
 
 
 def _driver_goldens(entries: list[dict[str, Any]]) -> list[tuple[str, list[object]]]:
@@ -349,7 +353,7 @@ def _scenario_goldens(
     return out
 
 
-def _assert_reads_are_proper_selects(port: _RecordingPort) -> None:
+def _assert_reads_are_proper_selects(port: _KeyedSeedPort) -> None:
     """The read/write partition :func:`_observed_statements` relies on is
     exhaustive and correctly classified: every op the port recorded as a READ
     genuinely is one (a ``select``), never a write emission miscategorized —
@@ -366,7 +370,7 @@ def _assert_reads_are_proper_selects(port: _RecordingPort) -> None:
 
 
 def _observed_statements(
-    port: _RecordingPort, case_id: str
+    port: _KeyedSeedPort, case_id: str
 ) -> list[tuple[str, tuple[object, ...]]]:
     """The statements this case's golden ``then.statements``/``statements``
     grades against: a ``writeSequence`` case's own golden vocabulary is
@@ -381,7 +385,7 @@ def _observed_statements(
 
 
 def _assert_statements(
-    port: _RecordingPort, goldens: list[tuple[str, list[object]]], case_id: str
+    port: _KeyedSeedPort, goldens: list[tuple[str, list[object]]], case_id: str
 ) -> None:
     observed = _observed_statements(port, case_id)
     assert len(observed) == len(goldens), (case_id, observed, goldens)
@@ -394,7 +398,7 @@ def _assert_statements(
         compare_binds(binds, golden_binds)
 
 
-def _db(port: _RecordingPort, story: WriteStory) -> Database:
+def _db(port: _KeyedSeedPort, story: WriteStory) -> Database:
     # A story's own scripted-clock FACTORY (never a shared instance) —
     # this consumer's fresh clock, independent of `test_story_run.py`'s own.
     clock = story.clock() if story.clock is not None else None
@@ -425,9 +429,9 @@ def test_commit_story_emits_the_golden_dml(case_id: str) -> None:
     port = _port_for(story)
     story.run(_db(port, story))
     _assert_statements(port, _scenario_goldens(case_id), case_id)
-    assert port.ops[0] == ("begin",)
-    assert port.ops[-1] == ("commit",)
-    assert ("rollback",) not in port.ops
+    assert port.calls[0] == BeginCall()
+    assert port.calls[-1] == CommitCall()
+    assert RollbackCall() not in port.calls
 
 
 @pytest.mark.parametrize("case_id", _PLAIN_DISCARD_ABORT_IDS, ids=_PLAIN_DISCARD_ABORT_IDS)
@@ -439,9 +443,9 @@ def test_abort_story_discards_the_buffer_and_keeps_the_reads_golden(case_id: str
     story = _STORIES[case_id]
     port = _port_for(story)
     story.run(_db(port, story))
-    assert not port.wrote, (case_id, port.ops)
+    assert not port.wrote, (case_id, port.calls)
     _assert_statements(port, _scenario_goldens(case_id, skip_rollback=True), case_id)
-    assert ("rollback",) in port.ops
+    assert RollbackCall() in port.calls
 
 
 @pytest.mark.parametrize(
@@ -461,9 +465,9 @@ def test_force_flushed_abort_story_reaches_the_wire_then_rolls_back(case_id: str
     port = _port_for(story)
     story.run(_db(port, story))
     _assert_statements(port, _scenario_goldens(case_id, skip_rollback=False), case_id)
-    assert ("rollback",) in port.ops
+    assert RollbackCall() in port.calls
     assert port.wrote
-    assert port.ops[-1] == ("commit",)
+    assert port.calls[-1] == CommitCall()
 
 
 def test_boundary_story_withholds_the_callback_value() -> None:
@@ -475,8 +479,13 @@ def test_boundary_story_withholds_the_callback_value() -> None:
     port = _port_for(story)
     with pytest.raises(RuntimeError, match="abort"):
         story.run(_db(port, story))
-    kinds = [op[0] for op in port.ops]
-    assert kinds == ["begin", "read", "write", "read", "rollback"], port.ops
+    assert [type(call) for call in port.calls] == [
+        BeginCall,
+        ReadCall,
+        WriteCall,
+        ReadCall,
+        RollbackCall,
+    ], port.calls
 
 
 def _case_model_stem(case_id: str) -> str:
@@ -508,7 +517,7 @@ REJECTED_WRITE_BUILDERS: dict[str, Callable[[Transaction], None]] = {
     "m-inheritance-088": lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))),
 }
 
-# case id -> the model `_RecordingPort` connects against.
+# case id -> the model `_KeyedSeedPort` connects against.
 REJECTED_WRITE_MODELS: dict[str, str] = {"m-inheritance-088": "payment"}
 
 # The Contact/Shipment value-object write-input rejects the corpus grades
@@ -611,7 +620,7 @@ def test_a_complete_document_still_constructs() -> None:
 def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
     case = _CASES[case_id]
     expected_rule = case_document(case)["then"]["rejectedRule"]
-    port = _RecordingPort()
+    port = _KeyedSeedPort()
     db = Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]])
     with pytest.raises(WriteRejectedError) as exc_info:
         db.transact(REJECTED_WRITE_BUILDERS[case_id])

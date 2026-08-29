@@ -173,10 +173,10 @@ import gc
 import sys
 import threading
 import tracemalloc
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack, suppress
 from itertools import product
-from typing import Final, NamedTuple, get_type_hints
+from typing import Final, NamedTuple, cast, get_type_hints
 
 import pytest
 from _lifecycle_cost_support import STATEMENT, TARGET, rows
@@ -184,8 +184,6 @@ from _transact_support import (
     ACCOUNT,
     FIXED,
     NEW_ROW,
-    NoIoPort,
-    RecordingPort,
     deadlock,
     new_account,
 )
@@ -202,8 +200,25 @@ from memory_instruments import (
 )
 
 from _support import mirrored_models as mm
+from _support.db_port import (
+    Read,
+    ScriptedPort,
+    Transact,
+    Write,
+    body_outcome,
+)
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort, TransactionOutcome
+from parallax.core.db_port import (
+    Bind,
+    CommitFailed,
+    Committed,
+    DbPort,
+    DocumentReadOrdinals,
+    RolledBack,
+    Row,
+    TransactionOutcome,
+)
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -603,7 +618,7 @@ def _public_db(port: DbPort, provider: ExecutionLifecycleProvider) -> Database:
     return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
-def _observed_db(port: RecordingPort) -> Database:
+def _observed_db(port: DbPort) -> Database:
     return _public_db(port, PROVIDER)
 
 
@@ -1022,7 +1037,7 @@ def _workload(point: _Point) -> Seam:
     port that recorded its calls would accumulate them across the repetitions a
     byte reading takes.
     """
-    return _threaded_roots(point, _public_db(NoIoPort(), _fanout(point.providers)))
+    return _threaded_roots(point, _public_db(_CountingPort(), _fanout(point.providers)))
 
 
 def _held_by_each_level(shape: _Chain) -> tuple[Closure, ...]:
@@ -1126,6 +1141,44 @@ class _HoardingHandler:
             self._nested = 0
 
 
+# The two workloads this port serves open a boundary per sample the instrument
+# takes and per worker thread it runs, so a script naming each one in advance
+# would make the count a parameter of the measurement rather than of the
+# workload — and the count is what one of them measures. It refuses every
+# statement, because a root of either workload reads and writes nothing, and it
+# counts under a lock, because the threaded workload asks from several threads
+# at once and a shared recording would be the reading's own contention.
+class _CountingPort:
+    """A port opening every boundary it is asked for and counting them."""
+
+    dialect: Dialect = POSTGRES
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.begins = 0
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        del sql, binds, document_reads
+        raise AssertionError("no read expected — this workload reads nothing")
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        del sql, binds
+        raise AssertionError("no write expected — this workload writes nothing")
+
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
+        del isolation
+        with self._lock:
+            self.begins += 1
+        return body_outcome(cast("DbPort", self), body)
+
+
 def _joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> Seam:
     """One transaction whose callback joins itself ``depth`` times, sampled at the
     innermost of them.
@@ -1147,7 +1200,7 @@ def _joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> Seam:
     axis alone, because a reading with no worker thread in it carries nothing a
     thread costs and no scheduling to arrange.
     """
-    db = _public_db(RecordingPort(rows=[NEW_ROW]), provider)
+    db = _public_db(_CountingPort(), provider)
 
     def joining(remaining: int, sample: Callable[[], None]) -> Callable[[Transaction], None]:
         def body(_tx: Transaction) -> None:
@@ -1234,33 +1287,13 @@ class _OpenScopes:
             return (self.roots, self.joined, self.finished)
 
 
-class _CountingPort(NoIoPort):
-    """A port counting the physical transactions it was asked to begin.
-
-    The refusals it inherits stand: a root of the threaded workload reads and
-    writes nothing, so a port touched for anything but a begin would mean the
-    workload is not the one being counted.
-    """
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self.begins = 0
-
-    def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:
-        with self._lock:
-            self.begins += 1
-        return super().transaction(body, isolation=isolation)
-
-
 @in_a_child_interpreter
 def test_a_completed_read_leaves_no_lifecycle_object_alive() -> None:
     # The published result is where a retained trace would hang: a caller holds
     # that value for as long as it likes and long after the root has finished,
     # so a result that could still reach its root's events would keep every one
     # of them alive for exactly that long.
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
     db = _observed_db(port)
     assert _left_behind(_one_read(db)) == []
 
@@ -1270,7 +1303,7 @@ def test_a_completed_transaction_leaves_no_lifecycle_object_alive() -> None:
     # A transaction is the deep root: an invocation over an attempt over a write
     # batch over its Database Calls, with a participating read and its dependency
     # batch beside them. Nothing of that tree may outlive the callback.
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact(Write(), Read(rows=[NEW_ROW])))
     db = _observed_db(port)
 
     def body(tx: Transaction) -> None:
@@ -1280,6 +1313,45 @@ def test_a_completed_transaction_leaves_no_lifecycle_object_alive() -> None:
     assert _left_behind(lambda: db.transact(body)) == []
 
 
+# A scripted commit failure is one the port still holds when the sample is
+# taken, and a live `DatabaseError` holds the traceback of every scope it
+# unwound through — so the script itself would keep the activities this pin
+# says are gone. This one builds each failure where it reports it and keeps no
+# reference to it.
+class _ReleasingCommitFailurePort:
+    """A port whose every commit fails retriably, holding none of the failures."""
+
+    dialect: Dialect = POSTGRES
+
+    def __init__(self, failures: int) -> None:
+        self._remaining = failures
+        self.begins = 0
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        del sql, binds, document_reads
+        raise AssertionError("no read expected — this workload only writes")
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        del sql, binds
+        return 1
+
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
+        del isolation
+        self.begins += 1
+        outcome = body_outcome(cast("DbPort", self), body)
+        if self._remaining and isinstance(outcome, Committed):
+            self._remaining -= 1
+            return RolledBack(CommitFailed(deadlock()))
+        return outcome
+
+
 @in_a_child_interpreter
 def test_a_retried_transaction_leaves_neither_its_events_nor_its_diagnostics_alive() -> None:
     # The failure path is where retention has something to hold: a rendered
@@ -1287,8 +1359,7 @@ def test_a_retried_transaction_leaves_neither_its_events_nor_its_diagnostics_ali
     # attempt's events per try. The trigger is dropped rather than caught into a
     # name, because a live traceback holds the frames of every scope it unwound
     # through and would keep their activities alive by itself.
-    port = RecordingPort(rows=[NEW_ROW])
-    port.txn_faults = [deadlock(), deadlock()]
+    port = _ReleasingCommitFailurePort(2)
     db = _observed_db(port)
 
     def run() -> None:
@@ -1304,7 +1375,7 @@ def test_a_hundred_sequential_roots_leave_exactly_what_one_leaves() -> None:
     # The slope claim, stated as an equality of two definite answers rather than
     # as a trend anyone has to read: if a completed root left one reference, a
     # hundred roots would leave a hundred.
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Read(rows=[NEW_ROW], times=101))
     db = _observed_db(port)
     one = _one_read(db)
 
@@ -1609,7 +1680,7 @@ def test_a_joining_call_nests_a_live_scope_the_correlation_tree_does_not_show() 
     # between its Started and its Finished, every Started here arrives before any
     # Finished, and they close in the reverse of the order they opened.
     transitions = _JoiningTransitions()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = ScriptedPort(Transact())
     db = _public_db(port, _SharedProvider(transitions))
     depth = 5
 

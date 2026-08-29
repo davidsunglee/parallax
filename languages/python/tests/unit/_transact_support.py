@@ -1,9 +1,10 @@
 """Shared fixtures for the `parallax.snapshot.handle` transaction suites.
 
-The recording fake `m-db-port`, the two `Database` builders over it, the mirrored
-model handles, and the SQL/row goldens that more than one suite drives. Shared by
+The two `Database` builders over a port, the mirrored model handles, and the
+SQL/row goldens that more than one suite drives. Shared by
 `test_database_transact.py` and the three `test_transaction_*.py` suites, split
-apart by observable behavior.
+apart by observable behavior. The ports themselves come from
+`_support.db_port`.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a `reportPrivateUsage` error under pyright strict, so privacy is
@@ -14,30 +15,19 @@ carried by this MODULE's underscore — the same convention the private
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Final, cast
 
 from _support import mirrored_models as mm
-from _support.db_port import body_outcome
-from _support.document_reads import fold_mapping_rows
 from parallax.conformance.class_models import MODELS
 from parallax.core import Attr, Bitemporal, DomainModel, attr
-from parallax.core.base import PresentDocument, SqlNull
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
-    BeginFailed,
-    Bind,
-    CommitFailed,
-    Committed,
     DbPort,
-    DocumentReadOrdinals,
-    RollbackFailed,
-    RolledBack,
     Row,
-    TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import FixedClock, RetainedObservation
 from parallax.snapshot import InvalidData, connect
 from parallax.snapshot.handle import Database, Snapshot
@@ -59,8 +49,6 @@ __all__ = [
     "RATE",
     "SHIPMENT",
     "WHERE_POSITION_META",
-    "NoIoPort",
-    "RecordingPort",
     "WherePosition",
     "account_db",
     "balance_row",
@@ -147,105 +135,13 @@ def deadlock() -> DatabaseError:
     return DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
 
 
-class RecordingPort:
-    """An in-memory ``m-db-port`` recording every call in order (no Docker).
-
-    ``txn_faults`` ends the next ``transaction`` calls as rolled back after a
-    commit failure (a driver failure the adapter translated, whose rollback then
-    completed) — after running the body, because a commit failure is by
-    definition what follows a body that returned — and ``begin_faults`` ends them
-    as never begun, which is the one boundary outcome no attempt ran under;
-    ``rollback_faults`` ends them with the undo itself failing, whatever
-    triggered it. ``read_faults`` raises from the
-    next ``execute`` calls (a failure inside the transaction body).
-    ``row_queue`` scripts a SEQUENCE of result sets across successive ``execute``
-    calls — what a multi-statement read (a deep fetch's root then each level)
-    needs — falling back to the constant ``rows`` once exhausted, so every
-    single-result-set caller is unchanged.
-    ``write_affected_queue`` scripts a SEQUENCE of
-    affected-row counts across successive ``execute_write`` calls — an
-    optimistic-lock retry-loop probe's own oracle: attempt 0's gated UPDATE
-    affects ``0`` (the conflict), a retried attempt's affects ``1`` (success) —
-    falling back to the constant ``write_affected`` once exhausted (or when
-    never set, unaffected — every existing single-affected-count caller is
-    unchanged).
-    """
-
-    def __init__(
-        self,
-        *,
-        rows: Sequence[Row] = (),
-        row_queue: Sequence[Sequence[Row]] = (),
-        write_affected: int = 1,
-        dialect: Dialect = POSTGRES,
-    ) -> None:
-        self.dialect = dialect
-        self.ops: list[tuple[object, ...]] = []
-        # One entry per boundary this port was asked to open, carrying exactly
-        # what the caller requested — `None` where it asked for nothing. Kept
-        # beside `ops` rather than inside it so an isolation observation cannot
-        # move a `("begin",)` entry every other suite already asserts on.
-        self.isolations: list[str | None] = []
-        self.rows = list(rows)
-        self.row_queue = [list(result) for result in row_queue]
-        self.write_affected = write_affected
-        self.write_affected_queue: list[int] = []
-        self.txn_faults: list[DatabaseError] = []
-        self.begin_faults: list[DatabaseError] = []
-        self.rollback_faults: list[DatabaseError] = []
-        self.read_faults: list[DatabaseError] = []
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[Bind],
-        document_reads: Sequence[DocumentReadOrdinals] = (),
-    ) -> list[Row]:
-        if self.read_faults:
-            raise self.read_faults.pop(0)
-        self.ops.append(("read", sql, tuple(binds)))
-        result = self.row_queue.pop(0) if self.row_queue else self.rows
-        if not document_reads or all(
-            any(isinstance(value, (SqlNull, PresentDocument)) for value in row.values())
-            for row in result
-        ):
-            return [dict(row) for row in result]
-        return fold_mapping_rows(result, document_reads)
-
-    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
-        self.ops.append(("write", sql, tuple(binds)))
-        if self.write_affected_queue:
-            return self.write_affected_queue.pop(0)
-        return self.write_affected
-
-    def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:
-        self.isolations.append(isolation)
-        self.ops.append(("begin",))
-        if self.begin_faults:
-            return BeginFailed(self.begin_faults.pop(0))
-        outcome = body_outcome(self, body)
-        if self.txn_faults and isinstance(outcome, Committed):
-            outcome = RolledBack(CommitFailed(self.txn_faults.pop(0)))
-        if self.rollback_faults and isinstance(outcome, RolledBack):
-            self.ops.append(("rollback",))
-            return RollbackFailed(outcome.trigger, self.rollback_faults.pop(0))
-        self.ops.append(("commit",) if isinstance(outcome, Committed) else ("rollback",))
-        return outcome
-
-    @property
-    def begins(self) -> int:
-        return sum(1 for op in self.ops if op == ("begin",))
-
-
-def account_db(port: RecordingPort) -> Database:
+def account_db(port: DbPort) -> Database:
     # The spec §8 module-level `connect` is the classmethod's alias, so this
     # covers both spellings.
     return connect(port, ACCOUNT, clock=FixedClock(FIXED))
 
 
-def db_for(meta: DomainModel, port: RecordingPort) -> Database:
+def db_for(meta: DomainModel, port: DbPort) -> Database:
     return Database.connect(port, meta, clock=FixedClock(FIXED))
 
 
@@ -300,29 +196,3 @@ def balance_row(*, in_z: dt.datetime, out_z: dt.datetime = INFINITY_INSTANT) -> 
         "in_z": in_z,
         "out_z": out_z,
     }
-
-
-# A minimal `DbPort` that raises if the connection is ever touched — the harness
-# behind every "the guard runs BEFORE any I/O" pin. Shared by the keyed and
-# predicate suites, so it lives here rather than in either one.
-class NoIoPort:
-    """A minimal ``DbPort`` that raises if the connection is ever touched."""
-
-    dialect: Dialect = POSTGRES
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[Bind],
-        document_reads: Sequence[DocumentReadOrdinals] = (),
-    ) -> list[Row]:
-        del sql, binds, document_reads
-        raise AssertionError("no read expected — the guard runs first")
-
-    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
-        raise AssertionError("no write expected — the guard runs first")
-
-    def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:
-        return body_outcome(cast("DbPort", self), body)
