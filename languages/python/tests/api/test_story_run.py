@@ -57,7 +57,7 @@ from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order, OrderStatus
 from parallax.core import LATEST, DomainModel, ObjectQuery
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError, ValueObject, to_document
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import Concurrency
@@ -1184,6 +1184,10 @@ class _StatementCapturePort:
         self.statements: list[tuple[str, tuple[object, ...]]] = (
             statements if statements is not None else []
         )
+
+    @property
+    def dialect(self) -> Dialect:
+        return cast("Dialect", self._inner.dialect)
 
     def execute(
         self, sql: str, binds: Any, document_reads: Sequence[tuple[int, int]] = ()

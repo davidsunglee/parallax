@@ -773,7 +773,7 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
         error_codes=POSTGRES.error_codes,
     )
     recorder = RecordingLifecycleProvider()
-    port = RecordingPort(rows=[NEW_ROW])
+    port = RecordingPort(rows=[NEW_ROW], dialect=dialect)
 
     def body(tx: Transaction) -> None:
         with suppress(ValueError):
@@ -786,7 +786,6 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
         connect(
             port,
             ACCOUNT,
-            dialect=dialect,
             clock=FixedClock(FIXED),
             lifecycle_provider=recorder,
         ).transact(body, retries=0)

@@ -56,7 +56,7 @@ shared-node states remain distinct without issuing later SQL.
 | `m-conformance-adapter` | src/conformance | conformance | `m-case-format` | depcheck.toml |
 | `m-core` | src/core | core | none | depcheck.toml |
 | `m-db-error` | src/db-error | db-error | `m-db-port`, `m-dialect` | depcheck.toml |
-| `m-db-port` | src/db-port | db-port | `m-core` | depcheck.toml |
+| `m-db-port` | src/db-port | db-port | `m-core`, `m-dialect` | depcheck.toml |
 | `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance` | depcheck.toml |
 | `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel`, `m-inheritance` | depcheck.toml |
 | `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |

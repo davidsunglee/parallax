@@ -39,6 +39,7 @@ from parallax.conformance.snapshot_recipes import (
 )
 from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
 from parallax.core.db_port import Bind, Committed, DbPort, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
 from parallax.snapshot import SnapshotStreamStateError, connect, is_view_loaded
@@ -270,6 +271,8 @@ class _CannedPort:
     """A fake `m-db-port` answering every read with no rows, which is all a
     run-through proof needs: an empty root level short-circuits every child."""
 
+    dialect: Dialect = POSTGRES
+
     def execute(
         self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
@@ -294,6 +297,8 @@ class _CannedAccountPort:
     A short first page is what proves exhaustion (`m-snapshot-read`), so one row
     is a whole delivery and no second read is issued.
     """
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self) -> None:
         self.rows = [_ACCOUNT_ROW]
@@ -342,6 +347,8 @@ class _CannedOrderPort:
     short page of its own. Answering an empty result instead would run neither
     loop body, and the loop body is what the recipe is about.
     """
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self) -> None:
         self.scripted = [[_ORDER_ROW], [_ORDER_ITEM_ROW], [_ORDER_ROW]]

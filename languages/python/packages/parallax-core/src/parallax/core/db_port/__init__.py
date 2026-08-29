@@ -2,17 +2,21 @@
 
 The abstract runtime database port: the execution interface the layers above the
 seam call to run compiled SQL and demarcate transactions. It names
+``dialect`` (the SQL spelling its statements are written in),
 ``execute`` (row-oriented), ``execute_write`` (affected-row count), and
 ``transaction`` (callback reporting a :data:`TransactionOutcome`, at an
 optionally requested isolation) — and nothing
-more. The port depends on nothing
-application-specific (no driver, no concrete database), so any layer may hold it
-without acquiring a database dependency. Concrete adapters (`parallax.postgres`)
+more. The dialect is the port's because the port is what holds the connection:
+a caller reads it off the port it already has rather than choosing a second
+value beside it. The port still depends on nothing
+application-specific (no driver, no concrete database) — the dialect layer is
+pure — so any layer may hold it without acquiring a database dependency.
+Concrete adapters (`parallax.postgres`)
 implement it at the composition root and carry the normalize-at-boundary contract:
 rows come back as managed values, never raw driver representations. They carry the
 failure-identity contract too: an error the port makes to report a failure — raised
 by a statement call, or carried by a transaction outcome — is an instance shared
-with no other invocation. ``m-db-port`` depends only on ``m-core``.
+with no other invocation. ``m-db-port`` depends on ``m-core`` and ``m-dialect``.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from parallax.core.base import DocumentReadOrdinals
+from parallax.core.dialect import Dialect
 
 __all__ = [
     "BeginFailed",
@@ -30,6 +35,7 @@ __all__ = [
     "CommitFailed",
     "Committed",
     "DbPort",
+    "DeclaresDialect",
     "DocumentReadOrdinals",
     "JsonDocument",
     "RollbackFailed",
@@ -155,6 +161,16 @@ class DbPort(Protocol):
     carries the same object back and governs nothing about its identity.
     """
 
+    @property
+    def dialect(self) -> Dialect:
+        """The SQL spelling every statement crossing this port is written in.
+
+        A decorating or transaction-scoped port reports the dialect of the port
+        it stands in for rather than one of its own, so the answer is the same
+        whichever port in a chain a caller happens to hold.
+        """
+        ...
+
     def execute(
         self,
         sql: str,
@@ -194,3 +210,16 @@ class DbPort(Protocol):
         it governs this transaction alone and no later one on the same connection.
         """
         ...
+
+
+class DeclaresDialect(Protocol):
+    """Dialect metadata readable off a port's CLASS, before any connection opens.
+
+    A composition root selects a concrete adapter and needs the dialect it will
+    execute in without building one — nothing here reaches a driver, a socket, or
+    a container. It is a separate protocol because :class:`DbPort` states
+    ``dialect`` as a read-only property, and a property is unreachable through
+    ``type[...]``.
+    """
+
+    dialect: Dialect

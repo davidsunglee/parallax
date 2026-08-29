@@ -9,6 +9,27 @@ precisely because dialect divergence is localized to one swappable component.
 This mirrors Reladomo's `DatabaseType` seam — obtained from the connection
 manager at every SQL decision point, never from a global registry.
 
+## Selection belongs to the adapter that holds the connection
+
+A `Dialect` is **selected by the concrete adapter** (`m-db-port`) that will
+execute the SQL, and every runtime caller reads it off the port it already
+holds. Nothing above the seam names a dialect beside a port, and nothing reaches
+a module-level dialect value by import: a global singleton is exactly the
+registry this seam forbids, and it lets a caller compile for one database while
+executing against another.
+
+The direction is one-way. An adapter declares its dialect; no code selects an
+adapter, port, or connection *from* a dialect, and two adapters MAY declare the
+same one. That is what leaves the DQ9 door open below: per-source routing becomes
+"choose a port per source", with the dialect following the port, rather than a
+second routing decision made in parallel with the first.
+
+**Pure** compile and lowering entry points — which hold no port — still take a
+`Dialect` explicitly, because there is nothing for them to read it off. The rule
+across the tree is therefore: a runtime signature carries a port and derives the
+dialect from it; a pure signature carries a dialect and no port; nothing carries
+both.
+
 The database seam comprises this **pure dialect / portability layer**
 (`m-dialect`), an **abstract runtime database port** (`m-db-port`) implemented by
 **N independently deployable concrete adapter artifacts**, and **error
@@ -610,4 +631,7 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
   per-source / per-tenant connection routing could be added later without
   re-plumbing. Source-attribute sharding is out of scope for round 1, but
   nothing here may *preclude* it: the dialect/connection seam is the natural
-  future home for a routing hook.
+  future home for a routing hook, and binding the dialect to the port that holds
+  the connection is what reduces such a hook to one decision — choose a port per
+  source — instead of a routing decision plus a matching dialect choice that
+  could disagree with it.

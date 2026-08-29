@@ -49,6 +49,7 @@ from parallax.conformance.story_models import Order, OrderStatus
 from parallax.core import DomainModel, ObjectQuery
 from parallax.core.base import INFINITY
 from parallax.core.db_port import Bind, DbPort, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.unit_work import Clock, Concurrency
 from parallax.snapshot import is_view_loaded
@@ -194,6 +195,8 @@ class _CannedPort:
     into the adjacent presence/value projection the compiled read asked for, so
     a value-object-bearing entity can be canned here as the document it holds
     rather than as the widened cell pair its statement selects."""
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self, responses: Sequence[list[Row]] = ()) -> None:
         self._responses = list(responses)

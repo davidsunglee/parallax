@@ -29,6 +29,7 @@ from _support.corpus import case_document
 from _support.repo import adapter_schema
 from parallax.conformance import adapter, case_format, sweep
 from parallax.core.db_port import DbPort, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 
 _SCHEMA = adapter_schema()
 _REACHABLE_REJECTED = [c for c in sweep.reachable_cases() if c.shape == "rejected"]
@@ -36,6 +37,8 @@ _REACHABLE_REJECTED = [c for c in sweep.reachable_cases() if c.shape == "rejecte
 
 class _RefusingPort:
     """An `m-db-port` that fails loudly if the rejected lane ever touches it."""
+
+    dialect: Dialect = POSTGRES
 
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()

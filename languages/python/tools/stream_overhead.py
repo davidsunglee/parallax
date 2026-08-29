@@ -49,6 +49,7 @@ from typing import Any, Final, NamedTuple, cast
 
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.snapshot import SnapshotStream
 from parallax.snapshot.handle import Database
@@ -150,6 +151,8 @@ def _item_row(item_id: int, order_id: int) -> Row:
 class GeneratingPort:
     """A port that answers each page from a counter and retains nothing beyond
     the page it last answered."""
+
+    dialect: Dialect = POSTGRES
 
     __slots__ = ("_delivered", "_fanout", "_page", "_total")
 

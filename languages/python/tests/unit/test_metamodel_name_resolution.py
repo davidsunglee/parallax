@@ -24,7 +24,7 @@ from parallax.core import deep_fetch, navigate
 from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.db_port import DbPort
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.object_query import (
@@ -125,6 +125,8 @@ class _RefusingPort:
     """Every adapter call is a failure — a read refused for its spelling reaches
     none of them."""
 
+    dialect: Dialect = POSTGRES
+
     def execute(
         self, sql: str, binds: object, document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[dict[str, object]]:
@@ -147,7 +149,6 @@ def test_the_read_executor_classifies_an_ambiguous_bare_name_by_the_same_rule() 
         handle.find(
             _query("Person"),
             CatalogedModel(model),
-            POSTGRES,
             cast("DbPort", _RefusingPort()),
         )
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
@@ -163,7 +164,6 @@ def test_the_read_executor_refuses_a_target_the_model_does_not_declare() -> None
         handle.find(
             _query("Nope"),
             CatalogedModel(model),
-            POSTGRES,
             cast("DbPort", _RefusingPort()),
         )
     assert excinfo.value.code == "query-target-not-in-model"

@@ -35,7 +35,6 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from parallax.core.db_port import DbPort
-from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import (
     UNLOADED,
     DomainModel,
@@ -79,13 +78,12 @@ class AnotherSource:
     own.
     """
 
-    __slots__ = ("_dialect", "_domain", "_model", "_port")
+    __slots__ = ("_domain", "_model", "_port")
 
-    def __init__(self, model: DomainModel, port: DbPort, *, dialect: Dialect = POSTGRES) -> None:
+    def __init__(self, model: DomainModel, port: DbPort) -> None:
         self._domain = model
         self._model = cataloged_model(model)
         self._port = port
-        self._dialect = dialect
 
     def find[S](self, query: ObjectQuery[Any, S]) -> tuple[S, ...]:
         """Every root ``query`` matches, materialized by THIS source.
@@ -104,7 +102,7 @@ class AnotherSource:
                 "this source materializes flat graphs only, and the query includes "
                 "a relationship level"
             )
-        result = execute_read(node, self._model, self._dialect, self._port)
+        result = execute_read(node, self._model, self._port)
         return cast("tuple[S, ...]", self._materialize(result.graph))
 
     def produced(self, value: object) -> bool:

@@ -44,7 +44,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.db_port import Bind, Committed, DbPort, Row, TransactionOutcome
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata
@@ -265,6 +265,8 @@ class _RecordingPort:
     milestones, and deciding which is a temporal query this double does not
     answer. A read past the script's end falls back to the keyed selection.
     """
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self, *, rows: Sequence[Row] = (), reads: Sequence[Sequence[Row]] = ()) -> None:
         self.ops: list[tuple[object, ...]] = []

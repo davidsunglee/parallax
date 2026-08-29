@@ -25,6 +25,7 @@ from parallax.conformance.scripted_clock import ClockExhaustedError, ScriptedClo
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot.handle import Database, Transaction
 
@@ -44,6 +45,8 @@ class _RecordingPort:
     an attempt is driven far enough to have captured an instant and then made to
     fail retriably.
     """
+
+    dialect: Dialect = POSTGRES
 
     def __init__(
         self, *, rows: Sequence[Row] = (), write_faults: Sequence[DatabaseError] = ()

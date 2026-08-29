@@ -139,6 +139,7 @@ from memory_instruments import (
 from _support.db_port import body_outcome
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.snapshot import SnapshotStream
 from parallax.snapshot.handle import Database, Transaction
@@ -267,6 +268,8 @@ class _GeneratingPort:
     the parent keys the child level is about to gather, and how far through the
     result it is.
     """
+
+    dialect: Dialect = POSTGRES
 
     __slots__ = ("_delivered", "_fanout", "_page", "_total")
 

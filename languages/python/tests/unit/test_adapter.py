@@ -23,6 +23,7 @@ from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.core.base import PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 
 _SCHEMA = adapter_schema()
 _READ_CASE = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
@@ -41,6 +42,8 @@ _ENGINE_GAP_CASE = (
 
 class _FakePort:
     """An in-memory ``m-db-port`` returning canned rows (no Docker)."""
+
+    dialect: Dialect = POSTGRES
 
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
@@ -183,6 +186,8 @@ def test_run_case_ok_through_a_fake_port() -> None:
 class _WritePort:
     """A port that commits writes and returns canned find rows (no Docker)."""
 
+    dialect: Dialect = POSTGRES
+
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
@@ -270,6 +275,8 @@ def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
 class _ManagedPort:
     """A port returning the managed values psycopg decodes for the m-core-001 row."""
 
+    dialect: Dialect = POSTGRES
+
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
@@ -347,6 +354,8 @@ class _PositionPort:
     """A port returning the superseded position milestone the pin-read-only
     contrast's find step selects (no Docker)."""
 
+    dialect: Dialect = POSTGRES
+
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
@@ -411,6 +420,8 @@ _TX_PAST_READ_ONLY_CLAIM = Claim(
 class _BalancePort:
     """A port returning the superseded balance milestone the finite
     Transaction-Time pin selects (no Docker)."""
+
+    dialect: Dialect = POSTGRES
 
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
@@ -537,6 +548,8 @@ _BOUNDARY_CASE = (
 class _TriggerPort:
     """A port whose Nth `execute_write` raises the scripted failure (no Docker)."""
 
+    dialect: Dialect = POSTGRES
+
     def __init__(self, *, raise_on: int | None, failure: DatabaseError | None = None) -> None:
         self._raise_on = raise_on
         self._failure = failure
@@ -647,6 +660,8 @@ _REJECTED_WRITE_CASE = (
 class _NeverCalledPort:
     """An `m-db-port` that fails loudly if a rejected run ever touches it."""
 
+    dialect: Dialect = POSTGRES
+
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
@@ -713,6 +728,8 @@ def test_run_case_rejected_write_reports_the_classified_rule() -> None:
 class _QueuePort:
     """A fake `m-db-port` returning one canned response per `execute()` call,
     in call order (the per-level find executor issues more than one query)."""
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self, responses: Sequence[list[Row]]) -> None:
         self._responses = list(responses)
@@ -932,6 +949,8 @@ class _WriteAndReadBackPort:
     collapsed statement that reported a single row would read as a shortfall.
     """
 
+    dialect: Dialect = POSTGRES
+
     def __init__(self, affected: Sequence[int] = (), rows: Sequence[Row] = ()) -> None:
         self.writes = 0
         self._affected = list(affected)
@@ -1004,6 +1023,8 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> No
 # --------------------------------------------------------------------------- #
 class _AccountPort:
     """Returns the one `account.yaml` row `m-execution-lifecycle-001` reads."""
+
+    dialect: Dialect = POSTGRES
 
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
@@ -1103,6 +1124,8 @@ _INCLUDE_SCENARIO_CASE = (
 
 class _OrderWithItemsPort:
     """A canned ``m-db-port`` answering the root level then the include level."""
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self) -> None:
         self._responses: list[list[Row]] = [

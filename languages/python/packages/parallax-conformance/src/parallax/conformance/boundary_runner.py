@@ -41,6 +41,7 @@ from parallax.conformance import case_format, sweep
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.dialect import Dialect
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot.handle import Database, Transaction
 
@@ -282,6 +283,10 @@ class FaultInjectingPort:
         self._fault = fault
         self._persistent = persistent
         self._state = state if state is not None else _FaultState()
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._inner.dialect
 
     def execute(
         self,

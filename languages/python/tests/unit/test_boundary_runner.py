@@ -32,6 +32,7 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot.handle import Database, Transaction
 
@@ -121,6 +122,8 @@ def test_translated_fault_matches_the_db_error_vocabulary(
 # reachable corpus case reaches.                                              #
 # --------------------------------------------------------------------------- #
 class _FakePort:
+    dialect: Dialect = POSTGRES
+
     def __init__(self, *, rows: list[Row]) -> None:
         self.rows = rows
         self.writes: list[tuple[str, tuple[object, ...]]] = []
