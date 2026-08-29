@@ -4279,8 +4279,9 @@ class _CaseContext:
     The dialect is deliberately NOT one of them. It is fixed by the connection a
     unit executes through rather than by the case, and one case's steps do not
     all run through one connection — an interleaved group runs on its own peer
-    session. Each lowering therefore names the dialect of the handle about to
-    execute it, so the record can travel beside any of them.
+    session. Each lowering therefore reads it off the port about to execute the
+    statement (:class:`_GroupSession` for a group, the unit's own port
+    otherwise), so this record can travel beside any of them.
     """
 
     domain: DomainModel
@@ -4612,10 +4613,49 @@ class _GroupRun:
     step_graphs: list[dict[str, object]]
 
 
+@dataclass(frozen=True, slots=True)
+class _GroupSession:
+    """The connection ONE `uow` group runs on: the port it executes through, and
+    the Handle opened over that port.
+
+    One value rather than two arguments because a group's SQL is spelled by the
+    port that executes it (`m-dialect`), and one case's groups do not all run on
+    one connection — an interleaved group runs on its own peer session. Handing
+    a runner a Handle and a dialect apart admits a group lowering in one
+    connection's spelling while executing in another's; :meth:`over` is the only
+    way to build the pair, so the two can name no different connections.
+    """
+
+    port: DbPort
+    database: handle.Database
+
+    @classmethod
+    def over(
+        cls,
+        port: DbPort,
+        context: _CaseContext,
+        instant: dt.datetime,
+        observation: LifecycleObservation,
+    ) -> _GroupSession:
+        return cls(
+            port,
+            handle.Database(
+                port,
+                context.domain,
+                clock=FixedClock(instant),
+                lifecycle_provider=observation.provider,
+            ),
+        )
+
+    @property
+    def dialect(self) -> Dialect:
+        return self.port.dialect
+
+
 def _run_group_step(
     tx: handle.Transaction,
+    session: _GroupSession,
     context: _CaseContext,
-    dialect: Dialect,
     state: _GroupState,
     step: Mapping[str, object],
     index: int,
@@ -4649,11 +4689,11 @@ def _run_group_step(
     observation, read across either call to recover the statements the step
     emits — for a delivery, every page's.
 
-    ``dialect`` is the spelling of the connection ``tx`` holds, which the group
-    runner reads off the port it opened the transaction over. A group runs on
-    its own connection — an interleaved group's on a peer session — so the
-    lowering a step reports is spelled by whatever is about to execute it rather
-    than by the caller's own port.
+    ``session`` is the connection ``tx`` was opened over, and the spelling of
+    every statement this step lowers is read off its port. A group runs on its
+    own connection — an interleaved group's on a peer session — so the lowering
+    a step reports is spelled by whatever is about to execute it rather than by
+    the caller's own port.
 
     Returns the step's lowered emission pointer, and — for a read step — what it
     published beside it (:class:`_StepRead`), which is the step's own
@@ -4679,7 +4719,7 @@ def _run_group_step(
             resolved,
             entries,
             model,
-            dialect,
+            session.dialect,
             context.concurrency,
             tx_instant,
             context.shadow,
@@ -4743,13 +4783,7 @@ def _run_uow_group(
     state = _GroupState()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observation = lifecycle.observation()
-    write_port = _write_port(port, rollback=doomed)
-    database = handle.Database(
-        write_port,
-        context.domain,
-        clock=FixedClock(instant),
-        lifecycle_provider=observation.provider,
-    )
+    session = _GroupSession.over(_write_port(port, rollback=doomed), context, instant, observation)
     lowered: list[_LoweredStep] = []
     step_rows: list[dict[str, object]] = []
     step_graphs: list[dict[str, object]] = []
@@ -4757,7 +4791,7 @@ def _run_uow_group(
     def body(tx: handle.Transaction) -> None:
         for index in range(start, end + 1):
             step, read = _run_group_step(
-                tx, context, write_port.dialect, state, steps[index], index, tx_instant, observation
+                tx, session, context, state, steps[index], index, tx_instant, observation
             )
             lowered.append(step)
             if read is None:
@@ -4771,7 +4805,7 @@ def _run_uow_group(
                 step_graphs.append(observed)
 
     with context.shadow.staged(doomed=doomed), contextlib.suppress(_RollbackStep):
-        database.transact(body, concurrency=context.concurrency)
+        session.database.transact(body, concurrency=context.concurrency)
     # The group's writes reach the wire in ONE flush at its boundary, so a step's
     # own plan is reconciled against the group's whole delivery rather than
     # against a flush of its own: what the transaction wrote is every write
@@ -4876,10 +4910,9 @@ class _InterleavedGroupResult:
 
 
 def _run_interleaved_group(
-    database: handle.Database,
+    session: _GroupSession,
     observation: LifecycleObservation,
     context: _CaseContext,
-    dialect: Dialect,
     steps: Sequence[Mapping[str, object]],
     indices: Sequence[int],
     turnstile: _Turnstile,
@@ -4887,7 +4920,7 @@ def _run_interleaved_group(
 ) -> None:
     """Run one interleaved group's OWN steps (``indices``, in authored order,
     possibly non-contiguous across the WHOLE scenario) inside ONE real
-    ``db.transact`` call on ``database`` — the SAME :func:`_run_group_step`
+    ``db.transact`` call on ``session``'s own Handle — the SAME :func:`_run_group_step`
     interpreter :func:`_run_uow_group` drives over a contiguous span,
     generalized to an explicit index list and gated by ``turnstile`` at every
     step. A write step's lowering is therefore recorded BEFORE the group's own
@@ -4916,10 +4949,9 @@ def _run_interleaved_group(
     callback's own Python code finished): the OTHER group's next step must
     observe that commit for real, never a same-process illusion of one.
 
-    ``dialect`` is the one ``database``'s own connection declares, which is why
-    it is passed beside the shared ``context`` rather than read out of it: the
-    two groups run on two connections, so the `concurrent` group's steps lower
-    in the spelling its peer session executes in.
+    ``session`` is passed beside the shared ``context`` rather than read out of
+    it because the two groups run on two connections: the `concurrent` group's
+    steps execute on, and lower in the spelling of, its own peer session.
 
     ``context`` carries the SAME single :class:`TemporalShadow` every group
     shares (`_run_uow_group`'s own convention) — safe here ONLY because
@@ -4946,7 +4978,7 @@ def _run_interleaved_group(
             turnstile.wait_for(index)
             is_last = position == len(indices) - 1
             lowered[index], read = _run_group_step(
-                tx, context, dialect, state, steps[index], index, _INERT_CLOCK_INSTANT, observation
+                tx, session, context, state, steps[index], index, _INERT_CLOCK_INSTANT, observation
             )
             if read is not None:
                 result.rows[index] = _graph_rows(
@@ -4957,7 +4989,7 @@ def _run_interleaved_group(
 
     committed = False
     try:
-        database.transact(body, concurrency=context.concurrency)
+        session.database.transact(body, concurrency=context.concurrency)
         committed = True
     except OptimisticLockConflictError as exc:
         result.conflict_actual = exc.actual
@@ -5503,12 +5535,8 @@ def run_interleaved_scenario_case(
     lifecycle = LifecycleRun()
     observed_a = lifecycle.observation()
     observed_b = lifecycle.observation()
-    main_db = handle.Database(
-        port,
-        domain,
-        clock=FixedClock(instant),
-        lifecycle_provider=observed_a.provider,
-    )
+    context = _CaseContext(domain, model, concurrency, shadow)
+    session_a = _GroupSession.over(port, context, instant, observed_a)
     peer_connection = peer_factory()
     try:
         _require_interleaved_termination_capability(port, peer_connection, case.path.name)
@@ -5522,28 +5550,20 @@ def run_interleaved_scenario_case(
         with contextlib.suppress(Exception):
             peer_connection.close()
         raise
-    peer_db = handle.Database(
-        peer_connection,
-        domain,
-        clock=FixedClock(instant),
-        lifecycle_provider=observed_b.provider,
-    )
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})
-    context = _CaseContext(domain, model, concurrency, shadow)
     thread_a = threading.Thread(
         target=_run_interleaved_group,
-        args=(main_db, observed_a, context, port.dialect, steps, indices_a, turnstile, result_a),
+        args=(session_a, observed_a, context, steps, indices_a, turnstile, result_a),
         name=f"uow-{label_a}",
     )
     thread_b = threading.Thread(
         target=_run_interleaved_group,
         args=(
-            peer_db,
+            _GroupSession.over(peer_connection, context, instant, observed_b),
             observed_b,
             context,
-            peer_connection.dialect,
             steps,
             indices_b,
             turnstile,

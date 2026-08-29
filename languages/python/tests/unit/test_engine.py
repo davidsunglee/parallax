@@ -23,8 +23,9 @@ from typing import Any, Final, cast
 
 import pytest
 from _metamodel_support import Declaration, attribute, key, source
+from _second_dialect import BACKTICKED
 
-from _support.db_port import BACKTICKED, body_outcome
+from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, models, sweep
 from parallax.conformance._lifecycle_observation import (
@@ -1387,9 +1388,8 @@ class _ScriptedPort:
 
     ``dialect`` is a constructor argument rather than the class attribute every
     other double declares, because the two-session pins hand the peer session a
-    DIFFERENT dialect from the main port's — which is the only way to observe
-    which connection spelled a statement while exactly one real dialect
-    exists."""
+    DIFFERENT dialect from the main port's, so a statement's own spelling names
+    the connection that compiled it."""
 
     def __init__(
         self,
