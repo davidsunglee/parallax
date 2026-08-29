@@ -126,7 +126,7 @@ def test_a_seam_bound_by_annotation_or_by_a_walrus_is_found_too() -> None:
     assert _seams("if (open_it := profile.provisioner):\n    open_it()\n") == [".provisioner()"]
 
 
-def test_every_form_that_binds_a_name_to_a_value_binds_it_to_the_acquisition() -> None:
+def test_every_form_that_binds_a_name_to_an_expression_binds_it_to_the_acquisition() -> None:
     # Enumerating the binding forms is what stops the rule being escaped by rewriting
     # the binding rather than the acquisition: unpacking, iteration, `with`, a
     # comprehension, and a parameter default all bind a name the same way `=` does.

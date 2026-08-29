@@ -114,7 +114,7 @@ def test_a_seam_reached_through_a_chain_of_local_names_is_found() -> None:
     ) == ["reference_harness.providers.provider_for"]
 
 
-def test_every_form_that_binds_a_name_to_a_value_binds_it_to_the_acquisition() -> None:
+def test_every_form_that_binds_a_name_to_an_expression_binds_it_to_the_acquisition() -> None:
     # Enumerating the binding forms is what stops the rule being escaped by rewriting
     # the binding rather than the acquisition: unpacking, iteration, `with`, a
     # comprehension, and a parameter default all bind a name the same way `=` does.
