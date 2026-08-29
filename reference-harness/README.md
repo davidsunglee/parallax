@@ -28,6 +28,7 @@ src/reference_harness/
 ├── data_loader.py     # load fixture rows
 ├── dep_graph_check.py # parse modules.md; assert DAG + legal direction
 ├── matrix.py          # emit the compatibility-matrix report (implementations x databases)
+├── multiset.py        # order-insensitive matching under a caller's own comparison
 ├── case_assertions.py # CaseFailure + the comparison primitives the runner and oracle share
 ├── case_runner.py     # the layered assertion engine: case-shape routing, provisioning,
 │                      #   rejected, writes, conflict, concurrency, coherence, and the
