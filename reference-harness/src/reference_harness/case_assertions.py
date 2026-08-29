@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -22,7 +22,7 @@ class CaseFailure(AssertionError):
     """A compatibility-case assertion failed."""
 
 
-def to_decimal(value: Any) -> Any:
+def _to_decimal(value: Any) -> Any:
     """Normalize a numeric to an EXACT ``Decimal``; pass non-numerics through.
 
     Integers and ``Decimal``\\ s convert losslessly. A ``float`` is converted via
@@ -88,12 +88,36 @@ def scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
         # (so True != 1 and False != 0), never a number that happens to be 0/1.
         return isinstance(left, bool) and isinstance(right, bool) and left == right
     left, right = _decoded_against(left, right), _decoded_against(right, left)
-    da, db = to_decimal(left), to_decimal(right)
+    da, db = _to_decimal(left), _to_decimal(right)
     if isinstance(da, Decimal) and isinstance(db, Decimal):
         if tolerance is not None:
             return abs(da - db) <= tolerance
         return da == db
     return left == right
+
+
+def multiset_matches(
+    left: Sequence[Any], right: Sequence[Any], matches: Callable[[Any, Any], bool]
+) -> bool:
+    """Whether *left* and *right* hold the same elements under *matches*, in any order.
+
+    *matches* is neither hashable-keyed nor required to be transitive — tolerance-aware
+    scalar comparison is neither, and a graph node's comparison depends on the entity it
+    is being read as — so this is a greedy match: each left element claims the first
+    unclaimed right element it matches, and both sides must be exhausted. The collections
+    compared this way are small enough for the O(n^2) match to be free.
+    """
+    if len(left) != len(right):
+        return False
+    remaining = list(right)
+    for item in left:
+        for index, candidate in enumerate(remaining):
+            if matches(item, candidate):
+                del remaining[index]
+                break
+        else:
+            return False
+    return not remaining
 
 
 def _row_matches(left: dict[str, Any], right: dict[str, Any], tolerance: Decimal | None) -> bool:
@@ -111,10 +135,6 @@ def rows_equal(
 ) -> bool:
     """Order-insensitive multiset comparison of result rows.
 
-    Tolerance-aware scalar comparison is not hashable, so this is a greedy match:
-    each left row must claim a distinct right row. Result sets are tiny, so the
-    O(n^2) match is free.
-
     ``ordered`` compares positionally instead, for the one row sequence whose order
     a case fixes: a streamed step's published roots, which arrive in the delivery's
     Continuation Order across every page (m-case-format "Streamed read steps").
@@ -126,12 +146,6 @@ def rows_equal(
             _row_matches(row, candidate, tolerance)
             for row, candidate in zip(left, right, strict=True)
         )
-    remaining = list(right)
-    for row in left:
-        for index, candidate in enumerate(remaining):
-            if _row_matches(row, candidate, tolerance):
-                del remaining[index]
-                break
-        else:
-            return False
-    return not remaining
+    return multiset_matches(
+        left, right, lambda row, candidate: _row_matches(row, candidate, tolerance)
+    )

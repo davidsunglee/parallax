@@ -27,7 +27,7 @@ from sqlglot import exp
 from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure, scalars_equal
 from ..sql_canonical import sqlglot_dialect
-from ..sql_normalize import _detach_read_lock, is_union_all
+from ..sql_normalize import detach_read_lock, is_union_all
 from ..storage_layout import ColumnTier
 from .executor import ReadExecutor
 
@@ -355,7 +355,7 @@ def _alias_document_presence_projections(
         select.set("expressions", projections)
     if not ordinals:
         return sql, keys
-    lock_suffix = _detach_read_lock(tree, dialect)
+    lock_suffix = detach_read_lock(tree, dialect)
     return tree.sql(dialect=sqlglot_dialect(dialect)) + lock_suffix, keys
 
 
@@ -413,44 +413,44 @@ _CANONICAL_AXIS_ORDER: tuple[str, ...] = ("valid-time", "transaction-time")
 
 
 @dataclass(frozen=True, slots=True)
-class AsOfSelection:
+class _AsOfSelection:
     coordinate: str
 
 
 @dataclass(frozen=True, slots=True)
-class AsOfRangeSelection:
+class _AsOfRangeSelection:
     start: str
     end: str
 
 
 @dataclass(frozen=True, slots=True)
-class HistorySelection:
+class _HistorySelection:
     pass
 
 
-TemporalSelection = AsOfSelection | AsOfRangeSelection | HistorySelection
+_TemporalSelection = _AsOfSelection | _AsOfRangeSelection | _HistorySelection
 
 
-def query_temporal_selections(query: Any) -> dict[str, TemporalSelection]:
+def query_temporal_selections(query: Any) -> dict[str, _TemporalSelection]:
     """One Object Query's Temporal Selection clause, keyed by dimension."""
     temporal = query.get("temporal") if isinstance(query, dict) else None
     if not isinstance(temporal, dict):
         return {}
-    selections: dict[str, TemporalSelection] = {}
+    selections: dict[str, _TemporalSelection] = {}
     for dimension, selection in temporal.items():
         if not isinstance(selection, dict) or len(selection) != 1:
             continue
         tag = next(iter(selection))
         body = selection[tag]
         if tag == "asOf" and isinstance(body, str):
-            selections[dimension] = AsOfSelection(body)
+            selections[dimension] = _AsOfSelection(body)
         elif tag == "asOfRange" and isinstance(body, dict):
             start = body.get("start")
             end = body.get("end")
             if isinstance(start, str) and isinstance(end, str):
-                selections[dimension] = AsOfRangeSelection(start, end)
+                selections[dimension] = _AsOfRangeSelection(start, end)
         elif tag == "history":
-            selections[dimension] = HistorySelection()
+            selections[dimension] = _HistorySelection()
     return selections
 
 
@@ -465,7 +465,7 @@ def root_asof_pins(query: dict[str, Any]) -> dict[str, str]:
     return {
         dimension: selection.coordinate
         for dimension, selection in query_temporal_selections(query).items()
-        if isinstance(selection, AsOfSelection)
+        if isinstance(selection, _AsOfSelection)
     }
 
 
@@ -493,7 +493,7 @@ def expected_pin_suffix(child_entity: Entity, pins: Mapping[str, str]) -> list[A
 
 
 def expected_temporal_suffix(
-    case: Case, entity: Entity, selections: Mapping[str, TemporalSelection]
+    case: Case, entity: Entity, selections: Mapping[str, _TemporalSelection]
 ) -> list[Any]:
     """The binds *entity*'s selected temporal predicates contribute, in axis order.
 
@@ -514,12 +514,12 @@ def expected_temporal_suffix(
                 f"{case.path.name}: temporal selection oracle is missing {dimension!r} "
                 f"for {entity.canonical_name}"
             )
-        if isinstance(selection, AsOfSelection):
+        if isinstance(selection, _AsOfSelection):
             if selection.coordinate == "latest":
                 suffix.append(axis["infinity"])
             else:
                 suffix.extend([selection.coordinate, selection.coordinate])
-        elif isinstance(selection, AsOfRangeSelection):
+        elif isinstance(selection, _AsOfRangeSelection):
             suffix.extend([selection.end, selection.start])
     return suffix
 

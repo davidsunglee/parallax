@@ -43,7 +43,7 @@ def query_has_includes(query: dict[str, Any]) -> bool:
     return bool(query.get("includes"))
 
 
-def deepfetch_paths(query: dict[str, Any]) -> list[list[str]]:
+def _deepfetch_paths(query: dict[str, Any]) -> list[list[str]]:
     """One Object Query's Include Paths as ordered lists of ``Class.relationship`` refs.
 
     A path is a closed object ``{appliesTo?, segments}`` whose entries are closed
@@ -85,7 +85,7 @@ def deepfetch_root_entity(model: Model, query: dict[str, Any]) -> Entity:
     (every path starts at the queried entity), so a deep fetch may be rooted at
     any entity in a multi-entity model, not just the descriptor's first one.
     """
-    first_rel = deepfetch_paths(query)[0][0]
+    first_rel = _deepfetch_paths(query)[0][0]
     root_class = first_rel.rpartition(".")[0]
     return model.entity(root_class)
 
@@ -137,7 +137,7 @@ class HopKey(NamedTuple):
     narrowed_set: tuple[str, ...] | None
 
 
-class ResolvedHop(NamedTuple):
+class _ResolvedHop(NamedTuple):
     """One authored path segment resolved against the family.
 
     The single derivation both passes over a deep fetch share — the execution pass
@@ -161,7 +161,7 @@ def resolve_hop(
     *,
     parent: HopKey | None,
     root_source: tuple[str, ...] | None,
-) -> ResolvedHop:
+) -> _ResolvedHop:
     """Resolve one authored segment into its effective set and its dedup identity.
 
     *root_source* is the path's resolved root source set at a path's FIRST segment
@@ -181,7 +181,9 @@ def resolve_hop(
         rel_ref=rel_ref,
         narrowed_set=tuple(effective_set) if (is_narrowed and effective_set is not None) else None,
     )
-    return ResolvedHop(key=key, target=target, effective_set=effective_set, is_narrowed=is_narrowed)
+    return _ResolvedHop(
+        key=key, target=target, effective_set=effective_set, is_narrowed=is_narrowed
+    )
 
 
 class FetchStep:
@@ -296,7 +298,7 @@ def fetch_steps(model: Model, query: dict[str, Any]) -> list[FetchStep]:
 def _step_of(
     model: Model,
     family: Family,
-    hop: ResolvedHop,
+    hop: _ResolvedHop,
     variant_map: dict[Any, str],
     *,
     root_guard: tuple[str, ...] | None,
@@ -428,7 +430,7 @@ def _sorted_by_order_keys(
     return sorted(rows, key=functools.cmp_to_key(compare))
 
 
-def assert_child_ordering(
+def _assert_child_ordering(
     case: Case,
     steps: list[FetchStep],
     children_by_step: dict[HopKey, dict[Any, list[dict[str, Any]]]],
@@ -488,7 +490,7 @@ def assert_child_ordering(
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutedLevels:
+class _ExecutedLevels:
     """What one run of a query's child levels produced, and how much SQL it used.
 
     ``consumed`` is the count rather than a slice because the levels a run
@@ -502,7 +504,7 @@ class ExecutedLevels:
 
 
 def refuse_unused_levels(
-    case: Case, source: str, dialect: str, executed: ExecutedLevels, listed: int
+    case: Case, source: str, dialect: str, executed: _ExecutedLevels, listed: int
 ) -> None:
     """Refuse a case listing child SQL its own levels never reached.
 
@@ -528,7 +530,7 @@ def execute_fetch_levels(
     steps: list[FetchStep],
     root_rows: list[dict[str, Any]],
     levels: list[tuple[str, list[Any]]],
-) -> ExecutedLevels:
+) -> _ExecutedLevels:
     """Execute one Object Query's child levels and bucket each hop's rows by parent key.
 
     The N+1-elimination contract, executed once for both positions an Include
@@ -665,6 +667,6 @@ def execute_fetch_levels(
         children_by_step[step.hop_key] = bucket
         statement_index += 1
 
-    assert_child_ordering(case, steps, children_by_step)
+    _assert_child_ordering(case, steps, children_by_step)
 
-    return ExecutedLevels(children_by_hop=children_by_step, consumed=statement_index)
+    return _ExecutedLevels(children_by_hop=children_by_step, consumed=statement_index)

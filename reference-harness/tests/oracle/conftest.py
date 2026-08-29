@@ -1,14 +1,12 @@
-"""What every Object Query oracle behavior group is driven with.
+"""What the Object Query oracle's tests are driven with.
 
 The oracle asks a database for exactly two things — its dialect and the rows a
 statement returns — so a test supplies them directly and never a container.
-``ScriptedReads`` is the one recorder all the groups share: five modules
-re-deriving it would be the coupling pattern this package exists to reverse.
 
-Cases come from the shipped corpus, so a group asserts against real authored SQL,
+Cases come from the shipped corpus, so a test asserts against real authored SQL,
 binds, and observables rather than a synthetic model that could drift from what
-the corpus actually declares. A group that needs a case to be wrong damages a
-deep copy, which :func:`reference_harness.case.discover_cases` documents as the
+the corpus actually declares. A test that needs a case to be wrong damages a deep
+copy, which :func:`reference_harness.case.discover_cases` documents as the
 supported way to obtain a mutable one.
 """
 

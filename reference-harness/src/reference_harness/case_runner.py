@@ -38,7 +38,7 @@ from sqlglot.expressions.core import Expr
 
 from . import errors, serde
 from .case import Case, Entity, Model, conflict_write_rows, step_as_read
-from .case_assertions import CaseFailure, rows_equal, scalars_equal
+from .case_assertions import CaseFailure, multiset_matches, rows_equal, scalars_equal
 from .data_loader import load_model
 from .ddl_builder import (
     contributor_types,
@@ -83,7 +83,7 @@ from .predicate_write_validate import (
 )
 from .providers import DatabaseProvider
 from .sql_canonical import NonCanonicalError, sqlglot_dialect
-from .sql_normalize import _detach_read_lock, is_union_all, normalize
+from .sql_normalize import detach_read_lock, is_union_all, normalize
 from .sql_wrapped_union import WrapFacts, WrapOrderKey, wrapped_union_source
 from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
@@ -1356,7 +1356,7 @@ def _alias_document_presence_projections(
         select.set("expressions", projections)
     if not ordinals:
         return sql, keys
-    lock_suffix = _detach_read_lock(tree, dialect)
+    lock_suffix = detach_read_lock(tree, dialect)
     return tree.sql(dialect=sqlglot_dialect(dialect)) + lock_suffix, keys
 
 
@@ -4200,17 +4200,7 @@ def _graphs_equal(
         if isinstance(a, list) or isinstance(b, list):
             if not isinstance(a, list) or not isinstance(b, list):
                 return False
-            if len(a) != len(b):
-                return False
-            remaining = list(b)
-            for item in a:
-                for index, candidate in enumerate(remaining):
-                    if equal_value(item, candidate):
-                        del remaining[index]
-                        break
-                else:
-                    return False
-            return not remaining
+            return multiset_matches(a, b, equal_value)
 
         return scalars_equal(a, b, None)
 
@@ -4266,17 +4256,9 @@ def _graphs_equal(
             if relationship["cardinality"] == "one-to-many":
                 if not isinstance(a[key], list) or not isinstance(b[key], list):
                     return False
-                if len(a[key]) != len(b[key]):
-                    return False
-                remaining = list(b[key])
-                for child in a[key]:
-                    for index, candidate in enumerate(remaining):
-                        if equal_entity_node(child, candidate, target):
-                            del remaining[index]
-                            break
-                    else:
-                        return False
-                if remaining:
+                if not multiset_matches(
+                    a[key], b[key], functools.partial(equal_entity_node, entity=target)
+                ):
                     return False
                 continue
 
@@ -4295,20 +4277,12 @@ def _graphs_equal(
     if left.keys() != right.keys():
         return False
     for entity_name in left:
-        left_nodes = left[entity_name]
-        right_nodes = right[entity_name]
-        if len(left_nodes) != len(right_nodes):
-            return False
         entity = model.entity(entity_name)
-        remaining = list(right_nodes)
-        for node in left_nodes:
-            for index, candidate in enumerate(remaining):
-                if equal_node_or_null(node, candidate, entity):
-                    del remaining[index]
-                    break
-            else:
-                return False
-        if remaining:
+        if not multiset_matches(
+            left[entity_name],
+            right[entity_name],
+            functools.partial(equal_node_or_null, entity=entity),
+        ):
             return False
     return True
 
