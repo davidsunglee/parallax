@@ -176,12 +176,46 @@ def test_a_step_asserted_twice_is_refused(corpus_case: CaseLoader) -> None:
         reads.assert_step(1, ScriptedReads(results=[_ORDERS]))
 
 
+def test_a_step_asserted_ahead_of_an_earlier_one_is_refused(corpus_case: CaseLoader) -> None:
+    """Scenario order is enforced, not documented, and the refusal names what is next.
+
+    A step observes what the steps before it published, so asserting two owned
+    steps in either order, or skipping one, would change what the later one sees.
+    The cursor accepts only the lowest step this instance owns and has not
+    asserted.
+    """
+    reads = ScenarioReads(corpus_case(_ONE_OBJECT_TWO_FINDS))
+
+    with pytest.raises(
+        CaseFailure,
+        match=r"scenario\[1\] is asserted out of Scenario order; scenario\[0\] is the next",
+    ):
+        reads.assert_step(1, ScriptedReads(results=[_LINUS]))
+
+
+def test_the_cursor_steps_over_what_the_runner_owns(corpus_case: CaseLoader) -> None:
+    """The next step is the next OWNED one, so a runner-owned step is not waited for.
+
+    `m-op-list-001` opens with the zero-round-trip construction of a query-backed
+    list, which the runner owns and never routes here. The first access is
+    therefore the first step this oracle is asked for, and the cursor must already
+    stand on it rather than on the step index before it.
+    """
+    reads = ScenarioReads(corpus_case(_CONSTRUCTION))
+
+    reads.assert_step(1, ScriptedReads(results=[_ORDERS]))
+
+
 def test_a_step_that_failed_an_observable_publishes_nothing(damaged_case: CaseLoader) -> None:
     """Publication is the last thing a step does, so a failed step retains nothing.
 
     Retaining before the observables are graded would hand a later step rows no
     comparison accepted, and would meet a second attempt at the failed step with
     "asserted twice" — a duplicate refusal standing in for the real failure.
+
+    Because the step retained nothing, the ordering cursor still stands on it, so
+    the step after it is refused for the step it skipped rather than answered from
+    an observation nothing accepted.
     """
     case = damaged_case(_ONE_OBJECT_TWO_FINDS)
     _steps(case)[0]["expectRows"][0]["owner"] = "Someone else"
@@ -191,7 +225,7 @@ def test_a_step_that_failed_an_observable_publishes_nothing(damaged_case: CaseLo
         with pytest.raises(CaseFailure, match=r"scenario\[0\] rows != expectRows"):
             reads.assert_step(0, ScriptedReads(results=[_LINUS]))
 
-    with pytest.raises(CaseFailure, match="names step 0, which published no observation"):
+    with pytest.raises(CaseFailure, match=r"scenario\[0\] is the next read step"):
         reads.assert_step(1, ScriptedReads(results=[_LINUS]))
 
 
@@ -818,6 +852,28 @@ def test_a_load_naming_a_source_that_is_not_earlier_is_refused(damaged_case: Cas
         reads.assert_step(1, reader)
 
 
+def test_a_load_running_more_statement_groups_than_sources_is_refused(
+    damaged_case: CaseLoader,
+) -> None:
+    """A coordinate-grouped load emits at most one statement per referenced source.
+
+    The batching contract is what makes the grouped form observable: every
+    executed group must be accounted for by a source the step references, or a
+    load could issue statements no coordinate group asked for and still pass on
+    the rows they returned.
+    """
+    case = damaged_case(_POPULATED_LIST)
+    step = _steps(case)[1]
+    step["on"] = [0]
+    step["statements"] = [*step["statements"], *step["statements"]]
+    reads = ScenarioReads(case)
+    reader = ScriptedReads(results=[_ORDERS, _ALL_ITEMS, _ALL_ITEMS])
+    reads.assert_step(0, reader)
+
+    with pytest.raises(CaseFailure, match="coordinate source"):
+        reads.assert_step(1, reader)
+
+
 # --- an access over an already-materialized view ------------------------------
 
 
@@ -1358,6 +1414,32 @@ def test_a_row_form_step_read_publishes_no_value_object_occurrence(
     case = _resolving_a_predicate_write_over_a_document_layout(
         damaged_case(_DOCUMENT_LAYOUT_ROW_FORM_READ)
     )
+
+    ScenarioReads(case).assert_step(0, ScriptedReads(results=[_TRAVELER_DOCUMENTS]))
+
+
+def test_a_resolving_read_widens_to_the_occurrence_its_write_assigns(
+    damaged_case: CaseLoader,
+) -> None:
+    """The one read that widens its lane's Document default does it for the write.
+
+    A versioned target's resolve projects the Value Object `Document` slots its own
+    assignments reach into (`m-case-format` *Read result form*), and the unit is the
+    SLOT: one Structured Column carries `displayName` beside `address` and `tags`,
+    so an assignment on the Attribute needs the slot and every occupant of that slot
+    materializes with it. The twin above is the same fabricated pairing under a
+    `delete`, which assigns nothing and therefore widens nothing: the same read, the
+    same golden, and a different published row because the write it serves differs.
+    """
+    case = _resolving_a_predicate_write_over_a_document_layout(
+        damaged_case(_DOCUMENT_LAYOUT_ROW_FORM_READ)
+    )
+    write = _steps(case)[1]["write"]
+    write["mutation"] = "update"
+    write["assignments"] = [{"attr": "parallax.compatibility.Traveler.displayName", "value": "Ada"}]
+    for expected, document in zip(_steps(case)[0]["expectRows"], _TRAVELER_DOCUMENTS, strict=True):
+        expected["address"] = document["payload"]["address"]
+        expected["tags"] = document["payload"]["tags"]
 
     ScenarioReads(case).assert_step(0, ScriptedReads(results=[_TRAVELER_DOCUMENTS]))
 

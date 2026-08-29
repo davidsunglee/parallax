@@ -15,6 +15,7 @@ import pytest
 
 import reference_harness.case_runner as case_runner
 import reference_harness.ddl_builder as ddl_builder
+import reference_harness.object_query_oracle as object_query_oracle
 from reference_harness.case import Model, load_model
 from reference_harness.data_loader import load_model as load_fixture_rows
 from reference_harness.ddl_builder import ddl_for
@@ -1331,12 +1332,22 @@ def test_a_fixture_row_naming_no_document_member_is_still_refused() -> None:
         load_fixture_rows(model, cast("Any", _RecordingProvider()))
 
 
-def test_case_runner_consumes_storage_layout_for_validation_reads_and_observation() -> None:
-    source = Path(case_runner.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(source)
+def _storage_layout_importers() -> list[Path]:
+    """The runner and every module of the read oracle, which import as one boundary.
+
+    The oracle is asked as a PACKAGE rather than module by module, so its private
+    interior stays free to be rearranged while the set of storage-layout facts the
+    harness consumes stays pinned.
+    """
+    oracle = Path(object_query_oracle.__file__).parent
+    return [Path(case_runner.__file__), *sorted(oracle.glob("*.py"))]
+
+
+def test_the_harness_consumes_storage_layout_for_validation_reads_and_observation() -> None:
     imported = {
         alias.asname or alias.name
-        for node in ast.walk(tree)
+        for path in _storage_layout_importers()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, ast.ImportFrom) and node.module == "storage_layout"
         for alias in node.names
     }

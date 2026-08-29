@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..case import Case, Entity
-from ..case_assertions import CaseFailure, scalars_equal
+from ..case_assertions import CaseFailure, coerce_identity_key, scalars_equal
 from . import execute, graph, includes, materialize, seek
 from .executor import ReadExecutor
 
@@ -221,7 +221,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
         root_rows.extend(executed.root_rows)
         if executed.root_rows:
             last = executed.root_rows[-1]
-            cursor = tuple(materialize.coerce_identity_key(last[term.column]) for term in terms)
+            cursor = tuple(coerce_identity_key(last[term.column]) for term in terms)
         page += 1
         if delivered < requested or (limit is not None and len(root_rows) >= limit):
             break

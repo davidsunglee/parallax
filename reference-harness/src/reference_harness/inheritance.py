@@ -451,7 +451,7 @@ class Family:
         class or the declaration is absent: a caller resolving a whole ``rel``
         reference has nowhere else to look and reads that as a non-polymorphic
         target (:func:`resolve_hop_effective_set`, :func:`_walk_active_position`,
-        ``case_runner._resolve_hop``), while :func:`applicable_relationship_target`
+        the read oracle's own hop resolution), while :func:`applicable_relationship_target`
         reads it as "not declared on THIS class" and keeps walking the ancestry.
         """
         if not isinstance(rel_ref, str) or "." not in rel_ref:

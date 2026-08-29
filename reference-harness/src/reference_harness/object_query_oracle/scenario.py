@@ -29,8 +29,13 @@ from contextlib import contextmanager
 from dataclasses import replace
 from typing import Any
 
-from ..case import Case, Entity, frozen_view
-from ..case_assertions import CaseFailure, rows_equal
+from ..case import Case, Entity, entry_pairs, frozen_view
+from ..case_assertions import (
+    CaseFailure,
+    assert_step_on_sources,
+    coerce_identity_key,
+    rows_equal,
+)
 from ..predicate_write_validate import requires_predicate_write_materialization
 from ..serde import canonical
 from . import execute, graph, includes, materialize, retained, stream
@@ -75,7 +80,7 @@ class ScenarioReads:
         """
         with self._reported_against(step_index):
             step = self._eligible_step(step_index)
-            pairs = _statement_pairs(step, reader.dialect)
+            pairs = entry_pairs(step.get("statements"), reader.dialect)
 
             if "stream" in step:
                 observation = self._deliver(step_index, step, reader)
@@ -126,12 +131,21 @@ class ScenarioReads:
             raise CaseFailure(f"{prefix}{marker} {detail}") from failure
 
     def _eligible_step(self, step_index: int) -> dict[str, Any]:
-        """The step at *step_index*, refused unless this instance owns it once.
+        """The step at *step_index*, refused unless it is the next one this owns.
 
-        The runner routes what IT owns and sends everything else here, so these
-        are defensive: a duplicate assertion would let a retained observation be
-        silently overwritten, and a runner-owned step reaching here would grade
-        DML or an unresolved construction as a read.
+        Scenario order is a precondition of the whole interface, not a courtesy: a
+        step reads what earlier steps published, so asserting two owned steps out
+        of order, or skipping one, changes what the later one observes. Stating
+        that in a docstring alone would leave the obligation undefended, so the
+        cursor enforces it — the only index accepted is the LOWEST this instance
+        owns and has not asserted. Refusing a skipped step is what makes the
+        oracle predict ownership rather than only check it on arrival, so a step
+        the runner routes differently than :func:`_runner_owned` reads it surfaces
+        as a refusal here rather than as a silently missing observation.
+
+        There is deliberately no closing operation: a trailing owned step nobody
+        asserted stays unrefused, because a second method and the lifetime
+        obligation behind it would cost a caller more than the defect it catches.
         """
         case = self._case
         scenario = case.scenario
@@ -150,7 +164,25 @@ class ScenarioReads:
         refusal = _runner_owned(step)
         if refusal is not None:
             raise CaseFailure(f"{case.path.name}: scenario[{step_index}] {refusal}")
+        expected = self._next_owned_step()
+        if expected != step_index:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{step_index}] is asserted out of Scenario "
+                f"order; scenario[{expected}] is the next read step and has not been "
+                f"asserted. A step observes what the steps before it published."
+            )
         return step
+
+    def _next_owned_step(self) -> int | None:
+        """The lowest step index this instance owns and has not yet asserted."""
+        return next(
+            (
+                index
+                for index, step in enumerate(self._case.scenario)
+                if index not in self._retained and _runner_owned(step) is None
+            ),
+            None,
+        )
 
     # --- the four read workflows ---------------------------------------------
 
@@ -228,8 +260,12 @@ class ScenarioReads:
         # The step is presented as the read it is, so the seam reads its result
         # form off the step's own read semantics rather than being told one: the
         # sole row-form step read is a materializing predicate write's resolve, and
-        # every other step is the object lane.
-        published = materialize.materialize_read(step_read, rows)
+        # every other step is the object lane. That resolve is also the one read
+        # that widens its lane's Document-slot default, which no read case states
+        # and only the write it serves decides.
+        published = materialize.materialize_read(
+            step_read, rows, widened_documents=_widened_documents(case, step_index)
+        )
         rows = [materialize.materialize_variant_owner_node(case, entity, row) for row in published]
         return retained.Observation(
             rows=rows,
@@ -511,7 +547,7 @@ class ScenarioReads:
                 f"{identity_column!r}; a scenario step's find MUST project the primary key "
                 f"so identity can be checked."
             )
-        return sorted(materialize.coerce_identity_key(row[identity_column]) for row in rows)
+        return sorted(coerce_identity_key(row[identity_column]) for row in rows)
 
     def _assert_graph_observable(
         self, step_index: int, step: Mapping[str, Any], observation: retained.Observation
@@ -628,29 +664,6 @@ def _runner_owned(step: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _statement_pairs(step: Mapping[str, Any], dialect: str) -> list[tuple[str, list[Any]]]:
-    """The ``(sql, binds)`` pairs a step's ``statements`` list declares for *dialect*.
-
-    Each statement's binds ride inline on its own entry (default ``[]``), so the
-    two are read together rather than paired positionally. An entry whose ``sql``
-    map does not declare *dialect* contributes nothing: a step lists golden SQL
-    per dialect, and a dialect it was never lowered for has no statement to run.
-    """
-    entries = step.get("statements")
-    if not isinstance(entries, list):
-        return []
-    pairs: list[tuple[str, list[Any]]] = []
-    for entry in entries:
-        sql = entry.get("sql") if isinstance(entry, dict) else None
-        if not isinstance(sql, dict) or dialect not in sql:
-            continue
-        binds = entry.get("binds", [])
-        pairs.append(
-            (sql[dialect], list(binds[dialect]) if isinstance(binds, dict) else list(binds))
-        )
-    return pairs
-
-
 def _reference_sql_for(step: Mapping[str, Any], dialect: str) -> str | None:
     """Resolve one Scenario read's naive SQL oracle for *dialect*."""
     raw = step.get("referenceSql")
@@ -670,29 +683,16 @@ def _assert_action_on(
 ) -> None:
     """Validate a read-verb action step's ``on`` source indices.
 
-    Every index in ``on`` — a single int, or an array of coordinate-group
-    sources — MUST name a REAL earlier step, and, for the array form, name it once.
-    A coordinate-grouped ``load`` emits one child statement per lowered-coordinate
-    group, so it MUST NOT execute MORE statement groups than it references sources:
-    every executed group is accounted for by a referenced source (m-deep-fetch
-    batching contract).
+    Naming a real earlier step is asked of every kind of step, so that half is the
+    shared :func:`..case_assertions.assert_step_on_sources`. What is read-verb-only
+    is the batching rule beneath it: a coordinate-grouped ``load`` emits one child
+    statement per lowered-coordinate group, so it MUST NOT execute MORE statement
+    groups than it references sources — every executed group is accounted for by a
+    referenced source (m-deep-fetch batching contract).
     """
-    if "on" not in step:
-        return
-    on = step["on"]
-    indices = list(on) if isinstance(on, list) else [on]
-    if isinstance(on, list) and len(set(indices)) != len(indices):
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{step_index}].on {on!r} names a DUPLICATE source; "
-            f"a coordinate-grouped action references each source at most once."
-        )
-    for source in indices:
-        if not 0 <= source < step_index:
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{step_index}].on references step {source!r}, "
-                f"which is not a real EARLIER step (0 <= source < {step_index}); an action "
-                f"targets the result of a prior step."
-            )
+    assert_step_on_sources(case, step_index, step)
+    on = step.get("on")
+    indices = list(on) if isinstance(on, list) else []
     if isinstance(on, list) and len(pairs) > len(indices):
         raise CaseFailure(
             f"{case.path.name}: scenario[{step_index}] executes {len(pairs)} statement "
@@ -761,6 +761,41 @@ def _resolves_a_materializing_write(case: Case, step_index: int) -> bool:
     if written.canonical_name != read.canonical_name:
         return False
     return requires_predicate_write_materialization(written)
+
+
+def _widened_documents(case: Case, step_index: int) -> frozenset[str]:
+    """The Value Object occurrences a materializing write's resolve additionally needs.
+
+    A resolve is row-form, and row form omits the Value Object `Document` slots —
+    but this one read widens that default to the slots the WRITE it serves needs
+    (`m-case-format` *Read result form*). The unit of the widening is the SLOT, not
+    the member: under a Relational Document Layout one Structured Column carries
+    the Attributes and the occurrences together, so a write reaching any member
+    inside it needs the whole slot, and every occurrence the slot holds
+    materializes with it.
+
+    A TEMPORAL target's resolve records a complete Predecessor Row, so it needs
+    every declared slot. A VERSIONED target's resolve retains only the observed
+    version, so it needs the slots its own assignments reach into — and none at
+    all for a ``delete``, which assigns nothing. Every other step read is the
+    object lane and widens nothing, carrying every applicable occurrence already.
+    """
+    if not _resolves_a_materializing_write(case, step_index):
+        return frozenset()
+    written = case.model.entity(case.scenario[step_index + 1]["write"]["target"]["entity"])
+    column, members = materialize.document_layout_members(case, written)
+    if not column:
+        return frozenset()
+    occurrences = frozenset(member.name for member in members if member.type_spelling is None)
+    if written.temporal_runtime_axes:
+        return occurrences
+    assignments = case.scenario[step_index + 1]["write"].get("assignments") or ()
+    assigned = {
+        str(assignment.get("attr", "")).rsplit(".", 1)[-1]
+        for assignment in assignments
+        if isinstance(assignment, Mapping)
+    }
+    return occurrences if assigned & {member.name for member in members} else frozenset()
 
 
 def _step_as_read(case: Case, step_index: int) -> Case:

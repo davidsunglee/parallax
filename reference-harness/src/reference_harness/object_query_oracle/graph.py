@@ -24,7 +24,12 @@ from functools import partial
 from typing import Any
 
 from ..case import Case, Entity, Model
-from ..case_assertions import CaseFailure, multiset_matches, scalars_equal
+from ..case_assertions import (
+    CaseFailure,
+    coerce_identity_key,
+    multiset_matches,
+    scalars_equal,
+)
 from ..inheritance import Family, resolve_root_source_set
 from . import includes, materialize
 
@@ -122,7 +127,7 @@ def assemble_graph(
 
     def node_for(view: str, entity: Entity, raw_row: dict[str, Any]) -> dict[str, Any]:
         pk_col = includes.column_of(entity, pk_attr(entity))
-        key = (view, entity.name, materialize.coerce_identity_key(raw_row[pk_col]))
+        key = (view, entity.name, coerce_identity_key(raw_row[pk_col]))
         if key not in registry:
             # Instance-form graph node: decode + project each top-level value-object
             # document column into its declared composite, at EVERY level (root AND
@@ -150,7 +155,7 @@ def assemble_graph(
             for parent_node in admitted:
                 # A materialized node is keyed by declared member name, so the
                 # correlation member is addressed by name rather than by column.
-                parent_key = materialize.coerce_identity_key(parent_node.get(step.parent_attr))
+                parent_key = coerce_identity_key(parent_node.get(step.parent_attr))
                 matched = bucket.get(parent_key, [])
                 child_nodes = [node_for(step.view_key, step.child_entity, row) for row in matched]
                 if step.to_many:

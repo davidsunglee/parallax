@@ -10,14 +10,19 @@ exercise that derivation with no database:
   exact predicate rule for a broadening narrow, an empty effective set, and a
   concrete-subtype attribute used outside a compatible narrowing scope;
 * the family-variant map and the concrete superset are derived from the ancestry;
-* `_materialize_family_variant` replaces the raw tag column with the derived
-  `familyVariant`, and FAILS loudly when the golden projection omits a superset
-  column or the tag column.
+* an accepted read observed through ``assert_case_read`` publishes the derived
+  `familyVariant` in place of the raw tag column or the per-branch literal, and
+  FAILS loudly when the golden projection omits a superset column, the tag
+  column, or the `union all` shape the position's concrete set requires.
+
+The read half is driven through the oracle's public seam with canned rows, so
+what it pins is the observable derivation rather than any one internal step.
 """
 
 from __future__ import annotations
 
 import copy
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,11 +30,7 @@ import pytest
 
 from reference_harness.case import Case, load_model
 from reference_harness.case_assertions import CaseFailure
-from reference_harness.case_runner import (
-    _materialize_family_variant,
-    _resolve_hop,
-    run_case,
-)
+from reference_harness.case_runner import run_case
 from reference_harness.inheritance import (
     ATTRIBUTE_OUTSIDE_ACTIVE_POSITION,
     NARROW_EMPTY_EFFECTIVE_SET,
@@ -42,11 +43,27 @@ from reference_harness.inheritance import (
     tag_value_to_subtype,
     validate_query_inheritance,
 )
+from reference_harness.object_query_oracle import assert_case_read
 from reference_harness.storage_layout import compile_storage_layout, position_projection
 from reference_harness.value_object_resolve import RejectionError
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
+
+
+class _Reads:
+    """A read executor answering one canned result set, and nothing else.
+
+    The read half of this module grades a hand-authored golden against rows it
+    states itself, so the executor is only the two members an observation needs.
+    """
+
+    def __init__(self, rows: list[dict[str, Any]], dialect: str = "postgres") -> None:
+        self.dialect = dialect
+        self._rows = rows
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._rows]
 
 
 def _animal_defs() -> list[dict[str, Any]]:
@@ -757,7 +774,7 @@ def test_tpcs_single_concrete_position_projection_is_its_own_table() -> None:
     )
 
 
-# --- _materialize_family_variant --------------------------------------------
+# --- the derived familyVariant, observed through the read seam ---------------
 
 
 # The full Animal-family concrete superset projected with the raw tag column
@@ -769,14 +786,19 @@ _ANIMAL_GOLDEN = (
 )
 
 
-def _read_case(target: str, golden: str = _ANIMAL_GOLDEN, **clauses: Any) -> Case:
+def _read_case(
+    target: str,
+    golden: str = _ANIMAL_GOLDEN,
+    rows: list[dict[str, Any]] | None = None,
+    **clauses: Any,
+) -> Case:
     model = load_model(_COMPATIBILITY_ROOT, "models/animal.yaml")
     raw = {
         "model": "models/animal.yaml",
         "tags": ["m-inheritance"],
         "shape": "read",
         "when": {"objectQuery": {"target": target, "predicate": {"all": {}}, **clauses}},
-        "then": {"statements": [{"sql": {"postgres": golden}}], "rows": []},
+        "then": {"statements": [{"sql": {"postgres": golden}}], "rows": rows or []},
     }
     return Case(path=Path("m-inheritance-999-x.yaml"), raw=raw, model=model)
 
@@ -795,26 +817,27 @@ def _dog_row() -> dict[str, Any]:
 
 
 def test_materialize_replaces_tag_with_family_variant() -> None:
-    case = _read_case("Animal")
-    out = _materialize_family_variant(case, [_dog_row()])
-    assert out == [
-        {
-            "id": 1,
-            "name": "Rex",
-            "owner_id": 10,
-            "license_id": "L-100",
-            "bark_volume": 7,
-            "indoor": None,
-            "tusk_length": None,
-            "familyVariant": "Dog",
-        }
-    ]
+    case = _read_case(
+        "Animal",
+        rows=[
+            {
+                "id": 1,
+                "name": "Rex",
+                "owner_id": 10,
+                "license_id": "L-100",
+                "bark_volume": 7,
+                "indoor": None,
+                "tusk_length": None,
+                "familyVariant": "Dog",
+            }
+        ],
+    )
+    assert_case_read(case, _Reads([_dog_row()]))
 
 
 def test_materialize_is_noop_for_concrete_target() -> None:
-    case = _read_case("Dog")
     rows = [{"id": 1, "name": "Rex", "license_id": "L-100", "bark_volume": 7}]
-    assert _materialize_family_variant(case, rows) == rows
+    assert_case_read(_read_case("Dog", rows=rows), _Reads(rows))
 
 
 def test_materialize_fails_when_superset_column_missing() -> None:
@@ -826,7 +849,7 @@ def test_materialize_fails_when_superset_column_missing() -> None:
     )
     case = _read_case("Animal", golden)
     with pytest.raises(CaseFailure, match="concrete-superset column"):
-        _materialize_family_variant(case, [_dog_row()])
+        assert_case_read(case, _Reads([_dog_row()]))
 
 
 _DOG_NARROWED_GOLDEN = (
@@ -845,7 +868,16 @@ def test_materialize_reads_the_narrowed_projection_through_a_deep_fetch() -> Non
         _DOG_NARROWED_GOLDEN,
         narrowTo=["Dog"],
         orderBy=[{"attr": "Dog.barkVolume", "direction": "desc"}],
-        includes=_INCLUDE_OWNER,
+        rows=[
+            {
+                "id": 1,
+                "name": "Rex",
+                "owner_id": 10,
+                "license_id": "L-100",
+                "bark_volume": 7,
+                "familyVariant": "Dog",
+            }
+        ],
     )
     row = {
         "id": 1,
@@ -855,16 +887,7 @@ def test_materialize_reads_the_narrowed_projection_through_a_deep_fetch() -> Non
         "license_id": "L-100",
         "bark_volume": 7,
     }
-    assert _materialize_family_variant(case, [row]) == [
-        {
-            "id": 1,
-            "name": "Rex",
-            "owner_id": 10,
-            "license_id": "L-100",
-            "bark_volume": 7,
-            "familyVariant": "Dog",
-        }
-    ]
+    assert_case_read(case, _Reads([row]))
 
 
 def test_materialize_fails_when_tag_column_missing() -> None:
@@ -883,7 +906,7 @@ def test_materialize_fails_when_tag_column_missing() -> None:
         "indoor": None,
     }
     with pytest.raises(CaseFailure, match="tag column"):
-        _materialize_family_variant(case, [row])
+        assert_case_read(case, _Reads([row]))
 
 
 # --- row-count-independence of the projection-shape check ---------------------
@@ -902,7 +925,7 @@ def test_materialize_zero_row_missing_superset_column_still_fails() -> None:
     )
     case = _read_case("Animal", golden)
     with pytest.raises(CaseFailure, match="concrete-superset column"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 def test_materialize_zero_row_missing_tag_column_still_fails() -> None:
@@ -912,14 +935,13 @@ def test_materialize_zero_row_missing_tag_column_still_fails() -> None:
     )
     case = _read_case("Animal", golden)
     with pytest.raises(CaseFailure, match="tag column"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 def test_materialize_zero_row_correct_golden_passes() -> None:
     # Positive twin: an empty result over a correct full-superset + tag golden
     # materializes nothing and does NOT raise.
-    case = _read_case("Animal")
-    assert _materialize_family_variant(case, []) == []
+    assert_case_read(_read_case("Animal"), _Reads([]))
 
 
 # --- table-per-concrete-subtype `union all` oracle -----------------------------
@@ -962,14 +984,19 @@ _DOCUMENT_ROOT_UNION = (
 )
 
 
-def _document_case(target: str, golden: str = _DOCUMENT_ROOT_UNION, **clauses: Any) -> Case:
+def _document_case(
+    target: str,
+    golden: str = _DOCUMENT_ROOT_UNION,
+    rows: list[dict[str, Any]] | None = None,
+    **clauses: Any,
+) -> Case:
     model = _document_model()
     raw = {
         "model": "models/document.yaml",
         "tags": ["m-inheritance"],
         "shape": "read",
         "when": {"objectQuery": {"target": target, "predicate": {"all": {}}, **clauses}},
-        "then": {"statements": [{"sql": {"postgres": golden}}], "rows": []},
+        "then": {"statements": [{"sql": {"postgres": golden}}], "rows": rows or []},
     }
     return Case(path=Path("m-inheritance-999-x.yaml"), raw=raw, model=model)
 
@@ -986,7 +1013,6 @@ def test_document_effective_sets_and_canonical_order() -> None:
 def test_tpcs_materialize_renames_family_variant_literal() -> None:
     # The DB projects the per-branch literal under `family_variant`; the oracle
     # renames it to `familyVariant` (no raw tag column exists to map).
-    case = _document_case("Document")
     invoice_row = {
         "id": 1,
         "title": "Invoice-A",
@@ -996,16 +1022,27 @@ def test_tpcs_materialize_renames_family_variant_literal() -> None:
         "body": None,
         "family_variant": "Invoice",
     }
-    (out,) = _materialize_family_variant(case, [invoice_row])
-    assert "family_variant" not in out
-    assert out["familyVariant"] == "Invoice"
+    case = _document_case(
+        "Document",
+        rows=[
+            {
+                "id": 1,
+                "title": "Invoice-A",
+                "currency": "USD",
+                "amount_due": 120,
+                "paid_amount": None,
+                "body": None,
+                "familyVariant": "Invoice",
+            }
+        ],
+    )
+    assert_case_read(case, _Reads([invoice_row]))
 
 
 def test_tpcs_zero_row_still_asserts_union_shape() -> None:
     # A correct golden over an empty result raises nothing but still runs the shape
     # assertion (row-count-independent, parsed from the golden text).
-    case = _document_case("Document")
-    assert _materialize_family_variant(case, []) == []
+    assert_case_read(_document_case("Document"), _Reads([]))
 
 
 def test_tpcs_wrong_branch_count_is_rejected() -> None:
@@ -1013,7 +1050,7 @@ def test_tpcs_wrong_branch_count_is_rejected() -> None:
     two_branch = " union all ".join(_DOCUMENT_ROOT_UNION.split(" union all ")[:2])
     case = _document_case("Document", two_branch)
     with pytest.raises(CaseFailure, match="union all"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 def test_tpcs_wrong_branch_order_is_rejected() -> None:
@@ -1023,7 +1060,7 @@ def test_tpcs_wrong_branch_order_is_rejected() -> None:
     swapped = " union all ".join([parts[1], parts[0], parts[2]])
     case = _document_case("Document", swapped)
     with pytest.raises(CaseFailure, match="alphabetical-order"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 def test_tpcs_missing_superset_column_is_rejected() -> None:
@@ -1032,7 +1069,7 @@ def test_tpcs_missing_superset_column_is_rejected() -> None:
     golden = golden.replace(", t0.body", "")
     case = _document_case("Document", golden)
     with pytest.raises(CaseFailure, match="stable superset"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 def test_tpcs_wrong_variant_literal_is_rejected() -> None:
@@ -1040,15 +1077,15 @@ def test_tpcs_wrong_variant_literal_is_rejected() -> None:
     golden = _DOCUMENT_ROOT_UNION.replace("'Memo' family_variant", "'Note' family_variant")
     case = _document_case("Document", golden)
     with pytest.raises(CaseFailure, match="familyVariant literal"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 def test_tpcs_concrete_target_is_a_noop() -> None:
     # A concrete-target TPCS read (Invoice) is an ordinary single-table read with no
     # familyVariant and no union — the oracle leaves it untouched.
-    case = _document_case("Invoice", "select t0.id, t0.amount_due from invoice t0")
     rows = [{"id": 1, "amount_due": 120}]
-    assert _materialize_family_variant(case, rows) == rows
+    case = _document_case("Invoice", "select t0.id, t0.amount_due from invoice t0", rows=rows)
+    assert_case_read(case, _Reads(rows))
 
 
 def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
@@ -1062,7 +1099,6 @@ def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
         "cast(null as decimal(18, 2)) amount_due, t0.body, 'Memo' family_variant "
         "from memo t0"
     )
-    case = _document_case("Document", golden, narrowTo=["Invoice", "Memo"])
     memo_row = {
         "id": 1,
         "title": "Memo-A",
@@ -1071,8 +1107,22 @@ def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
         "body": "Reminder",
         "family_variant": "Memo",
     }
-    (out,) = _materialize_family_variant(case, [memo_row])
-    assert out["familyVariant"] == "Memo"
+    case = _document_case(
+        "Document",
+        golden,
+        narrowTo=["Invoice", "Memo"],
+        rows=[
+            {
+                "id": 1,
+                "title": "Memo-A",
+                "currency": None,
+                "amount_due": None,
+                "body": "Reminder",
+                "familyVariant": "Memo",
+            }
+        ],
+    )
+    assert_case_read(case, _Reads([memo_row]))
 
 
 # --- union-all validation ------------------------------------------------------
@@ -1091,7 +1141,7 @@ def test_tpcs_plain_union_is_rejected() -> None:
     plain = _DOCUMENT_ROOT_UNION.replace(" union all ", " union ", 1)
     case = _document_case("Document", plain)
     with pytest.raises(CaseFailure, match="union all"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 def test_tpcs_bare_null_placeholder_no_cast_is_rejected() -> None:
@@ -1102,7 +1152,7 @@ def test_tpcs_bare_null_placeholder_no_cast_is_rejected() -> None:
     )
     case = _document_case("Document", golden)
     with pytest.raises(CaseFailure, match="cast"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 def test_tpcs_wrong_typed_placeholder_cast_is_rejected() -> None:
@@ -1112,7 +1162,7 @@ def test_tpcs_wrong_typed_placeholder_cast_is_rejected() -> None:
     )
     case = _document_case("Document", golden)
     with pytest.raises(CaseFailure, match="declared type"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 def test_tpcs_applicable_column_projected_as_null_is_rejected() -> None:
@@ -1123,7 +1173,7 @@ def test_tpcs_applicable_column_projected_as_null_is_rejected() -> None:
     )
     case = _document_case("Document", golden)
     with pytest.raises(CaseFailure, match="APPLICABLE"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 # The MariaDB abstract-root golden: bounded strings cast to `char`, decimals identical.
@@ -1135,7 +1185,7 @@ _DOCUMENT_ROOT_UNION_MARIADB = _DOCUMENT_ROOT_UNION.replace("varchar(64)", "char
 def test_tpcs_mariadb_char_cast_golden_is_accepted() -> None:
     case = _document_case("Document")
     case.raw["then"]["statements"][0]["sql"]["mariadb"] = _DOCUMENT_ROOT_UNION_MARIADB
-    assert _materialize_family_variant(case, []) == []
+    assert_case_read(case, _Reads([], dialect="mariadb"))
 
 
 def test_tpcs_mariadb_varchar_cast_golden_is_rejected() -> None:
@@ -1145,7 +1195,7 @@ def test_tpcs_mariadb_varchar_cast_golden_is_rejected() -> None:
     case = _document_case("Document")
     case.raw["then"]["statements"][0]["sql"] = {"mariadb": bad_mariadb}
     with pytest.raises(CaseFailure, match="declared type"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([], dialect="mariadb"))
 
 
 def test_tpcs_family_variant_column_requires_a_hygienic_internal_alias() -> None:
@@ -1156,7 +1206,7 @@ def test_tpcs_family_variant_column_requires_a_hygienic_internal_alias() -> None
                 {"name": "familyVariant", "type": "string", "column": "family_variant"}
             )
     with pytest.raises(CaseFailure, match="parallax_attr_0"):
-        _materialize_family_variant(case, [])
+        assert_case_read(case, _Reads([]))
 
 
 # --- polymorphic navigation + narrowed deep-fetch view keys -------------------
@@ -1234,56 +1284,25 @@ def test_resolve_hop_effective_set_broad_and_narrowed() -> None:
     assert resolve_hop_effective_set(family, "Person.pets", ["Dog"]) == (["Dog"], True)
 
 
-def test_hop_key_separates_a_broad_hop_from_a_redundant_narrow() -> None:
+def test_a_redundant_narrow_resolves_the_broad_set_and_still_declares_itself() -> None:
     # `Person.pets` targets Pet, whose effective concrete set is exactly {Cat, Dog},
-    # so `narrowTo: [Pet]` is REDUNDANT: it resolves to the very set the broad
-    # hop already reaches. The two hops nonetheless stay distinct, because a
-    # segment's view key is derived from whether a narrow was AUTHORED — `pets`
-    # versus `pets[Cat,Dog]` — so hop identity must carry that flag and cannot key
-    # on the resolved set alone (m-deep-fetch, case m-inheritance-068).
+    # so `narrowTo: [Pet]` is REDUNDANT: it resolves to the very set the broad hop
+    # already reaches. What separates the two is the AUTHORED flag beside the
+    # resolved set, not the set — which is why the resolution reports both, and why
+    # two equivalent spellings of the same narrow converge on one view key
+    # (m-deep-fetch; the two levels it makes are pinned at the read seam by
+    # `m-inheritance-068`).
     family = Family(_animal_defs())
     broad_set, broad_narrowed = resolve_hop_effective_set(family, "Person.pets", None)
     redundant_set, redundant_narrowed = resolve_hop_effective_set(family, "Person.pets", ["Pet"])
     assert broad_set == redundant_set == ["Cat", "Dog"]
     assert (broad_narrowed, redundant_narrowed) == (False, True)
 
-    broad_key = _segment_key(family, {"rel": "Person.pets"})
-    redundant_key = _segment_key(family, {"rel": "Person.pets", "narrowTo": ["Pet"]})
-    assert broad_key != redundant_key
-    assert narrowed_view_key(family, "Person.pets", redundant_set) == "pets[Cat,Dog]"
-
-    # Two AUTHORED narrows resolving to that same set still converge on one hop —
-    # dedup of equivalent spellings applies between two narrowed hops only.
-    equivalent = _segment_key(family, {"rel": "Person.pets", "narrowTo": ["Cat", "Dog"]})
-    assert equivalent == redundant_key
-
-
-def _segment_key(
-    family: Family, segment: dict[str, Any], root_source: tuple[str, ...] | None = None
-) -> Any:
-    return _resolve_hop(family, segment, parent=None, root_source=root_source).key
-
-
-def test_hop_key_separates_two_branches_reaching_one_relationship() -> None:
-    # One relationship reached from two DIFFERENT parents is two hops: each gathers
-    # its keys from its own branch's rows, so they can neither share a statement nor
-    # share a bucket of fetched children (m-deep-fetch branch provenance).
-    family = Family(_animal_defs())
-    dog_branch = _segment_key(family, {"rel": "Animal.owner"}, ("Dog",))
-    boar_branch = _segment_key(family, {"rel": "Animal.owner"}, ("WildBoar",))
-    under_dog = _resolve_hop(
-        family, {"rel": "Person.pets"}, parent=dog_branch, root_source=None
-    ).key
-    under_boar = _resolve_hop(
-        family, {"rel": "Person.pets"}, parent=boar_branch, root_source=None
-    ).key
-    assert under_dog != under_boar
-    # A shared prefix still folds: the same relationship under the same parent is one
-    # hop however many paths walk into it.
-    assert (
-        _resolve_hop(family, {"rel": "Person.pets"}, parent=dog_branch, root_source=None).key
-        == under_dog
+    equivalent_set, equivalent_narrowed = resolve_hop_effective_set(
+        family, "Person.pets", ["Cat", "Dog"]
     )
+    assert (equivalent_set, equivalent_narrowed) == (redundant_set, redundant_narrowed)
+    assert narrowed_view_key(family, "Person.pets", redundant_set) == "pets[Cat,Dog]"
 
 
 def test_root_source_set_resolves_a_guard_against_the_queried_position() -> None:
@@ -1300,18 +1319,16 @@ def test_root_source_set_resolves_a_guard_against_the_queried_position() -> None
     assert resolve_root_source_set(family, "Person", {}) is None
 
 
-def test_root_hop_identity_keys_on_the_resolved_source_set() -> None:
-    # The four relations two guards can stand in, all measured through the hop key
-    # (m-deep-fetch "Path-root guards"). The root component keys on the RESOLVED
-    # source set — deliberately unlike the segment component, which keys on whether
-    # a narrow was AUTHORED — so a guard admitting every root object collapses onto
-    # the broad path and every proper guard separates from it automatically.
+def test_a_root_guard_is_identified_by_the_source_set_it_resolves() -> None:
+    # The four relations two guards can stand in (m-deep-fetch "Path-root guards").
+    # A path root is identified by the RESOLVED source set — deliberately unlike a
+    # segment's narrow, which is identified by whether one was AUTHORED — so a guard
+    # admitting every root object collapses onto the broad path and every proper
+    # guard separates from it automatically.
     family = Family(_animal_defs())
 
     def key(path: dict[str, Any]) -> Any:
-        return _segment_key(
-            family, {"rel": "Animal.owner"}, resolve_root_source_set(family, "Animal", path)
-        )
+        return resolve_root_source_set(family, "Animal", path)
 
     broad = key({})
     pet_guard = key({"appliesTo": ["Pet"]})

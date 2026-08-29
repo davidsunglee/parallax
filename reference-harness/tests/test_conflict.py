@@ -18,14 +18,13 @@ from pathlib import Path
 
 import pytest
 
-from reference_harness.case import discover_cases
+from reference_harness.case import discover_cases, entry_pairs
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
     _assert_conflict_input,
     _assert_scenario_conflict_abort,
     _assert_schema,
     _conflict_temporal_entity,
-    _entry_pairs,
     _has_version_gate,
     _scenario_root_entity,
     _version_column,
@@ -291,7 +290,7 @@ def _conflict_abort_scenario():
     index, step = next((i, s) for i, s in enumerate(case.scenario) if s.get("rollback"))
     version_col = _version_column(_scenario_root_entity(case))
     assert version_col is not None, "the scenario root entity must carry a version column"
-    statements = [sql for sql, _binds in _entry_pairs(step.get("statements"), "postgres")]
+    statements = [sql for sql, _binds in entry_pairs(step.get("statements"), "postgres")]
     gated = [sql for sql in statements if _has_version_gate(sql, version_col, "postgres")]
     non_gated = [sql for sql in statements if not _has_version_gate(sql, version_col, "postgres")]
     # The authored abort step lists exactly one gated write and at least one non-gated
