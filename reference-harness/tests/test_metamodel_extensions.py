@@ -28,7 +28,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from reference_harness.case import Model, discover_cases, load_model
-from reference_harness.case_runner import _assert_write_input_columns, _tag
+from reference_harness.case_runner import _assert_write_input_columns
 from reference_harness.ddl_builder import ddl_for
 from reference_harness.inheritance import (
     INHERITANCE_ABSTRACT_NODE_FIXTURE_ROWS,
@@ -37,6 +37,7 @@ from reference_harness.inheritance import (
 from reference_harness.paths import schemas_dir
 from reference_harness.temporality import derive_temporal_structure
 from reference_harness.value_object_resolve import RejectionError
+from reference_harness.write_plan import tag
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -468,7 +469,7 @@ def test_schema_rejects_subtype_without_parent() -> None:
     assert not _is_valid(descriptor)
 
 
-def test_schema_requires_table_per_hierarchy_root_tag() -> None:
+def test_schema_requires_table_per_hierarchy_roottag() -> None:
     """A table-per-hierarchy root MUST declare its ``tag`` column; a non-root MUST NOT."""
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     descriptor = copy.deepcopy(model.descriptor)
@@ -481,7 +482,7 @@ def test_schema_requires_table_per_hierarchy_root_tag() -> None:
     assert not _is_valid(descriptor)
 
 
-def test_schema_rejects_table_per_concrete_subtype_root_tag() -> None:
+def test_schema_rejects_table_per_concrete_subtype_roottag() -> None:
     """A table-per-concrete-subtype root MUST NOT declare a tag (no shared table)."""
     model = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
     descriptor = copy.deepcopy(model.descriptor)
@@ -505,7 +506,7 @@ def test_schema_conditionally_requires_table_and_attributes() -> None:
     assert _is_valid(descriptor), "a concrete subtype with only inherited attributes may omit them"
 
 
-def test_shared_hierarchy_table_ddl_unions_subtype_columns_and_the_derived_tag() -> None:
+def test_shared_hierarchy_table_ddl_unions_subtype_columns_and_the_derivedtag() -> None:
     """The table-per-hierarchy shared table is the UNION of every concrete subtype's
     columns plus the framework-derived tag column (m-inheritance), even though each
     concrete subtype declares only its own subtype-specific column."""
@@ -599,10 +600,10 @@ def test_table_per_hierarchy_write_derives_the_tag_column() -> None:
     no tagValue, so it derives no tag."""
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     # A concrete subtype's tag (shared column, own value) comes from the model.
-    assert _tag(model.entity("CardPayment")) == ("kind", "card")
-    assert _tag(model.entity("CashPayment")) == ("kind", "cash")
+    assert tag(model.entity("CardPayment")) == ("kind", "card")
+    assert tag(model.entity("CashPayment")) == ("kind", "cash")
     # The abstract root is rowless and carries no tagValue.
-    assert _tag(model.entity("Payment")) is None
+    assert tag(model.entity("Payment")) is None
 
     cases = {c.path.stem: c for c in discover_cases(COMPATIBILITY_ROOT)}
     tph_insert = cases["m-inheritance-007-tph-insert"]
@@ -614,13 +615,13 @@ def test_table_per_hierarchy_write_derives_the_tag_column() -> None:
     _assert_write_input_columns(tph_insert, "postgres")
 
 
-def test_table_per_concrete_subtype_write_has_no_tag() -> None:
+def test_table_per_concrete_subtype_write_has_notag() -> None:
     """A table-per-concrete-subtype write targets the subtype's own table with no tag
-    column (m-inheritance): ``_tag`` is None and the golden INSERT names the concrete
+    column (m-inheritance): ``write_plan.tag`` is None and the golden INSERT names the concrete
     subtype's table, not a shared family table."""
     cases = {c.path.stem: c for c in discover_cases(COMPATIBILITY_ROOT)}
     tpcs_insert = cases["m-inheritance-010-tpcs-insert"]
-    assert _tag(tpcs_insert.model.entity("Invoice")) is None
+    assert tag(tpcs_insert.model.entity("Invoice")) is None
     (insert,) = tpcs_insert.golden_statements("postgres")
     assert insert.startswith("insert into invoice(")
     _assert_write_input_columns(tpcs_insert, "postgres")

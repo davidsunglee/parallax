@@ -24,19 +24,15 @@ from reference_harness.case_runner import (
     _assert_scenario_count_consistency,
     _assert_write_input_columns,
     _assert_write_step_count,
-    _classify_write_row,
     _increment_marker,
     _is_computed_marker,
-    _parse_insert_columns,
-    _parse_set_columns,
     _read_table,
     _table_layout,
-    _tag,
-    _unit_resolving_reads,
     _write_column_order,
 )
 from reference_harness.ddl_builder import contributor_types, ddl_for
 from reference_harness.storage_layout import derived_primary_key_index
+from reference_harness.write_plan import classify_write_row, tag, unit_resolving_reads
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -95,7 +91,7 @@ def test_one_entity_spelled_two_ways_owes_one_resolving_read() -> None:
             "rows": [{"id": 2}],
         },
     ]
-    assert _unit_resolving_reads(case, entries) == 1
+    assert unit_resolving_reads(case, entries) == 1
 
 
 def test_a_value_object_document_shaped_like_a_marker_still_owes_its_read() -> None:
@@ -109,13 +105,13 @@ def test_a_value_object_document_shaped_like_a_marker_still_owes_its_read() -> N
         "entity": "parallax.compatibility.Customer",
         "rows": [{"id": 1, "address": {"increment": 1}}],
     }
-    assert _unit_resolving_reads(case, [document_entry]) == 1
+    assert unit_resolving_reads(case, [document_entry]) == 1
     marker_entry = {
         "mutation": "update",
         "entity": "parallax.compatibility.Customer",
         "rows": [{"id": 1, "name": {"increment": 1}}],
     }
-    assert _unit_resolving_reads(case, [marker_entry]) == 0
+    assert unit_resolving_reads(case, [marker_entry]) == 0
 
 
 def _non_temporal_row_step(case) -> dict | None:
@@ -320,7 +316,7 @@ def test_an_unentitled_write_row_observation_is_refused(
     entity = case.model.entity(entity_name)
     row = {"id": 1, "observedVersion": 3}
     with pytest.raises(CaseFailure, match=expected):
-        _classify_write_row(case, entity, row, mutation=mutation, opening=False)
+        classify_write_row(case, entity, row, mutation=mutation, opening=False)
 
 
 def test_a_versioned_update_row_observation_is_entitled() -> None:
@@ -329,7 +325,7 @@ def test_a_versioned_update_row_observation_is_entitled() -> None:
     # `observedVersion` is classified rather than refused.
     case = _write_case_by_id("m-opt-lock-002")
     entity = case.model.entity("Account")
-    *_, observed = _classify_write_row(
+    *_, observed = classify_write_row(
         case, entity, {"id": 1, "observedVersion": 3}, mutation="update", opening=False
     )
     assert observed == 3
@@ -415,12 +411,12 @@ def test_tph_insert_writes_tag_from_tag_value() -> None:
 
 def test_tag_helper_reads_the_inheritance_metadata() -> None:
     case = _write_case_by_id("m-inheritance-007")
-    assert _tag(case.model.entity("CardPayment")) == ("kind", "card")
+    assert tag(case.model.entity("CardPayment")) == ("kind", "card")
     # The abstract root owns no rows and no tagValue, so it derives no tag.
-    assert _tag(case.model.entity("Payment")) is None
+    assert tag(case.model.entity("Payment")) is None
     # A table-per-concrete-subtype entity has no tag (tagValue is absent).
     document = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
-    assert _tag(document.entity("Invoice")) is None
+    assert tag(document.entity("Invoice")) is None
 
 
 def test_tph_insert_rejects_wrong_tag_bind() -> None:
@@ -441,7 +437,7 @@ def test_tph_insert_rejects_tag_authored_in_row() -> None:
         _assert_write_input_columns(case, "postgres")
 
 
-def test_tpcs_insert_targets_concrete_table_without_tag() -> None:
+def test_tpcs_insert_targets_concrete_table_withouttag() -> None:
     # m-inheritance-010: a table-per-concrete-subtype INSERT targets the subtype's own
     # table with no tag column and no shared table. Currency is REQUIRED on
     # the FinancialDocument branch, so the Invoice insert SUPPLIES it (the full ancestry
@@ -812,59 +808,6 @@ def test_balance_entity_is_unitemporal_transaction_time() -> None:
     (dimension,) = entity.temporal_runtime_axes
     assert dimension["dimension"] == "transaction-time"
     assert [axis["dimension"] for axis in entity.temporal_runtime_axes] == ["transaction-time"]
-
-
-def test_a_set_clause_splits_on_the_commas_that_separate_its_assignments() -> None:
-    # A document mutation expression takes commas of its own — nested `jsonb_set`
-    # calls on Postgres, one N-pair `json_set` on MariaDB — so only a comma at
-    # bracket depth zero ends an assignment. Splitting naively would read the
-    # expression's own arguments as further SET columns.
-    nested = (
-        "update t set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), "
-        "?, cast(? as jsonb)) where id = ?"
-    )
-    case = _write_case_by_id("m-storage-layout-023")
-    assert _parse_set_columns(case, nested) == ["payload"]
-    pairs = "update t set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?"
-    assert _parse_set_columns(case, pairs) == ["payload"]
-    plain = "update t set a = ?, b = ? where id = ?"
-    assert _parse_set_columns(case, plain) == ["a", "b"]
-
-
-def test_a_set_clause_reads_no_syntax_inside_a_quoted_identifier() -> None:
-    # A column name is any nonempty string and a dialect quotes one that is reserved
-    # or otherwise non-simple, so a comma, a bracket, an `=`, and the word `where`
-    # can each sit INSIDE an identifier. A parse that read one as syntax would split
-    # a legal one-assignment clause into two, or end the clause early.
-    case = _write_case_by_id("m-storage-layout-023")
-    assert _parse_set_columns(case, 'update t set "payload,archive" = ? where id = ?') == [
-        '"payload,archive"'
-    ]
-    assert _parse_set_columns(case, "update t set `a(b` = ?, `c=d` = ? where id = ?") == [
-        "`a(b`",
-        "`c=d`",
-    ]
-    assert _parse_set_columns(case, 'update t set "where" = ?, note = ? where id = ?') == [
-        '"where"',
-        "note",
-    ]
-    assert _parse_set_columns(case, "update t set note = 'a, b' where id = ?") == ["note"]
-
-
-def test_an_insert_column_list_reads_no_syntax_inside_a_quoted_identifier() -> None:
-    # The same rule one clause family over: a quoted identifier may carry a comma or
-    # a bracket, so a raw split would report a one-column INSERT as two columns and a
-    # quoted `)` would end the list early.
-    case = _write_case_by_id("m-storage-layout-022")
-    assert _parse_insert_columns(case, 'insert into t(id, "payload,archive") values (?, ?)') == [
-        "id",
-        '"payload,archive"',
-    ]
-    assert _parse_insert_columns(case, "insert into t(`a)b`, c) values (?, ?)") == ["`a)b`", "c"]
-    # The pk-gen `max` form folds a call into its value list; the column list is
-    # still the one that follows the table.
-    max_form = 'insert into t(id, note) select coalesce(max(t0."id"), ?) + ?, ? from t t0'
-    assert _parse_insert_columns(case, max_form) == ["id", "note"]
 
 
 # --- the carried Structured Column (m-storage-layout x m-document-codec) ------

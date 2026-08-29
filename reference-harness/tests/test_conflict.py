@@ -25,10 +25,9 @@ from reference_harness.case_runner import (
     _assert_scenario_conflict_abort,
     _assert_schema,
     _conflict_temporal_entity,
-    _has_version_gate,
     _scenario_root_entity,
-    _version_column,
 )
+from reference_harness.write_plan import has_version_gate, version_column
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -282,17 +281,17 @@ def _conflict_abort_scenario():
 
     The version-gated write (the conflicting `... and version = ?` UPDATE) and the
     non-gated write(s) are resolved from the case's OWN scenario statements via the
-    SAME version column the harness gates on (`_version_column` over the scenario root
+    SAME version column the harness gates on (`write_plan.version_column` over the scenario root
     entity), so the `executed` lists below are built from authentic golden SQL rather
     than hand-typed strings.
     """
     case = next(c for c in _cases() if c.path.stem.startswith("m-opt-lock-012"))
     index, step = next((i, s) for i, s in enumerate(case.scenario) if s.get("rollback"))
-    version_col = _version_column(_scenario_root_entity(case))
+    version_col = version_column(_scenario_root_entity(case))
     assert version_col is not None, "the scenario root entity must carry a version column"
     statements = [sql for sql, _binds in entry_pairs(step.get("statements"), "postgres")]
-    gated = [sql for sql in statements if _has_version_gate(sql, version_col, "postgres")]
-    non_gated = [sql for sql in statements if not _has_version_gate(sql, version_col, "postgres")]
+    gated = [sql for sql in statements if has_version_gate(sql, version_col, "postgres")]
+    non_gated = [sql for sql in statements if not has_version_gate(sql, version_col, "postgres")]
     # The authored abort step lists exactly one gated write and at least one non-gated
     # write (the buffered insert), so the corruptions below are well-formed.
     assert len(gated) == 1 and non_gated, "m-opt-lock-012 abort step shape changed"
@@ -362,7 +361,7 @@ def test_conflict_abort_rejects_affected_rows_one_as_no_conflict() -> None:
 # other places name the version column and are not a gate — an `UPDATE`'s own SET
 # clause, a nested subquery's `WHERE`, and (under a quoting dialect) the same
 # column under a different surface — so the decision is made on the parsed tree.
-# These drive `_has_version_gate` directly with the shapes a text scan gets wrong.
+# These drive `has_version_gate` directly with the shapes a text scan gets wrong.
 
 
 @pytest.mark.parametrize(
@@ -374,7 +373,7 @@ def test_conflict_abort_rejects_affected_rows_one_as_no_conflict() -> None:
     ids=["postgres-double-quoted", "mariadb-backticked"],
 )
 def test_a_quoted_version_column_is_still_the_gate(dialect: str, statement: str) -> None:
-    assert _has_version_gate(statement, "version", dialect)
+    assert has_version_gate(statement, "version", dialect)
 
 
 def test_a_subquery_predicate_is_not_the_outer_gate() -> None:
@@ -383,7 +382,7 @@ def test_a_subquery_predicate_is_not_the_outer_gate() -> None:
     statement = (
         "update account set balance = ? where id in (select id from staging where version = ?)"
     )
-    assert not _has_version_gate(statement, "version", "postgres")
+    assert not has_version_gate(statement, "version", "postgres")
 
 
 def test_an_outer_gate_followed_by_a_subquery_is_still_detected() -> None:
@@ -393,23 +392,23 @@ def test_an_outer_gate_followed_by_a_subquery_is_still_detected() -> None:
         "update account set balance = ? "
         "where id in (select id from staging where owner = ?) and version = ?"
     )
-    assert _has_version_gate(statement, "version", "postgres")
+    assert has_version_gate(statement, "version", "postgres")
 
 
 def test_a_set_clause_version_advance_is_not_a_gate() -> None:
     # The framework-derived advance is written in BOTH modes, so reading it as a gate
     # would report every versioned update gated and silently defeat the mode check.
     statement = "update account set balance = ?, version = ? where id = ?"
-    assert not _has_version_gate(statement, "version", "postgres")
+    assert not has_version_gate(statement, "version", "postgres")
 
 
 def test_a_column_merely_ending_in_the_version_name_is_not_the_gate() -> None:
     statement = "update account set balance = ? where id = ? and prior_version = ?"
-    assert not _has_version_gate(statement, "version", "postgres")
+    assert not has_version_gate(statement, "version", "postgres")
 
 
 def test_an_unparsable_statement_carries_no_gate() -> None:
-    assert not _has_version_gate("update account set where and", "version", "postgres")
+    assert not has_version_gate("update account set where and", "version", "postgres")
 
 
 def _bitemporal_edge_named_case():

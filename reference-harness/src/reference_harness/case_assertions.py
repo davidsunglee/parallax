@@ -1,12 +1,13 @@
-"""The assertion vocabulary the compatibility runner and the read oracle share.
+"""The assertion vocabulary the compatibility harness's grading seams share.
 
-A name is offered here only if it has at least one live caller in the runner AND
-at least one in the read oracle; what those names are implemented in terms of
-travels with them, unless both sides call that primitive directly too — then it
-is a module of its own (:mod:`.multiset`) rather than a second offering here. A
-name only one side calls belongs to that side instead, so this module never
-becomes the place a helper lands when its home is unclear. It imports neither of
-them, so neither can reach the other through it.
+A name is offered here only if MORE THAN ONE of those seams has a live caller for
+it — the case runner, write grading, the read oracle, Unit Work Scenario
+grading — and what those names are implemented in terms of travels with them,
+unless several seams call that primitive directly too, in which case it is a
+module of its own (:mod:`.multiset`) rather than a second offering here. A name
+one seam alone calls belongs to that seam instead, so this module never becomes
+the place a helper lands when its home is unclear. It imports none of them, so no
+seam can reach another through it.
 """
 
 from __future__ import annotations
@@ -128,6 +129,36 @@ def rows_equal(
     return multiset.multiset_matches(
         left, right, lambda row, candidate: _row_matches(row, candidate, tolerance)
     )
+
+
+def _bytes_to_hex(value: Any) -> Any:
+    """Render a ``bytes`` / ``memoryview`` value as lowercase hex text, else unchanged.
+
+    The neutral write input (①) authors a ``bytes`` column as its wire form — a
+    lowercase hex STRING (a ``bytes`` object is not a JSON type the write-row schema
+    admits), while the golden bind carries the raw bytes (a ``!!binary`` tag). Both
+    collapse to the same lowercase hex text here so ① ↔ golden cross-checking and
+    table-state read-back compare a ``bytes`` column dialect-agnostically.
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    return value
+
+
+def write_value_equal(left: Any, right: Any) -> bool:
+    """Scalar equality for an ① value vs a golden bind, tolerant of date/bytes encoding.
+
+    A date/timestamp authored QUOTED in ① (a string) must match the golden bind
+    that PyYAML parsed from an UNQUOTED token into a ``date`` / ``datetime`` object;
+    compare their ISO string forms once the exact-Decimal comparison declines. A
+    ``bytes`` column is authored as a hex STRING in ① but as raw ``!!binary`` bytes
+    in the golden bind, so both are normalized to lowercase hex first.
+    """
+    left = _bytes_to_hex(left)
+    right = _bytes_to_hex(right)
+    if scalars_equal(left, right, None):
+        return True
+    return str(left) == str(right)
 
 
 def coerce_identity_key(value: Any) -> Any:
