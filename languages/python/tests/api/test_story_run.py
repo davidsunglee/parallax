@@ -140,7 +140,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: 
         "dict[str, list[dict[str, Any]]]",
         case_document(_CASES[story.case_id])["then"]["tableState"],
     )
-    observed_state = engine.read_table_state(provisioner.port, model_of(meta), POSTGRES)
+    observed_state = engine.read_table_state(provisioner.port, model_of(meta))
     assert set(observed_state) >= set(expected_state), (story.case_id, observed_state)
     for table, expected_rows in expected_state.items():
         compare_rows(observed_state[table], expected_rows)
@@ -710,14 +710,14 @@ def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) ->
     # pinned find, edit, keyed verb — and the pin is carried on the value.
     meta = _reset_for("m-identity-map-010", provisioner)
     db = _counting_connect(provisioner.port, meta)
-    before = engine.read_table_state(provisioner.port, model_of(meta), POSTGRES)
+    before = engine.read_table_state(provisioner.port, model_of(meta))
     with pytest.raises(TransactionTimePinReadOnlyError) as refused:
         a_finite_transaction_time_pinned_view_is_read_only(db)
     assert refused.value.code == "transaction-time-pin-read-only"
     # The case's own `roundTrips: 0` on the mutate step, graded as durable state:
     # the superseded milestone and the current one stand exactly as they were, so
     # nothing appended and nothing was rewritten.
-    assert engine.read_table_state(provisioner.port, model_of(meta), POSTGRES) == before
+    assert engine.read_table_state(provisioner.port, model_of(meta)) == before
 
 
 def test_history_of_a_concrete_temporal_node_distinguishes_milestones(provisioner: Any) -> None:

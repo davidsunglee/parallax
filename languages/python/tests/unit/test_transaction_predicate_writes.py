@@ -1797,7 +1797,6 @@ def test_the_engines_readless_predicate_ingress_refuses_before_any_statement(
         engine._run_readless_predicate_write(  # pyright: ignore[reportPrivateUsage] - the conformance engine's own readless predicate-write ingress
             port,
             _READLESS_ENGINE_MODEL,
-            POSTGRES,
             "optimistic",
             {"mutation": "delete", "target": {"entity": "Wallet", "predicate": predicate}},
             LoweredStatement("delete from wallet", ()),

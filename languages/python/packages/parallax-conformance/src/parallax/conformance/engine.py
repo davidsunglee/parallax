@@ -559,7 +559,6 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
 
 def run_read_case(
     case: case_format.Case,
-    dialect_name: str,
     port: DbPort,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[Row], int]:
@@ -647,7 +646,6 @@ def _wire_read(
     query: ObjectQueryNode,
     domain: DomainModel,
     port: DbPort,
-    dialect_name: str,
     lifecycle: LifecycleRun,
 ) -> tuple[handle.Snapshot[handle.WireEntity], LifecycleObservation]:
     """One graph-form Wire read of the case's own Object Query, and what it ran.
@@ -670,7 +668,6 @@ def _wire_read(
 
 def run_graph_case(
     case: case_format.Case,
-    dialect_name: str,
     port: DbPort,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], dict[str, list[Row | None]], int, list[dict[str, object]] | None]:
@@ -682,9 +679,7 @@ def run_graph_case(
     query = _read_query(case)
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
-    snapshot, observed = _wire_read(
-        case, query, domain, port, dialect_name, lifecycle_run(lifecycle)
-    )
+    snapshot, observed = _wire_read(case, query, domain, port, lifecycle_run(lifecycle))
     if not _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a `then.graph` case read a milestone SET — "
@@ -741,7 +736,6 @@ def _stream_batch_size(case: case_format.Case) -> int:
 
 def run_stream_case(
     case: case_format.Case,
-    dialect_name: str,
     port: DbPort,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], dict[str, list[Row | None]], int, list[dict[str, object]] | None]:
@@ -774,7 +768,7 @@ def run_stream_case(
             f"{case.path.name}: a streamed `then.graph` case read a milestone SET — "
             "a milestone-set delivery asserts `then.graphs`"
         )
-    roots, observed = _wire_delivery(case, query, domain, port, dialect_name, lifecycle)
+    roots, observed = _wire_delivery(case, query, domain, port, lifecycle)
     return (
         _read_emissions(observed),
         {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
@@ -785,7 +779,6 @@ def run_stream_case(
 
 def run_streamed_graphs_case(
     case: case_format.Case,
-    dialect_name: str,
     port: DbPort,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[dict[str, object]], int]:
@@ -807,7 +800,7 @@ def run_streamed_graphs_case(
             f"{case.path.name}: a streamed `then.graphs` case read a single instant — "
             "a single-instant delivery asserts `then.graph`"
         )
-    roots, observed = _wire_delivery(case, query, domain, port, dialect_name, lifecycle)
+    roots, observed = _wire_delivery(case, query, domain, port, lifecycle)
     root_key = _graph_root_key(query.target.canonical, model)
     entity = _declaring_metadata(model, query.target.canonical)
     graphs_wire: list[dict[str, object]] = [
@@ -822,7 +815,6 @@ def _wire_delivery(
     query: ObjectQueryNode,
     domain: DomainModel,
     port: DbPort,
-    dialect_name: str,
     lifecycle: LifecycleRun | None,
 ) -> tuple[list[object], LifecycleObservation]:
     """One streamed Wire delivery of ``query``, drained, and what it ran.
@@ -844,7 +836,6 @@ def _wire_delivery(
 
 def run_graphs_case(
     case: case_format.Case,
-    dialect_name: str,
     port: DbPort,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[dict[str, object]], int]:
@@ -861,9 +852,7 @@ def run_graphs_case(
     query = _read_query(case)
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
-    snapshot, observed = _wire_read(
-        case, query, domain, port, dialect_name, lifecycle_run(lifecycle)
-    )
+    snapshot, observed = _wire_read(case, query, domain, port, lifecycle_run(lifecycle))
     if _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a `then.graphs` case read a single instant — "
@@ -2490,7 +2479,6 @@ def _step_query(step: Mapping[str, object]) -> ObjectQueryNode:
 def _run_standalone_find(
     port: DbPort,
     domain: DomainModel,
-    dialect: Dialect,
     concurrency: Concurrency,
     step: Mapping[str, object],
     lifecycle: LifecycleRun,
@@ -3005,7 +2993,6 @@ _NO_SCENARIO_RESULT: Final[_ScenarioStepResult] = _ScenarioStepResult((), None, 
 
 def _run_snapshot_scenario(
     case: case_format.Case,
-    dialect_name: str,
     port: DbPort,
     steps: Sequence[Mapping[str, object]],
     lifecycle: LifecycleRun,
@@ -3034,14 +3021,13 @@ def _run_snapshot_scenario(
     group."""
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
-    dialect = dialect_for(dialect_name)
-    context = _CaseContext(domain, model, dialect, _concurrency(case), TemporalShadow())
+    context = _CaseContext(domain, model, port.dialect, _concurrency(case), TemporalShadow())
     # Seeded from the case's own fixtures and then advanced by each write step's
     # plan, so a temporal close observes the milestone the persisted history (or
     # an earlier step) actually holds — the SAME order every other lane applies:
     # fixtures, then `given.apply`, then the first step.
     _seed_shadow_from_fixtures(case, model, context.shadow)
-    _apply_given_apply(case, dialect, port, context.shadow)
+    _apply_given_apply(case, port, context.shadow)
     observation = lifecycle.observation()
     db = handle.Database(port, domain, lifecycle_provider=observation.provider)
     emissions: list[Emission] = []
@@ -3690,7 +3676,6 @@ def _framework_writes(
 
 def _execute_framework_write_unit(
     port: DbPort,
-    dialect: Dialect,
     statements: Sequence[LoweredStatement],
     *,
     rollback: bool,
@@ -3722,7 +3707,9 @@ def _execute_framework_write_unit(
 
     def run(conn: DbPort) -> None:
         for statement in statements:
-            conn.execute_write(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
+            conn.execute_write(
+                conn.dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds)
+            )
 
     with contextlib.suppress(_RollbackStep):
         _committed(_write_port(port, rollback=rollback).transaction(run))
@@ -3828,7 +3815,6 @@ def _execute_write_unit(
     port: DbPort,
     domain: DomainModel,
     model: AcceptedMetamodel,
-    dialect: Dialect,
     concurrency: Concurrency,
     resolved: Sequence[_ResolvedWrite],
     statements: Sequence[LoweredStatement],
@@ -3889,9 +3875,7 @@ def _execute_write_unit(
                 "bookkeeping and is a choreography unit of its own, so it is the buffer's only "
                 f"entry: this one holds {len(resolved)}"
             )
-        return tuple(statements), _execute_framework_write_unit(
-            port, dialect, statements, rollback=rollback
-        )
+        return tuple(statements), _execute_framework_write_unit(port, statements, rollback=rollback)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
     database = handle.Database(
@@ -3959,7 +3943,6 @@ def _execute_keyed_unit(
             port,
             context.domain,
             context.model,
-            context.dialect,
             context.concurrency,
             resolved,
             statements,
@@ -3973,7 +3956,6 @@ def _execute_keyed_unit(
 def _run_readless_predicate_write(
     port: DbPort,
     domain: DomainModel,
-    dialect: Dialect,
     concurrency: Concurrency,
     raw_write: Mapping[str, object],
     statement: LoweredStatement,
@@ -4095,7 +4077,6 @@ def _run_materializing_pair(
     port: DbPort,
     domain: DomainModel,
     model: AcceptedMetamodel,
-    dialect: Dialect,
     concurrency: Concurrency,
     steps: Sequence[Mapping[str, object]],
     index: int,
@@ -5436,7 +5417,6 @@ def _await_interleaved_workers(
 
 def run_interleaved_scenario_case(
     case: case_format.Case,
-    dialect_name: str,
     port: DbPort,
     peer_factory: Callable[[], _PeerConnection],
 ) -> tuple[list[Emission], int, int | None, list[list[Mapping[str, object]]]]:
@@ -5474,7 +5454,7 @@ def run_interleaved_scenario_case(
     steps = _scenario_steps(case)
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
-    dialect = dialect_for(dialect_name)
+    dialect = port.dialect
     concurrency = _concurrency(case)
     if any("expectGraph" in step for step in steps):
         raise EngineError(
@@ -5494,7 +5474,7 @@ def run_interleaved_scenario_case(
     (label_a, indices_a), (label_b, indices_b) = groups.items()
     shadow = TemporalShadow()
     _seed_shadow_from_fixtures(case, model, shadow)
-    _apply_given_apply(case, dialect, port, shadow)
+    _apply_given_apply(case, port, shadow)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     # This lane reports no lifecycle oracle, and could not: two connections
     # driven at once have no single root order to state. The run is here so the
@@ -5583,9 +5563,7 @@ def run_interleaved_scenario_case(
                 "interleaved uow race is unsupported — m-opt-lock-012's own ungrouped "
                 "step is a trailing verify find only"
             )
-        read, read_observed = _run_standalone_find(
-            port, domain, dialect, concurrency, step, lifecycle
-        )
+        read, read_observed = _run_standalone_find(port, domain, concurrency, step, lifecycle)
         rows_by_index[index] = _graph_rows(model, _step_query(step), read.checked().results())
         round_trips += read_observed.round_trips
         lowered[index] = _LoweredStep(
@@ -5603,7 +5581,6 @@ def run_interleaved_scenario_case(
 
 def run_scenario_case(
     case: case_format.Case,
-    dialect_name: str,
     port: DbPort,
     lifecycle: LifecycleRun | None = None,
 ) -> ScenarioRun:
@@ -5635,10 +5612,10 @@ def run_scenario_case(
     steps = _scenario_steps(case)
     lifecycle = lifecycle_run(lifecycle)
     if _has_action_step(steps):
-        return _run_snapshot_scenario(case, dialect_name, port, steps, lifecycle)
+        return _run_snapshot_scenario(case, port, steps, lifecycle)
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
-    dialect = dialect_for(dialect_name)
+    dialect = port.dialect
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
     step_rows: list[dict[str, object]] = []
@@ -5664,7 +5641,7 @@ def run_scenario_case(
         # and where that state can no longer be the whole stored row the write is
         # refused rather than silently rebuilt
         # (:func:`_refuse_unaccounted_document_milestone`).
-        _apply_given_apply(case, dialect, port, shadow)
+        _apply_given_apply(case, port, shadow)
         index = 0
         while index < len(steps):
             label = span_start_labels.get(index)
@@ -5685,14 +5662,14 @@ def run_scenario_case(
                     model, _step_query(step).target.canonical, pairing.target.entity
                 ):
                     pair_lowered, pair_trips = _run_materializing_pair(
-                        port, domain, model, dialect, concurrency, steps, index, shadow, lifecycle
+                        port, domain, model, concurrency, steps, index, shadow, lifecycle
                     )
                     lowered.extend(pair_lowered)
                     round_trips += pair_trips
                     index += 2
                     continue
                 read, read_observed = _run_standalone_find(
-                    port, domain, dialect, concurrency, step, lifecycle
+                    port, domain, concurrency, step, lifecycle
                 )
                 round_trips += read_observed.round_trips
                 lowered.append(
@@ -5724,7 +5701,6 @@ def run_scenario_case(
                 ran, predicate_trips = _run_readless_predicate_write(
                     port,
                     domain,
-                    dialect,
                     concurrency,
                     raw_predicate_write,
                     statement,
@@ -5749,7 +5725,6 @@ def run_scenario_case(
 
 def run_write_sequence_case(
     case: case_format.Case,
-    dialect_name: str,
     port: DbPort,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], dict[str, list[Row]], int]:
@@ -5771,15 +5746,14 @@ def run_write_sequence_case(
     """
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
-    dialect = dialect_for(dialect_name)
     lifecycle = lifecycle_run(lifecycle)
-    context = _CaseContext(domain, model, dialect, _concurrency(case), TemporalShadow())
+    context = _CaseContext(domain, model, port.dialect, _concurrency(case), TemporalShadow())
     group_observations: GroupObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
     round_trips = 0
     try:
         _seed_shadow_from_fixtures(case, model, context.shadow)
-        _apply_given_apply(case, dialect, port, context.shadow)
+        _apply_given_apply(case, port, context.shadow)
         for index, entry in enumerate(_write_sequence_entries(case)):
             statements, unit_trips = _execute_keyed_unit(
                 port, context, [entry], group_observations, lifecycle, rollback=False
@@ -5789,13 +5763,11 @@ def run_write_sequence_case(
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = _emissions(lowered)
-    table_state = read_table_state(port, model, dialect)
+    table_state = read_table_state(port, model)
     return emissions, table_state, round_trips
 
 
-def read_table_state(
-    port: DbPort, model: AcceptedMetamodel, dialect: Dialect
-) -> dict[str, list[Row]]:
+def read_table_state(port: DbPort, model: AcceptedMetamodel) -> dict[str, list[Row]]:
     """The committed contents of every model table, in canonical wire form.
 
     Every compiled Table Layout is read back exactly once, projecting its
@@ -5805,6 +5777,7 @@ def read_table_state(
     inserted `CardPayment` row still reports the cash-only `tendered` column as
     `null`).
     """
+    dialect = port.dialect
     state: dict[str, list[Row]] = {}
     for layout in storage_layout.view(model).tables:
         columns = ", ".join(dialect.quote(slot.column.name) for slot in layout.columns)
@@ -5825,9 +5798,7 @@ def read_table_state(
 # conflict case tests ONLY the close, under an address and a gate the case     #
 # names EXPLICITLY rather than derives from an observation.                    #
 # --------------------------------------------------------------------------- #
-def _apply_given_apply(
-    case: case_format.Case, dialect: Dialect, port: DbPort, shadow: TemporalShadow
-) -> None:
+def _apply_given_apply(case: case_format.Case, port: DbPort, shadow: TemporalShadow) -> None:
     """Apply a case's out-of-band ``given.apply`` naive statements VERBATIM,
     immediately (never inside our own transaction), and tell ``shadow`` they ran.
 
@@ -5852,7 +5823,7 @@ def _apply_given_apply(
     for entry in cast("list[Mapping[str, object]]", entries):
         sql = cast("str", entry["sql"])
         binds = cast("list[object]", entry.get("binds", []))
-        port.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
+        port.execute_write(port.dialect.to_driver_sql(sql), _driver_binds(binds))
 
 
 def _default_family_root(model: AcceptedMetamodel) -> EntityMetadata | None:
@@ -6150,7 +6121,6 @@ def _conflict_key_predicate(
 
 def _conflict_source_nodes(
     port: DbPort,
-    dialect: Dialect,
     domain: DomainModel,
     model: AcceptedMetamodel,
     target: str,
@@ -6251,7 +6221,6 @@ def _refuse_unobserved_conflict_version(
 
 def _run_conflict_write(
     port: DbPort,
-    dialect: Dialect,
     domain: DomainModel,
     model: AcceptedMetamodel,
     target: str,
@@ -6286,7 +6255,7 @@ def _run_conflict_write(
     of what ran rather than a claim beside it.
     """
     resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
-    statements = _lower_conflict_write(model, dialect, concurrency, resolved)
+    statements = _lower_conflict_write(model, port.dialect, concurrency, resolved)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
     database = handle.Database(
@@ -6335,7 +6304,6 @@ _CLOSE_MUTATION: Final[str] = "close"
 
 def _run_conflict_close(
     port: DbPort,
-    dialect: Dialect,
     model: AcceptedMetamodel,
     target: str,
     concurrency: Concurrency,
@@ -6401,7 +6369,7 @@ def _run_conflict_close(
         observed_tx_start,
         observed_valid_end,
     )
-    statement = handle.lower_step(step, model, dialect)
+    statement = handle.lower_step(step, model, port.dialect)
 
     # A standalone close is no keyed mutation and no unit of work buffers it, so
     # it runs on the port's own transaction — public `m-db-port`, the same
@@ -6419,7 +6387,9 @@ def _run_conflict_close(
     # authors both directly — including the deliberately stale gate whose whole
     # point is that it matches no milestone.
     def run_close(conn: DbPort) -> int:
-        affected = conn.execute_write(dialect.to_driver_sql(statement.sql), list(statement.binds))
+        affected = conn.execute_write(
+            conn.dialect.to_driver_sql(statement.sql), list(statement.binds)
+        )
         # The SAME authoritative interpreter `parallax.snapshot.handle`'s own
         # flush executor asks, so the two callers can never disagree on what a
         # count means.
@@ -6594,7 +6564,6 @@ def _refuse_unentitled_observed_edge(
 
 def run_conflict_case(
     case: case_format.Case,
-    dialect_name: str,
     port: DbPort,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], int, dict[str, list[Row]] | None, int]:
@@ -6627,7 +6596,6 @@ def run_conflict_case(
     """
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
-    dialect = dialect_for(dialect_name)
     lifecycle = lifecycle_run(lifecycle)
     when = _when(case)
     concurrency = _concurrency(case)
@@ -6660,7 +6628,6 @@ def run_conflict_case(
             nonlocal round_trips
             nodes, source_trips = _conflict_source_nodes(
                 port,
-                dialect,
                 domain,
                 model,
                 target,
@@ -6673,12 +6640,11 @@ def run_conflict_case(
         # Taken before the concurrent writer commits, and spent by the first
         # attempt; every later attempt reads again, after the one before it ran.
         sources = None if is_temporal else sources_for(attempts[0][1])
-        _apply_given_apply(case, dialect, port, shadow)
+        _apply_given_apply(case, port, shadow)
         for pointer, attempt in attempts:
             if is_temporal:
                 statements, affected, attempt_trips = _run_conflict_close(
                     port,
-                    dialect,
                     model,
                     target,
                     concurrency,
@@ -6691,7 +6657,6 @@ def run_conflict_case(
             else:
                 statements, affected, attempt_trips = _run_conflict_write(
                     port,
-                    dialect,
                     domain,
                     model,
                     target,
@@ -6708,7 +6673,7 @@ def run_conflict_case(
         raise EngineError(f"{case.path.name}: {exc}") from exc
     then = case.document.get("then")
     table_state = (
-        read_table_state(port, model, dialect)
+        read_table_state(port, model)
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )
@@ -6745,7 +6710,7 @@ def _error_trigger(
 
 
 def run_error_case(
-    case: case_format.Case, dialect_name: str, port: DbPort
+    case: case_format.Case, port: DbPort
 ) -> tuple[list[Emission], str, str | int, int]:
     """Run an error-shape case and report the raised failure's classification.
 
@@ -6783,8 +6748,8 @@ def run_error_case(
             "the case-driven rounds runner (parallax.conformance.concurrency_runner) or "
             "the provider contract proof grades it instead, never this function"
         )
-    trigger = _error_trigger(case, dialect_name)
-    dialect = dialect_for(dialect_name)
+    dialect = port.dialect
+    trigger = _error_trigger(case, dialect.name)
     emissions: list[Emission] = []
     final = len(trigger) - 1
     for index, (sql, binds) in enumerate(trigger):

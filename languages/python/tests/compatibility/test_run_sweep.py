@@ -42,7 +42,6 @@ from _support.sweep_goldens import (
 )
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
 from parallax.core import inheritance, storage_layout
-from parallax.core.dialect import dialect_for
 from parallax.core.metamodel import Metamodel, entity_by_name
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
@@ -800,9 +799,7 @@ def test_run_scenario_case_pairs_a_materializing_write_spelled_bare(provisioner:
     steps[1]["objectQuery"]["target"] = canonical.rpartition(".")[2]
     assert steps[1]["objectQuery"]["target"] != canonical
 
-    run = engine.run_scenario_case(
-        dataclasses.replace(case, document=document), "postgres", provisioner.port
-    )
+    run = engine.run_scenario_case(dataclasses.replace(case, document=document), provisioner.port)
 
     assert run.round_trips == case_document(case)["then"]["roundTrips"]
     assert [entry["at"] for entry in run.step_rows] == ["/scenario/0", "/scenario/3"]
@@ -897,7 +894,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, provisioner: An
     provisioner.reset(model, case_fixtures(case))
 
     emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
-        case, "postgres", provisioner.port, lambda: provisioner.peer()
+        case, provisioner.port, lambda: provisioner.peer()
     )
 
     golden_statements = write_golden_statements(case)
@@ -1244,10 +1241,9 @@ def test_concurrency_rounds(case: case_format.Case, provisioner: Any) -> None:
     provisioner.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
     rounds = concurrency_runner.parse_rounds(case, "postgres")
-    dialect = dialect_for("postgres")
     isolation = "serializable" if case.case_id in _SERIALIZABLE_ISOLATION_CASES else None
     run = concurrency_runner.run_rounds(
-        rounds, dialect, lambda: provisioner.peer(autocommit=False), isolation=isolation
+        rounds, lambda: provisioner.peer(autocommit=False), isolation=isolation
     )
 
     if case.shape == "error":

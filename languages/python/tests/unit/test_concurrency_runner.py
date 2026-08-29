@@ -20,7 +20,7 @@ import pytest
 from parallax.conformance import case_format, concurrency_runner
 from parallax.conformance.concurrency_runner import ConcurrencyStep, RoundsRun
 from parallax.core.db_error import DatabaseError
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, Dialect
 
 
 def _case(document: dict[str, Any], *, case_id: str = "m-read-lock-900") -> case_format.Case:
@@ -127,6 +127,8 @@ class _FakeSession:
     """A fake `PeerSession`: records every call, optionally raises a scripted
     `DatabaseError` on a matching statement, never blocks."""
 
+    dialect: Dialect = POSTGRES
+
     def __init__(self, *, raises_on: str | None = None, error: DatabaseError | None = None) -> None:
         self.calls: list[tuple[str, str, tuple[Any, ...]]] = []
         self.closed = False
@@ -181,7 +183,7 @@ def test_run_rounds_applies_both_contention_gucs_to_both_sessions() -> None:
     # lock-wait errors instead of one `40P01` victim.
     a, b = _FakeSession(), _FakeSession()
     peers = iter([a, b])
-    concurrency_runner.run_rounds(_rounds({}), POSTGRES, lambda: next(peers))
+    concurrency_runner.run_rounds(_rounds({}), lambda: next(peers))
     for session in (a, b):
         assert session.calls == [
             ("execute", "set deadlock_timeout = '100ms'", ()),
@@ -202,7 +204,7 @@ def test_run_rounds_dispatches_read_and_write_kinds_to_the_right_verb() -> None:
             ),
         }
     )
-    run = concurrency_runner.run_rounds(rounds, POSTGRES, lambda: next(peers))
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers))
     assert len(run.rounds) == 1
     assert run.rounds[0]["A"].rows == ({"id": 2},)
     assert run.rounds[0]["A"].error is None
@@ -237,7 +239,7 @@ def test_run_rounds_an_undeclared_kind_step_executes_verbatim() -> None:
             )
         },
     )
-    run = concurrency_runner.run_rounds(rounds, POSTGRES, lambda: next(peers))
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers))
     assert run.rounds[0]["A"].rows == ({"id": 2},)
     # Two contention-GUC SETs, then B's own UPDATE -- via `execute`, not
     # `execute_write`, since the step declares no `kind`.
@@ -259,7 +261,7 @@ def test_run_rounds_captures_a_database_error_on_its_own_node_and_round() -> Non
             )
         },
     )
-    run = concurrency_runner.run_rounds(rounds, POSTGRES, lambda: next(peers))
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers))
     assert run.rounds[0]["A"].error is None
     assert "B" not in run.rounds[0]
     assert run.rounds[1]["B"].error is err
@@ -274,7 +276,7 @@ def test_run_rounds_closes_both_sessions_even_when_one_raises() -> None:
     rounds = _rounds(
         {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
     )
-    concurrency_runner.run_rounds(rounds, POSTGRES, lambda: next(peers))
+    concurrency_runner.run_rounds(rounds, lambda: next(peers))
     assert a.closed
     assert b.closed
 
@@ -293,7 +295,7 @@ def test_run_rounds_setup_failure_closes_the_already_open_first_session() -> Non
         raise RuntimeError("the second peer never opens")
 
     with pytest.raises(RuntimeError, match="the second peer never opens"):
-        concurrency_runner.run_rounds(_rounds({}), POSTGRES, peer_factory)
+        concurrency_runner.run_rounds(_rounds({}), peer_factory)
     assert a.closed
 
 
@@ -306,7 +308,7 @@ def test_run_rounds_setup_failure_closes_both_sessions_when_tuning_the_second_fa
     b = _FakeSession(raises_on="lock_timeout", error=err)
     peers = iter([a, b])
     with pytest.raises(DatabaseError):
-        concurrency_runner.run_rounds(_rounds({}), POSTGRES, lambda: next(peers))
+        concurrency_runner.run_rounds(_rounds({}), lambda: next(peers))
     assert a.closed
     assert b.closed
 
@@ -321,6 +323,8 @@ def test_run_rounds_raises_the_originating_failure_not_a_partners_barrier_break(
     # masking barrier break (the join/inspect-order bug this remediation
     # fixes) — with the secondary chained as its own `__cause__`.
     class _Broken:
+        dialect: Dialect = POSTGRES
+
         def execute(
             self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
         ) -> list[dict[str, Any]]:
@@ -341,7 +345,7 @@ def test_run_rounds_raises_the_originating_failure_not_a_partners_barrier_break(
         {"B": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
     )
     with pytest.raises(RuntimeError, match="B's own genuine defect") as excinfo:
-        concurrency_runner.run_rounds(rounds, POSTGRES, lambda: next(peers))
+        concurrency_runner.run_rounds(rounds, lambda: next(peers))
     assert isinstance(excinfo.value.__cause__, threading.BrokenBarrierError)
     assert a.closed
 
@@ -352,6 +356,8 @@ def test_run_rounds_reraises_an_unexpected_non_database_error() -> None:
     # the OTHER thread's own `barrier.wait()` never hangs) and re-raises on
     # the caller's thread once both workers join.
     class _Broken:
+        dialect: Dialect = POSTGRES
+
         def execute(
             self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
         ) -> list[dict[str, Any]]:
@@ -372,7 +378,7 @@ def test_run_rounds_reraises_an_unexpected_non_database_error() -> None:
         {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
     )
     with pytest.raises(RuntimeError, match="unexpected defect"):
-        concurrency_runner.run_rounds(rounds, POSTGRES, lambda: next(peers))
+        concurrency_runner.run_rounds(rounds, lambda: next(peers))
     assert b.closed
 
 
@@ -382,7 +388,7 @@ def test_run_rounds_reports_no_outcome_for_an_absent_node() -> None:
     rounds = _rounds(
         {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
     )
-    run = concurrency_runner.run_rounds(rounds, POSTGRES, lambda: next(peers))
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers))
     assert set(run.rounds[0]) == {"A"}
 
 
@@ -399,6 +405,8 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
     started = threading.Event()
 
     class _NoOpA:
+        dialect: Dialect = POSTGRES
+
         def execute(
             self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
         ) -> list[dict[str, Any]]:
@@ -414,6 +422,8 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
             pass
 
     class _SlowB:
+        dialect: Dialect = POSTGRES
+
         def execute(
             self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
         ) -> list[dict[str, Any]]:
@@ -441,7 +451,7 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
     outcome: list[RoundsRun] = []
 
     def go() -> None:
-        outcome.append(concurrency_runner.run_rounds(rounds, POSTGRES, lambda: next(sessions)))
+        outcome.append(concurrency_runner.run_rounds(rounds, lambda: next(sessions)))
 
     runner = threading.Thread(target=go)
     runner.start()
@@ -468,9 +478,7 @@ def test_run_rounds_isolation_override_runs_first_and_adds_a_commit_round() -> N
     rounds = _rounds(
         {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
     )
-    run = concurrency_runner.run_rounds(
-        rounds, POSTGRES, lambda: next(peers), isolation="serializable"
-    )
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers), isolation="serializable")
     # A's own authored step is the `select 1` between setup and commit; B is
     # idle every authored round, so its list is setup + commit exactly.
     assert a.calls == [
@@ -498,9 +506,7 @@ def test_run_rounds_a_commit_time_error_lands_on_the_synthetic_round() -> None:
     rounds = _rounds(
         {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
     )
-    run = concurrency_runner.run_rounds(
-        rounds, POSTGRES, lambda: next(peers), isolation="serializable"
-    )
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers), isolation="serializable")
     assert run.rounds[1]["B"].error is err
     assert "A" not in run.rounds[1]
 
@@ -522,9 +528,7 @@ def test_run_rounds_an_already_errored_node_skips_its_own_commit_attempt() -> No
             )
         }
     )
-    run = concurrency_runner.run_rounds(
-        rounds, POSTGRES, lambda: next(peers), isolation="serializable"
-    )
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers), isolation="serializable")
     assert run.rounds[0]["A"].error is err
     assert all(call[1] != "commit" for call in a.calls)
     assert b.calls[-1][1] == "commit"

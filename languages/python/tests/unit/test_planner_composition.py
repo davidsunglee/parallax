@@ -352,7 +352,6 @@ def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
     case = case_format.load_case(_CASES / "m-opt-lock-006-success.yaml")
     emissions, _affected, _state, _round_trips = engine.run_conflict_case(
         case,
-        "postgres",
         RecordingPort(
             rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]
         ),
