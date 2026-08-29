@@ -32,8 +32,11 @@ from ..inheritance import (
     tag_value_to_subtype,
 )
 from ..storage_layout import (
+    ColumnSlot,
     DocumentPath,
     MemberAddress,
+    PositionBranch,
+    PositionLayoutView,
     RelationalDocument,
     TableLayout,
     member_address,
@@ -514,21 +517,42 @@ def materialize_navigated_family_variant(
     Object Query and its own family fixes the concrete set — there is no ``narrowTo``
     to read and no whole-read superset to assert, the level's own golden being what
     fixes the projection shape (:func:`materialize_hop_variant`, the eager
-    counterpart). Only a MULTI-CONCRETE table-per-hierarchy position is polymorphic:
-    a position resolving to one concrete already names its variant, and a
-    table-per-concrete-subtype hop's branch literal is the eager fetch's own open
-    question rather than a second answer to it (`m-deep-fetch`).
+    counterpart). A position resolving to ONE concrete already names its variant and
+    carries no branch carrier at all; a multi-concrete one is polymorphic under both
+    strategies, publishing ``familyVariant`` from a table-per-hierarchy tag or from
+    the ``union all`` branch literal a table-per-concrete-subtype hop projects
+    (`m-deep-fetch`). Navigating is instance-form, so the branch superset that hop
+    aligns to is the instance-form one.
 
-    A row carrying no tag column stands somewhere else — a multi-hop load aggregates
-    the levels it walked THROUGH as well as the one it ended at — and is left as it
-    came back, exactly as the owner-node decode beside it leaves a column the golden
-    did not project.
+    A row carrying no branch carrier stands somewhere else — a multi-hop load
+    aggregates the levels it walked THROUGH as well as the one it ended at — and is
+    left as it came back, exactly as the owner-node decode beside it leaves a column
+    the golden did not project.
     """
     position = abstract_family_position(case, {"target": entity.canonical_name})
-    if position is None or position.strategy != STRATEGY_TPH:
+    if position is None:
         return rows
-    tag_column = position.family.tag_column_of(position.target)
-    if tag_column is None or len(position.family.effective_concrete_set(position.target)) < 2:
+    family, target = position.family, position.target
+    if len(family.effective_concrete_set(target)) < 2:
+        return rows
+    if position.strategy == STRATEGY_TPCS:
+        if not any(tpcs.VARIANT_COLUMN in row for row in rows):
+            return rows
+        tpcs_position = _tpcs_position(
+            case, family, family.effective_concrete_set(target), instance_form=True
+        )
+        return [
+            _tpcs_row_at_its_branch(
+                case, tpcs_position, row, subject=f"navigated position {target}"
+            )
+            if tpcs.VARIANT_COLUMN in row
+            else row
+            for row in rows
+        ]
+    if position.strategy != STRATEGY_TPH:
+        return rows
+    tag_column = family.tag_column_of(target)
+    if tag_column is None:
         return rows
     variant_map = tag_value_to_subtype(case.model.entity_defs)
     return [
@@ -537,7 +561,7 @@ def materialize_navigated_family_variant(
             dict(row),
             tag_column=tag_column,
             variant_map=variant_map,
-            subject=f"navigated position {position.target}",
+            subject=f"navigated position {target}",
         )
         if tag_column in row
         else row
@@ -719,20 +743,31 @@ def _has_document_resident_attribute(case: Case, entity: Entity) -> bool:
     return any(attribute["name"] in resident for attribute in entity.attributes)
 
 
-def _materialize_tpcs_family_variant(
-    case: Case, rows: list[dict[str, Any]], family: Family, target_name: str
-) -> list[dict[str, Any]]:
-    """Rename the projected `familyVariant` literal column for a TPCS abstract read.
+class _TpcsPosition(NamedTuple):
+    """What restoring one `union all` row to its own branch takes.
 
-    Asserts the `union all` branch/projection shape, then renames each row's
-    ``family_variant`` (the per-branch subtype-name literal) to ``familyVariant`` so
-    the materialized rows compare against ``then.rows`` — the TPCS counterpart of the
-    TPH tag-to-variant materialization (m-inheritance / m-sql). A row observed through
-    a collision-safe internal alias is restored to the physical spelling its OWN
-    branch's slot carries, and an alias standing for a slot that branch does not own is
-    dropped.
+    ``view``, ``branch_variants`` and ``document_resident`` are the position's own
+    layout facts, which :mod:`.tpcs` also grades the golden against; the rest is the
+    aligned projection those facts and the read's result form derive — the physical
+    spelling each ordinal carries, the collision-safe alias it is projected under,
+    how many ordinals share that spelling, and per variant the slot-or-absence entry
+    and Table layout its branch reads.
     """
-    effective = read_effective_set(case, family, target_name)
+
+    view: PositionLayoutView
+    branch_variants: list[tuple[PositionBranch, str]]
+    document_resident: bool
+    superset: list[str]
+    result_aliases: list[str]
+    column_counts: dict[str, int]
+    slots_by_variant: dict[str, tuple[ColumnSlot | None, ...]]
+    layouts_by_variant: dict[str, TableLayout]
+
+
+def _tpcs_position(
+    case: Case, family: Family, effective: list[str], *, instance_form: bool
+) -> _TpcsPosition:
+    """The table-per-concrete-subtype position *effective* selects, as its rows read it."""
     ordered = family.canonical_concrete_order(effective)
     view = position_view(case.model.storage_layout, family, effective)
     if view is None:
@@ -746,48 +781,97 @@ def _materialize_tpcs_family_variant(
         _has_document_resident_attribute(case, case.model.entity(name))
         for _branch, name in branch_variants
     )
-    tpcs.assert_union_shape(case, view, branch_variants, document_resident=document_resident)
-    ordinals = tpcs.projected_position_ordinals(case, view, document_resident=document_resident)
+    ordinals = tpcs.projected_position_ordinals(
+        view, instance_form=instance_form, document_resident=document_resident
+    )
     superset = [view.column_spellings[ordinal] for ordinal in ordinals]
-    result_aliases = tpcs.result_aliases(superset)
-    column_counts = {column: superset.count(column) for column in set(superset)}
-    slots_by_variant = {
-        name: tuple(branch.slots[ordinal] for ordinal in ordinals)
-        for branch, name in branch_variants
-    }
-    layouts_by_variant = {name: branch.layout for branch, name in branch_variants}
+    return _TpcsPosition(
+        view=view,
+        branch_variants=branch_variants,
+        document_resident=document_resident,
+        superset=superset,
+        result_aliases=tpcs.result_aliases(superset),
+        column_counts={column: superset.count(column) for column in set(superset)},
+        slots_by_variant={
+            name: tuple(branch.slots[ordinal] for ordinal in ordinals)
+            for branch, name in branch_variants
+        },
+        layouts_by_variant={name: branch.layout for branch, name in branch_variants},
+    )
 
-    materialized: list[dict[str, Any]] = []
-    for row in rows:
-        new_row = _materialized_row(row)
-        if tpcs.VARIANT_COLUMN not in new_row:
-            raise CaseFailure(
-                f"{case.path.name}: table-per-concrete-subtype abstract read does not "
-                f"project the {tpcs.VARIANT_COLUMN!r} literal; familyVariant cannot be "
-                f"materialized (m-sql)."
-            )
-        if "familyVariant" in new_row:
-            new_row.consumed_value_object_columns.add("familyVariant")
-        variant = new_row.pop(tpcs.VARIANT_COLUMN)
-        slots = slots_by_variant.get(variant)
-        if slots is None:
-            raise CaseFailure(
-                f"{case.path.name}: {tpcs.VARIANT_COLUMN!r} literal {variant!r} names no "
-                f"branch of the effective concrete set {sorted(slots_by_variant)}."
-            )
-        for slot, column, result_alias in zip(slots, superset, result_aliases, strict=True):
-            if (
-                result_alias in new_row
-                and result_alias != column
-                and (column_counts[column] == 1 or slot is not None)
-            ):
-                new_row[column] = new_row.pop(result_alias)
-            elif column_counts[column] > 1 and slot is None:
-                new_row.pop(result_alias, None)
-        new_row["familyVariant"] = variant
-        new_row = _materialize_tpcs_document_row(case, layouts_by_variant[variant], new_row)
-        materialized.append(new_row)
-    return materialized
+
+def _tpcs_row_at_its_branch(
+    case: Case, position: _TpcsPosition, row: dict[str, Any], *, subject: str
+) -> dict[str, Any]:
+    """*row* restored to the `union all` branch its ``family_variant`` literal names.
+
+    The literal becomes ``familyVariant``; a column observed through a collision-safe
+    internal alias is restored to the physical spelling its OWN branch's slot carries,
+    an alias standing for a slot that branch does not own is dropped, and the branch's
+    own Structured Column decodes through that branch's placements. The TPCS
+    counterpart of the table-per-hierarchy tag-to-variant materialization
+    (:func:`_with_family_variant`), which likewise names its *subject* so the same
+    defect reported against a whole read and against a navigated position reads alike.
+    """
+    new_row = _materialized_row(row)
+    if tpcs.VARIANT_COLUMN not in new_row:
+        raise CaseFailure(
+            f"{case.path.name}: {subject} does not project the "
+            f"{tpcs.VARIANT_COLUMN!r} literal; familyVariant cannot be "
+            f"materialized (m-sql)."
+        )
+    if "familyVariant" in new_row:
+        new_row.consumed_value_object_columns.add("familyVariant")
+    variant = new_row.pop(tpcs.VARIANT_COLUMN)
+    slots = position.slots_by_variant.get(variant)
+    if slots is None:
+        raise CaseFailure(
+            f"{case.path.name}: {tpcs.VARIANT_COLUMN!r} literal {variant!r} names no "
+            f"branch of the effective concrete set {sorted(position.slots_by_variant)}."
+        )
+    for slot, column, result_alias in zip(
+        slots, position.superset, position.result_aliases, strict=True
+    ):
+        if (
+            result_alias in new_row
+            and result_alias != column
+            and (position.column_counts[column] == 1 or slot is not None)
+        ):
+            new_row[column] = new_row.pop(result_alias)
+        elif position.column_counts[column] > 1 and slot is None:
+            new_row.pop(result_alias, None)
+    new_row["familyVariant"] = variant
+    return _materialize_tpcs_document_row(case, position.layouts_by_variant[variant], new_row)
+
+
+def _materialize_tpcs_family_variant(
+    case: Case, rows: list[dict[str, Any]], family: Family, target_name: str
+) -> list[dict[str, Any]]:
+    """Rename the projected `familyVariant` literal column for a TPCS abstract read.
+
+    Asserts the `union all` branch/projection shape, then restores each row to its own
+    branch (:func:`_tpcs_row_at_its_branch`) so the materialized rows compare against
+    ``then.rows`` — the TPCS counterpart of the TPH tag-to-variant materialization
+    (m-inheritance / m-sql).
+    """
+    position = _tpcs_position(
+        case,
+        family,
+        read_effective_set(case, family, target_name),
+        instance_form=tpcs.is_instance_form(case),
+    )
+    tpcs.assert_union_shape(
+        case,
+        position.view,
+        position.branch_variants,
+        document_resident=position.document_resident,
+    )
+    return [
+        _tpcs_row_at_its_branch(
+            case, position, row, subject="table-per-concrete-subtype abstract read"
+        )
+        for row in rows
+    ]
 
 
 def _materialize_tpcs_document_row(
