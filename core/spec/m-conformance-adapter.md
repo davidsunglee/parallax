@@ -31,9 +31,18 @@ language-native wrapper that accepts the same commands.
 ```text
 parallax-conformance describe
 parallax-conformance compile --case <case.yaml> --dialect <dialect>
-parallax-conformance run --case <case.yaml> --dialect <dialect>
-parallax-conformance benchmark --benchmark <benchmark.yaml> --dialect <dialect>
+parallax-conformance run --case <case.yaml> --profile <profile>
+parallax-conformance benchmark --benchmark <benchmark.yaml> --profile <profile>
 ```
+
+`compile` executes nothing, so it is asked for a dialect: there is no adapter to
+read one off. `run` and `benchmark` execute, so they are asked for a **profile** —
+the declared database matrix profile
+([`database-provider-test-contract.md`](database-provider-test-contract.md)) naming
+the adapter configuration to run against — and the dialect they report is the one
+that adapter executes in rather than one the caller named beside it. One
+invocation runs one profile; running the matrix is the caller's loop, not a
+command-line option.
 
 Each command writes exactly one JSON document to stdout. That JSON document MUST
 validate against
@@ -52,7 +61,8 @@ Human-readable logs MAY be written to stderr.
 
 The `unsupported` result is only valid when the adapter has not claimed the
 requested command, dialect, case shape, module tags, or case-tag selection in
-`describe`. The `run-only` result is only valid for a `compile` command on a
+`describe`, or when a `run` or `benchmark` names a profile the implementation does
+not declare. The `run-only` result is only valid for a `compile` command on a
 **claimed** case the corpus declares run-only (`compileEligibility`, `m-case-format`).
 
 ## Common Output Envelope
@@ -156,7 +166,8 @@ exclusions. A completed language spec ordinarily adopts its selected canonical
 A case command is claimed only when **all** of these are true:
 
 - the command is listed in `commands`
-- the requested dialect is listed in `dialects`
+- the dialect the case is requested in is listed in `dialects` — the one named by
+  `compile --dialect`, or the one the profile named by `run --profile` executes in
 - the case shape is listed in `caseShapes`
 - every module-like tag on the case (`m-core`, `m-predicate`, …) is
   listed in `modules`
@@ -319,6 +330,15 @@ coalescing special case, one final-value write or none — is compared to the
 authored golden unchanged, exactly as for any other write, never reverse-engineered
 from it.
 
+`run` is asked for a **profile** rather than a dialect, and its envelope reports
+both. `profile` echoes the requested profile — the adapter configuration the case
+was run under. `dialect` is a **report of what executed**: the dialect the adapter
+that profile opened spells its SQL in, which is the key a runner resolves the
+case's per-dialect goldens under. Neither field derives the other, because two
+profiles may execute in the same dialect. An adapter asked for a profile it does
+not declare returns `unsupported` with a diagnostic naming it, exactly as an
+unclaimed dialect does under `compile`, and provisions nothing.
+
 The adapter is responsible for using a clean database according to its declared
 provisioning mode, applying schema and fixtures, executing the implementation's
 public behavior, and reporting observations. A runner may compare those
@@ -355,6 +375,7 @@ Example:
     "version": "0.1.0"
   },
   "case": "core/compatibility/cases/m-predicate-002-eq.yaml",
+  "profile": "pg-full",
   "dialect": "postgres",
   "caseShape": "read",
   "emissions": [
@@ -650,6 +671,7 @@ Example:
     "version": "0.1.0"
   },
   "benchmark": "core/compatibility/benchmarks/read-mix.yaml",
+  "profile": "pg-full",
   "report": {
     "generatedAt": "2026-06-27T00:00:00+00:00",
     "dialect": "postgres",

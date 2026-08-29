@@ -90,6 +90,11 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*$"
     },
+    "profileName": {
+      "description": "The stable reporting name of a declared database matrix profile (`database-provider-test-contract.md`), such as `pg-full`. It names an adapter configuration rather than a dialect: two profiles may execute in the same dialect, and the dialect a profile runs in is read back off the adapter it declares.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
     "casePath": {
       "type": "string",
       "pattern": "^(core/compatibility/cases/|cases/).+\\.ya?ml$"
@@ -904,6 +909,7 @@
       }
     },
     "runOk": {
+      "description": "A completed `run`. `profile` names the declared database matrix profile the case was run under; `dialect` is the dialect the adapter that profile opened actually executed the case in, which is what selects the per-dialect golden the emissions are compared against. The two are not interchangeable: profiles may share a dialect, so neither field can be derived from the other.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -912,6 +918,7 @@
         "status",
         "adapter",
         "case",
+        "profile",
         "dialect",
         "caseShape",
         "emissions",
@@ -923,6 +930,7 @@
         "status": { "const": "ok" },
         "adapter": { "$ref": "#/$defs/adapter" },
         "case": { "$ref": "#/$defs/casePath" },
+        "profile": { "$ref": "#/$defs/profileName" },
         "dialect": { "$ref": "#/$defs/dialect" },
         "caseShape": { "$ref": "#/$defs/caseShape" },
         "emissions": { "$ref": "#/$defs/emissions" },
@@ -938,6 +946,7 @@
         "status",
         "adapter",
         "benchmark",
+        "profile",
         "report"
       ],
       "properties": {
@@ -946,6 +955,7 @@
         "status": { "const": "ok" },
         "adapter": { "$ref": "#/$defs/adapter" },
         "benchmark": { "$ref": "#/$defs/benchmarkPath" },
+        "profile": { "$ref": "#/$defs/profileName" },
         "report": { "$ref": "#/$defs/benchmarkReport" }
       }
     },

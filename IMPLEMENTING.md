@@ -277,9 +277,13 @@ the simplest cross-language seam:
 ```text
 parallax-conformance describe
 parallax-conformance compile --case <case.yaml> --dialect postgres
-parallax-conformance run --case <case.yaml> --dialect postgres
-parallax-conformance benchmark --benchmark <benchmark.yaml> --dialect postgres
+parallax-conformance run --case <case.yaml> --profile pg-full
+parallax-conformance benchmark --benchmark <benchmark.yaml> --profile pg-full
 ```
+
+Compilation names a dialect because it executes nothing; a command that executes
+names a declared profile instead and reports the dialect its adapter actually ran
+in.
 
 Every command writes one JSON document that validates against
 [core/schemas/conformance-adapter.schema.json](core/schemas/conformance-adapter.schema.json).

@@ -32,6 +32,10 @@ from parallax.core.db_port import DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 
 _SCHEMA = adapter_schema()
+# The profile a rejected `run` is requested under. Nothing here provisions it: the
+# refusing port below stands in for the container the shape never needs, and the
+# envelope still names the profile the request was made against.
+_PROFILE = "pg-full"
 _REACHABLE_REJECTED = [c for c in sweep.reachable_cases() if c.shape == "rejected"]
 
 
@@ -66,7 +70,7 @@ def _when_kind(case: case_format.Case) -> str:
 
 @pytest.mark.parametrize("case", _REACHABLE_REJECTED, ids=[c.case_id for c in _REACHABLE_REJECTED])
 def test_rejected_sweep(case: case_format.Case) -> None:
-    envelope = adapter.run_case(case.path, "postgres", _RefusingPort())
+    envelope = adapter.run_case(case.path, _PROFILE, _RefusingPort())
     jsonschema.validate(envelope, _SCHEMA)
 
     assert envelope["status"] == "ok", envelope

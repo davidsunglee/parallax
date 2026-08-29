@@ -15,7 +15,8 @@ module is legitimate — the dialect and error-classification tests exercise its
 pure functions — while *calling* one of the seams below boots a container. Each
 call's target is resolved through the importing module's own bindings, so a
 local name that merely looks like a seam is not one, and a seam reached under an
-alias still is.
+alias still is. A seam a declared value reaches through a member rather than an
+importable name is matched by that member's name; this tree declares none.
 
 Three structural facts are checked with it, because the rule is vacuous without
 them: every declared seam must still name an importable callable, the designated
@@ -36,6 +37,7 @@ __all__ = [
     "DATABASE_SEAMS",
     "ENTRY_POINT_FIXTURE",
     "ENTRY_POINT_MODULE",
+    "SEAM_MEMBERS",
     "TESTS_ROOT",
     "Finding",
     "audit",
@@ -63,6 +65,13 @@ DATABASE_SEAMS: frozenset[str] = frozenset(
         "testcontainers.community.postgres.PostgresContainer",
     }
 )
+
+# Members through which a declared value reaches one of the seams above, matched
+# by name because such a call has no importable name of its own to resolve. Empty
+# here: every acquisition in this tree is spelled as one of the seams above, and a
+# member listed without a value declaring it would match calls that acquire
+# nothing.
+SEAM_MEMBERS: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -147,14 +156,23 @@ def unresolved_seams() -> tuple[str, ...]:
 
 
 def seam_calls(tree: ast.Module) -> list[tuple[int, str]]:
-    """Every call in *tree* whose target resolves to a database seam."""
+    """Every call in *tree* that acquires a live database.
+
+    A call is one when its target resolves to a declared seam, or when it calls a
+    declared seam member — the indirection a scope's recipe reaches a seam through
+    when what names it is a declared value rather than an import.
+    """
     bindings = _imported_names(tree)
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            target = _resolved_target(node.func, bindings)
-            if target is not None and target in DATABASE_SEAMS:
-                found.append((node.lineno, target))
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute) and node.func.attr in SEAM_MEMBERS:
+            found.append((node.lineno, f".{node.func.attr}()"))
+            continue
+        target = _resolved_target(node.func, bindings)
+        if target is not None and target in DATABASE_SEAMS:
+            found.append((node.lineno, target))
     return sorted(found)
 
 

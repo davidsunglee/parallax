@@ -125,6 +125,7 @@ def _run_envelope(lifecycle: dict[str, Any]) -> dict[str, Any]:
         "status": "ok",
         "adapter": {"language": "example", "name": "example-adapter", "version": "1.0.0"},
         "case": "cases/m-execution-lifecycle-001-standalone-read.yaml",
+        "profile": "pg-full",
         "dialect": "postgres",
         "caseShape": "writeSequence",
         "emissions": [

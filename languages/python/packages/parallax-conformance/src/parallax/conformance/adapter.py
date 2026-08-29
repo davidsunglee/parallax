@@ -131,9 +131,17 @@ def _case_ref(path: Path) -> str:
         return str(path)
 
 
-def _echo(envelope: Envelope, case: case_format.Case, dialect: str) -> Envelope:
-    """Echo the routing fields every compile/run envelope carries."""
+def _echo(
+    envelope: Envelope, case: case_format.Case, dialect: str, profile: str | None = None
+) -> Envelope:
+    """Echo the routing fields every compile/run envelope carries.
+
+    ``profile`` is the run lane's alone: a `run` names the adapter configuration it
+    executed under, while a `compile` opens nothing and so has no profile to name.
+    """
     envelope["case"] = _case_ref(case.path)
+    if profile is not None:
+        envelope["profile"] = profile
     envelope["dialect"] = dialect
     envelope["caseShape"] = case.shape
     return envelope
@@ -421,14 +429,22 @@ def compile_case(
 
 def run_case(
     case_path: str | Path,
-    dialect: str,
+    profile: str,
     port: DbPort,
     claim: Claim = SNAPSHOT_CLAIM,
     adapter: Adapter = ADAPTER,
 ) -> Envelope:
     """Run one case (read / scenario / writeSequence) through ``port`` and report its
-    emissions and observations."""
+    emissions and observations.
+
+    ``profile`` is the reporting name of the declared matrix profile this run was
+    asked for; the dialect is not asked for at all but read off ``port``, so the
+    envelope reports the spelling the case was actually executed in and the
+    classification grades that same spelling. Reading it requires no connection —
+    a port that refuses SQL still answers its dialect (`m-db-port`).
+    """
     case = case_format.load_case(Path(case_path))
+    dialect = port.dialect.name
     diagnostic = classify("run", dialect, case, claim)
     if diagnostic is not None:
         return _non_ok("run", "unsupported", diagnostic, adapter)
@@ -441,4 +457,4 @@ def run_case(
     envelope = _common("run", "ok", adapter)
     envelope["emissions"] = [e.to_json() for e in emissions]
     envelope["observations"] = observations
-    return _echo(envelope, case, dialect)
+    return _echo(envelope, case, dialect, profile)

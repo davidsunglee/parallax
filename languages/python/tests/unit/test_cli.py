@@ -39,13 +39,14 @@ def test_compile_claimed_case_emits_exit_0(capsys: pytest.CaptureFixture[str]) -
     assert envelope["command"] == "compile"
 
 
-def test_run_unsupported_dialect_exit_10(capsys: pytest.CaptureFixture[str]) -> None:
-    # The `run` dialect filter is Docker-free: an out-of-claim dialect is rejected
-    # before any container is provisioned.
-    code, envelope = _run(capsys, ["run", "--case", _READ_CASE, "--dialect", "mariadb"])
+def test_run_unknown_profile_exit_10(capsys: pytest.CaptureFixture[str]) -> None:
+    # `run` selects an adapter configuration rather than a dialect, so the filter
+    # that used to reject an out-of-claim dialect rejects an undeclared profile —
+    # Docker-free, before any container is provisioned and before the case is read.
+    code, envelope = _run(capsys, ["run", "--case", _READ_CASE, "--profile", "mariadb-full"])
     assert code == 10
     assert envelope["status"] == "unsupported"
-    assert envelope["diagnostics"][0]["code"] == "unsupported-dialect"
+    assert envelope["diagnostics"][0]["code"] == "unsupported-profile"
 
 
 def test_run_rejected_case_never_provisions_a_container(
@@ -54,22 +55,27 @@ def test_run_rejected_case_never_provisions_a_container(
     # A `rejected`-shape `run` is provisioning-free by contract
     # (m-conformance-adapter): it must never construct a
     # `Provisioner` (Docker), so the shape's short-circuit is proven
-    # structurally here rather than merely by exit code — a fake provisioner
-    # factory that raises on construction fails loudly if the CLI's dispatch
-    # order regresses back to provisioning-before-shape-check.
+    # structurally here rather than merely by exit code — a construction that
+    # raises fails loudly if the CLI's dispatch order regresses back to
+    # provisioning-before-shape-check.
     from parallax.conformance import provision
 
-    class _RaisingProvisioner:
-        def __init__(self) -> None:
-            raise AssertionError("a rejected-case run must not construct a Provisioner")
+    def _refuse(_self: object) -> None:
+        raise AssertionError("a rejected-case run must not construct a Provisioner")
 
-    monkeypatch.setattr(provision, "Provisioner", _RaisingProvisioner)
+    # Patched on the class the declared profile holds, not on the name the module
+    # binds: the profile resolves to the class object itself, so rebinding
+    # `provision.Provisioner` would leave the lane reaching the real one.
+    monkeypatch.setattr(provision.Provisioner, "__init__", _refuse)
     rejected_case = str(
         case_format.default_cases_dir() / "m-inheritance-040-rejected-narrow-outside-position.yaml"
     )
-    code, envelope = _run(capsys, ["run", "--case", rejected_case, "--dialect", "postgres"])
+    code, envelope = _run(capsys, ["run", "--case", rejected_case, "--profile", "pg-full"])
     assert code == 0
+    jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
+    assert envelope["profile"] == "pg-full"
+    assert envelope["dialect"] == "postgres"
     assert envelope["emissions"] == []
     assert envelope["observations"]["rejectedRule"] == "narrow-outside-position"
     assert envelope["observations"]["roundTrips"] == 0
@@ -82,7 +88,7 @@ def test_compile_unsupported_dialect_exit_10(capsys: pytest.CaptureFixture[str])
 
 
 def test_benchmark_unsupported_command_exit_10(capsys: pytest.CaptureFixture[str]) -> None:
-    code, envelope = _run(capsys, ["benchmark", "--benchmark", "b.yaml", "--dialect", "postgres"])
+    code, envelope = _run(capsys, ["benchmark", "--benchmark", "b.yaml", "--profile", "pg-full"])
     assert code == 10
     assert envelope["command"] == "benchmark"
     assert envelope["diagnostics"][0]["code"] == "unsupported-command"
@@ -90,7 +96,7 @@ def test_benchmark_unsupported_command_exit_10(capsys: pytest.CaptureFixture[str
 
 def test_unreadable_case_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
     code, envelope = _run(
-        capsys, ["run", "--case", "/nonexistent/missing.yaml", "--dialect", "postgres"]
+        capsys, ["run", "--case", "/nonexistent/missing.yaml", "--profile", "pg-full"]
     )
     assert code == 2
     jsonschema.validate(envelope, _SCHEMA)
