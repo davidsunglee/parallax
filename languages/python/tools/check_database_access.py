@@ -14,10 +14,11 @@ constants — while *calling* one of the seams below opens a socket. Each call's
 target is resolved through the importing module's own bindings, so a local name
 that merely looks like a seam is not one, and a seam reached under an alias
 still is — including a local name the module first binds to a seam and calls
-afterwards. A declared matrix profile reaches a seam through a member rather than
-an importable name, so that member is matched by name as well, on any receiver:
-the member is matched rather than resolved, so a call the rule cannot type is
-reported rather than trusted. That direction is deliberate — a false report is a
+afterwards, however many names the binding passed through on the way. A declared
+matrix profile reaches a seam through a member rather than an importable name, so
+that member is matched by name as well, on any receiver: the member is matched
+rather than resolved, so a call the rule cannot type is reported rather than
+trusted. That direction is deliberate — a false report is a
 loud failure a reader resolves, while the state this guard exists to catch is
 silent on any host with Docker.
 
@@ -182,13 +183,17 @@ def unbacked_profiles() -> tuple[str, ...]:
     return tuple(unbacked)
 
 
-def _acquisition_named(expression: ast.expr, bindings: dict[str, str]) -> str | None:
+def _acquisition_named(
+    expression: ast.expr, bindings: dict[str, str], aliases: dict[str, str]
+) -> str | None:
     """How *expression* is reported when it names an acquisition, else ``None``.
 
-    An acquisition is named either by a dotted path resolving to a declared seam
-    or by a declared seam member, which has no importable name of its own for the
-    dotted resolution to reach.
+    An acquisition is named by a dotted path resolving to a declared seam, by a
+    declared seam member — which has no importable name of its own for the dotted
+    resolution to reach — or by a plain name *aliases* already found to hold one.
     """
+    if isinstance(expression, ast.Name) and expression.id in aliases:
+        return aliases[expression.id]
     if isinstance(expression, ast.Attribute) and expression.attr in SEAM_MEMBERS:
         return f".{expression.attr}()"
     target = _resolved_target(expression, bindings)
@@ -196,30 +201,38 @@ def _acquisition_named(expression: ast.expr, bindings: dict[str, str]) -> str | 
 
 
 def _local_aliases(tree: ast.Module, bindings: dict[str, str]) -> dict[str, str]:
-    """Every plain name *tree* binds to an acquisition without calling it.
+    """Every plain name *tree* binds to an acquisition without calling it, including
+    through a chain of such names.
 
     Calling a seam through a local name is the same acquisition as calling it
     where it is spelled, so a name bound to one is treated as the acquisition it
-    holds. The binding is collected for the whole module rather than per scope: a
-    name that ever holds an acquisition is never assumed to have lost it, because
-    over-reporting fails a run loudly while under-reporting is exactly the silent
-    misclassification this guard exists to prevent.
+    holds — and a name bound to *that* name holds it too, which is why the bindings
+    are collected until they stop growing rather than in one pass. Growth is the only
+    direction: a name that ever holds an acquisition is never assumed to have lost it,
+    so the collection is module-wide rather than per scope, independent of the order
+    the bindings appear in, and terminating. Over-reporting fails a run loudly, while
+    under-reporting is exactly the silent misclassification this guard exists to
+    prevent.
     """
     aliases: dict[str, str] = {}
-    for node in ast.walk(tree):
-        targets: Sequence[ast.expr]
-        if isinstance(node, ast.Assign):
-            targets, value = node.targets, node.value
-        elif isinstance(node, ast.AnnAssign | ast.NamedExpr) and node.value is not None:
-            targets, value = [node.target], node.value
-        else:
-            continue
-        acquisition = _acquisition_named(value, bindings)
-        if acquisition is None:
-            continue
-        for target in targets:
-            if isinstance(target, ast.Name):
-                aliases[target.id] = acquisition
+    growing = True
+    while growing:
+        growing = False
+        for node in ast.walk(tree):
+            targets: Sequence[ast.expr]
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.AnnAssign | ast.NamedExpr) and node.value is not None:
+                targets, value = [node.target], node.value
+            else:
+                continue
+            acquisition = _acquisition_named(value, bindings, aliases)
+            if acquisition is None:
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id not in aliases:
+                    aliases[target.id] = acquisition
+                    growing = True
     return aliases
 
 
@@ -229,7 +242,8 @@ def seam_calls(tree: ast.Module) -> list[tuple[int, str]]:
     A call is one when its target resolves to a declared seam, when it calls a
     declared seam member — the indirection a scope's recipe reaches a seam through
     when what names it is a declared value rather than an import — or when it calls
-    a local name the module bound to either.
+    a local name the module bound to either, however many names the binding passed
+    through on the way.
     """
     bindings = _imported_names(tree)
     aliases = _local_aliases(tree, bindings)
@@ -237,10 +251,7 @@ def seam_calls(tree: ast.Module) -> list[tuple[int, str]]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if isinstance(node.func, ast.Name) and node.func.id in aliases:
-            found.append((node.lineno, aliases[node.func.id]))
-            continue
-        acquisition = _acquisition_named(node.func, bindings)
+        acquisition = _acquisition_named(node.func, bindings, aliases)
         if acquisition is not None:
             found.append((node.lineno, acquisition))
     return sorted(found)

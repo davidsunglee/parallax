@@ -38,10 +38,10 @@ pytestmark = pytest.mark.compile_sweep
 
 _REACHABLE = sweep.reachable_cases()
 _SCHEMA = adapter_schema()
-# The declared profile the lane-dispatch check below names its `run` request under,
-# resolved out of the one roster; nothing here provisions it, because the case is
-# refused before a database is needed.
-_PROFILE = profile_for("pg-full")
+# The name of the declared profile the lane-dispatch check below makes its `run`
+# request under, read off the one roster; nothing here provisions it, because the
+# case is refused before a database is needed.
+_PROFILE = profile_for("pg-full").name
 
 
 class _RefusingPort:

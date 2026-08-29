@@ -90,6 +90,23 @@ def test_a_seam_bound_to_a_local_name_and_called_through_it_is_found() -> None:
     ) == ["parallax.conformance.provision.Provisioner"]
 
 
+def test_a_seam_reached_through_a_chain_of_local_names_is_found() -> None:
+    # Rebinding costs one line, so a rule reading one hop only is escaped by adding
+    # another; the bindings are followed until they stop growing instead.
+    assert _seams("first = profile.provisioner\nsecond = first\nsecond()\n") == [".provisioner()"]
+    assert _seams(
+        "from parallax.conformance.provision import Provisioner\n"
+        "first = Provisioner\n"
+        "second = first\n"
+        "third = second\n"
+        "third()\n"
+    ) == ["parallax.conformance.provision.Provisioner"]
+    # Order is not the rule either: the alias may be bound before the name it holds.
+    assert _seams(
+        "def rogue():\n    return second()\n\n\nsecond = first\nfirst = profile.provisioner\n"
+    ) == [".provisioner()"]
+
+
 def test_a_seam_bound_by_annotation_or_by_a_walrus_is_found_too() -> None:
     # The three ways a name is bound to a value are one rule; a guard that read
     # only the plain one would be escaped by adding a type or an `if`.
