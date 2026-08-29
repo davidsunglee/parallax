@@ -2,10 +2,10 @@
 
 The lanes that grade a write end to end — write sequence, conflict, bitemporal,
 pk generation, Unit Work Scenario — cover the operations through their own
-cases. What this file covers is what only the interface can state: the two
-operations restated so no caller borrows a lexical primitive, the address a
-statement is read down to, and the pin that the scanner underneath all of them
-stays invisible.
+cases. What this file covers is what only the interface can state: the column
+lists an operation reads a rendered statement down to, the object an existing-row
+statement addresses, and the pin that the scanner underneath all of them stays
+invisible.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from reference_harness.case import Case, discover_cases
 from reference_harness.write_plan import (
     parse_insert_columns,
     parse_set_columns,
-    predicate_bind_offset,
     statement_object,
 )
 
@@ -81,7 +80,6 @@ def test_write_grading_offers_operations_and_no_lexical_primitive() -> None:
         "is_existing_row_statement",
         "parse_insert_columns",
         "parse_set_columns",
-        "predicate_bind_offset",
         "statement_object",
         "tag",
         "unit_resolving_reads",
@@ -160,26 +158,6 @@ def test_an_insert_column_list_reads_no_syntax_inside_a_quoted_identifier() -> N
     assert parse_insert_columns(case, max_form) == ["id", "note"]
 
 
-# --- where a predicate's binds begin -----------------------------------------
-
-
-def test_the_predicate_bind_offset_counts_the_placeholders_before_it() -> None:
-    assert predicate_bind_offset("update t set a = ?, b = ? where id = ?") == 2
-    assert predicate_bind_offset("delete from t where id = ?") == 0
-
-
-def test_a_statement_with_no_outer_predicate_has_no_bind_offset() -> None:
-    assert predicate_bind_offset("insert into t(id) values (?)") is None
-
-
-def test_the_predicate_bind_offset_reads_no_syntax_inside_a_literal() -> None:
-    # A `?` inside a string literal binds nothing and a `where` inside a quoted
-    # identifier opens no predicate, so a text scan would place the offset at a
-    # position no bind occupies and every fact read off it would be off by one.
-    assert predicate_bind_offset("update t set note = 'a ? b', x = ? where id = ?") == 1
-    assert predicate_bind_offset('update t set "where" = ? where id = ?') == 1
-
-
 # --- which object an existing-row statement addresses ------------------------
 
 
@@ -228,6 +206,36 @@ def test_a_quoted_identifier_names_only_what_it_spells() -> None:
     bare = statement_object("update t set note = ? where ID = ?", ["hi", 4], "postgres")
     assert bare is not None
     assert bare.names_key_column("id")
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_a_delete_addresses_the_key_that_opens_its_predicate(dialect: str) -> None:
+    # A DELETE assigns nothing, so no placeholder precedes its predicate and the key
+    # is the statement's first bind rather than one counted in from the `set` clause.
+    address = statement_object("delete from account where id = ?", [7], dialect)
+    assert address is not None
+    assert address.names_table("account")
+    assert address.names_key_column("id")
+    assert address.key == 7
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_a_placeholder_a_string_literal_spells_binds_no_value(dialect: str) -> None:
+    # A `?` inside a string literal binds nothing, so counting the text's question
+    # marks would read the key one position past the bind that actually carries it
+    # and the statement would address the wrong object.
+    address = statement_object("update t set note = 'a ? b', x = ? where id = ?", [4, 7], dialect)
+    assert address is not None
+    assert address.key == 7
+
+
+def test_a_where_a_quoted_identifier_spells_opens_no_predicate() -> None:
+    # `where` is a legal column name, quoted because it is reserved, so a statement
+    # read as text would open the predicate inside the `set` clause and take an
+    # assigned value for the key.
+    address = statement_object('update t set "where" = ? where id = ?', [4, 7], "postgres")
+    assert address is not None
+    assert address.key == 7
 
 
 @pytest.mark.parametrize("dialect", _DIALECTS)

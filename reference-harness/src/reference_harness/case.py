@@ -568,6 +568,23 @@ def entry_bind_values(entry: Mapping[str, Any], dialect: str) -> list[Any]:
     return list(binds[dialect]) if isinstance(binds, dict) else list(binds)
 
 
+def _lowered_entries(entries: Any, dialect: str) -> list[tuple[Mapping[str, Any], str]]:
+    """Each ``(entry, sql)`` a ``statements`` entry list lowers for *dialect*.
+
+    An entry whose ``sql`` map does not declare *dialect* contributes nothing: a
+    step lists golden SQL per dialect, and a dialect it was never lowered for has
+    no statement to run.
+    """
+    if not isinstance(entries, list):
+        return []
+    lowered: list[tuple[Mapping[str, Any], str]] = []
+    for entry in entries:
+        sql = entry.get("sql") if isinstance(entry, dict) else None
+        if isinstance(sql, dict) and dialect in sql:
+            lowered.append((entry, sql[dialect]))
+    return lowered
+
+
 def entry_pairs(entries: Any, dialect: str) -> list[tuple[str, list[Any]]]:
     """The ``(sql, binds)`` pairs a ``statements`` entry list declares for *dialect*.
 
@@ -576,28 +593,24 @@ def entry_pairs(entries: Any, dialect: str) -> list[tuple[str, list[Any]]]:
     ``{sql, binds}`` entries, mirroring the top-level ``then.statements``. Binds
     ride inline on their own entry, so the two are read together rather than
     paired positionally.
-
-    An entry whose ``sql`` map does not declare *dialect* contributes nothing: a
-    step lists golden SQL per dialect, and a dialect it was never lowered for has
-    no statement to run.
     """
-    if not isinstance(entries, list):
-        return []
-    pairs: list[tuple[str, list[Any]]] = []
-    for entry in entries:
-        sql = entry.get("sql") if isinstance(entry, dict) else None
-        if isinstance(sql, dict) and dialect in sql:
-            pairs.append((sql[dialect], entry_bind_values(entry, dialect)))
-    return pairs
+    return [
+        (sql, entry_bind_values(entry, dialect))
+        for entry, sql in _lowered_entries(entries, dialect)
+    ]
 
 
 def entry_statements(entries: Any, dialect: str) -> list[str]:
     """The per-dialect golden SQL texts of a ``statements`` entry list (empty if none).
 
     The statement half of :func:`entry_pairs`, for the lanes that grade a step's SQL
-    without its binds — normalization, canonicality, and statement counting.
+    without its binds — normalization, canonicality, and statement counting. Reading
+    a statement resolves no binds, so a lane that never asks for them is not held to
+    the coverage rule a dialect-keyed ``binds`` map owes its ``sql`` map: those lanes
+    include the per-dialect predicates that decide whether a case runs at all, which
+    would otherwise refuse the dialect rather than grade it.
     """
-    return [sql for sql, _binds in entry_pairs(entries, dialect)]
+    return [sql for _entry, sql in _lowered_entries(entries, dialect)]
 
 
 @dataclass(frozen=True)

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 import sqlglot
@@ -458,7 +459,7 @@ def parse_set_columns(statement: str) -> list[str] | None:
     return [_assigned_column(piece) for piece in _top_level_commas(clause)]
 
 
-def predicate_bind_offset(statement: str) -> int | None:
+def _predicate_bind_offset(statement: str) -> int | None:
     """How many binds precede the outer predicate's own first placeholder, or None
     when the statement carries no outer predicate.
 
@@ -695,10 +696,10 @@ def _names(identifier: exp.Identifier, declared: str) -> bool:
 # --- which object an existing-row statement addresses ----------------------------
 
 
-class ObjectAddress(NamedTuple):
-    """Which object an existing-row statement writes: the identifiers its DML names
-    the target table and the key column with, and the primary-key value its identity
-    predicate binds.
+@dataclass(frozen=True)
+class ObjectAddress:
+    """Which object an existing-row statement writes: the target table it names, the
+    key column it gates on, and the primary-key value its identity predicate binds.
 
     Table and key together ARE an Object Key — Entity Identity plus primary-key
     values (`m-unit-work`). Every structural Table has exactly one mapping owner
@@ -710,23 +711,24 @@ class ObjectAddress(NamedTuple):
     say, so the settled lane grades it separately
     (:func:`assert_inheritance_write_routing`).
 
-    The two identifiers are the golden's OWN spellings, which is why they are asked
-    rather than read: quoting is what a reserved or otherwise non-simple physical
-    name is rendered with, so only :meth:`names_table` / :meth:`names_key_column`
-    can say whether an address is the model's.
+    The table and the key column are ASKED rather than read, and are held in the
+    golden's own spelling to make that the only way to ask: quoting is what a
+    reserved or otherwise non-simple physical name is rendered with, so whether an
+    address is the model's is a question about two renderings rather than about two
+    strings, and only :meth:`names_table` / :meth:`names_key_column` answer it.
     """
 
-    table: exp.Identifier
-    key_column: exp.Identifier
+    _table: exp.Identifier
+    _key_column: exp.Identifier
     key: Any
 
     def names_table(self, declared: str) -> bool:
         """Whether this address's target table is the physical *declared* one."""
-        return _names(self.table, declared)
+        return _names(self._table, declared)
 
     def names_key_column(self, declared: str) -> bool:
         """Whether this address's key column is the physical *declared* one."""
-        return _names(self.key_column, declared)
+        return _names(self._key_column, declared)
 
 
 def statement_object(statement: str, binds: list[Any], dialect: str) -> ObjectAddress | None:
@@ -742,7 +744,7 @@ def statement_object(statement: str, binds: list[Any], dialect: str) -> ObjectAd
     """
     write = _existing_row_write(statement, dialect)
     key_column = _bound_equality_identifier(write.conjuncts[0]) if write is not None else None
-    offset = predicate_bind_offset(statement)
+    offset = _predicate_bind_offset(statement)
     if write is None or key_column is None or offset is None or offset >= len(binds):
         return None
     return ObjectAddress(write.table, key_column, binds[offset])
@@ -861,7 +863,7 @@ def _assert_existing_row_tag_guard(
 
     Both halves are read off the statement's own parse — the guard's shape from the
     predicate's first two conjuncts (:func:`_existing_row_write`), its bind position
-    from the scanned placeholder count (:func:`predicate_bind_offset`) — because a
+    from the scanned placeholder count (:func:`_predicate_bind_offset`) — because a
     literal ``<pk> = ? and <tag> = ?`` fragment finds neither a quoted physical column
     nor a legally reformatted predicate, and a textual ``?`` count includes the ones
     inside string literals and quoted identifiers, which bind nothing.
@@ -871,7 +873,7 @@ def _assert_existing_row_tag_guard(
     if len(pk_columns) != 1:  # the inheritance families key on a single-column pk (`id`)
         return
     write = _existing_row_write(statement, dialect)
-    offset = predicate_bind_offset(statement)
+    offset = _predicate_bind_offset(statement)
     guarded = (
         write is not None
         and len(write.conjuncts) > 1
