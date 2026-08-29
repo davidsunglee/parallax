@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, NamedTuple
 
-from ..case import Case, Entity
+from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure
 from ..document_codec import decode_leaf, decode_stored
 from ..inheritance import (
@@ -638,6 +638,37 @@ def materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, Any
             node.pop(column)
         node[occurrence["name"]] = _project_value_object(occurrence, decode_stored(raw))
     return node
+
+
+def variant_entity(model: Model, entity: Entity, row: dict[str, Any]) -> Entity:
+    """The concrete Entity *row* names through its own materialized ``familyVariant``.
+
+    *entity* is the position a read TARGETED, which for an abstract-target read
+    declares none of its concretes' own members. A row carrying no variant — a
+    concrete target, or a non-inheritance entity — stands at its position.
+    """
+    variant = row.get("familyVariant")
+    if not isinstance(variant, str):
+        return entity
+    try:
+        return model.entity(variant)
+    except KeyError:
+        return entity
+
+
+def materialize_variant_owner_node(
+    model: Model, entity: Entity, row: dict[str, Any]
+) -> dict[str, Any]:
+    """:func:`materialize_owner_node` against the concrete Entity *row* names itself.
+
+    A Value Object occurrence is decoded and projected against the Entity that
+    DECLARES it, and an abstract inheritance position declares none of them:
+    decoding a `Memo` at the abstract `Document` it was queried through would leave
+    the stored document standing as the raw carrier it is, so an unknown key
+    written by another version of the application would reach the logical result
+    (`m-document-codec`).
+    """
+    return materialize_owner_node(variant_entity(model, entity, row), row)
 
 
 def _has_document_resident_attribute(case: Case, entity: Entity) -> bool:

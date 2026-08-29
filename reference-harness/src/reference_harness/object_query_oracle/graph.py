@@ -104,13 +104,7 @@ def graph_node(model: Model, entity: Entity, row: dict[str, Any]) -> dict[str, A
     declarations fill what that position cannot name — never overriding what it
     can.
     """
-    concrete = entity
-    variant = row.get("familyVariant")
-    if isinstance(variant, str):
-        try:
-            concrete = model.entity(variant)
-        except KeyError:
-            concrete = entity
+    concrete = materialize.variant_entity(model, entity, row)
     node = materialize.materialize_owner_node(concrete, row)
     names = {attribute["column"]: attribute["name"] for attribute in concrete.attributes}
     for other in model.entities:

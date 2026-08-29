@@ -283,13 +283,15 @@ def test_a_find_whose_reference_oracle_disagrees_is_refused(corpus_case: CaseLoa
 def test_a_materializing_predicate_writes_resolving_read_is_an_ordinary_step(
     corpus_case: CaseLoader,
 ) -> None:
-    """Nothing in the step distinguishes it, so nothing routes it differently.
+    """Nothing in the step's own shape distinguishes it, so nothing routes it differently.
 
     A predicate write's resolving read is authored as an ordinary preceding read —
     its own query, golden, reference oracle, and ``expectRows`` — and is graded
-    the way every other Scenario read is. The exception it carries is the
-    conformance adapter's (it publishes no ``stepRows`` entry), which the harness
-    never expresses.
+    the way every other Scenario read is. What sets it apart is outside the step:
+    the write it serves, which is what its result form is read off
+    (``test_a_materializing_predicate_writes_resolving_find_is_graded_row_form``).
+    The other exception it carries is the conformance adapter's (it publishes no
+    ``stepRows`` entry), which the harness never expresses.
     """
     case = corpus_case(_RESOLVING_READ)
     assert "write" in _steps(case)[1]
@@ -365,7 +367,9 @@ _DOCUMENT_FAMILY: list[dict[str, Any]] = [
         "body": "Reminder",
         "paid_amount": None,
         _ANNOTATION_PRESENCE: True,
-        "annotation": {"author": "Ada", "priority": "high"},
+        # `future` is an unknown key: valid carrier state written by another version
+        # of the application, which Memo's declaration does not name.
+        "annotation": {"author": "Ada", "priority": "high", "future": "x"},
         "family_variant": "Memo",
     },
     {
@@ -385,13 +389,19 @@ _DOCUMENT_FAMILY: list[dict[str, Any]] = [
 
 _UNPUBLISHED_COLUMNS = frozenset({_ANNOTATION_PRESENCE, "family_variant"})
 
+_DECLARED_ANNOTATION = {"author": "Ada", "priority": "high"}
+
 
 def _as_published(row: dict[str, Any]) -> dict[str, Any]:
     """One physical `union all` row as the step's ``expectRows`` state it: the
     execution-only presence cell gone, the branch literal materialized, and the
-    instance-form `Document` slot carried through."""
+    instance-form `Document` slot carried through as the composite `Memo` declares
+    — the stored document's unknown key is carrier state, never a result member."""
     kept = {key: value for key, value in row.items() if key not in _UNPUBLISHED_COLUMNS}
-    return kept | {"familyVariant": row["family_variant"]}
+    published = kept | {"familyVariant": row["family_variant"]}
+    if published["familyVariant"] == "Memo":
+        published["annotation"] = _DECLARED_ANNOTATION
+    return published
 
 
 _DOCUMENT_FAMILY_ROWS: list[dict[str, Any]] = [_as_published(row) for row in _DOCUMENT_FAMILY]
@@ -413,22 +423,92 @@ def test_a_table_per_concrete_subtype_step_materializes_against_its_own_read(
     reads.assert_step(0, ScriptedReads(results=[_DOCUMENT_FAMILY]))
 
 
-def test_a_table_per_concrete_subtype_step_is_graded_in_the_instance_form_it_reads(
+def test_an_abstract_step_decodes_its_document_at_the_row_s_own_concrete(
     damaged_case: CaseLoader,
 ) -> None:
-    """A step read is the object lane, so its `union all` superset carries the slot.
+    """A Memo read through the abstract `Document` publishes the composite Memo declares.
+
+    The occurrence is declared on one concrete, so the position the query targeted
+    names none of its members: decoding there would leave the stored document
+    standing as the raw carrier it is, and the unknown key some other version of the
+    application wrote would become a result member (`m-document-codec`).
+    """
+    case = _as_a_one_step_scenario(damaged_case(_TPCS_INSTANCE_FORM_READ), _DOCUMENT_FAMILY_ROWS)
+
+    ScenarioReads(case).assert_step(0, ScriptedReads(results=[_DOCUMENT_FAMILY]))
+
+    carried = [copy.deepcopy(row) for row in _DOCUMENT_FAMILY_ROWS]
+    carried[2]["annotation"] = _DOCUMENT_FAMILY[2]["annotation"]
+    with pytest.raises(CaseFailure, match=r"rows != expectRows"):
+        ScenarioReads(
+            _as_a_one_step_scenario(damaged_case(_TPCS_INSTANCE_FORM_READ), carried)
+        ).assert_step(0, ScriptedReads(results=[_DOCUMENT_FAMILY]))
+
+
+def test_an_observation_find_step_is_graded_in_the_instance_form_it_reads(
+    damaged_case: CaseLoader,
+) -> None:
+    """An observation find is the object lane, so its `union all` superset carries the slot.
 
     The two goldens are the same query in the two result forms, and they differ by
     exactly the top-level Value Object `Document` pair rule 3 adds. The row-form one
-    an eager `then.rows` case authors is therefore not a step's golden: presented as
-    a step it is refused for the column it omits, and the refusal is reached from the
-    golden text alone, so it does not depend on a row arriving.
+    an eager `then.rows` case authors is therefore not an observation find's golden:
+    presented as such a step it is refused for the column it omits, and the refusal is
+    reached from the golden text alone, so it does not depend on a row arriving.
     """
     case = _as_a_one_step_scenario(damaged_case(_TPCS_ROW_FORM_READ), [])
     reads = ScenarioReads(case)
 
     with pytest.raises(CaseFailure, match=r"not the stable superset.*'annotation'"):
         reads.assert_step(0, ScriptedReads(results=[[]]))
+
+
+def _followed_by_a_materializing_predicate_write(case: Case) -> Case:
+    """*case*'s one find made the resolving read of a set-based predicate write.
+
+    The corpus authors no set-based write over an inheritance family, so the pairing
+    is fabricated in a private copy: a `delete` over the find's own target and
+    canonical predicate, and the family root marked versioned — the one model fact
+    that decides whether such a write must resolve its rows before it writes them.
+    """
+    query = case.raw["when"]["scenario"][0]["objectQuery"]
+    case.raw["when"]["scenario"].append(
+        {
+            "write": {
+                "mutation": "delete",
+                "target": {"entity": query["target"], "predicate": query["predicate"]},
+            },
+            "roundTrips": 1,
+        }
+    )
+    root = case.model.descriptor["entities"][0]
+    root["attributes"][1]["optimisticLocking"] = True
+    return case
+
+
+def test_a_materializing_predicate_writes_resolving_find_is_graded_row_form(
+    damaged_case: CaseLoader,
+) -> None:
+    """The one row-form step read is derived from the write it serves, not assumed.
+
+    It is an ordinary preceding `objectQuery` step this oracle grades like any other,
+    so the form cannot be read off the step's own shape: what distinguishes it is that
+    the very next step is a predicate write over its target which must resolve its rows
+    before it writes them. Graded row-form, the `union all` superset it must project
+    drops the `Document` slot the observation find beside it requires — so the same
+    two goldens swap verdicts once the write is authored.
+    """
+    resolving = _followed_by_a_materializing_predicate_write(
+        _as_a_one_step_scenario(damaged_case(_TPCS_ROW_FORM_READ), [])
+    )
+
+    ScenarioReads(resolving).assert_step(0, ScriptedReads(results=[[]]))
+
+    observing = _followed_by_a_materializing_predicate_write(
+        _as_a_one_step_scenario(damaged_case(_TPCS_INSTANCE_FORM_READ), [])
+    )
+    with pytest.raises(CaseFailure, match=r"not the stable superset"):
+        ScenarioReads(observing).assert_step(0, ScriptedReads(results=[[]]))
 
 
 def test_a_find_listing_sql_for_levels_its_query_declares_none_of_is_refused(
