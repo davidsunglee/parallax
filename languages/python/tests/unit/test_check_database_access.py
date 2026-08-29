@@ -81,6 +81,26 @@ def test_a_profiles_provisioner_member_is_a_seam_however_the_profile_was_reached
     ) == [".provisioner()"]
 
 
+def test_a_seam_bound_to_a_local_name_and_called_through_it_is_found() -> None:
+    # Binding first and calling second is the same acquisition, spelled so that
+    # neither the dotted resolution nor the member match sees it at the call.
+    assert _seams("open_it = profile.provisioner\nopen_it()\n") == [".provisioner()"]
+    assert _seams(
+        "from parallax.conformance.provision import Provisioner\nctor = Provisioner\nctor()\n"
+    ) == ["parallax.conformance.provision.Provisioner"]
+
+
+def test_a_seam_bound_by_annotation_or_by_a_walrus_is_found_too() -> None:
+    # The three ways a name is bound to a value are one rule; a guard that read
+    # only the plain one would be escaped by adding a type or an `if`.
+    assert _seams("open_it: object = profile.provisioner\nopen_it()\n") == [".provisioner()"]
+    assert _seams("if (open_it := profile.provisioner):\n    open_it()\n") == [".provisioner()"]
+
+
+def test_a_name_bound_to_something_other_than_a_seam_is_not_one() -> None:
+    assert _seams("open_it: object\nfake = profile.dialect\nfake()\n") == []
+
+
 def test_resolving_a_profile_without_building_its_provisioner_is_not_a_seam() -> None:
     # Naming a profile and reading its dialect opens nothing, which is the property
     # the declaration exists to have.

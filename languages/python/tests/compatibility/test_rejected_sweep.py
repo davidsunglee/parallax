@@ -28,14 +28,16 @@ import pytest
 from _support.corpus import case_document
 from _support.repo import adapter_schema
 from parallax.conformance import adapter, case_format, sweep
+from parallax.conformance.profile import profile_for
 from parallax.core.db_port import DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 
 _SCHEMA = adapter_schema()
-# The profile a rejected `run` is requested under. Nothing here provisions it: the
-# refusing port below stands in for the container the shape never needs, and the
-# envelope still names the profile the request was made against.
-_PROFILE = "pg-full"
+# The declared profile a rejected `run` is requested under, resolved out of the one
+# roster. Nothing here provisions it: the refusing port below stands in for the
+# container the shape never needs, and the envelope still names the profile the
+# request was made against.
+_PROFILE = profile_for("pg-full")
 _REACHABLE_REJECTED = [c for c in sweep.reachable_cases() if c.shape == "rejected"]
 
 

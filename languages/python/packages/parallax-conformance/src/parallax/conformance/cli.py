@@ -62,13 +62,10 @@ class _NoProvisioningPort:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """The four commands, with the executing ones selected by profile.
-
-    ``compile`` names a dialect because it executes nothing and so has no adapter
-    to read one off; ``run`` and ``benchmark`` name a declared profile, which
-    carries the adapter — and with it the dialect — the case is executed in
-    (m-conformance-adapter).
-    """
+    """``compile`` names a dialect because it executes nothing and so has no adapter
+    to read one off; ``run`` and ``benchmark`` name a declared profile, which carries
+    the adapter — and with it the dialect — the case is executed in
+    (m-conformance-adapter)."""
     parser = argparse.ArgumentParser(prog="parallax-conformance")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -122,7 +119,7 @@ def _run_self_managed(
     if diagnostic is not None:
         return adapter.unsupported("run", diagnostic)
     if case.shape == "rejected":
-        return adapter.run_case(case_path, profile.name, _NoProvisioningPort(profile.dialect))
+        return adapter.run_case(case_path, profile, _NoProvisioningPort(profile.dialect))
 
     from parallax.conformance import engine, provision
 
@@ -130,7 +127,7 @@ def _run_self_managed(
     try:
         meta = engine.load_case_metamodel(case)
         provisioner.reset(meta, provision.load_fixtures(str(case.document["model"])))
-        return adapter.run_case(case_path, profile.name, provisioner.port)
+        return adapter.run_case(case_path, profile, provisioner.port)
     finally:
         provisioner.close()
 

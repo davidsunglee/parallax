@@ -75,15 +75,42 @@ def test_the_driver_stays_out_of_the_conformance_adapters_import_graph() -> None
     # `describe` is answered from the claim, whose dialects are read off an
     # adapter class that lives in the psycopg module — so the reach has to be
     # deferred to the derivation rather than taken at import, or every Docker-free
-    # lane would load the driver to answer a question about SQL spelling.
+    # lane would load the driver to answer a question about SQL spelling. Both
+    # readings matter: absent at import is the property, and present afterwards is
+    # what proves the derivation really reached the concrete adapter rather than
+    # answering from something that never needed it.
     probed = _probe(
         "import json, sys\n"
         "import parallax.conformance.adapter as conformance_adapter\n"
         "at_import = 'psycopg' in sys.modules\n"
         "dialects = conformance_adapter.describe()['capabilities']['dialects']\n"
-        "print(json.dumps({'at_import': at_import, 'dialects': dialects}))\n"
+        "after = 'psycopg' in sys.modules\n"
+        "print(json.dumps({'at_import': at_import, 'after': after, 'dialects': dialects}))\n"
     )
-    assert probed == {"at_import": False, "dialects": ["postgres"]}
+    assert probed == {"at_import": False, "after": True, "dialects": ["postgres"]}
+
+
+def test_the_driver_stays_out_of_the_cold_cli_import_graph() -> None:
+    # The CLI resolves a profile at module level, so importing it reaches the
+    # declaration; `describe` and `compile` must still run without the driver, and
+    # a `run` loads it only when it resolves the profile's adapter.
+    probed = _probe(
+        "import json, sys\n"
+        "import parallax.conformance.cli as cli\n"
+        "at_import = 'psycopg' in sys.modules\n"
+        "profile = cli.profile_for('pg-full')\n"
+        "named = 'psycopg' in sys.modules\n"
+        "dialect = profile.dialect.name\n"
+        "after = 'psycopg' in sys.modules\n"
+        "print(json.dumps({'at_import': at_import, 'named': named, 'after': after,"
+        " 'dialect': dialect}))\n"
+    )
+    assert probed == {
+        "at_import": False,
+        "named": False,
+        "after": True,
+        "dialect": "postgres",
+    }
 
 
 def test_deriving_a_profiles_dialect_starts_no_container() -> None:

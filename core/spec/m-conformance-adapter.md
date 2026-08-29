@@ -334,10 +334,14 @@ from it.
 both. `profile` echoes the requested profile — the adapter configuration the case
 was run under. `dialect` is a **report of what executed**: the dialect the adapter
 that profile opened spells its SQL in, which is the key a runner resolves the
-case's per-dialect goldens under. Neither field derives the other, because two
-profiles may execute in the same dialect. An adapter asked for a profile it does
-not declare returns `unsupported` with a diagnostic naming it, exactly as an
-unclaimed dialect does under `compile`, and provisions nothing.
+case's per-dialect goldens under. The derivation runs one way only. A profile
+fixes its dialect, by reading it back off the adapter it declares
+(`database-provider-test-contract.md`); a dialect fixes no profile, because two
+profiles may execute in the same one. Both are reported because a consumer of the
+envelope holds neither the roster nor the adapter the derivation reaches through.
+An adapter asked for a profile it does not declare returns `unsupported` with a
+diagnostic naming it, exactly as an unclaimed dialect does under `compile`, and
+provisions nothing.
 
 The adapter is responsible for using a clean database according to its declared
 provisioning mode, applying schema and fixtures, executing the implementation's

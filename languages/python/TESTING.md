@@ -77,12 +77,18 @@ stay globally unique across the test tree.
 
 ## Fixtures
 
-Both are session-scoped and defined in `tests/conftest.py`.
+All three are session-scoped and defined in `tests/conftest.py`.
 
 | Fixture | Live database? | Yields |
 |---|---|---|
+| `profile` | no | The declared matrix profile the database-backed lane runs (`pg-full`) |
 | `provisioner` | **yes** | A self-managed Testcontainers Postgres and an open adapter connection |
 | `wheelhouse` | no | A directory of freshly built wheels plus a package-name-to-wheel map |
+
+`profile` resolves a declaration and opens nothing, so it classifies no item; it
+is what `provisioner` is built through, and what a database-backed test names
+when it needs the dialect its run executed in. Requesting it alone leaves an item
+`dbfree`.
 
 `provisioner` is the only route to a live database, and
 `tools/check_database_access.py` is what keeps it so: it fails when any module

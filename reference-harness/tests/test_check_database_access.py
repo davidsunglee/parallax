@@ -76,6 +76,25 @@ def test_the_cli_entry_points_that_boot_providers_are_seams() -> None:
     ]
 
 
+def test_a_seam_bound_to_a_local_name_and_called_through_it_is_found() -> None:
+    # Binding first and calling second is the same acquisition, spelled so that the
+    # dotted resolution sees only a plain name at the call. The three ways a name is
+    # bound are one rule, so adding a type or an `if` does not escape it.
+    assert _seams(
+        "from reference_harness.providers import provider_for\nboot = provider_for\nboot('pg')\n"
+    ) == ["reference_harness.providers.provider_for"]
+    assert _seams(
+        "from reference_harness.providers import provider_for\n"
+        "boot: object = provider_for\n"
+        "boot('pg')\n"
+    ) == ["reference_harness.providers.provider_for"]
+    assert _seams(
+        "from reference_harness.providers import provider_for\n"
+        "if (boot := provider_for):\n"
+        "    boot('pg')\n"
+    ) == ["reference_harness.providers.provider_for"]
+
+
 def test_importing_a_provider_module_for_its_pure_functions_is_not_a_violation() -> None:
     assert (
         _seams("from reference_harness.providers.mariadb import normalize\nnormalize('select 1')\n")
