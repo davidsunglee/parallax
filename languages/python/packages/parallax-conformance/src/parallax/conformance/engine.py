@@ -4613,7 +4613,7 @@ class _GroupRun:
     step_graphs: list[dict[str, object]]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class _GroupSession:
     """The connection ONE `uow` group runs on: the port it executes through, and
     the Handle opened over that port.
@@ -4622,23 +4622,25 @@ class _GroupSession:
     port that executes it (`m-dialect`), and one case's groups do not all run on
     one connection — an interleaved group runs on its own peer session. Handing
     a runner a Handle and a dialect apart admits a group lowering in one
-    connection's spelling while executing in another's; :meth:`over` is the only
-    way to build the pair, so the two can name no different connections.
+    connection's spelling while executing in another's, so this takes the port
+    alone and OPENS the Handle over it: no caller can hand it a Handle connected
+    to some other port, and the pair it holds names one connection.
     """
 
     port: DbPort
     database: handle.Database
 
-    @classmethod
-    def over(
-        cls,
+    def __init__(
+        self,
         port: DbPort,
         context: _CaseContext,
         instant: dt.datetime,
         observation: LifecycleObservation,
-    ) -> _GroupSession:
-        return cls(
-            port,
+    ) -> None:
+        object.__setattr__(self, "port", port)
+        object.__setattr__(
+            self,
+            "database",
             handle.Database(
                 port,
                 context.domain,
@@ -4783,7 +4785,7 @@ def _run_uow_group(
     state = _GroupState()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observation = lifecycle.observation()
-    session = _GroupSession.over(_write_port(port, rollback=doomed), context, instant, observation)
+    session = _GroupSession(_write_port(port, rollback=doomed), context, instant, observation)
     lowered: list[_LoweredStep] = []
     step_rows: list[dict[str, object]] = []
     step_graphs: list[dict[str, object]] = []
@@ -4944,7 +4946,7 @@ def _run_interleaved_group(
     here; a genuinely non-conflict-driven interleaved abort is unwitnessed
     and out of scope (pinned semantics #10, "unwitnessed surfaces stay
     honest"). The turnstile only ADVANCES past the group's own last step once
-    ``database.transact`` itself RETURNS (a REAL commit — the underlying
+    ``session.database.transact`` itself RETURNS (a REAL commit — the underlying
     port's transaction context manager has committed, not merely that this
     callback's own Python code finished): the OTHER group's next step must
     observe that commit for real, never a same-process illusion of one.
@@ -5536,7 +5538,7 @@ def run_interleaved_scenario_case(
     observed_a = lifecycle.observation()
     observed_b = lifecycle.observation()
     context = _CaseContext(domain, model, concurrency, shadow)
-    session_a = _GroupSession.over(port, context, instant, observed_a)
+    session_a = _GroupSession(port, context, instant, observed_a)
     peer_connection = peer_factory()
     try:
         _require_interleaved_termination_capability(port, peer_connection, case.path.name)
@@ -5561,7 +5563,7 @@ def run_interleaved_scenario_case(
     thread_b = threading.Thread(
         target=_run_interleaved_group,
         args=(
-            _GroupSession.over(peer_connection, context, instant, observed_b),
+            _GroupSession(peer_connection, context, instant, observed_b),
             observed_b,
             context,
             steps,
