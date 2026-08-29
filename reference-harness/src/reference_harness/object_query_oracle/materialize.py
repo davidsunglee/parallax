@@ -8,6 +8,17 @@ members from the document it was stored in — and asserts the projection shape 
 derivation depends on, reading that shape from the golden text so a zero-row read
 still witnesses a dropped column.
 
+Those derivations are ORDERED, and the order is not the caller's to choose: a
+document is fanned out at the concrete variant a row names, so the variant must
+already be resolved, and each derivation's own absence is invisible until the one
+after it runs. So the sequence is offered whole, once per kind of position a row
+can stand at — :func:`materialize_read` for the position an Object Query names,
+:func:`materialize_navigated` for one a relationship declaration reached — and the
+steps it is composed of are private. What comes back is a :class:`PublishedRow`,
+which is what the consumers of a published row accept, so a path assembling the
+sequence itself fails where it would have published rather than silently
+publishing storage.
+
 The physical facts themselves are never re-derived here: family topology comes
 from :mod:`..inheritance`, column placement from :mod:`..storage_layout`, and the
 JSON codec from :mod:`..document_codec`. A table-per-concrete-subtype read's
@@ -51,7 +62,7 @@ from .execute import (
 # --- materialized rows ------------------------------------------------------
 
 
-class MaterializedRow(dict[str, Any]):
+class _MaterializedRow(dict[str, Any]):
     """A result row that still remembers which of its columns are raw VO blobs.
 
     ``value_object_columns`` are the columns carrying an undecoded Value Object
@@ -73,15 +84,40 @@ class MaterializedRow(dict[str, Any]):
         self.consumed_value_object_columns = consumed_value_object_columns or set()
 
 
-def _materialized_row(row: dict[str, Any]) -> MaterializedRow:
+class PublishedRow(_MaterializedRow):
+    """A row that reached its logical result through this module's seam.
+
+    The type is the evidence: a consumer of published rows accepts only this, so a
+    path that assembled the materialization sequence itself — or skipped it — fails
+    where it would have published rather than publishing a raw physical row that
+    still carries a discriminator, a branch literal, or an undecoded document.
+    """
+
+    __slots__ = ()
+
+
+def _materialized_row(row: dict[str, Any]) -> _MaterializedRow:
     """A writable copy of *row* preserving any Value Object bookkeeping it carries."""
-    if isinstance(row, MaterializedRow):
-        return MaterializedRow(
+    if isinstance(row, _MaterializedRow):
+        return _MaterializedRow(
             dict(row),
             value_object_columns=dict(row.value_object_columns),
             consumed_value_object_columns=set(row.consumed_value_object_columns),
         )
-    return MaterializedRow(dict(row))
+    return _MaterializedRow(dict(row))
+
+
+def _published(row: dict[str, Any]) -> PublishedRow:
+    """*row* marked as having come through this module's materialization seam."""
+    if isinstance(row, PublishedRow):
+        return row
+    if isinstance(row, _MaterializedRow):
+        return PublishedRow(
+            dict(row),
+            value_object_columns=dict(row.value_object_columns),
+            consumed_value_object_columns=set(row.consumed_value_object_columns),
+        )
+    return PublishedRow(dict(row))
 
 
 def reference_identity_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -92,7 +128,7 @@ def reference_identity_row(row: dict[str, Any]) -> dict[str, Any]:
     occurrence a projection already consumed stays, since the column then carries a
     materialized value rather than the raw blob.
     """
-    if not isinstance(row, MaterializedRow):
+    if not isinstance(row, _MaterializedRow):
         return dict(row)
     return {
         key: value
@@ -115,6 +151,125 @@ def coerce_identity_key(value: Any) -> Any:
     if isinstance(value, float):
         return Decimal(str(value))
     return value
+
+
+# --- the sequence, per kind of position --------------------------------------
+
+
+def materialize_read(read: Case, rows: list[dict[str, Any]]) -> list[PublishedRow]:
+    """The rows a read of the position its own Object Query names publishes.
+
+    *read* is the ``read`` case whose golden statement returned *rows* — for a
+    Scenario step, that step presented as the one read it is. Everything the
+    sequence needs it states: the target and any ``narrowTo``, the golden text the
+    projection shape is asserted from, and the result member the form is read off.
+    So the form is DERIVED here (:func:`.tpcs.is_instance_form`) rather than
+    passed: a caller that could state it could state one the case contradicts, and
+    a row-form read asks for the Attributes alone while an instance-form one
+    additionally carries every applicable Value Object occurrence.
+
+    The order is the sequence's own. The Relational Document Layout fan-out runs
+    first, because it is what puts each member back under the result name the
+    steps after it read; the Value Object bookkeeping is taken over the fanned-out
+    row, so an occurrence that arrived inside the shared document is recorded
+    where the identity oracle can drop it again; and ``familyVariant`` is derived
+    last, over rows already standing at the columns their own branch spells.
+
+    Per-variant COLUMN narrowing is deliberately NOT part of this
+    (:func:`narrow_to_variant_columns`): a whole read's ``then.graph`` states the
+    per-variant node shape, while a Scenario step publishes the positional
+    superset, and a caller comparing the matched row SET against ``referenceSql``
+    needs the unnarrowed rows either way.
+    """
+    _refuse_a_case_the_sequence_cannot_read(read)
+    instance_form = tpcs.is_instance_form(read)
+    materialized = _materialize_target_tph_document_layout(
+        read, rows, include_value_objects=instance_form
+    )
+    if instance_form:
+        materialized = _carrying_value_object_columns(read, materialized)
+    return [_published(row) for row in _materialize_family_variant(read, materialized)]
+
+
+def materialize_navigated(
+    case: Case, entity: Entity, rows: list[dict[str, Any]]
+) -> list[PublishedRow]:
+    """The rows a read of a position reached by relationship declaration publishes.
+
+    A relationship names its target, so this position carries no Object Query:
+    there is no ``narrowTo`` to read and no whole-read projection superset to
+    assert, the level's own golden being what fixes the shape. Navigating is
+    instance-form, and *rows* may stand at more than one position — a multi-hop
+    load aggregates the levels it walked through as well as the one it ended at —
+    so the document fan-out is taken per row, at whichever concrete that row's own
+    derived ``familyVariant`` names.
+    """
+    return [
+        _published(
+            materialize_document_layout(
+                case,
+                variant_entity(case.model, entity, row),
+                [row],
+                include_value_objects=True,
+            )[0]
+        )
+        for row in _materialize_navigated_family_variant(case, entity, rows)
+    ]
+
+
+def _refuse_a_case_the_sequence_cannot_read(read: Case) -> None:
+    """Refuse a case that cannot answer what the read sequence asks of it.
+
+    Both facts are read off the case rather than taken from the caller, so both
+    are refused here: a case of another shape carries a different action member
+    and would answer ``target`` and ``statements`` from somewhere else, and a case
+    stating no result member has no form for the projection to follow.
+    """
+    if read.shape != "read":
+        raise CaseFailure(
+            f"{read.path.name}: rows are materialized against the READ they belong to, "
+            f"but this case's shape is {read.shape!r}. A Scenario step, a write, or any "
+            f"other shape is presented as the one read it states before its rows are "
+            f"materialized (m-case-format)."
+        )
+    if "rows" not in read.then and read.expected_graph is None and read.expected_graphs is None:
+        raise CaseFailure(
+            f"{read.path.name}: the read states no result member, so its result FORM is "
+            f"undecided; a row-form read materializes its Attributes alone while an "
+            f"instance-form one additionally carries every applicable Value Object "
+            f"occurrence (m-case-format *Read result form*)."
+        )
+
+
+def _carrying_value_object_columns(read: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """*rows* remembering which of their columns are still raw Value Object blobs."""
+    target = read.object_query.get("target")
+    if not isinstance(target, str):
+        return rows
+    columns = _position_value_object_columns(read, read.model.entity(target))
+    return [
+        _MaterializedRow(row, value_object_columns={key: row[key] for key in columns if key in row})
+        for row in rows
+    ]
+
+
+def _position_value_object_columns(case: Case, entity: Entity) -> set[str]:
+    """Every top-level Value Object Column a read of *entity*'s position can carry.
+
+    An abstract inheritance node declares none of its concretes' own members, so
+    an occurrence a single concrete declares is invisible from the position the
+    query targeted while still arriving in that concrete's own rows. The union
+    over the position is therefore what an instance-form read of it materializes,
+    and it collapses to the entity's own occurrences for every concrete or
+    non-inheritance target.
+    """
+    family = Family(case.model.entity_defs)
+    position = family.concrete_descendants(entity.name) if entity.role else []
+    return {
+        occurrence["column"]
+        for name in (entity.name, *position)
+        for occurrence in case.model.entity(name).value_objects
+    }
 
 
 # --- the read's family position ---------------------------------------------
@@ -259,7 +414,7 @@ def materialize_document_layout(
     """Fan a Relational Document Layout read's Structured Column out into the members
     it was asked for, under the result names a ``Columns`` layout would have used.
 
-    The same shape as :func:`materialize_family_variant`: the golden SQL projects a
+    The same shape as :func:`_materialize_family_variant`: the golden SQL projects a
     raw column and the logical result is derived from it here, because the Structured
     Column is never itself a result field (`m-sql`). Which members a read asked for
     is the result form's answer — a row-form read takes the scalars alone while an
@@ -322,7 +477,7 @@ def _materialize_target_document_layout(
     )
 
 
-def materialize_target_tph_document_layout(
+def _materialize_target_tph_document_layout(
     case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
 ) -> list[dict[str, Any]]:
     """Decode an abstract TPH document only after its raw tag resolves the variant."""
@@ -339,7 +494,7 @@ def materialize_target_tph_document_layout(
             case, rows, include_value_objects=include_value_objects
         )
 
-    tagged = materialize_family_variant(case, rows)
+    tagged = _materialize_family_variant(case, rows)
     effective = read_effective_set(case, family, target_name)
     scalar_superset = {
         member.column
@@ -369,7 +524,7 @@ def materialize_target_tph_document_layout(
 # --- familyVariant ----------------------------------------------------------
 
 
-def materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Materialize ``familyVariant`` for an abstract-target table-per-hierarchy read.
 
     A non-inheritance / concrete-target read (or a non-TPH strategy) returns *rows*
@@ -460,7 +615,7 @@ def _with_family_variant(
 
     The one tag-to-variant transformation, applied wherever a row arrives carrying a
     table-per-hierarchy discriminator. *row* is transformed IN PLACE, so a caller hands
-    over a private copy and chooses its form — a :class:`MaterializedRow` whose Value
+    over a private copy and chooses its form — a :class:`_MaterializedRow` whose Value
     Object bookkeeping must survive, or a plain row. *subject* names the read in both
     diagnostics, since a whole-read tag failure and a deep-fetch hop's are the same
     defect reported against different reads.
@@ -477,7 +632,7 @@ def _with_family_variant(
             f"{case.path.name}: {subject} tag value {tag_value!r} maps to no concrete "
             f"subtype (tag metadata {sorted(variant_map)})."
         )
-    if isinstance(row, MaterializedRow) and "familyVariant" in row:
+    if isinstance(row, _MaterializedRow) and "familyVariant" in row:
         row.consumed_value_object_columns.add("familyVariant")
     row["familyVariant"] = variant
     return row
@@ -493,7 +648,7 @@ def materialize_hop_variant(
 ) -> dict[str, Any]:
     """Replace a polymorphic deep-fetch child row's raw tag column with ``familyVariant``.
 
-    The table-per-hierarchy analogue of :func:`materialize_family_variant` for a
+    The table-per-hierarchy analogue of :func:`_materialize_family_variant` for a
     deep-fetch hop, whose own step golden fixes the projection shape a whole read has
     to assert first. The hop states its own facts — its attach key, its tag column, and
     the family's tag map — rather than handing over the fetch step it belongs to,
@@ -508,7 +663,7 @@ def materialize_hop_variant(
     )
 
 
-def materialize_navigated_family_variant(
+def _materialize_navigated_family_variant(
     case: Case, entity: Entity, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """``familyVariant`` for rows read at a NAVIGATED position rather than a queried one.
@@ -569,7 +724,7 @@ def materialize_navigated_family_variant(
     ]
 
 
-def narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def narrow_to_variant_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
     """Narrow each row of an INSTANCE-FORM abstract-target read to its own concrete
     variant's declared columns (m-case-format "Read targeting", the instance-form
     per-variant node shape).
@@ -577,13 +732,13 @@ def narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[di
     A materialized instance carries only its own branch's members — its inherited
     chain plus its own declared attributes — never a sibling branch's null-padded
     column: a `Dog` node has no `indoor` key to be null. Row-form (`then.rows`)
-    keeps the full concrete-superset row unchanged (:func:`materialize_family_variant`
+    keeps the full concrete-superset row unchanged (:func:`_materialize_family_variant`
     alone); this ADDITIONAL narrowing applies only where a row already carries a
     materialized ``familyVariant`` (a no-op for a concrete-target read, or a
     non-inheritance entity, whose rows carry none).
     """
     family = Family(case.model.entity_defs)
-    narrowed: list[dict[str, Any]] = []
+    narrowed: list[PublishedRow] = []
     for row in rows:
         variant = row.get("familyVariant")
         if not isinstance(variant, str):
@@ -594,20 +749,14 @@ def narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[di
             member.column for member in document_layout_members(case, case.model.entity(variant))[1]
         )
         narrowed.append(
-            MaterializedRow(
+            PublishedRow(
                 {
                     key: value
                     for key, value in row.items()
                     if key == "familyVariant" or key in own_columns
                 },
-                value_object_columns=(
-                    dict(row.value_object_columns) if isinstance(row, MaterializedRow) else None
-                ),
-                consumed_value_object_columns=(
-                    set(row.consumed_value_object_columns)
-                    if isinstance(row, MaterializedRow)
-                    else None
-                ),
+                value_object_columns=dict(row.value_object_columns),
+                consumed_value_object_columns=set(row.consumed_value_object_columns),
             )
         )
     return narrowed
@@ -678,7 +827,7 @@ def _publishes_when_omitted(nested: dict[str, Any]) -> bool:
     return nested.get("multiplicity", "one") == "many" or not nested.get("nullable", False)
 
 
-def materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, Any]:
+def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, Any]:
     """A read row with its top-level value-object columns decoded + projected.
 
     Scalar columns pass through under their result-column name; each declared
@@ -693,11 +842,11 @@ def materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, Any
             continue
         raw = (
             row.value_object_columns[column]
-            if isinstance(row, MaterializedRow) and column in row.value_object_columns
+            if isinstance(row, _MaterializedRow) and column in row.value_object_columns
             else node.pop(column)
         )
         if column in node and (
-            not isinstance(row, MaterializedRow) or column not in row.consumed_value_object_columns
+            not isinstance(row, _MaterializedRow) or column not in row.consumed_value_object_columns
         ):
             node.pop(column)
         node[occurrence["name"]] = _project_value_object(occurrence, decode_stored(raw))
@@ -720,10 +869,8 @@ def variant_entity(model: Model, entity: Entity, row: dict[str, Any]) -> Entity:
         return entity
 
 
-def materialize_variant_owner_node(
-    model: Model, entity: Entity, row: dict[str, Any]
-) -> dict[str, Any]:
-    """:func:`materialize_owner_node` against the concrete Entity *row* names itself.
+def materialize_variant_owner_node(case: Case, entity: Entity, row: dict[str, Any]) -> PublishedRow:
+    """:func:`_materialize_owner_node` against the concrete Entity *row* names itself.
 
     A Value Object occurrence is decoded and projected against the Entity that
     DECLARES it, and an abstract inheritance position declares none of them:
@@ -731,8 +878,58 @@ def materialize_variant_owner_node(
     the stored document standing as the raw carrier it is, so an unknown key
     written by another version of the application would reach the logical result
     (`m-document-codec`).
+
+    The decode is the LAST step of the sequence, so it is where a row that skipped
+    an earlier one is still recognizable: it refuses a row standing at a
+    polymorphic position that still carries the branch carrier
+    ``familyVariant`` is derived from.
     """
-    return materialize_owner_node(variant_entity(model, entity, row), row)
+    _refuse_a_carried_branch(case, entity, row)
+    return _published(_materialize_owner_node(variant_entity(case.model, entity, row), row))
+
+
+def _refuse_a_carried_branch(case: Case, entity: Entity, row: Mapping[str, Any]) -> None:
+    """Refuse a row still carrying the branch carrier its position resolves through.
+
+    A position over two or more concretes names each row's variant physically — a
+    table-per-hierarchy tag column, a table-per-concrete-subtype branch literal —
+    and the derivation that reads one CONSUMES it, replacing it with
+    ``familyVariant``. So a row carrying a carrier and no ``familyVariant``
+    reached publication without that derivation having run.
+
+    Both halves of that test are load-bearing, because a carrier spelling is not
+    reserved: a concrete's own Attribute may claim the Column a branch literal is
+    projected under, in which case the read renames the collision away and the
+    published row carries that Column legitimately. Carrying the derived variant
+    beside it is what tells the two apart.
+
+    Stated one-directionally: presence is refused, absence never demanded. A row
+    that stands somewhere else carries no carrier at all — the levels a multi-hop
+    load walked through, a concrete-target read that already names its one
+    variant — and this must not turn either into a failure.
+    """
+    if "familyVariant" in row:
+        return
+    position = abstract_family_position(case, {"target": entity.canonical_name})
+    if position is None:
+        return
+    family, target = position.family, position.target
+    if len(family.effective_concrete_set(target)) < 2:
+        return
+    if position.strategy == STRATEGY_TPH:
+        carrier = family.tag_column_of(target)
+    elif position.strategy == STRATEGY_TPCS:
+        carrier = tpcs.VARIANT_COLUMN
+    else:
+        carrier = None
+    if carrier is None or carrier not in row:
+        return
+    raise CaseFailure(
+        f"{case.path.name}: a row published at the polymorphic position {target} still "
+        f"carries its branch carrier {carrier!r} and no derived `familyVariant`. That "
+        f"column names the row's concrete variant physically and is never a result "
+        f"member, so the derivation that reads it consumes it (m-inheritance / m-sql)."
+    )
 
 
 def _has_document_resident_attribute(case: Case, entity: Entity) -> bool:

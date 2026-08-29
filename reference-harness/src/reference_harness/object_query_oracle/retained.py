@@ -24,7 +24,7 @@ from typing import Any
 
 from ..case import Case, Entity
 from ..case_assertions import CaseFailure
-from . import graph, includes
+from . import graph, includes, materialize
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +37,7 @@ class StepIncludes:
 
     query: dict[str, Any]
     steps: list[includes.FetchStep]
-    root_rows: list[dict[str, Any]]
+    root_rows: list[materialize.PublishedRow]
     children_by_hop: dict[includes.HopKey, dict[Any, list[dict[str, Any]]]]
 
 
@@ -49,11 +49,26 @@ class Observation:
     an `access`'s navigated terminal — and is ``None`` only where a step observed
     no rows. ``includes`` is ``None`` where the step's query declared no Include
     Paths, so there is no materialized view for a later access to navigate.
+
+    ``rows`` are what the step PUBLISHED, so they come from the materialization
+    seam and nowhere else. That is checked at construction rather than trusted:
+    an observation outlives its reader and is read back by later steps, so a raw
+    physical row admitted here would surface as a wrong ``expectRows``, a wrong
+    identity, or a wrong graph several steps away from the path that let it in.
     """
 
-    rows: list[dict[str, Any]]
+    rows: list[materialize.PublishedRow]
     entity: Entity | None
     includes: StepIncludes | None
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(row, materialize.PublishedRow) for row in self.rows):
+            raise TypeError(
+                "a retained observation holds the rows its step published; these did not "
+                "come through the materialization seam (materialize_read / "
+                "materialize_navigated), so they may still carry storage the read never "
+                "asked for."
+            )
 
 
 def relationship_path_fans_out(case: Case, start: Entity, path: str) -> bool:

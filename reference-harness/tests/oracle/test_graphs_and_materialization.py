@@ -25,6 +25,7 @@ import pytest
 from reference_harness.case import Case
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.object_query_oracle import assert_case_read
+from reference_harness.object_query_oracle import materialize as oracle_materialize
 
 from .conftest import ScriptedReads
 
@@ -511,4 +512,148 @@ def test_a_node_authored_with_a_sibling_branch_column_is_refused(
     reads = ScriptedReads(results=[_PAYMENTS])
 
     with pytest.raises(CaseFailure, match="materialized graph != then.graph"):
+        assert_case_read(case, reads)
+
+
+# --- rows a graph is built from -----------------------------------------------
+
+_TEMPORAL_ABSTRACT_READ = "m-inheritance-092-tph-temporal-abstract-read.yaml"
+
+_JANUARY_INSTANT = "2024-01-01T00:00:00+00:00"
+_JUNE_INSTANT = "2024-06-01T00:00:00+00:00"
+
+# The shared `instrument` table carries the raw tag column `kind` alongside the
+# concrete superset and the two rectangles' interval columns.
+_INSTRUMENT_MILESTONES: list[dict[str, Any]] = [
+    {
+        "id": 1,
+        "kind": "bond",
+        "price": Decimal("100.00"),
+        "coupon": Decimal("5.00"),
+        "ticker": None,
+        "from_z": _JANUARY_INSTANT,
+        "thru_z": _JUNE_INSTANT,
+        "in_z": _JANUARY_INSTANT,
+        "out_z": "infinity",
+    },
+    {
+        "id": 1,
+        "kind": "bond",
+        "price": Decimal("110.00"),
+        "coupon": Decimal("5.00"),
+        "ticker": None,
+        "from_z": _JUNE_INSTANT,
+        "thru_z": "infinity",
+        "in_z": _JANUARY_INSTANT,
+        "out_z": "infinity",
+    },
+]
+
+
+def _as_a_milestone_set_read(case: Case) -> Case:
+    """A shipped abstract-target temporal read restated as the milestone set it scans.
+
+    The corpus authors no ``then.graphs`` over an inheritance family, so the pairing
+    is fabricated in a private copy: the same family, the same golden projection —
+    identity, raw tag, concrete superset, interval columns — with Valid Time scanned
+    rather than pinned and the result stated as one edge-pinned graph per milestone.
+    """
+    case.raw["when"]["objectQuery"]["temporal"] = {
+        "transaction-time": {"asOf": "latest"},
+        "valid-time": {"history": {}},
+    }
+    del case.raw["then"]["rows"]
+    case.raw["then"]["graphs"] = [
+        {
+            "pin": {"valid-time": _JANUARY_INSTANT},
+            "graph": {
+                "Instrument": [
+                    {
+                        "id": 1,
+                        "price": Decimal("100.00"),
+                        "coupon": Decimal("5.00"),
+                        "familyVariant": "Bond",
+                        "validStart": _JANUARY_INSTANT,
+                        "validEnd": _JUNE_INSTANT,
+                        "txStart": _JANUARY_INSTANT,
+                        "txEnd": "infinity",
+                    }
+                ]
+            },
+        },
+        {
+            "pin": {"valid-time": _JUNE_INSTANT},
+            "graph": {
+                "Instrument": [
+                    {
+                        "id": 1,
+                        "price": Decimal("110.00"),
+                        "coupon": Decimal("5.00"),
+                        "familyVariant": "Bond",
+                        "validStart": _JUNE_INSTANT,
+                        "validEnd": "infinity",
+                        "txStart": _JANUARY_INSTANT,
+                        "txEnd": "infinity",
+                    }
+                ]
+            },
+        },
+    ]
+    return case
+
+
+def test_an_abstract_target_milestone_set_publishes_familyVariant_not_the_raw_tag(
+    damaged_case: CaseLoader,
+) -> None:
+    """A milestone is a whole object at an instant, so its roots are materialized.
+
+    The golden projects the raw `kind` column and the whole concrete superset; each
+    declared graph states the concrete instance the milestone stood at — its own
+    branch's members and the `familyVariant` derived from the tag map, with no
+    sibling branch's null padding and no storage column of any kind.
+    """
+    case = _as_a_milestone_set_read(damaged_case(_TEMPORAL_ABSTRACT_READ))
+    reads = ScriptedReads(results=[_INSTRUMENT_MILESTONES, _INSTRUMENT_MILESTONES])
+
+    assert_case_read(case, reads)
+
+    assert len(reads.calls) == 2
+
+
+def test_a_hop_child_row_still_carrying_the_shared_tag_column_is_refused(
+    corpus_case: CaseLoader,
+) -> None:
+    """A row about to become a node is refused while it still names its branch physically.
+
+    `pets[Dog]` narrows to one concrete, so its level reads the shared table under a
+    tag equality and projects no tag column of its own. A level that projected one
+    anyway would carry the discriminator into the graph as if it were a member, which
+    is refused at the last step of the materialization sequence rather than compared.
+    """
+    case = corpus_case(_NARROWED_PETS)
+    tagged = [row | {"kind": "dog"} for row in _DOGS]
+    reads = ScriptedReads(results=[_PEOPLE, tagged])
+
+    with pytest.raises(CaseFailure, match="still carries its branch carrier 'kind' and no derived"):
+        assert_case_read(case, reads)
+
+
+def test_a_graph_assembled_from_roots_that_skipped_the_seam_is_refused(
+    corpus_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The roots a graph is assembled from are the ones a read PUBLISHED.
+
+    Standing in for a future path that assembles the materialization sequence
+    itself: the seam is replaced by a pass-through, and the assembly refuses its
+    rows rather than grading storage against the logical graph the case authored.
+    """
+    case = corpus_case(_ORDERED_ITEMS)
+    monkeypatch.setattr(
+        oracle_materialize,
+        "materialize_read",
+        lambda _read, rows: [dict(row) for row in rows],
+    )
+    reads = ScriptedReads(results=[_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE])
+
+    with pytest.raises(CaseFailure, match="did not come through the materialization seam"):
         assert_case_read(case, reads)

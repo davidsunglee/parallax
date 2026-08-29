@@ -391,7 +391,7 @@ def reference_rows(reader: ReadExecutor, sql: str) -> list[dict[str, Any]]:
     return reader.query(sql)
 
 
-def project_like(row: dict[str, Any], template_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def project_like(row: dict[str, Any], template_rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """Keep only the columns the golden root projection carries.
 
     An independent oracle states its own naive SELECT, so it may project more than

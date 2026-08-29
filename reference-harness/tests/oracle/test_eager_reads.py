@@ -314,3 +314,36 @@ def test_a_partitioned_document_read_is_observed_on_both_dialects(
 
     assert reads.calls[0][1] == tuple(case.statement_binds(0, dialect))
     assert reads.calls[1] == (case.reference_sql_for(dialect), ())
+
+
+# --- what a read must state before its rows can be materialized ---------------
+
+
+def test_a_case_that_is_not_read_shaped_is_refused(damaged_case: CaseLoader) -> None:
+    """Rows are materialized against the READ they belong to, and nothing else.
+
+    The target, the ``narrowTo``, the golden the projection shape is asserted
+    from, and the result member the form is read off all come from one case, so a
+    case of another shape would answer them from members that mean something else.
+    """
+    case = damaged_case(_ORDER_BY_LIMIT)
+    case.raw["shape"] = "boundary"
+    reads = ScriptedReads(results=[_ORDER_ROWS])
+
+    with pytest.raises(CaseFailure, match="this case's shape is 'boundary'"):
+        assert_case_read(case, reads)
+
+
+def test_a_read_stating_no_result_member_is_refused(damaged_case: CaseLoader) -> None:
+    """The result form is derived from the member the case authored, never passed.
+
+    A row-form read materializes its Attributes alone and an instance-form one
+    additionally carries every applicable Value Object occurrence, so a read
+    stating neither member leaves that undecided rather than defaulting.
+    """
+    case = damaged_case(_ORDER_BY_LIMIT)
+    del case.then["rows"]
+    reads = ScriptedReads(results=[_ORDER_ROWS])
+
+    with pytest.raises(CaseFailure, match="states no result member"):
+        assert_case_read(case, reads)

@@ -24,7 +24,7 @@ once per read-bearing step with the reader that step's lifecycle selected.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import Any
@@ -182,7 +182,7 @@ class ScenarioReads:
         ).root_rows
         reference = self._reference_rows(step, reader)
         if reference is not None:
-            materialized = materialize.materialize_family_variant(step_read, reference)
+            materialized = materialize.materialize_read(step_read, reference)
             self._assert_reference_rows(
                 step_index,
                 [execute.project_like(row, delivered) for row in materialized],
@@ -192,7 +192,7 @@ class ScenarioReads:
             delivered
             if entity is None
             else [
-                materialize.materialize_variant_owner_node(self._case.model, entity, row)
+                materialize.materialize_variant_owner_node(self._case, entity, row)
                 for row in delivered
             ]
         )
@@ -225,18 +225,12 @@ class ScenarioReads:
         reference = self._reference_rows(step, reader)
         if reference is not None:
             self._assert_reference_rows(step_index, reference, rows)
-        # Under Relational Document Layout the fan-out comes FIRST, because it is
-        # what puts each occurrence back under the very column name the projection
-        # below reads it from — after which that projection is layout-blind. Both
-        # decode against DECLARATIONS, which an abstract position does not carry for
-        # its concretes' own members, so each stands at the row's own variant: the
-        # fan-out resolves one itself, the projection reads the `familyVariant`
-        # materialized between them.
-        rows = materialize.materialize_target_tph_document_layout(
-            step_read, rows, include_value_objects=True
-        )
-        rows = materialize.materialize_family_variant(step_read, rows)
-        rows = [materialize.materialize_variant_owner_node(case.model, entity, row) for row in rows]
+        # The step is presented as the read it is, so the seam reads its result
+        # form off the step's own read semantics rather than being told one: the
+        # sole row-form step read is a materializing predicate write's resolve, and
+        # every other step is the object lane.
+        published = materialize.materialize_read(step_read, rows)
+        rows = [materialize.materialize_variant_owner_node(case, entity, row) for row in published]
         return retained.Observation(
             rows=rows,
             entity=entity,
@@ -268,46 +262,34 @@ class ScenarioReads:
             return retained.Observation(
                 rows=self._reused_rows(step_index, step), entity=entity, includes=None
             )
-        rows: list[dict[str, Any]] = []
+        if entity is None:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{step_index}] resolved no entity for the rows "
+                f"its statements returned. A read verb publishes objects, so the position "
+                f"they stand at — the relationship's declared target, or the query-backed "
+                f"list's own — MUST be resolvable from the case."
+            )
+        returned: list[dict[str, Any]] = []
         for statement, binds in pairs:
-            rows.extend(execute.query_rows(case, reader, statement, binds))
-        if entity is not None:
-            # A freshly-resolved load / first access materializes the value-object
-            # document of the entity it navigated TO, resolved per step so a
-            # value-object-bearing child decodes with its OWN composite schema —
-            # and, for a row naming a concrete variant, with that variant's rather
-            # than the navigated position's. A polymorphic position names that
-            # variant with a raw tag or a branch literal, neither of which is a
-            # result field, so it is derived first: what the step publishes is
-            # `familyVariant`, and it is also what the Relational Document Layout
-            # fan-out and the owner-node decode below both stand at. A resolved
-            # list is derived as the whole read it is — one call ordering the
-            # fan-out ahead of the tag it already resolves itself — and a navigated
-            # position as the position it stands at, per row, because a multi-hop
-            # load aggregates levels whose Structured Columns differ.
-            list_read = _resolved_list_read(case, step_index, step)
-            if list_read is None:
-                rows = materialize.materialize_navigated_family_variant(case, entity, rows)
-                rows = [
-                    materialize.materialize_document_layout(
-                        case,
-                        materialize.variant_entity(case.model, entity, row),
-                        [row],
-                        include_value_objects=True,
-                    )[0]
-                    for row in rows
-                ]
-            else:
-                rows = materialize.materialize_target_tph_document_layout(
-                    list_read, rows, include_value_objects=True
-                )
-                rows = materialize.materialize_family_variant(list_read, rows)
-            rows = [
-                materialize.materialize_variant_owner_node(case.model, entity, row) for row in rows
-            ]
+            returned.extend(execute.query_rows(case, reader, statement, binds))
+        # The two shapes stand at different KINDS of position, so each is
+        # materialized by the seam that owns its kind. A first access resolves the
+        # construction step's own Object Query, which is one read spread over two
+        # steps. A `load` navigates a relationship, which no Object Query
+        # describes, and may aggregate the levels it walked through as well as the
+        # one it ended at.
+        list_read = _resolved_list_read(case, step_index, step)
+        published = (
+            materialize.materialize_navigated(case, entity, returned)
+            if list_read is None
+            else materialize.materialize_read(list_read, returned)
+        )
+        rows = [materialize.materialize_variant_owner_node(case, entity, row) for row in published]
         return retained.Observation(rows=rows, entity=entity, includes=None)
 
-    def _reused_rows(self, step_index: int, step: Mapping[str, Any]) -> list[dict[str, Any]]:
+    def _reused_rows(
+        self, step_index: int, step: Mapping[str, Any]
+    ) -> list[materialize.PublishedRow]:
         """The rows a zero-round-trip step reuses from the earlier step it names.
 
         A cache hit, a re-access, or a repeated find returns the SAME rows an
@@ -336,7 +318,7 @@ class ScenarioReads:
         self,
         step_index: int,
         step: Mapping[str, Any],
-        root_rows: list[dict[str, Any]],
+        root_rows: list[materialize.PublishedRow],
         pairs: list[tuple[str, list[Any]]],
         reader: ReadExecutor,
     ) -> retained.StepIncludes | None:
@@ -437,7 +419,7 @@ class ScenarioReads:
         self,
         step_index: int,
         reference_rows: list[dict[str, Any]],
-        golden_rows: list[dict[str, Any]],
+        golden_rows: Sequence[dict[str, Any]],
     ) -> None:
         """Compare an independent formulation's rows to the ones the golden read reached.
 
@@ -454,7 +436,7 @@ class ScenarioReads:
             )
 
     def _assert_row_observables(
-        self, step_index: int, step: Mapping[str, Any], rows: list[dict[str, Any]]
+        self, step_index: int, step: Mapping[str, Any], rows: list[materialize.PublishedRow]
     ) -> None:
         """Assert a step's ``expectRows`` and its ``sameObjectAs`` identity claim.
 
@@ -468,6 +450,13 @@ class ScenarioReads:
         A STREAMED step compares positionally: its rows are the roots its delivery
         handed over in the Continuation Order, and nothing else in the case grades
         the order inside a page (m-case-format *Streamed read steps*).
+
+        What ``expectRows`` states is the LOGICAL result, so the rows it grades are
+        the ones the materialization seam published — a raw physical row would be
+        compared against members the golden never projected under names it never
+        carried. Nothing re-checks that here: these rows come from a
+        :class:`retained.Observation`, which refuses an unpublished one at
+        construction.
         """
         case = self._case
         expect = step.get("expectRows")
@@ -502,7 +491,11 @@ class ScenarioReads:
             )
 
     def _identity_keys(
-        self, step_index: int, published_by: int, rows: list[dict[str, Any]], identity_column: str
+        self,
+        step_index: int,
+        published_by: int,
+        rows: Sequence[dict[str, Any]],
+        identity_column: str,
     ) -> list[Any]:
         """The ordered set of primary-key identities carried by *rows*.
 
@@ -809,7 +802,7 @@ def _resolved_list_read(case: Case, step_index: int, step: Mapping[str, Any]) ->
     Selection are the CONSTRUCTION step's Object Query, the projection shape is THIS
     step's golden. A ``load`` / ``access`` that walked a ``path`` stands at a
     navigated position instead, which no Object Query describes, and answers ``None``
-    (:func:`materialize.materialize_navigated_family_variant`).
+    (:func:`materialize.materialize_navigated`).
     """
     if step.get("path") is not None:
         return None

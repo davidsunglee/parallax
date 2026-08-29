@@ -32,7 +32,7 @@ class _StreamPage:
     authored list, which is where the next page's root statement begins.
     """
 
-    root_rows: list[dict[str, Any]]
+    root_rows: list[materialize.PublishedRow]
     nodes: list[dict[str, Any]]
     consumed: int
 
@@ -57,18 +57,14 @@ def _stream_page(
     declares none. What the page adds is that it consumes a PREFIX of *levels* and
     reports how much, because the statements after it belong to later pages.
     """
-    if not includes.query_has_includes(query):
-        rows = graph.instance_form_root_rows(case, reader, root_entity, root_sql, root_binds)
-        narrowed = materialize.narrow_to_variant_columns(case, rows)
-        nodes = [graph.graph_node(case.model, root_entity, row) for row in narrowed]
-        return _StreamPage(root_rows=rows, nodes=nodes, consumed=0)
-
-    root_rows = materialize.materialize_target_tph_document_layout(
-        case,
-        execute.query_rows(case, reader, root_sql, root_binds),
-        include_value_objects=True,
+    root_rows = materialize.materialize_read(
+        case, execute.query_rows(case, reader, root_sql, root_binds)
     )
-    root_rows = materialize.materialize_family_variant(case, root_rows)
+    if not includes.query_has_includes(query):
+        narrowed = materialize.narrow_to_variant_columns(case, root_rows)
+        nodes = [graph.graph_node(case, root_entity, row) for row in narrowed]
+        return _StreamPage(root_rows=root_rows, nodes=nodes, consumed=0)
+
     executed = includes.execute_fetch_levels(case, reader, source, query, steps, root_rows, levels)
     assembled = graph.assemble_graph(case, query, steps, root_rows, executed.children_by_hop)
     nodes = assembled.get(root_entity.name, [])
@@ -95,7 +91,7 @@ class StreamDelivery:
     """What one streamed delivery published: its root rows, and the graph nodes
     assembled from them, concatenated across every page in delivery order."""
 
-    root_rows: list[dict[str, Any]]
+    root_rows: list[materialize.PublishedRow]
     nodes: list[dict[str, Any]]
 
 
@@ -161,7 +157,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
     limit = query.get("limit")
 
     nodes: list[dict[str, Any]] = []
-    root_rows: list[dict[str, Any]] = []
+    root_rows: list[materialize.PublishedRow] = []
     carried_binds: list[Any] = []
     first_root_sql = ""
     seek_shapes: dict[tuple[bool, ...], str] = {}

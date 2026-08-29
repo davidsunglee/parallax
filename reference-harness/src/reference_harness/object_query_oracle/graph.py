@@ -19,80 +19,47 @@ per milestone and the streamed delivery that publishes each root at its own edge
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from functools import partial
 from typing import Any
 
 from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure, multiset_matches, scalars_equal
 from ..inheritance import Family, resolve_root_source_set
-from . import execute, includes, materialize
-from .executor import ReadExecutor
-
-# --- the rows a graph is built from -----------------------------------------
+from . import includes, materialize
 
 
-def _position_value_object_columns(case: Case, entity: Entity) -> set[str]:
-    """Every top-level Value Object Column a read of *entity*'s position can carry.
+def _refuse_unpublished_roots(case: Case, root_rows: Sequence[materialize.PublishedRow]) -> None:
+    """Refuse roots that did not come from the materialization seam.
 
-    An abstract inheritance node declares none of its concretes' own members, so
-    an occurrence a single concrete declares is invisible from the position the
-    query targeted while still arriving in that concrete's own rows. The union
-    over the position is therefore what an instance-form read of it materializes,
-    and it collapses to the entity's own occurrences for every concrete or
-    non-inheritance target.
+    A graph node is built from what the read published, so a root that reached
+    here without the derivation the seam owns would carry storage into the
+    assembled graph — a raw discriminator, a branch literal, an undecoded
+    document — and the comparison against ``then.graph`` would grade a physical
+    row against a logical one.
     """
-    family = Family(case.model.entity_defs)
-    position = family.concrete_descendants(entity.name) if entity.role else []
-    return {
-        occurrence["column"]
-        for name in (entity.name, *position)
-        for occurrence in case.model.entity(name).value_objects
-    }
-
-
-def instance_form_root_rows(
-    case: Case,
-    reader: ReadExecutor,
-    entity: Entity,
-    sql: str,
-    binds: list[Any],
-) -> list[dict[str, Any]]:
-    """One instance-form root statement's rows, ready to become graph nodes.
-
-    Instance form is what a `then.graph` read publishes: the Document fan-out of a
-    Relational Document Layout read, each row carrying its own Structured Column
-    values, and `familyVariant` materialized from the tag map for an
-    abstract-target read. Per-variant COLUMN narrowing is deliberately NOT done
-    here — a caller comparing the matched row SET against `referenceSql` needs the
-    unnarrowed rows.
-    """
-    value_object_columns = _position_value_object_columns(case, entity)
-    projected = materialize.materialize_target_tph_document_layout(
-        case, execute.query_rows(case, reader, sql, binds), include_value_objects=True
+    if all(isinstance(row, materialize.PublishedRow) for row in root_rows):
+        return
+    raise CaseFailure(
+        f"{case.path.name}: a Snapshot Graph is assembled from the roots a read "
+        f"PUBLISHED, but these did not come through the materialization seam "
+        f"(materialize_read / materialize_navigated), so they may still carry storage "
+        f"the read never asked for."
     )
-    rows: list[dict[str, Any]] = [
-        materialize.MaterializedRow(
-            row,
-            value_object_columns={key: row[key] for key in value_object_columns if key in row},
-        )
-        for row in projected
-    ]
-    return materialize.materialize_family_variant(case, rows)
 
 
 # --- nodes and assembly ------------------------------------------------------
 
 
-def graph_node(model: Model, entity: Entity, row: dict[str, Any]) -> dict[str, Any]:
+def graph_node(case: Case, entity: Entity, row: dict[str, Any]) -> dict[str, Any]:
     """One materialized node keyed the way `then.graph` keys one.
 
     A graph leaf is keyed by the DECLARED member name (`m-case-format` *Graph
     keys*), while a read row arrives keyed by its physical column, so the
     attribute half is renamed here. Value Object occurrences and relationship
-    views are already name-keyed by :func:`..materialize.materialize_owner_node`
-    and the assembly, and `familyVariant` names no declared member, so both pass
-    through.
+    views are already name-keyed by
+    :func:`..materialize.materialize_variant_owner_node` and the assembly, and
+    `familyVariant` names no declared member, so both pass through.
 
     Both the occurrence decode and the rename map come from the node's OWN
     concrete Entity where the row states one: an abstract-root read narrows each
@@ -104,8 +71,9 @@ def graph_node(model: Model, entity: Entity, row: dict[str, Any]) -> dict[str, A
     declarations fill what that position cannot name — never overriding what it
     can.
     """
+    model = case.model
     concrete = materialize.variant_entity(model, entity, row)
-    node = materialize.materialize_owner_node(concrete, row)
+    node = materialize.materialize_variant_owner_node(case, entity, row)
     names = {attribute["column"]: attribute["name"] for attribute in concrete.attributes}
     for other in model.entities:
         for attribute in other.attributes:
@@ -117,7 +85,7 @@ def assemble_graph(
     case: Case,
     query: dict[str, Any],
     steps: list[includes.FetchStep],
-    root_rows: list[dict[str, Any]],
+    root_rows: Sequence[materialize.PublishedRow],
     children_by_step: dict[includes.HopKey, dict[Any, list[dict[str, Any]]]],
 ) -> dict[str, list[dict[str, Any]]]:
     """Build the root-keyed object graph following the deep-fetch paths.
@@ -129,7 +97,12 @@ def assemble_graph(
     attachment from the root objects it excludes, so an unguarded object's view stays
     UNSET rather than empty — the observable difference between "no such related row"
     and "this object never participated".
+
+    The roots are what the read PUBLISHED, so they arrive from the materialization
+    seam; the child rows are the levels' own and are materialized by
+    :mod:`.includes` as each level is executed.
     """
+    _refuse_unpublished_roots(case, root_rows)
     root_entity = includes.deepfetch_root_entity(case.model, query)
     family = Family(case.model.entity_defs)
     root_position = includes.deepfetch_root_position(query)
@@ -156,7 +129,7 @@ def assemble_graph(
             # child), so a VO-bearing deep-fetch child materializes its document with
             # the owner exactly as a root value-object read does (m-value-object /
             # m-sql "Read projection", slot 4).
-            registry[key] = graph_node(case.model, entity, raw_row)
+            registry[key] = graph_node(case, entity, raw_row)
         return registry[key]
 
     root_nodes = [node_for("", root_entity, row) for row in root_rows]
@@ -315,8 +288,8 @@ def graphs_equal(
 def assert_milestone_partition(
     case: Case,
     root_entity: Entity,
-    root_rows: list[dict[str, Any]],
-    nodes: list[dict[str, Any]],
+    root_rows: Sequence[dict[str, Any]],
+    nodes: Sequence[dict[str, Any]],
     graph_specs: list[dict[str, Any]],
 ) -> None:
     """Assert ``then.graphs`` against milestone rows and the nodes built from them.
