@@ -404,7 +404,7 @@ def guarded_parents(
 
 
 def _sorted_by_order_keys(
-    rows: list[dict[str, Any]],
+    rows: Sequence[dict[str, Any]],
     sort_spec: list[tuple[str, bool, bool]],
 ) -> list[dict[str, Any]]:
     """Return *rows* sorted by *sort_spec* — a list of
@@ -434,7 +434,7 @@ def _sorted_by_order_keys(
 def _assert_child_ordering(
     case: Case,
     steps: list[FetchStep],
-    children_by_step: dict[HopKey, dict[Any, list[dict[str, Any]]]],
+    children_by_step: dict[HopKey, dict[Any, list[materialize.PublishedRow]]],
 ) -> None:
     """Assert each ordered to-many level returned its children in the declared order.
 
@@ -500,7 +500,7 @@ class _ExecutedLevels:
     left by the pages before it and hands the rest back.
     """
 
-    children_by_hop: dict[HopKey, dict[Any, list[dict[str, Any]]]]
+    children_by_hop: dict[HopKey, dict[Any, list[materialize.PublishedRow]]]
     consumed: int
 
 
@@ -551,11 +551,11 @@ def execute_fetch_levels(
     dialect = reader.dialect
     root_pins = execute.root_asof_pins(query)
 
-    # rows_by_hop[hop key] -> the result-rows that hop fetched.
-    rows_by_hop: dict[HopKey, list[dict[str, Any]]] = {}
+    # rows_by_hop[hop key] -> the result-rows that hop PUBLISHED.
+    rows_by_hop: dict[HopKey, list[materialize.PublishedRow]] = {}
 
     # Execute each hop once, keyed by gathered parent keys, bucketed by hop identity.
-    children_by_step: dict[HopKey, dict[Any, list[dict[str, Any]]]] = {}
+    children_by_step: dict[HopKey, dict[Any, list[materialize.PublishedRow]]] = {}
     statement_index = 0
     for step in steps:
         source_rows = root_rows if step.parent_hop is None else rows_by_hop[step.parent_hop]
@@ -629,41 +629,23 @@ def execute_fetch_levels(
             level_sql,
             list(parent_keys) + list(step.tag_binds) + expected_suffix,
         )
-        # A polymorphic (multi-concrete, table-per-hierarchy) hop projects the raw tag
-        # column; materialize each row's `familyVariant` from the tag map (never a
-        # projected SQL column), exactly as an abstract-target flat read does.
-        if step.polymorphic and step.tag_column is not None:
-            child_rows = [
-                materialize.materialize_hop_variant(
-                    case,
-                    row,
-                    view_key=step.view_key,
-                    tag_column=step.tag_column,
-                    variant_map=step.variant_map,
-                )
-                for row in child_rows
-            ]
-            child_rows = [
-                materialize.materialize_document_layout(
-                    case,
-                    case.model.entity(row["familyVariant"]),
-                    [row],
-                    include_value_objects=True,
-                )[0]
-                for row in child_rows
-            ]
-        else:
-            child_rows = materialize.materialize_document_layout(
-                case,
-                step.child_entity,
-                child_rows,
-                include_value_objects=True,
-            )
-        rows_by_hop[step.hop_key] = child_rows
+        # The level is materialized WHOLE by the seam that owns its kind of
+        # position, which it states its own facts to: the raw tag column a
+        # polymorphic (multi-concrete, table-per-hierarchy) hop projects, and the
+        # family's tag map. Every other hop resolves one concrete and names none.
+        published = materialize.materialize_hop_level(
+            case,
+            step.child_entity,
+            child_rows,
+            view_key=step.view_key,
+            tag_column=step.tag_column if step.polymorphic else None,
+            variant_map=step.variant_map,
+        )
+        rows_by_hop[step.hop_key] = published
 
         child_col = column_of(step.child_entity, step.child_attr)
-        bucket: dict[Any, list[dict[str, Any]]] = {}
-        for row in child_rows:
+        bucket: dict[Any, list[materialize.PublishedRow]] = {}
+        for row in published:
             bucket.setdefault(coerce_identity_key(row[child_col]), []).append(row)
         children_by_step[step.hop_key] = bucket
         statement_index += 1
