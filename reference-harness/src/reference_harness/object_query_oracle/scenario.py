@@ -24,7 +24,8 @@ once per read-bearing step with the reader that step's lifecycle selected.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import Any
 
@@ -49,11 +50,12 @@ class ScenarioReads:
         write, an action whose verb is not ``load`` or ``access``, and the
         zero-round-trip construction of a query-backed list that has not resolved.
     Guarantees
-        a step's observables are asserted atomically, and whatever it published is
-        retained under its own index for the later steps that name it. An
-        ineligible index, a repeated assertion, or a reference to an observation
-        no asserted step produced is refused locally. Every failure names the case
-        path and the step index; a driver exception passes through unchanged.
+        a step's observables are asserted atomically: what it published is retained
+        under its own index only once every observable it states has passed, so a
+        failed step leaves nothing behind for a later step to read. An ineligible
+        index, a repeated assertion, or a reference to an observation no asserted
+        step produced is refused locally. Every failure names the case path and the
+        step index; a driver exception passes through unchanged.
     """
 
     def __init__(self, case: Case) -> None:
@@ -69,27 +71,57 @@ class ScenarioReads:
         makes it an access, and a step that lists nothing and names an earlier one
         is a reuse.
         """
-        step = self._eligible_step(step_index)
-        pairs = _statement_pairs(step, reader.dialect)
+        with self._reported_against(step_index):
+            step = self._eligible_step(step_index)
+            pairs = _statement_pairs(step, reader.dialect)
 
-        if "stream" in step:
-            observation = self._deliver(step_index, step, reader)
-        elif "action" in step:
-            observation = self._act(step_index, step, pairs, reader)
-        elif pairs:
-            observation = self._query(step_index, step, pairs, reader)
-        else:
-            observation = retained.Observation(
-                rows=self._reused_rows(step_index, step),
-                entity=self._read_entity(step_index),
-                includes=None,
-            )
+            if "stream" in step:
+                observation = self._deliver(step_index, step, reader)
+            elif "action" in step:
+                observation = self._act(step_index, step, pairs, reader)
+            elif pairs:
+                observation = self._query(step_index, step, pairs, reader)
+            else:
+                observation = retained.Observation(
+                    rows=self._reused_rows(step_index, step),
+                    entity=self._read_entity(step_index),
+                    includes=None,
+                )
 
-        self._retained[step_index] = observation
-        self._assert_row_observables(step_index, step, observation.rows)
-        self._assert_graph_observable(step_index, step, observation)
+            self._assert_row_observables(step_index, step, observation.rows)
+            self._assert_graph_observable(step_index, step, observation)
+            # Publication is the LAST thing a step does, so a step that failed an
+            # observable published nothing: a later step naming it is refused for
+            # naming an unobserved step rather than answered with rows nobody graded.
+            self._retained[step_index] = observation
 
     # --- eligibility ---------------------------------------------------------
+
+    @contextmanager
+    def _reported_against(self, step_index: int) -> Iterator[None]:
+        """Name the active step on every authored failure raised inside.
+
+        A step's observation is graded by the same delivery, materialization,
+        Include, and graph oracles an ordinary read's is, and those speak of the
+        read they were handed rather than the Scenario position it occupies. So
+        the position is added here, once, at the boundary that knows it — rather
+        than threaded through every oracle beneath it as a second parameter.
+
+        A driver exception is not an authored failure and passes through
+        untouched, and a failure already naming both the case and this step — a
+        delivery pointed at ``scenario[i].statements``, an Include level at
+        ``when.scenario[i].statements`` — is re-raised as it was written.
+        """
+        try:
+            yield
+        except CaseFailure as failure:
+            marker = f"scenario[{step_index}]"
+            prefix = f"{self._case.path.name}: "
+            message = str(failure)
+            if message.startswith(prefix) and marker in message:
+                raise
+            detail = message[len(prefix) :] if message.startswith(prefix) else message
+            raise CaseFailure(f"{prefix}{marker} {detail}") from failure
 
     def _eligible_step(self, step_index: int) -> dict[str, Any]:
         """The step at *step_index*, refused unless this instance owns it once.
@@ -131,19 +163,34 @@ class ScenarioReads:
         page. Inside a `uow` group that runs on the group's own held session, so
         each page observes the writes the group buffered before it.
 
+        A delivery hands back roots it has ALREADY materialized — fanned out of a
+        Relational Document Layout and carrying ``familyVariant`` in place of the
+        raw tag — so what is left here is the decode a delivery leaves to its
+        caller: the owner's own value-object projection, which an eager step's
+        rows carry too and which the reference oracle below must not see.
+
         A streamed step states no ``expectGraph`` — what it publishes is roots,
         page after page — so it retains no view for a later access to navigate.
         """
-        case = self._case
-        rows = stream.deliver_stream(
-            _step_as_read(case, step), reader, f"scenario[{step_index}].statements"
+        entity = self._read_entity(step_index)
+        step_read = _step_as_read(self._case, step)
+        delivered = stream.deliver_stream(
+            step_read, reader, f"scenario[{step_index}].statements"
         ).root_rows
-        self._assert_reference_sql(step_index, step, rows, reader)
-        return retained.Observation(
-            rows=materialize.materialize_step_family_variant(case, step, rows),
-            entity=self._read_entity(step_index),
-            includes=None,
+        reference = self._reference_rows(step, reader)
+        if reference is not None:
+            materialized = materialize.materialize_family_variant(step_read, reference)
+            self._assert_reference_rows(
+                step_index,
+                [execute.project_like(row, delivered) for row in materialized],
+                delivered,
+            )
+        rows = (
+            delivered
+            if entity is None
+            else [materialize.materialize_owner_node(entity, row) for row in delivered]
         )
+        return retained.Observation(rows=rows, entity=entity, includes=None)
 
     def _query(
         self,
@@ -168,7 +215,9 @@ class ScenarioReads:
             )
         statement, binds = pairs[0]
         rows = execute.query_rows(case, reader, statement, binds)
-        self._assert_reference_sql(step_index, step, rows, reader)
+        reference = self._reference_rows(step, reader)
+        if reference is not None:
+            self._assert_reference_rows(step_index, reference, rows)
         # Under Relational Document Layout the fan-out comes FIRST, because it is
         # what puts each occurrence back under the very column name the projection
         # below reads it from — after which that projection is layout-blind.
@@ -176,7 +225,7 @@ class ScenarioReads:
             case, entity, rows, include_value_objects=True
         )
         rows = [materialize.materialize_owner_node(entity, row) for row in rows]
-        rows = materialize.materialize_step_family_variant(case, step, rows)
+        rows = materialize.materialize_family_variant(_step_as_read(case, step), rows)
         return retained.Observation(
             rows=rows,
             entity=entity,
@@ -328,14 +377,10 @@ class ScenarioReads:
 
     # --- what a step observes -------------------------------------------------
 
-    def _assert_reference_sql(
-        self,
-        step_index: int,
-        step: Mapping[str, Any],
-        golden_rows: list[dict[str, Any]],
-        reader: ReadExecutor,
-    ) -> None:
-        """Run a find's independent, bind-free naive SQL oracle.
+    def _reference_rows(
+        self, step: Mapping[str, Any], reader: ReadExecutor
+    ) -> list[dict[str, Any]] | None:
+        """Run a step's independent, bind-free naive SQL oracle, or ``None`` for none.
 
         On the SAME connection the golden read used — the provider's autocommit
         connection for an ungrouped find, the `uow` group's own held session for a
@@ -343,11 +388,24 @@ class ScenarioReads:
         state is what the oracle observes too, never a different connection's
         committed-only view.
         """
-        case = self._case
         reference_sql = _reference_sql_for(step, reader.dialect)
         if reference_sql is None:
-            return
-        reference_rows = execute.query_rows(case, reader, reference_sql, [])
+            return None
+        return execute.query_rows(self._case, reader, reference_sql, [])
+
+    def _assert_reference_rows(
+        self,
+        step_index: int,
+        reference_rows: list[dict[str, Any]],
+        golden_rows: list[dict[str, Any]],
+    ) -> None:
+        """Compare an independent formulation's rows to the ones the golden read reached.
+
+        Both sides are handed in at the SAME stage of materialization: a find
+        compares raw rows, before its value-object columns are decoded, while a
+        delivery compares what its pages already materialized.
+        """
+        case = self._case
         if not rows_equal(reference_rows, golden_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step_index}] referenceSql rows != golden rows.\n"
@@ -390,9 +448,9 @@ class ScenarioReads:
                 f"must reference an EARLIER step."
             )
         identity_column = step.get("identityAttr", _pk_column(case.model.root_entity))
-        these = self._identity_keys(step_index, rows, identity_column)
+        these = self._identity_keys(step_index, step_index, rows, identity_column)
         those = self._identity_keys(
-            source, self._observation(step_index, source).rows, identity_column
+            step_index, source, self._observation(step_index, source).rows, identity_column
         )
         if these != those:
             raise CaseFailure(
@@ -404,15 +462,21 @@ class ScenarioReads:
             )
 
     def _identity_keys(
-        self, step_index: int, rows: list[dict[str, Any]], identity_column: str
+        self, step_index: int, published_by: int, rows: list[dict[str, Any]], identity_column: str
     ) -> list[Any]:
-        """The ordered set of primary-key identities carried by *rows*."""
+        """The ordered set of primary-key identities carried by *rows*.
+
+        An identity claim compares two steps' rows, so the refusal names the step
+        that MADE the claim and, separately, the one whose rows cannot answer it.
+        """
         case = self._case
         if any(identity_column not in row for row in rows):
+            whose = "its own" if published_by == step_index else f"step {published_by}'s"
             raise CaseFailure(
-                f"{case.path.name}: scenario[{step_index}] result rows do not carry the "
-                f"identity column {identity_column!r}; a scenario step's find MUST project "
-                f"the primary key so identity can be checked."
+                f"{case.path.name}: scenario[{step_index}] compares identity against "
+                f"{whose} result rows, which do not carry the identity column "
+                f"{identity_column!r}; a scenario step's find MUST project the primary key "
+                f"so identity can be checked."
             )
         return sorted(materialize.coerce_identity_key(row[identity_column]) for row in rows)
 

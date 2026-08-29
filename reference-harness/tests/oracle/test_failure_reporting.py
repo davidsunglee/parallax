@@ -10,6 +10,7 @@ observable as an empty call log.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
@@ -19,6 +20,7 @@ import pytest
 from reference_harness.case import Case
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.object_query_oracle import ScenarioReads, assert_case_read
+from reference_harness.object_query_oracle import execute as oracle_execute
 
 from .conftest import ScriptedReads
 
@@ -29,6 +31,7 @@ _TPH_DOCUMENT_UNION = "m-inheritance-124-document-layout-tph-sibling-path-reuse.
 _TPCS_TEMPORAL_UNION = "m-inheritance-093-tpcs-temporal-union-read.yaml"
 _ONE_OBJECT_TWO_FINDS = "m-identity-map-001-same-transaction-identity.yaml"
 _STREAMED_EVIDENCE = "m-unit-work-030-a-streamed-roots-evidence-licenses-a-later-write.yaml"
+_EDIT_KEEPS_ITEMS = "m-snapshot-read-016-edit-keeps-loaded-items.yaml"
 
 
 class _DriverError(Exception):
@@ -140,6 +143,22 @@ def _account(id_: int, owner: str, balance: str, version: int) -> dict[str, Any]
 
 
 _LINUS = [_account(2, "Linus", "250.00", 1)]
+_ORDER_ONE = [
+    {
+        "id": 1,
+        "name": "Ada",
+        "sku": "A-100",
+        "qty": 5,
+        "price": Decimal("10.50"),
+        "active": True,
+        "ordered_on": "2024-01-05",
+    }
+]
+# `Order.items` declares `id desc`, so a child level must return 12 before 11.
+_ORDER_ONE_ITEMS = [
+    {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1, "shipped_on": "2024-02-15"},
+    {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+]
 _DELIVERY = [
     [_account(1, "Ada", "100.00", 1), _account(2, "Linus", "250.00", 1)],
     [_account(3, "Grace", "10.00", 1)],
@@ -165,6 +184,16 @@ def _broken_identity(case: Case) -> tuple[int, list[int], list[Any]]:
     return 1, [0], [_LINUS, [_account(3, "Linus", "10.00", 1)]]
 
 
+def _identity_column_the_source_never_projected(case: Case) -> tuple[int, list[int], list[Any]]:
+    """An identity claim graded on a column NEITHER find published.
+
+    The rows that cannot answer it are the SOURCE step's, so this is the one
+    identity route whose subject is a step other than the failing one.
+    """
+    case.when["scenario"][1]["identityAttr"] = "account_number"
+    return 1, [0], [_LINUS, _LINUS]
+
+
 def _drifting_page(case: Case) -> tuple[int, list[int], list[Any]]:
     """A continuing page of a streamed step seeking a different way."""
     sql = case.when["scenario"][0]["statements"][1]["sql"]
@@ -173,14 +202,48 @@ def _drifting_page(case: Case) -> tuple[int, list[int], list[Any]]:
     return 0, [], list(_DELIVERY)
 
 
+def _an_extra_page(case: Case) -> tuple[int, list[int], list[Any]]:
+    """A statement after the short page that ended the delivery."""
+    statements = case.when["scenario"][0]["statements"]
+    statements.append(copy.deepcopy(statements[-1]))
+    return 0, [], list(_DELIVERY)
+
+
+def _a_level_the_query_declares_no_include_for(case: Case) -> tuple[int, list[int], list[Any]]:
+    """A second golden statement on a step whose Object Query has no Include Paths."""
+    statements = case.when["scenario"][0]["statements"]
+    statements.append(copy.deepcopy(statements[0]))
+    return 0, [], [_LINUS]
+
+
+def _an_access_over_a_relationship_the_read_never_included(
+    case: Case,
+) -> tuple[int, list[int], list[Any]]:
+    """An access navigating a hop the source read did not materialize."""
+    case.when["scenario"][2]["path"] = "statuses"
+    return 2, [0], [_ORDER_ONE, _ORDER_ONE_ITEMS]
+
+
 @pytest.mark.parametrize(
     ("case_name", "damage"),
     [
         (_ONE_OBJECT_TWO_FINDS, _wrong_rows),
         (_ONE_OBJECT_TWO_FINDS, _broken_identity),
+        (_ONE_OBJECT_TWO_FINDS, _identity_column_the_source_never_projected),
+        (_ONE_OBJECT_TWO_FINDS, _a_level_the_query_declares_no_include_for),
         (_STREAMED_EVIDENCE, _drifting_page),
+        (_STREAMED_EVIDENCE, _an_extra_page),
+        (_EDIT_KEEPS_ITEMS, _an_access_over_a_relationship_the_read_never_included),
     ],
-    ids=["rows", "identity", "page drift"],
+    ids=[
+        "rows",
+        "identity",
+        "identity source",
+        "unused level",
+        "page drift",
+        "trailing page",
+        "access",
+    ],
 )
 def test_every_step_failure_names_the_case_file_and_the_step(
     damaged_case: CaseLoader,
@@ -198,6 +261,41 @@ def test_every_step_failure_names_the_case_file_and_the_step(
         reads.assert_step(failing, reader)
 
     assert str(raised.value).startswith(f"{case.path.name}: scenario[{failing}]")
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [
+        "the storage layout resolves no position for the effective concrete set",
+        "m-identity-map-001-same-transaction-identity.yaml: the Continuation Order names "
+        "a member this read resolves to no single Structured Column",
+    ],
+    ids=["names neither", "names the case only"],
+)
+def test_a_subordinate_refusal_is_reported_against_the_step_that_reached_it(
+    corpus_case: CaseLoader, monkeypatch: pytest.MonkeyPatch, raised: str
+) -> None:
+    """The step boundary is unconditional, so no route has to be remembered.
+
+    Every oracle a step reaches — delivery, seek derivation, materialization,
+    Include levels, graph assembly — speaks of the READ it was handed rather than
+    the Scenario position that handed it over, so a refusal from any of them
+    arrives naming at most the case. Standing in for all of them is a refusal
+    raised from the statement execution every SQL-issuing workflow shares.
+    """
+    case = corpus_case(_ONE_OBJECT_TWO_FINDS)
+
+    def refuse(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise CaseFailure(raised)
+
+    monkeypatch.setattr(oracle_execute, "query_rows", refuse)
+    reads = ScenarioReads(case)
+
+    with pytest.raises(CaseFailure) as caught:
+        reads.assert_step(0, ScriptedReads())
+
+    detail = raised.removeprefix(f"{case.path.name}: ")
+    assert str(caught.value) == f"{case.path.name}: scenario[0] {detail}"
 
 
 def test_a_driver_exception_from_a_step_is_not_reported_as_a_mismatch(
