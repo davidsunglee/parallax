@@ -31,6 +31,8 @@ from typing import Any
 
 from ..case import Case, Entity, frozen_view
 from ..case_assertions import CaseFailure, rows_equal
+from ..predicate_write_validate import requires_predicate_write_materialization
+from ..serde import canonical
 from . import execute, graph, includes, materialize, retained, stream
 from .executor import ReadExecutor
 
@@ -166,14 +168,15 @@ class ScenarioReads:
         A delivery hands back roots it has ALREADY materialized — fanned out of a
         Relational Document Layout and carrying ``familyVariant`` in place of the
         raw tag — so what is left here is the decode a delivery leaves to its
-        caller: the owner's own value-object projection, which an eager step's
-        rows carry too and which the reference oracle below must not see.
+        caller: the owner's own value-object projection, taken at each root's own
+        concrete variant, which an eager step's rows carry too and which the
+        reference oracle below must not see.
 
         A streamed step states no ``expectGraph`` — what it publishes is roots,
         page after page — so it retains no view for a later access to navigate.
         """
         entity = self._read_entity(step_index)
-        step_read = _step_as_read(self._case, step)
+        step_read = _step_as_read(self._case, step_index)
         delivered = stream.deliver_stream(
             step_read, reader, f"scenario[{step_index}].statements"
         ).root_rows
@@ -188,7 +191,10 @@ class ScenarioReads:
         rows = (
             delivered
             if entity is None
-            else [materialize.materialize_owner_node(entity, row) for row in delivered]
+            else [
+                materialize.materialize_variant_owner_node(self._case.model, entity, row)
+                for row in delivered
+            ]
         )
         return retained.Observation(rows=rows, entity=entity, includes=None)
 
@@ -214,18 +220,23 @@ class ScenarioReads:
                 f"{case.path.name}: scenario[{step_index}] find step resolved no read entity"
             )
         statement, binds = pairs[0]
+        step_read = _step_as_read(case, step_index)
         rows = execute.query_rows(case, reader, statement, binds)
         reference = self._reference_rows(step, reader)
         if reference is not None:
             self._assert_reference_rows(step_index, reference, rows)
         # Under Relational Document Layout the fan-out comes FIRST, because it is
         # what puts each occurrence back under the very column name the projection
-        # below reads it from — after which that projection is layout-blind.
-        rows = materialize.materialize_document_layout(
-            case, entity, rows, include_value_objects=True
+        # below reads it from — after which that projection is layout-blind. Both
+        # decode against DECLARATIONS, which an abstract position does not carry for
+        # its concretes' own members, so each stands at the row's own variant: the
+        # fan-out resolves one itself, the projection reads the `familyVariant`
+        # materialized between them.
+        rows = materialize.materialize_target_tph_document_layout(
+            step_read, rows, include_value_objects=True
         )
-        rows = [materialize.materialize_owner_node(entity, row) for row in rows]
-        rows = materialize.materialize_family_variant(_step_as_read(case, step), rows)
+        rows = materialize.materialize_family_variant(step_read, rows)
+        rows = [materialize.materialize_variant_owner_node(case.model, entity, row) for row in rows]
         return retained.Observation(
             rows=rows,
             entity=entity,
@@ -263,8 +274,12 @@ class ScenarioReads:
         if entity is not None:
             # A freshly-resolved load / first access materializes the value-object
             # document of the entity it navigated TO, resolved per step so a
-            # value-object-bearing child decodes with its OWN composite schema.
-            rows = [materialize.materialize_owner_node(entity, row) for row in rows]
+            # value-object-bearing child decodes with its OWN composite schema —
+            # and, for a row naming a concrete variant, with that variant's rather
+            # than the navigated position's.
+            rows = [
+                materialize.materialize_variant_owner_node(case.model, entity, row) for row in rows
+            ]
         return retained.Observation(rows=rows, entity=entity, includes=None)
 
     def _reused_rows(self, step_index: int, step: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -695,8 +710,43 @@ def _pk_column(entity: Entity) -> str:
     return entity.attributes[0]["column"]
 
 
-def _step_as_read(case: Case, step: Mapping[str, Any]) -> Case:
-    """*step* presented as the READ case its own materialization belongs to.
+def _resolves_a_materializing_write(case: Case, step_index: int) -> bool:
+    """Whether the find at *step_index* is a materializing predicate write's own resolve.
+
+    That write is authored immediately after the find that resolves it, over that
+    find's own target and canonical predicate, and its target MATERIALIZES — a
+    versioned or temporal one does, while an unversioned, non-temporal `update` /
+    `delete` is readless and resolves nothing, so an ordinary find before one is an
+    ordinary find (`m-case-format` *Materializing cases*).
+
+    "That find's own target" is decided by MODEL IDENTITY, because a case may spell
+    an Entity either way: a find naming ``Subscriber`` and a write naming
+    ``parallax.compatibility.Subscriber`` are one materializing operation.
+    """
+    scenario = case.scenario
+    step = scenario[step_index]
+    query = step.get("objectQuery")
+    following = scenario[step_index + 1] if step_index + 1 < len(scenario) else None
+    write = following.get("write") if isinstance(following, Mapping) else None
+    if not isinstance(query, Mapping) or not isinstance(write, Mapping):
+        return False
+    target = write.get("target")
+    if not isinstance(target, Mapping) or not isinstance(target.get("predicate"), Mapping):
+        return False
+    if canonical(target["predicate"]) != canonical(query.get("predicate")):
+        return False
+    try:
+        written = case.model.entity(target["entity"])
+        read = case.model.entity(query["target"])
+    except (KeyError, TypeError):
+        return False
+    if written.canonical_name != read.canonical_name:
+        return False
+    return requires_predicate_write_materialization(written)
+
+
+def _step_as_read(case: Case, step_index: int) -> Case:
+    """The step at *step_index* presented as the READ case its materialization belongs to.
 
     A row materializer asks a case for the read it is materializing — the target
     its Object Query names, the projection shape its golden ``select`` states, and
@@ -707,18 +757,25 @@ def _step_as_read(case: Case, step: Mapping[str, Any]) -> Case:
     the case's own: the model, the path a failure names, and the comparison
     tolerance.
 
-    The form is instance-form for every step that reaches here: an observation
-    find, a resolving ``load``, and a first ``access`` are all the object lane
-    (`m-case-format` *Read result form*), and the sole row-form step read — the
-    materialized-predicate-write resolving find — sits inside a write step, which
-    Scenario orchestration owns. A read case states its lane by WHICH observation
-    member it carries, so that is how this presentation states it, and an abstract
-    table-per-concrete-subtype step is graded on projecting the top-level Value
-    Object `Document` slot its lane requires rather than on omitting it. The
-    member's CONTENTS are never read: what a step observed is graded against the
-    step's own ``expectRows`` / ``expectGraph``.
+    A step's own ``expectRows`` names no form, so the form follows the step's read
+    semantics (`m-case-format` *Read result form*). An observation find, a resolving
+    ``load``, and a first ``access`` are the object lane; the sole row-form step read
+    is the materialized-predicate-write resolving find, which is an ordinary
+    preceding ``objectQuery`` step this oracle grades like any other and is
+    recognized as the resolve by the write it serves
+    (:func:`_resolves_a_materializing_write`). A read case states its lane by WHICH
+    result member it carries, so that is how this presentation states it, and an
+    abstract table-per-concrete-subtype step is graded on projecting the top-level
+    Value Object `Document` slot its own lane selects. The member's CONTENTS are
+    never read: what a step observed is graded against the step's own ``expectRows``
+    / ``expectGraph``.
     """
-    then: dict[str, Any] = {"statements": step.get("statements", []), "graph": {}}
+    step = case.scenario[step_index]
+    row_form = _resolves_a_materializing_write(case, step_index)
+    then: dict[str, Any] = {
+        "statements": step.get("statements", []),
+        **({"rows": []} if row_form else {"graph": {}}),
+    }
     if "tolerance" in case.then:
         then["tolerance"] = case.then["tolerance"]
     return replace(
