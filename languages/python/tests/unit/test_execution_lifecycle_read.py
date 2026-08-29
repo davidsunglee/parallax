@@ -26,6 +26,7 @@ from _support import mirrored_models as mm
 from parallax.conformance import read_models
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DocumentReadOrdinals, Row
+from parallax.core.dialect import POSTGRES
 from parallax.core.execution_lifecycle import (
     CausedFailure,
     DatabaseCallFailed,
@@ -284,6 +285,8 @@ def test_a_control_flow_exception_still_finishes_every_open_activity() -> None:
     # No call site writes the `BaseException` path by hand; the scope shape is
     # what keeps the transitions balanced through one.
     class _Interrupting:
+        dialect = POSTGRES
+
         def execute(self, sql: str, binds: Any, document_reads: Any = ()) -> list[Any]:
             del sql, binds, document_reads
             raise KeyboardInterrupt

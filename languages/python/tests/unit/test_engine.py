@@ -43,6 +43,7 @@ from parallax.core.base import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Committed, DbPort, JsonDocument, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import (
     AbstractRoot,
     AttributeIdentity,
@@ -108,6 +109,8 @@ def _entry(entry: dict[str, object], key: str) -> Row:
 
 class FakeDbPort:
     """An in-memory port that records executed SQL and returns canned rows."""
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self, rows: list[Row]) -> None:
         self.rows = rows
@@ -387,6 +390,8 @@ def test_compile_read_case_reports_missing_fields(
 # --------------------------------------------------------------------------- #
 class FakeWritePort:
     """An in-memory ``m-db-port`` recording DML + read execution and commit/rollback."""
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self, find_rows: list[Row] | None = None) -> None:
         self.find_rows = find_rows if find_rows is not None else []
@@ -1395,6 +1400,8 @@ class _ScriptedPort:
     either way. Set via `setattr` below (never a hardcoded attribute name
     here) so this fake can never drift from `engine`'s own marker name."""
 
+    dialect: Dialect = POSTGRES
+
     def __init__(
         self,
         *,
@@ -1748,6 +1755,8 @@ class _CancellableBlockingConnection:
     survivor's OWN connection is exactly what the second escalation targets.
     """
 
+    dialect: Dialect = POSTGRES
+
     def __init__(self) -> None:
         self._released = threading.Event()
         self.cancel_calls = 0
@@ -1826,6 +1835,8 @@ class _TerminableBlockingConnection:
     fulfil the in-flight call), and any LATER call raises immediately too,
     as far as this fake allows — never silently executing against a
     terminated connection."""
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self) -> None:
         self._closed = threading.Event()
@@ -1933,6 +1944,8 @@ class _TerminableOnlyViaUnderlyingSeamConnection:
     _terminate_connection` past the failing outer ``close()`` to the
     documented underlying seam (``self.connection``, mirroring
     `PostgresAdapter.connection`)."""
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self) -> None:
         self._released = threading.Event()
@@ -2093,6 +2106,8 @@ class _CapabilityLessConnection:
     observable for "no thread ever started": a defect here refuses before
     either worker is even constructed, so nothing ever calls it."""
 
+    dialect: Dialect = POSTGRES
+
     def __init__(self) -> None:
         self.execute_calls = 0
 
@@ -2176,6 +2191,8 @@ class _AllRungsRaiseConnection:
     trust check, never a behavioral probe): `calls` staying empty is this
     pin's own proof that no worker thread ever got far enough to discover
     any of this."""
+
+    dialect: Dialect = POSTGRES
 
     class _Underlying:
         def __init__(self, calls: list[str]) -> None:
@@ -5126,6 +5143,8 @@ def test_read_table_state_normalizes_values_without_changing_the_projection() ->
 # --------------------------------------------------------------------------- #
 class QueueDbPort:
     """A fake `m-db-port` returning one canned response per `execute()` call."""
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self, responses: Sequence[list[Row]]) -> None:
         self._responses = list(responses)

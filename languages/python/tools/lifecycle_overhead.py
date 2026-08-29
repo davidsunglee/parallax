@@ -85,6 +85,7 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -140,6 +141,8 @@ class _MemoryPort:
     differ by the lifecycle alone. ``statements`` is what the latency projection
     charges its round trips against.
     """
+
+    dialect: Dialect = POSTGRES
 
     def __init__(self) -> None:
         self.statements = 0

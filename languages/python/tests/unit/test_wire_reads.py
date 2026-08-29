@@ -36,7 +36,7 @@ from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, STRING, PresentDocument
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -80,6 +80,8 @@ class QueuePort:
     in call order — enough to drive the executor's own per-level loop without a
     real database."""
 
+    dialect: Dialect = POSTGRES
+
     def __init__(self, responses: Sequence[list[Row]]) -> None:
         self._responses = list(responses)
         self.executed: list[tuple[str, list[object]]] = []
@@ -115,7 +117,7 @@ def _order_row(order_id: int = 1) -> Row:
 
 
 def _wire_database(port: QueuePort) -> handle.Database:
-    return handle.Database(port, ORDERS, dialect=POSTGRES)
+    return handle.Database(port, ORDERS)
 
 
 def _entity(published: object) -> WireEntity:
@@ -171,7 +173,7 @@ def test_a_document_occurrence_publishes_the_members_the_document_held() -> None
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
     )
-    root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
+    root = _entity(handle.Database(port, CUSTOMER).wire.find(query).result())
     address = _mapping(root["address"])
     geo = _mapping(address["geo"])
     # `geo.point` is a declared `one` the stored document never carried, so it is
@@ -190,7 +192,7 @@ def test_two_stored_occurrences_short_and_null_publish_differently() -> None:
         query = deserialize_query(
             {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
         )
-        root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
+        root = _entity(handle.Database(port, CUSTOMER).wire.find(query).result())
         return _mapping(root["address"])
 
     assert published({"street": "1 Park Ave", "city": "Oslo"}) == {
@@ -230,7 +232,7 @@ def test_only_an_entity_node_can_carry_a_source_hint() -> None:
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
     )
-    root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
+    root = _entity(handle.Database(port, CUSTOMER).wire.find(query).result())
     address = _mapping(root["address"])
     assert not isinstance(address, WireEntity)
     assert source_hint_of(cast("Any", address)) is None
@@ -242,7 +244,7 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 4}}}
     )
-    root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
+    root = _entity(handle.Database(port, CUSTOMER).wire.find(query).result())
     assert root["address"] is None
 
     # A `many` has no absent state, so a document omitting `phones` stored that
@@ -254,7 +256,7 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 3}}}
     )
-    root = _entity(handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).result())
+    root = _entity(handle.Database(port, CUSTOMER).wire.find(query).result())
     assert _mapping(root["address"])["phones"] == []
 
 
@@ -585,7 +587,7 @@ def _customer_wire(model: DomainModel, row: Row) -> object:
     """One connected Customer read, published in band."""
     port = QueuePort([[row]])
     query = deserialize_query({"target": "Customer", "predicate": {"all": {}}})
-    return connect(port, model, dialect=POSTGRES).wire.find(query).checked().result()
+    return connect(port, model).wire.find(query).checked().result()
 
 
 @pytest.mark.parametrize("provenance", list(_CUSTOMER_MODELS))
@@ -633,9 +635,7 @@ def test_the_constructor_door_classifies_the_same_way_connect_does() -> None:
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
     )
-    published = (
-        handle.Database(port, CUSTOMER, dialect=POSTGRES).wire.find(query).checked().result()
-    )
+    published = handle.Database(port, CUSTOMER).wire.find(query).checked().result()
     assert isinstance(published, InvalidData)
     record = cast("InvalidData[object]", published)
     assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
@@ -643,12 +643,10 @@ def test_the_constructor_door_classifies_the_same_way_connect_does() -> None:
 
 def test_a_classless_connection_serves_wire_and_refuses_typed_before_any_io() -> None:
     with pytest.raises(handle.SnapshotConnectionError):
-        handle.Database(NoIoPort(), ORDERS, dialect=POSTGRES).find(
-            cast("Any", Gadget.where(Gadget.id == 1))
-        )
+        handle.Database(NoIoPort(), ORDERS).find(cast("Any", Gadget.where(Gadget.id == 1)))
     # The capability the same connection DOES hold is an executed read, not a
     # reachable namespace: the Wire lane needs no Entity Class, so it runs.
-    served = handle.Database(QueuePort([[_order_row()]]), ORDERS, dialect=POSTGRES)
+    served = handle.Database(QueuePort([[_order_row()]]), ORDERS)
     assert isinstance(served.wire, WireDatabaseView)
     published = served.wire.find(
         {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
@@ -682,7 +680,7 @@ def test_an_inheritance_participant_publishes_its_family_variant() -> None:
         ]
     )
     query = deserialize_query({"target": "Animal", "predicate": {"all": {}}})
-    root = _entity(handle.Database(port, ANIMAL, dialect=POSTGRES).wire.find(query).result())
+    root = _entity(handle.Database(port, ANIMAL).wire.find(query).result())
     assert root["familyVariant"] == "Dog"
     assert root["barkVolume"] == 3
 
@@ -722,7 +720,7 @@ def test_a_loaded_null_to_one_view_publishes_null_and_a_guarded_parent_publishes
             ],
         }
     )
-    roots = handle.Database(port, ANIMAL, dialect=POSTGRES).wire.find(query).results()
+    roots = handle.Database(port, ANIMAL).wire.find(query).results()
     dog, cat = (_entity(root) for root in roots)
     # The guard admits only the Dog, so the Cat never sees the view at all — an
     # absent key, which is what unloaded means — while the admitted Dog's own
@@ -752,7 +750,7 @@ def test_a_temporal_end_publishes_the_canonical_infinity_literal() -> None:
             "temporal": {"transaction-time": {"asOf": "latest"}},
         }
     )
-    root = _entity(handle.Database(port, INVOICE, dialect=POSTGRES).wire.find(query).result())
+    root = _entity(handle.Database(port, INVOICE).wire.find(query).result())
     assert root["txStart"] == "2024-04-01T00:00:00.000000Z"
     assert root["txEnd"] == "infinity"
 
@@ -789,13 +787,13 @@ _HISTORY_QUERY: Mapping[str, object] = {
 
 def test_a_milestone_set_wire_read_publishes_every_milestone_in_one_ordered_result() -> None:
     port = _history_port()
-    roots = handle.Database(port, INVOICE, dialect=POSTGRES).wire.find(_HISTORY_QUERY).results()
+    roots = handle.Database(port, INVOICE).wire.find(_HISTORY_QUERY).results()
     assert [_entity(root)["amount"] for root in roots] == ["50.00", "75.00"]
 
 
 def test_a_participating_milestone_set_wire_read_runs_inside_the_transaction() -> None:
     port = _history_port()
-    database = handle.Database(port, INVOICE, dialect=POSTGRES)
+    database = handle.Database(port, INVOICE)
     result = database.transact(lambda tx: tx.wire.find(_HISTORY_QUERY).results())
     assert [_entity(root)["amount"] for root in result] == ["50.00", "75.00"]
 

@@ -18,6 +18,7 @@ from typing import Final
 
 from parallax.conformance import adapter, case_format
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.dialect import Dialect, dialect_for
 
 __all__ = ["main"]
 
@@ -31,7 +32,15 @@ class _NoProvisioningPort:
     dispatched with THIS port instead of a Docker-backed one, so a future
     regression that makes the rejected lane reach the port fails loudly rather
     than silently starting a container.
+
+    It still reports a dialect, because what it refuses is executing SQL rather
+    than answering metadata: the run it stands in for names the dialect its
+    rejection is classified under, and reading that off a port must not depend
+    on the port being usable.
     """
+
+    def __init__(self, dialect: Dialect) -> None:
+        self.dialect = dialect
 
     def execute(
         self,
@@ -92,7 +101,7 @@ def _run_self_managed(
     if diagnostic is not None:
         return adapter.unsupported("run", diagnostic)
     if case.shape == "rejected":
-        return adapter.run_case(case_path, dialect, _NoProvisioningPort())
+        return adapter.run_case(case_path, dialect, _NoProvisioningPort(dialect_for(dialect)))
 
     from parallax.conformance import engine, provision
 

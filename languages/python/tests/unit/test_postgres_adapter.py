@@ -41,6 +41,11 @@ from parallax.postgres.adapter import (
     translating_driver_errors,
 )
 
+# Read off the class rather than named again here: these seams are the adapter's
+# own internals, so grading them under any other dialect would grade something
+# the adapter never runs.
+_DIALECT = PostgresAdapter.dialect
+
 
 def test_public_surface_is_the_adapter_alone() -> None:
     assert parallax.postgres.__all__ == ["PostgresAdapter"]
@@ -67,7 +72,7 @@ def testadapt_binds_wraps_the_document_value() -> None:
 
 
 def test_translate_driver_error_maps_a_unique_violation() -> None:
-    error = translate_driver_error(errors.UniqueViolation("dup key"))
+    error = translate_driver_error(_DIALECT, errors.UniqueViolation("dup key"))
     assert error.category == "uniqueViolation"
     assert error.native_code == "23505"
     assert error.violates_unique_index
@@ -76,14 +81,14 @@ def test_translate_driver_error_maps_a_unique_violation() -> None:
 
 def test_translate_driver_error_is_uncategorized_without_sqlstate() -> None:
     # A driver failure with no SQLSTATE (a dropped connection) stays uncategorized.
-    error = translate_driver_error(psycopg.OperationalError("connection closed"))
+    error = translate_driver_error(_DIALECT, psycopg.OperationalError("connection closed"))
     assert error.category is None
     assert error.native_code is None
     assert error.message == "connection closed"
 
 
 def test_translating_driver_errors_reraises_as_a_database_error() -> None:
-    with pytest.raises(DatabaseError) as exc_info, translating_driver_errors():
+    with pytest.raises(DatabaseError) as exc_info, translating_driver_errors(_DIALECT):
         raise errors.DeadlockDetected("deadlock detected")
     assert exc_info.value.category == "deadlock"
     assert exc_info.value.is_retriable
@@ -91,7 +96,7 @@ def test_translating_driver_errors_reraises_as_a_database_error() -> None:
 
 
 def test_translating_driver_errors_passes_a_clean_block() -> None:
-    with translating_driver_errors():
+    with translating_driver_errors(_DIALECT):
         value = 1 + 1
     assert value == 2
 
@@ -100,7 +105,7 @@ def test_translating_driver_errors_passes_a_non_driver_exception() -> None:
     class _Boom(Exception):
         pass
 
-    with pytest.raises(_Boom), translating_driver_errors():
+    with pytest.raises(_Boom), translating_driver_errors(_DIALECT):
         raise _Boom
 
 
@@ -248,6 +253,7 @@ def test_adapter_registers_boundary_value_loaders() -> None:
 
 def test_fold_document_reads_distinguishes_sql_null_from_present_json_null() -> None:
     rows = fold_document_reads(
+        _DIALECT,
         ("id", "doc_present", "doc"),
         (
             (1, False, None),
@@ -269,11 +275,11 @@ def test_json_loader_preserves_only_present_json_null() -> None:
 
 def test_fold_document_reads_rejects_invalid_projection_metadata_and_row_width() -> None:
     with pytest.raises(ValueError, match="adjacent, zero-based"):
-        fold_document_reads(("presence", "gap", "document"), (), ((0, 2),))
+        fold_document_reads(_DIALECT, ("presence", "gap", "document"), (), ((0, 2),))
     with pytest.raises(ValueError, match="must not overlap"):
-        fold_document_reads(("first", "shared", "second"), (), ((0, 1), (1, 2)))
+        fold_document_reads(_DIALECT, ("first", "shared", "second"), (), ((0, 1), (1, 2)))
     with pytest.raises(ValueError, match="does not match"):
-        fold_document_reads(("id", "presence", "document"), ((1, True),), ((1, 2),))
+        fold_document_reads(_DIALECT, ("id", "presence", "document"), ((1, True),), ((1, 2),))
 
 
 class _JsonNullCursor(_FakeCursor):

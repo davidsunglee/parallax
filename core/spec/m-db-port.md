@@ -3,14 +3,15 @@
 `m-db-port` is the **abstract runtime database port**: the execution interface the
 layers above the seam call to run compiled SQL and demarcate transactions. Each
 language supplies **N concrete adapter artifacts** (one per supported database
-type) that implement this behavioral contract. The module depends only on
-`m-core`. It is the one **contract-covered** module — no compatibility fixture
+type) that implement this behavioral contract. The module depends on `m-core`
+and on `m-dialect`, whose value it exposes. It is the one **contract-covered** module — no compatibility fixture
 maps to it; the port is proven by each language's
 [database-provider test contract](database-provider-test-contract.md).
 
 ## The port contract
 
-The port names an
+The port names a
+`dialect` /
 `execute(sql, binds, documentReads) → rows` /
 `executeWrite(sql, binds) → affected-row count` /
 `transaction(body, isolation?)` contract and nothing more. `execute` is row/result oriented;
@@ -20,9 +21,19 @@ append dialect-specific row-returning clauses merely to infer an affected count.
 projection ordinal pairs `(presence, document)`; it is empty for a result with no
 selected Structured Column. It carries no model, member, layout, or driver type.
 
+`dialect` is the concrete `m-dialect` strategy every statement crossing this
+port is spelled in — read-only, and answerable at any time. The port is the
+thing that holds the connection, so it is the only thing that knows which
+spelling its statements must use; a caller that reaches a port therefore reads
+the dialect off it rather than choosing a second value beside it and requiring
+the two to agree. The mapping runs **adapter → dialect only**: two adapters MAY
+report the same dialect, and nothing selects a port, an adapter, or a connection
+*from* a dialect.
+
 The port **depends on nothing application-specific** (beyond the neutral `m-core`
-types its contract names) — no driver, no concrete database, no harness — so any
-layer may hold the port without acquiring a database dependency. It carries the
+types its contract names, and the driver-free `m-dialect` value it exposes) — no
+driver, no concrete database, no harness — so any layer may hold the port without
+acquiring a database dependency. It carries the
 **normalize-at-boundary contract**: an adapter behind it returns rows whose cells
 are already **managed values** (produced by the `m-dialect` layer's parse
 functions), never raw driver representations. Nothing above the seam ever sees a
@@ -45,6 +56,24 @@ callback value, propagates a triggering error after successful rollback, and
 preserves both triggering and rollback errors when rollback fails. The outcome
 is not public provenance and transaction begin, commit, and rollback remain
 outside Database Call accounting.
+
+## The dialect is preserved through every port that stands in for another
+
+A port a caller holds MAY be a decorator over another port, or the
+transaction-scoped port `transaction` hands `body`. Every such port reports the
+dialect of the port it stands in for; none authors one of its own. Otherwise the
+dialect a caller reads would depend on which port in a chain it happened to
+hold, and a statement compiled inside a boundary could be spelled for a database
+other than the one about to execute it.
+
+A concrete adapter states its dialect as **metadata reachable without a
+connection**, so a composition root can resolve which spelling an adapter
+executes in — to report it, or to compile against it — before opening anything.
+
+What the port does **not** carry is **adapter identity**. Which adapter, driver,
+or configuration is behind a port is the composition root's own knowledge and
+appears neither on the port nor in any envelope a harness publishes; the dialect
+is a fact about the SQL, not a name for the thing executing it.
 
 `isolation` is optional and, when present, is the isolation the caller asked
 **this** boundary to open at, spelled in the concrete database's own vocabulary.
@@ -134,9 +163,12 @@ Two structural rules make the decomposition load-bearing:
   one program target the production database and a test target a different one
   without recompiling the layers between.
 - **The port depends on nothing application-specific, and the pure dialect layer
-  performs no I/O.** A wrong-direction dependency here — the port reaching for a
-  driver, or an above-seam module importing a concrete adapter — is the same class
-  of spec violation the module-dependency graph forbids.
+  performs no I/O.** The port's dependency on `m-dialect` costs it neither
+  property: the dialect layer opens no socket and imports no driver, so a layer
+  holding a port still acquires no database dependency. A wrong-direction
+  dependency here — the port reaching for a driver, an above-seam module
+  importing a concrete adapter, or the dialect layer reaching back for the port —
+  is the same class of spec violation the module-dependency graph forbids.
 
 ## Managed at the boundary, wire at the grader
 

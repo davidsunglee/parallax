@@ -191,6 +191,7 @@ m-sql-agg --> m-agg
 m-sql-agg --> m-sql
 m-dialect --> m-core
 m-db-port --> m-core
+m-db-port --> m-dialect
 m-db-error --> m-db-port
 m-db-error --> m-dialect
 m-unit-work --> m-predicate
@@ -368,6 +369,15 @@ construction it may reference any behavioral module it harnesses.
   as-of value propagates per hop to every temporal entity in the path. As-of
   *reads* are algebra-level, so navigation references `m-temporal-read`, not the
   write modules.
+- **`m-db-port --> m-dialect`.** A port is the thing that holds a connection, so
+  it is the only place that knows which SQL spelling the statements crossing it
+  are written in. It therefore EXPOSES that dialect rather than receiving one:
+  a caller reads the dialect off the port it already holds instead of choosing a
+  second value beside it and hoping the two agree. The edge costs the port none
+  of its independence — `m-dialect` is pure, opening no socket and importing no
+  driver — so any layer may still hold a port without acquiring a database
+  dependency. The direction is one-way: nothing selects a port from a dialect,
+  and two ports may report the same one.
 - **`m-unit-work --> m-temporal-read`.** A write-planning module depending on a
   read module is the surprise, and it is load-bearing: a temporal Observed State
   Key addresses the object it observed **plus the observed milestone's own

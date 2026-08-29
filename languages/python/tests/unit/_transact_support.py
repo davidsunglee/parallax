@@ -37,7 +37,7 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.unit_work import FixedClock, RetainedObservation
 from parallax.snapshot import InvalidData, connect
 from parallax.snapshot.handle import Database, Snapshot
@@ -177,7 +177,9 @@ class RecordingPort:
         rows: Sequence[Row] = (),
         row_queue: Sequence[Sequence[Row]] = (),
         write_affected: int = 1,
+        dialect: Dialect = POSTGRES,
     ) -> None:
+        self.dialect = dialect
         self.ops: list[tuple[object, ...]] = []
         # One entry per boundary this port was asked to open, carrying exactly
         # what the caller requested — `None` where it asked for nothing. Kept
@@ -305,6 +307,8 @@ def balance_row(*, in_z: dt.datetime, out_z: dt.datetime = INFINITY_INSTANT) -> 
 # predicate suites, so it lives here rather than in either one.
 class NoIoPort:
     """A minimal ``DbPort`` that raises if the connection is ever touched."""
+
+    dialect: Dialect = POSTGRES
 
     def execute(
         self,

@@ -46,7 +46,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.object_query import ObjectQueryNode
@@ -95,7 +95,6 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., FindResult]:
     def recording(
         query: ObjectQueryNode,
         model: CatalogedModel,
-        dialect: Dialect,
         port: DbPort,
         *,
         preference: Concurrency | None = None,
@@ -105,7 +104,6 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., FindResult]:
         result = real(
             query,
             model,
-            dialect,
             port,
             preference=preference,
             ledger=ledger,

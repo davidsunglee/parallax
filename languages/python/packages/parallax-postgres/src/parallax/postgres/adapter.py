@@ -51,7 +51,7 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, Dialect
 
 __all__ = ["PostgresAdapter"]
 
@@ -103,13 +103,13 @@ class _InfinityTimestamptzLoader(TimestamptzLoader):  # pragma: no cover - Docke
         return super().load(data)  # type: ignore[arg-type] - psycopg hands the loader a raw buffer at runtime
 
 
-def translate_driver_error(exc: psycopg.Error) -> DatabaseError:
+def translate_driver_error(dialect: Dialect, exc: psycopg.Error) -> DatabaseError:
     """The `m-db-error` re-raise target for a psycopg exception (port boundary).
 
     Extracts psycopg's driver-specific SQLSTATE (``exc.sqlstate`` — ``None`` for a
     non-database failure such as a dropped connection) and message, then delegates
-    category interpretation to ``m-db-error`` (which consults the pure Postgres
-    dialect code table). This module-internal seam is the psycopg half of the
+    category interpretation to ``m-db-error`` (which consults ``dialect``'s own
+    code table). This module-internal seam is the psycopg half of the
     normalize-at-boundary contract; it is not part of the ``parallax.postgres``
     public export (``PostgresAdapter`` alone — §8).
 
@@ -117,10 +117,10 @@ def translate_driver_error(exc: psycopg.Error) -> DatabaseError:
     failure-identity rule (``m-db-port``): no two invocations share an instance,
     so the object a caller catches names the invocation that raised it.
     """
-    return classify_error(POSTGRES, exc.sqlstate, str(exc))
+    return classify_error(dialect, exc.sqlstate, str(exc))
 
 
-def boundary_failure(exc: psycopg.Error) -> DatabaseError:
+def boundary_failure(dialect: Dialect, exc: psycopg.Error) -> DatabaseError:
     """The neutral error a transaction outcome carries for a boundary failure.
 
     A statement failure reaches its caller through ``raise ... from``, which is
@@ -130,13 +130,13 @@ def boundary_failure(exc: psycopg.Error) -> DatabaseError:
     into the outcome, and a caller re-raising the error later would see no cause
     at all.
     """
-    error = translate_driver_error(exc)
+    error = translate_driver_error(dialect, exc)
     error.__cause__ = exc
     return error
 
 
 @contextlib.contextmanager
-def translating_driver_errors() -> Generator[None]:
+def translating_driver_errors(dialect: Dialect) -> Generator[None]:
     """Re-raise any psycopg exception inside the block as a neutral ``DatabaseError``.
 
     A :class:`~parallax.core.db_error.DatabaseError` raised by an inner port call
@@ -147,7 +147,7 @@ def translating_driver_errors() -> Generator[None]:
     try:
         yield
     except psycopg.Error as exc:
-        raise translate_driver_error(exc) from exc
+        raise translate_driver_error(dialect, exc) from exc
 
 
 def adapt_binds(binds: Sequence[object]) -> list[object]:
@@ -165,6 +165,7 @@ def adapt_binds(binds: Sequence[object]) -> list[object]:
 
 
 def fold_document_reads(
+    dialect: Dialect,
     names: Sequence[str],
     rows: Sequence[Sequence[object]],
     document_reads: Sequence[DocumentReadOrdinals],
@@ -195,9 +196,7 @@ def fold_document_reads(
             if value is _PRESENT_JSON_NULL:
                 value = None
             row[name] = (
-                POSTGRES.parse_document_read(raw[presence], value)
-                if presence is not None
-                else value
+                dialect.parse_document_read(raw[presence], value) if presence is not None else value
             )
         managed.append(row)
     return managed
@@ -205,6 +204,15 @@ def fold_document_reads(
 
 class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/provider lanes
     """A psycopg-backed :class:`~parallax.core.db_port.DbPort` over one connection."""
+
+    dialect: Dialect = POSTGRES
+    """The one place this adapter's SQL spelling is stated.
+
+    Declared on the class, so a composition root reads it off
+    ``PostgresAdapter`` itself without opening a connection, and every dialect
+    decision this adapter makes — error classification, document-read parsing —
+    consults it rather than a module name that could drift from it.
+    """
 
     def __init__(self, connection: psycopg.Connection[TupleRow]) -> None:
         self._connection = connection
@@ -246,14 +254,16 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
-        with translating_driver_errors():
+        with translating_driver_errors(self.dialect):
             if document_reads:
                 with self._connection.cursor() as cursor:
                     cursor.execute(sql.encode(), adapt_binds(binds))
                     if cursor.description is None:
                         return []
                     names = [column.name for column in cursor.description]
-                    return fold_document_reads(names, cursor.fetchall(), document_reads)
+                    return fold_document_reads(
+                        self.dialect, names, cursor.fetchall(), document_reads
+                    )
             with self._connection.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(sql.encode(), adapt_binds(binds))
                 if cursor.description is None:
@@ -267,7 +277,7 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
                 ]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        with translating_driver_errors(), self._connection.cursor() as cursor:
+        with translating_driver_errors(self.dialect), self._connection.cursor() as cursor:
             cursor.execute(sql.encode(), adapt_binds(binds))
             return cursor.rowcount
 
@@ -316,7 +326,7 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         try:
             boundary.__enter__()
         except psycopg.Error as exc:
-            return BeginFailed(boundary_failure(exc))
+            return BeginFailed(boundary_failure(self.dialect, exc))
         if isolation is not None:
             unopened = self._at_isolation(isolation, boundary=boundary)
             if unopened is not None:
@@ -328,7 +338,7 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         try:
             boundary.__exit__(None, None, None)
         except psycopg.Error as exc:
-            return self._undone(CommitFailed(boundary_failure(exc)), boundary=None)
+            return self._undone(CommitFailed(boundary_failure(self.dialect, exc)), boundary=None)
         return Committed(value)
 
     def _at_isolation(
@@ -373,7 +383,7 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
                 self._connection.rollback()
             except psycopg.Error:
                 self._discard()
-            return BeginFailed(boundary_failure(exc))
+            return BeginFailed(boundary_failure(self.dialect, exc))
         return None
 
     def _undone(
@@ -402,7 +412,7 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
                 boundary.__exit__(type(error), error, error.__traceback__)
             self._connection.rollback()
         except psycopg.Error as exc:
-            rollback_error = boundary_failure(exc)
+            rollback_error = boundary_failure(self.dialect, exc)
             self._discard()
             return RollbackFailed(trigger, rollback_error)
         return RolledBack(trigger)

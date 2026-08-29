@@ -82,7 +82,7 @@ from typing import Any, Protocol, cast
 from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
 from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
-from parallax.core.dialect import Dialect, LockMode
+from parallax.core.dialect import LockMode
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
@@ -369,7 +369,6 @@ class _Milestone:
 def find(
     query: ObjectQueryNode,
     model: CatalogedModel,
-    dialect: Dialect,
     port: DbPort,
     *,
     preference: Concurrency | None = None,
@@ -448,13 +447,11 @@ def find(
     root_compiled = compile_read(
         plan_.root,
         meta,
-        dialect,
+        port.dialect,
         result_form="instance",
         lock=entity_read_lock(meta, root_entity.identity, preference),
     )
-    root_refs = _convert_level(
-        builder, ROOT_LEVEL, model, port, dialect, root_compiled, calls, observations
-    )
+    root_refs = _convert_level(builder, ROOT_LEVEL, model, port, root_compiled, calls, observations)
 
     level_refs: list[tuple[int, ...]] = []
     for index, level in enumerate(plan_.levels):
@@ -474,12 +471,12 @@ def find(
         child_compiled = compile_read(
             child_query,
             meta,
-            dialect,
+            port.dialect,
             result_form="instance",
             lock=entity_read_lock(meta, child_query.target, preference),
         )
         child_refs = _convert_level(
-            builder, index + 1, model, port, dialect, child_compiled, calls, observations
+            builder, index + 1, model, port, child_compiled, calls, observations
         )
         _attach_children(builder, meta, level, parents, child_refs)
         level_refs.append(child_refs)
@@ -609,7 +606,6 @@ def stage_rows(
 def find_rows(
     query: ObjectQueryNode,
     model: CatalogedModel,
-    dialect: Dialect,
     port: DbPort,
     *,
     preference: Concurrency | None = None,
@@ -641,13 +637,12 @@ def find_rows(
     compiled = compile_read(
         plan_.root,
         meta,
-        dialect,
+        port.dialect,
         result_form="row",
         lock=entity_read_lock(meta, root_entity.identity, preference),
     )
     rows = execute_read(
         port,
-        dialect,
         compiled,
         read,
     )
@@ -688,7 +683,6 @@ def _published_rows(stage: StagedRows, meta: Metamodel) -> tuple[PublishedRow, .
 def find_history(
     query: ObjectQueryNode,
     model: CatalogedModel,
-    dialect: Dialect,
     port: DbPort,
     *,
     read: ReadActivity = INERT,
@@ -728,11 +722,11 @@ def find_history(
     # `_edge_sort_key`) MUST resolve through it rather than the queried target's
     # own (possibly locally-empty) axes.
     entity = declaring_metadata(meta, metadata.identity)
-    compiled = compile_read(plan_.root, meta, dialect, result_form="instance")
+    compiled = compile_read(plan_.root, meta, port.dialect, result_form="instance")
     stage = stage_publishable_rows(
         model,
         compiled,
-        execute_read(port, dialect, compiled, read),
+        execute_read(port, compiled, read),
         pin=Pin(),
     )
 
@@ -758,7 +752,6 @@ def _convert_level(
     source: SourceLevel,
     model: CatalogedModel,
     port: DbPort,
-    dialect: Dialect,
     compiled: CompiledRead,
     calls: DatabaseCallScope,
     observations: ReadObservations,
@@ -790,7 +783,7 @@ def _convert_level(
     settles against.
     """
     refs: list[int] = []
-    for row in _execute_compiled(port, dialect, compiled, calls):
+    for row in _execute_compiled(port, compiled, calls):
         context = LevelContext(
             model.layouts.entity(row.resolved_entity),
             compiled.projected_documents,
@@ -973,7 +966,7 @@ def _correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> Attrib
 
 
 def _execute_compiled(
-    port: DbPort, dialect: Dialect, compiled: CompiledRead, calls: DatabaseCallScope
+    port: DbPort, compiled: CompiledRead, calls: DatabaseCallScope
 ) -> Iterator[MaterializedReadRow]:
     """Execute one compiled read, materializing its rows through its OWN transform.
 
@@ -993,12 +986,10 @@ def _execute_compiled(
     MATERIALIZED row is reachable for exactly as long as its consumer takes to
     convert it, and the level never holds a second copy of its result set.
     """
-    return map(compiled.materialize_row, execute_read(port, dialect, compiled, calls))
+    return map(compiled.materialize_row, execute_read(port, compiled, calls))
 
 
-def execute_read(
-    port: DbPort, dialect: Dialect, compiled: CompiledRead, calls: DatabaseCallScope
-) -> list[Row]:
+def execute_read(port: DbPort, compiled: CompiledRead, calls: DatabaseCallScope) -> list[Row]:
     """Run one compiled read's statement inside its own Database Call bracket.
 
     A FAILED call finishes too, and the failure then propagates untouched: a
@@ -1017,7 +1008,7 @@ def execute_read(
     statement = compiled.statement
     document_reads = compiled.document_reads
     with calls.database_call(statement, "READ", compiled.target) as call:
-        driver_sql = dialect.to_driver_sql(statement.sql)
+        driver_sql = port.dialect.to_driver_sql(statement.sql)
         binds = list(statement.binds)
         rows = (
             port.execute(driver_sql, binds, document_reads)

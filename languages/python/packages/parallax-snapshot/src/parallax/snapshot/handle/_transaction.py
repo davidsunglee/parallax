@@ -18,7 +18,7 @@ does, and opens its own Read under this transaction's attempt exactly as every
 participating read here does.
 
 The predicate-selected ``_where`` family is NOT owned here: those five public
-verbs are thin delegates that thread ``(uow, meta, conn, dialect)`` into
+verbs are thin delegates that thread ``(uow, meta, conn)`` into
 :mod:`parallax.snapshot.handle._predicate_writes`, which buffers through
 ``uow.buffer`` and never reaches back into this class.
 
@@ -41,7 +41,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from parallax.core.db_port import DbPort
-from parallax.core.dialect import Dialect
 from parallax.core.entity import (
     AttributeAssignment,
     EntityGraphConstruction,
@@ -149,7 +148,6 @@ class Transaction:
         "_codec",
         "_conn",
         "_construction",
-        "_dialect",
         "_inserted_objects",
         "_lifecycle",
         "_model",
@@ -161,7 +159,6 @@ class Transaction:
         uow: UnitOfWork,
         conn: DbPort,
         model: CatalogedModel,
-        dialect: Dialect,
         construction: EntityGraphConstruction | None,
         codec: EntityRowCodec,
         attempt: TransactionAttemptActivity,
@@ -170,7 +167,6 @@ class Transaction:
         self._uow = uow
         self._conn = conn
         self._model = model
-        self._dialect = dialect
         self._construction = construction
         self._codec = codec
         # The physical attempt every activity this transaction opens hangs
@@ -612,7 +608,6 @@ class Transaction:
                 self._model,
                 self._uow,
                 self._conn,
-                self._dialect,
                 self._attempt,
                 self._inserted_objects,
                 self._lifecycle,
@@ -703,7 +698,6 @@ class Transaction:
             return find(
                 node,
                 self._model,
-                self._dialect,
                 self._conn,
                 preference=self._uow.settings.concurrency,
                 ledger=self._uow,
@@ -736,7 +730,6 @@ class Transaction:
                     find_history(
                         node,
                         self._model,
-                        self._dialect,
                         self._conn,
                         read=read,
                     )
@@ -745,7 +738,6 @@ class Transaction:
                 find(
                     node,
                     self._model,
-                    self._dialect,
                     self._conn,
                     preference=self._uow.settings.concurrency,
                     ledger=self._uow,
@@ -782,7 +774,6 @@ class Transaction:
             return find_rows(
                 query,
                 self._model,
-                self._dialect,
                 self._conn,
                 preference=self._uow.settings.concurrency,
                 read=read,
@@ -854,7 +845,6 @@ class Transaction:
             self._uow,
             self._model,
             self._conn,
-            self._dialect,
             "update",
             query,
             assignments,
@@ -874,7 +864,6 @@ class Transaction:
             self._uow,
             self._model,
             self._conn,
-            self._dialect,
             "delete",
             query,
             (),
@@ -894,7 +883,6 @@ class Transaction:
             self._uow,
             self._model,
             self._conn,
-            self._dialect,
             "terminate",
             query,
             (),
@@ -917,7 +905,6 @@ class Transaction:
             self._uow,
             self._model,
             self._conn,
-            self._dialect,
             "updateUntil",
             query,
             assignments,
@@ -938,7 +925,6 @@ class Transaction:
             self._uow,
             self._model,
             self._conn,
-            self._dialect,
             "terminateUntil",
             query,
             (),

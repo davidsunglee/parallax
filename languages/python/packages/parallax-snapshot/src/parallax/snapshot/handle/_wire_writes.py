@@ -74,7 +74,6 @@ from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import NeutralType, decode_neutral_literal
 from parallax.core.db_port import DbPort
-from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
@@ -170,7 +169,6 @@ class WireWriteLane:
     model: CatalogedModel
     uow: UnitOfWork
     conn: DbPort
-    dialect: Dialect
     attempt: TransactionAttemptActivity
     inserts: BufferedInserts
     lifecycle: InstalledLifecycle | None
@@ -363,9 +361,7 @@ def wire_predicate_write(
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # a `target` document always builds this shape
     instructions.validate_instruction(instruction, lane.model.meta)
-    buffer_predicate_instruction(
-        lane.uow, lane.model, lane.conn, lane.dialect, instruction, lane.attempt
-    )
+    buffer_predicate_instruction(lane.uow, lane.model, lane.conn, instruction, lane.attempt)
 
 
 def _authored_row(

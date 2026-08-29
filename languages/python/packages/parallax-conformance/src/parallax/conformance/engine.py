@@ -596,11 +596,8 @@ def run_read_case(
     logical value observably different under the two layouts.
     """
     query = _read_query(case)
-    dialect = dialect_for(dialect_name)
     observed = lifecycle_run(lifecycle).observation()
-    db = handle.Database(
-        port, load_case_domain_model(case), dialect=dialect, lifecycle_provider=observed.provider
-    )
+    db = handle.Database(port, load_case_domain_model(case), lifecycle_provider=observed.provider)
     concurrency = _read_case_concurrency(case)
     try:
         result = (
@@ -663,9 +660,8 @@ def _wire_read(
     count come back beside the result rather than on it, because a Snapshot
     retains nothing about the execution that produced it.
     """
-    dialect = dialect_for(dialect_name)
     observed = lifecycle.observation()
-    db = handle.Database(port, domain, dialect=dialect, lifecycle_provider=observed.provider)
+    db = handle.Database(port, domain, lifecycle_provider=observed.provider)
     try:
         return db.wire.find(query), observed
     except _READ_ERRORS as exc:
@@ -835,9 +831,8 @@ def _wire_delivery(
     than a claim about production's: what the caller grades is the roots the
     delivery published, and that needs the whole delivery in hand.
     """
-    dialect = dialect_for(dialect_name)
     observed = lifecycle_run(lifecycle).observation()
-    db = handle.Database(port, domain, dialect=dialect, lifecycle_provider=observed.provider)
+    db = handle.Database(port, domain, lifecycle_provider=observed.provider)
     roots: list[object] = []
     try:
         with db.wire.stream(query, batch_size=_stream_batch_size(case)) as delivery:
@@ -1221,6 +1216,10 @@ class _AbortingPort:
 
     def __init__(self, inner: DbPort) -> None:
         self._inner = inner
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._inner.dialect
 
     def execute(
         self,
@@ -2507,7 +2506,7 @@ def _run_standalone_find(
     """
     query = _step_query(step)
     observed = lifecycle.observation()
-    db = handle.Database(port, domain, dialect=dialect, lifecycle_provider=observed.provider)
+    db = handle.Database(port, domain, lifecycle_provider=observed.provider)
     return db.transact(lambda tx: tx.wire.find(query), concurrency=concurrency), observed
 
 
@@ -3044,7 +3043,7 @@ def _run_snapshot_scenario(
     _seed_shadow_from_fixtures(case, model, context.shadow)
     _apply_given_apply(case, dialect, port, context.shadow)
     observation = lifecycle.observation()
-    db = handle.Database(port, domain, dialect=dialect, lifecycle_provider=observation.provider)
+    db = handle.Database(port, domain, lifecycle_provider=observation.provider)
     emissions: list[Emission] = []
     round_trips = 0
     results: list[_ScenarioStepResult] = []
@@ -3898,7 +3897,6 @@ def _execute_write_unit(
     database = handle.Database(
         _write_port(port, rollback=rollback),
         domain,
-        dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )
@@ -4004,7 +4002,6 @@ def _run_readless_predicate_write(
     database = handle.Database(
         _write_port(port, rollback=rollback),
         domain,
-        dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )
@@ -4172,7 +4169,6 @@ def _run_materializing_pair(
     database = handle.Database(
         _write_port(port, rollback=rollback),
         domain,
-        dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )
@@ -4755,7 +4751,6 @@ def _run_uow_group(
     database = handle.Database(
         _write_port(port, rollback=doomed),
         context.domain,
-        dialect=context.dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observation.provider,
     )
@@ -5510,7 +5505,6 @@ def run_interleaved_scenario_case(
     main_db = handle.Database(
         port,
         domain,
-        dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed_a.provider,
     )
@@ -5530,7 +5524,6 @@ def run_interleaved_scenario_case(
     peer_db = handle.Database(
         peer_connection,
         domain,
-        dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed_b.provider,
     )
@@ -6195,7 +6188,6 @@ def _conflict_source_nodes(
     database = handle.Database(
         port,
         domain,
-        dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )
@@ -6300,7 +6292,6 @@ def _run_conflict_write(
     database = handle.Database(
         port,
         domain,
-        dialect=dialect,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )

@@ -8,7 +8,7 @@ validation into a canonical
 dispatch, the minimal resolving read, per-row no-op elimination, and
 Materialized Write Group buffering.
 
-Every entry point threads ``(uow, model, conn, dialect)`` — the four pieces of
+Every entry point threads ``(uow, model, conn)`` — the three pieces of
 transaction state this lane actually reads — mirroring
 :func:`~parallax.snapshot.handle._write_inputs.retain_evidence`'s own shape.
 ``model`` is the connected model as one value: the accepted Metamodel every
@@ -48,7 +48,7 @@ from typing import Any, Final, cast
 from parallax.core import deep_fetch, inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
-from parallax.core.dialect import Dialect, LockMode
+from parallax.core.dialect import LockMode
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
@@ -145,7 +145,6 @@ def buffer_predicate(
     uow: UnitOfWork,
     model: CatalogedModel,
     conn: DbPort,
-    dialect: Dialect,
     mutation: PredicateMutation,
     query: ObjectQuery[Any, Any],
     assignments: Sequence[AttributeAssignment[Any]],
@@ -251,7 +250,7 @@ def buffer_predicate(
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
-    buffer_predicate_instruction(uow, model, conn, dialect, instruction, attempt)
+    buffer_predicate_instruction(uow, model, conn, instruction, attempt)
 
 
 def _reject_uncomposable_assignments(
@@ -310,7 +309,6 @@ def buffer_predicate_instruction(
     uow: UnitOfWork,
     model: CatalogedModel,
     conn: DbPort,
-    dialect: Dialect,
     instruction: PredicateWrite,
     attempt: TransactionAttemptActivity,
 ) -> None:
@@ -379,7 +377,6 @@ def buffer_predicate_instruction(
         uow,
         model,
         conn,
-        dialect,
         instruction,
         entity,
         declaring_entity,
@@ -422,7 +419,6 @@ def _materialize_predicate_write(
     uow: UnitOfWork,
     model: CatalogedModel,
     conn: DbPort,
-    dialect: Dialect,
     instruction: PredicateWrite,
     entity: EntityMetadata,
     declaring_entity: EntityMetadata,
@@ -549,12 +545,12 @@ def _materialize_predicate_write(
             compiled = compile_read(
                 deep_fetch.plan(entity, selection, meta).root,
                 meta,
-                dialect,
+                conn.dialect,
                 result_form="row",
                 lock=lock,
                 include_value_objects=needs_documents,
             )
-            driver_rows = execute_read(conn, dialect, compiled, read)
+            driver_rows = execute_read(conn, compiled, read)
             return compiled, stage_publishable_rows(model, compiled, driver_rows, pin=Pin())
 
     compiled, stage = uow.read(resolve)

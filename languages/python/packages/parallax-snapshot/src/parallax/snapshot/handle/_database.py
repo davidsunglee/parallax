@@ -48,7 +48,6 @@ from parallax.core.db_port import (
     RolledBack,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -156,7 +155,7 @@ class TransactionOwnershipError(RuntimeError):
     The active demarcation records the exact ``Database`` object that opened it,
     and a nested call joins only through that same object. An alias of the owner
     joins and receives the identical :class:`Transaction`; every different handle
-    is refused even when it carries the same model, adapter, dialect, clock, or
+    is refused even when it carries the same model, adapter, clock, or
     otherwise equivalent configuration, because the owner is scoped state rather
     than a registry keyed by any of those.
 
@@ -310,7 +309,6 @@ class Database:
     __slots__ = (
         "_clock",
         "_connected",
-        "_dialect",
         "_lifecycle",
         "_planner",
         "_port",
@@ -321,7 +319,6 @@ class Database:
         port: DbPort,
         model: DomainModel,
         *,
-        dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> None:
@@ -346,7 +343,6 @@ class Database:
             construction=(None if class_index(model) is None else graph_construction_of(model)),
         )
         self._port = port
-        self._dialect = dialect
         self._clock: Clock = clock if clock is not None else SystemClock()
         # Absent by default, and absence is the whole default path: every
         # operation below branches on it before allocating a UUID, a descriptor,
@@ -368,15 +364,15 @@ class Database:
         adapter: DbPort,
         model: DomainModel,
         *,
-        dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> Database:
         """Wire a concrete ``m-db-port`` adapter to the Domain Model it will serve.
 
         The composition-root entry point (spec §8): only the root names a
-        concrete adapter; everything above works against the port. ``dialect``
-        defaults to the sole adapter's; ``clock`` defaults to the system clock
+        concrete adapter; everything above works against the port, and the
+        dialect every statement is spelled in is that adapter's own.
+        ``clock`` defaults to the system clock
         (inject a fixed clock in tests). ``lifecycle_provider`` is the ONE
         execution-lifecycle seam (`m-execution-lifecycle`): the Provider owns
         its own error reporter, so there is no second argument, and omitting it
@@ -398,9 +394,7 @@ class Database:
                 "a descriptor produced (snapshot-class-backed-model-required); a bare "
                 "accepted Metamodel is a form no application holds"
             )
-        return cls(
-            adapter, model, dialect=dialect, clock=clock, lifecycle_provider=lifecycle_provider
-        )
+        return cls(adapter, model, clock=clock, lifecycle_provider=lifecycle_provider)
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         """Execute ``query`` exactly once, materializing fully, and return
@@ -467,7 +461,7 @@ class Database:
     def wire(self) -> WireDatabaseView:
         """This connection's Wire read interface (spec §3).
 
-        A lightweight view over the SAME connected model, adapter, and dialect —
+        A lightweight view over the SAME connected model and adapter —
         not a second connection and not a format switch. It needs no Entity
         Class, which is why a descriptor-backed connection answers this and
         refuses :meth:`find`.
@@ -539,7 +533,7 @@ class Database:
         begins.
         """
         with batch as calls:
-            return find(node, self._connected.model, self._dialect, self._port, calls=calls)
+            return find(node, self._connected.model, self._port, calls=calls)
 
     def _read(self, node: ObjectQueryNode, publication: ResultPublication) -> Snapshot[Any]:
         """One non-transactional read of ``node``, published through
@@ -567,7 +561,6 @@ class Database:
                     find_history(
                         node,
                         self._connected.model,
-                        self._dialect,
                         self._port,
                         read=read,
                     )
@@ -576,7 +569,6 @@ class Database:
                 find(
                     node,
                     self._connected.model,
-                    self._dialect,
                     self._port,
                     calls=read,
                 )
@@ -606,7 +598,6 @@ class Database:
             return find_rows(
                 query,
                 self._connected.model,
-                self._dialect,
                 self._port,
                 read=read,
             )
@@ -675,7 +666,7 @@ class Database:
                     "this Database did not open the active transaction, so it cannot "
                     "join it (transaction-owner-mismatch); only the exact Database "
                     "object that opened the boundary joins, however equivalent "
-                    "another handle's model, adapter, dialect, or clock may be"
+                    "another handle's model, adapter, or clock may be"
                 )
             _check_join_options(
                 demarcation.options,
@@ -745,14 +736,13 @@ class Database:
 
                     def in_txn(conn: DbPort) -> T:
                         physical.begun()
-                        edge = _FlushEdge(conn, meta, self._dialect, physical)
+                        edge = _FlushEdge(conn, meta, physical)
 
                         def body(uow: UnitOfWork) -> T:
                             tx = Transaction(
                                 uow,
                                 conn,
                                 self._connected.model,
-                                self._dialect,
                                 construction,
                                 codec,
                                 physical,
@@ -913,18 +903,16 @@ class _FlushEdge:
     always the one most recently opened.
     """
 
-    __slots__ = ("_attempt", "_batch", "_conn", "_dialect", "_model")
+    __slots__ = ("_attempt", "_batch", "_conn", "_model")
 
     def __init__(
         self,
         conn: DbPort,
         model: Metamodel,
-        dialect: Dialect,
         attempt: TransactionAttemptActivity,
     ) -> None:
         self._conn = conn
         self._model = model
-        self._dialect = dialect
         self._attempt = attempt
         self._batch: WriteBatchActivity = INERT
 
@@ -965,7 +953,7 @@ class _FlushEdge:
         # carries it; taking it again here would be a second spelling of one
         # fact.
         del trigger
-        dialect = self._dialect
+        dialect = self._conn.dialect
         batch = self._batch
         for step, statement in stream_lowered(plan, self._model, dialect):
             with batch.database_call(statement, "WRITE", step.entity) as call:
