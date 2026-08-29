@@ -10,7 +10,6 @@ dialect its own port declares rather than one chosen beside it.
 
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Any, cast
@@ -19,7 +18,7 @@ import pytest
 from _transact_support import ACCOUNT
 
 from _support import mirrored_models as mm
-from _support.db_port import body_outcome
+from _support.db_port import BACKTICKED, body_outcome
 from parallax.conformance import engine
 from parallax.conformance.boundary_runner import FaultInjectingPort
 from parallax.core.db_port import DbPort, DeclaresDialect, DocumentReadOrdinals, Row
@@ -27,16 +26,6 @@ from parallax.core.db_port import TransactionOutcome as Outcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import connect
-
-# A second dialect that differs only in how it spells an identifier, so any SQL
-# compiled through it is distinguishable from the same SQL compiled through
-# `POSTGRES` without a second database existing.
-BACKTICKED: Dialect = dataclasses.replace(
-    POSTGRES,
-    name="backticked",
-    quote_char="`",
-    reserved=frozenset({"id", "owner", "balance", "version"}),
-)
 
 _ACCOUNT_ROW: Row = {"id": 7, "owner": "Ada", "balance": Decimal("1.00"), "version": 1}
 

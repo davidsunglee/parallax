@@ -13,8 +13,8 @@ manager at every SQL decision point, never from a global registry.
 
 A `Dialect` is **selected by the concrete adapter** (`m-db-port`) that will
 execute the SQL, and every runtime caller reads it off the port it already
-holds. Nothing above the seam names a dialect beside a port, and nothing reaches
-a module-level dialect value by import: a global singleton is exactly the
+holds. Nothing above the seam names a `Dialect` value beside a port, and nothing
+reaches a module-level dialect value by import: a global singleton is exactly the
 registry this seam forbids, and it lets a caller compile for one database while
 executing against another.
 
@@ -29,6 +29,15 @@ second routing decision made in parallel with the first.
 across the tree is therefore: a runtime signature carries a port and derives the
 dialect from it; a pure signature carries a dialect and no port; nothing carries
 both.
+
+The rule binds the `Dialect` a statement is **spelled and executed in**. A
+**requested dialect name** is a different thing and MAY accompany a port: it is
+the caller's target, matched against what an implementation claims so that an
+unclaimed target is refused — a refusal owed *before* any port is consulted,
+which is why the name cannot be read off one. What such a name MUST NOT do is
+decide how a statement is spelled. That `Dialect` comes from the executing port
+alone, so no request can make a caller compile SQL for a database other than the
+one about to run it.
 
 The database seam comprises this **pure dialect / portability layer**
 (`m-dialect`), an **abstract runtime database port** (`m-db-port`) implemented by
