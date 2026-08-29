@@ -175,7 +175,7 @@ def read_effective_set(case: Case, family: Family, target_name: str) -> list[str
 # --- Relational Document Layout ---------------------------------------------
 
 
-class _DocumentMember(NamedTuple):
+class DocumentMember(NamedTuple):
     """One member a Relational Document Layout keeps inside the shared Structured
     Column: where it sits in the document and — for a leaf — the declared type its
     stored spelling decodes through.
@@ -196,7 +196,7 @@ class _DocumentMember(NamedTuple):
         return self.address.path[0]
 
 
-def document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[_DocumentMember, ...]]:
+def document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[DocumentMember, ...]]:
     """*entity*'s Structured Column and the top-level members it carries.
 
     Answers ``("", ())`` for a conventional ``Columns`` entity, which is what makes
@@ -218,12 +218,12 @@ def document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[_Doc
         return "", ()
     family = Family(case.model.entity_defs)
 
-    def resident(declaration: dict[str, Any], type_spelling: str | None) -> _DocumentMember | None:
+    def resident(declaration: dict[str, Any], type_spelling: str | None) -> DocumentMember | None:
         address = member_address(family, entity.canonical_name, declaration["name"])
         placement = layout.placement(address)
         if not (isinstance(placement, DocumentPath) and placement.slot == slot):
             return None
-        return _DocumentMember(address, declaration["column"], placement.path, type_spelling)
+        return DocumentMember(address, declaration["column"], placement.path, type_spelling)
 
     declared = (
         *((attribute, attribute["type"]) for attribute in entity.attributes),
