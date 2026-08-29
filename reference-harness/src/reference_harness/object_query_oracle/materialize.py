@@ -16,7 +16,7 @@ can stand at — :func:`materialize_read` for the position an Object Query names
 :func:`materialize_navigated` for one a relationship declaration reached, and
 :func:`materialize_hop_level` for one level of a deep fetch — and the steps it is
 composed of are private. What comes back is a :class:`PublishedRow`, whose
-constructor only those entry points can reach and which is what the consumers of a
+constructor demands a token this module keeps and which is what the consumers of a
 published row accept, so a path assembling the sequence itself fails where it
 would have published rather than silently publishing storage. A step that runs
 AFTER an entry point projects what it published and demands that provenance on
@@ -89,19 +89,25 @@ class _MaterializedRow(dict[str, Any]):
 _SEAM = object()
 """The token :class:`PublishedRow`'s constructor demands.
 
-It is module-private, so holding the class is not enough to stamp a row with the
-provenance its consumers check for: the entry points below, which ARE the
-derivations that provenance stands for, are the only places one can be minted.
+Holding the class is not enough to stamp a row with the provenance its consumers
+check for; holding this is, and it is private to this module, so every mint is
+written here beside the derivations that provenance stands for. The privacy is
+the underscore's — a path that reaches past it forges provenance the way any
+Python privacy is forged, and what the token stops is a publishing path written
+in the ordinary way.
 """
 
 
 class PublishedRow(_MaterializedRow):
     """A row that reached its logical result through this module's seam.
 
-    The type is the evidence: a consumer of published rows accepts only this, so a
-    path that assembled the materialization sequence itself — or skipped it — fails
-    where it would have published rather than publishing a raw physical row that
-    still carries a discriminator, a branch literal, or an undecoded document.
+    The type is the evidence: a consumer of published rows accepts only this, and
+    the constructor demands :data:`_SEAM`, so a path that assembled the
+    materialization sequence itself — or skipped it — fails where it would have
+    published rather than publishing a raw physical row that still carries a
+    discriminator, a branch literal, or an undecoded document. What the row went
+    through is checked at the end of the sequence rather than at the type: see
+    :func:`_refuse_a_carried_branch`.
     """
 
     __slots__ = ()
@@ -116,9 +122,9 @@ class PublishedRow(_MaterializedRow):
     ) -> None:
         if seam is not _SEAM:
             raise CaseFailure(
-                "a published row is minted by this module's materialization entry "
-                "points alone, because the provenance stands for the derivation they "
-                "run; a row assembled anywhere else has not been through it."
+                "a published row is minted with a token this module keeps to itself, "
+                "because the provenance stands for the derivation its materialization "
+                "entry points run; a row assembled elsewhere has not been through it."
             )
         super().__init__(
             values,
@@ -285,6 +291,11 @@ def materialize_hop_level(
     facts because they are the level's own; the derivation over them is this
     module's, which is why the level is materialized here rather than assembled
     step by step by the caller that planned it.
+
+    A table-per-concrete-subtype hop over more than one concrete also arrives with
+    ``None``: resolving a level's branch literal takes the ``union all`` shape that
+    names it, which the deep fetch does not plan, so such a level publishes rows
+    still carrying whatever their statement projected.
 
     Navigating is instance-form, and a polymorphic level's document fan-out is
     taken per row at the concrete that row's own derived ``familyVariant`` names.

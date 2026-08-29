@@ -632,7 +632,9 @@ def execute_fetch_levels(
         # The level is materialized WHOLE by the seam that owns its kind of
         # position, which it states its own facts to: the raw tag column a
         # polymorphic (multi-concrete, table-per-hierarchy) hop projects, and the
-        # family's tag map. Every other hop resolves one concrete and names none.
+        # family's tag map. Every other hop names none — it resolves one concrete,
+        # targets no family, or is table-per-concrete-subtype, whose multi-concrete
+        # hop this planner reads as a single table and so cannot name a carrier for.
         published = materialize.materialize_hop_level(
             case,
             step.child_entity,

@@ -79,9 +79,10 @@ def corpus_case() -> Callable[[str], Case]:
 def damaged_case(corpus_case: Callable[[str], Case]) -> Callable[[str], Case]:
     """A private, fully mutable copy of one shipped case, for a group to rewrite.
 
-    A group breaks it to witness a refusal, or varies it into a legal shape the
-    corpus does not carry — either way against a case whose model, golden text,
-    and observables are the corpus's own.
+    A shipped case is the starting point rather than the invariant: a group breaks
+    it to witness a refusal, or varies it into a legal shape the corpus does not
+    carry, and either way may rewrite any part of the copy — its model, its Object
+    Query, its golden statements, and its expected observables.
     """
 
     def load(name: str) -> Case:
