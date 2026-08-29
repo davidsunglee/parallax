@@ -32,7 +32,6 @@ from parallax.conformance.vo_models import (
     CustomerPhone,
     CustomerPoint,
 )
-from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction
@@ -70,7 +69,7 @@ def _connect_and_seed(provisioner: Any, observed: LifecycleObservation | None = 
 
 
 def _stored_address(provisioner: Any) -> object:
-    state = engine.read_table_state(provisioner.port, model_of(_CUSTOMER), POSTGRES)
+    state = engine.read_table_state(provisioner.port, model_of(_CUSTOMER))
     (row,) = state["customer"]
     return row["address"]
 

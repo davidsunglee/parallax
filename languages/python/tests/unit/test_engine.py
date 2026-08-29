@@ -158,9 +158,7 @@ def test_compile_read_case_matches_golden() -> None:
 
 def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
     port = FakeDbPort([{"id": 1, "name": "Grace"}])
-    emissions, rows, round_trips = engine.run_read_case(
-        _case("m-value-object-001"), "postgres", port
-    )
+    emissions, rows, round_trips = engine.run_read_case(_case("m-value-object-001"), port)
     assert round_trips == 1
     assert rows == [{"id": 1, "name": "Grace"}]
     assert emissions[0].sql.count("?") == 2
@@ -172,9 +170,7 @@ def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
 def test_run_read_case_wire_renders_managed_row_values() -> None:
     # The port returns managed values; run_read_case records canonical wire form.
     port = FakeDbPort([{"id": 1, "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000")}])
-    _emissions, rows, _round_trips = engine.run_read_case(
-        _case("m-value-object-001"), "postgres", port
-    )
+    _emissions, rows, _round_trips = engine.run_read_case(_case("m-value-object-001"), port)
     assert rows == [{"id": 1, "external_id": "123e4567-e89b-12d3-a456-426614174000"}]
 
 
@@ -195,9 +191,7 @@ def test_run_read_case_materializes_family_variant_from_the_tph_tag_column() -> 
             }
         ]
     )
-    _emissions, rows, _round_trips = engine.run_read_case(
-        _case("m-inheritance-003"), "postgres", port
-    )
+    _emissions, rows, _round_trips = engine.run_read_case(_case("m-inheritance-003"), port)
     assert rows == [
         {
             "id": 1,
@@ -227,9 +221,7 @@ def test_run_read_case_materializes_family_variant_from_the_tpcs_literal_column(
             }
         ]
     )
-    _emissions, rows, _round_trips = engine.run_read_case(
-        _case("m-inheritance-050"), "postgres", port
-    )
+    _emissions, rows, _round_trips = engine.run_read_case(_case("m-inheritance-050"), port)
     assert rows[0]["familyVariant"] == "Invoice"
     assert "family_variant" not in rows[0]
 
@@ -238,9 +230,7 @@ def test_run_read_case_concrete_target_read_carries_no_family_variant() -> None:
     # m-inheritance-001 (CardPayment, concrete target): the compiled SELECT never
     # projects a tag/literal column, so the row passes through wire rendering alone.
     port = FakeDbPort([{"id": 1, "amount": decimal.Decimal("100.00"), "card_network": "Visa"}])
-    _emissions, rows, _round_trips = engine.run_read_case(
-        _case("m-inheritance-001"), "postgres", port
-    )
+    _emissions, rows, _round_trips = engine.run_read_case(_case("m-inheritance-001"), port)
     assert rows == [{"id": 1, "amount": "100.00", "card_network": "Visa"}]
     assert "familyVariant" not in rows[0]
 
@@ -257,9 +247,7 @@ def test_run_read_case_reports_an_unresolvable_target_as_an_engine_error() -> No
     when["objectQuery"] = query
     document["when"] = when
     with pytest.raises(engine.EngineError, match=case.path.name):
-        engine.run_read_case(
-            dataclasses.replace(case, document=document), "postgres", FakeDbPort([])
-        )
+        engine.run_read_case(dataclasses.replace(case, document=document), FakeDbPort([]))
 
 
 def test_wire_value_covers_the_managed_type_set() -> None:
@@ -709,7 +697,7 @@ def test_a_carrier_the_wire_renderer_leaves_alone_reconciles_by_its_own_equality
 
 def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
     port = FakeWritePort(find_rows=[{"id": 7}])
-    run = engine.run_scenario_case(_case("m-unit-work-001"), "postgres", port)
+    run = engine.run_scenario_case(_case("m-unit-work-001"), port)
     assert run.round_trips == 2
     assert run.errors == []  # a keyed unit-of-work scenario reports no error observation
     assert [e.case_pointer for e in run.emissions] == [
@@ -730,7 +718,7 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
 
 def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> None:
     port = FakeWritePort(find_rows=[])
-    run = engine.run_scenario_case(_case("m-unit-work-011"), "postgres", port)
+    run = engine.run_scenario_case(_case("m-unit-work-011"), port)
     assert run.round_trips == 2  # the aborted insert still counts one round trip
     assert len(port.writes) == 1  # the DML executed before the abort
     # An UNGROUPED find runs in its OWN transaction, exactly as `run_read_case`
@@ -761,7 +749,7 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    run = engine.run_scenario_case(_case("m-unit-work-005"), "postgres", port)
+    run = engine.run_scenario_case(_case("m-unit-work-005"), port)
     assert run.round_trips == 3
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
@@ -821,7 +809,7 @@ def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_i
     # latest observation and reading the named delivery's diverge.
     port = _two_delivery_port()
 
-    run = engine.run_scenario_case(_case("m-unit-work-030"), "postgres", port)
+    run = engine.run_scenario_case(_case("m-unit-work-030"), port)
 
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
@@ -855,7 +843,7 @@ def test_run_scenario_case_settles_on_the_named_delivery_rather_than_the_latest_
 
     with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
         engine.run_scenario_case(
-            dataclasses.replace(_case("m-unit-work-030"), document=document), "postgres", port
+            dataclasses.replace(_case("m-unit-work-030"), document=document), port
         )
 
 
@@ -866,7 +854,7 @@ def test_run_scenario_case_reports_each_streamed_steps_own_delivered_roots() -> 
     # a write that moves account 1, so the two entries differ by exactly what that
     # write did: an observation read off the group's accumulated published values,
     # or off one page, could not tell them apart.
-    run = engine.run_scenario_case(_case("m-unit-work-030"), "postgres", _two_delivery_port())
+    run = engine.run_scenario_case(_case("m-unit-work-030"), _two_delivery_port())
 
     assert run.step_rows == [
         {
@@ -1008,7 +996,7 @@ def test_run_scenario_case_reports_a_grouped_finds_own_materialized_graph() -> N
     # what IT materialized — roots plus the relationship its own Include Path
     # populated — at its own step pointer, so the two graphs differ by exactly
     # what the group's write did between them.
-    run = engine.run_scenario_case(_case("m-unit-work-029"), "postgres", _ryow_relationship_port())
+    run = engine.run_scenario_case(_case("m-unit-work-029"), _ryow_relationship_port())
 
     assert [entry["at"] for entry in run.step_graphs] == ["/scenario/0", "/scenario/2"]
     graphs = [cast("dict[str, list[Any]]", entry["graph"]) for entry in run.step_graphs]
@@ -1043,7 +1031,6 @@ def test_run_scenario_case_reports_an_ungrouped_finds_own_materialized_graph() -
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     run = engine.run_scenario_case(
         case,
-        "postgres",
         _ScriptedPort(read_rows=[[dict(_ORDER_1_ROW)], [dict(_ORDER_ITEM_11_ROW)]]),
     )
     assert [entry["at"] for entry in run.step_graphs] == ["/scenario/0"]
@@ -1062,7 +1049,7 @@ def test_run_scenario_case_refuses_a_read_step_graph_over_no_include_path() -> N
     del steps[0]["objectQuery"]["includes"]
 
     with pytest.raises(engine.EngineError, match="declares no `includes`"):
-        engine.run_scenario_case(case, "postgres", _ryow_relationship_port())
+        engine.run_scenario_case(case, _ryow_relationship_port())
 
 
 def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_contents() -> None:
@@ -1075,9 +1062,7 @@ def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_conte
     steps[0]["expectGraph"] = {"Account": [{"id": 2}]}
 
     with pytest.raises(engine.EngineError, match="carries no `stepGraphs` channel"):
-        engine.run_interleaved_scenario_case(
-            case, "postgres", _ScriptedPort(), lambda: _ScriptedPort()
-        )
+        engine.run_interleaved_scenario_case(case, _ScriptedPort(), lambda: _ScriptedPort())
 
 
 def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
@@ -1088,7 +1073,7 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    run = engine.run_scenario_case(_case("m-unit-work-002"), "postgres", port)
+    run = engine.run_scenario_case(_case("m-unit-work-002"), port)
     assert run.round_trips == 3
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
@@ -1125,7 +1110,7 @@ def test_run_scenario_case_discards_an_aborted_ungrouped_temporal_writes_case_st
             _ledger_update("300.00", "2026-02-01T00:00:00+00:00"),
         ]
     )
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
     assert port.rollbacks == 1 and port.commits == 1
     aborted_close, _aborted_successor, close, successor = run.emissions
     assert aborted_close.binds[3] == "2024-02-01T00:00:00+00:00"
@@ -1148,7 +1133,7 @@ def test_scenario_compile_lane_closes_the_fixture_milestone_the_run_lane_closes(
     port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
 
     compiled, _round_trips = engine.compile_scenario_case(case, "postgres")
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
 
     assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
         (e.case_pointer, e.sql, e.binds) for e in run.emissions
@@ -1218,7 +1203,7 @@ def test_scenario_compile_lane_discards_an_aborted_ungrouped_writes_case_state()
     port = FakeWritePort(
         find_rows=[_ledger_row(9, "100.00", in_z="2025-01-01T00:00:00+00:00", acct_num="D")]
     )
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
     assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
         (e.case_pointer, e.sql, e.binds) for e in run.emissions
     ]
@@ -1336,7 +1321,7 @@ def test_run_scenario_case_routes_the_two_group_interleave_to_run_interleaved_sc
         },
     )
     with pytest.raises(engine.EngineError, match="run_interleaved_scenario_case"):
-        engine.run_scenario_case(case, "postgres", FakeWritePort())
+        engine.run_scenario_case(case, FakeWritePort())
 
 
 def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() -> None:
@@ -1471,7 +1456,7 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
 
     emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
-        case, "postgres", main_port, lambda: peer_port
+        case, main_port, lambda: peer_port
     )
 
     assert round_trips == 6
@@ -1520,7 +1505,7 @@ def test_run_interleaved_scenario_case_applies_out_of_band_statements_before_the
     main_port = _ScriptedPort(read_rows=[[row_v1], []], write_affected=[1, 0, 0])
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
 
-    engine.run_interleaved_scenario_case(with_apply, "postgres", main_port, lambda: peer_port)
+    engine.run_interleaved_scenario_case(with_apply, main_port, lambda: peer_port)
 
     assert main_port.writes[0][0] == "update account set balance = %s"
     assert len(main_port.writes) == 3  # the statement, then the doomed group's two
@@ -1591,7 +1576,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[0])
 
     _emissions, _round_trips, conflict_actual, _find_rows = engine.run_interleaved_scenario_case(
-        case, "postgres", main_port, lambda: peer_port
+        case, main_port, lambda: peer_port
     )
 
     assert conflict_actual == 0
@@ -1666,7 +1651,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
     peer_port = _ScriptedPort(read_rows=[[row3]])
 
     emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
-        case, "postgres", main_port, lambda: peer_port
+        case, main_port, lambda: peer_port
     )
 
     assert conflict_actual is None
@@ -1697,7 +1682,7 @@ def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -
     )
 
     with pytest.raises(RuntimeError, match="unexpected defect"):
-        engine.run_interleaved_scenario_case(case, "postgres", main_port, lambda: peer_port)
+        engine.run_interleaved_scenario_case(case, main_port, lambda: peer_port)
     assert peer_port.closed
 
 
@@ -2157,7 +2142,7 @@ def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_capabili
 
     with pytest.raises(engine.EngineError, match="refuses to start") as exc_info:
         engine.run_interleaved_scenario_case(
-            case, "postgres", cast("Any", main_connection), lambda: cast("Any", peer_connection)
+            case, cast("Any", main_connection), lambda: cast("Any", peer_connection)
         )
 
     message = str(exc_info.value)
@@ -2248,7 +2233,7 @@ def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_all_rung
 
     with pytest.raises(engine.EngineError, match="refuses to start") as exc_info:
         engine.run_interleaved_scenario_case(
-            case, "postgres", cast("Any", main_connection), lambda: cast("Any", peer_connection)
+            case, cast("Any", main_connection), lambda: cast("Any", peer_connection)
         )
 
     assert "main connection" in str(exc_info.value)
@@ -2691,7 +2676,7 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
             }
         ]
     )
-    run = engine.run_scenario_case(_load_case("m-unit-work-015"), "postgres", port)
+    run = engine.run_scenario_case(_load_case("m-unit-work-015"), port)
     assert run.round_trips == 5
     # The close plus the two rectangles the split chains, all under the write
     # step's own pointer.
@@ -2715,7 +2700,7 @@ def test_a_tracked_milestone_of_a_document_target_is_refused_after_out_of_band_s
     # and lose the key. The engine names the shape instead of chaining it.
     port = FakeWritePort()
     with pytest.raises(engine.EngineError, match="out-of-band statements may have overtaken"):
-        engine.run_write_sequence_case(_load_case("m-txtime-write-011"), "postgres", port)
+        engine.run_write_sequence_case(_load_case("m-txtime-write-011"), port)
 
 
 def test_a_tracked_milestone_under_columns_survives_out_of_band_statements() -> None:
@@ -2742,7 +2727,7 @@ def test_a_tracked_milestone_of_a_document_target_chains_when_the_case_authored_
     # This is what keeps the refusal above narrow enough to leave the corpus alone.
     port = FakeWritePort(find_rows=[_VOYAGE_MILESTONE])
     emissions, _table_state, round_trips = engine.run_write_sequence_case(
-        _load_case("m-txtime-write-010"), "postgres", port
+        _load_case("m-txtime-write-010"), port
     )
     # Three DML statements plus the update entry's own resolving read.
     assert round_trips == 4
@@ -2770,9 +2755,7 @@ def test_a_document_milestone_opened_after_out_of_band_statements_still_chains()
         },
     )
     port = FakeWritePort(find_rows=[_VOYAGE_MILESTONE])
-    emissions, _table_state, round_trips = engine.run_write_sequence_case(
-        with_apply, "postgres", port
-    )
+    emissions, _table_state, round_trips = engine.run_write_sequence_case(with_apply, port)
     assert round_trips == 4
     assert [e.case_pointer for e in emissions] == [
         "/writeSequence/0",
@@ -2837,7 +2820,7 @@ def test_run_conflict_case_temporal_close_propagates_a_failed_call() -> None:
     # and then propagates: the lane admits only the shortfall class the case's own
     # facts imply, and a transient database failure is not one.
     with pytest.raises(DatabaseError):
-        engine.run_conflict_case(_load_case("m-temporal-read-010"), "postgres", _FailingClosePort())
+        engine.run_conflict_case(_load_case("m-temporal-read-010"), _FailingClosePort())
 
 
 def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() -> None:
@@ -2845,7 +2828,7 @@ def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() ->
     # OWN `db.transact` unit, never the whole sequence in one transaction.
     port = FakeWritePort()
     emissions, table_state, round_trips = engine.run_write_sequence_case(
-        _case("m-unit-work-003"), "postgres", port
+        _case("m-unit-work-003"), port
     )
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/writeSequence/0", "/writeSequence/1"]
@@ -2869,7 +2852,7 @@ def test_run_write_sequence_case_settles_a_temporal_write_against_its_resolving_
     # that read beside the three DML statements.
     port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
     emissions, table_state, round_trips = engine.run_write_sequence_case(
-        _load_case("m-txtime-write-002"), "postgres", port
+        _load_case("m-txtime-write-002"), port
     )
     assert round_trips == 4
     assert [e.case_pointer for e in emissions] == [
@@ -2894,7 +2877,7 @@ def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation(
     port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
     run = LifecycleRun()
     emissions, _table_state, round_trips = engine.run_write_sequence_case(
-        _load_case("m-txtime-write-002"), "postgres", port, run
+        _load_case("m-txtime-write-002"), port, run
     )
     observed = execution_lifecycle_observation(
         run.roots, [emission.sql for emission in emissions], run.resolving_read_calls
@@ -2926,7 +2909,7 @@ def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window(
         ]
     )
     _emissions, table_state, round_trips = engine.run_write_sequence_case(
-        _load_case("m-bitemp-write-001"), "postgres", port
+        _load_case("m-bitemp-write-001"), port
     )
     assert round_trips == 6
     assert len(port.writes) == 5 and port.commits == 2
@@ -3172,7 +3155,7 @@ def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execut
         },
     )
     port = FakeWritePort()
-    _emissions, _table_state, round_trips = engine.run_write_sequence_case(case, "postgres", port)
+    _emissions, _table_state, round_trips = engine.run_write_sequence_case(case, port)
     assert round_trips == 1
     assert len(port.writes) == 1
     sql, binds = port.writes[0]
@@ -3542,7 +3525,7 @@ def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
         },
     )
     port = FakeWritePort()
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
     assert run.round_trips == 1
     assert run.emissions[0].case_pointer == "/scenario/0/write"
     assert run.emissions[0].sql == "delete from wallet where balance < ?"
@@ -3586,7 +3569,7 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
     assert run.round_trips == 2
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
@@ -3626,7 +3609,7 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
         },
     )
     port = FakeWritePort()
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
     assert run.round_trips == 1
     assert run.emissions[0].sql == "delete from wallet where balance < ?"
     assert len(port.writes) == 1
@@ -3669,7 +3652,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
     assert run.round_trips == 2
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
@@ -3742,7 +3725,7 @@ def test_run_scenario_case_refuses_a_keyed_temporal_write_after_a_materializing_
         ]
     )
     with pytest.raises(engine.EngineError, match="materializing predicate write already moved"):
-        engine.run_scenario_case(case, "postgres", _ledger_resolve_port())
+        engine.run_scenario_case(case, _ledger_resolve_port())
 
 
 def test_run_scenario_case_keeps_case_state_when_a_materializing_pair_aborts() -> None:
@@ -3758,7 +3741,7 @@ def test_run_scenario_case_keeps_case_state_when_a_materializing_pair_aborts() -
         ]
     )
     port = _ledger_resolve_port()
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
     assert port.rollbacks == 1 and port.commits == 1
     close, _successor = run.emissions[-2:]
     assert close.case_pointer == "/scenario/2/write"
@@ -3779,7 +3762,6 @@ def test_run_scenario_case_chains_a_key_inserted_after_a_materializing_pair() ->
     )
     run = engine.run_scenario_case(
         case,
-        "postgres",
         _ledger_resolve_port(
             _ledger_row(9, "100.00", in_z="2025-06-01T00:00:00+00:00", acct_num="D")
         ),
@@ -3830,8 +3812,6 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
     # calling this function, so the guard is unreachable through the public
     # entry point — a genuine caller-contract defense, pinned here by
     # calling the function directly with a manufactured mismatch.
-    from parallax.core.dialect import POSTGRES
-
     domain = engine.load_case_domain_model(_case("m-unit-work-001"))
     meta = models.accepted_model_of(domain)
     steps: list[Mapping[str, object]] = [
@@ -3856,7 +3836,6 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
             FakeWritePort(),
             domain,
             meta,
-            POSTGRES,
             "locking",
             steps,
             0,
@@ -3905,7 +3884,7 @@ def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_dif
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
     with pytest.raises(engine.EngineError, match="SAME canonical predicate"):
-        engine.run_scenario_case(case, "postgres", port)
+        engine.run_scenario_case(case, port)
 
 
 def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
@@ -3925,7 +3904,7 @@ def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
     )
     port = FakeWritePort()
     with pytest.raises(engine.EngineError, match="Ghost"):
-        engine.run_write_sequence_case(case, "postgres", port)
+        engine.run_write_sequence_case(case, port)
 
 
 # --------------------------------------------------------------------------- #
@@ -3950,7 +3929,7 @@ _ACCOUNT_ROW_2: Final[Row] = {
 def test_run_conflict_case_single_attempt() -> None:
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     emissions, affected, table_state, _round_trips = engine.run_conflict_case(
-        _load_case("m-opt-lock-006"), "postgres", port
+        _load_case("m-opt-lock-006"), port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert affected == 1
@@ -3964,7 +3943,7 @@ def test_run_conflict_case_reads_its_source_before_applying_given_apply() -> Non
     # the stale gate the case grades would never be reachable.
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     emissions, affected, table_state, _round_trips = engine.run_conflict_case(
-        _load_case("m-opt-lock-005"), "postgres", port
+        _load_case("m-opt-lock-005"), port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert port.reads[0][0].startswith("select")  # the source read ran first
@@ -3992,7 +3971,7 @@ class _ZeroAffectedPort(FakeWritePort):
 def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> None:
     port = _ZeroAffectedPort(find_rows=[_ACCOUNT_ROW_2])
     _emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
-        _load_case("m-opt-lock-005"), "postgres", port
+        _load_case("m-opt-lock-005"), port
     )
     assert affected == 0
 
@@ -4003,7 +3982,7 @@ def test_a_conflict_attempt_whose_source_read_finds_no_row_is_refused() -> None:
     # verbs rather than merely unpleasant.
     port = FakeWritePort(find_rows=[])
     with pytest.raises(engine.EngineError, match="found no row for"):
-        engine.run_conflict_case(_load_case("m-opt-lock-006"), "postgres", port)
+        engine.run_conflict_case(_load_case("m-opt-lock-006"), port)
 
 
 def test_a_conflict_attempt_declaring_a_version_its_read_did_not_observe_is_refused() -> None:
@@ -4012,7 +3991,7 @@ def test_a_conflict_attempt_declaring_a_version_its_read_did_not_observe_is_refu
     # state or the case grades a statement no read of this lane produced.
     port = FakeWritePort(find_rows=[{**_ACCOUNT_ROW_2, "version": 7}])
     with pytest.raises(engine.EngineError, match="its own source read observed 7"):
-        engine.run_conflict_case(_load_case("m-opt-lock-006"), "postgres", port)
+        engine.run_conflict_case(_load_case("m-opt-lock-006"), port)
 
 
 def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> None:
@@ -4030,9 +4009,7 @@ def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> Non
         },
     )
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
-        case, "postgres", port
-    )
+    emissions, affected, _table_state, _round_trips = engine.run_conflict_case(case, port)
     assert [e.sql for e in emissions] == ["delete from account where id = ? and version = ?"]
     assert affected == 1
 
@@ -4056,7 +4033,7 @@ def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() 
     # which is why a Locking-mode conflict is expressible here and nowhere else
     # in this lane.
     _emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
-        _load_case("m-temporal-read-012"), "postgres", _ZeroAffectedClosePort()
+        _load_case("m-temporal-read-012"), _ZeroAffectedClosePort()
     )
     assert affected == 0
 
@@ -4083,7 +4060,7 @@ def test_a_conflict_attempt_row_authoring_an_unobservable_observed_version_is_re
         ]
     )
     with pytest.raises(engine.EngineError, match="an unversioned row authors no `observedVersion`"):
-        engine.run_conflict_case(case, "postgres", FakeWritePort())
+        engine.run_conflict_case(case, FakeWritePort())
 
 
 def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_read() -> None:
@@ -4096,14 +4073,12 @@ def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_r
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00")}]
     )
     with pytest.raises(WriteEvidenceError, match="write-evidence-unavailable"):
-        engine.run_conflict_case(
-            _unversioned_conflict_case([{"id": 1, "balance": 500.00}]), "postgres", port
-        )
+        engine.run_conflict_case(_unversioned_conflict_case([{"id": 1, "balance": 500.00}]), port)
 
 
 def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
     _emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
-        _load_case("m-temporal-read-010"), "postgres", _ZeroAffectedClosePort()
+        _load_case("m-temporal-read-010"), _ZeroAffectedClosePort()
     )
     assert affected == 0
 
@@ -4185,9 +4160,7 @@ class TestConflictShortfallClassification:
             engine, "_implied_shortfall_error", _always_implying(OptimisticLockConflictError)
         )
         with pytest.raises(StaleWriteError):
-            engine.run_conflict_case(
-                _load_case("m-temporal-read-012"), "postgres", _ZeroAffectedClosePort()
-            )
+            engine.run_conflict_case(_load_case("m-temporal-read-012"), _ZeroAffectedClosePort())
 
     def test_a_gated_shortfall_admitted_as_a_stale_write_propagates(
         self, monkeypatch: pytest.MonkeyPatch
@@ -4195,7 +4168,7 @@ class TestConflictShortfallClassification:
         monkeypatch.setattr(engine, "_implied_shortfall_error", _always_implying(StaleWriteError))
         with pytest.raises(OptimisticLockConflictError):
             engine.run_conflict_case(
-                _load_case("m-opt-lock-005"), "postgres", _ZeroAffectedPort([_ACCOUNT_ROW_2])
+                _load_case("m-opt-lock-005"), _ZeroAffectedPort([_ACCOUNT_ROW_2])
             )
 
 
@@ -4218,7 +4191,7 @@ def test_run_conflict_case_refuses_a_multi_key_write_against_a_temporal_target()
         },
     )
     with pytest.raises(engine.EngineError, match="closes one milestone row"):
-        engine.run_conflict_case(case, "postgres", FakeWritePort())
+        engine.run_conflict_case(case, FakeWritePort())
 
 
 class _ScriptedReadPort(FakeWritePort):
@@ -4245,7 +4218,7 @@ def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() ->
         [[_ACCOUNT_ROW_2], [{**_ACCOUNT_ROW_2, "balance": decimal.Decimal("999.00"), "version": 2}]]
     )
     emissions, affected, table_state, _round_trips = engine.run_conflict_case(
-        _load_case("m-opt-lock-007"), "postgres", port
+        _load_case("m-opt-lock-007"), port
     )
     assert [e.case_pointer for e in emissions] == [
         "/when/attempts/0/write",
@@ -4257,14 +4230,12 @@ def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() ->
 
 
 def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None:
-    from parallax.core.dialect import POSTGRES
-
     case = _synthetic_write("conflict", {"given": {"fixtures": True}})
     port = FakeWritePort()
     shadow = TemporalShadow()
     meta = engine.load_case_metamodel(_load_case("m-txtime-write-002"))
     model = meta
-    engine._apply_given_apply(case, POSTGRES, port, shadow)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    engine._apply_given_apply(case, port, shadow)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert port.writes == []
     # A case that applies nothing leaves the tracker's account of the stored rows
     # whole — including for a key it tracks no milestone of — which is what a keyed
@@ -4277,7 +4248,7 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
 def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
     case = _synthetic_write("conflict", {"when": {"write": {"id": 1, "bogus": True}}})
     with pytest.raises(engine.EngineError, match="undeclared member"):
-        engine.run_conflict_case(case, "postgres", FakeWritePort())
+        engine.run_conflict_case(case, FakeWritePort())
 
 
 def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() -> None:
@@ -4286,9 +4257,7 @@ def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() ->
     # `handle.plan_temporal_close`, not the non-temporal versioned-UPDATE path.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-txtime-write-006"]
     port = FakeWritePort()
-    emissions, affected, table_state, _round_trips = engine.run_conflict_case(
-        case, "postgres", port
-    )
+    emissions, affected, table_state, _round_trips = engine.run_conflict_case(case, port)
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert emissions[0].sql == (
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
@@ -4340,7 +4309,7 @@ def test_a_temporal_close_row_authoring_an_observation_control_key_is_refused(
         },
     )
     with pytest.raises(engine.EngineError, match=re.escape(refusal)):
-        engine.run_conflict_case(case, "postgres", FakeWritePort())
+        engine.run_conflict_case(case, FakeWritePort())
 
 
 def _edge_named_close(document_when: dict[str, object]) -> case_format.Case:
@@ -4378,7 +4347,6 @@ def test_an_edge_named_close_derives_its_address_from_the_named_milestone() -> N
                     "observedValidStart": valid_start,
                 }
             ),
-            "postgres",
             port,
         )
         assert affected == 1
@@ -4419,7 +4387,6 @@ def test_a_close_naming_both_an_observed_edge_and_an_authored_address_is_refused
                     "observedValidStart": "2024-01-01T00:00:00+00:00",
                 }
             ),
-            "postgres",
             FakeWritePort(),
         )
 
@@ -4442,7 +4409,6 @@ def test_a_non_temporal_conflict_target_may_not_name_an_observed_milestone() -> 
                     },
                 },
             ),
-            "postgres",
             FakeWritePort(),
         )
 
@@ -4472,7 +4438,6 @@ def test_a_non_temporal_retry_attempt_may_not_name_an_observed_milestone_either(
                     },
                 },
             ),
-            "postgres",
             FakeWritePort(),
         )
 
@@ -4501,7 +4466,6 @@ def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
                     ],
                 }
             ),
-            "postgres",
             FakeWritePort(),
         )
 
@@ -4529,7 +4493,6 @@ def test_a_retry_sequence_may_not_leave_an_observation_coordinate_on_the_root() 
                     ],
                 }
             ),
-            "postgres",
             FakeWritePort(),
         )
 
@@ -4548,7 +4511,6 @@ def test_a_locking_close_may_not_author_a_lone_observed_gate() -> None:
                     "observedTxStart": "2024-04-01T00:00:00+00:00",
                 }
             ),
-            "postgres",
             FakeWritePort(),
         )
 
@@ -4574,7 +4536,6 @@ def test_a_locking_retry_attempt_may_not_author_an_observed_gate() -> None:
                     ],
                 }
             ),
-            "postgres",
             FakeWritePort(),
         )
 
@@ -4594,7 +4555,6 @@ def test_a_locking_close_may_still_name_its_observed_milestones_edge() -> None:
                 "observedValidStart": "2024-01-01T00:00:00+00:00",
             }
         ),
-        "postgres",
         FakeWritePort(),
     )
     assert affected == 1
@@ -4624,7 +4584,6 @@ def test_a_close_naming_an_edge_no_current_milestone_carries_is_refused() -> Non
                     "observedValidStart": "2023-01-01T00:00:00+00:00",
                 }
             ),
-            "postgres",
             FakeWritePort(),
         )
 
@@ -4723,9 +4682,7 @@ def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None
     # convention.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-inheritance-105"]
     port = FakeWritePort()
-    emissions, affected, table_state, _round_trips = engine.run_conflict_case(
-        case, "postgres", port
-    )
+    emissions, affected, table_state, _round_trips = engine.run_conflict_case(case, port)
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert emissions[0].sql == (
         "update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
@@ -4741,9 +4698,7 @@ def test_run_conflict_case_temporal_attempts_form_retries_the_gated_close() -> N
     # non-temporal versioned-UPDATE retry `m-opt-lock-007` already covers).
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-temporal-read-011"]
     port = FakeWritePort()
-    emissions, affected, table_state, _round_trips = engine.run_conflict_case(
-        case, "postgres", port
-    )
+    emissions, affected, table_state, _round_trips = engine.run_conflict_case(case, port)
     assert [e.case_pointer for e in emissions] == [
         "/when/attempts/0/write",
         "/when/attempts/1/write",
@@ -5081,11 +5036,10 @@ def test_read_table_state_reads_each_physical_table_once_over_every_slot() -> No
     # table. The one read projects the layout's complete slot sequence, so a
     # CardPayment row still reports the sibling-only `tendered` column.
     from parallax.conformance import models
-    from parallax.core.dialect import POSTGRES
 
     port = FakeWritePort()
     meta = models.load_models()["payment"]
-    state = engine.read_table_state(port, meta, POSTGRES)
+    state = engine.read_table_state(port, meta)
     assert set(state) == {"payment"}
     assert len(port.reads) == 1
     sql, _ = port.reads[0]
@@ -5094,11 +5048,10 @@ def test_read_table_state_reads_each_physical_table_once_over_every_slot() -> No
 
 def test_read_table_state_reads_each_tpcs_concrete_table() -> None:
     from parallax.conformance import models
-    from parallax.core.dialect import POSTGRES
 
     port = FakeWritePort()
     meta = models.load_models()["document"]
-    state = engine.read_table_state(port, meta, POSTGRES)
+    state = engine.read_table_state(port, meta)
     assert set(state) == {"invoice", "receipt", "memo", "folder"}
     assert len(port.reads) == 4
 
@@ -5107,11 +5060,10 @@ def test_read_table_state_projects_value_object_document_columns_last() -> None:
     # A document slot follows every scalar tier (m-storage-layout), even for a
     # plain non-inheritance entity — the customer model's `address`.
     from parallax.conformance import models
-    from parallax.core.dialect import POSTGRES
 
     port = FakeWritePort()
     meta = models.load_models()["customer"]
-    state = engine.read_table_state(port, meta, POSTGRES)
+    state = engine.read_table_state(port, meta)
     assert "customer" in state
     sql, _ = port.reads[0]
     assert sql == "select id, name, address from customer"
@@ -5123,12 +5075,11 @@ def test_read_table_state_normalizes_values_without_changing_the_projection() ->
     import datetime as dt
 
     from parallax.conformance import models
-    from parallax.core.dialect import POSTGRES
 
     instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     port = FakeWritePort(find_rows=[{"bal_id": 1, "acct_num": "A", "val": 1, "in_z": instant}])
     meta = models.load_models()["balance"]
-    state = engine.read_table_state(port, meta, POSTGRES)
+    state = engine.read_table_state(port, meta)
     (row,) = state["balance"]
     assert row["in_z"] == "2024-01-01T00:00:00+00:00"
     sql, _ = port.reads[0]
@@ -5200,7 +5151,7 @@ def test_run_graph_case_renders_root_class_keyed_graph_with_relationships() -> N
         ]
     )
     emissions, graph, round_trips, stored_data_issues = engine.run_graph_case(
-        _case("m-snapshot-read-001"), "postgres", port
+        _case("m-snapshot-read-001"), port
     )
     assert round_trips == 3
     assert len(emissions) == 3
@@ -5236,7 +5187,7 @@ def test_run_graph_case_unwinds_a_back_reference_finitely() -> None:
         ]
     )
     _emissions, graph, round_trips, stored_data_issues = engine.run_graph_case(
-        _case("m-snapshot-read-011"), "postgres", port
+        _case("m-snapshot-read-011"), port
     )
     assert round_trips == 2
     assert stored_data_issues is None
@@ -5266,7 +5217,7 @@ def test_run_graph_case_reports_the_records_a_classified_root_published() -> Non
         ]
     )
     _emissions, graph, _round_trips, stored_data_issues = engine.run_graph_case(
-        _load_case("m-storage-layout-027"), "postgres", port
+        _load_case("m-storage-layout-027"), port
     )
     assert _node(graph["ClassificationTwinItem"], 0)["profile"] == {
         "street": "1 Main",
@@ -5303,7 +5254,7 @@ def test_run_graph_case_publishes_null_where_nothing_could_be_hydrated() -> None
         ]
     )
     _emissions, graph, _round_trips, stored_data_issues = engine.run_graph_case(
-        _load_case("m-storage-layout-027"), "postgres", port
+        _load_case("m-storage-layout-027"), port
     )
     assert graph["ClassificationTwinItem"] == [None]
     assert stored_data_issues is not None
@@ -5336,7 +5287,7 @@ def test_run_read_case_refuses_a_row_form_position_the_read_classified() -> None
     # the shape rather than grading a classification as though it were a row.
     port = FakeDbPort([{"id": 4, "name": None}])
     with pytest.raises(engine.EngineError, match="published an InvalidData record"):
-        engine.run_read_case(_load_case("m-value-object-007"), "postgres", port)
+        engine.run_read_case(_load_case("m-value-object-007"), port)
 
 
 def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
@@ -5354,7 +5305,7 @@ def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
         ]
     )
     _emissions, graph, _round_trips, _stored_data_issues = engine.run_graph_case(
-        _case("m-descriptor-002"), "postgres", port
+        _case("m-descriptor-002"), port
     )
     row = _node(graph["MemberColumnDefaults"], 0)
     assert row["mailingAddress"] == {"city": "Oslo"}
@@ -5763,7 +5714,7 @@ def test_run_graph_case_wraps_a_temporal_read_error_from_the_find_executor() -> 
         }
     )
     with pytest.raises(engine.EngineError, match="undeclared"):
-        engine.run_graph_case(case, "postgres", QueueDbPort([]))
+        engine.run_graph_case(case, QueueDbPort([]))
 
 
 def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
@@ -5789,9 +5740,7 @@ def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
             ]
         ]
     )
-    emissions, graphs, round_trips = engine.run_graphs_case(
-        _case("m-snapshot-read-013"), "postgres", port
-    )
+    emissions, graphs, round_trips = engine.run_graphs_case(_case("m-snapshot-read-013"), port)
     assert round_trips == 1
     assert len(emissions) == 1
     assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
@@ -5832,7 +5781,7 @@ def test_run_streamed_graphs_case_groups_a_delivery_back_into_edge_ranked_graphs
         ]
     )
     case = _doctored("m-snapshot-read-013", stream={"batchSize": 1})
-    emissions, graphs, round_trips = engine.run_streamed_graphs_case(case, "postgres", port)
+    emissions, graphs, round_trips = engine.run_streamed_graphs_case(case, port)
     assert round_trips == 4
     assert len(emissions) == 4
     assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
@@ -5859,7 +5808,7 @@ def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
         }
     )
     with pytest.raises(engine.EngineError, match="undeclared"):
-        engine.run_graphs_case(case, "postgres", QueueDbPort([]))
+        engine.run_graphs_case(case, QueueDbPort([]))
 
 
 def test_run_graph_case_refuses_a_case_whose_read_answers_a_milestone_set() -> None:
@@ -5877,7 +5826,7 @@ def test_run_graph_case_refuses_a_case_whose_read_answers_a_milestone_set() -> N
         }
     )
     with pytest.raises(engine.EngineError, match=r"asserts `then\.graphs`"):
-        engine.run_graph_case(case, "postgres", QueueDbPort([[]]))
+        engine.run_graph_case(case, QueueDbPort([[]]))
 
 
 def test_run_graphs_case_refuses_a_case_whose_read_answers_one_graph() -> None:
@@ -5895,7 +5844,7 @@ def test_run_graphs_case_refuses_a_case_whose_read_answers_one_graph() -> None:
         }
     )
     with pytest.raises(engine.EngineError, match=r"asserts `then\.graph`"):
-        engine.run_graphs_case(case, "postgres", QueueDbPort([[]]))
+        engine.run_graphs_case(case, QueueDbPort([[]]))
 
 
 def test_render_value_recurses_into_a_nested_value_object_document() -> None:
@@ -5909,7 +5858,7 @@ def test_render_value_recurses_into_a_nested_value_object_document() -> None:
         ]
     )
     _emissions, graph, _round_trips, _stored_data_issues = engine.run_graph_case(
-        _case("m-value-object-024"), "postgres", port
+        _case("m-value-object-024"), port
     )
     rendered = _node(graph["Customer"], 0)
     assert rendered["address"] == {
@@ -5969,7 +5918,7 @@ def test_run_scenario_case_snapshot_lane_requires_an_object_query() -> None:
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     with pytest.raises(engine.EngineError, match="needs `objectQuery`"):
-        engine.run_scenario_case(case, "postgres", QueueDbPort([]))
+        engine.run_scenario_case(case, QueueDbPort([]))
 
 
 def test_run_scenario_case_snapshot_lane_wraps_an_error_from_the_find_executor() -> None:
@@ -5986,7 +5935,7 @@ def test_run_scenario_case_snapshot_lane_wraps_an_error_from_the_find_executor()
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     with pytest.raises(engine.EngineError, match="names no attribute"):
-        engine.run_scenario_case(case, "postgres", QueueDbPort([]))
+        engine.run_scenario_case(case, QueueDbPort([]))
 
 
 _ORDER_ROW: dict[str, object] = {
@@ -6002,7 +5951,7 @@ _ORDER_ROW: dict[str, object] = {
 
 def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -> None:
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
-    run = engine.run_scenario_case(_case("m-snapshot-read-010"), "postgres", port)
+    run = engine.run_scenario_case(_case("m-snapshot-read-010"), port)
     assert run.round_trips == 2
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
@@ -6031,7 +5980,7 @@ def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() 
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
     with pytest.raises(engine.EngineError, match="Order has no assignable member of"):
-        engine.run_scenario_case(case, "postgres", port)
+        engine.run_scenario_case(case, port)
     assert len(port.writes) == 0
 
 
@@ -6049,7 +5998,7 @@ def test_run_scenario_case_snapshot_lane_applies_out_of_band_statements() -> Non
         },
     )
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
-    engine.run_scenario_case(with_apply, "postgres", port)
+    engine.run_scenario_case(with_apply, port)
     assert port.writes == [("update orders set qty = %s", [9])]
 
 
@@ -6072,7 +6021,7 @@ _POSITION_R1_ROW: dict[str, object] = {
 
 def test_run_scenario_case_grades_a_transaction_time_pin_read_only_mutate() -> None:
     port = FakeDbPort([dict(_POSITION_R1_ROW)])
-    run = engine.run_scenario_case(_case("m-bitemp-write-016"), "postgres", port)
+    run = engine.run_scenario_case(_case("m-bitemp-write-016"), port)
     assert run.round_trips == 1
     assert [e.case_pointer for e in run.emissions] == ["/scenario/0/objectQuery"]
     assert run.errors == [{"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}]
@@ -6084,7 +6033,7 @@ def test_run_scenario_case_accepts_a_finite_valid_time_pin_mutate() -> None:
     # mutate applies in-memory and no error observation is reported.
     row = dict(_POSITION_R1_ROW, val=decimal.Decimal("100.00"))
     port = FakeDbPort([row])
-    run = engine.run_scenario_case(_case("m-bitemp-write-015"), "postgres", port)
+    run = engine.run_scenario_case(_case("m-bitemp-write-015"), port)
     assert run.round_trips == 1
     assert run.errors == []
 
@@ -6110,7 +6059,7 @@ def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
     }
     case = _synthetic_write("scenario", {"model": "models/position.yaml", "when": when})
     with pytest.raises(engine.EngineError, match="declares no expectError"):
-        engine.run_scenario_case(case, "postgres", FakeDbPort([dict(_POSITION_R1_ROW)]))
+        engine.run_scenario_case(case, FakeDbPort([dict(_POSITION_R1_ROW)]))
 
 
 def test_run_scenario_case_mutate_grading_rejects_an_out_of_range_on_index() -> None:
@@ -6121,7 +6070,7 @@ def test_run_scenario_case_mutate_grading_rejects_an_out_of_range_on_index() -> 
     when = {"scenario": [{"action": "mutate", "on": 5, "set": {"name": "Mutant"}}]}
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     with pytest.raises(engine.EngineError, match="holds no view to edit"):
-        engine.run_scenario_case(case, "postgres", FakeDbPort([]))
+        engine.run_scenario_case(case, FakeDbPort([]))
 
 
 def test_run_scenario_case_reports_an_unraised_expect_error_loudly() -> None:
@@ -6147,7 +6096,7 @@ def test_run_scenario_case_reports_an_unraised_expect_error_loudly() -> None:
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     port = FakeDbPort([{"id": 1, "name": "Ada"}])
     with pytest.raises(engine.EngineError, match="but the mutation was accepted"):
-        engine.run_scenario_case(case, "postgres", port)
+        engine.run_scenario_case(case, port)
 
 
 # --------------------------------------------------------------------------- #
@@ -6273,7 +6222,7 @@ def test_a_unit_reads_each_entity_it_writes_once_however_many_entries_address_it
     port = FakeWritePort(
         find_rows=[{"id": 21, "order_id": 2, "sku": "A-300", "quantity": 4, "shipped_on": None}]
     )
-    run = engine.run_scenario_case(_case("m-unit-work-026"), "postgres", port)
+    run = engine.run_scenario_case(_case("m-unit-work-026"), port)
     assert run.round_trips == 3  # the step's own read + its one DELETE + the dependent find
     assert next(sql for sql, _binds in port.reads) == (
         "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on"
@@ -6285,7 +6234,7 @@ def test_a_unit_reads_each_entity_it_writes_once_however_many_entries_address_it
 def test_a_temporal_terminate_entry_reaches_its_own_wire_verb() -> None:
     port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
     _emissions, _table_state, round_trips = engine.run_write_sequence_case(
-        _load_case("m-txtime-write-003"), "postgres", port
+        _load_case("m-txtime-write-003"), port
     )
     assert round_trips == 3  # insert, then the terminate entry's own read + its close
     assert port.writes[-1][0].startswith("update balance set out_z")
@@ -6300,7 +6249,7 @@ def test_a_bounded_bitemporal_terminate_entry_reaches_its_own_wire_verb() -> Non
         ]
     )
     _emissions, _table_state, round_trips = engine.run_write_sequence_case(
-        _load_case("m-bitemp-write-002"), "postgres", port
+        _load_case("m-bitemp-write-002"), port
     )
     assert round_trips == 5  # four statements plus the terminateUntil entry's own read
     assert port.writes[1][0].startswith("update position set out_z")
@@ -6326,7 +6275,7 @@ def test_every_materializing_predicate_mutation_reaches_its_own_wire_verb(case_i
             )
         ]
     )
-    run = engine.run_scenario_case(_load_case(case_id), "postgres", port)
+    run = engine.run_scenario_case(_load_case(case_id), port)
     assert run.errors == []
     assert any(e.sql.startswith("update position set out_z") for e in run.emissions)
 
@@ -6356,7 +6305,7 @@ def test_a_write_settles_against_a_row_its_own_unit_opened() -> None:
         ]
     )
     port = FakeWritePort()
-    engine.run_scenario_case(case, "postgres", port)
+    engine.run_scenario_case(case, port)
     # The pair coalesces in place: one INSERT carrying the final value, no read.
     assert port.reads == []
     assert [sql for sql, _binds in port.writes] == [
@@ -6383,7 +6332,7 @@ def test_a_grouped_write_addressing_a_key_no_read_published_is_refused() -> None
         ]
     )
     with pytest.raises(engine.EngineError, match="which no read of its own choreography unit"):
-        engine.run_scenario_case(case, "postgres", FakeWritePort())
+        engine.run_scenario_case(case, FakeWritePort())
 
 
 def test_a_named_find_publishing_no_row_of_a_writes_key_settles_nothing() -> None:
@@ -6421,7 +6370,7 @@ def test_a_named_find_publishing_no_row_of_a_writes_key_settles_nothing() -> Non
         },
     )
     with pytest.raises(engine.EngineError, match="published 0 rows"):
-        engine.run_scenario_case(case, "postgres", FakeWritePort())
+        engine.run_scenario_case(case, FakeWritePort())
 
 
 def test_a_transaction_time_past_reading_is_skipped_as_a_write_source() -> None:
@@ -6455,7 +6404,7 @@ def test_a_transaction_time_past_reading_is_skipped_as_a_write_source() -> None:
         ]
     )
     port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
-    engine.run_scenario_case(case, "postgres", port)
+    engine.run_scenario_case(case, port)
     assert next(sql for sql, _binds in port.writes).startswith("update ledger set out_z")
 
 
@@ -6506,7 +6455,7 @@ def test_one_entity_spelled_two_ways_owes_one_membership_read() -> None:
             }
         ],
     )
-    engine.run_scenario_case(case, "postgres", port)
+    engine.run_scenario_case(case, port)
     assert len(port.reads) == 1
     assert port.reads[0][0].endswith("where t0.id in (%s, %s) for share of t0")
 
@@ -6542,7 +6491,7 @@ def test_a_unit_mixing_a_framework_marker_with_a_public_verb_write_is_refused() 
         ],
     )
     with pytest.raises(engine.EngineError, match="never both"):
-        engine.run_scenario_case(case, "postgres", FakeWritePort())
+        engine.run_scenario_case(case, FakeWritePort())
 
 
 def test_a_unit_holding_two_framework_markers_is_refused() -> None:
@@ -6561,7 +6510,7 @@ def test_a_unit_holding_two_framework_markers_is_refused() -> None:
         ],
     )
     with pytest.raises(engine.EngineError, match="buffer's only entry"):
-        engine.run_scenario_case(case, "postgres", FakeWritePort())
+        engine.run_scenario_case(case, FakeWritePort())
 
 
 def _pk_sequence_advance(**step: object) -> dict[str, object]:
@@ -6579,7 +6528,6 @@ def test_an_aborted_framework_write_step_executes_its_dml_and_rolls_back() -> No
         _synthetic_scenario(
             "models/pk-sequence.yaml", "m-pk-gen-998", [_pk_sequence_advance(rollback=True)]
         ),
-        "postgres",
         port,
     )
     assert run.round_trips == 1
@@ -6596,7 +6544,7 @@ def test_a_framework_write_step_inside_a_uow_group_is_refused() -> None:
         "models/pk-sequence.yaml", "m-pk-gen-997", [_pk_sequence_advance(uow="g")]
     )
     with pytest.raises(engine.EngineError, match="choreography unit of its own"):
-        engine.run_scenario_case(case, "postgres", FakeWritePort())
+        engine.run_scenario_case(case, FakeWritePort())
 
 
 def test_a_write_settles_against_a_hydratable_invalid_published_root() -> None:
@@ -6640,7 +6588,7 @@ def test_a_write_settles_against_a_hydratable_invalid_published_root() -> None:
             },
         ],
     )
-    engine.run_scenario_case(case, "postgres", port)
+    engine.run_scenario_case(case, port)
     assert [sql for sql, _binds in port.writes] == ["update customer set name = %s where id = %s"]
 
 
@@ -6664,9 +6612,7 @@ def _include_scenario_port() -> QueueDbPort:
 
 
 def test_run_scenario_case_reports_an_access_step_graph_from_the_retained_view() -> None:
-    run = engine.run_scenario_case(
-        _case("m-snapshot-read-016"), "postgres", _include_scenario_port()
-    )
+    run = engine.run_scenario_case(_case("m-snapshot-read-016"), _include_scenario_port())
     # The find's two levels are the only calls; the mutate and the access cost none.
     assert run.round_trips == 2
     assert run.errors == []
@@ -6694,7 +6640,7 @@ def test_run_scenario_case_reports_a_snapshot_lane_finds_own_materialized_graph(
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    run = engine.run_scenario_case(case, "postgres", _include_scenario_port())
+    run = engine.run_scenario_case(case, _include_scenario_port())
     assert [entry["at"] for entry in run.step_graphs] == ["/scenario/0", "/scenario/1"]
     root_graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     (root,) = root_graph["Order"]
@@ -6723,7 +6669,7 @@ def test_run_scenario_case_lets_an_edit_chain_name_the_copy_before_it() -> None:
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    run = engine.run_scenario_case(case, "postgres", _include_scenario_port())
+    run = engine.run_scenario_case(case, _include_scenario_port())
     assert run.round_trips == 2  # the find's two levels; no hop of the chain costs one
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType]
@@ -6744,7 +6690,7 @@ def test_run_scenario_case_access_without_expect_graph_reports_no_step_graph() -
     # The observation is the case's own oracle answered: a step asserting no
     # contents reports none, exactly as a step raising no error reports none.
     case = _orders_access_scenario({"action": "access", "on": 0, "path": "items"}, includes=True)
-    run = engine.run_scenario_case(case, "postgres", _include_scenario_port())
+    run = engine.run_scenario_case(case, _include_scenario_port())
     assert run.step_graphs == []
 
 
@@ -6754,7 +6700,7 @@ def test_run_scenario_case_access_step_graph_rejects_an_on_naming_no_view() -> N
         includes=True,
     )
     with pytest.raises(engine.EngineError, match="holds no view to navigate"):
-        engine.run_scenario_case(case, "postgres", _include_scenario_port())
+        engine.run_scenario_case(case, _include_scenario_port())
 
 
 def test_run_scenario_case_access_step_graph_refuses_an_on_naming_a_derived_copy() -> None:
@@ -6779,7 +6725,7 @@ def test_run_scenario_case_access_step_graph_refuses_an_on_naming_a_derived_copy
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     with pytest.raises(engine.EngineError, match="derived its view rather than materializing it"):
-        engine.run_scenario_case(case, "postgres", _include_scenario_port())
+        engine.run_scenario_case(case, _include_scenario_port())
 
 
 def test_run_scenario_case_access_step_graph_refuses_a_multi_source_on() -> None:
@@ -6792,7 +6738,7 @@ def test_run_scenario_case_access_step_graph_refuses_a_multi_source_on() -> None
         includes=True,
     )
     with pytest.raises(engine.EngineError, match="names ONE materializing read"):
-        engine.run_scenario_case(case, "postgres", _include_scenario_port())
+        engine.run_scenario_case(case, _include_scenario_port())
 
 
 def test_run_scenario_case_access_step_graph_needs_a_navigated_path() -> None:
@@ -6800,7 +6746,7 @@ def test_run_scenario_case_access_step_graph_needs_a_navigated_path() -> None:
         {"action": "access", "on": 0, "expectGraph": {"OrderItem": []}}, includes=True
     )
     with pytest.raises(engine.EngineError, match="needs a `path`"):
-        engine.run_scenario_case(case, "postgres", _include_scenario_port())
+        engine.run_scenario_case(case, _include_scenario_port())
 
 
 def test_run_scenario_case_access_step_graph_refuses_an_unincluded_relationship() -> None:
@@ -6812,7 +6758,7 @@ def test_run_scenario_case_access_step_graph_refuses_an_unincluded_relationship(
         includes=False,
     )
     with pytest.raises(engine.EngineError, match="carries no loaded 'items'"):
-        engine.run_scenario_case(case, "postgres", QueueDbPort([[dict(_ORDER_ROW)]]))
+        engine.run_scenario_case(case, QueueDbPort([[dict(_ORDER_ROW)]]))
 
 
 def test_run_scenario_case_access_step_graph_refuses_an_undeclared_relationship() -> None:
@@ -6821,7 +6767,7 @@ def test_run_scenario_case_access_step_graph_refuses_an_undeclared_relationship(
         includes=True,
     )
     with pytest.raises(engine.EngineError, match="declares no relationship 'nope'"):
-        engine.run_scenario_case(case, "postgres", _include_scenario_port())
+        engine.run_scenario_case(case, _include_scenario_port())
 
 
 def test_run_scenario_case_access_step_graph_walks_a_to_one_arm() -> None:
@@ -6846,7 +6792,7 @@ def test_run_scenario_case_access_step_graph_walks_a_to_one_arm() -> None:
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     port = QueueDbPort([[dict(_ORDER_1_ITEM_ROWS[1])], [dict(_ORDER_ROW)]])
 
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
 
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert [node["id"] for node in graph["Order"]] == [1]
@@ -6905,7 +6851,7 @@ def test_run_scenario_case_access_step_graph_drops_a_null_branch_before_a_deeper
         ]
     )
 
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
 
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert [node["id"] for node in graph["OrderStatus"]] == [202, 201]
@@ -6940,7 +6886,7 @@ def test_run_scenario_case_access_step_graph_omits_a_terminal_null_after_a_fan_o
         ]
     )
 
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
 
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert [node["id"] for node in graph["OrderItem"]] == [11]
@@ -7058,9 +7004,7 @@ def test_run_scenario_case_write_step_commits_and_leaves_the_retained_view_stand
         ]
     )
 
-    run = engine.run_scenario_case(
-        _write_between_find_and_access(_ORDER_NAME_UPDATE), "postgres", port
-    )
+    run = engine.run_scenario_case(_write_between_find_and_access(_ORDER_NAME_UPDATE), port)
 
     assert [emission.case_pointer for emission in run.emissions] == [
         "/scenario/0/objectQuery",
@@ -7080,7 +7024,7 @@ def test_run_scenario_case_refuses_a_non_keyed_write_step_on_the_snapshot_lane()
     # two predicate forms below, each refused for a reason of its own.
     port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
     with pytest.raises(engine.EngineError, match="BUFFERED KEYED instruction list"):
-        engine.run_scenario_case(_write_between_find_and_access("insert"), "postgres", port)
+        engine.run_scenario_case(_write_between_find_and_access("insert"), port)
     assert port.writes == []
 
 
@@ -7097,7 +7041,7 @@ def test_run_scenario_case_names_the_case_when_a_snapshot_lane_write_will_not_lo
     ]
     port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
     with pytest.raises(engine.EngineError, match="undeclared member"):
-        engine.run_scenario_case(_write_between_find_and_access(mis_authored), "postgres", port)
+        engine.run_scenario_case(_write_between_find_and_access(mis_authored), port)
     assert port.writes == []
 
 
@@ -7147,7 +7091,7 @@ def test_run_scenario_case_refuses_a_materializing_predicate_write_on_the_snapsh
     }
     port = _QueueWritePort([[dict(_LEDGER_2_ROW)]])
     with pytest.raises(engine.EngineError, match="MATERIALIZING predicate write"):
-        engine.run_scenario_case(_ledger_write_after_find_and_mutate(write), "postgres", port)
+        engine.run_scenario_case(_ledger_write_after_find_and_mutate(write), port)
     assert port.writes == []
 
 
@@ -7166,7 +7110,7 @@ def test_run_scenario_case_refuses_a_readless_predicate_write_on_the_snapshot_la
     }
     port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
     with pytest.raises(engine.EngineError, match="READLESS predicate write"):
-        engine.run_scenario_case(_write_between_find_and_access(write), "postgres", port)
+        engine.run_scenario_case(_write_between_find_and_access(write), port)
     assert port.writes == []
 
 
@@ -7182,7 +7126,7 @@ def test_snapshot_lane_compile_and_run_reach_the_same_temporal_dml() -> None:
     port = _QueueWritePort([[dict(_LEDGER_2_ROW)], [dict(_LEDGER_2_ROW)]])
 
     compiled, _round_trips = engine.compile_scenario_case(case, "postgres")
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
 
     assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
         (e.case_pointer, e.sql, e.binds) for e in run.emissions
@@ -7212,7 +7156,7 @@ def test_run_scenario_case_access_step_graph_keeps_an_all_to_one_terminal_null()
     )
     port = QueueDbPort([[dict(_STATUS_ON_ORDER_ALONE)]])
 
-    run = engine.run_scenario_case(case, "postgres", port)
+    run = engine.run_scenario_case(case, port)
 
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert graph["Order"] == [None]
@@ -7237,7 +7181,7 @@ _STREAM_CASE_ID: Final[str] = "m-snapshot-read-029"
 def test_run_stream_case_refuses_a_page_size_that_is_not_a_positive_int() -> None:
     case = _doctored(_STREAM_CASE_ID, stream={"batchSize": 0})
     with pytest.raises(engine.EngineError, match="positive integer"):
-        engine.run_stream_case(case, "postgres", FakeDbPort([]))
+        engine.run_stream_case(case, FakeDbPort([]))
 
 
 def test_run_stream_case_refuses_a_case_declaring_no_delivery() -> None:
@@ -7251,9 +7195,7 @@ def test_run_stream_case_refuses_a_case_declaring_no_delivery() -> None:
     document["when"] = {key: value for key, value in when.items() if key != "stream"}
 
     with pytest.raises(engine.EngineError, match=re.escape("declares `when.stream.batchSize`")):
-        engine.run_stream_case(
-            dataclasses.replace(case, document=document), "postgres", FakeDbPort([])
-        )
+        engine.run_stream_case(dataclasses.replace(case, document=document), FakeDbPort([]))
 
 
 def test_run_stream_case_refuses_a_milestone_set_read() -> None:
@@ -7263,7 +7205,7 @@ def test_run_stream_case_refuses_a_milestone_set_read() -> None:
     # it rather than reporting one flat graph the case never stated.
     case = _doctored("m-snapshot-read-013", stream={"batchSize": 2})
     with pytest.raises(engine.EngineError, match=re.escape("asserts `then.graphs`")):
-        engine.run_stream_case(case, "postgres", FakeDbPort([]))
+        engine.run_stream_case(case, FakeDbPort([]))
 
 
 def test_run_streamed_graphs_case_refuses_a_single_instant_read() -> None:
@@ -7272,7 +7214,7 @@ def test_run_streamed_graphs_case_refuses_a_single_instant_read() -> None:
     # report and the case's own member says so.
     case = _doctored(_STREAM_CASE_ID)
     with pytest.raises(engine.EngineError, match=re.escape("asserts `then.graph`")):
-        engine.run_streamed_graphs_case(case, "postgres", FakeDbPort([]))
+        engine.run_streamed_graphs_case(case, FakeDbPort([]))
 
 
 def test_run_stream_case_reports_a_refused_delivery_as_an_engine_error() -> None:
@@ -7292,5 +7234,5 @@ def test_run_stream_case_reports_a_refused_delivery_as_an_engine_error() -> None
     )
     port = FakeDbPort([])
     with pytest.raises(engine.EngineError):
-        engine.run_stream_case(case, "postgres", port)
+        engine.run_stream_case(case, port)
     assert port.executed == []

@@ -1096,9 +1096,9 @@ def test_a_lifecycle_index_naming_a_different_statement_is_an_adapter_error() ->
     real_run = adapter._run  # pyright: ignore[reportPrivateUsage] - the adapter's own dispatch
 
     def _drifted(
-        case: case_format.Case, dialect: str, port: DbPort, lifecycle: LifecycleRun
+        case: case_format.Case, port: DbPort, lifecycle: LifecycleRun
     ) -> tuple[list[engine.Emission], dict[str, Any]]:
-        emissions, observations = real_run(case, dialect, port, lifecycle)
+        emissions, observations = real_run(case, port, lifecycle)
         drifted = [engine.Emission(e.case_pointer, "select 0", e.binds) for e in emissions]
         return drifted, observations
 

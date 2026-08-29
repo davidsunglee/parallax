@@ -132,7 +132,14 @@ class PeerSession(Protocol):
     protocol rather than the full `~parallax.core.db_port.DbPort` (which
     declares `transaction` too, unused here, and no lifecycle method at all
     — a demarcated `Database` handle never closes its own port).
+
+    It reports the dialect its statements execute in for the same reason a
+    port does: a caller cannot drive `execute` correctly without knowing the
+    SQL spelling of the connection behind the session.
     """
+
+    @property
+    def dialect(self) -> Dialect: ...
 
     def execute(
         self,
@@ -233,7 +240,7 @@ class RoundsRun:
     rounds: tuple[dict[str, NodeOutcome], ...]
 
 
-def _execute_step(session: PeerSession, dialect: Dialect, step: ConcurrencyStep) -> tuple[Row, ...]:
+def _execute_step(session: PeerSession, step: ConcurrencyStep) -> tuple[Row, ...]:
     """Run one step's statements VERBATIM on ``session`` (`m-case-format`'s
     own case contract for this shape), returning the LAST statement's rows.
 
@@ -254,7 +261,7 @@ def _execute_step(session: PeerSession, dialect: Dialect, step: ConcurrencyStep)
     """
     rows: tuple[Row, ...] = ()
     for sql, binds in step.statements:
-        driver_sql = dialect.to_driver_sql(sql)
+        driver_sql = session.dialect.to_driver_sql(sql)
         if step.kind == "write":
             session.execute_write(driver_sql, binds)
         else:
@@ -274,7 +281,6 @@ class _WorkerResult:
 
 def run_rounds(
     rounds: Sequence[Mapping[str, ConcurrencyStep]],
-    dialect: Dialect,
     peer_factory: Callable[[], PeerSession],
     *,
     isolation: str | None = None,
@@ -363,7 +369,7 @@ def run_rounds(
                     step = round_steps.get(node)
                     if step is not None:
                         try:
-                            rows = _execute_step(session, dialect, step)
+                            rows = _execute_step(session, step)
                             result.outcomes[index] = NodeOutcome(rows=rows)
                         except DatabaseError as exc:
                             result.outcomes[index] = NodeOutcome(error=exc)
