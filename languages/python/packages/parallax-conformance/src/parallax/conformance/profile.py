@@ -13,7 +13,9 @@ A profile also constitutes its own runs. :class:`ProfileRun` pairs the name a ru
 reports under with the port it executes through, and it is constructed from a
 profile rather than from a name, so the pairing is made by the profile instead of
 checked after the fact (`database-provider-test-contract.md`). The lanes that
-publish a run name no port at all: the profile opens it.
+publish a run name no port at all, and a :class:`ProvisionedRun` opens the
+profile's own provisioning rather than being handed one, so the recipe that
+opened the database and the name the run reports are one declaration.
 """
 
 from __future__ import annotations
@@ -113,11 +115,13 @@ class ProfileRun:
 
 @dataclass(frozen=True, slots=True, init=False)
 class ProvisionedRun(ProfileRun):
-    """A :class:`ProfileRun` over a database the profile provisioned for it.
+    """A :class:`ProfileRun` over a database the profile itself opened.
 
-    It takes the open provisioner and reads the port off it rather than being
-    handed the two, so the database this run reports through is the one this
-    provisioner opened.
+    It takes the profile alone and opens that profile's declared provisioning, so
+    there is no argument position for a recipe: a run reporting one profile while
+    executing through what another profile declared has no spelling. Constructing
+    one therefore acquires a live database, which is what makes it a seam of the
+    database-access guard rather than a value a test can assemble.
 
     Preparing that database is part of running a case, so the provider operations
     a run needs are delegated here rather than the provisioner being handed out:
@@ -127,7 +131,8 @@ class ProvisionedRun(ProfileRun):
 
     _provisioner: Provisioner
 
-    def __init__(self, profile: Profile, provisioner: Provisioner) -> None:
+    def __init__(self, profile: Profile) -> None:  # pragma: no cover - Docker
+        provisioner = profile.provisioner()
         ProfileRun.__init__(self, profile, provisioner.port)
         object.__setattr__(self, "_provisioner", provisioner)
 
@@ -140,6 +145,10 @@ class ProvisionedRun(ProfileRun):
     def peer(self, *, autocommit: bool = True) -> DbPort:  # pragma: no cover - Docker
         """An independent second connection to the same database (provider `peer`)."""
         return self._provisioner.peer(autocommit=autocommit)
+
+    def close(self) -> None:  # pragma: no cover - Docker
+        """Close the provisioning this run opened."""
+        self._provisioner.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,18 +169,18 @@ class Profile:
 
     @contextmanager
     def provisioned(self) -> Generator[ProvisionedRun]:  # pragma: no cover - Docker
-        """Open this profile's declared provisioning and yield the run over the port
-        it opened, closing the provisioner on exit.
+        """Yield this profile's run over the database its own provisioning opens,
+        closing that provisioning on exit.
 
         This is how a database-backed run is constituted: the caller names a
-        profile and never a port, so the name the envelope reports and the database
-        that produced it are the same declaration by construction.
+        profile and never a port or a recipe, so the name the envelope reports and
+        the database that produced it are the same declaration by construction.
         """
-        provisioner = self.provisioner()
+        run = ProvisionedRun(self)
         try:
-            yield ProvisionedRun(self, provisioner)
+            yield run
         finally:
-            provisioner.close()
+            run.close()
 
     def unprovisioned(self) -> ProfileRun:
         """This profile's run of a case whose answer needs no database.
