@@ -437,7 +437,7 @@ def test_tph_insert_rejects_tag_authored_in_row() -> None:
         _assert_write_input_columns(case, "postgres")
 
 
-def test_tpcs_insert_targets_concrete_table_withouttag() -> None:
+def test_tpcs_insert_targets_concrete_table_without_tag() -> None:
     # m-inheritance-010: a table-per-concrete-subtype INSERT targets the subtype's own
     # table with no tag column and no shared table. Currency is REQUIRED on
     # the FinancialDocument branch, so the Invoice insert SUPPLIES it (the full ancestry

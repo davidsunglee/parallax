@@ -469,7 +469,7 @@ def test_schema_rejects_subtype_without_parent() -> None:
     assert not _is_valid(descriptor)
 
 
-def test_schema_requires_table_per_hierarchy_roottag() -> None:
+def test_schema_requires_table_per_hierarchy_root_tag() -> None:
     """A table-per-hierarchy root MUST declare its ``tag`` column; a non-root MUST NOT."""
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     descriptor = copy.deepcopy(model.descriptor)
@@ -482,7 +482,7 @@ def test_schema_requires_table_per_hierarchy_roottag() -> None:
     assert not _is_valid(descriptor)
 
 
-def test_schema_rejects_table_per_concrete_subtype_roottag() -> None:
+def test_schema_rejects_table_per_concrete_subtype_root_tag() -> None:
     """A table-per-concrete-subtype root MUST NOT declare a tag (no shared table)."""
     model = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
     descriptor = copy.deepcopy(model.descriptor)
@@ -506,7 +506,7 @@ def test_schema_conditionally_requires_table_and_attributes() -> None:
     assert _is_valid(descriptor), "a concrete subtype with only inherited attributes may omit them"
 
 
-def test_shared_hierarchy_table_ddl_unions_subtype_columns_and_the_derivedtag() -> None:
+def test_shared_hierarchy_table_ddl_unions_subtype_columns_and_the_derived_tag() -> None:
     """The table-per-hierarchy shared table is the UNION of every concrete subtype's
     columns plus the framework-derived tag column (m-inheritance), even though each
     concrete subtype declares only its own subtype-specific column."""
@@ -615,7 +615,7 @@ def test_table_per_hierarchy_write_derives_the_tag_column() -> None:
     _assert_write_input_columns(tph_insert, "postgres")
 
 
-def test_table_per_concrete_subtype_write_has_notag() -> None:
+def test_table_per_concrete_subtype_write_has_no_tag() -> None:
     """A table-per-concrete-subtype write targets the subtype's own table with no tag
     column (m-inheritance): ``write_plan.tag`` is None and the golden INSERT names the concrete
     subtype's table, not a shared family table."""
