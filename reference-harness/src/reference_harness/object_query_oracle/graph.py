@@ -27,10 +27,10 @@ from ..case import Case, Entity, Model
 from ..case_assertions import (
     CaseFailure,
     coerce_identity_key,
-    multiset_matches,
     scalars_equal,
 )
 from ..inheritance import Family, resolve_root_source_set
+from ..multiset import multiset_matches
 from . import includes, materialize
 
 
@@ -56,7 +56,7 @@ def _refuse_unpublished_roots(case: Case, root_rows: Sequence[materialize.Publis
 # --- nodes and assembly ------------------------------------------------------
 
 
-def graph_node(case: Case, entity: Entity, row: dict[str, Any]) -> dict[str, Any]:
+def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dict[str, Any]:
     """One materialized node keyed the way `then.graph` keys one.
 
     A graph leaf is keyed by the DECLARED member name (`m-case-format` *Graph
@@ -91,7 +91,7 @@ def assemble_graph(
     query: dict[str, Any],
     steps: list[includes.FetchStep],
     root_rows: Sequence[materialize.PublishedRow],
-    children_by_step: dict[includes.HopKey, dict[Any, list[dict[str, Any]]]],
+    children_by_step: dict[includes.HopKey, dict[Any, list[materialize.PublishedRow]]],
 ) -> dict[str, list[dict[str, Any]]]:
     """Build the root-keyed object graph following the deep-fetch paths.
 
@@ -125,7 +125,7 @@ def assemble_graph(
 
     registry: dict[tuple[str, str, Any], dict[str, Any]] = {}
 
-    def node_for(view: str, entity: Entity, raw_row: dict[str, Any]) -> dict[str, Any]:
+    def node_for(view: str, entity: Entity, raw_row: materialize.PublishedRow) -> dict[str, Any]:
         pk_col = includes.column_of(entity, pk_attr(entity))
         key = (view, entity.name, coerce_identity_key(raw_row[pk_col]))
         if key not in registry:

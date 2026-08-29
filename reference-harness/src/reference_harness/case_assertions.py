@@ -2,9 +2,11 @@
 
 A name is offered here only if it has at least one live caller in the runner AND
 at least one in the read oracle; what those names are implemented in terms of
-travels with them. A name only one side calls belongs to that side instead, so
-this module never becomes the place a helper lands when its home is unclear. It
-imports neither of them, so neither can reach the other through it.
+travels with them, unless both sides call that primitive directly too — then it
+is a module of its own (:mod:`.multiset`) rather than a second offering here. A
+name only one side calls belongs to that side instead, so this module never
+becomes the place a helper lands when its home is unclear. It imports neither of
+them, so neither can reach the other through it.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from typing import Any
 
 from . import portable_literal
 from .case import Case
+from .multiset import multiset_matches
 
 
 class CaseFailure(AssertionError):
@@ -95,30 +98,6 @@ def scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
             return abs(da - db) <= tolerance
         return da == db
     return left == right
-
-
-def multiset_matches(
-    left: Sequence[Any], right: Sequence[Any], matches: Callable[[Any, Any], bool]
-) -> bool:
-    """Whether *left* and *right* hold the same elements under *matches*, in any order.
-
-    *matches* is neither hashable-keyed nor required to be transitive — tolerance-aware
-    scalar comparison is neither, and a graph node's comparison depends on the entity it
-    is being read as — so this is a greedy match: each left element claims the first
-    unclaimed right element it matches, and both sides must be exhausted. The collections
-    compared this way are small enough for the O(n^2) match to be free.
-    """
-    if len(left) != len(right):
-        return False
-    remaining = list(right)
-    for item in left:
-        for index, candidate in enumerate(remaining):
-            if matches(item, candidate):
-                del remaining[index]
-                break
-        else:
-            return False
-    return not remaining
 
 
 def _row_matches(left: dict[str, Any], right: dict[str, Any], tolerance: Decimal | None) -> bool:
