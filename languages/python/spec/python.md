@@ -4447,9 +4447,11 @@ remains observable rather than making Python its own oracle.
   import, keeping psycopg out of the conformance adapter's import graph.
   The `run` lane refuses a profile `PROFILES` does not declare wherever it is
   entered: the CLI answers `unsupported-profile` before a case is read, and
-  `run_case` is handed the declaration itself rather than a reporting name, so a
-  Docker-free sweep cannot stamp an undeclared label into an otherwise valid
-  envelope either. `tests/unit/test_profile.py` pins the lookup, its refusal of
+  `run_case` checks the reporting name it is handed against the same roster before
+  reading the case, so a Docker-free sweep cannot stamp an undeclared label into an
+  otherwise valid envelope either. The name travels rather than the declaration
+  because a declaration answers a dialect, and `run_case` already holds the port it
+  derives one from. `tests/unit/test_profile.py` pins the lookup, its refusal of
   an undeclared name, the dialect resolved with nothing constructed, and both
   import-graph facts.
 - **Commands and skip reporting.** Every collected item carries exactly one

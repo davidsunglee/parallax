@@ -21,18 +21,17 @@ from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import adapter, case_format, engine
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
-from parallax.conformance.profile import Profile, profile_for
-from parallax.conformance.provision import Provisioner
+from parallax.conformance.profile import profile_for
 from parallax.core.base import PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 
 _SCHEMA = adapter_schema()
-# The declared profile a `run` reports, resolved out of the one roster rather than
-# spelled as a label: these suites hand their own port, so what is under test is the
-# reporting name a declared profile carries, not a lane that gets provisioned.
-_PROFILE = profile_for("pg-full")
+# The name a `run` reports, read off the one roster rather than spelled as a label:
+# these suites hand their own port, so what is under test is the reporting name a
+# declared profile carries, not a lane that gets provisioned.
+_PROFILE = profile_for("pg-full").name
 _READ_CASE = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
 _VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"
 _SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-roundtrip.yaml"
@@ -173,11 +172,10 @@ def test_run_case_unsupported_for_an_out_of_claim_dialect() -> None:
 
 
 def test_run_case_unsupported_for_a_profile_the_roster_does_not_declare() -> None:
-    # A `Profile` is constructible, so being handed one is not yet being handed a
-    # DECLARED one; the roster is what the contract refuses against, and it refuses
+    # A name is only a request: any string satisfies the schema's `profileName`
+    # pattern, so the roster is what the contract refuses against, and it refuses
     # before the case is read or the port is touched.
-    undeclared = Profile("invented-profile", Provisioner)
-    envelope = adapter.run_case(_READ_CASE, undeclared, _FakePort())
+    envelope = adapter.run_case(_READ_CASE, "invented-profile", _FakePort())
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-profile"
@@ -210,7 +208,7 @@ def test_run_case_ok_through_a_fake_port() -> None:
     # The envelope answers two different questions: which adapter configuration
     # was asked for, and which spelling actually executed. The second is read off
     # the port rather than echoed back from the request.
-    assert envelope["profile"] == _PROFILE.name
+    assert envelope["profile"] == _PROFILE
     assert envelope["dialect"] == "postgres"
     assert envelope["observations"]["rows"] == [{"id": 1, "name": "Ada"}]
     assert envelope["observations"]["roundTrips"] == 1

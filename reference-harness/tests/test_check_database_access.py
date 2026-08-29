@@ -95,6 +95,25 @@ def test_a_seam_bound_to_a_local_name_and_called_through_it_is_found() -> None:
     ) == ["reference_harness.providers.provider_for"]
 
 
+def test_a_seam_reached_through_a_chain_of_local_names_is_found() -> None:
+    # Rebinding costs one line, so a rule reading one hop only is escaped by adding
+    # another; the bindings are followed until they stop growing instead, in whatever
+    # order the module happens to write them.
+    assert _seams(
+        "from reference_harness.providers import provider_for\n"
+        "boot = provider_for\n"
+        "again = boot\n"
+        "again('pg')\n"
+    ) == ["reference_harness.providers.provider_for"]
+    assert _seams(
+        "from reference_harness.providers import provider_for\n"
+        "def rogue():\n"
+        "    return again('pg')\n"
+        "again = boot\n"
+        "boot = provider_for\n"
+    ) == ["reference_harness.providers.provider_for"]
+
+
 def test_importing_a_provider_module_for_its_pure_functions_is_not_a_violation() -> None:
     assert (
         _seams("from reference_harness.providers.mariadb import normalize\nnormalize('select 1')\n")

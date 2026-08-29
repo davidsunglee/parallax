@@ -119,7 +119,7 @@ def _run_self_managed(
     if diagnostic is not None:
         return adapter.unsupported("run", diagnostic)
     if case.shape == "rejected":
-        return adapter.run_case(case_path, profile, _NoProvisioningPort(profile.dialect))
+        return adapter.run_case(case_path, profile.name, _NoProvisioningPort(profile.dialect))
 
     from parallax.conformance import engine, provision
 
@@ -127,7 +127,7 @@ def _run_self_managed(
     try:
         meta = engine.load_case_metamodel(case)
         provisioner.reset(meta, provision.load_fixtures(str(case.document["model"])))
-        return adapter.run_case(case_path, profile, provisioner.port)
+        return adapter.run_case(case_path, profile.name, provisioner.port)
     finally:
         provisioner.close()
 

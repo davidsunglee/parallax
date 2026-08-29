@@ -33,11 +33,11 @@ from parallax.core.db_port import DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 
 _SCHEMA = adapter_schema()
-# The declared profile a rejected `run` is requested under, resolved out of the one
-# roster. Nothing here provisions it: the refusing port below stands in for the
+# The name of the declared profile a rejected `run` is requested under, read off the
+# one roster. Nothing here provisions it: the refusing port below stands in for the
 # container the shape never needs, and the envelope still names the profile the
 # request was made against.
-_PROFILE = profile_for("pg-full")
+_PROFILE = profile_for("pg-full").name
 _REACHABLE_REJECTED = [c for c in sweep.reachable_cases() if c.shape == "rejected"]
 
 

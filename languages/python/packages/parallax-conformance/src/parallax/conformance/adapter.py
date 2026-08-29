@@ -22,7 +22,7 @@ from parallax.conformance._lifecycle_observation import (
     execution_lifecycle_observation,
 )
 from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
-from parallax.conformance.profile import PROFILES, Profile
+from parallax.conformance.profile import PROFILES
 from parallax.core.db_port import DbPort
 
 __all__ = [
@@ -427,7 +427,7 @@ def compile_case(
 
 def run_case(
     case_path: str | Path,
-    profile: Profile,
+    profile: str,
     port: DbPort,
     claim: Claim = SNAPSHOT_CLAIM,
     adapter: Adapter = ADAPTER,
@@ -435,17 +435,19 @@ def run_case(
     """Run one case (read / scenario / writeSequence) through ``port`` and report its
     emissions and observations.
 
-    ``profile`` is the declared matrix profile this run was asked for, passed as the
-    declaration rather than as its reporting name so that every caller — the CLI and
-    the in-process sweeps alike — resolves the one roster; a profile that roster does
-    not declare is answered ``unsupported`` before anything is read or executed. The
-    dialect is not asked for at all but read off ``port``, so the envelope reports the
-    spelling the case was actually executed in and the classification grades that same
-    spelling. Reading it requires no connection — a port that refuses SQL still answers
-    its dialect (`m-db-port`).
+    ``profile`` is the reporting name of the declared matrix profile this run was
+    asked for, and a name ``PROFILES`` does not declare is answered ``unsupported``
+    before anything is read or executed — so the CLI and the in-process sweeps alike
+    reach the one roster rather than each vouching for its own request. The name
+    crosses rather than the declaration because a declaration answers a dialect, and
+    a signature holding a port derives the dialect from the port alone. That
+    dialect is read off ``port``, so the envelope reports the spelling the case was
+    actually executed in and the classification grades that same spelling. Reading it
+    requires no connection — a port that refuses SQL still answers its dialect
+    (`m-db-port`).
     """
-    if profile not in PROFILES:
-        diagnostic = Diagnostic("unsupported-profile", f"unknown profile {profile.name!r}")
+    if profile not in {declared.name for declared in PROFILES}:
+        diagnostic = Diagnostic("unsupported-profile", f"unknown profile {profile!r}")
         return _non_ok("run", "unsupported", diagnostic, adapter)
     case = case_format.load_case(Path(case_path))
     dialect = port.dialect.name
@@ -461,4 +463,4 @@ def run_case(
     envelope = _common("run", "ok", adapter)
     envelope["emissions"] = [e.to_json() for e in emissions]
     envelope["observations"] = observations
-    return _echo(envelope, case, dialect, profile.name)
+    return _echo(envelope, case, dialect, profile)
