@@ -647,8 +647,16 @@ def _render_seek(node: _SeekNode) -> str:
 
 
 class PageText(NamedTuple):
+    """One continuing page's SQL, and where a failure should say it was read.
+
+    ``source`` is the authored list the pages came off — ``then.statements`` for a
+    read case, a Scenario step's own ``scenario[<index>].statements`` — so a drift
+    diagnostic names the member the case actually carries.
+    """
+
     case: Case
     dialect: str
+    source: str
     page: int
     first_root_sql: str
     root_sql: str
@@ -672,8 +680,8 @@ def refuse_a_drifting_page(
     past — which is what grades the seek's DIRECTION and its BRANCHING, the parts
     of it no bind can carry.
     """
-    case, dialect, page, first_root_sql, root_sql = text
-    where = f"{case.path.name}: then.statements ({dialect}) page {page + 1}"
+    case, dialect, source, page, first_root_sql, root_sql = text
+    where = f"{case.path.name}: {source} ({dialect}) page {page + 1}"
     if root_sql == first_root_sql:
         raise CaseFailure(
             f"{where} repeats the FIRST page's root SQL. A continuing page carries a seek "

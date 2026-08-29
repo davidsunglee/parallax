@@ -1,22 +1,24 @@
 """What a failing read reports, and what it does not touch on the way there.
 
 Two contracts meet here. An authored failure is a ``CaseFailure`` naming the case
-file, so the person who wrote the case can find it. An infrastructure failure is
-the driver's own exception, unwrapped, so a dead connection is never reported as a
-semantic mismatch. And a failure knowable before execution costs no database work
-at all, which is only observable as an empty call log.
+file — and, at a Scenario step, the index of the step — so the person who wrote
+the case can find it. An infrastructure failure is the driver's own exception,
+unwrapped, so a dead connection is never reported as a semantic mismatch. And a
+failure knowable before execution costs no database work at all, which is only
+observable as an empty call log.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from decimal import Decimal
 from typing import Any
 
 import pytest
 
 from reference_harness.case import Case
 from reference_harness.case_assertions import CaseFailure
-from reference_harness.object_query_oracle import assert_case_read
+from reference_harness.object_query_oracle import ScenarioReads, assert_case_read
 
 from .conftest import ScriptedReads
 
@@ -25,6 +27,8 @@ CaseLoader = Callable[[str], Case]
 _ORDER_BY_LIMIT = "m-object-query-001-order-by-limit.yaml"
 _TPH_DOCUMENT_UNION = "m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml"
 _TPCS_TEMPORAL_UNION = "m-inheritance-093-tpcs-temporal-union-read.yaml"
+_ONE_OBJECT_TWO_FINDS = "m-identity-map-001-same-transaction-identity.yaml"
+_STREAMED_EVIDENCE = "m-unit-work-030-a-streamed-roots-evidence-licenses-a-later-write.yaml"
 
 
 class _DriverError(Exception):
@@ -126,3 +130,83 @@ def test_a_case_failure_is_an_assertion_error_so_a_runner_reports_it_as_one(
 
     with pytest.raises(AssertionError):
         assert_case_read(case, reads)
+
+
+# --- the Scenario half: a step failure also names the step --------------------
+
+
+def _account(id_: int, owner: str, balance: str, version: int) -> dict[str, Any]:
+    return {"id": id_, "owner": owner, "balance": Decimal(balance), "version": version}
+
+
+_LINUS = [_account(2, "Linus", "250.00", 1)]
+_DELIVERY = [
+    [_account(1, "Ada", "100.00", 1), _account(2, "Linus", "250.00", 1)],
+    [_account(3, "Grace", "10.00", 1)],
+    [
+        _account(1, "Ada", "100.00", 1),
+        _account(2, "Linus", "250.00", 1),
+        _account(3, "Grace", "10.00", 1),
+    ],
+]
+
+
+def _wrong_rows(case: Case) -> tuple[int, list[int], list[Any]]:
+    """A find whose published rows disagree with the rows the step states."""
+    case.when["scenario"][0]["expectRows"][0]["owner"] = "Someone else"
+    return 0, [], [_LINUS]
+
+
+def _broken_identity(case: Case) -> tuple[int, list[int], list[Any]]:
+    """Two finds declared to be one object, reaching two different accounts."""
+    case.when["scenario"][1]["expectRows"] = [
+        {"id": 3, "owner": "Linus", "balance": 10.00, "version": 1}
+    ]
+    return 1, [0], [_LINUS, [_account(3, "Linus", "10.00", 1)]]
+
+
+def _drifting_page(case: Case) -> tuple[int, list[int], list[Any]]:
+    """A continuing page of a streamed step seeking a different way."""
+    sql = case.when["scenario"][0]["statements"][1]["sql"]
+    for dialect, text in sql.items():
+        sql[dialect] = text.replace("t0.id > ?", "t0.id >= ?")
+    return 0, [], list(_DELIVERY)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "damage"),
+    [
+        (_ONE_OBJECT_TWO_FINDS, _wrong_rows),
+        (_ONE_OBJECT_TWO_FINDS, _broken_identity),
+        (_STREAMED_EVIDENCE, _drifting_page),
+    ],
+    ids=["rows", "identity", "page drift"],
+)
+def test_every_step_failure_names_the_case_file_and_the_step(
+    damaged_case: CaseLoader,
+    case_name: str,
+    damage: Callable[[Case], tuple[int, list[int], list[Any]]],
+) -> None:
+    case = damaged_case(case_name)
+    failing, prior, results = damage(case)
+    reads = ScenarioReads(case)
+    reader = ScriptedReads(results=results)
+    for index in prior:
+        reads.assert_step(index, reader)
+
+    with pytest.raises(CaseFailure) as raised:
+        reads.assert_step(failing, reader)
+
+    assert str(raised.value).startswith(f"{case.path.name}: scenario[{failing}]")
+
+
+def test_a_driver_exception_from_a_step_is_not_reported_as_a_mismatch(
+    corpus_case: CaseLoader,
+) -> None:
+    failure = _DriverError("server closed the connection unexpectedly")
+    reads = ScenarioReads(corpus_case(_ONE_OBJECT_TWO_FINDS))
+
+    with pytest.raises(_DriverError) as raised:
+        reads.assert_step(0, ScriptedReads(results=[failure]))
+
+    assert raised.value is failure
