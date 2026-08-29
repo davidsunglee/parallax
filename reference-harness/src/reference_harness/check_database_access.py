@@ -16,9 +16,18 @@ pure functions — while *calling* one of the seams below boots a container. Eac
 call's target is resolved through the importing module's own bindings, so a
 local name that merely looks like a seam is not one, and a seam reached under an
 alias still is — including a local name the module first binds to a seam and
-calls afterwards, however many names the binding passed through on the way. A
-seam a declared value reaches through a member rather than an importable name is
-matched by that member's name on any receiver; this tree declares no such member.
+calls afterwards, through any of the forms Python binds a name with, however many
+names the binding passed through, and through any container it was stored in and
+taken back out of. A seam a declared value reaches through a member rather than an
+importable name is matched by that member's name on any receiver; this tree
+declares no such member.
+
+The rule follows a value through this module's own bindings and stops at a call
+boundary: a seam handed to a function or returned out of one is beyond it, because
+deciding whether the callee calls it would take the whole program rather than one
+syntax tree. Reporting an argument regardless would report the sites that hand a
+seam over precisely to keep it from being constructed, which is the point where a
+syntactic rule stops being able to tell the two apart.
 
 Three structural facts are checked with it, because the rule is vacuous without
 them: every declared seam must still name an importable callable, the designated
@@ -165,14 +174,77 @@ def _acquisition_named(
 
     An acquisition is named by a dotted path resolving to a declared seam, by a
     declared seam member — which has no importable name of its own for the dotted
-    resolution to reach — or by a plain name *aliases* already found to hold one.
+    resolution to reach — by a plain name *aliases* already found to hold one, or by
+    a container holding one, since storing an acquisition in a tuple, list, set, or
+    dict and taking it back out is the same acquisition under a longer spelling. A
+    container is reported by the first acquisition it holds rather than per element:
+    the finding names what a call reaches, and one is enough to reach it.
     """
     if isinstance(expression, ast.Name) and expression.id in aliases:
         return aliases[expression.id]
     if isinstance(expression, ast.Attribute) and expression.attr in SEAM_MEMBERS:
         return f".{expression.attr}()"
-    target = _resolved_target(expression, bindings)
-    return target if target is not None and target in DATABASE_SEAMS else None
+    held: Sequence[ast.expr]
+    if isinstance(expression, ast.Tuple | ast.List | ast.Set):
+        held = expression.elts
+    elif isinstance(expression, ast.Dict):
+        held = expression.values
+    elif isinstance(expression, ast.Subscript | ast.Starred):
+        held = [expression.value]
+    else:
+        target = _resolved_target(expression, bindings)
+        return target if target is not None and target in DATABASE_SEAMS else None
+    for element in held:
+        acquisition = _acquisition_named(element, bindings, aliases)
+        if acquisition is not None:
+            return acquisition
+    return None
+
+
+def _bound_names(target: ast.expr) -> list[str]:
+    """Every plain name *target* binds, destructuring as far as the syntax goes.
+
+    A name inside a tuple, list, or star pattern is bound to a part of the value
+    rather than to the whole, which the rule cannot tell apart, so it binds all of
+    them: a value holding an acquisition is one wherever it is unpacked to.
+    """
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, ast.Starred):
+        return _bound_names(target.value)
+    if isinstance(target, ast.Tuple | ast.List):
+        return [name for element in target.elts for name in _bound_names(element)]
+    return []
+
+
+def _value_bindings(node: ast.AST) -> list[tuple[list[str], ast.expr]]:
+    """The names *node* binds and the expression it binds them to, for every form
+    Python's grammar binds a name with.
+
+    The enumeration is the point: assignment, annotation, walrus, iteration,
+    ``with``, comprehension, and parameter defaults are one rule, so a seam reached
+    by rewriting the binding into a form the rule had not enumerated is not an
+    escape but an omission.
+    """
+    if isinstance(node, ast.Assign):
+        return [([name for t in node.targets for name in _bound_names(t)], node.value)]
+    if isinstance(node, ast.AnnAssign | ast.NamedExpr) and node.value is not None:
+        return [(_bound_names(node.target), node.value)]
+    if isinstance(node, ast.For | ast.AsyncFor | ast.comprehension):
+        return [(_bound_names(node.target), node.iter)]
+    if isinstance(node, ast.withitem) and node.optional_vars is not None:
+        return [(_bound_names(node.optional_vars), node.context_expr)]
+    if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef | ast.Lambda):
+        positional = [*node.args.posonlyargs, *node.args.args]
+        defaulted = positional[len(positional) - len(node.args.defaults) :]
+        pairs = list(zip(defaulted, node.args.defaults, strict=True))
+        pairs += [
+            (argument, default)
+            for argument, default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True)
+            if default is not None
+        ]
+        return [([argument.arg], default) for argument, default in pairs]
+    return []
 
 
 def _local_aliases(tree: ast.Module, bindings: dict[str, str]) -> dict[str, str]:
@@ -194,20 +266,14 @@ def _local_aliases(tree: ast.Module, bindings: dict[str, str]) -> dict[str, str]
     while growing:
         growing = False
         for node in ast.walk(tree):
-            targets: Sequence[ast.expr]
-            if isinstance(node, ast.Assign):
-                targets, value = node.targets, node.value
-            elif isinstance(node, ast.AnnAssign | ast.NamedExpr) and node.value is not None:
-                targets, value = [node.target], node.value
-            else:
-                continue
-            acquisition = _acquisition_named(value, bindings, aliases)
-            if acquisition is None:
-                continue
-            for target in targets:
-                if isinstance(target, ast.Name) and target.id not in aliases:
-                    aliases[target.id] = acquisition
-                    growing = True
+            for names, value in _value_bindings(node):
+                acquisition = _acquisition_named(value, bindings, aliases)
+                if acquisition is None:
+                    continue
+                for name in names:
+                    if name not in aliases:
+                        aliases[name] = acquisition
+                        growing = True
     return aliases
 
 
@@ -217,8 +283,13 @@ def seam_calls(tree: ast.Module) -> list[tuple[int, str]]:
     A call is one when its target resolves to a declared seam, when it calls a
     declared seam member — the indirection a scope's recipe reaches a seam through
     when what names it is a declared value rather than an import — or when it calls
-    a local name the module bound to either, however many names the binding passed
-    through on the way.
+    a local name the module bound to either, through any binding form and however
+    many names and containers the binding passed through on the way.
+
+    A value that leaves through a call — passed as an argument, or returned out of
+    one — is outside the rule: what a callee does with a seam is not decidable from
+    this module's syntax, and the sites that hand one over here hand it to something
+    that replaces it rather than calls it.
     """
     bindings = _imported_names(tree)
     aliases = _local_aliases(tree, bindings)

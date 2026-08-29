@@ -114,6 +114,39 @@ def test_a_seam_reached_through_a_chain_of_local_names_is_found() -> None:
     ) == ["reference_harness.providers.provider_for"]
 
 
+def test_every_form_that_binds_a_name_binds_it_to_the_acquisition_it_holds() -> None:
+    # Enumerating the binding forms is what stops the rule being escaped by rewriting
+    # the binding rather than the acquisition: unpacking, iteration, `with`, a
+    # comprehension, and a parameter default all bind a name the same way `=` does.
+    source = "from reference_harness.providers import provider_for\n"
+    found = ["reference_harness.providers.provider_for"]
+    assert _seams(source + "(boot,) = (provider_for,)\nboot('pg')\n") == found
+    assert _seams(source + "boot, _rest = provider_for, None\nboot('pg')\n") == found
+    assert _seams(source + "for boot in [provider_for]:\n    boot('pg')\n") == found
+    assert _seams(source + "with provider_for as boot:\n    boot('pg')\n") == found
+    assert _seams(source + "[boot('pg') for boot in (provider_for,)]\n") == found
+    assert _seams(source + "def rogue(boot=provider_for):\n    boot('pg')\n") == found
+
+
+def test_a_seam_stored_in_a_container_and_taken_back_out_is_found() -> None:
+    # A container is a name with an extra subscript on the end; storing the seam in
+    # one and calling the element is the same acquisition spelled longer.
+    source = "from reference_harness.providers import provider_for\n"
+    found = ["reference_harness.providers.provider_for"]
+    assert _seams(source + "holder = [provider_for]\nholder[0]('pg')\n") == found
+    assert _seams(source + "holder = {'boot': provider_for}\nholder['boot']('pg')\n") == found
+
+
+def test_a_seam_handed_to_a_call_is_outside_the_rule_the_guard_can_decide() -> None:
+    # Where the rule stops, and why it stops there rather than one form later: whether
+    # an argument is called is the callee's to decide, not this syntax tree's, and a
+    # seam is handed over to be replaced at least as often as to be run — patching one
+    # so that reaching it fails loudly is itself an argument position.
+    source = "from reference_harness.providers import provider_for\n"
+    assert _seams(source + "register(provider_for)\n") == []
+    assert _seams(source + "monkeypatch.setattr(provider_for, '__call__', _refuse)\n") == []
+
+
 def test_importing_a_provider_module_for_its_pure_functions_is_not_a_violation() -> None:
     assert (
         _seams("from reference_harness.providers.mariadb import normalize\nnormalize('select 1')\n")

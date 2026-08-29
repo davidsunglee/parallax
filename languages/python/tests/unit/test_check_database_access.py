@@ -114,6 +114,32 @@ def test_a_seam_bound_by_annotation_or_by_a_walrus_is_found_too() -> None:
     assert _seams("if (open_it := profile.provisioner):\n    open_it()\n") == [".provisioner()"]
 
 
+def test_every_form_that_binds_a_name_binds_it_to_the_acquisition_it_holds() -> None:
+    # Enumerating the binding forms is what stops the rule being escaped by rewriting
+    # the binding rather than the acquisition: unpacking, iteration, `with`, a
+    # comprehension, and a parameter default all bind a name the same way `=` does.
+    assert _seams("(open_it,) = (profile.provisioner,)\nopen_it()\n") == [".provisioner()"]
+    assert _seams("open_it, _rest = profile.provisioner, None\nopen_it()\n") == [".provisioner()"]
+    assert _seams("for open_it in [profile.provisioner]:\n    open_it()\n") == [".provisioner()"]
+    assert _seams("with profile.provisioner as open_it:\n    open_it()\n") == [".provisioner()"]
+    assert _seams("[open_it() for open_it in (profile.provisioner,)]\n") == [".provisioner()"]
+    assert _seams("def rogue(open_it=profile.provisioner):\n    open_it()\n") == [".provisioner()"]
+
+
+def test_a_seam_stored_in_a_container_and_taken_back_out_is_found() -> None:
+    # A container is a name with an extra subscript on the end; storing the seam in
+    # one and calling the element is the same acquisition spelled longer.
+    assert _seams("holder = [profile.provisioner]\nholder[0]()\n") == [".provisioner()"]
+    assert _seams("holder = {'make': profile.provisioner}\nholder['make']()\n") == [
+        ".provisioner()"
+    ]
+    assert _seams(
+        "from parallax.conformance.provision import Provisioner\n"
+        "holder = {'make': Provisioner}\n"
+        "holder['make']()\n"
+    ) == ["parallax.conformance.provision.Provisioner"]
+
+
 def test_a_name_bound_to_something_other_than_a_seam_is_not_one() -> None:
     assert _seams("open_it: object\nfake = profile.dialect\nfake()\n") == []
 
@@ -143,6 +169,24 @@ def test_naming_a_seam_without_calling_it_is_not_a_violation() -> None:
         _seams(
             "from parallax.conformance import provision\n"
             "monkeypatch.setattr(provision, 'Provisioner', _Raising)\n"
+        )
+        == []
+    )
+
+
+def test_a_seam_handed_to_a_call_is_outside_the_rule_the_guard_can_decide() -> None:
+    # Where the rule stops, and why it stops there rather than one form later: whether
+    # an argument is called is the callee's to decide, not this syntax tree's, and the
+    # sites that hand a seam over here hand it to something that replaces it. The real
+    # tree has two — `tests/unit/test_cli.py` patches the class the declared profile
+    # holds so that constructing it fails loudly, and `tests/unit/test_profile.py`
+    # passes it to compare a declaration — so reporting arguments would report the
+    # site whose whole purpose is to make an unwanted acquisition impossible.
+    assert _seams("register(profile.provisioner)\n") == []
+    assert (
+        _seams(
+            "from parallax.conformance import provision\n"
+            "monkeypatch.setattr(provision.Provisioner, '__init__', _refuse)\n"
         )
         == []
     )
