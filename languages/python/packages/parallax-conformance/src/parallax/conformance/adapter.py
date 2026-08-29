@@ -22,6 +22,7 @@ from parallax.conformance._lifecycle_observation import (
     execution_lifecycle_observation,
 )
 from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
+from parallax.conformance.profile import PROFILES, Profile
 from parallax.core.db_port import DbPort
 
 __all__ = [
@@ -134,11 +135,8 @@ def _case_ref(path: Path) -> str:
 def _echo(
     envelope: Envelope, case: case_format.Case, dialect: str, profile: str | None = None
 ) -> Envelope:
-    """Echo the routing fields every compile/run envelope carries.
-
-    ``profile`` is the run lane's alone: a `run` names the adapter configuration it
-    executed under, while a `compile` opens nothing and so has no profile to name.
-    """
+    """``profile`` is the run lane's alone: a `run` names the adapter configuration
+    it executed under, while a `compile` opens nothing and so has none to name."""
     envelope["case"] = _case_ref(case.path)
     if profile is not None:
         envelope["profile"] = profile
@@ -429,7 +427,7 @@ def compile_case(
 
 def run_case(
     case_path: str | Path,
-    profile: str,
+    profile: Profile,
     port: DbPort,
     claim: Claim = SNAPSHOT_CLAIM,
     adapter: Adapter = ADAPTER,
@@ -437,12 +435,18 @@ def run_case(
     """Run one case (read / scenario / writeSequence) through ``port`` and report its
     emissions and observations.
 
-    ``profile`` is the reporting name of the declared matrix profile this run was
-    asked for; the dialect is not asked for at all but read off ``port``, so the
-    envelope reports the spelling the case was actually executed in and the
-    classification grades that same spelling. Reading it requires no connection —
-    a port that refuses SQL still answers its dialect (`m-db-port`).
+    ``profile`` is the declared matrix profile this run was asked for, passed as the
+    declaration rather than as its reporting name so that every caller — the CLI and
+    the in-process sweeps alike — resolves the one roster; a profile that roster does
+    not declare is answered ``unsupported`` before anything is read or executed. The
+    dialect is not asked for at all but read off ``port``, so the envelope reports the
+    spelling the case was actually executed in and the classification grades that same
+    spelling. Reading it requires no connection — a port that refuses SQL still answers
+    its dialect (`m-db-port`).
     """
+    if profile not in PROFILES:
+        diagnostic = Diagnostic("unsupported-profile", f"unknown profile {profile.name!r}")
+        return _non_ok("run", "unsupported", diagnostic, adapter)
     case = case_format.load_case(Path(case_path))
     dialect = port.dialect.name
     diagnostic = classify("run", dialect, case, claim)
@@ -457,4 +461,4 @@ def run_case(
     envelope = _common("run", "ok", adapter)
     envelope["emissions"] = [e.to_json() for e in emissions]
     envelope["observations"] = observations
-    return _echo(envelope, case, dialect, profile)
+    return _echo(envelope, case, dialect, profile.name)

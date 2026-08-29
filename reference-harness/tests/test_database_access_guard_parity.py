@@ -43,18 +43,20 @@ _GUARDS = {
 
 _SHARED_ANALYSER = (
     "Finding",
+    "_acquisition_named",
     "_declared_database_fixtures",
     "_entry_point_span",
     "_imported_names",
+    "_local_aliases",
     "_resolved_target",
     "_resolves_to_callable",
     "seam_calls",
     "unresolved_seams",
 )
 """Every definition deciding what the rule computes: the finding it reports, the
-import bindings and call targets it resolves a violation from, the fixture
-declarations it reads out of a classifier, and the seam resolution that keeps it
-from matching nothing."""
+import bindings, local aliases, and call targets it resolves a violation from, the
+fixture declarations it reads out of a classifier, and the seam resolution that
+keeps it from matching nothing."""
 
 _SCOPE_OWNED = {
     "audit": (

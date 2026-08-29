@@ -30,6 +30,7 @@ from _support.sweep_goldens import (
     write_golden_statements,
 )
 from parallax.conformance import adapter, case_format, engine, sweep
+from parallax.conformance.profile import profile_for
 from parallax.core.db_port import DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 
@@ -37,9 +38,10 @@ pytestmark = pytest.mark.compile_sweep
 
 _REACHABLE = sweep.reachable_cases()
 _SCHEMA = adapter_schema()
-# The profile the lane-dispatch check below names its `run` request under; nothing
-# here provisions it, because the case is refused before a database is needed.
-_PROFILE = "pg-full"
+# The declared profile the lane-dispatch check below names its `run` request under,
+# resolved out of the one roster; nothing here provisions it, because the case is
+# refused before a database is needed.
+_PROFILE = profile_for("pg-full")
 
 
 class _RefusingPort:

@@ -230,7 +230,7 @@ def test_run_sweep(case: case_format.Case, profile: Profile, provisioner: Any) -
 
     provisioner.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
-    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
+    envelope = adapter.run_case(case.path, profile, provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
     # The envelope names the profile this lane declares and reports the dialect the
@@ -468,7 +468,7 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, provisioner: 
     model = engine.load_case_metamodel(case)
     provisioner.reset(model, case_fixtures(case))
 
-    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
+    envelope = adapter.run_case(case.path, profile, provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -953,7 +953,7 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, provisioner: 
     fixtures = provision.load_fixtures(str(doc["model"])) if given.get("fixtures") else {}
     provisioner.reset(model, fixtures)
 
-    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
+    envelope = adapter.run_case(case.path, profile, provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -1077,7 +1077,7 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, provisione
     model = engine.load_case_metamodel(case)
     provisioner.reset(model, case_fixtures(case))
 
-    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
+    envelope = adapter.run_case(case.path, profile, provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -1170,7 +1170,7 @@ def test_run_only_write_sequence_run_sweep(
     model = engine.load_case_metamodel(case)
     provisioner.reset(model, case_fixtures(case))
 
-    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
+    envelope = adapter.run_case(case.path, profile, provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 

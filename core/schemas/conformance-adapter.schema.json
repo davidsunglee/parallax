@@ -909,7 +909,7 @@
       }
     },
     "runOk": {
-      "description": "A completed `run`. `profile` names the declared database matrix profile the case was run under; `dialect` is the dialect the adapter that profile opened actually executed the case in, which is what selects the per-dialect golden the emissions are compared against. The two are not interchangeable: profiles may share a dialect, so neither field can be derived from the other.",
+      "description": "A completed `run`. `profile` names the declared database matrix profile the case was run under; `dialect` is the dialect the adapter that profile opened actually executed the case in, which is what selects the per-dialect golden the emissions are compared against. The derivation runs one way only: a profile fixes its dialect by reading it back off the adapter it declares, while a dialect fixes no profile, because profiles may share one. Both are reported because a consumer of this envelope holds neither the roster nor that adapter.",
       "type": "object",
       "additionalProperties": false,
       "required": [

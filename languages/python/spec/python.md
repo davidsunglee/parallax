@@ -4417,16 +4417,19 @@ remains observable rather than making Python its own oracle.
   authored `POSTGRES` of its own would fail rather than pass by coincidence.
   `tests/unit/test_postgres_adapter.py` pins the third port that stands in for
   another: the one `transaction` hands its body.
-- **Matrix profiles.** Two named profiles, both **full**: `pg-full` (every
-  claimed case, `run`, expected count derived from the corpus at
-  runtime — never hard-coded) and `compile-sweep` (every **compile-eligible**
-  claimed case, `compile`, Docker-free, emissions and binds vs golden plus
-  normalization). A claimed case the corpus declares run-only
-  (`compileEligibility`, `m-case-format`) is graded by `pg-full` only; the
-  compile lane's refusing port makes it emit the `compile-run-only` diagnostic
-  (`m-conformance-adapter`) rather than a golden comparison, so the sweep stays
-  honest without hard-coding which cases are excluded. No partial profiles
-  exist; MariaDB is a §1 deferral, not a profile exclusion.
+- **Matrix profiles.** One declared profile, **full**: `pg-full` — every claimed
+  case, `run`, expected count derived from the corpus at runtime, never
+  hard-coded. Beside it, and not a profile, runs the Docker-free `compile-sweep`
+  lane: every **compile-eligible** claimed case, `compile`, emissions and binds
+  vs golden plus normalization. It compiles without a database and so has no
+  adapter to derive a dialect from, which is why it stays marker-driven and
+  selected by `compile --dialect` rather than by a profile name. A claimed case
+  the corpus declares run-only (`compileEligibility`, `m-case-format`) is graded
+  by `pg-full` only; the compile lane's refusing port makes it emit the
+  `compile-run-only` diagnostic (`m-conformance-adapter`) rather than a golden
+  comparison, so the sweep stays honest without hard-coding which cases are
+  excluded. No partial profiles exist; MariaDB is a §1 deferral, not a profile
+  exclusion.
   `pg-full` is a declared value — `parallax.conformance.profile.PROFILES`, whose
   entries name a provisioner, which declares the adapter it opens. A profile's
   dialect is read back off that adapter's class, so it is answerable with no
@@ -4442,12 +4445,13 @@ remains observable rather than making Python its own oracle.
   (`parallax.conformance.claim`), so a claimed dialect is one some profile
   actually runs; the derivation reaches the concrete adapter through a deferred
   import, keeping psycopg out of the conformance adapter's import graph.
-  `compile-sweep` is deliberately not a declared profile: it compiles without a
-  database and so has no adapter to derive a dialect from, which is why it stays
-  the marker-driven Docker-free lane selected by `compile --dialect`.
-  `tests/unit/test_profile.py` pins the lookup, its refusal of an undeclared
-  name, the dialect resolved with nothing constructed, and both import-graph
-  facts.
+  The `run` lane refuses a profile `PROFILES` does not declare wherever it is
+  entered: the CLI answers `unsupported-profile` before a case is read, and
+  `run_case` is handed the declaration itself rather than a reporting name, so a
+  Docker-free sweep cannot stamp an undeclared label into an otherwise valid
+  envelope either. `tests/unit/test_profile.py` pins the lookup, its refusal of
+  an undeclared name, the dialect resolved with nothing constructed, and both
+  import-graph facts.
 - **Commands and skip reporting.** Every collected item carries exactly one
   scheduling marker — `dbfree`, `db`, or `cost` — added at collection from what
   the item requires: `db` when its fixture closure reaches the session-scoped
