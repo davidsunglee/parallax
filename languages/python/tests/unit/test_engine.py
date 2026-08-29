@@ -24,7 +24,7 @@ from typing import Any, Final, cast
 import pytest
 from _metamodel_support import Declaration, attribute, key, source
 
-from _support.db_port import body_outcome
+from _support.db_port import BACKTICKED, body_outcome
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, models, sweep
 from parallax.conformance._lifecycle_observation import (
@@ -1383,17 +1383,23 @@ class _ScriptedPort:
     class also stands in directly for `_await_interleaved_workers`'s own
     pins, which bypass preflight entirely and so never consult this marker
     either way. Set via `setattr` below (never a hardcoded attribute name
-    here) so this fake can never drift from `engine`'s own marker name."""
+    here) so this fake can never drift from `engine`'s own marker name.
 
-    dialect: Dialect = POSTGRES
+    ``dialect`` is a constructor argument rather than the class attribute every
+    other double declares, because the two-session pins hand the peer session a
+    DIFFERENT dialect from the main port's — which is the only way to observe
+    which connection spelled a statement while exactly one real dialect
+    exists."""
 
     def __init__(
         self,
         *,
+        dialect: Dialect = POSTGRES,
         read_rows: Sequence[list[Row]] = (),
         write_affected: Sequence[int] = (),
         raise_on_read: BaseException | None = None,
     ) -> None:
+        self.dialect = dialect
         self._read_rows = [list(rows) for rows in read_rows]
         self._write_affected = list(write_affected)
         self._raise_on_read = raise_on_read
@@ -1481,6 +1487,34 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     # the Wire result re-keyed by column, so a `decimal` reads as its canonical
     # string exactly as the grader's own wire space compares it.
     assert find_rows == [[_wire_row(row_v1)], [_wire_row(row_v1)], []]
+
+
+def test_each_interleaved_group_lowers_in_its_own_connections_dialect() -> None:
+    # The two groups run on two connections, so the emission a group reports is
+    # spelled by the connection that executed it: the `concurrent` group's write
+    # (step 2) is lowered through the peer session's dialect and the `ours`
+    # group's (step 3) through the caller's port. A shared dialect taken off the
+    # main port would make the concurrent group report DML the peer never ran,
+    # which its own plan-versus-delivery reconciliation refuses outright.
+    case = _load_case("m-opt-lock-012")
+    row_v1: Row = {
+        "id": 2,
+        "owner": "Linus",
+        "balance": decimal.Decimal("250.00"),
+        "version": 1,
+    }
+    main_port = _ScriptedPort(read_rows=[[row_v1], []], write_affected=[1, 0])
+    peer_port = _ScriptedPort(dialect=BACKTICKED, read_rows=[[row_v1]], write_affected=[1])
+
+    emissions, _round_trips, _conflict_actual, _find_rows = engine.run_interleaved_scenario_case(
+        case, main_port, lambda: peer_port
+    )
+
+    concurrent_write = next(e for e in emissions if e.case_pointer == "/scenario/2/write")
+    ours_writes = [e for e in emissions if e.case_pointer == "/scenario/3/write"]
+    assert "`version`" in concurrent_write.sql
+    assert all("`" not in emission.sql for emission in ours_writes)
+    assert all('"' not in emission.sql for emission in ours_writes)
 
 
 def test_run_interleaved_scenario_case_applies_out_of_band_statements_before_the_groups() -> None:

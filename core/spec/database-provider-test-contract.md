@@ -69,6 +69,20 @@ When a transient proof would be impractical for a specific database in local
 tooling, the language spec must record the gap and name the deeper suite that
 proves the same classification.
 
+Each adapter must also prove its **dialect binding** (`m-db-port`). Neither half
+needs a database. The adapter states its dialect as metadata reachable without a
+connection, so the proof resolves it off the adapter itself rather than off a
+constructed, connected instance, and checks that it is the strategy whose SQL
+that adapter executes. And every port that stands in for another preserves it:
+the transaction-scoped port `transaction` hands `body` reports the dialect of the
+port that opened the boundary, and each port a language ships that decorates
+another reports the dialect of the port it wraps rather than one of its own.
+Enumerating those decorators is part of the obligation, and so is the input that
+separates preserving from declaring: a decorator that authors a constant passes
+against a port declaring that same dialect and fails against any other, so the
+proof drives each one over a port whose dialect none of the language's own
+adapters declare. The language spec names where that proof lives.
+
 Each adapter must also prove the port's failure-instance identity rule
 (`m-db-port`). The rule binds every error the port itself raises, so the proof
 must reach every raise site: a statement failure surfaced by `execute`, one

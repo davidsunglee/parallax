@@ -397,6 +397,14 @@ def test_transaction_commits_and_reports_the_body_value() -> None:
     assert _adapter(_FakeConnection()).transaction(lambda _port: "kept") == Committed("kept")
 
 
+def test_the_transaction_scoped_port_reports_the_boundarys_own_dialect() -> None:
+    # The port a body holds spells the statements that boundary is about to run,
+    # so it answers the dialect of the port that opened the boundary rather than
+    # resolving one of its own.
+    outcome = _adapter(_FakeConnection()).transaction(lambda port: port.dialect)
+    assert outcome == Committed(PostgresAdapter.dialect)
+
+
 def test_transaction_reports_a_boundary_that_never_began() -> None:
     # No attempt ran, so there is nothing to undo and nothing to re-execute; the
     # body is what proves it, by never running.

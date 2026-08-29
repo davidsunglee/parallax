@@ -4407,7 +4407,16 @@ remains observable rather than making Python its own oracle.
   and unmatched DML, and a **real transient classification proof** (two
   crossed-update connections via `peer` provoke a genuine `40P01` deadlock).
   The provider contract suite exercises `reset`, `applyDdl`, `loadFixtures`,
-  `query`, `exec`, `execRolledBack`, and `peer` against the container.
+  `query`, `exec`, `execRolledBack`, and `peer` against the container. The
+  contract's **dialect-binding** obligation is discharged Docker-free in
+  `tests/unit/test_dialect_binding.py`, which resolves `PostgresAdapter.dialect`
+  off the class with no instance and no connection, and drives both shipped
+  decorating ports — `FaultInjectingPort`, including the copy it re-wraps around
+  a transaction-scoped port, and the engine's `_AbortingPort` — over a port
+  declaring a second dialect no adapter here declares, so a decorator that
+  authored `POSTGRES` of its own would fail rather than pass by coincidence.
+  `tests/unit/test_postgres_adapter.py` pins the third port that stands in for
+  another: the one `transaction` hands its body.
 - **Matrix profiles.** Two named profiles, both **full**: `pg-full` (every
   claimed case, `run`, postgres, expected count derived from the corpus at
   runtime — never hard-coded) and `compile-sweep` (every **compile-eligible**

@@ -2613,6 +2613,7 @@ def _member_columns(
 
 def _lower_scenario_step(
     context: _CaseContext,
+    dialect: Dialect,
     step: Mapping[str, object],
     index: int,
     group_observations: GroupObservations,
@@ -2626,9 +2627,7 @@ def _lower_scenario_step(
     known.
     """
     if "write" not in step:
-        statement = _compile_find(
-            step, context.model, context.dialect, context.concurrency
-        ).statement
+        statement = _compile_find(step, context.model, dialect, context.concurrency).statement
         return _LoweredStep(f"/scenario/{index}/objectQuery", (statement,), False, False)
     raw_write = step["write"]
     rollback = step.get("rollback") is True
@@ -2640,7 +2639,7 @@ def _lower_scenario_step(
         statement = _lower_predicate_write_step(
             cast("Mapping[str, object]", raw_write),
             context.model,
-            context.dialect,
+            dialect,
             context.concurrency,
         )
         return _LoweredStep(f"/scenario/{index}/write", (statement,), True, rollback)
@@ -2648,7 +2647,7 @@ def _lower_scenario_step(
     statements = _lower_writes(
         entries,
         context.model,
-        context.dialect,
+        dialect,
         context.concurrency,
         context.shadow,
         _entry_instant(entries[0]),
@@ -2707,7 +2706,8 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
     concurrency = _concurrency(case)
-    context = _CaseContext(domain, model, dialect_for(dialect_name), concurrency, TemporalShadow())
+    dialect = dialect_for(dialect_name)
+    context = _CaseContext(domain, model, concurrency, TemporalShadow())
     _seed_shadow_from_fixtures(case, model, context.shadow)
     group_observations: GroupObservations = []
     lowered: list[_LoweredStep] = []
@@ -2722,14 +2722,16 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
                     for grouped in range(index, end + 1):
                         lowered.append(
                             _lower_scenario_step(
-                                context, steps[grouped], grouped, group_observations
+                                context, dialect, steps[grouped], grouped, group_observations
                             )
                         )
                 index = end + 1
                 continue
             step = steps[index]
             with context.shadow.staged(doomed=step.get("rollback") is True):
-                lowered.append(_lower_scenario_step(context, step, index, group_observations))
+                lowered.append(
+                    _lower_scenario_step(context, dialect, step, index, group_observations)
+                )
             index += 1
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -3021,7 +3023,7 @@ def _run_snapshot_scenario(
     group."""
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
-    context = _CaseContext(domain, model, port.dialect, _concurrency(case), TemporalShadow())
+    context = _CaseContext(domain, model, _concurrency(case), TemporalShadow())
     # Seeded from the case's own fixtures and then advanced by each write step's
     # plan, so a temporal close observes the milestone the persisted history (or
     # an earlier step) actually holds — the SAME order every other lane applies:
@@ -3934,7 +3936,7 @@ def _execute_keyed_unit(
             resolved,
             entries,
             context.model,
-            context.dialect,
+            port.dialect,
             context.concurrency,
             tx_instant,
             context.shadow,
@@ -4270,14 +4272,19 @@ class _CaseContext:
     lowering surface is stated over. The tracker is the ONE case-spanning
     :class:`TemporalShadow` every unit shares rather than a per-unit copy — a
     later unit's temporal close observes the milestone an earlier one's write
-    opened. The record is frozen because none of the five is ever REBOUND inside
+    opened. The record is frozen because none of the four is ever REBOUND inside
     a case; the tracker's own contents advance, which is exactly the state a
     shared tracker exists to carry.
+
+    The dialect is deliberately NOT one of them. It is fixed by the connection a
+    unit executes through rather than by the case, and one case's steps do not
+    all run through one connection — an interleaved group runs on its own peer
+    session. Each lowering therefore names the dialect of the handle about to
+    execute it, so the record can travel beside any of them.
     """
 
     domain: DomainModel
     model: AcceptedMetamodel
-    dialect: Dialect
     concurrency: Concurrency
     shadow: TemporalShadow
 
@@ -4608,6 +4615,7 @@ class _GroupRun:
 def _run_group_step(
     tx: handle.Transaction,
     context: _CaseContext,
+    dialect: Dialect,
     state: _GroupState,
     step: Mapping[str, object],
     index: int,
@@ -4641,6 +4649,12 @@ def _run_group_step(
     observation, read across either call to recover the statements the step
     emits — for a delivery, every page's.
 
+    ``dialect`` is the spelling of the connection ``tx`` holds, which the group
+    runner reads off the port it opened the transaction over. A group runs on
+    its own connection — an interleaved group's on a peer session — so the
+    lowering a step reports is spelled by whatever is about to execute it rather
+    than by the caller's own port.
+
     Returns the step's lowered emission pointer, and — for a read step — what it
     published beside it (:class:`_StepRead`), which is the step's own
     `expectRows` observable on either lane. A write step publishes nothing and
@@ -4665,7 +4679,7 @@ def _run_group_step(
             resolved,
             entries,
             model,
-            context.dialect,
+            dialect,
             context.concurrency,
             tx_instant,
             context.shadow,
@@ -4729,8 +4743,9 @@ def _run_uow_group(
     state = _GroupState()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observation = lifecycle.observation()
+    write_port = _write_port(port, rollback=doomed)
     database = handle.Database(
-        _write_port(port, rollback=doomed),
+        write_port,
         context.domain,
         clock=FixedClock(instant),
         lifecycle_provider=observation.provider,
@@ -4742,7 +4757,7 @@ def _run_uow_group(
     def body(tx: handle.Transaction) -> None:
         for index in range(start, end + 1):
             step, read = _run_group_step(
-                tx, context, state, steps[index], index, tx_instant, observation
+                tx, context, write_port.dialect, state, steps[index], index, tx_instant, observation
             )
             lowered.append(step)
             if read is None:
@@ -4864,6 +4879,7 @@ def _run_interleaved_group(
     database: handle.Database,
     observation: LifecycleObservation,
     context: _CaseContext,
+    dialect: Dialect,
     steps: Sequence[Mapping[str, object]],
     indices: Sequence[int],
     turnstile: _Turnstile,
@@ -4900,6 +4916,11 @@ def _run_interleaved_group(
     callback's own Python code finished): the OTHER group's next step must
     observe that commit for real, never a same-process illusion of one.
 
+    ``dialect`` is the one ``database``'s own connection declares, which is why
+    it is passed beside the shared ``context`` rather than read out of it: the
+    two groups run on two connections, so the `concurrent` group's steps lower
+    in the spelling its peer session executes in.
+
     ``context`` carries the SAME single :class:`TemporalShadow` every group
     shares (`_run_uow_group`'s own convention) — safe here ONLY because
     `m-opt-lock-012`'s own witnessed model is entirely NON-temporal (the
@@ -4925,7 +4946,7 @@ def _run_interleaved_group(
             turnstile.wait_for(index)
             is_last = position == len(indices) - 1
             lowered[index], read = _run_group_step(
-                tx, context, state, steps[index], index, _INERT_CLOCK_INSTANT, observation
+                tx, context, dialect, state, steps[index], index, _INERT_CLOCK_INSTANT, observation
             )
             if read is not None:
                 result.rows[index] = _graph_rows(
@@ -5425,7 +5446,8 @@ def run_interleaved_scenario_case(
     on the caller's own ``port``, a
     ``concurrent`` group on a SECOND, peer-backed connection (``peer_factory``
     — this function constructs no connection itself), each a REAL
-    ``db.transact`` (production routing), steps sequenced across
+    ``db.transact`` (production routing) whose steps lower in the dialect its
+    OWN connection declares, steps sequenced across
     the two in AUTHORED order (:class:`_Turnstile`). Any ungrouped step
     (`m-opt-lock-012`'s own trailing verify find) runs AFTER both groups have
     resolved, on the caller's ``port``.
@@ -5454,7 +5476,6 @@ def run_interleaved_scenario_case(
     steps = _scenario_steps(case)
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
-    dialect = port.dialect
     concurrency = _concurrency(case)
     if any("expectGraph" in step for step in steps):
         raise EngineError(
@@ -5510,15 +5531,24 @@ def run_interleaved_scenario_case(
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})
-    context = _CaseContext(domain, model, dialect, concurrency, shadow)
+    context = _CaseContext(domain, model, concurrency, shadow)
     thread_a = threading.Thread(
         target=_run_interleaved_group,
-        args=(main_db, observed_a, context, steps, indices_a, turnstile, result_a),
+        args=(main_db, observed_a, context, port.dialect, steps, indices_a, turnstile, result_a),
         name=f"uow-{label_a}",
     )
     thread_b = threading.Thread(
         target=_run_interleaved_group,
-        args=(peer_db, observed_b, context, steps, indices_b, turnstile, result_b),
+        args=(
+            peer_db,
+            observed_b,
+            context,
+            peer_connection.dialect,
+            steps,
+            indices_b,
+            turnstile,
+            result_b,
+        ),
         name=f"uow-{label_b}",
     )
     try:
@@ -5628,7 +5658,7 @@ def run_scenario_case(
             "function does not construct — call run_interleaved_scenario_case instead"
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
-    context = _CaseContext(domain, model, dialect, concurrency, shadow)
+    context = _CaseContext(domain, model, concurrency, shadow)
     lowered: list[_LoweredStep] = []
     round_trips = 0
     try:
@@ -5747,7 +5777,7 @@ def run_write_sequence_case(
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
     lifecycle = lifecycle_run(lifecycle)
-    context = _CaseContext(domain, model, port.dialect, _concurrency(case), TemporalShadow())
+    context = _CaseContext(domain, model, _concurrency(case), TemporalShadow())
     group_observations: GroupObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
     round_trips = 0
