@@ -9,6 +9,7 @@ must not need a database.
 
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 import sys
@@ -74,9 +75,10 @@ class _StandInPort:
 
 
 def test_a_run_pairs_the_profiles_reporting_name_with_the_port_it_runs_through() -> None:
-    # The pairing is what a run is reported from, and a profile is what makes one, so
-    # the name an envelope carries and the port that produced it cannot be a pair
-    # some caller assembled. It answers no dialect of its own — what executes does.
+    # A run is reported from the pairing, and the name half of it comes off the
+    # profile rather than from the caller. Substituting the port is the deliberate
+    # exception, which is why the call site has to name it. It answers no dialect of
+    # its own — what executes does.
     profile = profile_for("pg-full")
     port = _StandInPort()
     run = profile.on_stand_in(port)
@@ -93,20 +95,13 @@ def test_a_run_cannot_be_spelled_from_a_reporting_name_beside_a_port() -> None:
         ProfileRun("pg-full", _StandInPort())  # type: ignore[arg-type]
 
 
-class _StandInProvisioner:
-    """A provisioner double: it opens nothing and answers the port it was given."""
-
-    def __init__(self, port: DbPort) -> None:
-        self.port = port
-
-
-def test_a_provisioned_run_reads_its_port_off_the_provisioner_that_opened_it() -> None:
-    # The other half of the same rule: a provisioned run is handed the open
-    # provisioner rather than a port beside it, so the database it reports through
-    # cannot be one some other recipe opened.
-    port = _StandInPort()
-    run = ProvisionedRun(profile_for("pg-full"), _StandInProvisioner(port))  # type: ignore[arg-type]
-    assert (run.name, run.port) == ("pg-full", port)
+def test_a_provisioned_run_is_spelled_from_the_profile_alone() -> None:
+    # The other half of the same rule: a provisioned run opens the profile's own
+    # provisioning, so there is no argument position a foreign recipe could occupy
+    # and no run that reports one profile while executing through another's
+    # database. Constructing one starts a container, so what is inspected here is
+    # the signature that leaves the recipe unspellable rather than a run.
+    assert list(inspect.signature(ProvisionedRun).parameters) == ["profile"]
 
 
 def test_an_unprovisioned_run_answers_this_profiles_dialect_and_refuses_sql() -> None:

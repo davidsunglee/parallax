@@ -66,10 +66,12 @@ CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"
 
 # Fully qualified callables that acquire a live database. Constructing the
 # provisioner or a container starts a server; the two ``connect`` seams open a
-# socket to one. Constructing `PostgresAdapter` over an already-open connection
+# socket to one; constructing a provisioned run opens the profile's own
+# provisioning. Constructing `PostgresAdapter` over an already-open connection
 # is deliberately absent: the internal-behavior surface wraps fakes with it.
 DATABASE_SEAMS: frozenset[str] = frozenset(
     {
+        "parallax.conformance.profile.ProvisionedRun",
         "parallax.conformance.provision.Provisioner",
         "parallax.postgres.PostgresAdapter.connect",
         "psycopg.connect",

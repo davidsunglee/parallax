@@ -4448,14 +4448,16 @@ remains observable rather than making Python its own oracle.
   A profile also constitutes the runs made under its name. `run_case` takes one
   `ProfileRun` — the profile's reporting name paired with the port the case
   executes through — and a run is constructed from a profile rather than from a
-  name: `provisioned()` opens the profile's own provisioner and yields the run over
-  the port it opened, `unprovisioned()` yields the run of a `rejected`-shape case
-  over a port that refuses SQL, and `on_stand_in(port)` names the substitution the
-  unit tests and Docker-free sweeps make when they stand a double in for a
-  database. No caller that publishes an envelope from a real run names a port
-  at all, so a run reported under one profile beside another's database is
+  name: `provisioned()` yields a `ProvisionedRun`, which opens the profile's own
+  provisioner itself and takes no other recipe, `unprovisioned()` yields the run of
+  a `rejected`-shape case over a port that refuses SQL, and `on_stand_in(port)`
+  names the substitution the unit tests and Docker-free sweeps make when they stand
+  a double in for a database. No caller names a port or a recipe beside the
+  profile, so a run reported under one profile beside another's database is
   unspellable rather than merely checked
-  (`database-provider-test-contract.md`). The declaration itself does not travel,
+  (`database-provider-test-contract.md`). Constructing a `ProvisionedRun` acquires
+  a live database, so it is a declared seam of `tools/check_database_access.py`
+  alongside the provisioner itself. The declaration itself does not travel,
   because a declaration answers a dialect and a signature holding a port derives the
   dialect from the port alone. The `run` lane still refuses a profile `PROFILES`
   does not declare wherever it is entered — a `Profile` is constructible without
