@@ -15,6 +15,7 @@ import pytest
 
 from _support.distributions import ALL_PACKAGES, Wheelhouse
 from _support.repo import PY_ROOT
+from parallax.conformance.profile import Profile, profile_for
 
 # Database-backed checks skipped because Docker/Postgres was unavailable — printed
 # in a final summary so a skip is never silent (spec §6); CI fails on any skip.
@@ -73,17 +74,28 @@ def record_db_skip(reason: str) -> None:
 
 
 @pytest.fixture(scope="session")
-def provisioner() -> Iterator[Any]:
+def profile() -> Profile:
+    """The declared matrix profile the database-backed lane runs (spec §6).
+
+    Resolving it opens nothing, so this fixture classifies no item: what needs a
+    container is the ``provisioner`` this profile declares, not the declaration.
+    """
+    return profile_for("pg-full")
+
+
+@pytest.fixture(scope="session")
+def provisioner(profile: Profile) -> Iterator[Any]:
     """A session-scoped self-managed Testcontainers Postgres (spec §6).
+
+    Built through the declared profile, so the recipe the database-backed lane
+    runs is the declaration itself rather than a parallel wiring of it.
 
     Skips the database-backed lane with a reason (never silently) when Docker or
     the provider cannot be brought up; the ``python-check-db`` CI job fails on any
     such skip, so a green CI run has exercised every database-backed check.
     """
     try:
-        from parallax.conformance.provision import Provisioner
-
-        instance = Provisioner()
+        instance = profile.provisioner()
     except Exception as exc:
         reason = f"Testcontainers Postgres unavailable: {type(exc).__name__}: {exc}"
         record_db_skip(reason)

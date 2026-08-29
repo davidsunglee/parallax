@@ -2,14 +2,17 @@
 
 The exact ``describe`` capability envelope the Python target claims, copied
 verbatim from the canonical claim in ``core/spec/slices.md`` (adapter identity
-aside). This is the single in-code source of truth for the adapter's
-``describe`` output and its unsupported-classification filters.
+aside) except for the dialects, which are derived from the declared matrix
+profiles rather than restated here. This is the single in-code source of truth
+for the adapter's ``describe`` output and its unsupported-classification filters.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Final
+
+from parallax.conformance.profile import profile_dialects
 
 __all__ = ["ADAPTER", "SNAPSHOT_CLAIM", "Adapter", "Claim"]
 
@@ -28,15 +31,24 @@ class Adapter:
 
 @dataclass(frozen=True, slots=True)
 class Claim:
-    """A conformance claim: the broad filters plus the ``caseTags`` selection."""
+    """A conformance claim: the broad filters plus the ``caseTags`` selection.
+
+    Every filter is authored except the dialects, which are derived from the
+    declared matrix profiles — a claimed dialect is one some profile actually
+    runs the suite against, so a claim no adapter backs is unwritable.
+    """
 
     modules: tuple[str, ...]
-    dialects: tuple[str, ...]
     case_shapes: tuple[str, ...]
     include: tuple[str, ...]
     exclude: tuple[str, ...]
     commands: tuple[str, ...]
     provisioning: str
+
+    @property
+    def dialects(self) -> tuple[str, ...]:
+        """The dialects the declared profiles run the suite against."""
+        return profile_dialects()
 
     def capabilities(self) -> dict[str, object]:
         """The ``capabilities`` block of a ``describe`` envelope."""
@@ -95,7 +107,6 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-value-object",
         "m-wire",
     ),
-    dialects=("postgres",),
     case_shapes=(
         "read",
         "writeSequence",

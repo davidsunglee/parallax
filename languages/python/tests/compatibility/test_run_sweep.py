@@ -4,8 +4,8 @@ Every exercised reachable read case is compiled, executed against a freshly rese
 real database (``DROP SCHEMA … CASCADE`` → descriptor DDL → fixtures), and its
 observation (``then.rows`` / ``then.graph`` / ``then.graphs``, order-insensitive
 where the case format says so, wire space) compared against the golden; its
-emitted SQL and binds equal the ``postgres`` golden, root and every deep-fetch
-child level alike. This is the tracer path proven end to end — compile (where
+emitted SQL and binds equal the golden keyed by the profile's own dialect, root
+and every deep-fetch child level alike. This is the tracer path proven end to end — compile (where
 eligible) to canonical SQL/binds, then run against a reset database. Docker-
 gated; a skip is reported, never silent (spec §6).
 """
@@ -41,6 +41,7 @@ from _support.sweep_goldens import (
     write_golden_statements,
 )
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
+from parallax.conformance.profile import Profile
 from parallax.core import inheritance, storage_layout
 from parallax.core.metamodel import Metamodel, entity_by_name
 
@@ -117,7 +118,9 @@ _CASES = _reachable_run_cases()
 _SCHEMA = adapter_schema()
 
 
-def _read_golden_statements(case: case_format.Case) -> list[tuple[str, list[Any]]]:
+def _read_golden_statements(
+    case: case_format.Case, dialect_name: str
+) -> list[tuple[str, list[Any]]]:
     """A read case's ordered golden statements (root, then every deep-fetch
     child level) — the same per-entry `{sql, binds}` extraction
     `write_golden_statements` uses for a write case, applied to a read's own
@@ -126,10 +129,10 @@ def _read_golden_statements(case: case_format.Case) -> list[tuple[str, list[Any]
     out: list[tuple[str, list[Any]]] = []
     for entry in cast("list[dict[str, Any]]", statements):
         sql = entry["sql"]
-        text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
+        text = cast("dict[str, str]", sql)[dialect_name] if isinstance(sql, dict) else sql
         binds = entry.get("binds", [])
         if isinstance(binds, dict):
-            binds = cast("dict[str, list[object]]", binds)["postgres"]
+            binds = cast("dict[str, list[object]]", binds)[dialect_name]
         out.append((cast("str", text), list(cast("list[object]", binds))))
     return out
 
@@ -221,7 +224,7 @@ def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) ->
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
-def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+def test_run_sweep(case: case_format.Case, profile: Profile, provisioner: Any) -> None:
     model = engine.load_case_metamodel(case)
     from parallax.conformance import provision
 
@@ -233,7 +236,7 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
     doc = case_document(case)
     then = doc.get("then", {})
-    golden_statements = _read_golden_statements(case)
+    golden_statements = _read_golden_statements(case, profile.dialect.name)
     emissions = envelope["emissions"]
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
     # Which emissions carry user-authored binds: an eager read's is its one root
@@ -929,7 +932,7 @@ _ERROR_CASES = _reachable_error_cases()
 
 
 @pytest.mark.parametrize("case", _ERROR_CASES, ids=[c.case_id for c in _ERROR_CASES])
-def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+def test_error_run_sweep(case: case_format.Case, profile: Profile, provisioner: Any) -> None:
     """Run each single-connection m-db-error case against a reset real database.
 
     The authored trigger DML executes in order; the final statement raises a real
@@ -952,11 +955,11 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
     then = doc["then"]
     assert envelope["observations"]["errorClass"] == then["errorClass"]
-    assert envelope["observations"]["nativeCode"] == then["nativeCode"]["postgres"]
+    assert envelope["observations"]["nativeCode"] == then["nativeCode"][profile.dialect.name]
     assert envelope["observations"]["roundTrips"] == len(then["statements"])
     golden_trigger = [
         (
-            entry["sql"]["postgres"] if isinstance(entry["sql"], dict) else entry["sql"],
+            entry["sql"][profile.dialect.name] if isinstance(entry["sql"], dict) else entry["sql"],
             entry.get("binds", []),
         )
         for entry in then["statements"]
@@ -1038,17 +1041,19 @@ def _reachable_conflict_cases() -> list[case_format.Case]:
 _CONFLICT_CASES = _reachable_conflict_cases()
 
 
-def _conflict_golden_statements(then: dict[str, Any]) -> list[tuple[str, list[Any]]]:
+def _conflict_golden_statements(
+    then: dict[str, Any], dialect_name: str
+) -> list[tuple[str, list[Any]]]:
     out: list[tuple[str, list[Any]]] = []
     for entry in cast("list[dict[str, Any]]", then.get("statements", [])):
         sql = entry["sql"]
-        text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
+        text = cast("dict[str, str]", sql)[dialect_name] if isinstance(sql, dict) else sql
         out.append((cast("str", text), list(cast("list[Any]", entry.get("binds", [])))))
     return out
 
 
 @pytest.mark.parametrize("case", _CONFLICT_CASES, ids=[c.case_id for c in _CONFLICT_CASES])
-def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+def test_conflict_run_sweep(case: case_format.Case, profile: Profile, provisioner: Any) -> None:
     """Run each `conflict`-shape case against a reset real database.
 
     The single-attempt form (`m-opt-lock-005/006/013`) grades the golden write's
@@ -1078,7 +1083,7 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     emissions = envelope["emissions"]
 
     if "affectedRows" in then:
-        golden_statements = _conflict_golden_statements(then)
+        golden_statements = _conflict_golden_statements(then, profile.dialect.name)
         assert len(emissions) == len(golden_statements), (case.case_id, emissions)
         for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
             assert emission["sql"] == golden_sql, (case.case_id, emission)
@@ -1090,7 +1095,9 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     else:
         attempts = cast("list[dict[str, Any]]", doc["when"]["attempts"])
         golden_statements = [
-            entry for attempt in attempts for entry in _conflict_golden_statements(attempt)
+            entry
+            for attempt in attempts
+            for entry in _conflict_golden_statements(attempt, profile.dialect.name)
         ]
         assert len(emissions) == len(golden_statements), (case.case_id, emissions)
         for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
@@ -1221,7 +1228,7 @@ _CONCURRENCY_CASES = _reachable_concurrency_rounds_cases()
 
 
 @pytest.mark.parametrize("case", _CONCURRENCY_CASES, ids=[c.case_id for c in _CONCURRENCY_CASES])
-def test_concurrency_rounds(case: case_format.Case, provisioner: Any) -> None:
+def test_concurrency_rounds(case: case_format.Case, profile: Profile, provisioner: Any) -> None:
     """Run one `when.concurrency` case's rounds over two independently-held
     peer sessions and grade its own shape's assertion.
 
@@ -1240,7 +1247,7 @@ def test_concurrency_rounds(case: case_format.Case, provisioner: Any) -> None:
 
     provisioner.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
-    rounds = concurrency_runner.parse_rounds(case, "postgres")
+    rounds = concurrency_runner.parse_rounds(case, profile.dialect.name)
     isolation = "serializable" if case.case_id in _SERIALIZABLE_ISOLATION_CASES else None
     run = concurrency_runner.run_rounds(
         rounds, lambda: provisioner.peer(autocommit=False), isolation=isolation
@@ -1258,7 +1265,7 @@ def test_concurrency_rounds(case: case_format.Case, provisioner: Any) -> None:
         then = case_document(case)["then"]
         assert exc is not None
         assert exc.category == then["errorClass"], (case.case_id, exc)
-        assert exc.native_code == then["nativeCode"]["postgres"], (case.case_id, exc)
+        assert exc.native_code == then["nativeCode"][profile.dialect.name], (case.case_id, exc)
         for index, round_outcomes in enumerate(run.rounds):
             for node, outcome in round_outcomes.items():
                 if (index, node) != (raised_index, raised_node):

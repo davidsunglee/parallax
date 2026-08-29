@@ -135,13 +135,24 @@ A provider contract suite must exercise these operations:
 
 The provider matrix must be declared with named profiles. A profile records:
 
-- dialect
 - provider/adapter under test
 - case-selection rule
 - whether it is full or partial
 - expected included case ids or a mechanically checked count
 - explicit exclusions with reasons
 - the command or recipe that runs it
+
+A profile does not record a dialect of its own. The adapter under test already
+declares the dialect it executes in (`m-db-port`), and that declaration is
+metadata rather than connection state, so the profile derives its dialect by
+reading it back — without a container and without a connection. Deriving rather
+than recording is what makes a profile naming a dialect its adapter does not
+execute in unrepresentable rather than merely wrong, and it is why the derivation
+must reach the adapter's declaration rather than an instance of it.
+
+The recipe the profile names must be what actually runs the matrix. A declaration
+some other wiring duplicates is a name, not a profile: the recipe and any
+command surface that selects a profile must resolve the same declaration.
 
 A full profile runs every case in the claimed slice for that dialect. A partial
 profile is first-class only when its omissions are explicit. In particular, a

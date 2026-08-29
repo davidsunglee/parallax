@@ -4418,7 +4418,7 @@ remains observable rather than making Python its own oracle.
   `tests/unit/test_postgres_adapter.py` pins the third port that stands in for
   another: the one `transaction` hands its body.
 - **Matrix profiles.** Two named profiles, both **full**: `pg-full` (every
-  claimed case, `run`, postgres, expected count derived from the corpus at
+  claimed case, `run`, expected count derived from the corpus at
   runtime — never hard-coded) and `compile-sweep` (every **compile-eligible**
   claimed case, `compile`, Docker-free, emissions and binds vs golden plus
   normalization). A claimed case the corpus declares run-only
@@ -4427,6 +4427,23 @@ remains observable rather than making Python its own oracle.
   (`m-conformance-adapter`) rather than a golden comparison, so the sweep stays
   honest without hard-coding which cases are excluded. No partial profiles
   exist; MariaDB is a §1 deferral, not a profile exclusion.
+  `pg-full` is a declared value — `parallax.conformance.profile.PROFILES`, whose
+  entries name a provisioner, which declares the adapter it opens. A profile's
+  dialect is read back off that adapter's class, so it is answerable with no
+  container and no connection, and no profile can name a dialect its adapter does
+  not execute in. The `pg-full` sweep resolves that declaration rather than
+  restating it: `tests/conftest.py`'s `provisioner` fixture is built through the
+  profile, and the per-dialect goldens it grades against are keyed by the
+  profile's own dialect. `capabilities.dialects` is derived from `PROFILES` too
+  (`parallax.conformance.claim`), so a claimed dialect is one some profile
+  actually runs; the derivation reaches the concrete adapter through a deferred
+  import, keeping psycopg out of the conformance adapter's import graph.
+  `compile-sweep` is deliberately not a declared profile: it compiles without a
+  database and so has no adapter to derive a dialect from, which is why it stays
+  the marker-driven Docker-free lane selected by `compile --dialect`.
+  `tests/unit/test_profile.py` pins the lookup, its refusal of an undeclared
+  name, the dialect resolved with nothing constructed, and both import-graph
+  facts.
 - **Commands and skip reporting.** Every collected item carries exactly one
   scheduling marker — `dbfree`, `db`, or `cost` — added at collection from what
   the item requires: `db` when its fixture closure reaches the session-scoped
