@@ -279,15 +279,29 @@ class ScenarioReads:
             # than the navigated position's. A polymorphic position names that
             # variant with a raw tag or a branch literal, neither of which is a
             # result field, so it is derived first: what the step publishes is
-            # `familyVariant`, and it is also what the decode below stands at. A
-            # resolved list is derived as the whole read it is, a navigated
-            # position as the position it stands at.
+            # `familyVariant`, and it is also what the Relational Document Layout
+            # fan-out and the owner-node decode below both stand at. A resolved
+            # list is derived as the whole read it is — one call ordering the
+            # fan-out ahead of the tag it already resolves itself — and a navigated
+            # position as the position it stands at, per row, because a multi-hop
+            # load aggregates levels whose Structured Columns differ.
             list_read = _resolved_list_read(case, step_index, step)
-            rows = (
-                materialize.materialize_navigated_family_variant(case, entity, rows)
-                if list_read is None
-                else materialize.materialize_family_variant(list_read, rows)
-            )
+            if list_read is None:
+                rows = materialize.materialize_navigated_family_variant(case, entity, rows)
+                rows = [
+                    materialize.materialize_document_layout(
+                        case,
+                        materialize.variant_entity(case.model, entity, row),
+                        [row],
+                        include_value_objects=True,
+                    )[0]
+                    for row in rows
+                ]
+            else:
+                rows = materialize.materialize_target_tph_document_layout(
+                    list_read, rows, include_value_objects=True
+                )
+                rows = materialize.materialize_family_variant(list_read, rows)
             rows = [
                 materialize.materialize_variant_owner_node(case.model, entity, row) for row in rows
             ]

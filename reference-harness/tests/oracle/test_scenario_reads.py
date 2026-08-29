@@ -42,6 +42,8 @@ _ONE_OBJECT_TWO_FINDS = "m-identity-map-001-same-transaction-identity.yaml"
 _TPCS_ROW_FORM_READ = "m-inheritance-050-tpcs-abstract-root-read.yaml"
 _TPCS_INSTANCE_FORM_READ = "m-inheritance-137-tpcs-union-vo-placeholder.yaml"
 _POLYMORPHIC_OWNER = "m-identity-map-005-family-root-vs-leaf.yaml"
+_DOCUMENT_LAYOUT_DEEP_FETCH = "m-deep-fetch-024-document-layout-graph.yaml"
+_DOCUMENT_LAYOUT_TPH_READ = "m-inheritance-123-document-layout-tph-broad-read.yaml"
 
 
 def _order(
@@ -661,6 +663,149 @@ def test_a_load_to_an_abstract_position_publishes_familyVariant_not_the_raw_tag(
     reads.assert_step(1, reader)
 
 
+_FOLDER_SQL = "select t0.id, t0.name from folder t0 where t0.id = ?"
+
+
+def _keyed_by_folder(union_all: str) -> str:
+    """m-inheritance-137's `union all`, each branch keyed by the parent `IN` list.
+
+    A polymorphic table-per-concrete-subtype hop is ONE `union all` whose branches
+    share the parent-id list (m-deep-fetch), so the level projects the same aligned
+    superset the abstract root read projects and differs from it only by that key.
+    """
+    return " union all ".join(
+        f"{branch} where t0.folder_id in (?)" for branch in union_all.split(" union all ")
+    )
+
+
+def _as_a_load_of_the_folders_documents(case: Case) -> Case:
+    """*case*'s table-per-concrete-subtype family reached through a deferred load.
+
+    `Folder.documents` targets the abstract root Document, so the position the load
+    walks to owns no table of its own: each row names its concrete with the branch
+    literal its own `union all` arm projects.
+    """
+    union_all = case.raw["then"]["statements"][0]["sql"]["postgres"]
+    case.raw["shape"] = "scenario"
+    case.raw["when"] = {
+        "scenario": [
+            {
+                "objectQuery": {
+                    "target": "parallax.compatibility.Folder",
+                    "predicate": {"eq": {"attr": "parallax.compatibility.Folder.id", "value": 100}},
+                },
+                "roundTrips": 1,
+                "statements": [{"sql": {"postgres": _FOLDER_SQL}, "binds": [100]}],
+            },
+            {
+                "action": "load",
+                "on": 0,
+                "path": "documents",
+                "roundTrips": 1,
+                "statements": [{"sql": {"postgres": _keyed_by_folder(union_all)}, "binds": [100]}],
+                "expectRows": _DOCUMENT_FAMILY_ROWS,
+            },
+        ]
+    }
+    case.raw["then"] = {}
+    return case
+
+
+def test_a_load_to_an_abstract_tpcs_position_publishes_familyVariant_not_the_branch_literal(
+    damaged_case: CaseLoader,
+) -> None:
+    """A `union all` hop's branch literal is no more a result field than a raw tag is.
+
+    The position is navigated, so its own family fixes the concrete set and the
+    level's own golden fixes the projection shape — but what each row publishes is
+    the `familyVariant` its branch literal names, restored to that branch's own
+    physical spellings and decoded through that branch's own placements.
+    """
+    case = _as_a_load_of_the_folders_documents(damaged_case(_TPCS_INSTANCE_FORM_READ))
+    reads = ScenarioReads(case)
+    reader = ScriptedReads(results=[[{"id": 100, "name": "Alpha"}], _DOCUMENT_FAMILY])
+
+    reads.assert_step(0, reader)
+
+    reads.assert_step(1, reader)
+
+
+_TRAVELER_SQL = "select t0.id, not t0.payload is null, t0.payload from traveler t0 where t0.id = ?"
+_TRIPS_SQL = (
+    "select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 "
+    "where t0.traveler_id in (?) order by t0.id asc"
+)
+_TRAVELER_ROW = {
+    "id": 1,
+    "__parallax_document_presence_1": True,
+    "payload": '{"displayName": "Ada", "score": 7, "joinedOn": "2026-01-15", "tags": []}',
+}
+_TRIP_ROWS: list[dict[str, Any]] = [
+    {
+        "id": 51,
+        "traveler_id": 1,
+        "__parallax_document_presence_2": True,
+        "payload": '{"destination": "Oslo", "nights": 3}',
+    },
+    {
+        "id": 52,
+        "traveler_id": 1,
+        "__parallax_document_presence_2": True,
+        "payload": '{"destination": "Bergen", "nights": 1}',
+    },
+]
+_TRIP_ROWS_PUBLISHED: list[dict[str, Any]] = [
+    {"id": 51, "traveler_id": 1, "destination": "Oslo", "nights": 3},
+    {"id": 52, "traveler_id": 1, "destination": "Bergen", "nights": 1},
+]
+
+
+def _as_a_load_of_the_travelers_trips(case: Case) -> Case:
+    """*case*'s deep fetch restated as the deferred load of the same relationship."""
+    case.raw["shape"] = "scenario"
+    case.raw["when"] = {
+        "scenario": [
+            {
+                "objectQuery": {
+                    "target": "parallax.compatibility.Traveler",
+                    "predicate": {"eq": {"attr": "parallax.compatibility.Traveler.id", "value": 1}},
+                },
+                "roundTrips": 1,
+                "statements": [{"sql": {"postgres": _TRAVELER_SQL}, "binds": [1]}],
+            },
+            {
+                "action": "load",
+                "on": 0,
+                "path": "trips",
+                "roundTrips": 1,
+                "statements": [{"sql": {"postgres": _TRIPS_SQL}, "binds": [1]}],
+                "expectRows": _TRIP_ROWS_PUBLISHED,
+            },
+        ]
+    }
+    case.raw["then"] = {}
+    return case
+
+
+def test_a_load_fans_a_relational_document_layout_out_into_its_members(
+    damaged_case: CaseLoader,
+) -> None:
+    """The Structured Column is never a result field, at a navigated position either.
+
+    The loaded level projects `trip`'s shared Column once and publishes neither it
+    nor the document it carried: `destination` and `nights` come back under the
+    result names a `Columns` layout would have given them, decoded through the
+    level's OWN entity.
+    """
+    case = _as_a_load_of_the_travelers_trips(damaged_case(_DOCUMENT_LAYOUT_DEEP_FETCH))
+    reads = ScenarioReads(case)
+    reader = ScriptedReads(results=[[_TRAVELER_ROW], _TRIP_ROWS])
+
+    reads.assert_step(0, reader)
+
+    reads.assert_step(1, reader)
+
+
 def test_a_load_naming_a_source_that_is_not_earlier_is_refused(damaged_case: CaseLoader) -> None:
     case = damaged_case(_POPULATED_LIST)
     _steps(case)[1]["on"] = 1
@@ -761,6 +906,48 @@ def test_a_first_access_of_an_abstract_list_is_graded_as_the_read_it_resolves(
     row_form = _as_a_constructed_list_first_accessed(damaged_case(_TPCS_ROW_FORM_READ), [])
     with pytest.raises(CaseFailure, match=r"not the stable superset.*'annotation'"):
         ScenarioReads(row_form).assert_step(1, ScriptedReads(results=[[]]))
+
+
+_PAYMENT_FAMILY: list[dict[str, Any]] = [
+    {
+        "id": 1,
+        "kind": "card",
+        "__parallax_document_presence_2": True,
+        "payload": '{"detail": "visa-4242", "authorizationCode": "AUTH-7"}',
+    },
+    {
+        "id": 2,
+        "kind": "cash",
+        "__parallax_document_presence_2": True,
+        "payload": '{"detail": "12.50"}',
+    },
+]
+_PAYMENT_FAMILY_ROWS: list[dict[str, Any]] = [
+    {
+        "id": 1,
+        "familyVariant": "CardPayment",
+        "detail": "visa-4242",
+        "authorization_code": "AUTH-7",
+    },
+    {"id": 2, "familyVariant": "CashPayment", "detail": Decimal("12.50")},
+]
+
+
+def test_a_first_access_fans_a_relational_document_layout_out_at_the_rows_own_variant(
+    damaged_case: CaseLoader,
+) -> None:
+    """The resolved list publishes members, and each row's own branch decodes them.
+
+    The two variants store `detail` at the same Document Path under different
+    declared types, so the fan-out has to stand at the variant the raw tag names —
+    which is what makes the access publish `12.50` as a decimal and give the cash
+    node no `authorization_code` member from its sibling.
+    """
+    case = _as_a_constructed_list_first_accessed(
+        damaged_case(_DOCUMENT_LAYOUT_TPH_READ), _PAYMENT_FAMILY_ROWS
+    )
+
+    ScenarioReads(case).assert_step(1, ScriptedReads(results=[_PAYMENT_FAMILY]))
 
 
 def test_an_access_naming_a_relationship_the_read_never_included_is_refused(

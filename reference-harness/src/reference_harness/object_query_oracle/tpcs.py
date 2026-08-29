@@ -98,7 +98,7 @@ def _placeholder_types(
     return [types.get(column.contributor) for column in columns]
 
 
-def _is_instance_form(case: Case) -> bool:
+def is_instance_form(case: Case) -> bool:
     """Whether a read case's authored result form is the object lane.
 
     `m-case-format` *Read result form*: a ``then.graph`` / ``then.graphs``
@@ -109,9 +109,9 @@ def _is_instance_form(case: Case) -> bool:
 
 
 def projected_position_ordinals(
-    case: Case, view: PositionLayoutView, *, document_resident: bool
+    view: PositionLayoutView, *, instance_form: bool, document_resident: bool
 ) -> tuple[int, ...]:
-    """The position-column ordinals a read of *case*'s result form projects.
+    """The position-column ordinals a read of the given result form projects.
 
     Every non-`Document` contributor is projected in both result forms. A
     `Document` one is not: a top-level Value Object occurrence's own Structured
@@ -126,9 +126,10 @@ def projected_position_ordinals(
     *document_resident* is that last fact — whether any branch's concrete places an
     Attribute of its own inside the shared Structured Column — and it is stated by the
     caller, because the layout's member placement is the materializer's vocabulary and
-    the `union all` shape is this module's.
+    the `union all` shape is this module's. *instance_form* is stated the same way: a
+    read case states it through the result member it authored
+    (:func:`is_instance_form`), while a navigated position is one by classification.
     """
-    instance_form = _is_instance_form(case)
     return tuple(
         ordinal
         for ordinal, column in enumerate(view.columns)
@@ -367,7 +368,9 @@ def assert_union_shape(
     Sort Keys and cap the Object Query authored, each rendered as the dialect under
     test spells it.
     """
-    ordinals = projected_position_ordinals(case, view, document_resident=document_resident)
+    ordinals = projected_position_ordinals(
+        view, instance_form=is_instance_form(case), document_resident=document_resident
+    )
     superset = [view.column_spellings[ordinal] for ordinal in ordinals]
     position_types = _placeholder_types(case.model, view.columns)
     placeholder_types = [position_types[ordinal] for ordinal in ordinals]
