@@ -36,10 +36,13 @@ from reference_harness.inheritance import (
     NARROW_EMPTY_EFFECTIVE_SET,
     NARROW_OUTSIDE_POSITION,
     REFERENCE_AMBIGUOUS_ENTITY_NAME,
+    STRATEGY_TPCS,
+    STRATEGY_TPH,
     SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
     SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE,
     SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES,
     Family,
+    query_position,
     tag_value_to_subtype,
     validate_query_inheritance,
 )
@@ -77,6 +80,42 @@ def _judge(defs: list[dict[str, Any]], position: str, **clauses: Any) -> None:
     that clause and letting every other take its unfiltered default.
     """
     validate_query_inheritance(defs, {"target": position, "predicate": {"all": {}}, **clauses})
+
+
+# --- the family position a query reads --------------------------------------
+
+
+def test_an_abstract_target_answers_the_position_and_the_strategy_it_projects_from() -> None:
+    defs = _animal_defs()
+    position = query_position({"target": "Animal"}, defs)
+    assert position is not None
+    assert (position.target, position.strategy) == ("Animal", STRATEGY_TPH)
+    assert position.family.effective_concrete_set(position.target) == ["Cat", "Dog", "WildBoar"]
+    # An abstract SUBTYPE is a position of its own, kept in the query's own spelling.
+    interior = query_position({"target": "Pet"}, defs)
+    assert interior is not None
+    assert interior.target == "Pet"
+    # The strategy is the only thing a consumer's projection differs by.
+    tpcs = query_position({"target": "Document"}, _document_defs())
+    assert tpcs is not None
+    assert tpcs.strategy == STRATEGY_TPCS
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"target": "Dog"},
+        {"target": "Absent"},
+        {"target": 7},
+        {},
+        None,
+    ],
+)
+def test_a_read_carrying_no_variant_answers_no_position(query: Any) -> None:
+    # A concrete target already names the one variant it returns, and a read of a
+    # non-inheritance entity has none at all; an unresolvable or unspelled target
+    # is refused elsewhere and classifies here by the same test.
+    assert query_position(query, _animal_defs()) is None
 
 
 # --- effective concrete-set derivation --------------------------------------

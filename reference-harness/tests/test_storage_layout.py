@@ -27,7 +27,9 @@ from reference_harness.storage_layout import (
     AttributeContributor,
     ColumnTier,
     DirectColumn,
+    DocumentMember,
     DocumentPath,
+    EntityDocument,
     InheritanceDiscriminator,
     MemberAddress,
     RelationalDocument,
@@ -550,6 +552,75 @@ def test_document_resident_members_are_placed_at_one_segment_under_the_shared_co
         structured, ("payload",)
     )
     assert layout.contribution(ValueObjectContributor(alpha, "payload")) is None
+
+
+def test_an_entity_document_carries_the_members_its_own_ancestry_placed_inside() -> None:
+    facet = compile_storage_layout(_document_hierarchy())
+    root = "example.Record"
+    alpha = "example.AlphaRecord"
+    document = facet.document(alpha)
+    assert document.column == "doc"
+    # Inherited members first, in ancestry declaration order, then the occurrences;
+    # a leaf carries the declared type its stored spelling decodes through and an
+    # occurrence carries none. The primary key and the tag never appear: one is
+    # placed in a Column of its own and the other is no declared member at all.
+    assert document.members == (
+        DocumentMember(MemberAddress(root, ("label",)), "label", ("label",), "int64"),
+        DocumentMember(
+            MemberAddress(alpha, ("alphaValue",)), "alpha_value", ("alphaValue",), "int64"
+        ),
+        DocumentMember(MemberAddress(alpha, ("payload",)), "payload", ("payload",), None),
+    )
+    assert [member.name for member in document.members] == ["label", "alphaValue", "payload"]
+    # Disjoint siblings share the Table and the Column, never each other's members.
+    assert [member.name for member in facet.document("example.BetaRecord").members] == [
+        "label",
+        "betaValue",
+    ]
+
+
+def test_a_rowless_position_answers_for_the_structured_column_its_family_shares() -> None:
+    # A table-per-hierarchy root owns no rows and so has no layout selection, but it
+    # does map to the shared Table, and a read of that position asks the same
+    # residence question a read of one of its subtypes does.
+    facet = compile_storage_layout(_document_hierarchy())
+    root = "example.Record"
+    assert facet.entity(root) is None
+    assert facet.document(root).column == "doc"
+    assert [member.name for member in facet.document(root).members] == ["label"]
+
+
+def test_an_entity_outside_a_relational_document_layout_answers_the_empty_document() -> None:
+    # A tableless table-per-concrete-subtype root, a conventional ``Columns``
+    # entity, and a name no definition claims all answer alike, which is what lets
+    # a consumer's document fan-out stay unconditional.
+    assert compile_storage_layout(_document_tpcs()).document("example.Document") == EntityDocument(
+        "", ()
+    )
+    facet = compile_storage_layout(_tph_definitions())
+    assert facet.document("example.AlphaRecord") == EntityDocument("", ())
+    assert facet.document("example.Absent") == EntityDocument("", ())
+
+
+def test_every_corpus_document_member_is_the_placement_the_layout_compiled() -> None:
+    checked = 0
+    for model_path in sorted(_COMPATIBILITY_ROOT.glob("models/**/*.yaml")):
+        model = load_model(_COMPATIBILITY_ROOT, model_path.relative_to(_COMPATIBILITY_ROOT))
+        facet = model.storage_layout
+        for entity in model.entities:
+            document = facet.document(entity.canonical_name)
+            layout = facet.table(entity.table) if entity.table else None
+            if not document.column:
+                continue
+            assert layout is not None
+            slot = layout.column(document.column)
+            assert slot is not None
+            assert isinstance(slot.contributor, RelationalDocument)
+            for member in document.members:
+                assert layout.placement(member.address) == DocumentPath(slot, member.path)
+                assert layout.column(member.column) is None
+                checked += 1
+    assert checked
 
 
 def test_a_tpcs_family_receives_one_structured_column_per_concrete_table() -> None:
@@ -1355,6 +1426,7 @@ def test_the_harness_consumes_storage_layout_for_validation_reads_and_observatio
         "ColumnContributor",
         "ColumnSlot",
         "ColumnTier",
+        "DocumentMember",
         "DocumentPath",
         "MemberAddress",
         "PositionBranch",

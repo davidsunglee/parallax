@@ -41,18 +41,16 @@ from ..inheritance import (
     STRATEGY_TPCS,
     STRATEGY_TPH,
     Family,
-    is_abstract,
+    query_position,
     tag_value_to_subtype,
 )
 from ..storage_layout import (
     ColumnSlot,
     DocumentPath,
-    MemberAddress,
     PositionBranch,
     PositionLayoutView,
     RelationalDocument,
     TableLayout,
-    member_address,
     position_projection,
     position_view,
 )
@@ -379,49 +377,6 @@ def _position_value_object_columns(case: Case, entity: Entity) -> set[str]:
     }
 
 
-# --- the read's family position ---------------------------------------------
-
-
-class _AbstractFamilyPosition(NamedTuple):
-    """The abstract family node a query reads, with the family it belongs to.
-
-    *target* keeps the QUERY's own spelling of that position — every :class:`Family`
-    lookup resolves an unambiguous local alias itself, so carrying the authored
-    spelling keeps a consumer's diagnostics in the case's own words.
-    """
-
-    family: Family
-    target: str
-    strategy: str | None
-
-
-def abstract_family_position(case: Case, query: Any) -> _AbstractFamilyPosition | None:
-    """Classify *query*'s target position: the abstract family node it reads, or
-    ``None`` for every other read.
-
-    One classifier for every consumer whose behavior turns on the distinction,
-    because they all ask the same question of the same field. An ABSTRACT position
-    resolves over more than one concrete subtype, so its SQL partitions per branch
-    and its result carries a variant tag (`m-sql`); a CONCRETE-target read — and any
-    read of a non-inheritance entity — carries neither, having already named the one
-    variant it returns. What differs between consumers is only the storage
-    *strategy* they then project that behavior from.
-
-    Abstractness is read off the definition's inheritance role, which only a family
-    participant carries, so a non-inheritance target answers ``None`` by the same
-    test.
-    """
-    target = query.get("target") if isinstance(query, dict) else None
-    if not isinstance(target, str):
-        return None
-    family = Family(case.model.entity_defs)
-    if target not in family.defs:
-        return None
-    if not is_abstract(family.defs[target]):
-        return None
-    return _AbstractFamilyPosition(family, target, family.strategy_of(target))
-
-
 def read_effective_set(case: Case, family: Family, target_name: str) -> list[str]:
     """The effective concrete-subtype set an abstract-target read resolves over.
 
@@ -435,70 +390,6 @@ def read_effective_set(case: Case, family: Family, target_name: str) -> list[str
     if isinstance(narrow_to, list):
         return family.resolve_to_set(narrow_to)
     return family.effective_concrete_set(target_name)
-
-
-# --- Relational Document Layout ---------------------------------------------
-
-
-class DocumentMember(NamedTuple):
-    """One member a Relational Document Layout keeps inside the shared Structured
-    Column: where it sits in the document and — for a leaf — the declared type its
-    stored spelling decodes through.
-
-    ``address`` identifies the member — by its declaring owner, so two disjoint
-    inheritance siblings sharing a Table may reuse a member name and still be told
-    apart — and ``column`` only spells it: a member inside a document claims no
-    Column, so its spelling is free to collide with the Column a direct member
-    really holds."""
-
-    address: MemberAddress
-    column: str
-    path: tuple[str, ...]
-    type_spelling: str | None
-
-    @property
-    def name(self) -> str:
-        return self.address.path[0]
-
-
-def document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[DocumentMember, ...]]:
-    """*entity*'s Structured Column and the top-level members it carries.
-
-    Answers ``("", ())`` for a conventional ``Columns`` entity, which is what makes
-    the fan-out below inert rather than conditional at its call sites. Residency
-    comes from the independently compiled Member Placements, never from the
-    declaration, and each member is asked for at its own address: a Table shared by
-    disjoint inheritance siblings holds a placement per declaration, so the member
-    one of them reaches under a reused name is the one its own declaration owns. A
-    leaf inside an occurrence is addressed under that occurrence and is left to the
-    occurrence's own document, which already carries it.
-    """
-    layout = case.model.storage_layout.table(entity.table)
-    if layout is None:
-        return "", ()
-    slot = next(
-        (slot for slot in layout.columns if isinstance(slot.contributor, RelationalDocument)), None
-    )
-    if slot is None:
-        return "", ()
-    family = Family(case.model.entity_defs)
-
-    def resident(declaration: dict[str, Any], type_spelling: str | None) -> DocumentMember | None:
-        address = member_address(family, entity.canonical_name, declaration["name"])
-        placement = layout.placement(address)
-        if not (isinstance(placement, DocumentPath) and placement.slot == slot):
-            return None
-        return DocumentMember(address, declaration["column"], placement.path, type_spelling)
-
-    declared = (
-        *((attribute, attribute["type"]) for attribute in entity.attributes),
-        *((occurrence, None) for occurrence in entity.value_objects),
-    )
-    return slot.column, tuple(
-        member
-        for declaration, type_spelling in declared
-        if (member := resident(declaration, type_spelling)) is not None
-    )
 
 
 def _document_value(document: Any, path: tuple[str, ...]) -> Any:
@@ -542,7 +433,8 @@ def _materialize_document_layout(
     document itself (`m-sql` *Read projection*, rule 5), which is provenance rather
     than a result field.
     """
-    column, members = document_layout_members(case, entity)
+    document = case.model.storage_layout.document(entity.canonical_name)
+    column, members = document.column, document.members
     if not column:
         return rows
     selected = [
@@ -592,15 +484,14 @@ def _materialize_target_tph_document_layout(
     case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool, widened: frozenset[str]
 ) -> list[dict[str, Any]]:
     """Decode an abstract TPH document only after its raw tag resolves the variant."""
-    position = abstract_family_position(case, case.object_query)
+    position = query_position(case.object_query, case.model.entity_defs)
     if position is None or position.strategy != STRATEGY_TPH:
         return _materialize_target_document_layout(
             case, rows, include_value_objects=include_value_objects, widened=widened
         )
     family, target_name = position.family, position.target
     target = case.model.entity(target_name)
-    column, _members = document_layout_members(case, target)
-    if not column:
+    if not case.model.storage_layout.document(target.canonical_name).column:
         return _materialize_target_document_layout(
             case, rows, include_value_objects=include_value_objects, widened=widened
         )
@@ -610,7 +501,9 @@ def _materialize_target_tph_document_layout(
     scalar_superset = {
         member.column
         for concrete in effective
-        for member in document_layout_members(case, case.model.entity(concrete))[1]
+        for member in case.model.storage_layout.document(
+            case.model.entity(concrete).canonical_name
+        ).members
         if member.type_spelling is not None
     }
     materialized: list[dict[str, Any]] = []
@@ -651,7 +544,7 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
     states all four under the step, so it is materialized against the step
     presented as the read it is, never against the Scenario case around it.
     """
-    position = abstract_family_position(case, case.object_query)
+    position = query_position(case.object_query, case.model.entity_defs)
     if position is None:
         return rows  # concrete-target (or non-inheritance) read carries no familyVariant
     family, target_name = position.family, position.target
@@ -796,7 +689,7 @@ def _materialize_navigated_family_variant(
     left as it came back, exactly as the owner-node decode beside it leaves a column
     the golden did not project.
     """
-    position = abstract_family_position(case, {"target": entity.canonical_name})
+    position = query_position({"target": entity.canonical_name}, case.model.entity_defs)
     if position is None:
         return rows
     family, target = position.family, position.target
@@ -862,7 +755,10 @@ def narrow_to_variant_columns(case: Case, rows: list[PublishedRow]) -> list[Publ
             continue
         own_columns = set(position_projection(case.model.storage_layout, family, [variant]))
         own_columns.update(
-            member.column for member in document_layout_members(case, case.model.entity(variant))[1]
+            member.column
+            for member in case.model.storage_layout.document(
+                case.model.entity(variant).canonical_name
+            ).members
         )
         narrowed.append(
             PublishedRow(
@@ -1030,7 +926,7 @@ def _refuse_a_carried_branch(case: Case, entity: Entity, row: Mapping[str, Any])
     """
     if "familyVariant" in row:
         return
-    position = abstract_family_position(case, {"target": entity.canonical_name})
+    position = query_position({"target": entity.canonical_name}, case.model.entity_defs)
     if position is None:
         return
     family, target = position.family, position.target
@@ -1056,7 +952,9 @@ def _has_document_resident_attribute(case: Case, entity: Entity) -> bool:
     """Whether the layout placed any of *entity*'s own Attributes inside its
     Structured Column — the one need that reaches a Relational Document Layout's
     shared Column from a row-form read (`m-sql` *Read projection*, rule 5)."""
-    resident = {member.name for member in document_layout_members(case, entity)[1]}
+    resident = {
+        member.name for member in case.model.storage_layout.document(entity.canonical_name).members
+    }
     return any(attribute["name"] in resident for attribute in entity.attributes)
 
 

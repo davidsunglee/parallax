@@ -27,9 +27,9 @@ from sqlglot.expressions.core import Expr
 
 from ..case import Case, Entity
 from ..case_assertions import CaseFailure
-from ..inheritance import Family
+from ..inheritance import Family, query_position
 from ..sql_canonical import sqlglot_dialect
-from ..storage_layout import MemberAddress, member_address
+from ..storage_layout import DocumentMember, MemberAddress, member_address
 from . import execute, materialize
 
 # --- the order ---------------------------------------------------------------
@@ -178,7 +178,7 @@ def _extraction_path_binds(path: tuple[str, ...], dialect: str) -> tuple[Any, ..
 
 
 def _resident_term(
-    member: materialize.DocumentMember,
+    member: DocumentMember,
     document_column: str,
     dialect: str,
     *,
@@ -212,7 +212,7 @@ def _read_resolved_entities(case: Case, query: dict[str, Any], root: Entity) -> 
     sits, and whether the read reaches one placement of it or several — are asked
     of this same list.
     """
-    position = materialize.abstract_family_position(case, query)
+    position = query_position(query, case.model.entity_defs)
     if position is None:
         return [root]
     return [
@@ -226,7 +226,7 @@ def _read_resolved_entities(case: Case, query: dict[str, Any], root: Entity) -> 
 
 def _resolved_document_member(
     case: Case, query: dict[str, Any], root: Entity, address: MemberAddress
-) -> tuple[str, materialize.DocumentMember] | None:
+) -> tuple[str, DocumentMember] | None:
     """The ONE Structured Column and member a resident Sort Key extracts from.
 
     A seek spells its extraction against a single Table's document column, so the
@@ -239,9 +239,10 @@ def _resolved_document_member(
     are refused by name rather than derived from.
     """
     slots: set[tuple[str, str]] = set()
-    resolved: tuple[str, materialize.DocumentMember] | None = None
+    resolved: tuple[str, DocumentMember] | None = None
     for entity in _read_resolved_entities(case, query, root):
-        document_column, members = materialize.document_layout_members(case, entity)
+        document = case.model.storage_layout.document(entity.canonical_name)
+        document_column, members = document.column, document.members
         member = next((member for member in members if member.address == address), None)
         if not document_column or member is None:
             continue
@@ -251,7 +252,10 @@ def _resolved_document_member(
 
 
 def _document_resident_members(case: Case, entity: Entity) -> set[MemberAddress]:
-    return {member.address for member in materialize.document_layout_members(case, entity)[1]}
+    return {
+        member.address
+        for member in case.model.storage_layout.document(entity.canonical_name).members
+    }
 
 
 def _read_document_resident_members(case: Case, query: dict[str, Any]) -> set[MemberAddress]:

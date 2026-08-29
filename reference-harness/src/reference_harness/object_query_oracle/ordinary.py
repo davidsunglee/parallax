@@ -9,7 +9,7 @@ from sqlglot import exp
 
 from ..case import Case, Entity
 from ..case_assertions import CaseFailure, rows_equal
-from ..inheritance import STRATEGY_TPCS, STRATEGY_TPH
+from ..inheritance import STRATEGY_TPCS, STRATEGY_TPH, query_position
 from ..sql_canonical import sqlglot_dialect
 from . import execute, graph, includes, materialize, stream
 from .executor import ReadExecutor
@@ -340,12 +340,12 @@ def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
 
 def _assert_tph_document_partition_shape(case: Case, dialect: str) -> None:
     """Grade a TPH document `union all` as one tag-filtered branch per variant."""
-    position = materialize.abstract_family_position(case, case.object_query)
+    position = query_position(case.object_query, case.model.entity_defs)
     if position is None or position.strategy != STRATEGY_TPH:
         return
     family, target_name = position.family, position.target
     target = case.model.entity(target_name)
-    if not materialize.document_layout_members(case, target)[0]:
+    if not case.model.storage_layout.document(target.canonical_name).column:
         return
     statements = case.golden_statements(dialect)
     if not statements or " union all " not in statements[0]:
@@ -437,7 +437,7 @@ def _assert_temporal_only_union_binds(case: Case, dialect: str) -> None:
         case.object_query
     ):
         return
-    position = materialize.abstract_family_position(case, case.object_query)
+    position = query_position(case.object_query, case.model.entity_defs)
     if position is None or position.strategy != STRATEGY_TPCS:
         return
     family = position.family
