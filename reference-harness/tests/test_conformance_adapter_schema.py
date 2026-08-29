@@ -61,6 +61,7 @@ def _valid_benchmark() -> dict:
             "version": "0.1.0",
         },
         "benchmark": "core/compatibility/benchmarks/read-mix.yaml",
+        "profile": "pg-full",
         "report": {
             "generatedAt": "2026-06-27T00:00:00+00:00",
             "dialect": "postgres",
@@ -103,6 +104,7 @@ def _valid_run(observations: dict) -> dict:
             "version": "0.1.0",
         },
         "case": "core/compatibility/cases/m-deep-fetch-013-deferred-load-batches-latest.yaml",
+        "profile": "pg-full",
         "dialect": "postgres",
         "caseShape": "scenario",
         "emissions": [],

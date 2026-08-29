@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Final
 
 from parallax.conformance import adapter, case_format
+from parallax.conformance.profile import profile_for
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
-from parallax.core.dialect import Dialect, dialect_for
+from parallax.core.dialect import Dialect
 
 __all__ = ["main"]
 
@@ -61,19 +62,29 @@ class _NoProvisioningPort:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """The four commands, with the executing ones selected by profile.
+
+    ``compile`` names a dialect because it executes nothing and so has no adapter
+    to read one off; ``run`` and ``benchmark`` name a declared profile, which
+    carries the adapter — and with it the dialect — the case is executed in
+    (m-conformance-adapter).
+    """
     parser = argparse.ArgumentParser(prog="parallax-conformance")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("describe", help="report the adapter's claimed capability set")
 
-    for name in ("compile", "run"):
-        case_parser = sub.add_parser(name, help=f"{name} one compatibility case")
-        case_parser.add_argument("--case", required=True, help="path to the case YAML file")
-        case_parser.add_argument("--dialect", required=True, help="target SQL dialect")
+    compile_parser = sub.add_parser("compile", help="compile one compatibility case")
+    compile_parser.add_argument("--case", required=True, help="path to the case YAML file")
+    compile_parser.add_argument("--dialect", required=True, help="target SQL dialect")
+
+    run_parser = sub.add_parser("run", help="run one compatibility case")
+    run_parser.add_argument("--case", required=True, help="path to the case YAML file")
+    run_parser.add_argument("--profile", required=True, help="declared matrix profile to run")
 
     benchmark = sub.add_parser("benchmark", help="run one benchmark fixture (unclaimed)")
     benchmark.add_argument("--benchmark", required=True, help="path to the benchmark YAML file")
-    benchmark.add_argument("--dialect", required=True, help="target SQL dialect")
+    benchmark.add_argument("--profile", required=True, help="declared matrix profile to run")
 
     return parser
 
@@ -84,32 +95,42 @@ def _emit(envelope: adapter.Envelope) -> int:
 
 
 def _run_self_managed(
-    case_path: str, dialect: str
+    case_path: str, profile_name: str
 ) -> adapter.Envelope:  # pragma: no cover - Docker
-    """Provision a fresh container, reset from the case, and run it.
+    """Resolve the profile, provision a fresh container, reset from the case, run it.
+
+    The profile is resolved first and resolving it opens nothing, so a name no
+    profile declares is refused as `unsupported` before a case is even read — the
+    same guard an out-of-claim dialect gets under `compile`. The profile then
+    supplies both halves the run needs: the provisioner that opens the adapter, and
+    the dialect that adapter executes in, which is read off its class rather than
+    out of a container.
 
     A `rejected`-shape case is provisioning-free by contract
     (m-conformance-adapter): its run answer is the classified
     `rejectedRule`, touching no SQL, so it is dispatched BEFORE any
-    :class:`~parallax.conformance.provision.Provisioner` is constructed — no
-    container starts for it at all (the shape dispatch already lives in
-    :func:`~parallax.conformance.adapter.run_case`; this only decides whether
-    that call is preceded by provisioning).
+    provisioner is constructed — no container starts for it at all (the shape
+    dispatch already lives in :func:`~parallax.conformance.adapter.run_case`; this
+    only decides whether that call is preceded by provisioning).
     """
+    try:
+        profile = profile_for(profile_name)
+    except ValueError as exc:
+        return adapter.unsupported("run", adapter.Diagnostic("unsupported-profile", str(exc)))
     case = case_format.load_case(Path(case_path))
-    diagnostic = adapter.classify("run", dialect, case)
+    diagnostic = adapter.classify("run", profile.dialect.name, case)
     if diagnostic is not None:
         return adapter.unsupported("run", diagnostic)
     if case.shape == "rejected":
-        return adapter.run_case(case_path, dialect, _NoProvisioningPort(dialect_for(dialect)))
+        return adapter.run_case(case_path, profile.name, _NoProvisioningPort(profile.dialect))
 
     from parallax.conformance import engine, provision
 
-    provisioner = provision.Provisioner()
+    provisioner = profile.provisioner()
     try:
         meta = engine.load_case_metamodel(case)
         provisioner.reset(meta, provision.load_fixtures(str(case.document["model"])))
-        return adapter.run_case(case_path, dialect, provisioner.port)
+        return adapter.run_case(case_path, profile.name, provisioner.port)
     finally:
         provisioner.close()
 
@@ -128,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         if command == "compile":
             envelope = adapter.compile_case(args.case, args.dialect)
         else:
-            envelope = _run_self_managed(args.case, args.dialect)
+            envelope = _run_self_managed(args.case, args.profile)
     except (OSError, ValueError) as exc:
         diagnostic = adapter.Diagnostic("unreadable-case", f"cannot read case {args.case!r}: {exc}")
         print(json.dumps(adapter.error(command, diagnostic)))

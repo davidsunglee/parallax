@@ -22,15 +22,13 @@ def _seams(source: str) -> list[str]:
 
 def _minimal_tree(root: Path) -> None:
     """A tests root the guard finds clean: the designated fixture, acquiring the
-    database, and a classifier designating exactly it."""
+    database through the declared profile, and a classifier designating exactly it."""
     (root / "conftest.py").write_text(
         "_DATABASE_FIXTURES = frozenset({'provisioner'})\n"
         "\n"
         "\n"
-        "def provisioner():\n"
-        "    from parallax.conformance.provision import Provisioner\n"
-        "\n"
-        "    yield Provisioner()\n"
+        "def provisioner(profile):\n"
+        "    yield profile.provisioner()\n"
     )
 
 
@@ -73,6 +71,28 @@ def test_the_adapter_connect_classmethod_is_a_seam_but_its_constructor_is_not() 
     assert _seams("from parallax.postgres import PostgresAdapter\nPostgresAdapter(fake)\n") == []
 
 
+def test_a_profiles_provisioner_member_is_a_seam_however_the_profile_was_reached() -> None:
+    # The profile indirection reaches a seam through no importable name of its own:
+    # the fixture is handed a profile, and a rogue test could resolve one inline.
+    assert _seams("profile.provisioner()\n") == [".provisioner()"]
+    assert _seams(
+        "from parallax.conformance.profile import profile_for\n"
+        "profile_for('pg-full').provisioner()\n"
+    ) == [".provisioner()"]
+
+
+def test_resolving_a_profile_without_building_its_provisioner_is_not_a_seam() -> None:
+    # Naming a profile and reading its dialect opens nothing, which is the property
+    # the declaration exists to have.
+    assert (
+        _seams(
+            "from parallax.conformance.profile import profile_for\n"
+            "dialect = profile_for('pg-full').dialect\n"
+        )
+        == []
+    )
+
+
 def test_a_local_name_that_merely_looks_like_a_seam_is_not_one() -> None:
     assert _seams("class _RaisingProvisioner:\n    pass\n\n\n_RaisingProvisioner()\n") == []
     assert (
@@ -96,6 +116,24 @@ def test_naming_a_seam_without_calling_it_is_not_a_violation() -> None:
 # --------------------------------------------------------------------------
 def test_every_declared_seam_names_a_callable() -> None:
     assert access.unresolved_seams() == ()
+
+
+def test_every_declared_profile_reaches_a_seam_through_its_provisioner_member() -> None:
+    assert access.unbacked_profiles() == ()
+
+
+def test_a_profile_whose_provisioner_is_not_a_declared_seam_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Matching the member by name guards nothing if the member stops reaching an
+    # acquisition, so the two halves are checked against each other.
+    monkeypatch.setattr(
+        access,
+        "DATABASE_SEAMS",
+        access.DATABASE_SEAMS - {"parallax.conformance.provision.Provisioner"},
+    )
+    assert access.unbacked_profiles() == ("pg-full",)
+    assert access.main([]) == 1
 
 
 def test_a_seam_whose_attribute_was_renamed_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:

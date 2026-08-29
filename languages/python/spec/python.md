@@ -4434,7 +4434,11 @@ remains observable rather than making Python its own oracle.
   not execute in. The `pg-full` sweep resolves that declaration rather than
   restating it: `tests/conftest.py`'s `provisioner` fixture is built through the
   profile, and the per-dialect goldens it grades against are keyed by the
-  profile's own dialect. `capabilities.dialects` is derived from `PROFILES` too
+  profile's own dialect. The conformance CLI resolves the same declaration —
+  `parallax-conformance run --case <case> --profile pg-full` provisions through the
+  profile and reports both the profile it ran and the dialect the container's
+  adapter executed in; a name no profile declares is answered `unsupported`
+  (`unsupported-profile`, exit 10) before anything is provisioned. `capabilities.dialects` is derived from `PROFILES` too
   (`parallax.conformance.claim`), so a claimed dialect is one some profile
   actually runs; the derivation reaches the concrete adapter through a deferred
   import, keeping psycopg out of the conformance adapter's import graph.

@@ -13,10 +13,12 @@ type-checks error translation against fake connections and reads the module's
 constants — while *calling* one of the seams below opens a socket. Each call's
 target is resolved through the importing module's own bindings, so a local name
 that merely looks like a seam is not one, and a seam reached under an alias
-still is.
+still is. A declared matrix profile reaches a seam through a member rather than
+an importable name, so that member is matched by name as well.
 
-Three structural facts are checked with it, because the rule is vacuous without
-them: every declared seam must still name an importable callable, the designated
+Four structural facts are checked with it, because the rule is vacuous without
+them: every declared seam must still name an importable callable, every declared
+profile must still reach one through a declared seam member, the designated
 fixture must exist, and the classifier's own designated set must name exactly it.
 
 Usage
@@ -56,6 +58,14 @@ DATABASE_SEAMS: frozenset[str] = frozenset(
         "testcontainers.community.postgres.PostgresContainer",
     }
 )
+
+# Members through which a declared value reaches one of the seams above. A matrix
+# profile names the provisioner it opens, so the designated fixture and the `run`
+# command surface both acquire a database as ``<profile>.provisioner()`` — a call
+# with no importable name of its own for the dotted resolution to reach. Such a
+# call is matched by member name instead, and `unbacked_profiles` keeps that match
+# honest by requiring every declared profile to still reach a seam through one.
+SEAM_MEMBERS: frozenset[str] = frozenset({"provisioner"})
 
 
 @dataclass(frozen=True)
@@ -144,15 +154,46 @@ def unresolved_seams() -> tuple[str, ...]:
     return tuple(seam for seam in sorted(DATABASE_SEAMS) if not _resolves_to_callable(seam))
 
 
+def unbacked_profiles() -> tuple[str, ...]:
+    """Every declared profile reaching no seam through a :data:`SEAM_MEMBERS` member.
+
+    A member is matched by name rather than resolved, so it guards nothing unless
+    the profiles still acquire their database through one. A provisioner renamed,
+    replaced by something uncallable, or moved out of :data:`DATABASE_SEAMS` would
+    otherwise leave the audit matching a member no acquisition goes through.
+    """
+    from parallax.conformance.profile import PROFILES
+
+    unbacked: list[str] = []
+    for profile in PROFILES:
+        reached = False
+        for member in SEAM_MEMBERS:
+            target = getattr(profile, member, None)
+            if isinstance(target, type):
+                reached |= f"{target.__module__}.{target.__qualname__}" in DATABASE_SEAMS
+        if not reached:
+            unbacked.append(profile.name)
+    return tuple(unbacked)
+
+
 def seam_calls(tree: ast.Module) -> list[tuple[int, str]]:
-    """Every call in *tree* whose target resolves to a database seam."""
+    """Every call in *tree* that acquires a live database.
+
+    A call is one when its target resolves to a declared seam, or when it calls a
+    declared seam member — the indirection a scope's recipe reaches a seam through
+    when what names it is a declared value rather than an import.
+    """
     bindings = _imported_names(tree)
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            target = _resolved_target(node.func, bindings)
-            if target is not None and target in DATABASE_SEAMS:
-                found.append((node.lineno, target))
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute) and node.func.attr in SEAM_MEMBERS:
+            found.append((node.lineno, f".{node.func.attr}()"))
+            continue
+        target = _resolved_target(node.func, bindings)
+        if target is not None and target in DATABASE_SEAMS:
+            found.append((node.lineno, target))
     return sorted(found)
 
 
@@ -244,8 +285,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.parse_args(argv)
 
     stale = unresolved_seams()
+    unbacked = unbacked_profiles()
     findings = audit(TESTS_ROOT)
-    if not stale and not findings:
+    if not stale and not unbacked and not findings:
         print(f"{_TOOL}: live database access is confined to `{ENTRY_POINT_FIXTURE}`")
         return 0
 
@@ -258,6 +300,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         for seam in stale:
             print(f"    {seam}", file=sys.stderr)
+    if unbacked:
+        print(
+            f"{_TOOL}: {len(unbacked)} declared profile(s) reach no declared seam through\n"
+            "  a declared seam member. The audit matches those members by name, so a profile\n"
+            "  acquiring a database another way is acquired outside the guard.",
+            file=sys.stderr,
+        )
+        for profile in unbacked:
+            print(f"    {profile}", file=sys.stderr)
     if findings:
         print(
             f"{_TOOL}: live database access outside the designated fixture. Each\n"

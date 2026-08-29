@@ -15,6 +15,7 @@ orthogonal focused selector, not a class.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 import jsonschema
@@ -29,11 +30,35 @@ from _support.sweep_goldens import (
     write_golden_statements,
 )
 from parallax.conformance import adapter, case_format, engine, sweep
+from parallax.core.db_port import DbPort, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 
 pytestmark = pytest.mark.compile_sweep
 
 _REACHABLE = sweep.reachable_cases()
 _SCHEMA = adapter_schema()
+# The profile the lane-dispatch check below names its `run` request under; nothing
+# here provisions it, because the case is refused before a database is needed.
+_PROFILE = "pg-full"
+
+
+class _RefusingPort:
+    """An `m-db-port` that fails loudly if a lane-dispatched `run` ever touches it."""
+
+    dialect: Dialect = POSTGRES
+
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
+        raise AssertionError(f"a lane-dispatched run must not execute SQL: {sql!r}")
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        raise AssertionError(f"a lane-dispatched run must not execute SQL: {sql!r}")
+
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:
+        raise AssertionError("a lane-dispatched run must not open a transaction")
 
 
 def golden(case: case_format.Case) -> tuple[str, list[object]]:
@@ -285,9 +310,10 @@ def test_scenario_lane_dispatch_is_honest() -> None:
         assert engine.eligibility(case) is None, case.case_id
         envelope = adapter.compile_case(case.path, "postgres")
         assert envelope["status"] == "error", (case.case_id, envelope)
-        # `run` answers the SAME lane-honest error, never touching a port at all
-        # (a `None` port would raise loudly on any attempted use — it never is).
-        run_envelope = adapter.run_case(case.path, "postgres", cast("Any", None))
+        # `run` answers the SAME lane-honest error, never executing SQL: the port
+        # it is handed answers only the dialect the case would have been classified
+        # and run under, and raises on any attempt to use it.
+        run_envelope = adapter.run_case(case.path, _PROFILE, _RefusingPort())
         assert run_envelope["status"] == "error", (case.case_id, run_envelope)
     for case in engine_graded:
         assert case.case_id in WRITE_EXERCISED, case.case_id

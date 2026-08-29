@@ -230,9 +230,13 @@ def test_run_sweep(case: case_format.Case, profile: Profile, provisioner: Any) -
 
     provisioner.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
-    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
+    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
+    # The envelope names the profile this lane declares and reports the dialect the
+    # container's own adapter executed in — the same key the goldens below resolve.
+    assert envelope["profile"] == profile.name
+    assert envelope["dialect"] == profile.dialect.name
 
     doc = case_document(case)
     then = doc.get("then", {})
@@ -445,7 +449,7 @@ def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] |
 
 
 @pytest.mark.parametrize("case", _WRITE_CASES, ids=[c.case_id for c in _WRITE_CASES])
-def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+def test_write_run_sweep(case: case_format.Case, profile: Profile, provisioner: Any) -> None:
     """Run each keyed unit-of-work write case end-to-end against a reset database.
 
     An UNGROUPED scenario write commits (or, `rollback: true`, aborts) as its own
@@ -464,7 +468,7 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     model = engine.load_case_metamodel(case)
     provisioner.reset(model, case_fixtures(case))
 
-    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
+    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -949,7 +953,7 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, provisioner: 
     fixtures = provision.load_fixtures(str(doc["model"])) if given.get("fixtures") else {}
     provisioner.reset(model, fixtures)
 
-    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
+    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -1073,7 +1077,7 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, provisione
     model = engine.load_case_metamodel(case)
     provisioner.reset(model, case_fixtures(case))
 
-    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
+    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -1154,7 +1158,9 @@ _RUN_ONLY_WRITE_SEQUENCE_CASES = _reachable_run_only_write_sequence_cases()
 @pytest.mark.parametrize(
     "case", _RUN_ONLY_WRITE_SEQUENCE_CASES, ids=[c.case_id for c in _RUN_ONLY_WRITE_SEQUENCE_CASES]
 )
-def test_run_only_write_sequence_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+def test_run_only_write_sequence_run_sweep(
+    case: case_format.Case, profile: Profile, provisioner: Any
+) -> None:
     """Run each run-only pk-gen `sequence`-strategy writeSequence case end to end
     against a reset real database — the SAME grading `test_write_run_sweep` applies
     to a compile-eligible writeSequence case, parametrized separately because a
@@ -1164,7 +1170,7 @@ def test_run_only_write_sequence_run_sweep(case: case_format.Case, provisioner: 
     model = engine.load_case_metamodel(case)
     provisioner.reset(model, case_fixtures(case))
 
-    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
+    envelope = adapter.run_case(case.path, profile.name, provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
