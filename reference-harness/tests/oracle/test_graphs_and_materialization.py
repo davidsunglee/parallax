@@ -18,7 +18,7 @@ import copy
 import json
 from collections.abc import Callable
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -35,6 +35,7 @@ _ORDERED_ITEMS = "m-deep-fetch-009-ordered-items-desc.yaml"
 _EMPTY_ROOT = "m-deep-fetch-006-empty-root.yaml"
 _NARROWED_PETS = "m-inheritance-065-tph-deepfetch-narrowed-pets-dog.yaml"
 _BROAD_AND_NARROWED_PETS = "m-inheritance-068-tph-deepfetch-broad-and-redundant-narrow.yaml"
+_GUARDED_BRANCHES = "m-inheritance-078-tph-deepfetch-guarded-branches-diverge.yaml"
 _TEMPORAL_DEEP_FETCH = "m-navigate-012-deepfetch-temporal-both-latest.yaml"
 _HISTORY_GRAPHS = "m-snapshot-read-013-history-edge-pinned-graphs.yaml"
 _ABSTRACT_ROOT_GRAPH = "m-inheritance-106-tph-abstract-root-read-graph.yaml"
@@ -307,6 +308,194 @@ def test_a_broad_and_a_redundantly_narrowed_hop_are_two_levels(corpus_case: Case
 
     assert len(reads.calls) == 4
     assert reads.calls[1][1] == reads.calls[2][1] == (10, 11, 12, "cat", "dog")
+
+
+_ROOT_ANIMALS: list[dict[str, Any]] = [
+    {
+        "id": 1,
+        "kind": "dog",
+        "name": "Rex",
+        "owner_id": 10,
+        "license_id": "L-100",
+        "indoor": None,
+        "bark_volume": 7,
+        "tusk_length": None,
+    },
+    {
+        "id": 2,
+        "kind": "dog",
+        "name": "Fido",
+        "owner_id": 11,
+        "license_id": "L-101",
+        "indoor": None,
+        "bark_volume": 3,
+        "tusk_length": None,
+    },
+    {
+        "id": 3,
+        "kind": "cat",
+        "name": "Whiskers",
+        "owner_id": 10,
+        "license_id": "L-200",
+        "indoor": True,
+        "bark_volume": None,
+        "tusk_length": None,
+    },
+    {
+        "id": 4,
+        "kind": "boar",
+        "name": "Tusker",
+        "owner_id": 12,
+        "license_id": None,
+        "indoor": None,
+        "bark_volume": None,
+        "tusk_length": Decimal("12.50"),
+    },
+    {
+        "id": 5,
+        "kind": "cat",
+        "name": "Mittens",
+        "owner_id": 12,
+        "license_id": "L-300",
+        "indoor": True,
+        "bark_volume": None,
+        "tusk_length": None,
+    },
+]
+
+_ANIMAL_BY_ID = {row["id"]: row for row in _ROOT_ANIMALS}
+
+_PETS_LEVEL_SQL = (
+    "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
+    "t0.bark_volume from animal t0 where t0.owner_id in ({placeholders}) and "
+    "t0.kind in (?, ?)"
+)
+
+
+def _pet_level_rows(*ids: int) -> list[dict[str, Any]]:
+    """The `pets` level rows for *ids*, projected at Pet's own superset."""
+    return [
+        {key: value for key, value in _ANIMAL_BY_ID[identifier].items() if key != "tusk_length"}
+        for identifier in ids
+    ]
+
+
+def _pet_node(identifier: int, variant: str) -> dict[str, Any]:
+    row = _ANIMAL_BY_ID[identifier]
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "ownerId": row["owner_id"],
+        "licenseId": row["license_id"],
+        "indoor": row["indoor"],
+        "barkVolume": row["bark_volume"],
+        "familyVariant": variant,
+    }
+
+
+def _root_node(identifier: int, variant: str, **views: Any) -> dict[str, Any]:
+    row = _ANIMAL_BY_ID[identifier]
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "ownerId": row["owner_id"],
+        "licenseId": row["license_id"],
+        "indoor": row["indoor"],
+        "barkVolume": row["bark_volume"],
+        "tuskLength": row["tusk_length"],
+        "familyVariant": variant,
+        **views,
+    }
+
+
+def _both_guarded_branches_continue(case: Case) -> Case:
+    """`m-inheritance-078` with BOTH guarded branches continuing into `pets`.
+
+    The corpus carries the shape one branch deeper than the other; this legal
+    variation of it walks the same relationship from two different parent hops, so
+    what identifies a level is exercised at the segment's parent rather than only
+    at the path's root guard.
+    """
+    case.object_query["includes"][0]["segments"].append(
+        {"rel": "parallax.compatibility.Person.pets"}
+    )
+    case.then["statements"] = [
+        {"sql": {"postgres": case.then["statements"][0]["sql"]["postgres"]}},
+        {
+            "sql": {"postgres": "select t0.id, t0.name from person t0 where t0.id in (?)"},
+            "binds": [12],
+        },
+        {
+            "sql": {"postgres": _PETS_LEVEL_SQL.format(placeholders="?")},
+            "binds": [12, "cat", "dog"],
+        },
+        {
+            "sql": {"postgres": "select t0.id, t0.name from person t0 where t0.id in (?, ?)"},
+            "binds": [10, 11],
+        },
+        {
+            "sql": {"postgres": _PETS_LEVEL_SQL.format(placeholders="?, ?")},
+            "binds": [10, 11, "cat", "dog"],
+        },
+    ]
+    case.then["roundTrips"] = 5
+    case.then["graph"] = {
+        "Animal": [
+            _root_node(
+                1,
+                "Dog",
+                owner={
+                    "id": 10,
+                    "name": "Alice",
+                    "pets": [_pet_node(1, "Dog"), _pet_node(3, "Cat")],
+                },
+            ),
+            _root_node(2, "Dog", owner={"id": 11, "name": "Bob", "pets": [_pet_node(2, "Dog")]}),
+            _root_node(3, "Cat"),
+            _root_node(
+                4,
+                "WildBoar",
+                owner={"id": 12, "name": "Carol", "pets": [_pet_node(5, "Cat")]},
+            ),
+            _root_node(5, "Cat"),
+        ]
+    }
+    return case
+
+
+def test_two_parent_branches_reaching_one_relationship_are_two_levels(
+    damaged_case: CaseLoader,
+) -> None:
+    """One relationship reached from two DIFFERENT parents is two hops.
+
+    Each gathers its keys from its own branch's rows, so the two can share neither
+    a statement nor a bucket of fetched children (`m-deep-fetch` branch
+    provenance). The `pets` hop under the WildBoar branch's owner asks for Carol's
+    pets alone and the one under the Dog branch's owners asks for Alice's and
+    Bob's; a level identified without its parent would issue one statement for
+    both and attach every fetched pet to every owner.
+    """
+    case = _both_guarded_branches_continue(damaged_case(_GUARDED_BRANCHES))
+    reads = ScriptedReads(
+        results=[
+            _ROOT_ANIMALS,
+            [{"id": 12, "name": "Carol"}],
+            _pet_level_rows(5),
+            [{"id": 10, "name": "Alice"}, {"id": 11, "name": "Bob"}],
+            _pet_level_rows(1, 2, 3),
+            _ROOT_ANIMALS,
+        ]
+    )
+
+    assert_case_read(case, reads)
+
+    assert len(reads.calls) == 6
+    assert [binds for _sql, binds in reads.calls[1:5]] == [
+        (12,),
+        (12, "cat", "dog"),
+        (10, 11),
+        (10, 11, "cat", "dog"),
+    ]
 
 
 def test_a_polymorphic_hop_tag_value_naming_no_subtype_is_refused(
@@ -656,4 +845,49 @@ def test_a_graph_assembled_from_roots_that_skipped_the_seam_is_refused(
     reads = ScriptedReads(results=[_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE])
 
     with pytest.raises(CaseFailure, match="did not come through the materialization seam"):
+        assert_case_read(case, reads)
+
+
+def test_a_published_row_cannot_be_minted_by_holding_the_class() -> None:
+    """Provenance is the derivation, so the class alone does not confer it.
+
+    Standing in for a future path that would rather stamp a row than run the
+    sequence: the constructor demands a token only the materialization entry
+    points hold, so a consumer that reached the class mints nothing.
+    """
+    with pytest.raises(CaseFailure, match="minted by this module's materialization entry"):
+        oracle_materialize.PublishedRow({"id": 1}, object())
+
+
+def test_the_owner_node_decode_refuses_a_row_that_skipped_the_seam(
+    corpus_case: CaseLoader,
+) -> None:
+    """A step after the sequence projects a published row; it does not publish one.
+
+    A raw non-polymorphic row carries no branch carrier, so the carried-branch
+    refusal beside this one has nothing to catch it by; what refuses it is that it
+    never came through the seam at all, and so may still hold the storage document
+    the fan-out would have taken out.
+    """
+    case = corpus_case(_ABSTRACT_ROOT_GRAPH)
+    entity = case.model.entity(case.object_query["target"])
+    row = cast(oracle_materialize.PublishedRow, {"id": 1, "kind": "dog"})
+
+    with pytest.raises(CaseFailure, match="the owner-node decode projects a row"):
+        oracle_materialize.materialize_variant_owner_node(case, entity, row)
+
+
+def test_per_variant_narrowing_refuses_rows_that_skipped_the_seam(
+    corpus_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The narrowing an instance-form node shape needs also projects what was published."""
+    case = corpus_case(_ABSTRACT_ROOT_GRAPH)
+    monkeypatch.setattr(
+        oracle_materialize,
+        "materialize_read",
+        lambda _read, rows, **_widened: [dict(row) for row in rows],
+    )
+    reads = ScriptedReads(results=[_PAYMENTS, _PAYMENTS])
+
+    with pytest.raises(CaseFailure, match="per-variant column narrowing projects a row"):
         assert_case_read(case, reads)
