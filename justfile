@@ -206,6 +206,15 @@ harness-test-db:
 harness-test-contract-tools:
     cd {{harness}} && uv run pytest tests/contract_tools
 
+# A focused selector for iterating on the accepted Object Query read oracle, and
+# deliberately no gate's dependency for the opposite reason to the one above: every
+# test it selects is `dbfree`, so an aggregate composing it would run them a second
+# time inside `harness-test-dbfree`.
+[metadata("runtime:fast")]
+[doc("Focused: the accepted Object Query read oracle's own tests.")]
+harness-test-oracle:
+    cd {{harness}} && uv run pytest tests/oracle
+
 # A scheduling class is only as honest as the restriction on the resource that
 # defines it: an item acquiring a provider outside the designated fixture would
 # be classified `dbfree` and would still pass on a host with Docker.
