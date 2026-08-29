@@ -39,6 +39,7 @@ _STREAMED_EVIDENCE = "m-unit-work-030-a-streamed-roots-evidence-licenses-a-later
 _ABSTRACT_FIND = "m-inheritance-130-tph-abstract-find-licenses-concrete-update.yaml"
 _RESOLVING_READ = "m-bitemp-write-010-predicate-plain-update-materialize.yaml"
 _ONE_OBJECT_TWO_FINDS = "m-identity-map-001-same-transaction-identity.yaml"
+_TPCS_ABSTRACT_READ = "m-inheritance-050-tpcs-abstract-root-read.yaml"
 
 
 def _order(
@@ -170,6 +171,25 @@ def test_a_step_asserted_twice_is_refused(corpus_case: CaseLoader) -> None:
         reads.assert_step(1, ScriptedReads(results=[_ORDERS]))
 
 
+def test_a_step_that_failed_an_observable_publishes_nothing(damaged_case: CaseLoader) -> None:
+    """Publication is the last thing a step does, so a failed step retains nothing.
+
+    Retaining before the observables are graded would hand a later step rows no
+    comparison accepted, and would meet a second attempt at the failed step with
+    "asserted twice" — a duplicate refusal standing in for the real failure.
+    """
+    case = damaged_case(_ONE_OBJECT_TWO_FINDS)
+    _steps(case)[0]["expectRows"][0]["owner"] = "Someone else"
+    reads = ScenarioReads(case)
+
+    for _attempt in range(2):
+        with pytest.raises(CaseFailure, match=r"scenario\[0\] rows != expectRows"):
+            reads.assert_step(0, ScriptedReads(results=[_LINUS]))
+
+    with pytest.raises(CaseFailure, match="names step 0, which published no observation"):
+        reads.assert_step(1, ScriptedReads(results=[_LINUS]))
+
+
 def test_a_write_step_is_not_this_oracles_to_assert(corpus_case: CaseLoader) -> None:
     reads = ScenarioReads(corpus_case(_STREAMED_EVIDENCE))
     reader = ScriptedReads()
@@ -285,6 +305,83 @@ def test_an_abstract_target_step_publishes_familyVariant_not_the_raw_tag(
     reads = ScenarioReads(corpus_case(_ABSTRACT_FIND))
 
     reads.assert_step(0, ScriptedReads(results=[physical]))
+
+
+def _as_a_one_step_scenario(case: Case) -> Case:
+    """A shipped `read` case restated as the Scenario step it would be authored as.
+
+    A Scenario states its reads under the step and nothing at the top level, so a
+    corpus read case is the closest thing to an authored step there is: its target,
+    goldens, and expected rows move under ``when.scenario[0]`` unchanged.
+    """
+    read = case.raw["when"]["objectQuery"]
+    statements = case.raw["then"]["statements"]
+    rows = case.raw["then"]["rows"]
+    case.raw["shape"] = "scenario"
+    case.raw["when"] = {
+        "scenario": [{"objectQuery": read, "statements": statements, "expectRows": rows}]
+    }
+    case.raw["then"] = {}
+    return case
+
+
+_DOCUMENT_FAMILY: list[dict[str, Any]] = [
+    {
+        "id": 1,
+        "title": "Invoice-A",
+        "folder_id": 100,
+        "currency": "USD",
+        "amount_due": Decimal("120.00"),
+        "body": None,
+        "paid_amount": None,
+        "family_variant": "Invoice",
+    },
+    {
+        "id": 2,
+        "title": "Invoice-B",
+        "folder_id": 101,
+        "currency": "EUR",
+        "amount_due": Decimal("80.00"),
+        "body": None,
+        "paid_amount": None,
+        "family_variant": "Invoice",
+    },
+    {
+        "id": 1,
+        "title": "Memo-A",
+        "folder_id": 102,
+        "currency": None,
+        "amount_due": None,
+        "body": "Reminder",
+        "paid_amount": None,
+        "family_variant": "Memo",
+    },
+    {
+        "id": 1,
+        "title": "Receipt-A",
+        "folder_id": 100,
+        "currency": "USD",
+        "amount_due": None,
+        "body": None,
+        "paid_amount": Decimal("120.00"),
+        "family_variant": "Receipt",
+    },
+]
+
+
+def test_a_table_per_concrete_subtype_step_materializes_against_its_own_read(
+    damaged_case: CaseLoader,
+) -> None:
+    """A `union all` abstract step is graded against the read the STEP presents.
+
+    Unlike the table-per-hierarchy step beside it, this materialization reads the
+    query's own narrowing, ordering, cap, goldens, and binds to grade the branch
+    and projection shape it renames `family_variant` out of — none of which a
+    Scenario case carries at the top level, where a whole-case read states them.
+    """
+    reads = ScenarioReads(_as_a_one_step_scenario(damaged_case(_TPCS_ABSTRACT_READ)))
+
+    reads.assert_step(0, ScriptedReads(results=[_DOCUMENT_FAMILY]))
 
 
 def test_a_find_listing_sql_for_levels_its_query_declares_none_of_is_refused(

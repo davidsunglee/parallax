@@ -374,6 +374,12 @@ def materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[d
     the full concrete superset; this asserts that projection shape, then replaces the
     tag column with the derived ``familyVariant`` (``tagValue`` -> concrete subtype
     name) so the materialized rows can be compared to ``then.rows``.
+
+    Everything it classifies, narrows, and grades against comes from *case*: the
+    target and its ``narrowTo``, the Sort Keys and cap a `union all` wrap renders,
+    and the golden statement whose projection shape is asserted. A Scenario step
+    states all four under the step, so it is materialized against the step
+    presented as the read it is, never against the Scenario case around it.
     """
     position = abstract_family_position(case, case.object_query)
     if position is None:
@@ -417,37 +423,10 @@ def materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[d
     return _materialize_tph_family_variant(case, family, target_name, rows)
 
 
-def materialize_step_family_variant(
-    case: Case, step: Mapping[str, Any], rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Materialize ``familyVariant`` for a step whose OWN read targets an abstract position.
-
-    A step's ``expectRows`` states the leaves that read materialized, and an
-    abstract-target read's leaf carries the derived variant rather than the raw
-    tag column its SQL projects (`m-case-format` *Read targeting*). The position
-    is classified from the STEP's own query, because a Scenario names one target
-    per step and none for the case.
-    """
-    position = abstract_family_position(case, step.get("objectQuery"))
-    if position is None:
-        return rows
-    family, target_name = position.family, position.target
-    if position.strategy == STRATEGY_TPCS:
-        return _materialize_tpcs_family_variant(case, rows, family, target_name)
-    if position.strategy != STRATEGY_TPH:
-        return rows
-    return _materialize_tph_family_variant(case, family, target_name, rows)
-
-
 def _materialize_tph_family_variant(
     case: Case, family: Family, target_name: str, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Replace each row's raw tag column with the derived ``familyVariant``.
-
-    The row-level half of the table-per-hierarchy materialization, shared by the
-    whole-read path (which asserts the golden projection shape first) and the
-    per-step one (whose shape its own step golden fixes).
-    """
+    """Replace each row's raw tag column with the derived ``familyVariant``."""
     tag_column = family.tag_column_of(target_name)
     if tag_column is None:
         return rows

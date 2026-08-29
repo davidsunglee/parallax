@@ -35,7 +35,7 @@ from . import execute, materialize
 # --- the order ---------------------------------------------------------------
 
 
-def _primary_key_column(entity: Entity) -> str:
+def _primary_key_column(case: Case, entity: Entity) -> str:
     """The physical column of *entity*'s primary key.
 
     Every Continuation Order carries the primary key (`m-snapshot-read`), and a
@@ -46,7 +46,10 @@ def _primary_key_column(entity: Entity) -> str:
     for attribute in entity.attributes:
         if attribute.get("primaryKey"):
             return attribute["column"]
-    raise CaseFailure(f"{entity.canonical_name}: no primary key to continue a stream from")
+    raise CaseFailure(
+        f"{case.path.name}: {entity.canonical_name} declares no primary key to continue a "
+        f"stream from; a Continuation Order ends in the key that makes it total."
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,7 +336,9 @@ def continuation_order(
         )
     if not names_the_key:
         terms.append(
-            _direct_term(_primary_key_column(root), direction="asc", nulls="last", nullable=False)
+            _direct_term(
+                _primary_key_column(case, root), direction="asc", nulls="last", nullable=False
+            )
         )
     named = {term.column for term in terms}
     for column in _milestone_edge_columns(query, root):
