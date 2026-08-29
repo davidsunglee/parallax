@@ -505,6 +505,46 @@ def materialize_hop_variant(
     )
 
 
+def materialize_navigated_family_variant(
+    case: Case, entity: Entity, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """``familyVariant`` for rows read at a NAVIGATED position rather than a queried one.
+
+    A relationship reaches its target by declaration, so the position carries no
+    Object Query and its own family fixes the concrete set — there is no ``narrowTo``
+    to read and no whole-read superset to assert, the level's own golden being what
+    fixes the projection shape (:func:`materialize_hop_variant`, the eager
+    counterpart). Only a MULTI-CONCRETE table-per-hierarchy position is polymorphic:
+    a position resolving to one concrete already names its variant, and a
+    table-per-concrete-subtype hop's branch literal is the eager fetch's own open
+    question rather than a second answer to it (`m-deep-fetch`).
+
+    A row carrying no tag column stands somewhere else — a multi-hop load aggregates
+    the levels it walked THROUGH as well as the one it ended at — and is left as it
+    came back, exactly as the owner-node decode beside it leaves a column the golden
+    did not project.
+    """
+    position = abstract_family_position(case, {"target": entity.canonical_name})
+    if position is None or position.strategy != STRATEGY_TPH:
+        return rows
+    tag_column = position.family.tag_column_of(position.target)
+    if tag_column is None or len(position.family.effective_concrete_set(position.target)) < 2:
+        return rows
+    variant_map = tag_value_to_subtype(case.model.entity_defs)
+    return [
+        _with_family_variant(
+            case,
+            dict(row),
+            tag_column=tag_column,
+            variant_map=variant_map,
+            subject=f"navigated position {position.target}",
+        )
+        if tag_column in row
+        else row
+        for row in rows
+    ]
+
+
 def narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Narrow each row of an INSTANCE-FORM abstract-target read to its own concrete
     variant's declared columns (m-case-format "Read targeting", the instance-form

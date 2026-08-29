@@ -41,6 +41,7 @@ _RESOLVING_READ = "m-bitemp-write-010-predicate-plain-update-materialize.yaml"
 _ONE_OBJECT_TWO_FINDS = "m-identity-map-001-same-transaction-identity.yaml"
 _TPCS_ROW_FORM_READ = "m-inheritance-050-tpcs-abstract-root-read.yaml"
 _TPCS_INSTANCE_FORM_READ = "m-inheritance-137-tpcs-union-vo-placeholder.yaml"
+_POLYMORPHIC_OWNER = "m-identity-map-005-family-root-vs-leaf.yaml"
 
 
 def _order(
@@ -575,6 +576,91 @@ def test_a_load_resolves_its_levels_and_publishes_the_rows_they_returned(
     assert reader.calls[1][1] == (1, 2, 3, 4, 5, 42)
 
 
+_OWNER_SQL = "select t0.id, t0.name from person t0 where t0.id = ?"
+_ANIMALS_SQL = (
+    "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
+    "t0.bark_volume, t0.tusk_length from animal t0 where t0.owner_id in (?)"
+)
+
+_OWNED_ANIMALS: list[dict[str, Any]] = [
+    {
+        "id": 1,
+        "kind": "dog",
+        "name": "Rex",
+        "owner_id": 10,
+        "license_id": "L-100",
+        "indoor": None,
+        "bark_volume": 7,
+        "tusk_length": None,
+    },
+    {
+        "id": 2,
+        "kind": "cat",
+        "name": "Tom",
+        "owner_id": 10,
+        "license_id": "L-200",
+        "indoor": True,
+        "bark_volume": None,
+        "tusk_length": None,
+    },
+]
+
+_OWNED_ANIMAL_ROWS: list[dict[str, Any]] = [
+    {key: value for key, value in row.items() if key != "kind"}
+    | {"familyVariant": "Dog" if row["kind"] == "dog" else "Cat"}
+    for row in _OWNED_ANIMALS
+]
+
+
+def _as_a_load_of_the_owners_animals(case: Case) -> Case:
+    """*case*'s family reached through the deferred load of a polymorphic relationship.
+
+    The corpus authors no `load` over a relationship whose target is abstract, so the
+    navigation is fabricated in a private copy. `Person.animals` is declared against
+    the abstract ROOT, so the position the load walks to owns no rows: each row names
+    its own concrete with the shared table's raw tag, and the step stands where a
+    query-backed read would carry a `narrowTo` and a superset the golden must state.
+    """
+    case.raw["when"] = {
+        "scenario": [
+            {
+                "objectQuery": {
+                    "target": "parallax.compatibility.Person",
+                    "predicate": {"eq": {"attr": "parallax.compatibility.Person.id", "value": 10}},
+                },
+                "roundTrips": 1,
+                "statements": [{"sql": {"postgres": _OWNER_SQL}, "binds": [10]}],
+            },
+            {
+                "action": "load",
+                "on": 0,
+                "path": "animals",
+                "roundTrips": 1,
+                "statements": [{"sql": {"postgres": _ANIMALS_SQL}, "binds": [10]}],
+                "expectRows": _OWNED_ANIMAL_ROWS,
+            },
+        ]
+    }
+    case.raw["then"] = {}
+    return case
+
+
+def test_a_load_to_an_abstract_position_publishes_familyVariant_not_the_raw_tag(
+    damaged_case: CaseLoader,
+) -> None:
+    """A navigated position is polymorphic too, and the tag is never a result field.
+
+    The two loaded rows sit in one shared table under one relationship and resolve to
+    DIFFERENT concretes, so the variant is derived per row from the tag the golden
+    projects rather than read off the position, which names none of them.
+    """
+    reads = ScenarioReads(_as_a_load_of_the_owners_animals(damaged_case(_POLYMORPHIC_OWNER)))
+    reader = ScriptedReads(results=[[{"id": 10, "name": "Ada"}], _OWNED_ANIMALS])
+    reads.assert_step(0, reader)
+
+    reads.assert_step(1, reader)
+
+
 def test_a_load_naming_a_source_that_is_not_earlier_is_refused(damaged_case: CaseLoader) -> None:
     case = damaged_case(_POPULATED_LIST)
     _steps(case)[1]["on"] = 1
@@ -626,6 +712,55 @@ def test_a_multi_hop_access_drops_the_branches_that_reached_no_row(
     reads.assert_step(1, reader)
 
     assert reader.calls == materialized
+
+
+def _as_a_constructed_list_first_accessed(case: Case, expect_rows: list[dict[str, Any]]) -> Case:
+    """A shipped `read` case restated as the query-backed list a first access resolves.
+
+    The construction step carries the Object Query and costs nothing; the access
+    carries the golden that resolves it. So the read is one thing spread over two
+    steps, which is what the corpus's own path-less `access` shape declares.
+    """
+    read = case.raw["when"]["objectQuery"]
+    statements = case.raw["then"]["statements"]
+    case.raw["shape"] = "scenario"
+    case.raw["when"] = {
+        "scenario": [
+            {"objectQuery": read, "roundTrips": 0},
+            {
+                "action": "access",
+                "on": 0,
+                "roundTrips": 1,
+                "statements": statements,
+                "expectRows": expect_rows,
+            },
+        ]
+    }
+    case.raw["then"] = {}
+    return case
+
+
+def test_a_first_access_of_an_abstract_list_is_graded_as_the_read_it_resolves(
+    damaged_case: CaseLoader,
+) -> None:
+    """The list's position is the CONSTRUCTION step's; the projection is the access's.
+
+    A path-less access navigates nothing — it resolves the Object Query an earlier
+    step authored — so what it publishes is that read's own result: the `union all`
+    branch literal materialized as `familyVariant`, and each row's `Document` slot
+    decoded at the concrete the literal names rather than at the abstract position,
+    which declares none of its members. Presenting the row-form golden the same way
+    is refused for the slot its lane omits, which is what pins that the read carried
+    over is graded in the access's own lane.
+    """
+    resolved = _as_a_constructed_list_first_accessed(
+        damaged_case(_TPCS_INSTANCE_FORM_READ), _DOCUMENT_FAMILY_ROWS
+    )
+    ScenarioReads(resolved).assert_step(1, ScriptedReads(results=[_DOCUMENT_FAMILY]))
+
+    row_form = _as_a_constructed_list_first_accessed(damaged_case(_TPCS_ROW_FORM_READ), [])
+    with pytest.raises(CaseFailure, match=r"not the stable superset.*'annotation'"):
+        ScenarioReads(row_form).assert_step(1, ScriptedReads(results=[[]]))
 
 
 def test_an_access_naming_a_relationship_the_read_never_included_is_refused(

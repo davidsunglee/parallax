@@ -276,7 +276,18 @@ class ScenarioReads:
             # document of the entity it navigated TO, resolved per step so a
             # value-object-bearing child decodes with its OWN composite schema —
             # and, for a row naming a concrete variant, with that variant's rather
-            # than the navigated position's.
+            # than the navigated position's. A polymorphic position names that
+            # variant with a raw tag or a branch literal, neither of which is a
+            # result field, so it is derived first: what the step publishes is
+            # `familyVariant`, and it is also what the decode below stands at. A
+            # resolved list is derived as the whole read it is, a navigated
+            # position as the position it stands at.
+            list_read = _resolved_list_read(case, step_index, step)
+            rows = (
+                materialize.materialize_navigated_family_variant(case, entity, rows)
+                if list_read is None
+                else materialize.materialize_family_variant(list_read, rows)
+            )
             rows = [
                 materialize.materialize_variant_owner_node(case.model, entity, row) for row in rows
             ]
@@ -763,17 +774,50 @@ def _step_as_read(case: Case, step_index: int) -> Case:
     is the materialized-predicate-write resolving find, which is an ordinary
     preceding ``objectQuery`` step this oracle grades like any other and is
     recognized as the resolve by the write it serves
-    (:func:`_resolves_a_materializing_write`). A read case states its lane by WHICH
-    result member it carries, so that is how this presentation states it, and an
-    abstract table-per-concrete-subtype step is graded on projecting the top-level
-    Value Object `Document` slot its own lane selects. The member's CONTENTS are
-    never read: what a step observed is graded against the step's own ``expectRows``
-    / ``expectGraph``.
+    (:func:`_resolves_a_materializing_write`), so an abstract table-per-concrete-subtype
+    step is graded on projecting the top-level Value Object `Document` slot its own
+    lane selects.
     """
     step = case.scenario[step_index]
-    row_form = _resolves_a_materializing_write(case, step_index)
+    return _as_read(
+        case,
+        {key: step[key] for key in ("objectQuery", "stream") if key in step},
+        step.get("statements", []),
+        row_form=_resolves_a_materializing_write(case, step_index),
+    )
+
+
+def _resolved_list_read(case: Case, step_index: int, step: Mapping[str, Any]) -> Case | None:
+    """A first ``access`` of a query-backed list, presented as the read it resolves.
+
+    Such an access navigates no relationship: it resolves the list an earlier step
+    constructed, so one read is spread over two steps — the position and its Subtype
+    Selection are the CONSTRUCTION step's Object Query, the projection shape is THIS
+    step's golden. A ``load`` / ``access`` that walked a ``path`` stands at a
+    navigated position instead, which no Object Query describes, and answers ``None``
+    (:func:`materialize.materialize_navigated_family_variant`).
+    """
+    if step.get("path") is not None:
+        return None
+    named = step.get("on")
+    source = named[0] if isinstance(named, list) else named
+    if not isinstance(source, int) or not 0 <= source < step_index:
+        return None
+    query = case.scenario[source].get("objectQuery")
+    if not isinstance(query, Mapping):
+        return None
+    return _as_read(case, {"objectQuery": query}, step.get("statements", []), row_form=False)
+
+
+def _as_read(case: Case, when: Mapping[str, Any], statements: Any, *, row_form: bool) -> Case:
+    """*case* restated as the one-read `read` case *when* and *statements* describe.
+
+    A read case states its lane by WHICH result member it carries, so that is how
+    this presentation states it. The member's CONTENTS are never read: what a step
+    observed is graded against the step's own ``expectRows`` / ``expectGraph``.
+    """
     then: dict[str, Any] = {
-        "statements": step.get("statements", []),
+        "statements": statements,
         **({"rows": []} if row_form else {"graph": {}}),
     }
     if "tolerance" in case.then:
@@ -784,7 +828,7 @@ def _step_as_read(case: Case, step_index: int) -> Case:
             {
                 "model": case.raw["model"],
                 "shape": "read",
-                "when": {key: step[key] for key in ("objectQuery", "stream") if key in step},
+                "when": dict(when),
                 "then": then,
             }
         ),
