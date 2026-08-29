@@ -93,6 +93,24 @@ def test_a_profile_provisioning_itself_is_a_seam() -> None:
     ) == [".provisioned()"]
 
 
+def test_constructing_a_provisioned_run_is_a_seam_but_pairing_a_stand_in_is_not() -> None:
+    # The third route through a profile, and the one neither other rule reaches: the
+    # run opens the profile's declared provisioning inside its own constructor, so the
+    # call site names no provisioner and no seam member. Its base only pairs a
+    # reporting name with a port some other route opened, and acquires nothing.
+    assert _seams(
+        "from parallax.conformance.profile import ProvisionedRun, profile_for\n"
+        "ProvisionedRun(profile_for('pg-full'))\n"
+    ) == ["parallax.conformance.profile.ProvisionedRun"]
+    assert _seams(
+        "from parallax.conformance import profile\nprofile.ProvisionedRun(declared)\n"
+    ) == ["parallax.conformance.profile.ProvisionedRun"]
+    assert (
+        _seams("from parallax.conformance.profile import ProfileRun\nProfileRun(declared, port)\n")
+        == []
+    )
+
+
 def test_a_seam_bound_to_a_local_name_and_called_through_it_is_found() -> None:
     # Binding first and calling second is the same acquisition, spelled so that
     # neither the dotted resolution nor the member match sees it at the call.
