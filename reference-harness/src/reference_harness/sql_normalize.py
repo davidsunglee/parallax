@@ -417,7 +417,7 @@ def _assert_canonical(tree: Expr, dialect: str) -> None:
 _MARIADB_READ_LOCK = "lock in share mode"
 
 
-def _detach_read_lock(tree: Expr, dialect: str) -> str:
+def detach_read_lock(tree: Expr, dialect: str) -> str:
     """Pop a non-update ``exp.Lock`` for MariaDB, returning the canonical suffix.
 
     Returns ``""`` (and leaves the tree untouched) for any other dialect or when
@@ -448,13 +448,13 @@ def normalize(sql: str, dialect: str = "postgres") -> str:
     A *dialect* the m-dialect seam knows but sqlglot does not (``mariadb`` → sqlglot
     ``mysql``) is mapped through :func:`sqlglot_dialect`; the MariaDB shared-row
     lock suffix is rendered by the seam rather than sqlglot (see
-    :func:`_detach_read_lock`).
+    :func:`detach_read_lock`).
     """
     engine = sqlglot_dialect(dialect)
     tree = sqlglot.parse_one(sql, read=engine)
     tree = _reassociate_connectors(tree)
     _assert_canonical(tree, dialect)
-    lock_suffix = _detach_read_lock(tree, dialect)
+    lock_suffix = detach_read_lock(tree, dialect)
     _lowercase_unquoted_identifiers(tree)
     rendered = tree.sql(dialect=engine, normalize=True, pretty=False)
     # Tokenize through the dialect (not the base Tokenizer) so a quoted identifier

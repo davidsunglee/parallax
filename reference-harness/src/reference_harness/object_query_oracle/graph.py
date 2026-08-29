@@ -20,10 +20,11 @@ per milestone and the streamed delivery that publishes each root at its own edge
 from __future__ import annotations
 
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 from ..case import Case, Entity, Model
-from ..case_assertions import CaseFailure, scalars_equal
+from ..case_assertions import CaseFailure, multiset_matches, scalars_equal
 from ..inheritance import Family, resolve_root_source_set
 from . import execute, includes, materialize
 from .executor import ReadExecutor
@@ -231,17 +232,7 @@ def graphs_equal(
         if isinstance(a, list) or isinstance(b, list):
             if not isinstance(a, list) or not isinstance(b, list):
                 return False
-            if len(a) != len(b):
-                return False
-            remaining = list(b)
-            for item in a:
-                for index, candidate in enumerate(remaining):
-                    if equal_value(item, candidate):
-                        del remaining[index]
-                        break
-                else:
-                    return False
-            return not remaining
+            return multiset_matches(a, b, equal_value)
 
         return scalars_equal(a, b, None)
 
@@ -297,17 +288,7 @@ def graphs_equal(
             if relationship["cardinality"] == "one-to-many":
                 if not isinstance(a[key], list) or not isinstance(b[key], list):
                     return False
-                if len(a[key]) != len(b[key]):
-                    return False
-                remaining = list(b[key])
-                for child in a[key]:
-                    for index, candidate in enumerate(remaining):
-                        if equal_entity_node(child, candidate, target):
-                            del remaining[index]
-                            break
-                    else:
-                        return False
-                if remaining:
+                if not multiset_matches(a[key], b[key], partial(equal_entity_node, entity=target)):
                     return False
                 continue
 
@@ -326,20 +307,10 @@ def graphs_equal(
     if left.keys() != right.keys():
         return False
     for entity_name in left:
-        left_nodes = left[entity_name]
-        right_nodes = right[entity_name]
-        if len(left_nodes) != len(right_nodes):
-            return False
         entity = model.entity(entity_name)
-        remaining = list(right_nodes)
-        for node in left_nodes:
-            for index, candidate in enumerate(remaining):
-                if equal_node_or_null(node, candidate, entity):
-                    del remaining[index]
-                    break
-            else:
-                return False
-        if remaining:
+        if not multiset_matches(
+            left[entity_name], right[entity_name], partial(equal_node_or_null, entity=entity)
+        ):
             return False
     return True
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from reference_harness.case_assertions import rows_equal, scalars_equal, to_decimal
+from reference_harness.case_assertions import rows_equal, scalars_equal
 
 
 def test_distinct_high_precision_decimals_are_not_equal() -> None:
@@ -39,11 +39,11 @@ def test_yaml_float_normalizes_without_float_noise() -> None:
     assert not scalars_equal(Decimal("0.10000001"), 0.1, None)
 
 
-def test_to_decimal_keeps_bool_and_none_out_of_numeric_space() -> None:
-    assert to_decimal(True) is True
-    assert to_decimal(None) is None
+def test_bool_and_none_stay_out_of_numeric_space() -> None:
     assert scalars_equal(True, True, None)
     assert not scalars_equal(True, 1, None)  # bool is not coerced into 1
+    assert scalars_equal(None, None, None)
+    assert not scalars_equal(None, 0, None)  # None never enters Decimal space
 
 
 def test_tolerance_allows_inexact_match() -> None:
