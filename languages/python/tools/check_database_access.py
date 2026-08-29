@@ -14,9 +14,10 @@ constants — while *calling* one of the seams below opens a socket. Each call's
 target is resolved through the importing module's own bindings, so a local name
 that merely looks like a seam is not one, and a seam reached under an alias
 still is — including a local name the module first binds to a seam and calls
-afterwards, through any of the forms that bind a name to a value, a ``match``
-capture as much as an assignment, however many names the binding passed through,
-and through any container it was stored in and taken back out of. A declared
+afterwards, through any of the forms that bind a name to an expression this rule
+can read, a ``match`` capture as much as an assignment, however many names the
+binding passed through, and through any container it was stored in and taken back
+out of. A declared
 matrix profile reaches a seam through a member rather than an importable name —
 naming the provisioner it opens, and opening it itself — so those members are
 matched by name as well, on any receiver: the member is matched rather than

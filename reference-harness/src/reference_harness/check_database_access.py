@@ -16,9 +16,10 @@ pure functions — while *calling* one of the seams below boots a container. Eac
 call's target is resolved through the importing module's own bindings, so a
 local name that merely looks like a seam is not one, and a seam reached under an
 alias still is — including a local name the module first binds to a seam and
-calls afterwards, through any of the forms that bind a name to a value, a
-``match`` capture as much as an assignment, however many names the binding passed
-through, and through any container it was stored in and taken back out of. A seam
+calls afterwards, through any of the forms that bind a name to an expression this
+rule can read, a ``match`` capture as much as an assignment, however many names
+the binding passed through, and through any container it was stored in and taken
+back out of. A seam
 a declared value reaches through a member rather than an importable name is
 matched by that member's name on any receiver; this tree declares no such member.
 
