@@ -4,7 +4,9 @@ Every refusal here is asserted against a provider that raises on any call at all
 so each test proves two things at once: the case is refused, and the refusal cost
 zero database access. Those are the two claims a document-settled rule makes, and
 there is nothing else to inspect — a rule the read oracle owns is refused during
-execution instead, and is graded there.
+execution instead, and is graded there, while a rule about what the document says
+of itself is asked of the whole corpus before any executor runs, and is graded in
+`tests/test_scenario_document.py`.
 """
 
 from __future__ import annotations
@@ -56,7 +58,7 @@ def test_scenario_cases_are_discovered_and_self_describe(scenario_cases) -> None
 def test_every_authored_scenario_is_judged_clean_before_any_database(scenario_cases) -> None:
     # The whole executed corpus, graded against its own document on both dialects
     # without a container: normalization, round-trip accounting, settled-write
-    # cross-checks, `on` references, and dialect-key bookkeeping.
+    # cross-checks, and `on` references.
     for case in _executed(scenario_cases):
         for dialect in ("postgres", "mariadb"):
             try:
@@ -189,13 +191,6 @@ def test_a_case_level_round_trip_mismatch_is_refused(damaged_case) -> None:
         assert_unit_work_scenario(case, RefusingProvider())
 
 
-def test_a_reference_sql_map_must_cover_its_golden_dialects(damaged_case) -> None:
-    case = damaged_case("m-opt-lock-003-versioned-set-based-materialize-optimistic.yaml")
-    case.when["scenario"][0]["referenceSql"] = {"mariadb": "select id from account"}
-    with pytest.raises(CaseFailure, match="referenceSql map keys"):
-        assert_unit_work_scenario(case, RefusingProvider())
-
-
 def test_a_step_golden_must_be_canonical(damaged_case) -> None:
     case = damaged_case("m-opt-lock-003-versioned-set-based-materialize-optimistic.yaml")
     case.when["scenario"][0]["statements"][0]["sql"]["postgres"] = "SELECT t0.id FROM account t0"
@@ -209,6 +204,19 @@ def test_a_step_on_reference_must_name_an_earlier_step(damaged_case) -> None:
     case = damaged_case("m-snapshot-read-010-mutation-has-no-writeback.yaml")
     mutate = next(step for step in case.scenario if step.get("action") == "mutate")
     mutate["on"] = len(case.scenario)
+    with pytest.raises(CaseFailure, match="not a real EARLIER step"):
+        assert_unit_work_scenario(case, RefusingProvider())
+
+
+def test_a_settling_writes_on_reference_is_bounded_by_the_same_rule(damaged_case) -> None:
+    # A write's `on` is the find it settles against, which is still an index into
+    # the steps before it: the bound is one rule over every kind of step, and
+    # compilation must not address a step the case never authored. WHICH find it
+    # may name is the document's own rule, asked of the whole corpus elsewhere.
+    case = damaged_case(
+        "m-unit-work-015-close-settles-against-the-milestone-its-own-find-observed.yaml"
+    )
+    case.when["scenario"][2]["on"] = len(case.scenario)
     with pytest.raises(CaseFailure, match="not a real EARLIER step"):
         assert_unit_work_scenario(case, RefusingProvider())
 

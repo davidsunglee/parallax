@@ -15,10 +15,16 @@ It performs m-case-format layer 1 statically (no database needed):
   reaches the Predicate and Subtype Selection grammars through it.
 * **Case validation** — every case validates against the compatibility-case
   schema, and its referenced model + golden-SQL dialect keys are coherent. The
-  model-aware case-authoring rules JSON Schema cannot express are asked here too,
-  where the model is in hand and no executor has run yet: a buffered write's
-  member honesty, and a scenario `mutate`'s own assignments
-  (:func:`_validate_scenario_edit`).
+  case-authoring rules JSON Schema cannot express are asked here too, where the
+  model is in hand and no executor has run yet: a buffered write's member honesty
+  and a scenario `mutate`'s own assignments (:func:`_validate_scenario_edit`),
+  both model-aware; and the cross-references a scenario step makes — which find a
+  write settles against (:func:`_validate_settled_write`), and whether a step's
+  dialect-keyed maps cover the dialects its own golden declares
+  (:func:`_scenario_statement_binds_keys`,
+  :func:`_validate_scenario_reference_sql`) — which are properties of the document
+  alone. Asked here, they hold for every case in the corpus whatever lane runs it,
+  rather than only for the cases some executor reaches.
 """
 
 from __future__ import annotations
@@ -185,35 +191,43 @@ def _check_object_query(
         _validate(encoding, schema, f"{encodings_label}[{index}]", errors, registry)
 
 
-def _scenario_reference_sql_dialect_keys(
-    step: dict[str, Any], label: str, errors: list[str]
-) -> None:
-    """Ensure a scenario read's dialect map covers its golden statement maps.
+def _golden_dialects(statements: list[Any]) -> set[str]:
+    """The dialects EVERY golden entry in *statements* declares (empty if none does).
 
-    This is the scenario-local counterpart to the runner's top-level
-    ``then.referenceSql`` key check.  A plain string is dialect-neutral.  A map
-    must cover exactly the dialects this read step can execute, otherwise one
-    dialect would silently lose its independent oracle.
+    The intersection, exactly as :attr:`~reference_harness.case.Case.golden_dialects`
+    computes it at ``then``: a step executes on a dialect only where every statement
+    it lists carries that dialect, so this is the set anything keyed to the step's
+    execution must cover.
     """
-    reference_sql = step.get("referenceSql")
-    if not isinstance(reference_sql, dict):
-        return
-    statements = step.get("statements")
-    if not isinstance(statements, list) or not statements:
-        return
     dialect_sets = [
         set(entry["sql"])
         for entry in statements
         if isinstance(entry, dict) and isinstance(entry.get("sql"), dict)
     ]
-    if not dialect_sets:
+    return set.intersection(*dialect_sets) if dialect_sets else set()
+
+
+def _scenario_statement_binds_keys(step: dict[str, Any], label: str, errors: list[str]) -> None:
+    """Ensure each golden statement's dialect-keyed ``binds`` covers its own ``sql``.
+
+    Scenario golden SQL is stored under each step rather than at ``then``, so the
+    per-dialect coverage rule governing ``then.statements`` governs it again at that
+    location, independently per step and per statement: binds authored for one
+    dialect of a two-dialect statement would resolve to nothing on the other.
+    """
+    statements = step.get("statements")
+    if not isinstance(statements, list):
         return
-    golden_dialects = set.intersection(*dialect_sets)
-    if set(reference_sql) != golden_dialects:
-        errors.append(
-            f"{label}: referenceSql map keys {sorted(reference_sql)} != scenario golden sql "
-            f"map keys {sorted(golden_dialects)}"
-        )
+    for index, entry in enumerate(statements):
+        if not isinstance(entry, dict) or not isinstance(entry.get("binds"), dict):
+            continue
+        sql = entry.get("sql")
+        sql_keys = set(sql) if isinstance(sql, dict) else set()
+        if set(entry["binds"]) != sql_keys:
+            errors.append(
+                f"{label} statements[{index}]: binds map keys {sorted(entry['binds'])} "
+                f"!= sql map keys {sorted(sql_keys)}"
+            )
 
 
 def _validate_predicate_write(
@@ -425,11 +439,78 @@ def _check_compile_eligibility(case: Any, label: str, errors: list[str]) -> None
 def _validate_scenario_reference_sql(
     step: dict[str, Any], case_schema: dict[str, Any], label: str, errors: list[str]
 ) -> None:
+    """Validate the independent naive oracle a scenario read may carry.
+
+    `m-case-format` gives it the same shape and the same duty as
+    ``then.referenceSql``, at the step's own location. It is the naive spelling of
+    ONE golden read, so it needs that read to exist: exactly one statement for an
+    ordinary find, and a STREAMED step's whole page list for one delivery, whose
+    naive oracle answers the roots every page of it published.
+
+    A plain string is dialect-neutral; a dialect-keyed map MUST cover exactly the
+    dialects the step executes on (:func:`_golden_dialects`), which is what
+    guarantees no executed dialect runs with its golden checked against nothing but
+    itself. Both directions are refused: a map omitting a dialect the golden
+    declares drops that dialect's second opinion, and one naming a dialect the
+    golden does not carry states an oracle for a read that never runs.
+    """
     if "referenceSql" not in step:
         return
+    reference_sql = step["referenceSql"]
     reference_schema = case_schema["$defs"]["referenceSql"]
-    _validate(step["referenceSql"], reference_schema, f"{label} referenceSql", errors)
-    _scenario_reference_sql_dialect_keys(step, label, errors)
+    _validate(reference_sql, reference_schema, f"{label} referenceSql", errors)
+    statements = step.get("statements")
+    entries = statements if isinstance(statements, list) else []
+    if not entries or (len(entries) != 1 and "stream" not in step):
+        errors.append(
+            f"{label}: referenceSql needs the golden read it is the naive spelling of — "
+            f"exactly one statement for an ordinary find, and a streamed step's own pages "
+            f"for one delivery"
+        )
+        return
+    if not isinstance(reference_sql, dict):
+        return
+    golden_dialects = _golden_dialects(entries)
+    if set(reference_sql) != golden_dialects:
+        errors.append(
+            f"{label}: referenceSql map keys {sorted(reference_sql)} != scenario golden sql "
+            f"map keys {sorted(golden_dialects)}"
+        )
+
+
+def _validate_settled_write(steps: list[Any], index: int, label: str, errors: list[str]) -> None:
+    """Validate which find a scenario write settles against (`m-case-format`
+    *Settling against a grouped find*).
+
+    The case schema settles the SHAPE of the reference — that the step declares a
+    `uow` group, names ONE index rather than a set, and carries the buffered keyed
+    ``write`` an observation can reach. What one step cannot state about another is
+    left: the named step MUST be an earlier step, and a find of this write's own
+    group. Evidence a write consumes is transaction-scoped and published by a read,
+    so a reference to a later step, to a write, or to a find of another group names
+    evidence that never reaches it.
+
+    Every target profile is nameable, because on every one of them a unit of work
+    may hold more than one piece of evidence about a key: a milestone chain holds
+    several rows per key, and a versioned Non-Temporal key holds one observed
+    generation per read of it.
+    """
+    step = steps[index]
+    source, group = step.get("on"), step.get("uow")
+    if not isinstance(source, int) or isinstance(source, bool) or not isinstance(group, str):
+        return  # the case schema owns the reference's shape
+    if not 0 <= source < index:
+        errors.append(
+            f"{label}: settles against step {source}, which is not a real EARLIER step "
+            f"(0 <= source < {index})"
+        )
+        return
+    origin = steps[source]
+    if not isinstance(origin, dict) or "objectQuery" not in origin or origin.get("uow") != group:
+        errors.append(
+            f"{label}: settles against step {source}, which is not a find step of its own "
+            f"`uow` group {group!r}"
+        )
 
 
 _SAME_ENTITY_DERIVATIONS: frozenset[str] = frozenset({"mutate", "detachCopy", "mergeBack"})
@@ -787,31 +868,30 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         # `when.scenario[].objectQuery`); each one validates the same way.
         if isinstance(when.get("scenario"), list):
             for index, step in enumerate(when["scenario"]):
-                if isinstance(step, dict) and "objectQuery" in step:
+                if not isinstance(step, dict):
+                    continue  # the case schema owns a malformed step
+                step_label = f"case {case_path.name} scenario[{index}]"
+                _scenario_statement_binds_keys(step, step_label, errors)
+                _validate_scenario_reference_sql(step, case_schema, step_label, errors)
+                if "objectQuery" in step:
                     _check_object_query(
                         step["objectQuery"],
                         object_query_schema,
                         family,
-                        f"case {case_path.name} scenario[{index}].objectQuery",
+                        f"{step_label}.objectQuery",
                         errors,
                         registry,
                         encodings=step.get("equivalentEncodings"),
-                        encodings_label=(
-                            f"case {case_path.name} scenario[{index}].equivalentEncodings"
-                        ),
+                        encodings_label=f"{step_label}.equivalentEncodings",
                     )
-                    _validate_scenario_reference_sql(
-                        step,
-                        case_schema,
-                        f"case {case_path.name} scenario[{index}]",
-                        errors,
-                    )
-                if isinstance(step, dict) and isinstance(step.get("write"), dict):
+                if "write" in step and "on" in step:
+                    _validate_settled_write(when["scenario"], index, step_label, errors)
+                if isinstance(step.get("write"), dict):
                     entity = _validate_predicate_write(
                         step["write"],
                         model_entities.get(model_name or "", []),
                         predicate_schema,
-                        f"case {case_path.name} scenario[{index}]",
+                        step_label,
                         errors,
                         registry,
                     )
@@ -821,22 +901,22 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                                 entity, when["scenario"][:index], step["write"]
                             )
                         except PredicateWriteValidationError as exc:
-                            errors.append(f"case {case_path.name} scenario[{index}]: {exc}")
-                if isinstance(step, dict) and step.get("action") == "mutate":
+                            errors.append(f"{step_label}: {exc}")
+                if step.get("action") == "mutate":
                     _validate_scenario_edit(
                         when["scenario"],
                         index,
                         model_entities.get(model_name or "", []),
                         family,
-                        f"case {case_path.name} scenario[{index}]",
+                        step_label,
                         errors,
                     )
-                if isinstance(step, dict) and isinstance(step.get("write"), list):
+                if isinstance(step.get("write"), list):
                     _validate_buffered_write(
                         step["write"],
                         model_entities.get(model_name or "", []),
                         predicate_schema,
-                        f"case {case_path.name} scenario[{index}]",
+                        step_label,
                         errors,
                         registry,
                         grouped=isinstance(step.get("uow"), str),

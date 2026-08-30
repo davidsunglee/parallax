@@ -6,7 +6,10 @@ lists. What comes out is a closed set of variants carrying only the fields their
 kind has, so no later phase of this package asks a raw step dictionary what it
 means. The rules refused here are the ones those readings settle; what a read
 step may reference among the observations earlier steps published is the read
-oracle's, and is refused during execution.
+oracle's, and is refused during execution. What the document says about itself —
+which find a settling write may name, whether a step's dialect maps cover each
+other — is asked of every case, in every lane, by
+:mod:`~reference_harness.schema_validate`, so it is not restated here.
 
 Dialect-free by construction. A step's golden SQL is dialect-keyed, so a compiled
 step holds the entries it authored rather than one dialect's resolution of them,
@@ -159,8 +162,6 @@ def compile_scenario(case: Case) -> CompiledScenario:
     """
     if not case.scenario:
         raise CaseFailure(f"{case.path.name}: scenario case has no steps")
-    _assert_source_finds(case)
-    _assert_sql_bookkeeping(case)
     return CompiledScenario(
         case=case,
         steps=tuple(_compile_step(case, index, step) for index, step in enumerate(case.scenario)),
@@ -180,18 +181,17 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
     group = label if isinstance(label, str) else None
     common = (index, group, step.get("roundTrips"), _Golden(tuple(step.get("statements") or ())))
 
+    # `on` names earlier steps on every kind that carries it — a write's settling
+    # reference included — so the bound is decided once here rather than by each
+    # owner mid-execution, and every reader below may address the step it names.
+    assert_step_on_sources(case, index, step)
+
     if "write" in step:
         entries = _write_entries(step)
         rolls_back = step.get("rollback") is True
         if group is not None:
             return _GroupedWrite(*common, entries, rolls_back, _settled_on(case, step))
         return _UngroupedWrite(*common, entries, rolls_back)
-
-    # `on` names earlier steps on every kind that carries it, so the bound is
-    # decided here rather than by each owner mid-execution. A write's `on` is the
-    # settling reference, which :func:`_assert_source_finds` has already read
-    # under its own stricter rule.
-    assert_step_on_sources(case, index, step)
 
     action = step.get("action")
     if action is not None and action not in _ACTION_READ_VERBS:
@@ -211,8 +211,10 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
 def _settled_on(case: Case, step: Mapping[str, Any]) -> _SettledOn | None:
     """The find *step* settles against, or ``None`` when it settles against none.
 
-    Every part of the reference is already validated (:func:`_assert_source_finds`),
-    so what is left is to read the named step once.
+    The reference's shape is the case schema's and which step it may name is
+    :mod:`~reference_harness.schema_validate`'s, both asked of every case before an
+    executor sees it, and the bound is asserted above — so what is left is to read
+    the named step once.
     """
     source = step.get("on")
     if source is None:
@@ -252,101 +254,3 @@ def _assert_no_action_observables(case: Case, index: int, step: Mapping[str, Any
             f"declaring {declared}; only the read verbs {sorted(_ACTION_READ_VERBS)} "
             f"observe rows, so what such a step publishes is nothing to compare."
         )
-
-
-def _assert_source_finds(case: Case) -> None:
-    """Validate every write step's ``on`` — the find it settles against
-    (`m-case-format` *Settling against a grouped find*).
-
-    The reference is legal only where every part of it is meaningful: on a `uow`-
-    grouped step whose ``write`` is the BUFFERED KEYED form, naming ONE earlier
-    step of the SAME group that is a find. Every target profile is nameable,
-    because on every one of them a unit of work may hold more than one piece of
-    evidence about a key: a milestone chain holds several rows per key, and a
-    versioned Non-Temporal key holds one observed generation per read of it.
-
-    Structural and dialect-free, so it holds on every run rather than only where
-    the case carries a golden for the dialect under test — the same reason the
-    dialect-keyed cross-check that consumes the reference
-    (:func:`~reference_harness.unit_work_scenario.judge.assert_settled_write`)
-    cannot host it.
-    """
-    for index, step in enumerate(case.scenario):
-        if "write" not in step or "on" not in step:
-            continue
-        source, label = step["on"], step.get("uow")
-        if not isinstance(label, str):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] settles against a find but declares no "
-                f"`uow` group — the evidence a write consumes is transaction-scoped, and an "
-                f"ungrouped write shares a unit of work with no find."
-            )
-        if not isinstance(source, int) or isinstance(source, bool):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}].on is {source!r}; a write step settles "
-                f"against exactly ONE find, named by its index — a keyed write settles "
-                f"against the one observed state the value it was handed came from."
-            )
-        if not 0 <= source < index:
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}].on references step {source!r}, which is "
-                f"not a real EARLIER step (0 <= source < {index})."
-            )
-        origin = case.scenario[source]
-        if "objectQuery" not in origin or origin.get("uow") != label:
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] settles against step {source}, which is "
-                f"not a find step of its own `uow` group {label!r}."
-            )
-        if not isinstance(step.get("write"), list):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] settles against a find but its `write` is "
-                f"not the buffered keyed form — a legacy string label carries no instruction and "
-                f"a predicate-selected write consumes no single observation, so neither has "
-                f"anything the named observation could reach."
-            )
-
-
-def _assert_sql_bookkeeping(case: Case) -> None:
-    """Validate scenario-local binds and independent read-oracle maps.
-
-    Scenario SQL is stored below each step rather than at ``then``.  The same
-    per-dialect coverage rules therefore apply independently at that location,
-    and a read oracle must correspond to the golden read it is the naive
-    spelling of: one statement for an ordinary find, and a STREAMED step's whole
-    page list for one delivery (`m-case-format` *Streamed read steps*), whose
-    naive oracle answers the roots every page of it published.
-    """
-    for index, step in enumerate(case.scenario):
-        entries = step.get("statements", [])
-        if not isinstance(entries, list):
-            continue
-        for statement_index, entry in enumerate(entries):
-            if not isinstance(entry, dict) or not isinstance(entry.get("binds"), dict):
-                continue
-            sql = entry.get("sql")
-            sql_keys = set(sql) if isinstance(sql, dict) else set()
-            if set(entry["binds"]) != sql_keys:
-                raise CaseFailure(
-                    f"{case.path.name}: when.scenario[{index}].statements[{statement_index}] "
-                    f"binds map keys {sorted(entry['binds'])} != sql map keys "
-                    f"{sorted(sql_keys)}"
-                )
-        reference_sql = step.get("referenceSql")
-        if reference_sql is None:
-            continue
-        if not entries or (len(entries) != 1 and "stream" not in step):
-            raise CaseFailure(
-                f"{case.path.name}: when.scenario[{index}] referenceSql needs the golden read "
-                "it is the naive spelling of — exactly one statement for an ordinary find, "
-                "and a streamed step's own pages for one delivery"
-            )
-        if not isinstance(reference_sql, dict):
-            continue
-        sql = entries[0].get("sql") if isinstance(entries[0], dict) else None
-        sql_keys = set(sql) if isinstance(sql, dict) else set()
-        if set(reference_sql) != sql_keys:
-            raise CaseFailure(
-                f"{case.path.name}: when.scenario[{index}].referenceSql map keys "
-                f"{sorted(reference_sql)} != golden sql map keys {sorted(sql_keys)}"
-            )
