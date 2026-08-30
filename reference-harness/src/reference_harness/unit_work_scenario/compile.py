@@ -4,9 +4,11 @@ What each step is, before a database exists: which kind it is, which earlier ste
 it names, which Unit Work group it belongs to, and which golden statements it
 lists. What comes out is a closed set of variants carrying only the fields their
 kind has, so no later phase of this package asks a raw step dictionary what it
-means. The rules refused here are the ones those readings settle; what a read
-step may reference among the observations earlier steps published is the read
-oracle's, and is refused during execution. What the document says about itself —
+means. The rules refused here are the ones those readings settle — which kind a
+step is, and that every step it names is an earlier one — and nothing downstream
+decides either a second time. What only a run can answer, that the step a
+reference names actually published an observation, is the read oracle's and is
+refused during execution. What the document says about itself —
 which find a settling write may name, whether a step's dialect maps cover each
 other — is asked of every case, in every lane, by
 :mod:`~reference_harness.schema_validate`, so it is not restated here.
@@ -23,8 +25,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ..case import Case, entry_pairs, entry_statements
-from ..case_assertions import CaseFailure, assert_step_on_sources
+from ..case import Case, entry_pairs, entry_statements, names_earlier_step
+from ..case_assertions import CaseFailure
 
 # The m-case-format lifecycle verbs that READ: a `load` triggers a deferred fetch
 # and an `access` reads an already-loaded set. Every other verb either commits
@@ -169,22 +171,19 @@ def compile_scenario(case: Case) -> CompiledScenario:
 
 
 def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep:
-    """Which kind of step this is, decided once.
+    """Which kind of step this is, decided once and nowhere else.
 
-    "Is this a read?" gets exactly one implementation by being written as its
-    complement: the closed set of kinds this package executes itself is a write,
-    an action whose verb neither loads nor accesses, and the zero-round-trip
-    construction of a query-backed list that has not resolved. Every other step is
-    a read.
+    "Is this a read?" is written as its complement: the closed set of kinds this
+    package executes itself is a write, an action whose verb neither loads nor
+    accesses, and the zero-round-trip construction of a query-backed list that has
+    not resolved. Every other step is a read, and the read oracle grades whichever
+    step it is handed rather than asking that question again.
     """
     label = step.get("uow")
     group = label if isinstance(label, str) else None
     common = (index, group, step.get("roundTrips"), _Golden(tuple(step.get("statements") or ())))
 
-    # `on` names earlier steps on every kind that carries it — a write's settling
-    # reference included — so the bound is decided once here rather than by each
-    # owner mid-execution, and every reader below may address the step it names.
-    assert_step_on_sources(case, index, step)
+    _assert_step_references(case, index, step)
 
     if "write" in step:
         entries = _write_entries(step)
@@ -206,6 +205,48 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
     ):
         return _UnresolvedList(*common)
     return _Read(*common)
+
+
+def _assert_step_references(case: Case, index: int, step: Mapping[str, Any]) -> None:
+    """Refuse a step naming anything but an EARLIER step of this Scenario.
+
+    Every reference a step carries names a result some earlier step already
+    produced: the source an action targets, each coordinate group a batched load
+    consumes, the find a settling write was handed a value by, and the step whose
+    object an identity claim is made against. So the bound is one rule over every
+    kind of step, decided once here rather than by each owner mid-execution, and
+    every reader downstream may address the step it names. ``on`` is OPTIONAL on
+    the boundary verbs, which target the unit of work rather than a prior object;
+    a boundary step that DOES carry one — a ``flush`` documenting its buffered
+    write — owes the same bound.
+
+    Only the bound. Whether the named step published anything is a property of the
+    run rather than of the document — a step that fails its own observable
+    publishes nothing — so the read oracle refuses that during execution.
+    """
+    on = step.get("on")
+    sources = list(on) if isinstance(on, list) else [] if on is None else [on]
+    if isinstance(on, list) and len(set(sources)) != len(sources):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}].on {on!r} names a DUPLICATE source; "
+            f"a coordinate-grouped action references each source at most once."
+        )
+    for source in sources:
+        if not names_earlier_step(source, index):
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}].on references step {source!r}, "
+                f"which is not a real EARLIER step (0 <= source < {index}); a step's "
+                f"`on` names a result some earlier step already produced."
+            )
+    identity = step.get("sameObjectAs")
+    if identity is None:
+        return
+    if not isinstance(identity, int) or not names_earlier_step(identity, index):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}].sameObjectAs={identity!r} is not a real "
+            f"EARLIER step (0 <= source < {index}); an identity claim names the object an "
+            f"earlier step observed."
+        )
 
 
 def _settled_on(case: Case, step: Mapping[str, Any]) -> _SettledOn | None:

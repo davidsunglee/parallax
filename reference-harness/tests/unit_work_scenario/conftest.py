@@ -110,25 +110,47 @@ class RolledBack:
 type Call = Reset | Ddl | Fixtures | Opened | Queried | Executed | Committed | RolledBack
 
 
+class SessionEnded(Exception):
+    """Raised by a held session used after its transaction ended.
+
+    What a real driver does, and the whole of how a run can tell a rows-in-hand
+    observation from one still reaching back to the connection that produced it.
+    """
+
+
 class _ScriptedSession:
-    """One held transaction, answering from the provider's own single script."""
+    """One held transaction, answering from the provider's own single script.
+
+    Answers until it commits or rolls back and refuses like a driver after, so a
+    step reading through a group's session can only be answered while that group
+    is open.
+    """
 
     def __init__(self, provider: ScriptedProvider, ordinal: int) -> None:
         self._provider = provider
         self._ordinal = ordinal
+        self._ended = False
         self.dialect = provider.dialect
 
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        self._refuse_if_ended(sql)
         return self._provider._execute(self._ordinal, sql, binds)
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        self._refuse_if_ended(sql)
         return self._provider._query(self._ordinal, sql, binds)
 
     def commit(self) -> None:
+        self._ended = True
         self._provider.chronology.append(Committed(self._ordinal))
 
     def rollback(self) -> None:
+        self._ended = True
         self._provider.chronology.append(RolledBack(self._ordinal))
+
+    def _refuse_if_ended(self, sql: str) -> None:
+        if self._ended:
+            raise SessionEnded(f"session {self._ordinal} has ended: {sql!r}")
 
 
 class ScriptedProvider:

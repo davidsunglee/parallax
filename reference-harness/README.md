@@ -33,8 +33,8 @@ src/reference_harness/
 ├── matrix.py          # emit the compatibility-matrix report (implementations x databases)
 ├── multiset.py        # order-insensitive matching under a caller's own comparison
 ├── case_assertions.py # CaseFailure + the assertion vocabulary the grading seams share:
-│                      #   comparison primitives, step-reference checks, and the
-│                      #   boundary that names a Scenario position on a failure
+│                      #   comparison primitives and the boundary that names a
+│                      #   Scenario position on a failure
 ├── write_plan.py      # write grading: what a golden write statement must be for the
 │                      #   neutral input it renders — row classification, bind
 │                      #   correlation, close addresses, gates, and inheritance routing
@@ -42,8 +42,9 @@ src/reference_harness/
 │                      #   lane calls them (shallow by design; see its docstring)
 ├── case_runner.py     # the layered assertion engine: case-shape routing, provisioning,
 │                      #   rejected, writes, conflict, concurrency, and coherence
-├── object_query_oracle/ # every accepted Object Query observation, behind three names:
-│                        #   assert_case_read, ScenarioReads, ReadExecutor
+├── object_query_oracle/ # every accepted Object Query observation, behind two names:
+│                        #   assert_case_read, ReadExecutor — plus the Scenario-read
+│                        #   collaboration unit_work_scenario alone imports
 ├── unit_work_scenario/  # every Unit Work Scenario, graded whole, behind one name:
 │                        #   assert_unit_work_scenario — step interpretation, ordered
 │                        #   refusal, accounting, settlement, grouping, and lifecycle

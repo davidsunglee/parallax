@@ -16,6 +16,7 @@ import pytest
 import reference_harness.case_runner as case_runner
 import reference_harness.ddl_builder as ddl_builder
 import reference_harness.object_query_oracle as object_query_oracle
+import reference_harness.object_query_oracle.scenario as oracle_scenario
 import reference_harness.unit_work_scenario as unit_work_scenario
 import reference_harness.write_plan as write_plan
 from reference_harness.case import Model, load_model
@@ -1480,6 +1481,13 @@ def test_no_unit_work_scenario_module_imports_case_runner() -> None:
             assert module is None or "case_runner" not in module, f"{path.name} imports {module!r}"
 
 
+def _scenario_suite() -> list[Path]:
+    """Every test module of the Unit Work Scenario package's own suite."""
+    suite = sorted((Path(__file__).parent / "unit_work_scenario").glob("test_*.py"))
+    assert suite, "the Scenario suite was not found, so a pin over it would hold vacuously"
+    return suite
+
+
 def test_the_scenario_suite_reaches_the_package_only_through_its_one_export() -> None:
     """The package's own tests drive the operation, never a module behind it.
 
@@ -1487,9 +1495,7 @@ def test_the_scenario_suite_reaches_the_package_only_through_its_one_export() ->
     one would pin the layout rather than the behaviour, and would recreate — one
     directory over — the private-import surface this package exists to remove.
     """
-    suite = sorted((Path(__file__).parent / "unit_work_scenario").glob("test_*.py"))
-    assert suite, "the Scenario suite was not found, so this pin would hold vacuously"
-    for path in suite:
+    for path in _scenario_suite():
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if not isinstance(node, ast.ImportFrom) or node.module is None:
                 continue
@@ -1501,6 +1507,62 @@ def test_the_scenario_suite_reaches_the_package_only_through_its_one_export() ->
             assert [alias.name for alias in node.names] == ["assert_unit_work_scenario"], (
                 f"{path.name} imports more than the package's one export"
             )
+
+
+def test_the_oracle_exports_two_names_and_no_retained_type() -> None:
+    """The read oracle offers one accepted read and the executor it takes.
+
+    Scenario reads are graded there too, but under no name here: the collaboration
+    is package-private, and what a Scenario step retains has no public type,
+    constructor, fields, or iteration, so orchestration cannot reach a row, a view,
+    or an identity it did not ask a step for.
+    """
+    assert sorted(object_query_oracle.__all__) == ["ReadExecutor", "assert_case_read"]
+    assert not hasattr(object_query_oracle, "ScenarioReads")
+    reads = vars(oracle_scenario.ScenarioReads)
+    assert sorted(name for name in reads if not name.startswith("_")) == ["assert_step"]
+
+
+def test_only_the_scenario_packages_reads_module_imports_the_oracles_scenario_module() -> None:
+    """One name, one importer: the seam the demoted export left behind.
+
+    A second importer would make the collaboration an interface again — this time
+    an undocumented one — so the single-importer rule is pinned rather than stated.
+    """
+    reads = Path(unit_work_scenario.__file__).parent / "reads.py"
+    importers = {
+        path
+        for path in (*_storage_layout_importers(), *_scenario_suite())
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.ImportFrom)
+        and node.module is not None
+        and node.module.endswith("object_query_oracle.scenario")
+    }
+    assert importers == {reads}
+
+
+def test_the_case_runner_re_exports_no_displaced_name() -> None:
+    """The cutover left no shim: a caller reaches each owner directly or not at all.
+
+    The runner calls the package's own function rather than wrapping it under the
+    same name, and none of the Scenario helpers it used to hold survives under its
+    old one — so a caller of a displaced name is sent to its new owner by an import
+    error rather than answered by a module that no longer decides anything.
+    """
+    assert case_runner.assert_unit_work_scenario is unit_work_scenario.assert_unit_work_scenario
+    for displaced in (
+        "_assert_scenario",
+        "_assert_scenario_count_consistency",
+        "_assert_scenario_normalization",
+        "_assert_scenario_settled_write",
+        "_assert_scenario_source_finds",
+        "_assert_scenario_sql_bookkeeping",
+        "_assert_scenario_conflict_abort",
+        "_is_runner_owned_step",
+        "_scenario_uow_groups",
+        "_uow_group_is_doomed",
+    ):
+        assert not hasattr(case_runner, displaced), displaced
 
 
 def test_the_harness_retains_no_synthetic_physical_table_entity() -> None:

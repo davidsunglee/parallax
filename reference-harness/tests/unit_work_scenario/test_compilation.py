@@ -221,6 +221,29 @@ def test_a_settling_writes_on_reference_is_bounded_by_the_same_rule(damaged_case
         assert_unit_work_scenario(case, RefusingProvider())
 
 
+def test_a_read_verbs_on_reference_must_name_an_earlier_step(damaged_case) -> None:
+    # A `load` walks a relationship from the object an earlier step named. The
+    # oracle that walks it resolves that reference rather than bounding it, so a
+    # forward or self index is refused here, before a container exists — the rule
+    # has one owner however many readers follow the reference afterwards.
+    case = damaged_case("m-op-list-002-deep-fetch-population-stable.yaml")
+    case.when["scenario"][1]["on"] = 1
+    with pytest.raises(CaseFailure, match="not a real EARLIER step"):
+        assert_unit_work_scenario(case, RefusingProvider())
+
+
+def test_a_reuse_naming_a_step_that_is_not_earlier_is_refused(damaged_case) -> None:
+    # The other half of the same rule: a zero-round-trip cache hit / re-access
+    # names its source with `sameObjectAs`, and an empty reuse would let the
+    # step's own identity and `expectRows` assertions pass against nothing.
+    # Whether the step it names PUBLISHED anything only a run can answer, and the
+    # read oracle answers it there.
+    case = damaged_case("m-op-list-002-deep-fetch-population-stable.yaml")
+    case.when["scenario"][2]["sameObjectAs"] = 2
+    with pytest.raises(CaseFailure, match=r"sameObjectAs=2 is not a real EARLIER step"):
+        assert_unit_work_scenario(case, RefusingProvider())
+
+
 def test_a_coordinate_grouped_on_names_each_source_once(damaged_case) -> None:
     case = damaged_case("m-snapshot-read-010-mutation-has-no-writeback.yaml")
     mutate = next(step for step in case.scenario if step.get("action") == "mutate")
