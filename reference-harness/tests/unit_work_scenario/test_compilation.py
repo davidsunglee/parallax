@@ -267,3 +267,20 @@ def test_a_non_read_action_step_declaring_a_row_observable_is_refused(damaged_ca
     mutate["expectRows"] = list(source["expectRows"])
     with pytest.raises(CaseFailure, match="only the read verbs"):
         assert_unit_work_scenario(case, RefusingProvider())
+
+
+def test_an_observable_a_verb_may_not_declare_is_refused_before_its_anchor_is_bounded(
+    damaged_case,
+) -> None:
+    """A step told which observables its verb admits is not also told that one of
+    them names the wrong step.
+
+    Whether a key belongs on this kind of step at all precedes whether its value
+    is in range: bounding the anchor first would answer a question the step was
+    never entitled to ask, and hide the defect that makes the other moot.
+    """
+    case = damaged_case("m-snapshot-read-010-mutation-has-no-writeback.yaml")
+    mutate = next(step for step in case.scenario if step.get("action") == "mutate")
+    mutate["sameObjectAs"] = len(case.scenario)
+    with pytest.raises(CaseFailure, match="only the read verbs"):
+        assert_unit_work_scenario(case, RefusingProvider())

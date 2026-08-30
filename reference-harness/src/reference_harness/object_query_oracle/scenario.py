@@ -48,9 +48,10 @@ class ScenarioReads:
         exactly once, with the reader Scenario lifecycle selected for that step.
         The steps that compilation keeps are never passed: a write, an action whose
         verb neither loads nor accesses, and the zero-round-trip construction of a
-        query-backed list that has not resolved. That each step a reference names
-        is an earlier one is settled there too, so what a reference resolves to
-        here is only ever a step this Scenario authored.
+        query-backed list that has not resolved. That every reference resolved
+        here — a step's ``on`` and its ``sameObjectAs`` anchor — names an earlier
+        step is settled there too, so what one resolves to is only ever a step
+        this Scenario authored.
     Guarantees
         a step's observables are asserted atomically: what it published is retained
         under its own index only once every observable it states has passed, so a

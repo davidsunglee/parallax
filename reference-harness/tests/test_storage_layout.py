@@ -16,7 +16,6 @@ import pytest
 import reference_harness.case_runner as case_runner
 import reference_harness.ddl_builder as ddl_builder
 import reference_harness.object_query_oracle as object_query_oracle
-import reference_harness.object_query_oracle.scenario as oracle_scenario
 import reference_harness.unit_work_scenario as unit_work_scenario
 import reference_harness.write_plan as write_plan
 from reference_harness.case import Model, load_model
@@ -43,6 +42,7 @@ from reference_harness.storage_layout import (
     validate_storage_layout,
 )
 from reference_harness.temporality import derive_temporal_structure
+from reference_harness.unit_work_scenario.reads import ScenarioReads
 from reference_harness.value_object_resolve import RejectionError
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1429,6 +1429,31 @@ def _package_modules(package: Any) -> list[Path]:
     return sorted(Path(package.__file__).parent.glob("*.py"))
 
 
+def _harness_modules() -> list[Path]:
+    """Every Python module of the harness — the package and its own suite alike.
+
+    The universe an import rule holds over is every module that could break it, so
+    a pin scanning less would pass by omission. This suite is inside it: a test
+    reaching past a seam recreates the coupling that seam removes.
+    """
+    modules = sorted(
+        {*Path(case_runner.__file__).parent.rglob("*.py"), *Path(__file__).parent.rglob("*.py")}
+    )
+    assert Path(__file__) in modules, "the scan missed its own file, so it would hold vacuously"
+    return modules
+
+
+def _imported_modules(path: Path) -> Iterator[str]:
+    """Every module name *path* imports, in either import form."""
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom):
+            if node.module is not None:
+                yield node.module
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                yield alias.name
+
+
 def test_the_harness_consumes_storage_layout_for_validation_reads_and_observation() -> None:
     imported = {
         alias.asname or alias.name
@@ -1470,19 +1495,11 @@ def test_no_unit_work_scenario_module_imports_case_runner() -> None:
     modules = _package_modules(unit_work_scenario)
     assert modules, "the package was not found, so this pin would hold vacuously"
     for path in modules:
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            module = (
-                node.module
-                if isinstance(node, ast.ImportFrom)
-                else next((alias.name for alias in node.names), None)
-                if isinstance(node, ast.Import)
-                else None
-            )
-            assert module is None or "case_runner" not in module, f"{path.name} imports {module!r}"
+        for module in _imported_modules(path):
+            assert "case_runner" not in module, f"{path.name} imports {module!r}"
 
 
 def _scenario_suite() -> list[Path]:
-    """Every test module of the Unit Work Scenario package's own suite."""
     suite = sorted((Path(__file__).parent / "unit_work_scenario").glob("test_*.py"))
     assert suite, "the Scenario suite was not found, so a pin over it would hold vacuously"
     return suite
@@ -1519,38 +1536,38 @@ def test_the_oracle_exports_two_names_and_no_retained_type() -> None:
     """
     assert sorted(object_query_oracle.__all__) == ["ReadExecutor", "assert_case_read"]
     assert not hasattr(object_query_oracle, "ScenarioReads")
-    reads = vars(oracle_scenario.ScenarioReads)
+    reads = vars(ScenarioReads)
     assert sorted(name for name in reads if not name.startswith("_")) == ["assert_step"]
 
 
 def test_only_the_scenario_packages_reads_module_imports_the_oracles_scenario_module() -> None:
-    """One name, one importer: the seam the demoted export left behind.
+    """One name, one importer: `ScenarioReads` enters the harness at exactly one module.
 
     A second importer would make the collaboration an interface again — this time
-    an undocumented one — so the single-importer rule is pinned rather than stated.
+    an undocumented one — so the rule is pinned over every module of the harness,
+    this suite included, rather than stated. Whoever else needs the type asks that
+    one module for it, which is what makes the seam a seam.
     """
     reads = Path(unit_work_scenario.__file__).parent / "reads.py"
     importers = {
         path
-        for path in (*_storage_layout_importers(), *_scenario_suite())
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if isinstance(node, ast.ImportFrom)
-        and node.module is not None
-        and node.module.endswith("object_query_oracle.scenario")
+        for path in _harness_modules()
+        for module in _imported_modules(path)
+        if module.endswith("object_query_oracle.scenario")
     }
     assert importers == {reads}
 
 
-def test_the_case_runner_re_exports_no_displaced_name() -> None:
-    """The cutover left no shim: a caller reaches each owner directly or not at all.
+def test_the_case_runner_holds_no_scenario_helper_of_its_own() -> None:
+    """Each Scenario decision has one owner, and the runner is not it.
 
-    The runner calls the package's own function rather than wrapping it under the
-    same name, and none of the Scenario helpers it used to hold survives under its
-    old one — so a caller of a displaced name is sent to its new owner by an import
-    error rather than answered by a module that no longer decides anything.
+    The runner reaches the package's own function rather than offering a wrapper
+    under the same name, and carries none of these helpers, so a caller asking it
+    for one gets an attribute error rather than a second answer to a question the
+    package already settles.
     """
     assert case_runner.assert_unit_work_scenario is unit_work_scenario.assert_unit_work_scenario
-    for displaced in (
+    for helper in (
         "_assert_scenario",
         "_assert_scenario_count_consistency",
         "_assert_scenario_normalization",
@@ -1562,7 +1579,7 @@ def test_the_case_runner_re_exports_no_displaced_name() -> None:
         "_scenario_uow_groups",
         "_uow_group_is_doomed",
     ):
-        assert not hasattr(case_runner, displaced), displaced
+        assert not hasattr(case_runner, helper), helper
 
 
 def test_the_harness_retains_no_synthetic_physical_table_entity() -> None:

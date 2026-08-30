@@ -5,13 +5,17 @@ it names, which Unit Work group it belongs to, and which golden statements it
 lists. What comes out is a closed set of variants carrying only the fields their
 kind has, so no later phase of this package asks a raw step dictionary what it
 means. The rules refused here are the ones those readings settle — which kind a
-step is, and that every step it names is an earlier one — and nothing downstream
-decides either a second time. What only a run can answer, that the step a
-reference names actually published an observation, is the read oracle's and is
-refused during execution. What the document says about itself —
-which find a settling write may name, whether a step's dialect maps cover each
-other — is asked of every case, in every lane, by
-:mod:`~reference_harness.schema_validate`, so it is not restated here.
+step is, and that the references this package's own later phases resolve, a
+step's ``on`` sources and a read's ``sameObjectAs`` anchor, name earlier steps —
+and nothing downstream decides either a second time. What only a run can answer,
+that the step a reference names actually published an observation, is the read
+oracle's and is refused during execution. What the document says about itself —
+which find a settling write may name, which earlier step EITHER identity anchor
+names, whether a step's dialect maps cover each other — is asked of every case,
+in every lane, by :mod:`~reference_harness.schema_validate`, so it is not
+restated here. ``differentObjectFrom`` is bounded there and only there: no lane
+this package executes grades it, so a bound restated here would hold nowhere it
+is read.
 
 Dialect-free by construction. A step's golden SQL is dialect-keyed, so a compiled
 step holds the entries it authored rather than one dialect's resolution of them,
@@ -178,12 +182,24 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
     accesses, and the zero-round-trip construction of a query-backed list that has
     not resolved. Every other step is a read, and the read oracle grades whichever
     step it is handed rather than asking that question again.
+
+    Which kind a step is decides which rules it owes, so the classification comes
+    before them: a boundary verb may declare no observable at all, and answering
+    one of its identity claims with a bound would grade a key it was never
+    entitled to carry. Only ``on``'s bound precedes the classification, because
+    reading the find a settling write names reaches into the step it names.
     """
     label = step.get("uow")
     group = label if isinstance(label, str) else None
     common = (index, group, step.get("roundTrips"), _Golden(tuple(step.get("statements") or ())))
 
-    _assert_step_references(case, index, step)
+    _assert_on_sources(case, index, step)
+
+    boundary_verb = _boundary_verb(step)
+    if boundary_verb is not None:
+        _assert_no_action_observables(case, index, step)
+        return _BoundaryAction(*common, boundary_verb)
+    _assert_identity_anchor(case, index, step)
 
     if "write" in step:
         entries = _write_entries(step)
@@ -192,12 +208,8 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
             return _GroupedWrite(*common, entries, rolls_back, _settled_on(case, step))
         return _UngroupedWrite(*common, entries, rolls_back)
 
-    action = step.get("action")
-    if action is not None and action not in _ACTION_READ_VERBS:
-        _assert_no_action_observables(case, index, step)
-        return _BoundaryAction(*common, action)
     if (
-        action is None
+        step.get("action") is None
         and not step.get("statements")
         and "stream" not in step
         and step.get("sameObjectAs") is None
@@ -207,18 +219,29 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
     return _Read(*common)
 
 
-def _assert_step_references(case: Case, index: int, step: Mapping[str, Any]) -> None:
-    """Refuse a step naming anything but an EARLIER step of this Scenario.
+def _boundary_verb(step: Mapping[str, Any]) -> str | None:
+    """The lifecycle verb of a step that commits DML and observes nothing, or ``None``.
 
-    Every reference a step carries names a result some earlier step already
-    produced: the source an action targets, each coordinate group a batched load
-    consumes, the find a settling write was handed a value by, and the step whose
-    object an identity claim is made against. So the bound is one rule over every
-    kind of step, decided once here rather than by each owner mid-execution, and
-    every reader downstream may address the step it names. ``on`` is OPTIONAL on
-    the boundary verbs, which target the unit of work rather than a prior object;
-    a boundary step that DOES carry one — a ``flush`` documenting its buffered
-    write — owes the same bound.
+    A write step is never one however it is labelled: what it carries is buffered
+    DML rather than a verb acting on an earlier step's object.
+    """
+    action = step.get("action")
+    if "write" in step or action is None or action in _ACTION_READ_VERBS:
+        return None
+    return action
+
+
+def _assert_on_sources(case: Case, index: int, step: Mapping[str, Any]) -> None:
+    """Refuse an ``on`` naming anything but an EARLIER step of this Scenario.
+
+    ``on`` names a result some earlier step already produced: the source an action
+    targets, each coordinate group a batched load consumes, the find a settling
+    write was handed a value by. So the bound is one rule over every kind of step,
+    decided once here rather than by each owner mid-execution, and every reader
+    downstream may address the step it names. ``on`` is OPTIONAL on the boundary
+    verbs, which target the unit of work rather than a prior object; a boundary
+    step that DOES carry one — a ``flush`` documenting its buffered write — owes
+    the same bound.
 
     Only the bound. Whether the named step published anything is a property of the
     run rather than of the document — a step that fails its own observable
@@ -238,6 +261,18 @@ def _assert_step_references(case: Case, index: int, step: Mapping[str, Any]) -> 
                 f"which is not a real EARLIER step (0 <= source < {index}); a step's "
                 f"`on` names a result some earlier step already produced."
             )
+
+
+def _assert_identity_anchor(case: Case, index: int, step: Mapping[str, Any]) -> None:
+    """Refuse a ``sameObjectAs`` naming anything but an EARLIER step of this Scenario.
+
+    The read oracle resolves the anchor to what that step observed and compares
+    primary-key identities, so the index must address a step this Scenario
+    authored before the oracle reaches for it. Its counterpart
+    ``differentObjectFrom`` is graded by no lane this package executes, so the
+    corpus-wide bound :mod:`~reference_harness.schema_validate` asks of both is
+    the whole of that one's, and restating it here would be a rule with no reader.
+    """
     identity = step.get("sameObjectAs")
     if identity is None:
         return

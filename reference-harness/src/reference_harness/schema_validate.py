@@ -19,8 +19,9 @@ It performs m-case-format layer 1 statically (no database needed):
   model is in hand and no executor has run yet: a buffered write's member honesty
   and a scenario `mutate`'s own assignments (:func:`_validate_scenario_edit`),
   both model-aware; and the cross-references a scenario step makes — which find a
-  write settles against (:func:`_validate_settled_write`), and whether a step's
-  dialect-keyed maps cover the dialects its own golden declares
+  write settles against (:func:`_validate_settled_write`), which earlier step an
+  identity observable is anchored to (:func:`_validate_identity_anchor`), and
+  whether a step's dialect-keyed maps cover the dialects its own golden declares
   (:func:`_scenario_statement_binds_keys`,
   :func:`_validate_scenario_reference_sql`) — which are properties of the document
   alone. Asked here, they hold for every case in the corpus whatever lane runs it,
@@ -518,6 +519,40 @@ def _validate_settled_write(steps: list[Any], index: int, label: str, errors: li
         )
 
 
+_IDENTITY_ANCHORS: tuple[str, ...] = ("sameObjectAs", "differentObjectFrom")
+"""The scenario observables whose value is an earlier step's index.
+
+`m-case-format` *Per-step lifecycle observables*: `sameObjectAs` claims a step's
+result denotes the SAME object as the step it names and `differentObjectFrom`
+that it denotes a DISTINCT one. A step declares at most one of them, and each
+names the anchor the claim is made against, so one bound covers both.
+"""
+
+
+def _validate_identity_anchor(
+    step: dict[str, Any], index: int, label: str, errors: list[str]
+) -> None:
+    """Refuse an identity observable naming anything but an EARLIER step.
+
+    The two are graded in different places — the wire harness grades
+    `sameObjectAs` as primary-key identity, while `differentObjectFrom` is
+    adapter-delegated to each language's API Conformance Suite — and an
+    `api-conformance` case reaches no executor here at all. The bound is a
+    property of the document rather than of a grader, so it is asked here, of
+    every case in the corpus, rather than wherever each observable happens to be
+    consumed.
+    """
+    for anchor in _IDENTITY_ANCHORS:
+        source = step.get(anchor)
+        if not isinstance(source, int) or isinstance(source, bool):
+            continue  # the case schema owns the observable's shape
+        if not names_earlier_step(source, index):
+            errors.append(
+                f"{label}: {anchor} names step {source}, which is not a real EARLIER step "
+                f"(0 <= source < {index})"
+            )
+
+
 _SAME_ENTITY_DERIVATIONS: frozenset[str] = frozenset({"mutate", "detachCopy", "mergeBack"})
 """The action verbs whose result stands exactly where the step they name stands.
 
@@ -666,8 +701,8 @@ def _step_position(
     ``None`` means the position is undecidable here rather than absent. A write
     step or a boundary verb holds no queried node; an out-of-range or missing
     ``on`` is :mod:`~reference_harness.unit_work_scenario`'s to report, where
-    compiling a Scenario refuses every reference that names no earlier step,
-    rather than this check's to restate; and a step reachable from itself resolves
+    compiling a Scenario refuses an ``on`` that names no earlier step, rather than
+    this check's to restate; and a step reachable from itself resolves
     nowhere, which the cycle guard answers rather than looping.
     """
     if index in visited or not 0 <= index < len(steps):
@@ -886,6 +921,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                 step_label = f"case {case_path.name} scenario[{index}]"
                 _scenario_statement_binds_keys(step, step_label, errors)
                 _validate_scenario_reference_sql(step, case_schema, step_label, errors)
+                _validate_identity_anchor(step, index, step_label, errors)
                 if "objectQuery" in step:
                     _check_object_query(
                         step["objectQuery"],

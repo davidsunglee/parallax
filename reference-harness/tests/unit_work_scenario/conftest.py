@@ -113,17 +113,18 @@ type Call = Reset | Ddl | Fixtures | Opened | Queried | Executed | Committed | R
 class SessionEnded(Exception):
     """Raised by a held session used after its transaction ended.
 
-    What a real driver does, and the whole of how a run can tell a rows-in-hand
-    observation from one still reaching back to the connection that produced it.
+    Deliberately stricter than a driver, which would simply open a fresh
+    transaction: refusing instead is the whole of how a run can tell a
+    rows-in-hand observation from one still reaching back to the connection that
+    produced it.
     """
 
 
 class _ScriptedSession:
     """One held transaction, answering from the provider's own single script.
 
-    Answers until it commits or rolls back and refuses like a driver after, so a
-    step reading through a group's session can only be answered while that group
-    is open.
+    Answers until it commits or rolls back and refuses after, so a step reading
+    through a group's session can only be answered while that group is open.
     """
 
     def __init__(self, provider: ScriptedProvider, ordinal: int) -> None:
