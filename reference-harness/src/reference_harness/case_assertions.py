@@ -15,12 +15,12 @@ from __future__ import annotations
 import contextlib
 import datetime
 import uuid
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from decimal import Decimal
 from typing import Any
 
 from . import multiset, portable_literal
-from .case import Case, names_earlier_step
+from .case import Case
 
 
 class CaseFailure(AssertionError):
@@ -177,38 +177,6 @@ def coerce_identity_key(value: Any) -> Any:
     if isinstance(value, float):
         return Decimal(str(value))
     return value
-
-
-def assert_step_on_sources(case: Case, step_index: int, step: Mapping[str, Any]) -> None:
-    """Validate that a Scenario step's ``on`` names real earlier steps.
-
-    Every index in ``on`` — a single int, or an array of coordinate-group
-    sources — MUST be ``>= 0``, strictly EARLIER than this step, and, for the
-    array form, UNIQUE. ``on`` is OPTIONAL on the boundary verbs (``flush`` /
-    ``commit`` / ``abort``), which target the unit of work rather than a prior
-    object; when a boundary step DOES carry one — a ``flush`` documenting its
-    buffered write — the same checks apply. So does a WRITE step's ``on``, the
-    find it settles against: what that reference may name beyond being earlier is
-    a document rule the corpus asks of every case, and the bound itself is
-    :func:`~reference_harness.case.names_earlier_step`, which this raises the
-    grading seams' refusal for.
-    """
-    if "on" not in step:
-        return
-    on = step["on"]
-    indices = list(on) if isinstance(on, list) else [on]
-    if isinstance(on, list) and len(set(indices)) != len(indices):
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{step_index}].on {on!r} names a DUPLICATE source; "
-            f"a coordinate-grouped action references each source at most once."
-        )
-    for source in indices:
-        if not names_earlier_step(source, step_index):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{step_index}].on references step {source!r}, "
-                f"which is not a real EARLIER step (0 <= source < {step_index}); a step's "
-                f"`on` names a result some earlier step already produced."
-            )
 
 
 @contextlib.contextmanager

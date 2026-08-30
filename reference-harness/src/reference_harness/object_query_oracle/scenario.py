@@ -16,11 +16,13 @@ an `access` navigates the view an earlier read materialized, issuing nothing —
 unless it is the first access of a query-backed list, which resolves the list once
 by following the step's own ``on`` index back to the constructor's Object Query.
 
-What is NOT here is Scenario orchestration: step order, reader selection,
-transaction lifecycle, writes, boundary actions, unresolved list construction, and
-accounting across the whole Scenario all belong to :mod:`..unit_work_scenario`,
-whose execution phase calls this once per read-bearing step with the reader that
-step's lifecycle selected.
+What is NOT here is Scenario orchestration: which kind each step is, step order,
+reader selection, transaction lifecycle, writes, boundary actions, unresolved list
+construction, and accounting across the whole Scenario all belong to
+:mod:`..unit_work_scenario`, whose execution phase calls this once per
+read-bearing step with the reader that step's lifecycle selected. This module is
+that package's collaborator rather than an offering of the oracle's own
+interface, and it holds no second opinion about what it is handed.
 """
 
 from __future__ import annotations
@@ -29,42 +31,35 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
-from ..case import Case, Entity, entry_pairs, frozen_view, names_earlier_step
-from ..case_assertions import (
-    CaseFailure,
-    assert_step_on_sources,
-    coerce_identity_key,
-    reported_against,
-    rows_equal,
-)
+from ..case import Case, Entity, entry_pairs, frozen_view
+from ..case_assertions import CaseFailure, coerce_identity_key, reported_against, rows_equal
 from ..predicate_write_validate import requires_predicate_write_materialization
 from ..serde import canonical
 from . import execute, graph, includes, materialize, retained, stream
 from .executor import ReadExecutor
-
-# The m-case-format lifecycle verbs that READ: a `load` triggers a deferred fetch
-# and an `access` reads an already-loaded set. Every other verb either commits
-# buffered DML or acts in memory, and belongs to Scenario orchestration.
-_ACTION_READ_VERBS = frozenset({"load", "access"})
 
 
 class ScenarioReads:
     """Every accepted read of one Unit Work Scenario, and what those reads retain.
 
     Requires
-        one instance per Compatibility Case; :mod:`..unit_work_scenario` calls
-        every step this owns, in Scenario order, exactly once, with the reader
-        Scenario lifecycle selected for that step. The steps ORCHESTRATION keeps
-        are never passed: a write, an action whose verb is not ``load`` or
-        ``access``, and the zero-round-trip construction of a query-backed list
-        that has not resolved.
+        one instance per Compatibility Case; :mod:`..unit_work_scenario` compiles
+        the Scenario once and then calls every read step of it, in Scenario order,
+        exactly once, with the reader Scenario lifecycle selected for that step.
+        The steps that compilation keeps are never passed: a write, an action whose
+        verb neither loads nor accesses, and the zero-round-trip construction of a
+        query-backed list that has not resolved. That each step a reference names
+        is an earlier one is settled there too, so what a reference resolves to
+        here is only ever a step this Scenario authored.
     Guarantees
         a step's observables are asserted atomically: what it published is retained
         under its own index only once every observable it states has passed, so a
-        failed step leaves nothing behind for a later step to read. An ineligible
-        index, a repeated assertion, or a reference to an observation no asserted
-        step produced is refused locally. Every failure names the case path and the
-        step index; a driver exception passes through unchanged.
+        failed step leaves nothing behind for a later step to read. Ordering makes
+        that guarantee usable rather than checks: the store is keyed by the
+        authored step index, so a reference reaches the observation of the step it
+        names or none at all, and naming a step that published none is refused.
+        Every failure names the case path and the step index; a driver exception
+        passes through unchanged.
     """
 
     def __init__(self, case: Case) -> None:
@@ -81,7 +76,7 @@ class ScenarioReads:
         is a reuse.
         """
         with reported_against(self._case, step_index):
-            step = self._eligible_step(step_index)
+            step = self._case.scenario[step_index]
             pairs = entry_pairs(step.get("statements"), reader.dialect)
 
             if "stream" in step:
@@ -103,62 +98,6 @@ class ScenarioReads:
             # observable published nothing: a later step naming it is refused for
             # naming an unobserved step rather than answered with rows nobody graded.
             self._retained[step_index] = observation
-
-    # --- eligibility ---------------------------------------------------------
-
-    def _eligible_step(self, step_index: int) -> dict[str, Any]:
-        """The step at *step_index*, refused unless it is the next one this owns.
-
-        Scenario order is a precondition of the whole interface, not a courtesy: a
-        step reads what earlier steps published, so asserting two owned steps out
-        of order, or skipping one, changes what the later one observes. Stating
-        that in a docstring alone would leave the obligation undefended, so the
-        cursor enforces it — the only index accepted is the LOWEST this instance
-        owns and has not asserted. Refusing a skipped step is what makes the
-        oracle predict ownership rather than only check it on arrival, so a step
-        orchestration routes differently than :func:`_orchestration_owned` reads it
-        surfaces as a refusal here rather than as a silently missing observation.
-
-        There is deliberately no closing operation: a trailing owned step nobody
-        asserted stays unrefused, because a second method and the lifetime
-        obligation behind it would cost a caller more than the defect it catches.
-        """
-        case = self._case
-        scenario = case.scenario
-        if not 0 <= step_index < len(scenario):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{step_index}] is not a step of this case, "
-                f"which declares {len(scenario)}."
-            )
-        if step_index in self._retained:
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{step_index}] is asserted twice. A Scenario "
-                f"step is observed once, in Scenario order, so a second assertion would "
-                f"replace the observation the steps naming it already read."
-            )
-        step = scenario[step_index]
-        refusal = _orchestration_owned(step)
-        if refusal is not None:
-            raise CaseFailure(f"{case.path.name}: scenario[{step_index}] {refusal}")
-        expected = self._next_owned_step()
-        if expected != step_index:
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{step_index}] is asserted out of Scenario "
-                f"order; scenario[{expected}] is the next read step and has not been "
-                f"asserted. A step observes what the steps before it published."
-            )
-        return step
-
-    def _next_owned_step(self) -> int | None:
-        """The lowest step index this instance owns and has not yet asserted."""
-        return next(
-            (
-                index
-                for index, step in enumerate(self._case.scenario)
-                if index not in self._retained and _orchestration_owned(step) is None
-            ),
-            None,
-        )
 
     # --- the four read workflows ---------------------------------------------
 
@@ -268,7 +207,7 @@ class ScenarioReads:
         populated, so it answers the rows its source already published.
         """
         case = self._case
-        _assert_action_on(case, step_index, step, pairs)
+        _assert_coordinate_batching(case, step_index, step, pairs)
         entity = self._read_entity(step_index)
         if not pairs:
             return retained.Observation(
@@ -290,7 +229,7 @@ class ScenarioReads:
         # steps. A `load` navigates a relationship, which no Object Query
         # describes, and may aggregate the levels it walked through as well as the
         # one it ended at.
-        list_read = _resolved_list_read(case, step_index, step)
+        list_read = _resolved_list_read(case, step)
         published = (
             materialize.materialize_navigated(case, entity, returned)
             if list_read is None
@@ -306,21 +245,20 @@ class ScenarioReads:
 
         A cache hit, a re-access, or a repeated find returns the SAME rows an
         earlier step published, named by ``sameObjectAs`` or — on an action step —
-        by its ``on``. The named source MUST be an earlier step this instance
-        already observed: a forward, self, or unobserved index is an authoring
-        error rather than an empty set, which would let the step's own identity
-        and ``expectRows`` assertions pass against nothing.
+        by its ``on``. That the name is an EARLIER step is settled when the
+        Scenario is compiled; what only the run can answer is whether that step
+        OBSERVED anything (:func:`_observation`), because a step failing its own
+        observable publishes nothing. A step issuing nothing and naming nobody has
+        no source at all, which is an empty reuse: its own identity and
+        ``expectRows`` assertions would pass against nothing.
         """
-        case = self._case
         named = step.get("sameObjectAs", step.get("on"))
-        source = (named[0] if named else -1) if isinstance(named, list) else named
-        if not isinstance(source, int) or not names_earlier_step(source, step_index):
+        source = named[0] if isinstance(named, list) and named else named
+        if not isinstance(source, int):
             raise CaseFailure(
-                f"{case.path.name}: scenario[{step_index}] reuses prior rows from an "
-                f"UNRESOLVED source {source!r} — a zero-round-trip cache hit / "
-                f"re-access MUST name an EARLIER resolved step (0 <= source < "
-                f"{step_index}). An empty reuse here would let its identity / "
-                f"expectRows assertion pass vacuously."
+                f"{self._case.path.name}: scenario[{step_index}] issues no statement of its "
+                f"own and names no earlier step to reuse rows from — a zero-round-trip "
+                f"cache hit / re-access answers with the rows an earlier step published."
             )
         return self._observation(step_index, source).rows
 
@@ -380,28 +318,22 @@ class ScenarioReads:
         root — is what lets a step reading a different, value-object-bearing
         entity decode its document column with the RIGHT composite schema (m-sql
         *Read projection*, slot 4; m-case-format *Read result form*). A read step
-        names its queried position inside its own ``objectQuery.target``. A
-        ``load`` / ``access`` navigates from an earlier object (``on``, required
-        for the read verbs): with a ``path`` its rows are the path's TERMINAL
-        entity; a path-less query-backed-list ``access`` resolves the constructed
-        list's own source entity, which is why this reads the source step out of
-        the CASE rather than out of what was observed — the construction step it
-        may name published nothing and is never observed at all.
+        names its queried position inside its own ``objectQuery.target``. Every
+        action step reaching this oracle is a read verb, which navigates from an
+        earlier object (``on``, required for those verbs): with a ``path`` its rows
+        are the path's TERMINAL entity; a path-less query-backed-list ``access``
+        resolves the constructed list's own source entity, which is why this reads
+        the source step out of the CASE rather than out of what was observed — the
+        construction step it may name published nothing and is never observed at
+        all.
         """
         case = self._case
         step = case.scenario[step_index]
         if "objectQuery" in step:
             return case.model.entity(step["objectQuery"]["target"])
-        if step.get("action") in _ACTION_READ_VERBS:
+        if "action" in step:
             named = step["on"]
             source = named[0] if isinstance(named, list) else named
-            if not isinstance(source, int) or not names_earlier_step(source, step_index):
-                raise CaseFailure(
-                    f"{case.path.name}: scenario[{step_index}].on references step "
-                    f"{source!r}, which is not a real EARLIER step "
-                    f"(0 <= source < {step_index}); an action targets the result of a "
-                    f"prior step."
-                )
             start = self._read_entity(source)
             path = step.get("path")
             if path is None or start is None:
@@ -483,11 +415,6 @@ class ScenarioReads:
         if "sameObjectAs" not in step:
             return
         source = step["sameObjectAs"]
-        if not isinstance(source, int) or not names_earlier_step(source, step_index):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{step_index}].sameObjectAs={source} "
-                f"must reference an EARLIER step."
-            )
         # A Scenario case queries a single entity (cache / identity over one type),
         # so an unstated identity attribute is the model root's own.
         identity_column = step.get("identityAttr", case.model.root_entity.identity_column)
@@ -608,41 +535,6 @@ class ScenarioReads:
         return {terminal.name: retained.path_nodes(case, step_index, path, view)}
 
 
-def _orchestration_owned(step: Mapping[str, Any]) -> str | None:
-    """Why Scenario orchestration owns *step*, or ``None`` when this oracle does.
-
-    The complement of "is this a read step?": :mod:`..unit_work_scenario` classifies
-    every step as it compiles the Scenario, routes the closed set of kinds it owns,
-    and sends everything else here; this is the oracle's own reading of that same
-    classification. The two MUST agree — so a step orchestration owns is named here
-    rather than mis-graded as a read, and a kind this refuses that orchestration
-    nevertheless routes here is a disagreement about the seam rather than an
-    authoring error in the case.
-    """
-    if "write" in step:
-        return "is a write step, whose DML and lifecycle belong to Scenario orchestration."
-    action = step.get("action")
-    if action is not None and action not in _ACTION_READ_VERBS:
-        return (
-            f"is a {action!r} action step. Only the read verbs "
-            f"{sorted(_ACTION_READ_VERBS)} observe rows; every other verb commits "
-            f"buffered DML or acts in memory."
-        )
-    if (
-        "action" not in step
-        and not step.get("statements")
-        and "stream" not in step
-        and step.get("sameObjectAs") is None
-        and step.get("on") is None
-    ):
-        return (
-            "constructs a query-backed list that has not resolved. It carries no rows "
-            "until a later step accesses it, which is the step that resolves its Object "
-            "Query."
-        )
-    return None
-
-
 def _reference_sql_for(step: Mapping[str, Any], dialect: str) -> str | None:
     """Resolve one Scenario read's naive SQL oracle for *dialect*."""
     raw = step.get("referenceSql")
@@ -657,19 +549,18 @@ def _reference_sql_for(step: Mapping[str, Any], dialect: str) -> str | None:
     return raw
 
 
-def _assert_action_on(
+def _assert_coordinate_batching(
     case: Case, step_index: int, step: Mapping[str, Any], pairs: list[tuple[str, list[Any]]]
 ) -> None:
-    """Validate a read-verb action step's ``on`` source indices.
+    """Hold a read verb's executed statement groups to the sources it references.
 
-    Naming a real earlier step is asked of every kind of step, so that half is the
-    shared :func:`..case_assertions.assert_step_on_sources`. What is read-verb-only
-    is the batching rule beneath it: a coordinate-grouped ``load`` emits one child
-    statement per lowered-coordinate group, so it MUST NOT execute MORE statement
-    groups than it references sources — every executed group is accounted for by a
-    referenced source (m-deep-fetch batching contract).
+    A coordinate-grouped ``load`` emits one child statement per lowered-coordinate
+    group, so it MUST NOT execute MORE statement groups than it references sources
+    — every executed group is accounted for by a referenced source (m-deep-fetch
+    batching contract). That those sources are real earlier steps is settled when
+    the Scenario is compiled; what is read-verb-only is this count, and it is
+    dialect-keyed because the groups it counts are the golden's own.
     """
-    assert_step_on_sources(case, step_index, step)
     on = step.get("on")
     indices = list(on) if isinstance(on, list) else []
     if isinstance(on, list) and len(pairs) > len(indices):
@@ -797,7 +688,7 @@ def _step_as_read(case: Case, step_index: int) -> Case:
     )
 
 
-def _resolved_list_read(case: Case, step_index: int, step: Mapping[str, Any]) -> Case | None:
+def _resolved_list_read(case: Case, step: Mapping[str, Any]) -> Case | None:
     """A first ``access`` of a query-backed list, presented as the read it resolves.
 
     Such an access navigates no relationship: it resolves the list an earlier step
@@ -811,7 +702,7 @@ def _resolved_list_read(case: Case, step_index: int, step: Mapping[str, Any]) ->
         return None
     named = step.get("on")
     source = named[0] if isinstance(named, list) else named
-    if not isinstance(source, int) or not names_earlier_step(source, step_index):
+    if not isinstance(source, int):
         return None
     query = case.scenario[source].get("objectQuery")
     if not isinstance(query, Mapping):

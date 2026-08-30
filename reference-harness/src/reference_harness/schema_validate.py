@@ -534,6 +534,14 @@ reaches — an `access` on `items` holds OrderItems, never the Order it navigate
 from — so the position it stands at is the relationship's target rather than its
 source's. The path-less `access` form navigates nothing (it resolves a
 query-backed list, `m-op-list`), so its members stand where its source does.
+
+Stated here rather than borrowed from the verb sets an executing lane keeps: this
+one partitions the lifecycle verbs by where a result STANDS, alongside
+:data:`_SAME_ENTITY_DERIVATIONS`, and answers that question of every authored
+case with no executor in sight. That the same two verbs are also the ones that
+observe rows is a fact about the verbs, not a shared rule — a walk that borrowed
+it would start refusing or resolving positions whenever the execution lane
+redrew its own boundary.
 """
 
 
@@ -657,8 +665,8 @@ def _step_position(
 
     ``None`` means the position is undecidable here rather than absent. A write
     step or a boundary verb holds no queried node; an out-of-range or missing
-    ``on`` is the runtime ``on`` rules'
-    (:func:`~reference_harness.case_assertions.assert_step_on_sources`) to report
+    ``on`` is :mod:`~reference_harness.unit_work_scenario`'s to report, where
+    compiling a Scenario refuses every reference that names no earlier step,
     rather than this check's to restate; and a step reachable from itself resolves
     nowhere, which the cycle guard answers rather than looping.
     """

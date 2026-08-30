@@ -10,11 +10,13 @@ found.
 from __future__ import annotations
 
 import copy
+from typing import Any
 
 import pytest
 
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import run_case
+from reference_harness.object_query_oracle import execute as oracle_execute
 from reference_harness.unit_work_scenario import assert_unit_work_scenario
 
 from .conftest import Affected, RefusingProvider, Rows, ScriptedProvider
@@ -22,6 +24,7 @@ from .conftest import Affected, RefusingProvider, Rows, ScriptedProvider
 _SETTLED = "m-unit-work-015-close-settles-against-the-milestone-its-own-find-observed.yaml"
 _RYOW = "m-unit-work-005-ryow-update.yaml"
 _ABORT = "m-opt-lock-012-conflict-aborts-uow.yaml"
+_IDENTITY = "m-identity-map-001-same-transaction-identity.yaml"
 
 
 def _named_once(failure: CaseFailure, case_name: str, step: int) -> None:
@@ -73,6 +76,40 @@ def test_an_execution_refusal_from_the_read_oracle_names_its_step_once(damaged_c
     with pytest.raises(CaseFailure) as raised:
         assert_unit_work_scenario(case, ScriptedProvider(script=[observed]))
     _named_once(raised.value, case.path.name, 0)
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [
+        "the storage layout resolves no position for the effective concrete set",
+        "m-identity-map-001-same-transaction-identity.yaml: the Continuation Order names "
+        "a member this read resolves to no single Structured Column",
+    ],
+    ids=["names neither", "names the case only"],
+)
+def test_a_subordinate_refusal_is_reported_against_the_step_that_reached_it(
+    corpus_case, monkeypatch: pytest.MonkeyPatch, raised: str
+) -> None:
+    """The step boundary is unconditional, so no route has to be remembered.
+
+    Every oracle a read step reaches — delivery, seek derivation, materialization,
+    Include levels, graph assembly — speaks of the READ it was handed rather than
+    the Scenario position that handed it over, so a refusal from any of them
+    arrives naming at most the case. Standing in for all of them is a refusal
+    raised from the statement execution every SQL-issuing workflow shares.
+    """
+    case = corpus_case(_IDENTITY)
+
+    def refuse(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise CaseFailure(raised)
+
+    monkeypatch.setattr(oracle_execute, "query_rows", refuse)
+
+    with pytest.raises(CaseFailure) as caught:
+        assert_unit_work_scenario(case, ScriptedProvider())
+
+    detail = raised.removeprefix(f"{case.path.name}: ")
+    assert str(caught.value) == f"{case.path.name}: scenario[0] {detail}"
 
 
 # --- what is not an authored failure ----------------------------------------
