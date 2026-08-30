@@ -187,8 +187,10 @@ def assert_step_on_sources(case: Case, step_index: int, step: Mapping[str, Any])
     array form, UNIQUE. ``on`` is OPTIONAL on the boundary verbs (``flush`` /
     ``commit`` / ``abort``), which target the unit of work rather than a prior
     object; when a boundary step DOES carry one — a ``flush`` documenting its
-    buffered write — the same checks apply, which is why this rule is stated once
-    for every kind of step rather than once per owner.
+    buffered write — the same checks apply. So does a WRITE step's ``on``, the
+    find it settles against: what that reference may name beyond being earlier is
+    a document rule the corpus asks of every case, but the bound itself is stated
+    once here for every kind of step rather than once per owner.
     """
     if "on" not in step:
         return
@@ -203,8 +205,8 @@ def assert_step_on_sources(case: Case, step_index: int, step: Mapping[str, Any])
         if not 0 <= source < step_index:
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step_index}].on references step {source!r}, "
-                f"which is not a real EARLIER step (0 <= source < {step_index}); an action "
-                f"targets the result of a prior step."
+                f"which is not a real EARLIER step (0 <= source < {step_index}); a step's "
+                f"`on` names a result some earlier step already produced."
             )
 
 

@@ -18,7 +18,10 @@ conformance-adapter contract.
 ```text
 src/reference_harness/
 ├── case.py            # the in-memory Case + Model dataclasses + loader
-├── schema_validate.py # validate descriptors / queries / cases vs JSON Schema (+ meta-schema)
+├── schema_validate.py # validate descriptors / queries / cases vs JSON Schema (+ meta-schema),
+│                      #   and the case-authoring rules JSON Schema cannot express: a
+│                      #   buffered write's members, a scenario `mutate`'s assignments, a
+│                      #   settling write's named find, a step's dialect-map coverage
 ├── sql_lint.py        # sqlglot-parse every golden / reference SQL string
 ├── serde.py           # canonical (de)serialize for queries AND the metamodel (JSON + YAML)
 ├── sql_normalize.py   # sqlglot implementation of the m-sql normalization rules

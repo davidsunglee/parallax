@@ -5,6 +5,9 @@ The corpus states the observed state in two independent places — the find's
 them agree. Each degradation below moves ONE of those places and requires the
 refusal to notice; each is asserted against a provider that raises on any call,
 so every one of them is a defect of the document, refused before provisioning.
+WHICH find a write may name is a different question, decided about the document
+alone and asked of every case before any executor runs
+(`tests/test_scenario_document.py`).
 
 Two degradations of the harness itself discriminate these cross-checks. Emptying
 the settled-write judgement must fail every one of them and nothing else.
@@ -100,32 +103,6 @@ def test_settling_against_a_find_that_observed_another_key_is_refused(damaged_ca
     case = damaged_case(_SETTLED)
     case.when["scenario"][0]["expectRows"][0]["pos_id"] = 2
     with pytest.raises(CaseFailure, match="observed 0 row"):
-        assert_unit_work_scenario(case, RefusingProvider())
-
-
-# --- whether a write may settle against a find at all -----------------------
-
-
-def test_a_settling_write_must_declare_its_uow_group(damaged_case) -> None:
-    case = damaged_case(_SETTLED)
-    del case.when["scenario"][2]["uow"]
-    with pytest.raises(CaseFailure, match="declares no `uow` group"):
-        assert_unit_work_scenario(case, RefusingProvider())
-
-
-def test_a_settling_write_names_one_earlier_find_of_its_own_group(damaged_case) -> None:
-    case = damaged_case(_SETTLED)
-    case.when["scenario"][2]["on"] = 1000
-    with pytest.raises(CaseFailure, match="not a real EARLIER step"):
-        assert_unit_work_scenario(case, RefusingProvider())
-
-
-def test_a_settling_write_must_be_the_buffered_keyed_form(damaged_case) -> None:
-    # A legacy string label carries no instruction for the named observation to
-    # reach, so the reference would name evidence nothing consumes.
-    case = damaged_case(_SETTLED)
-    case.when["scenario"][2]["write"] = "correct the position"
-    with pytest.raises(CaseFailure, match="not the buffered keyed form"):
         assert_unit_work_scenario(case, RefusingProvider())
 
 
