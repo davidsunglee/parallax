@@ -1443,13 +1443,17 @@ def _harness_modules() -> list[Path]:
     return modules
 
 
+_SOURCE_IMPORT_ROOT = Path(case_runner.__file__).resolve().parents[case_runner.__name__.count(".")]
+_TEST_IMPORT_ROOT = Path(__file__).resolve().parents[__name__.count(".")]
+
+
 def _module_name(path: Path) -> str:
-    parts = [path.stem]
-    directory = path.parent
-    while (directory / "__init__.py").exists():
-        parts.append(directory.name)
-        directory = directory.parent
-    return ".".join(reversed(parts))
+    absolute = path.resolve()
+    for root in (_SOURCE_IMPORT_ROOT, _TEST_IMPORT_ROOT):
+        if absolute.is_relative_to(root):
+            dotted = ".".join(absolute.relative_to(root).with_suffix("").parts)
+            return dotted.removesuffix(".__init__")
+    raise AssertionError(f"{path} sits under neither import root, so no name anchors it")
 
 
 class _ImportEdge(NamedTuple):
@@ -1463,13 +1467,14 @@ class _ImportEdge(NamedTuple):
 
 
 def _absolute_imports(path: Path) -> Iterator[_ImportEdge]:
-    own = _module_name(path).split(".")
+    parts = _module_name(path).split(".")
+    own_package = parts if path.name == "__init__.py" else parts[:-1]
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 yield _ImportEdge(alias.name, None)
         elif isinstance(node, ast.ImportFrom):
-            anchor = own[: max(len(own) - node.level, 0)] if node.level else []
+            anchor = own_package[: max(len(own_package) - node.level + 1, 0)] if node.level else []
             base = ".".join([*anchor, *([node.module] if node.module else [])])
             if base:
                 yield _ImportEdge(base, None)
