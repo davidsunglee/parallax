@@ -16,6 +16,7 @@ import pytest
 import reference_harness.case_runner as case_runner
 import reference_harness.ddl_builder as ddl_builder
 import reference_harness.object_query_oracle as object_query_oracle
+import reference_harness.storage_layout as storage_layout
 import reference_harness.unit_work_scenario as unit_work_scenario
 import reference_harness.write_plan as write_plan
 from reference_harness.case import Model, load_model
@@ -1414,7 +1415,7 @@ def _storage_layout_importers() -> list[Path]:
     interior stays free to be rearranged while the set of storage-layout facts the
     harness consumes stays pinned. The universe is every module that grades a case
     against the physical layout, so a fact moving between them is invisible here
-    and a fact newly consumed is not.
+    and a change to which names they draw is not.
     """
     return [
         Path(case_runner.__file__),
@@ -1425,7 +1426,6 @@ def _storage_layout_importers() -> list[Path]:
 
 
 def _package_modules(package: Any) -> list[Path]:
-    """Every module of *package* at any depth, in a stable order."""
     return sorted(Path(package.__file__).parent.rglob("*.py"))
 
 
@@ -1475,12 +1475,12 @@ def _imported_modules(path: Path) -> Iterator[str]:
 
 
 def test_the_harness_consumes_storage_layout_for_validation_reads_and_observation() -> None:
+    facts = f"{storage_layout.__name__}."
     imported = {
-        alias.asname or alias.name
+        module.removeprefix(facts)
         for path in _storage_layout_importers()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if isinstance(node, ast.ImportFrom) and node.module == "storage_layout"
-        for alias in node.names
+        for module in _imported_modules(path)
+        if module.startswith(facts)
     }
     assert imported == {
         "ColumnContributor",
@@ -1488,12 +1488,12 @@ def test_the_harness_consumes_storage_layout_for_validation_reads_and_observatio
         "ColumnTier",
         "DocumentMember",
         "DocumentPath",
+        "MODEL_REJECTED_RULES",
         "MemberAddress",
         "PositionBranch",
         "PositionColumn",
         "PositionLayoutView",
         "RelationalDocument",
-        "STORAGE_LAYOUT_MODEL_REJECTED_RULES",
         "TableLayout",
         "ValueObjectContributor",
         "member_address",
@@ -1533,17 +1533,14 @@ def test_the_scenario_suite_reaches_the_package_only_through_its_one_export() ->
     recreate — one directory over — the private-import surface this package
     exists to remove.
     """
+    package = unit_work_scenario.__name__
+    exported = {package, *(f"{package}.{name}" for name in unit_work_scenario.__all__)}
     for path in _scenario_suite():
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not isinstance(node, ast.ImportFrom) or node.module is None:
+        for module in _imported_modules(path):
+            if module != package and not module.startswith(f"{package}."):
                 continue
-            if not node.module.startswith("reference_harness.unit_work_scenario"):
-                continue
-            assert node.module == "reference_harness.unit_work_scenario", (
-                f"{_module_name(path)} imports the package internal {node.module!r}"
-            )
-            assert [alias.name for alias in node.names] == ["assert_unit_work_scenario"], (
-                f"{_module_name(path)} imports more than the package's one export"
+            assert module in exported, (
+                f"{_module_name(path)} reaches past the package's exports to {module!r}"
             )
 
 
