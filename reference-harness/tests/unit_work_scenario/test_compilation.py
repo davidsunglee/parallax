@@ -2,8 +2,9 @@
 
 Every refusal here is asserted against a provider that raises on any call at all,
 so each test proves two things at once: the case is refused, and the refusal cost
-zero database access. That is the whole content of "a malformed Scenario topology
-must not partially execute" — there is nothing else to inspect.
+zero database access. Those are the two claims a document-settled rule makes, and
+there is nothing else to inspect — a rule the read oracle owns is refused during
+execution instead, and is graded there.
 """
 
 from __future__ import annotations

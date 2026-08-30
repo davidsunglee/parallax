@@ -1461,10 +1461,10 @@ def test_no_unit_work_scenario_module_imports_case_runner() -> None:
     """The Unit Work Scenario package reaches nothing in the runner.
 
     The runner imports the package, so an import back is a cycle rather than a
-    style question — and the ticket's own bar is that Scenario code depends on
-    Write Plan, Inheritance, and Storage Layout rather than reaching into
-    `case_runner`. Asserted over the package as a whole, because which of its
-    modules would do the reaching is exactly what may be rearranged.
+    style question: Scenario grading depends on `write_plan`, `inheritance`, and
+    `storage_layout` as authoritative owners rather than on a runner private.
+    Asserted over the package as a whole, because which of its modules would do
+    the reaching is exactly what may be rearranged.
     """
     modules = _package_modules(unit_work_scenario)
     assert modules, "the package was not found, so this pin would hold vacuously"

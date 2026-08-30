@@ -1,10 +1,12 @@
 """Reading a Scenario's authored steps, once.
 
-Every ordered semantic rule a Scenario answers to from its own document alone is
-decided here, before a database exists: which kind each step is, which earlier
-steps it names, which Unit Work group it belongs to, and which golden statements
-it lists. What comes out is a closed set of variants carrying only the fields
-their kind has, so no later phase asks a raw step dictionary what it means.
+What each step is, before a database exists: which kind it is, which earlier steps
+it names, which Unit Work group it belongs to, and which golden statements it
+lists. What comes out is a closed set of variants carrying only the fields their
+kind has, so no later phase of this package asks a raw step dictionary what it
+means. The rules refused here are the ones those readings settle; what a read
+step may reference among the observations earlier steps published is the read
+oracle's, and is refused during execution.
 
 Dialect-free by construction. A step's golden SQL is dialect-keyed, so a compiled
 step holds the entries it authored rather than one dialect's resolution of them,
@@ -70,9 +72,11 @@ class _Step:
     names one transaction, and which steps fall inside it is decided by the label
     alone, not by what those steps do.
 
-    No compiled step carries its authored dictionary. Everything a later phase
-    reads is resolved here, so "execution does not reinterpret a raw step" holds by
-    construction rather than by discipline; the adapter-delegated observables a
+    No compiled step carries its authored dictionary. Every fact this package's
+    own later phases read is resolved here, so "execution does not reinterpret a
+    raw step" holds by construction rather than by discipline; the read oracle is
+    handed a step index and asks the case itself, in its own vocabulary. The
+    adapter-delegated observables a
     step may also declare are validated by the schema and graded by each language's
     API Conformance Suite, never here.
     """
@@ -147,7 +151,7 @@ class CompiledScenario:
 
 
 def compile_scenario(case: Case) -> CompiledScenario:
-    """Read *case*'s Scenario, refusing a topology no execution could be correct on.
+    """Read *case*'s Scenario, refusing the defects its own document settles.
 
     Runs unconditionally, because everything it decides is a property of the
     document rather than of a dialect: a rule left to the dialect-keyed judgement
