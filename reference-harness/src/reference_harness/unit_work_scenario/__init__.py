@@ -21,9 +21,10 @@ make.
 What stays outside: shared case-shape routing, serialization and
 equivalent-encoding checks, accepted Object Query semantics, Write Plan grading,
 and the case-authoring rules :mod:`..schema_validate` asks of every case in the
-corpus before any executor runs — which find a settling write may name, and
-whether a step's dialect-keyed maps cover its own golden. Those hold whatever
-lane runs the case, rather than only where this operation is reached.
+corpus before any executor runs — which find a settling write may name, which
+earlier step an identity observable is anchored to, and whether a step's
+dialect-keyed maps cover its own golden. Those hold whatever lane runs the case,
+rather than only where this operation is reached.
 
 **The order defects surface in.** A Scenario is graded in four phases, and the
 first one to refuse is the one reported:
@@ -33,11 +34,12 @@ first one to refuse is the one reported:
 2. compilation, which is dialect-free and therefore runs on every dialect: what
    kind each step is, which earlier steps it names, which group it joins, and
    which golden entries it lists are read here, and the rules a step's own
-   reading settles — a Scenario with no steps, an ``on`` naming something other
-   than an earlier step, a boundary action claiming a row observable — refuse
-   here, at zero database calls. Which steps a read may reference, and whether
-   one is a read at all, are still adjudicated by the read oracle during
-   execution;
+   reading settles — a Scenario with no steps, an ``on`` or ``sameObjectAs``
+   naming something other than an earlier step, a boundary action claiming a row
+   observable — refuse here, at zero database calls. What is left to the read
+   oracle is what only a run can answer: whether the step a reference names
+   actually published an observation, which a step failing its own observable
+   does not;
 3. judgement, which reads golden SQL and therefore runs only where the executing
    dialect carries one;
 4. execution, which is the first phase to touch a database.

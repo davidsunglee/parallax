@@ -7,9 +7,10 @@ buckets, graph state, and reuse a step publishes are retained inside the oracle
 and read only by the later steps that name them.
 
 The collaboration is package-private on the oracle's side — offered under no name
-in its interface — and single-importer on this one: every module of this package
-that needs those reads imports them from here rather than reaching the oracle's
-module itself, so the seam has one importer rather than one per phase.
+in its interface — and single-importer on this one: this is the only module in
+the harness that imports the oracle's Scenario module, so whatever else needs
+those reads — another phase of this package, or a test asserting the seam — asks
+here rather than reaching past it.
 """
 
 from __future__ import annotations

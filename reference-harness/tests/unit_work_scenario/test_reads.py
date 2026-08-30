@@ -170,12 +170,10 @@ def _steps(case: Case) -> list[dict[str, Any]]:
 
 
 def _rows(*results: list[dict[str, Any]]) -> list[ScriptEntry]:
-    """One scripted answer per query, in the order the run makes them."""
     return [Rows(tuple(result)) for result in results]
 
 
 def _calls(db: ScriptedProvider) -> list[Queried | Executed]:
-    """Everything the run asked a connection for, provisioning aside."""
     return [call for call in db.chronology if isinstance(call, (Queried, Executed))]
 
 

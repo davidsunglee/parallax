@@ -1,17 +1,20 @@
 """What a Scenario step's own document must say, asked of every case.
 
-Two rules a step states about itself rather than about a run: which find a write
-settles against (`m-case-format` *Settling against a grouped find*), and whether
-the dialect-keyed maps it carries cover the dialects its own golden declares.
-Neither needs an executor, a dialect, or a database, so ``validate_tree`` asks
-them of every case in the corpus — the api-conformance lane's Scenario cases,
-which no wire executor ever runs, included.
+Three rules a step states about itself rather than about a run: which find a
+write settles against (`m-case-format` *Settling against a grouped find*), which
+earlier step an identity observable is anchored to, and whether the dialect-keyed
+maps it carries cover the dialects its own golden declares. None needs an
+executor, a dialect, or a database, so ``validate_tree`` asks them of every case
+in the corpus — the api-conformance lane's Scenario cases, which no wire executor
+ever runs, included.
 
-The SHAPE of a settling reference belongs to the case schema and is pinned in
-`test_case_schema.py` (an ungrouped write, an array `on`, and a legacy-string or
-predicate-selected `write` are each REJECTED there). What is left, and what these
-probes pin, is the part one step cannot state about another: the step a write
-names must be an earlier one, and a find of that write's own group.
+The SHAPE of a reference belongs to the case schema and is pinned in
+`test_case_schema.py` (an ungrouped write, an array `on`, a legacy-string or
+predicate-selected `write`, and a step declaring both identity observables at
+once are each REJECTED there). What is left, and what these probes pin, is the
+part one step cannot state about another: the step a write names must be an
+earlier one and a find of that write's own group, and the step an identity
+observable anchors to must be an earlier one.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import yaml
 
 from reference_harness.schema_validate import (
     _scenario_statement_binds_keys,
+    _validate_identity_anchor,
     _validate_scenario_reference_sql,
     _validate_settled_write,
     validate_tree,
@@ -54,6 +58,13 @@ def _reference_sql(step: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _anchored(step: dict[str, Any], index: int) -> list[str]:
+    """The problems reported for *step*, authored at position *index*."""
+    errors: list[str] = []
+    _validate_identity_anchor(step, index, "probe", errors)
+    return errors
+
+
 # --- which find a write may settle against ----------------------------------
 
 
@@ -81,6 +92,32 @@ def test_a_reference_the_case_schema_types_is_left_to_the_case_schema() -> None:
     ungrouped = {key: value for key, value in _WRITE.items() if key != "uow"}
     assert not _settled({**_WRITE, "on": "0"}, [_FIND])
     assert not _settled({**ungrouped, "on": 0}, [_FIND])
+
+
+# --- which step an identity observable anchors to ---------------------------
+
+
+def test_both_identity_observables_anchor_to_an_earlier_step() -> None:
+    # `sameObjectAs` and `differentObjectFrom` are graded in different places — one
+    # by the wire harness as primary-key identity, the other adapter-delegated to
+    # each language's API Conformance Suite — but an anchor that is not an earlier
+    # step names no result either grader could compare against.
+    assert not _anchored({"sameObjectAs": 0}, 1)
+    assert not _anchored({"differentObjectFrom": 0}, 1)
+    assert _anchored({"sameObjectAs": 1}, 1) == [
+        "probe: sameObjectAs names step 1, which is not a real EARLIER step (0 <= source < 1)"
+    ]
+    assert _anchored({"differentObjectFrom": 999}, 1) == [
+        "probe: differentObjectFrom names step 999, which is not a real EARLIER step "
+        "(0 <= source < 1)"
+    ]
+
+
+def test_an_anchor_the_case_schema_types_is_left_to_the_case_schema() -> None:
+    # An anchor whose shape the schema already refuses is reported there, in the
+    # schema's own vocabulary, rather than a second time here in a different one.
+    assert not _anchored({"sameObjectAs": "0"}, 1)
+    assert not _anchored({"differentObjectFrom": True}, 1)
 
 
 # --- the dialect maps a step carries ----------------------------------------
@@ -140,12 +177,12 @@ def test_a_dialect_keyed_binds_map_covers_its_own_statements_sql_map() -> None:
     ]
 
 
-# --- both rules reach the lane no executor runs -----------------------------
+# --- every rule reaches the lane no executor runs ----------------------------
 
 _API_CONFORMANCE_CASE = "m-snapshot-read-019-write-keeps-unloaded-absent.yaml"
 
 
-def test_whole_tree_validation_asks_both_rules_of_an_api_conformance_case(tmp_path: Path) -> None:
+def test_whole_tree_validation_asks_every_rule_of_an_api_conformance_case(tmp_path: Path) -> None:
     """The lane whose Scenario cases the wire harness never executes is validated
     like every other, so a defect either rule owns is refused there too.
 
@@ -163,8 +200,11 @@ def test_whole_tree_validation_asks_both_rules_of_an_api_conformance_case(tmp_pa
     steps[1]["on"] = 0
     # An independent oracle authored for the one dialect this read has no golden for.
     steps[0]["referenceSql"] = {"mariadb": "select id from orders where id = 3"}
+    # An identity observable anchored to a step the Scenario never authored.
+    steps[2]["differentObjectFrom"] = 999
     case_path.write_text(yaml.safe_dump(case, sort_keys=False), encoding="utf-8")
 
     errors = validate_tree(core / "compatibility")
     assert [error for error in errors if "not a find step of its own `uow` group" in error]
     assert [error for error in errors if "referenceSql map keys" in error]
+    assert [error for error in errors if "differentObjectFrom names step 999" in error]
