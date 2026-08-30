@@ -12,9 +12,10 @@ seam can reach another through it.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -205,3 +206,30 @@ def assert_step_on_sources(case: Case, step_index: int, step: Mapping[str, Any])
                 f"which is not a real EARLIER step (0 <= source < {step_index}); an action "
                 f"targets the result of a prior step."
             )
+
+
+@contextlib.contextmanager
+def reported_against(case: Case, step_index: int) -> Iterator[None]:
+    """Name *case* and the Scenario step at *step_index* on every authored failure
+    raised inside.
+
+    A step's grading reaches oracles that speak of the read, statement, or write
+    input they were handed rather than of the Scenario position that handed it
+    over, so the position is added at the boundary that knows it rather than
+    threaded through every one of them as a second parameter. Idempotent: a
+    failure already naming both the case and this step — a delivery pointed at
+    ``scenario[i].statements``, an Include level at ``when.scenario[i].statements``
+    — is re-raised as it was written, so nesting one boundary inside another it
+    already crossed adds nothing a second time. A driver exception is not an
+    authored failure and passes through untouched.
+    """
+    try:
+        yield
+    except CaseFailure as failure:
+        marker = f"scenario[{step_index}]"
+        prefix = f"{case.path.name}: "
+        message = str(failure)
+        if message.startswith(prefix) and marker in message:
+            raise
+        detail = message[len(prefix) :] if message.startswith(prefix) else message
+        raise CaseFailure(f"{prefix}{marker} {detail}") from failure
