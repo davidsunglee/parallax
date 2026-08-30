@@ -24,8 +24,7 @@ once per read-bearing step with the reader that step's lifecycle selected.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -34,6 +33,7 @@ from ..case_assertions import (
     CaseFailure,
     assert_step_on_sources,
     coerce_identity_key,
+    reported_against,
     rows_equal,
 )
 from ..predicate_write_validate import requires_predicate_write_materialization
@@ -78,7 +78,7 @@ class ScenarioReads:
         makes it an access, and a step that lists nothing and names an earlier one
         is a reuse.
         """
-        with self._reported_against(step_index):
+        with reported_against(self._case, step_index):
             step = self._eligible_step(step_index)
             pairs = entry_pairs(step.get("statements"), reader.dialect)
 
@@ -103,32 +103,6 @@ class ScenarioReads:
             self._retained[step_index] = observation
 
     # --- eligibility ---------------------------------------------------------
-
-    @contextmanager
-    def _reported_against(self, step_index: int) -> Iterator[None]:
-        """Name the active step on every authored failure raised inside.
-
-        A step's observation is graded by the same delivery, materialization,
-        Include, and graph oracles an ordinary read's is, and those speak of the
-        read they were handed rather than the Scenario position it occupies. So
-        the position is added here, once, at the boundary that knows it — rather
-        than threaded through every oracle beneath it as a second parameter.
-
-        A driver exception is not an authored failure and passes through
-        untouched, and a failure already naming both the case and this step — a
-        delivery pointed at ``scenario[i].statements``, an Include level at
-        ``when.scenario[i].statements`` — is re-raised as it was written.
-        """
-        try:
-            yield
-        except CaseFailure as failure:
-            marker = f"scenario[{step_index}]"
-            prefix = f"{self._case.path.name}: "
-            message = str(failure)
-            if message.startswith(prefix) and marker in message:
-                raise
-            detail = message[len(prefix) :] if message.startswith(prefix) else message
-            raise CaseFailure(f"{prefix}{marker} {detail}") from failure
 
     def _eligible_step(self, step_index: int) -> dict[str, Any]:
         """The step at *step_index*, refused unless it is the next one this owns.
@@ -512,7 +486,9 @@ class ScenarioReads:
                 f"{case.path.name}: scenario[{step_index}].sameObjectAs={source} "
                 f"must reference an EARLIER step."
             )
-        identity_column = step.get("identityAttr", _pk_column(case.model.root_entity))
+        # A Scenario case queries a single entity (cache / identity over one type),
+        # so an unstated identity attribute is the model root's own.
+        identity_column = step.get("identityAttr", case.model.root_entity.identity_column)
         these = self._identity_keys(step_index, step_index, rows, identity_column)
         those = self._identity_keys(
             step_index, source, self._observation(step_index, source).rows, identity_column
@@ -714,18 +690,6 @@ def _relationship_path_target(case: Case, start: Entity, path: str) -> Entity:
         relationship = entity.relationship_metadata_by_name(rel_name)
         entity = case.model.entity(relationship["join"]["target"]["entity"])
     return entity
-
-
-def _pk_column(entity: Entity) -> str:
-    """The column a step's identity claim compares on by default.
-
-    Scenario cases query a single entity (cache / identity over one type), so the
-    identity column defaults to the model root's primary key.
-    """
-    for attribute in entity.attributes:
-        if attribute.get("primaryKey"):
-            return attribute["column"]
-    return entity.attributes[0]["column"]
 
 
 def _resolves_a_materializing_write(case: Case, step_index: int) -> bool:

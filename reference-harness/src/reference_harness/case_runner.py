@@ -327,53 +327,6 @@ def _assert_reference_sql_dialect_keys(case: Case) -> None:
         )
 
 
-def _assert_scenario_sql_bookkeeping(case: Case) -> None:
-    """Validate scenario-local binds and independent read-oracle maps.
-
-    Scenario SQL is stored below each step rather than at ``then``.  The same
-    per-dialect coverage rules therefore apply independently at that location,
-    and a read oracle must correspond to the golden read it is the naive
-    spelling of: one statement for an ordinary find, and a STREAMED step's whole
-    page list for one delivery (`m-case-format` *Streamed read steps*), whose
-    naive oracle answers the roots every page of it published.
-    """
-    if not case.is_scenario:
-        return
-    for index, step in enumerate(case.scenario):
-        entries = step.get("statements", [])
-        if not isinstance(entries, list):
-            continue
-        for statement_index, entry in enumerate(entries):
-            if not isinstance(entry, dict) or not isinstance(entry.get("binds"), dict):
-                continue
-            sql = entry.get("sql")
-            sql_keys = set(sql) if isinstance(sql, dict) else set()
-            if set(entry["binds"]) != sql_keys:
-                raise CaseFailure(
-                    f"{case.path.name}: when.scenario[{index}].statements[{statement_index}] "
-                    f"binds map keys {sorted(entry['binds'])} != sql map keys "
-                    f"{sorted(sql_keys)}"
-                )
-        reference_sql = step.get("referenceSql")
-        if reference_sql is None:
-            continue
-        if not entries or (len(entries) != 1 and "stream" not in step):
-            raise CaseFailure(
-                f"{case.path.name}: when.scenario[{index}] referenceSql needs the golden read "
-                "it is the naive spelling of — exactly one statement for an ordinary find, "
-                "and a streamed step's own pages for one delivery"
-            )
-        if not isinstance(reference_sql, dict):
-            continue
-        sql = entries[0].get("sql") if isinstance(entries[0], dict) else None
-        sql_keys = set(sql) if isinstance(sql, dict) else set()
-        if set(reference_sql) != sql_keys:
-            raise CaseFailure(
-                f"{case.path.name}: when.scenario[{index}].referenceSql map keys "
-                f"{sorted(reference_sql)} != golden sql map keys {sorted(sql_keys)}"
-            )
-
-
 def _assert_normalization(case: Case, dialect: str) -> None:
     for index, statement in enumerate(case.golden_statements(dialect)):
         canonical = normalize(statement, dialect)
