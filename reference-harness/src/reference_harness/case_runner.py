@@ -189,12 +189,13 @@ def _assert_schema(case: Case) -> None:
         if not case.expected_table_state:
             raise CaseFailure(f"{case.path.name}: write sequence missing then.tableState")
     elif case.is_scenario:
-        # A Scenario's own shape is refused before it reaches here — by
-        # :mod:`~reference_harness.schema_validate` for what the document says
-        # about itself, and by
+        # A Scenario asserts nothing here because none of its shape is this
+        # check's to adjudicate: the static pass above refuses what the document
+        # says about itself, and
         # :func:`~reference_harness.unit_work_scenario.assert_unit_work_scenario`
-        # for what grading a run needs. This arm exists only to keep a Scenario
-        # clear of the read-shape requirement the chain ends in.
+        # — which :func:`run_case` reaches after this one, on the same branch —
+        # refuses what grading a run needs. This arm exists only to keep a
+        # Scenario clear of the read-shape requirement the chain ends in.
         pass
     elif case.is_conflict:
         if case.expected_affected_rows is None and not case.attempts:

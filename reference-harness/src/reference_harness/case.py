@@ -636,8 +636,9 @@ def names_earlier_step(source: int, step_index: int) -> bool:
     source an action targets, the coordinate group a batched load consumes, the
     find a settling write was handed a value by — so the index it names is bounded
     below by the first step and above by the naming step's own position. Every lane
-    that reads such a reference decides the bound here and reports a violation in
-    its own vocabulary.
+    that REFUSES an out-of-range reference tests it here and reports the violation
+    in its own vocabulary; a lane that only follows the reference to resolve what it
+    names leaves the refusal to them rather than restating the bound.
     """
     return 0 <= source < step_index
 
