@@ -18,8 +18,9 @@ by following the step's own ``on`` index back to the constructor's Object Query.
 
 What is NOT here is Scenario orchestration: step order, reader selection,
 transaction lifecycle, writes, boundary actions, unresolved list construction, and
-accounting across the whole Scenario all stay with the runner, which calls this
-once per read-bearing step with the reader that step's lifecycle selected.
+accounting across the whole Scenario all belong to :mod:`..unit_work_scenario`,
+whose execution phase calls this once per read-bearing step with the reader that
+step's lifecycle selected.
 """
 
 from __future__ import annotations
@@ -51,11 +52,12 @@ class ScenarioReads:
     """Every accepted read of one Unit Work Scenario, and what those reads retain.
 
     Requires
-        one instance per Compatibility Case; the runner calls every step this
-        owns, in Scenario order, exactly once, with the reader Scenario lifecycle
-        selected for that step. The steps the RUNNER owns are never passed: a
-        write, an action whose verb is not ``load`` or ``access``, and the
-        zero-round-trip construction of a query-backed list that has not resolved.
+        one instance per Compatibility Case; :mod:`..unit_work_scenario` calls
+        every step this owns, in Scenario order, exactly once, with the reader
+        Scenario lifecycle selected for that step. The steps ORCHESTRATION keeps
+        are never passed: a write, an action whose verb is not ``load`` or
+        ``access``, and the zero-round-trip construction of a query-backed list
+        that has not resolved.
     Guarantees
         a step's observables are asserted atomically: what it published is retained
         under its own index only once every observable it states has passed, so a
@@ -114,8 +116,8 @@ class ScenarioReads:
         cursor enforces it — the only index accepted is the LOWEST this instance
         owns and has not asserted. Refusing a skipped step is what makes the
         oracle predict ownership rather than only check it on arrival, so a step
-        the runner routes differently than :func:`_runner_owned` reads it surfaces
-        as a refusal here rather than as a silently missing observation.
+        orchestration routes differently than :func:`_orchestration_owned` reads it
+        surfaces as a refusal here rather than as a silently missing observation.
 
         There is deliberately no closing operation: a trailing owned step nobody
         asserted stays unrefused, because a second method and the lifetime
@@ -135,7 +137,7 @@ class ScenarioReads:
                 f"replace the observation the steps naming it already read."
             )
         step = scenario[step_index]
-        refusal = _runner_owned(step)
+        refusal = _orchestration_owned(step)
         if refusal is not None:
             raise CaseFailure(f"{case.path.name}: scenario[{step_index}] {refusal}")
         expected = self._next_owned_step()
@@ -153,7 +155,7 @@ class ScenarioReads:
             (
                 index
                 for index, step in enumerate(self._case.scenario)
-                if index not in self._retained and _runner_owned(step) is None
+                if index not in self._retained and _orchestration_owned(step) is None
             ),
             None,
         )
@@ -606,15 +608,16 @@ class ScenarioReads:
         return {terminal.name: retained.path_nodes(case, step_index, path, view)}
 
 
-def _runner_owned(step: Mapping[str, Any]) -> str | None:
+def _orchestration_owned(step: Mapping[str, Any]) -> str | None:
     """Why Scenario orchestration owns *step*, or ``None`` when this oracle does.
 
-    The complement of "is this a read step?": the runner routes the closed set of
-    kinds it owns and sends everything else here, and this is the oracle's own
-    reading of that same classification. The two MUST agree — so a step the runner
-    owns is named here rather than mis-graded as a read, and a kind this refuses
-    that the runner nevertheless routes here is a disagreement about the seam
-    rather than an authoring error in the case.
+    The complement of "is this a read step?": :mod:`..unit_work_scenario` classifies
+    every step as it compiles the Scenario, routes the closed set of kinds it owns,
+    and sends everything else here; this is the oracle's own reading of that same
+    classification. The two MUST agree — so a step orchestration owns is named here
+    rather than mis-graded as a read, and a kind this refuses that orchestration
+    nevertheless routes here is a disagreement about the seam rather than an
+    authoring error in the case.
     """
     if "write" in step:
         return "is a write step, whose DML and lifecycle belong to Scenario orchestration."

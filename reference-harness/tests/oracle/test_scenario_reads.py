@@ -193,11 +193,11 @@ def test_a_step_asserted_ahead_of_an_earlier_one_is_refused(corpus_case: CaseLoa
         reads.assert_step(1, ScriptedReads(results=[_LINUS]))
 
 
-def test_the_cursor_steps_over_what_the_runner_owns(corpus_case: CaseLoader) -> None:
-    """The next step is the next OWNED one, so a runner-owned step is not waited for.
+def test_the_cursor_steps_over_what_orchestration_owns(corpus_case: CaseLoader) -> None:
+    """The next step is the next OWNED one, so an orchestration-owned step is not waited for.
 
     `m-op-list-001` opens with the zero-round-trip construction of a query-backed
-    list, which the runner owns and never routes here. The first access is
+    list, which Scenario orchestration owns and never routes here. The first access is
     therefore the first step this oracle is asked for, and the cursor must already
     stand on it rather than on the step index before it.
     """
