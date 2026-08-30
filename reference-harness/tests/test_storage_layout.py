@@ -1443,15 +1443,35 @@ def _harness_modules() -> list[Path]:
     return modules
 
 
+def _module_name(path: Path) -> str:
+    parts = [path.stem]
+    directory = path.parent
+    while (directory / "__init__.py").exists():
+        parts.append(directory.name)
+        directory = directory.parent
+    return ".".join(reversed(parts))
+
+
 def _imported_modules(path: Path) -> Iterator[str]:
-    """Every module name *path* imports, in either import form."""
+    """Every module *path* could load, named absolutely.
+
+    `from package import name` loads `package.name` when that name is a module, so
+    each `from` target is yielded alongside the module it is drawn from; a relative
+    import is resolved against *path* so that both carry the same absolute name an
+    `import package.name` would.
+    """
+    own = _module_name(path).split(".")
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if isinstance(node, ast.ImportFrom):
-            if node.module is not None:
-                yield node.module
-        elif isinstance(node, ast.Import):
+        if isinstance(node, ast.Import):
             for alias in node.names:
                 yield alias.name
+        elif isinstance(node, ast.ImportFrom):
+            anchor = own[: max(len(own) - node.level, 0)] if node.level else []
+            base = ".".join([*anchor, *([node.module] if node.module else [])])
+            if base:
+                yield base
+            for alias in node.names:
+                yield f"{base}.{alias.name}" if base else alias.name
 
 
 def test_the_harness_consumes_storage_layout_for_validation_reads_and_observation() -> None:
