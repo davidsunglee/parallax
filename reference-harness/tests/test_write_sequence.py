@@ -21,7 +21,6 @@ from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
     _assert_carried_document,
-    _assert_scenario_count_consistency,
     _assert_write_input_columns,
     _assert_write_step_count,
     _increment_marker,
@@ -32,7 +31,19 @@ from reference_harness.case_runner import (
 )
 from reference_harness.ddl_builder import contributor_types, ddl_for
 from reference_harness.storage_layout import derived_primary_key_index
+from reference_harness.unit_work_scenario import assert_unit_work_scenario
 from reference_harness.write_plan import classify_write_row, tag, unit_resolving_reads
+
+
+class _NoDatabase:
+    """A provider that refuses to be one: reaching it means the case was graded
+    green on its own document, which is all this lane asks of a Scenario."""
+
+    dialect = "postgres"
+
+    def reset(self) -> None:
+        raise RuntimeError("graded on the document alone")
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -624,8 +635,11 @@ def test_detach_noop_merge_back_issues_no_dml() -> None:
     (merge_back,) = [step for step in case.scenario if "write" in step]
     assert merge_back["roundTrips"] == 0
     assert "statements" not in merge_back
-    # The per-step count-consistency check accepts the zero-round-trip write step.
-    _assert_scenario_count_consistency(case, "postgres")
+    # The Scenario's own accounting accepts the zero-round-trip write step: graded
+    # through the one Scenario operation, which refuses the case before it asks for
+    # a database if the counts disagree.
+    with pytest.raises(RuntimeError, match="graded on the document alone"):
+        assert_unit_work_scenario(case, _NoDatabase())
 
 
 # --- role-aware DB-computed marker interpretation -----------------------------

@@ -15,17 +15,18 @@ provisioned database selected via the provider seam:
 5. **Round-trip-count consistency** — the number of golden SQL statements a case
    declares equals its ``roundTrips``.
 
-What this module owns beyond those shared layers is everything that is not an
-accepted Object Query observation: case-shape routing, rejected-case
-adjudication, provisioning, DDL, fixtures, write sequences, conflicts, error
-classification, concurrency, coherence, and Unit Work Scenario orchestration —
-step order, reader selection, transaction lifecycle, writes, boundary actions,
-unresolved query-backed-list construction, and Scenario-wide accounting.
+What this module owns beyond those shared layers is case-shape routing plus the
+lanes whose ordered steps have no owner of their own: rejected-case adjudication,
+write sequences, conflicts, error classification, concurrency, and coherence.
 
-Every accepted read is :mod:`object_query_oracle`'s: ``assert_case_read`` for a
-read-shaped case and ``ScenarioReads.assert_step`` for a Scenario's read steps.
-This module states a case and an executor, or a step index and a reader, and
-nothing about delivery strategy, retained observations, or read intent.
+Two whole lanes are somebody else's. Every accepted read is
+:mod:`object_query_oracle`'s ``assert_case_read``: this module states a case and
+an executor, and nothing about delivery strategy, retained observations, or read
+intent. Every Unit Work Scenario is :mod:`unit_work_scenario`'s: this module
+routes the shape and states the case and the provider, and nothing about step
+order, reader selection, transaction lifecycle, writes, boundary actions,
+unresolved query-backed-list construction, settlement, or Scenario-wide
+accounting.
 
 What a golden WRITE statement must be for the neutral input it renders is
 :mod:`write_plan`'s, for every lane that authors one. This module composes a
@@ -43,8 +44,7 @@ import contextlib
 import json
 import re
 import threading
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Iterator, Mapping
 from typing import Any, NamedTuple
 
 from . import errors, serde
@@ -59,25 +59,20 @@ from .case import (
 )
 from .case_assertions import (
     CaseFailure,
-    assert_step_on_sources,
     coerce_identity_key,
     rows_equal,
     write_value_equal,
 )
-from .data_loader import load_model
 from .ddl_builder import (
     contributor_types,
-    ddl_for,
     quote_identifier,
 )
 from .document_codec import decode_stored, encode_document, encode_leaf, is_document
 from .inheritance import (
     MODEL_REJECTED_RULES,
     PREDICATE_REJECTED_RULES,
-    STRATEGY_TPCS,
     WRITE_REJECTED_RULES,
     Family,
-    query_position,
     validate_family,
     validate_query_inheritance,
 )
@@ -92,13 +87,14 @@ from .metamodel import (
 from .metamodel import (
     validate_index_identities,
 )
-from .object_query_oracle import ScenarioReads, assert_case_read
+from .object_query_oracle import assert_case_read
 from .object_query_validate import validate_object_query
 from .predicate_write_validate import (
     requires_predicate_write_materialization,
     validate_predicate_write,
 )
 from .providers import DatabaseProvider
+from .provisioning import apply_given, provision, provision_empty
 from .sql_normalize import normalize
 from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
@@ -111,21 +107,19 @@ from .storage_layout import (
 )
 from .temporal_selection_validate import normalize_authored_temporal_selections
 from .temporality import derive_temporal_structure, temporal_axes
+from .unit_work_scenario import assert_unit_work_scenario
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_plan import (
     MILESTONE_COORDINATE_KEYS,
     OPENING_MUTATIONS,
-    ObjectAddress,
     assert_inheritance_write_routing,
     assert_write_values,
     classify_write_row,
     close_address_binds,
     has_temporal_gate,
     has_version_gate,
-    is_existing_row_statement,
     parse_insert_columns,
     parse_set_columns,
-    statement_object,
     tag,
     unit_resolving_reads,
     version_column,
@@ -195,15 +189,11 @@ def _assert_schema(case: Case) -> None:
         if not case.expected_table_state:
             raise CaseFailure(f"{case.path.name}: write sequence missing then.tableState")
     elif case.is_scenario:
-        if not case.scenario:
-            raise CaseFailure(f"{case.path.name}: scenario case has no steps")
-        # Whether a write step may settle against a find at all is a property of
-        # the document, not of a dialect, so it is decided HERE — the one layer
-        # every scenario reaches. The cross-check that consumes the reference
-        # (:func:`_assert_scenario_settled_write`) is skipped for a dialect the
-        # case carries no golden for, so a rule left there would hold on some
-        # runs and not others.
-        _assert_scenario_source_finds(case)
+        # A Scenario's own shape is compiled and refused by
+        # :func:`~reference_harness.unit_work_scenario.assert_unit_work_scenario`,
+        # which owns every rule that reads a step. This arm exists only to keep a
+        # Scenario clear of the read-shape requirement the chain ends in.
+        pass
     elif case.is_conflict:
         if case.expected_affected_rows is None and not case.attempts:
             raise CaseFailure(f"{case.path.name}: conflict case missing affectedRows / attempts")
@@ -287,7 +277,6 @@ def _assert_schema(case: Case) -> None:
         raise CaseFailure(f"{case.path.name}: model has no class name")
     _assert_binds_dialect_keys(case)
     _assert_reference_sql_dialect_keys(case)
-    _assert_scenario_sql_bookkeeping(case)
 
 
 def _assert_binds_dialect_keys(case: Case) -> None:
@@ -611,41 +600,7 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
         )
 
 
-# --- provisioning and the model facts every lane reads -----------------------
-
-
-def _provision(case: Case, db: DatabaseProvider) -> None:
-    db.reset()
-    db.apply_ddl(ddl_for(case.model, db.dialect))
-    load_model(case.model, db)
-
-
-def _provision_empty(case: Case, db: DatabaseProvider) -> None:
-    """Provision DDL only (no fixture load) for a write-sequence case.
-
-    A write-sequence case constructs its entire milestone history from its own
-    ordered DML (the `insert` step is part of the sequence), so it starts from an
-    empty schema and is fully self-contained — UNLESS it sets ``given.fixtures``
-    (the m-detach detached-update merge-back case), in which case the model's fixtures
-    are loaded first so the merge-back can mutate a pre-existing persisted row.
-    """
-    db.reset()
-    db.apply_ddl(ddl_for(case.model, db.dialect))
-    if case.load_fixtures:
-        load_model(case.model, db)
-
-
-def _apply_given(case: Case, db: DatabaseProvider) -> None:
-    """Apply a case's out-of-band ``given.apply`` entries verbatim.
-
-    Every lane that admits the key calls this at the same point — after its own
-    provisioning and before the lane's first golden statement or step — so the
-    timing and the interpretation are one thing rather than one per lane. Each
-    entry's ``sql`` is naive, dialect-agnostic text run as authored; ``binds``
-    defaults to empty. A case carrying none applies nothing.
-    """
-    for entry in case.apply:
-        db.execute(entry["sql"], list(entry.get("binds", [])))
+# --- the model facts every lane reads ---------------------------------------
 
 
 class _DocumentAssignment(NamedTuple):
@@ -661,16 +616,6 @@ class _DocumentAssignment(NamedTuple):
 
     path: tuple[str, ...]
     value: Any
-
-
-# The projected output column that carries the table-per-concrete-subtype
-# `familyVariant` literal per `union all` branch (the settled TPCS asymmetry,
-# m-sql): unlike table-per-hierarchy — which projects the RAW tag column and
-# derives `familyVariant` at materialization — TPCS has no tag column, so each
-# branch projects a subtype-name literal aliased to this column. A settled write's
-# find observed its rows under that spelling, so matching one back to its variant
-# reads it here.
-_TPCS_VARIANT_COLUMN = "family_variant"
 
 
 # --- negative validation (the `rejected` shape) ----------------------------------------
@@ -2674,871 +2619,6 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
             )
 
 
-# --- scenarios (m-unit-work) ----------------------------------------------------------
-
-
-def _step_statements(step: dict[str, Any], dialect: str) -> list[str]:
-    """The ordered golden SQL statements a scenario step lists for *dialect*."""
-    return entry_statements(step.get("statements"), dialect)
-
-
-def _scenario_has_golden(case: Case, dialect: str) -> bool:
-    """True if any scenario step lists golden SQL for *dialect*."""
-    return any(_step_statements(step, dialect) for step in case.scenario)
-
-
-def _assert_scenario_normalization(case: Case, dialect: str) -> None:
-    for index, step in enumerate(case.scenario):
-        for sql in _step_statements(step, dialect):
-            canonical = normalize(sql, dialect)
-            if canonical != sql:
-                raise CaseFailure(
-                    f"{case.path.name}: when.scenario[{index}].statements ({dialect}) is "
-                    f"not canonical.\n"
-                    f"  stored:     {sql!r}\n"
-                    f"  normalized: {canonical!r}"
-                )
-
-
-def _scenario_step_resolving_reads(case: Case, step: dict[str, Any]) -> int:
-    """The resolving reads ONE scenario step owes beside the SQL it lists.
-
-    An UNGROUPED write step is its own choreography unit, so it owes what any
-    unit owes (:func:`write_plan.unit_resolving_reads`). A GROUPED one owes none of its
-    own: its group's find steps are what publish the values it settles against,
-    and those finds already declare their own round trips (`m-case-format`
-    *Resolving reads a write owes*). A find step owes none either — a read IS
-    the SQL it lists.
-    """
-    if "write" not in step or isinstance(step.get("uow"), str):
-        return 0
-    return unit_resolving_reads(case, _scenario_write_entries(step))
-
-
-def _assert_scenario_count_consistency(case: Case, dialect: str) -> None:
-    """Each step's declared roundTrips MUST equal its golden SQL statement count
-    plus the resolving reads it owes.
-
-    A cache HIT lists no golden SQL and declares ``roundTrips: 0``; a cache MISS
-    that executes one statement declares ``roundTrips: 1``. An ungrouped write
-    step declares its DML beside the read its keyed verbs' sources require, which
-    it lists no SQL for — the framework composes that read from the model rather
-    than from the case. The steps' total MUST equal the case-level
-    ``roundTrips``. This is the round-trip contract proven from the fixture's own
-    declared counts — the harness never compiles a query to SQL.
-    """
-    total = 0
-    for index, step in enumerate(case.scenario):
-        declared = step["roundTrips"]
-        statements = _step_statements(step, dialect)
-        reads = _scenario_step_resolving_reads(case, step)
-        if len(statements) + reads != declared:
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] declares roundTrips "
-                f"{declared} but lists {len(statements)} golden SQL statement(s) "
-                f"for {dialect} and owes {reads} resolving read(s). A step's declared "
-                f"round trips MUST equal the number of calls it makes (a cache hit = 0)."
-            )
-        total += declared
-    if total != case.round_trips:
-        raise CaseFailure(
-            f"{case.path.name}: scenario steps total {total} round trip(s) but "
-            f"roundTrips is {case.round_trips}. The case-level roundTrips MUST "
-            f"equal the sum of the per-step round trips."
-        )
-
-
-def _scenario_write_entries(step: dict[str, Any]) -> list[dict[str, Any]]:
-    """One scenario write step's own buffered KEYED entries, or none.
-
-    A write step's ``write`` is a legacy string label, a single predicate-selected
-    instruction (a mapping), or the buffered keyed sequence (a list) — only the
-    last is a list of ``{mutation, entity, rows}`` entries.
-    """
-    write = step.get("write")
-    if not isinstance(write, list):
-        return []
-    return [entry for entry in write if isinstance(entry, dict)]
-
-
-def _assert_scenario_source_finds(case: Case) -> None:
-    """Validate every write step's ``on`` — the find it settles against
-    (`m-case-format` *Settling against a grouped find*).
-
-    The reference is legal only where every part of it is meaningful: on a `uow`-
-    grouped step whose ``write`` is the BUFFERED KEYED form, naming ONE earlier
-    step of the SAME group that is a find. Every target profile is nameable,
-    because on every one of them a unit of work may hold more than one piece of
-    evidence about a key: a milestone chain holds several rows per key, and a
-    versioned Non-Temporal key holds one observed generation per read of it.
-
-    Structural and dialect-free, so it holds on every run rather than only where
-    the case carries a golden for the dialect under test — the same reason the
-    conflict lane decides observed-edge entitlement in :func:`_assert_schema`.
-    """
-    for index, step in enumerate(case.scenario):
-        if "write" not in step or "on" not in step:
-            continue
-        source, label = step["on"], step.get("uow")
-        if not isinstance(label, str):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] settles against a find but declares no "
-                f"`uow` group — the evidence a write consumes is transaction-scoped, and an "
-                f"ungrouped write shares a unit of work with no find."
-            )
-        if not isinstance(source, int) or isinstance(source, bool):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}].on is {source!r}; a write step settles "
-                f"against exactly ONE find, named by its index — a keyed write settles "
-                f"against the one observed state the value it was handed came from."
-            )
-        if not 0 <= source < index:
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}].on references step {source!r}, which is "
-                f"not a real EARLIER step (0 <= source < {index})."
-            )
-        origin = case.scenario[source]
-        if "objectQuery" not in origin or origin.get("uow") != label:
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] settles against step {source}, which is "
-                f"not a find step of its own `uow` group {label!r}."
-            )
-        if not isinstance(step.get("write"), list):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] settles against a find but its `write` is "
-                f"not the buffered keyed form — a legacy string label carries no instruction and "
-                f"a predicate-selected write consumes no single observation, so neither has "
-                f"anything the named observation could reach."
-            )
-
-
-def _assert_scenario_settled_write(case: Case, dialect: str) -> None:
-    """Cross-check each settled write step's golden against the observed state the
-    find it names recorded (`m-case-format` *Settling against a grouped find*).
-
-    The observed state is resolved INDEPENDENTLY of the golden, from the named
-    find step's own ``expectRows`` — the rows that read returned, which is exactly
-    the evidence the store it filled holds — and by each entry's OWN object
-    (:func:`_settled_observed_row`), so a find that observed no row of that object
-    names evidence that does not exist.
-    What the resolution then reaches is the target's PROFILE's answer: a temporal
-    write's close address (on a Bitemporal target, its Valid-Time exclusive upper
-    bound) and its optimistic gate, and a versioned Non-Temporal write's own gate
-    and framework-computed version advance. Either way the corpus states which
-    state the write settled against in two independent places — here and in
-    execution.
-
-    Which bind a misresolution moves differs the same way: a Bitemporal key's
-    current rectangles are disjoint on Valid Time, so a close binding the OTHER
-    current rectangle fails on the address, while a Transaction-Time-Only close
-    addresses the key plus the invariant open bound and a versioned write its key
-    alone, so on both of those the whole difference lands on what the observation
-    derives.
-
-    An entry is aligned with its golden by the OBJECT each statement itself
-    addresses (:func:`write_plan.statement_object`), never by the order the buffer names
-    objects in: a flush dependency-orders its surviving writes so a parent is
-    inserted before and deleted after the children referencing it (`m-unit-work`
-    *the planning pipeline*, `m-case-format` *foreign-key-ordered at flush*), so
-    the statement order a legal buffer produces is the graph's, not the author's.
-    Entries settling against one state of one object coalesce into ONE statement
-    (`m-unit-work` *Observed-State Coalescing*) — what distinguishes them is the
-    assignments they contribute to it, while what this cross-check reads, the
-    state they settled against, is the one thing they share — and the same buffer
-    equally expresses a mixed multi-object flush, whose objects emit one statement
-    each. The settling statement is the EXISTING-ROW one; a temporal successor's
-    chained INSERT settles nothing and is passed over.
-
-    An address names the object but not which concrete subtype of it a golden
-    claims, because a table-per-hierarchy family shares one table, so the aligned
-    statement is also required to ROUTE to the entry's own subtype — the tag guard
-    binding that subtype's ``tagValue``, or, under table-per-concrete-subtype, its
-    own table (`m-inheritance`). The writeSequence lane asks the same of its
-    goldens; a scenario write carries no writeSequence, so this is where a settled
-    one is asked.
-    """
-    for index, step in enumerate(case.scenario):
-        if "write" not in step or "on" not in step:
-            continue
-        settling = [
-            (_statement_object(case, index, statement, binds, dialect), statement, binds)
-            for statement, binds in entry_pairs(step.get("statements"), dialect)
-            if is_existing_row_statement(statement)
-        ]
-        origin = case.scenario[step["on"]]
-        aligned: set[int] = set()
-        for entry in _scenario_write_entries(step):
-            entity = case.model.entity(entry["entity"])
-            row = _sole_settled_row(case, index, entity, entry)
-            temporal = bool(temporal_axes(entity.runtime_facts))
-            _, pk, _set_cols, _observed = classify_write_row(
-                case, entity, row, mutation=entry["mutation"], opening=temporal
-            )
-            statement, binds = _settled_statement(case, index, entity, pk, settling, aligned)
-            assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
-            if not temporal:
-                _assert_settled_version_binds(
-                    case, entity, index, origin, pk, binds, statement, dialect
-                )
-                continue
-            observed = _settled_milestone(case, entity, index, origin, pk)
-            expected = [
-                entry.get("at"),
-                *close_address_binds(case, entity, pk, observed.valid_end),
-            ]
-            if case.concurrency_mode == "optimistic":
-                expected.append(observed.tx_start)
-            assert_write_values(case, expected, binds, statement)
-        if len(aligned) != len(settling):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] carries {len(settling) - len(aligned)} "
-                f"existing-row statement(s) for {dialect} addressing an object no entry of its "
-                f"buffer writes — every statement a settled flush emits belongs to one of the "
-                f"objects written, and entries settling against one state coalesce into one."
-            )
-
-
-def _settled_statement(
-    case: Case,
-    index: int,
-    entity: Entity,
-    pk: Any,
-    settling: Sequence[tuple[ObjectAddress, str, list[Any]]],
-    aligned: set[int],
-) -> tuple[str, list[Any]]:
-    """The golden statement one settled entry's OBJECT survives as, with the binds
-    authored on it.
-
-    Alignment is by OBJECT IDENTITY — the entry's own table and Object Key against
-    the ones each statement addresses — so it holds however the flush ordered
-    those statements, and every entry of one object reaches the one statement they
-    coalesce into. Two statements addressing one object are refused as firmly as
-    none: coalescing leaves an object at most one surviving existing-row write per
-    observed state, and the second would be graded against evidence the first
-    already consumed.
-
-    ``aligned`` collects the statements entries reached, which is what lets the
-    caller name a golden addressing an object the buffer never writes.
-    """
-    matches = [
-        position
-        for position, (address, _statement, _binds) in enumerate(settling)
-        if address.names_table(entity.table)
-        and address.names_key_column(_pk_column(entity))
-        and write_value_equal(address.key, pk)
-    ]
-    if not matches:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles a write of {entity.name} pk {pk!r} "
-            f"against a find but its golden carries no existing-row statement addressing that "
-            f"object — a settled write emits one."
-        )
-    if len(matches) > 1:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] carries {len(matches)} existing-row "
-            f"statements addressing {entity.name} pk {pk!r} — writes settling against one "
-            f"observed state of one object coalesce into ONE statement."
-        )
-    (position,) = matches
-    aligned.add(position)
-    _address, statement, binds = settling[position]
-    return statement, binds
-
-
-def _statement_object(
-    case: Case, index: int, statement: str, binds: list[Any], dialect: str
-) -> ObjectAddress:
-    """The object a settled scenario step's *statement* addresses.
-
-    A settled write addresses the ONE object it survives as, so a golden here that
-    renders no bound key address is a defect of the case rather than a statement
-    with nothing to say — which is why the address is required at this step and
-    optional to :func:`write_plan.statement_object`.
-    """
-    address = statement_object(statement, binds, dialect)
-    if address is None:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] carries an existing-row golden whose "
-            f"predicate does not open with a bound key equality for {dialect}: "
-            f"{statement!r} — a settled write addresses the ONE object it survives as, "
-            f"and its key leads that address."
-        )
-    return address
-
-
-def _assert_settled_version_binds(
-    case: Case,
-    entity: Entity,
-    index: int,
-    origin: dict[str, Any],
-    pk: Any,
-    binds: list[Any],
-    statement: str,
-    dialect: str,
-) -> None:
-    """Cross-check a settled VERSIONED Non-Temporal write's golden against the
-    generation the find it names observed OF ITS OWN KEY.
-
-    A versioned write is addressed by its key alone, so the whole difference
-    between one observed generation and another lands on what the observation
-    derives, and both halves are graded: the optimistic gate, which is the
-    golden's LAST bind and is the observed version itself, and the
-    framework-computed advance, which is one more than it and is assigned in
-    BOTH concurrency modes. A locking UPDATE therefore still states its observed
-    generation; a DELETE assigns nothing, so a locking one states none and there
-    is nothing here to cross-check.
-
-    Which of the two the statement carries is read off the STATEMENT rather than
-    off the entry's own verb, because coalescing decides what survives: a
-    destructive intent supersedes the assignments buffered before it, so an
-    entry spelling `update` may reach a golden DELETE that advances nothing.
-
-    The generation is read off the named find step's own ``expectRows`` by the
-    write's own key, exactly as the temporal arm reads its milestone
-    (:func:`_settled_milestone`), so the corpus states which generation the write
-    settled against in two independent places.
-
-    The version column is located in the SET clause by the spelling the golden
-    renders it with (:func:`quote_identifier`) rather than by its model name: a
-    physical column may be reserved or otherwise non-simple, and the golden then
-    quotes it exactly as the generated DML does (`m-dialect`).
-    """
-    version_col = version_column(entity)
-    if version_col is None:
-        return
-    observed = _settled_generation(case, entity, index, origin, pk, version_col)
-    if case.concurrency_mode == "optimistic" and (
-        not binds or not write_value_equal(binds[-1], observed)
-    ):
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles {entity.name} against a find that "
-            f"observed version {observed!r}, but its golden gate binds "
-            f"{binds[-1] if binds else None!r}."
-        )
-    assigned = parse_set_columns(statement)
-    if assigned is None:
-        return
-    spelling = quote_identifier(version_col, dialect)
-    if spelling not in assigned:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles a versioned {entity.name} update "
-            f"whose golden SET clause {assigned} assigns no {spelling!r} — a versioned "
-            f"update advances the framework-owned version under either concurrency strategy."
-        )
-    position = assigned.index(spelling)
-    advanced = binds[position] if position < len(binds) else None
-    if not write_value_equal(advanced, observed + 1):
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles {entity.name} against a find that "
-            f"observed version {observed!r}, but its golden advances the version to "
-            f"{advanced!r} rather than {observed + 1!r}."
-        )
-
-
-def _settled_observed_row(
-    case: Case, entity: Entity, index: int, origin: dict[str, Any], pk: Any, state: str
-) -> dict[str, Any]:
-    """The ONE row of *pk* a settled write's named find declares it observed.
-
-    Read off that find step's own ``expectRows`` — the rows the case declares that
-    read returned, which is exactly the evidence the store it filled holds — so
-    this derivation consults the case's READ result rather than the tracked
-    current state every other write shape resolves from. That is the whole point
-    of the reference: a unit of work may hold more than one piece of evidence
-    about a key, so tracked state answers for at most one of them and only the
-    read the write named says which it was handed.
-
-    One resolver for both profiles, because the rule they share is the whole of
-    it — the write's own object, exactly one match — and what differs is only the
-    state each then projects out of the row (:func:`_settled_generation`,
-    :func:`_settled_milestone`). *state* is that profile's own noun, so the
-    refusal names what the write would have settled against.
-
-    A POLYMORPHIC find needs the write's own concrete subtype beside the key
-    (:func:`_row_is_variant_of`): a primary key names one object per TABLE, and only a
-    table-per-hierarchy family shares one, so a discriminated-union read over
-    table-per-concrete-subtype legitimately returns sibling rows of one key from
-    different tables. Two rows the write's own subtype claims are two observed states,
-    which is what the write would have to choose between. Which of a row's fields
-    STATES a variant is the ORIGIN read's own question, so it is asked of that read
-    once (:func:`_origin_variant_columns`) rather than guessed per row.
-    """
-    key_column = _pk_column(entity)
-    observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []
-    variant_columns = _origin_variant_columns(case, origin)
-    matched = [
-        row
-        for row in observed_rows
-        if write_value_equal(row.get(key_column), pk)
-        and _row_is_variant_of(case, entity, row, variant_columns)
-    ]
-    if len(matched) != 1:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles against a find that observed "
-            f"{len(matched)} row(s) of {entity.name} pk {pk!r} — a keyed write settles "
-            f"against the ONE {state} the value it was handed came from."
-        )
-    return matched[0]
-
-
-def _origin_variant_columns(case: Case, origin: dict[str, Any]) -> tuple[str, ...]:
-    """The fields of *origin*'s observed rows that state a row's variant SPELLING, in
-    precedence order — empty when that read states no variant at all.
-
-    Only a read whose queried position is ABSTRACT is discriminated: it resolves over
-    more than one concrete subtype, so `m-sql` gives its result a variant tag —
-    materialized as ``familyVariant`` in the compatibility rows (`m-case-format`),
-    and, under table-per-concrete-subtype before that materialization, carried by the
-    projected per-branch ``family_variant`` literal. The materialized spelling leads,
-    because a materialized row carries BOTH: alias remapping restores an authored
-    physical column its own spelling, so `family_variant` beside `familyVariant` is
-    the model's own column beside the read's answer.
-
-    A **concrete-target** read carries no variant tag whatsoever (`m-sql`: the caller
-    already queried a known variant), so neither spelling means anything there. Both
-    are legal physical spellings a model may author — the compatibility corpus maps
-    `catalog.Record.variantMarker` to the column ``family_variant`` and
-    `compatibility.overlap.VariantRecord`'s value-object document to the column
-    ``familyVariant`` — and reading one of those as a discriminator would refuse a
-    settled write whose find observed exactly the row it names.
-
-    Which position is abstract is asked of the same classifier materialization asks
-    (:func:`~reference_harness.inheritance.query_position`), so one rule in this
-    harness decides whether a read's rows carry a variant — of *origin*'s own query,
-    because that is the read whose rows are being interrogated.
-    """
-    position = query_position(origin.get("objectQuery"), case.model.entity_defs)
-    if position is None:
-        return ()
-    if position.strategy == STRATEGY_TPCS:
-        return ("familyVariant", _TPCS_VARIANT_COLUMN)
-    return ("familyVariant",)
-
-
-def _row_is_variant_of(
-    case: Case, entity: Entity, row: dict[str, Any], variant_columns: tuple[str, ...]
-) -> bool:
-    """Whether an observed row is a row of *entity*'s own concrete subtype.
-
-    A discriminated-union read tags every returned row with the concrete variant it
-    resolved to (`m-inheritance` *Abstract-position reads*), and that tag is what
-    separates two sibling rows a key alone cannot: the raw tag column under
-    table-per-hierarchy, and otherwise whichever field the ORIGIN read states its
-    variant in (*variant_columns*, from :func:`_origin_variant_columns`). The tag
-    column is read first and needs no such licence: it is a real column of the shared
-    table carrying that row's own ``tagValue``, so it says the same thing wherever it
-    appears.
-
-    A row stating no variant answers for its key alone — a concrete-target read
-    projects no discriminator, because every row it returns is already the queried
-    subtype's.
-    """
-    discriminator = tag(entity)
-    if discriminator is not None and discriminator[0] in row:
-        return write_value_equal(row[discriminator[0]], discriminator[1])
-    for column in variant_columns:
-        if column in row:
-            return row[column] == Family(case.model.entity_defs).variant_spelling(
-                entity.canonical_name
-            )
-    return True
-
-
-def _settled_generation(
-    case: Case, entity: Entity, index: int, origin: dict[str, Any], pk: Any, version_column: str
-) -> Any:
-    """The version a settled versioned write's named find observed, of *pk*.
-
-    The versioned peer of :func:`_settled_milestone`: a versioned key holds one
-    ROW but one observed GENERATION per read of it, so the resolved row must carry
-    the version that read saw, and a row carrying none states no generation for
-    the write to have settled against.
-    """
-    row = _settled_observed_row(case, entity, index, origin, pk, "generation")
-    if version_column not in row:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles against a find whose observed "
-            f"{entity.name} pk {pk!r} carries no {version_column!r} — a keyed write settles "
-            f"against the ONE generation the value it was handed came from."
-        )
-    return row[version_column]
-
-
-def _sole_settled_row(
-    case: Case, index: int, entity: Entity, entry: dict[str, Any]
-) -> dict[str, Any]:
-    """The ONE row a settled write entry authors.
-
-    The plural half is `m-unit-work`'s own singleton — a temporal entry chains
-    one milestone, and an observed write of any profile is evidence about one row
-    — and it is asked of the SAME
-    :func:`~reference_harness.keyed_write_validate.validate_keyed_write` every
-    other lane asks it of, so this lane cannot refuse a different set of entries;
-    what is local here is only the consequence — a settled entry must hand over
-    exactly one row, because the named find handed over exactly one value.
-    """
-    try:
-        validate_keyed_write(entity, entry)
-    except RejectionError as exc:
-        raise CaseFailure(f"{case.path.name}: scenario[{index}]: {exc.detail}") from exc
-    rows = entry.get("rows")
-    if not isinstance(rows, list) or len(rows) != 1:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles a write entry carrying "
-            f"{len(rows) if isinstance(rows, list) else 0} rows against a find — a settled "
-            f"entry carries ONE row, which is the one value that find handed over."
-        )
-    return rows[0]
-
-
-def _settled_milestone(
-    case: Case, entity: Entity, index: int, origin: dict[str, Any], pk: Any
-) -> _Rectangle:
-    """The milestone a settled write's named find observed, of *pk*.
-
-    A milestone chain holds several rows per key, so the resolved row's own
-    rectangle is the whole of what the close derives from.
-
-    A Transaction-Time-Only target has no Valid-Time half to read, and its close
-    addresses the key plus the invariant open Transaction-Time bound, so there the
-    milestone the find observed reaches the golden through the optimistic gate
-    alone.
-    """
-    axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
-    valid_axis, tx_axis = axes.get("valid-time"), axes["transaction-time"]
-    row = _settled_observed_row(case, entity, index, origin, pk, "milestone")
-    return _Rectangle(
-        row.get(valid_axis.start.column) if valid_axis is not None else None,
-        row.get(valid_axis.end.column) if valid_axis is not None else None,
-        row.get(tx_axis.start.column),
-    )
-
-
-def _pk_column(entity: Entity) -> str:
-    for attribute in entity.attributes:
-        if attribute.get("primaryKey"):
-            return attribute["column"]
-    return entity.attributes[0]["column"]
-
-
-def _scenario_root_entity(case: Case) -> Entity:
-    """The entity the scenario's finds target (the model's root entity).
-
-    Scenario cases query a single entity (cache / identity over one type), so the
-    identity column defaults to that entity's primary-key column.
-    """
-    return case.model.root_entity
-
-
-_ACTION_READ_VERBS = frozenset({"load", "access"})
-
-
-def _scenario_uow_groups(case: Case) -> dict[str, list[int]]:
-    """Every declared `uow` GROUP label -> its step indices, in AUTHORED order
-    (`m-case-format` scenario `uow` grouping). A group's own indices need NOT
-    be contiguous — two groups may interleave (the optimistic-lock race shape,
-    `m-opt-lock-012`: one unit of work's observing find, a CONCURRENT unit of
-    work's own observe-and-commit, then back to the first unit of work's own
-    doomed write)."""
-    groups: dict[str, list[int]] = {}
-    for index, step in enumerate(case.scenario):
-        label = step.get("uow")
-        if isinstance(label, str):
-            groups.setdefault(label, []).append(index)
-    return groups
-
-
-def _uow_group_is_doomed(case: Case, indices: list[int]) -> bool:
-    """Whether a `uow` group ROLLS BACK after its last step: at least one of
-    its OWN write steps declares `rollback: true` — the WHOLE group is then
-    the doomed unit of work (`m-case-format` scenario `uow` grouping), not
-    just that one step; a later step in the SAME group (e.g. a find re-issued
-    to force-flush a pending write) still runs inside the still-open
-    transaction before the eventual rollback."""
-    return any(
-        "write" in case.scenario[i] and case.scenario[i].get("rollback") is True for i in indices
-    )
-
-
-@dataclass
-class _UowGroupState:
-    """One `uow` group's coordinated lifecycle (`m-case-format` scenario
-    grouping) — the data clump :func:`_finish_uow_group` used to juggle as
-    four separately-keyed dicts, now one invariant-owning instance per group
-    label: the HELD session every step of the group shares (``None`` until
-    the group's FIRST step lazily opens it), whether the group is DOOMED —
-    rolls back instead of commits at its last step
-    (:func:`_uow_group_is_doomed`) — the write statements it has executed so
-    far (the conflict-abort proof, :func:`_assert_scenario_conflict_abort`),
-    and the step index its LAST step occupies (the boundary
-    :func:`_finish_uow_group` closes the group at)."""
-
-    doomed: bool
-    last_step: int
-    session: Any = None
-    executed: list[tuple[str, int]] = field(default_factory=list)
-
-
-def _finish_uow_group(
-    case: Case,
-    index: int,
-    label: str | None,
-    group_states: dict[str, _UowGroupState],
-    dialect: str,
-) -> None:
-    """Close a `uow` group's held session when *index* is its declared LAST
-    step: COMMIT (the default), or — when the group is doomed
-    (:func:`_uow_group_is_doomed`) — assert the conflict-abort proof on the
-    group's own accumulated executed write statements (exactly as the
-    ungrouped single-step rollback branch does for one step) and ROLL BACK.
-    A no-op for a step whose group has not yet reached its last step, or for
-    an ungrouped step (*label* is ``None``)."""
-    if label is None:
-        return
-    state = group_states[label]
-    if index != state.last_step:
-        return
-    if state.doomed:
-        # A group that declares `then.affectedRows` is a conflict-abort group
-        # (m-opt-lock + m-unit-work): the UoW aborts BECAUSE a version-gated
-        # write conflicted. Assert the conflict was actually DETECTED (the
-        # gated write affected `then.affectedRows` rows — `updatedRows != 1`)
-        # BEFORE rolling back, so a rollback that merely discarded a
-        # NON-conflicting write fails the case rather than passing on a
-        # vacuous abort.
-        if case.expected_affected_rows is not None and state.executed:
-            _assert_scenario_conflict_abort(case, index, state.executed, dialect)
-        state.session.rollback()
-    else:
-        state.session.commit()
-    # The group's own steps are exhausted (this WAS its last step, by
-    # `_scenario_uow_groups`'s own authored-order accounting), so no later
-    # step ever looks the session up again — cleared anyway, so a
-    # (structurally impossible) later step of the SAME label would open a
-    # FRESH session rather than reuse a closed one.
-    state.session = None
-
-
-def _is_runner_owned_step(step: Mapping[str, Any]) -> bool:
-    """Whether Scenario orchestration, rather than the read oracle, owns *step*.
-
-    "Is this a read step?" gets exactly one implementation by being written as its
-    complement: the runner routes the closed set of kinds it owns — a write, an
-    action whose verb neither loads nor accesses, and the zero-round-trip
-    construction of a query-backed list that has not resolved — and every other
-    step is a read the oracle asserts. ``ScenarioReads.assert_step`` reads the same
-    classification from the other side and refuses a step it does not own, so a
-    disagreement here surfaces as a refusal rather than as a mis-graded step.
-    """
-    if "write" in step:
-        return True
-    action = step.get("action")
-    if action is not None:
-        return action not in _ACTION_READ_VERBS
-    return (
-        not step.get("statements")
-        and "stream" not in step
-        and step.get("sameObjectAs") is None
-        and step.get("on") is None
-    )
-
-
-def _assert_non_read_action(
-    case: Case, index: int, step: dict[str, Any], db: DatabaseProvider, dialect: str
-) -> None:
-    """Execute a non-read-verb action step's golden DML and refuse any observable.
-
-    A `flush` / `mergeBack` / `commit` commits its buffered statements on the unit
-    of work's connection, and a `mutate` / `abort` / `detachCopy` commits whatever
-    golden DML it authors (a Valid-Time-past correction's split write); none of
-    them observes rows. Identity, state, and error observables on such a step are
-    adapter-delegated — validated by the schema, graded by each language's API
-    Conformance Suite — so the wire harness runs the DML and nothing else.
-
-    A ROW observable on one of them is refused rather than skipped. Grading it
-    would mean reading what an earlier read retained, which is private to the read
-    oracle, so a case authoring one is stating an observable this lane cannot
-    answer and must fail loudly rather than pass vacuously.
-    """
-    _assert_no_action_observables(case, index, step)
-    assert_step_on_sources(case, index, step)
-    for statement, binds in entry_pairs(step.get("statements"), dialect):
-        db.execute(statement, binds)
-
-
-def _assert_no_action_observables(case: Case, index: int, step: Mapping[str, Any]) -> None:
-    """Refuse a row observable on a step whose verb observes no rows."""
-    declared = [key for key in ("expectRows", "expectGraph", "sameObjectAs") if key in step]
-    if declared:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] is a {step['action']!r} action step "
-            f"declaring {declared}; only the read verbs {sorted(_ACTION_READ_VERBS)} "
-            f"observe rows, so what such a step publishes is nothing to compare."
-        )
-
-
-def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
-    """Execute the scenario against the provisioned DB and assert its contract.
-
-    The loop owns the Scenario, not its reads. It resolves each step's `uow`
-    grouping, applies write DML and boundary-action DML, closes a group at its own
-    last step, and hands every read-bearing step to :class:`ScenarioReads` with the
-    reader that step's lifecycle selected — an index and a reader, and nothing
-    about delivery, retained state, or read intent.
-
-    A step carrying the OPTIONAL `uow` grouping key (`m-case-format`) executes
-    on a HELD session shared with every other step of the SAME label instead
-    of its own default boundary: a grouped write applies through the session
-    (never committed per-step) and a grouped find reads THROUGH the session
-    (read-your-own-writes, mid-transaction). The group's session commits
-    after its own declared LAST step, or rolls back there instead when the
-    group is doomed (:func:`_uow_group_is_doomed`) — the whole group is then
-    ONE unit of work sharing the abort contract, not each step its own. Two
-    groups MAY interleave (non-contiguous in authored order): each group's
-    own session, once opened, stays open across the OTHER group's steps in
-    between, closing only at ITS OWN last step. An UNGROUPED step (no `uow`
-    key) keeps exactly today's behavior, byte-for-byte: a committed write
-    applies on the provider's autocommit connection, a rolled-back write opens
-    its OWN single-step session, and a find reads on the autocommit
-    connection.
-    """
-    dialect = db.dialect
-
-    groups = _scenario_uow_groups(case)
-    group_states: dict[str, _UowGroupState] = {
-        label: _UowGroupState(doomed=_uow_group_is_doomed(case, indices), last_step=indices[-1])
-        for label, indices in groups.items()
-    }
-
-    reads = ScenarioReads(case)
-    with contextlib.ExitStack() as stack:
-        for index, step in enumerate(case.scenario):
-            raw_label = step.get("uow")
-            label = raw_label if isinstance(raw_label, str) else None
-            state = group_states.get(label) if label is not None else None
-            session: Any = None
-            if state is not None:
-                if state.session is None:
-                    state.session = stack.enter_context(db.open_session())
-                session = state.session
-
-            if not _is_runner_owned_step(step):
-                reads.assert_step(index, session if session is not None else db)
-            elif "write" in step:
-                pairs = entry_pairs(step.get("statements"), dialect)
-                if session is not None:
-                    # A GROUPED write: apply on the group's own held session — the
-                    # GROUP commits or rolls back as ONE unit at its last step
-                    # (:func:`_finish_uow_group`), never this step alone.
-                    assert state is not None  # `session` is only ever set alongside `state`
-                    for statement, stmt_binds in pairs:
-                        state.executed.append((statement, session.execute(statement, stmt_binds)))
-                elif step.get("rollback"):
-                    # An UNGROUPED aborted write (m-unit-work abort contract): apply
-                    # each DML statement inside a manual-commit session, then ROLL
-                    # BACK. The write lands in the atomic scope the abort discards,
-                    # so a later find MUST re-resolve and observe the ORIGINAL rows,
-                    # never the aborted write.
-                    with db.open_session() as rb_session:
-                        executed: list[tuple[str, int]] = []
-                        for statement, stmt_binds in pairs:
-                            executed.append((statement, rb_session.execute(statement, stmt_binds)))
-                        # See the SAME conflict-abort reasoning in
-                        # :func:`_finish_uow_group` — the ungrouped, single-step form.
-                        if case.expected_affected_rows is not None:
-                            _assert_scenario_conflict_abort(case, index, executed, dialect)
-                        rb_session.rollback()
-                else:
-                    # A committed write between finds (read-your-own-writes / cache
-                    # invalidation): apply and COMMIT each DML statement on the unit of
-                    # work's connection. It captures no rows; a later find observes the
-                    # committed state.
-                    for statement, stmt_binds in pairs:
-                        db.execute(statement, stmt_binds)
-            elif "action" in step:
-                # The schema forbids `uow` on an action step (it routes through the
-                # lifecycle-object engine path, which never observes grouping), so a
-                # boundary action always executes on the provider's autocommit
-                # connection rather than on any held session.
-                _assert_non_read_action(case, index, step, db, dialect)
-            else:
-                # A query-backed list that has not resolved: zero round trips, no
-                # rows, and no observation until the later step that accesses it
-                # resolves its Object Query.
-                pass
-            _finish_uow_group(case, index, label, group_states, dialect)
-
-
-def _assert_scenario_conflict_abort(
-    case: Case,
-    index: int,
-    executed: list[tuple[str, int]],
-    dialect: str,
-) -> None:
-    """Assert an aborted scenario step aborted BECAUSE a versioned write conflicted.
-
-    A scenario that declares ``then.affectedRows`` (the m-opt-lock conflict signal) is
-    a conflict-abort case (m-opt-lock + m-unit-work): the rollback must be the
-    CONSEQUENCE of a genuinely detected optimistic-lock conflict, not a vacuous abort.
-    The step's version-gated write (identified by its ``and <version> = ?`` gate) MUST
-    have affected ``then.affectedRows`` rows — ``0`` for a stale-version gate that
-    matched no row (``updatedRows != 1``). A gated write that unexpectedly affects 1
-    row is NO conflict, so the case fails rather than passing on the rollback alone.
-    """
-    expected = case.expected_affected_rows
-    if case.concurrency_mode != "optimistic":
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] declares then.affectedRows (an "
-            f"optimistic-lock conflict) but the unit of work is not "
-            f"`concurrency: optimistic` — a conflict abort requires the version gate."
-        )
-    if expected == 1:
-        raise CaseFailure(
-            f"{case.path.name}: then.affectedRows is 1, which is NOT a conflict — "
-            f"`updatedRows != 1` is the conflict signal. A conflict-abort scenario MUST "
-            f"declare a != 1 count (0 for a stale-version gate)."
-        )
-    version_col = version_column(_scenario_root_entity(case))
-    if version_col is None:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] declares a conflict abort but the "
-            f"entity carries no optimistic-lock version column to gate on."
-        )
-    gated = [
-        (sql, affected) for sql, affected in executed if has_version_gate(sql, version_col, dialect)
-    ]
-    if len(gated) != 1:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] conflict-abort step MUST list exactly "
-            f"one version-gated write (the conflicting statement), found {len(gated)}."
-        )
-    _sql, affected = gated[0]
-    if affected != expected:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] gated versioned write affected "
-            f"{affected} row(s) but then.affectedRows is {expected}. The UoW abort MUST "
-            f"be a CONSEQUENCE of a detected optimistic-lock conflict "
-            f"(`updatedRows != 1`); a gated write affecting 1 row is NO conflict."
-        )
-
-
-def _identity_keys(
-    case: Case,
-    index: int,
-    rows: list[dict[str, Any]],
-    identity_col: str,
-    label: str = "scenario",
-) -> list[Any]:
-    """The ordered set of primary-key identities carried by *rows*."""
-    if any(identity_col not in row for row in rows):
-        raise CaseFailure(
-            f"{case.path.name}: {label}[{index}] result rows do not carry the "
-            f"identity column {identity_col!r}; a {label} step's find MUST project "
-            f"the primary key so identity can be checked."
-        )
-    return sorted(coerce_identity_key(row[identity_col]) for row in rows)
-
-
 # --- conflict cases (m-opt-lock optimistic locking) ----------------------------------
 
 
@@ -3571,7 +2651,7 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
         )
 
     # Here the out-of-band setup is a concurrent transaction's own mutation.
-    _apply_given(case, db)
+    apply_given(case, db)
 
     affected = db.execute(statements[0], case.statement_binds(0))
     expected = case.expected_affected_rows
@@ -3639,7 +2719,7 @@ def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
     """
     dialect = db.dialect
 
-    _apply_given(case, db)
+    apply_given(case, db)
 
     for index, attempt in enumerate(case.attempts):
         statements = _attempt_statements(attempt, dialect)
@@ -3721,7 +2801,7 @@ def _assert_error_classification(case: Case, db: DatabaseProvider) -> None:
 def _assert_error_single_connection(case: Case, db: DatabaseProvider) -> None:
     """Run ordered golden DML; every statement but the last MUST succeed, the
     last MUST raise, and the raised error MUST classify to errorClass."""
-    _provision(case, db) if case.load_fixtures else _provision_empty(case, db)
+    provision(case, db) if case.load_fixtures else provision_empty(case, db)
     statements = case.golden_statements(db.dialect)
     last = len(statements) - 1
     raised: Exception | None = None
@@ -3817,7 +2897,7 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     # False and keeps the original mid-round-raise-only behavior untouched.
     serialization = str(case.expected_native_code.get(dialect)) == "40001"
 
-    _provision(case, db)  # given.fixtures seeds the lockable Gauge rows
+    provision(case, db)  # given.fixtures seeds the lockable Gauge rows
 
     def run_node(node: str, session: Any) -> None:
         errored = False
@@ -3972,7 +3052,7 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
     raised: dict[str, Exception] = {}
     row_failures: list[str] = []
 
-    _provision(case, db)  # given.fixtures seeds the Account rows the reads observe
+    provision(case, db)  # given.fixtures seeds the Account rows the reads observe
 
     def run_node(node: str, session: Any) -> None:
         for rnd in rounds:
@@ -4080,9 +3160,9 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
     """
     dialect = db.dialect
     tolerance = case.tolerance
-    default_identity = _pk_column(case.model.root_entity)
+    default_identity = case.model.root_entity.identity_column
 
-    _provision(case, db)  # fixtures loaded so the seed read sees a row
+    provision(case, db)  # fixtures loaded so the seed read sees a row
     with db.open_peer() as peer:
         nodes: dict[str, Any] = {"A": db, "B": peer}
         results: list[list[dict[str, Any]]] = []
@@ -4122,6 +3202,19 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
                 _assert_coherence_identity(case, index, step, results, default_identity)
 
 
+def _coherence_identity_keys(
+    case: Case, index: int, rows: list[dict[str, Any]], identity_col: str
+) -> list[Any]:
+    """The ordered set of primary-key identities carried by *rows*."""
+    if any(identity_col not in row for row in rows):
+        raise CaseFailure(
+            f"{case.path.name}: coherence[{index}] result rows do not carry the "
+            f"identity column {identity_col!r}; a coherence step's find MUST project "
+            f"the primary key so identity can be checked."
+        )
+    return sorted(coerce_identity_key(row[identity_col]) for row in rows)
+
+
 def _assert_coherence_identity(
     case: Case,
     index: int,
@@ -4158,8 +3251,8 @@ def _assert_coherence_identity(
             f"is per-process, so both steps MUST run on the same node."
         )
     identity_col = step.get("identityAttr", default_identity)
-    this_ids = _identity_keys(case, index, results[index], identity_col, label="coherence")
-    that_ids = _identity_keys(case, source, results[source], identity_col, label="coherence")
+    this_ids = _coherence_identity_keys(case, index, results[index], identity_col)
+    that_ids = _coherence_identity_keys(case, source, results[source], identity_col)
     if not this_ids or not that_ids:
         raise CaseFailure(
             f"{case.path.name}: coherence[{index}].sameObjectAs={source} has an "
@@ -4211,24 +3304,14 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     dialect = db.dialect
 
     if case.is_scenario:
-        if not _scenario_has_golden(case, dialect):
-            # No golden SQL for this dialect anywhere in the scenario: still run
-            # the dialect-agnostic checks so coverage is not skipped.
-            _assert_schema(case)
-            _assert_serde(case)
-            _assert_equivalent_encodings(case)
-            return
+        # Everything Scenario-specific — normalization, accounting, settlement,
+        # provisioning, ordered execution, and the diagnostics that name a step —
+        # is one operation. This branch contributes only the layers every case
+        # shape shares.
         _assert_schema(case)
-        _assert_scenario_normalization(case, dialect)  # layer 3
         _assert_serde(case)  # layer 4
         _assert_equivalent_encodings(case)  # layer 4c
-        _assert_scenario_count_consistency(case, dialect)  # layer 5 (count)
-        _assert_scenario_settled_write(case, dialect)  # layer 5c (observed state ↔ ②)
-        _provision(case, db)
-        # Here the out-of-band setup puts state into a row no authored member could
-        # produce — a Structured Column key the model declares nowhere included.
-        _apply_given(case, db)
-        _assert_scenario(case, db)  # layer 2 + identity
+        assert_unit_work_scenario(case, db)
         return
 
     if case.is_coherence:
@@ -4260,7 +3343,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_serde(case)  # layer 4
         _assert_equivalent_encodings(case)  # layer 4c
         _assert_conflict_input(case, dialect)  # layer 5c (① ↔ ② per attempt)
-        _provision(case, db)  # fixtures loaded: the versioned row exists
+        provision(case, db)  # fixtures loaded: the versioned row exists
         _assert_conflict_retry(case, db)  # given.apply + ordered attempts
         return
 
@@ -4306,18 +3389,18 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     if case.is_write_sequence:
         _assert_write_step_count(case, dialect)  # layer 5 (count)
         _assert_write_input_columns(case, dialect)  # layer 5c (① ↔ ② column/value)
-        _provision_empty(case, db)
+        provision_empty(case, db)
         # Here the out-of-band setup is what the m-detach merge-back-reinserts case
         # needs: DELETE the original persisted row, so the merge-back finds no
         # original and INSERTs the copy as a new row.
-        _apply_given(case, db)
+        apply_given(case, db)
         _assert_write_sequence(case, db)  # apply DML, assert table state
         _assert_pk_allocation(case, db)  # layer 5b: PK-generation oracle (sequence)
         return
 
     if case.is_conflict:
         _assert_conflict_input(case, dialect)  # layer 5c (① ↔ ② single form)
-        _provision(case, db)  # fixtures loaded: the row to lock exists
+        provision(case, db)  # fixtures loaded: the row to lock exists
         _assert_conflict(case, db)  # given.apply + golden write, affected rows
         return
 
@@ -4328,5 +3411,5 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     # the case, not reach a database.
     validate_query_inheritance(case.model.entity_defs, case.object_query)
     _assert_round_trip_count(case, dialect)  # layer 5 (count)
-    _provision(case, db)
+    provision(case, db)
     assert_case_read(case, db)  # layer 2 + 5 (every accepted Object Query observation)

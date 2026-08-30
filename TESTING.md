@@ -87,6 +87,7 @@ check-all` resolve exactly what each run contains.
 | The Pydantic parity corpus on the declared floor | `just python-test-pydantic-floor` |
 | The language-contract diagnostics | `just harness-test-contract-tools` |
 | The accepted Object Query read oracle | `just harness-test-oracle` |
+| Unit Work Scenario grading | `just harness-test-unit-work-scenario` |
 | One canonical slice's capabilities and cases | `just core-show-slice slice-snapshot-1` |
 | One language spec, drafted or complete | `just core-show-language-spec languages/python/spec/python.md` |
 | The compatibility-matrix report | `just report-matrix` |

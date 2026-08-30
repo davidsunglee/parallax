@@ -33,11 +33,15 @@ src/reference_harness/
 ├── write_plan.py      # write grading: what a golden write statement must be for the
 │                      #   neutral input it renders — row classification, bind
 │                      #   correlation, close addresses, gates, and inheritance routing
+├── provisioning.py    # reset + DDL + fixtures + given.apply, at the one point every
+│                      #   lane calls them (shallow by design; see its docstring)
 ├── case_runner.py     # the layered assertion engine: case-shape routing, provisioning,
-│                      #   rejected, writes, conflict, concurrency, coherence, and the
-│                      #   Unit Work Scenario's step order and transaction lifecycle
+│                      #   rejected, writes, conflict, concurrency, and coherence
 ├── object_query_oracle/ # every accepted Object Query observation, behind three names:
 │                        #   assert_case_read, ScenarioReads, ReadExecutor
+├── unit_work_scenario/  # every Unit Work Scenario, graded whole, behind one name:
+│                        #   assert_unit_work_scenario — step interpretation, ordered
+│                        #   refusal, accounting, settlement, grouping, and lifecycle
 ├── gate_graph.py      # resolve the orchestrator's command graph: roles, classes, closures
 ├── show_gates.py      # render the resolved command graph
 ├── check_gates.py     # fail when that graph breaks core/spec/language-testing.md
@@ -54,6 +58,8 @@ tests/
 ├── conftest.py            # shared fixtures; derives each item's dbfree/db scheduling class
 ├── contract_tools/        # the language-contract diagnostics' own tests
 ├── oracle/                # the read oracle's own tests, on a scripted read executor
+├── unit_work_scenario/    # the Scenario package's own tests, on scripted and refusing
+│                          #   providers, driven through its one export
 └── test_compatibility.py  # pytest: discover cases, run each through run_case per provider
 ```
 
