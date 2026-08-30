@@ -9,7 +9,7 @@ import sys
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import FrozenInstanceError
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import pytest
 
@@ -1452,35 +1452,38 @@ def _module_name(path: Path) -> str:
     return ".".join(reversed(parts))
 
 
-def _imported_modules(path: Path) -> Iterator[str]:
-    """Every module *path* could load, named absolutely.
+class _ImportEdge(NamedTuple):
+    module: str
+    member_drawn_from_it: str | None
 
-    `from package import name` loads `package.name` when that name is a module, so
-    each `from` target is yielded alongside the module it is drawn from; a relative
-    import is resolved against *path* so that both carry the same absolute name an
-    `import package.name` would.
-    """
+    @property
+    def target(self) -> str:
+        member = self.member_drawn_from_it
+        return f"{self.module}.{member}" if member else self.module
+
+
+def _absolute_imports(path: Path) -> Iterator[_ImportEdge]:
     own = _module_name(path).split(".")
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                yield alias.name
+                yield _ImportEdge(alias.name, None)
         elif isinstance(node, ast.ImportFrom):
             anchor = own[: max(len(own) - node.level, 0)] if node.level else []
             base = ".".join([*anchor, *([node.module] if node.module else [])])
             if base:
-                yield base
+                yield _ImportEdge(base, None)
             for alias in node.names:
-                yield f"{base}.{alias.name}" if base else alias.name
+                yield _ImportEdge(base, alias.name) if base else _ImportEdge(alias.name, None)
 
 
 def test_the_harness_consumes_storage_layout_for_validation_reads_and_observation() -> None:
     facts = f"{storage_layout.__name__}."
     imported = {
-        module.removeprefix(facts)
+        edge.target.removeprefix(facts)
         for path in _storage_layout_importers()
-        for module in _imported_modules(path)
-        if module.startswith(facts)
+        for edge in _absolute_imports(path)
+        if edge.target.startswith(facts)
     }
     assert imported == {
         "ColumnContributor",
@@ -1515,8 +1518,8 @@ def test_no_unit_work_scenario_module_imports_case_runner() -> None:
     modules = _package_modules(unit_work_scenario)
     assert modules, "the package was not found, so this pin would hold vacuously"
     for path in modules:
-        for module in _imported_modules(path):
-            assert "case_runner" not in module, f"{_module_name(path)} imports {module!r}"
+        for edge in _absolute_imports(path):
+            assert "case_runner" not in edge.target, f"{_module_name(path)} imports {edge.target!r}"
 
 
 def _scenario_suite() -> list[Path]:
@@ -1534,13 +1537,15 @@ def test_the_scenario_suite_reaches_the_package_only_through_its_one_export() ->
     exists to remove.
     """
     package = unit_work_scenario.__name__
-    exported = {package, *(f"{package}.{name}" for name in unit_work_scenario.__all__)}
     for path in _scenario_suite():
-        for module in _imported_modules(path):
-            if module != package and not module.startswith(f"{package}."):
+        for edge in _absolute_imports(path):
+            if edge.module != package and not edge.module.startswith(f"{package}."):
                 continue
-            assert module in exported, (
-                f"{_module_name(path)} reaches past the package's exports to {module!r}"
+            member = edge.member_drawn_from_it
+            binds_the_package_itself = member is None
+            draws_an_export = member in unit_work_scenario.__all__
+            assert edge.module == package and (binds_the_package_itself or draws_an_export), (
+                f"{_module_name(path)} reaches past the package's exports to {edge.target!r}"
             )
 
 
@@ -1570,8 +1575,8 @@ def test_only_the_scenario_packages_reads_module_imports_the_oracles_scenario_mo
     importers = {
         path
         for path in _harness_modules()
-        for module in _imported_modules(path)
-        if module.endswith("object_query_oracle.scenario")
+        for edge in _absolute_imports(path)
+        if edge.target.endswith("object_query_oracle.scenario")
     }
     assert importers == {reads}
 
