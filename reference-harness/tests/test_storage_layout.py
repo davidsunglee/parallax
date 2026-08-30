@@ -1448,7 +1448,10 @@ _TEST_IMPORT_ROOT = Path(__file__).resolve().parents[__name__.count(".")]
 
 
 def _module_name(path: Path) -> str:
-    absolute = path.resolve()
+    # Only the directory chain is resolved. Python names a module from the lexical
+    # path it was found at beneath sys.path, so following a symlinked module file to
+    # its target would anchor its relative imports in the wrong package.
+    absolute = path.parent.resolve() / path.name
     for root in (_SOURCE_IMPORT_ROOT, _TEST_IMPORT_ROOT):
         if absolute.is_relative_to(root):
             dotted = ".".join(absolute.relative_to(root).with_suffix("").parts)
