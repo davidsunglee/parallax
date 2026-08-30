@@ -37,7 +37,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 from referencing import Registry
 
-from .case import Entity
+from .case import Entity, names_earlier_step
 from .corpus_yaml import read_corpus_yaml
 from .execution_validate import validate_execution
 from .inheritance import (
@@ -192,19 +192,23 @@ def _check_object_query(
 
 
 def _golden_dialects(statements: list[Any]) -> set[str]:
-    """The dialects EVERY golden entry in *statements* declares (empty if none does).
+    """Every dialect ANY golden entry in *statements* declares (empty if none does).
 
-    The intersection, exactly as :attr:`~reference_harness.case.Case.golden_dialects`
-    computes it at ``then``: a step executes on a dialect only where every statement
-    it lists carries that dialect, so this is the set anything keyed to the step's
-    execution must cover.
+    The union, NOT the intersection
+    :attr:`~reference_harness.case.Case.golden_dialects` computes at ``then``. At
+    ``then`` the intersection is the set the run loop keys execution on, so it is
+    also the set an oracle must cover. A Scenario is keyed differently: it executes
+    on a dialect as soon as ONE of its steps lowers for it, and a streamed step's
+    pages are ONE delivery that runs whenever the Scenario does. So a map covering
+    only the dialects every page shares would leave a page's own dialect
+    unresolvable at the moment the delivery asks for it.
     """
     dialect_sets = [
         set(entry["sql"])
         for entry in statements
         if isinstance(entry, dict) and isinstance(entry.get("sql"), dict)
     ]
-    return set.intersection(*dialect_sets) if dialect_sets else set()
+    return set().union(*dialect_sets) if dialect_sets else set()
 
 
 def _scenario_statement_binds_keys(step: dict[str, Any], label: str, errors: list[str]) -> None:
@@ -448,11 +452,12 @@ def _validate_scenario_reference_sql(
     naive oracle answers the roots every page of it published.
 
     A plain string is dialect-neutral; a dialect-keyed map MUST cover exactly the
-    dialects the step executes on (:func:`_golden_dialects`), which is what
-    guarantees no executed dialect runs with its golden checked against nothing but
-    itself. Both directions are refused: a map omitting a dialect the golden
-    declares drops that dialect's second opinion, and one naming a dialect the
-    golden does not carry states an oracle for a read that never runs.
+    dialects the step's own golden declares (:func:`_golden_dialects`), which is
+    what guarantees no executed dialect runs with its golden checked against
+    nothing but itself. Both directions are refused: a map omitting a dialect the
+    golden declares would be asked for that dialect at execution and have no answer
+    to give, and one naming a dialect the golden does not carry states an oracle
+    for a read that never runs.
     """
     if "referenceSql" not in step:
         return
@@ -499,7 +504,7 @@ def _validate_settled_write(steps: list[Any], index: int, label: str, errors: li
     source, group = step.get("on"), step.get("uow")
     if not isinstance(source, int) or isinstance(source, bool) or not isinstance(group, str):
         return  # the case schema owns the reference's shape
-    if not 0 <= source < index:
+    if not names_earlier_step(source, index):
         errors.append(
             f"{label}: settles against step {source}, which is not a real EARLIER step "
             f"(0 <= source < {index})"

@@ -629,6 +629,19 @@ def entry_statements(entries: Any, dialect: str) -> list[str]:
     return [sql for _entry, sql in _lowered_entries(entries, dialect)]
 
 
+def names_earlier_step(source: int, step_index: int) -> bool:
+    """Whether a Scenario step's ``on`` index names a real EARLIER step.
+
+    A step's ``on`` reaches a result some earlier step already produced — the
+    source an action targets, the coordinate group a batched load consumes, the
+    find a settling write was handed a value by — so the index it names is bounded
+    below by the first step and above by the naming step's own position. Every lane
+    that reads such a reference decides the bound here and reports a violation in
+    its own vocabulary.
+    """
+    return 0 <= source < step_index
+
+
 @dataclass(frozen=True)
 class Case:
     """A parsed compatibility case bound to its model + fixtures."""

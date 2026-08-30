@@ -101,14 +101,19 @@ def test_a_reference_sql_map_covers_exactly_the_dialects_its_golden_executes_on(
     ]
 
 
-def test_a_streamed_delivery_is_covered_page_by_page() -> None:
-    # The dialects a step executes on are the ones EVERY statement it lists
-    # declares, so a page authored for one dialect alone narrows the set its oracle
-    # must cover — the same intersection `Case.golden_dialects` reads at `then`.
+def test_a_streamed_deliverys_oracle_covers_every_dialect_a_page_declares() -> None:
+    # A Scenario executes on a dialect as soon as ONE step lowers for it, and a
+    # streamed step's pages are one delivery that runs whenever the Scenario does.
+    # So the set the oracle owes is the UNION over the pages, not the intersection
+    # `Case.golden_dialects` reads at `then`: a map covering only what every page
+    # shares is asked for the odd page's dialect at execution and has no answer.
     pages = [{"sql": {"postgres": "p1", "mariadb": "m1"}}, {"sql": {"postgres": "p2"}}]
     step = {"stream": {"batchSize": 2}, "statements": pages}
-    assert not _reference_sql({**step, "referenceSql": {"postgres": "p"}})
-    assert _reference_sql({**step, "referenceSql": {"postgres": "p", "mariadb": "m"}})
+    assert not _reference_sql({**step, "referenceSql": {"postgres": "p", "mariadb": "m"}})
+    assert _reference_sql({**step, "referenceSql": {"postgres": "p"}}) == [
+        "probe: referenceSql map keys ['postgres'] != scenario golden sql map keys "
+        "['mariadb', 'postgres']"
+    ]
 
 
 def test_a_reference_sql_needs_the_golden_read_it_spells_naively() -> None:

@@ -28,7 +28,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
-from ..case import Case, Entity, entry_pairs, frozen_view
+from ..case import Case, Entity, entry_pairs, frozen_view, names_earlier_step
 from ..case_assertions import (
     CaseFailure,
     assert_step_on_sources,
@@ -312,7 +312,7 @@ class ScenarioReads:
         case = self._case
         named = step.get("sameObjectAs", step.get("on"))
         source = (named[0] if named else -1) if isinstance(named, list) else named
-        if not isinstance(source, int) or not 0 <= source < step_index:
+        if not isinstance(source, int) or not names_earlier_step(source, step_index):
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step_index}] reuses prior rows from an "
                 f"UNRESOLVED source {source!r} — a zero-round-trip cache hit / "
@@ -393,7 +393,7 @@ class ScenarioReads:
         if step.get("action") in _ACTION_READ_VERBS:
             named = step["on"]
             source = named[0] if isinstance(named, list) else named
-            if not isinstance(source, int) or not 0 <= source < step_index:
+            if not isinstance(source, int) or not names_earlier_step(source, step_index):
                 raise CaseFailure(
                     f"{case.path.name}: scenario[{step_index}].on references step "
                     f"{source!r}, which is not a real EARLIER step "
@@ -481,7 +481,7 @@ class ScenarioReads:
         if "sameObjectAs" not in step:
             return
         source = step["sameObjectAs"]
-        if not isinstance(source, int) or not 0 <= source < step_index:
+        if not isinstance(source, int) or not names_earlier_step(source, step_index):
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step_index}].sameObjectAs={source} "
                 f"must reference an EARLIER step."
@@ -808,7 +808,7 @@ def _resolved_list_read(case: Case, step_index: int, step: Mapping[str, Any]) ->
         return None
     named = step.get("on")
     source = named[0] if isinstance(named, list) else named
-    if not isinstance(source, int) or not 0 <= source < step_index:
+    if not isinstance(source, int) or not names_earlier_step(source, step_index):
         return None
     query = case.scenario[source].get("objectQuery")
     if not isinstance(query, Mapping):

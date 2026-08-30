@@ -20,7 +20,7 @@ from decimal import Decimal
 from typing import Any
 
 from . import multiset, portable_literal
-from .case import Case
+from .case import Case, names_earlier_step
 
 
 class CaseFailure(AssertionError):
@@ -189,8 +189,9 @@ def assert_step_on_sources(case: Case, step_index: int, step: Mapping[str, Any])
     object; when a boundary step DOES carry one — a ``flush`` documenting its
     buffered write — the same checks apply. So does a WRITE step's ``on``, the
     find it settles against: what that reference may name beyond being earlier is
-    a document rule the corpus asks of every case, but the bound itself is stated
-    once here for every kind of step rather than once per owner.
+    a document rule the corpus asks of every case, and the bound itself is
+    :func:`~reference_harness.case.names_earlier_step`, which this raises the
+    grading seams' refusal for.
     """
     if "on" not in step:
         return
@@ -202,7 +203,7 @@ def assert_step_on_sources(case: Case, step_index: int, step: Mapping[str, Any])
             f"a coordinate-grouped action references each source at most once."
         )
     for source in indices:
-        if not 0 <= source < step_index:
+        if not names_earlier_step(source, step_index):
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step_index}].on references step {source!r}, "
                 f"which is not a real EARLIER step (0 <= source < {step_index}); a step's "
