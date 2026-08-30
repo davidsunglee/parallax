@@ -1425,8 +1425,8 @@ def _storage_layout_importers() -> list[Path]:
 
 
 def _package_modules(package: Any) -> list[Path]:
-    """Every module of *package*, in a stable order."""
-    return sorted(Path(package.__file__).parent.glob("*.py"))
+    """Every module of *package* at any depth, in a stable order."""
+    return sorted(Path(package.__file__).parent.rglob("*.py"))
 
 
 def _harness_modules() -> list[Path]:
@@ -1516,21 +1516,22 @@ def test_no_unit_work_scenario_module_imports_case_runner() -> None:
     assert modules, "the package was not found, so this pin would hold vacuously"
     for path in modules:
         for module in _imported_modules(path):
-            assert "case_runner" not in module, f"{path.name} imports {module!r}"
+            assert "case_runner" not in module, f"{_module_name(path)} imports {module!r}"
 
 
 def _scenario_suite() -> list[Path]:
-    suite = sorted((Path(__file__).parent / "unit_work_scenario").glob("test_*.py"))
+    suite = sorted((Path(__file__).parent / "unit_work_scenario").rglob("*.py"))
     assert suite, "the Scenario suite was not found, so a pin over it would hold vacuously"
     return suite
 
 
 def test_the_scenario_suite_reaches_the_package_only_through_its_one_export() -> None:
-    """The package's own tests drive the operation, never a module behind it.
+    """The package's own suite drives the operation, never a module behind it.
 
-    Compilation, judgement, and grouping are internal seams: a test that imported
-    one would pin the layout rather than the behaviour, and would recreate — one
-    directory over — the private-import surface this package exists to remove.
+    Compilation, judgement, and grouping are internal seams: a suite module that
+    imported one would pin the layout rather than the behaviour, and would
+    recreate — one directory over — the private-import surface this package
+    exists to remove.
     """
     for path in _scenario_suite():
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -1539,10 +1540,10 @@ def test_the_scenario_suite_reaches_the_package_only_through_its_one_export() ->
             if not node.module.startswith("reference_harness.unit_work_scenario"):
                 continue
             assert node.module == "reference_harness.unit_work_scenario", (
-                f"{path.name} imports the package internal {node.module!r}"
+                f"{_module_name(path)} imports the package internal {node.module!r}"
             )
             assert [alias.name for alias in node.names] == ["assert_unit_work_scenario"], (
-                f"{path.name} imports more than the package's one export"
+                f"{_module_name(path)} imports more than the package's one export"
             )
 
 
