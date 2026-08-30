@@ -16,6 +16,7 @@ import pytest
 import reference_harness.case_runner as case_runner
 import reference_harness.ddl_builder as ddl_builder
 import reference_harness.object_query_oracle as object_query_oracle
+import reference_harness.unit_work_scenario as unit_work_scenario
 import reference_harness.write_plan as write_plan
 from reference_harness.case import Model, load_model
 from reference_harness.data_loader import load_model as load_fixture_rows
@@ -1405,21 +1406,26 @@ def test_a_fixture_row_naming_no_document_member_is_still_refused() -> None:
 
 
 def _storage_layout_importers() -> list[Path]:
-    """The runner, write grading, and every module of the read oracle, which import
-    as one boundary.
+    """The runner, write grading, and every module of the read oracle and the Unit
+    Work Scenario package, which import as one boundary.
 
-    The oracle is asked as a PACKAGE rather than module by module, so its private
+    Each package is asked as a PACKAGE rather than module by module, so its private
     interior stays free to be rearranged while the set of storage-layout facts the
     harness consumes stays pinned. The universe is every module that grades a case
     against the physical layout, so a fact moving between them is invisible here
     and a fact newly consumed is not.
     """
-    oracle = Path(object_query_oracle.__file__).parent
     return [
         Path(case_runner.__file__),
         Path(write_plan.__file__),
-        *sorted(oracle.glob("*.py")),
+        *_package_modules(object_query_oracle),
+        *_package_modules(unit_work_scenario),
     ]
+
+
+def _package_modules(package: Any) -> list[Path]:
+    """Every module of *package*, in a stable order."""
+    return sorted(Path(package.__file__).parent.glob("*.py"))
 
 
 def test_the_harness_consumes_storage_layout_for_validation_reads_and_observation() -> None:
@@ -1449,6 +1455,52 @@ def test_the_harness_consumes_storage_layout_for_validation_reads_and_observatio
         "position_view",
         "validate_storage_layout",
     }
+
+
+def test_no_unit_work_scenario_module_imports_case_runner() -> None:
+    """The Unit Work Scenario package reaches nothing in the runner.
+
+    The runner imports the package, so an import back is a cycle rather than a
+    style question — and the ticket's own bar is that Scenario code depends on
+    Write Plan, Inheritance, and Storage Layout rather than reaching into
+    `case_runner`. Asserted over the package as a whole, because which of its
+    modules would do the reaching is exactly what may be rearranged.
+    """
+    modules = _package_modules(unit_work_scenario)
+    assert modules, "the package was not found, so this pin would hold vacuously"
+    for path in modules:
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            module = (
+                node.module
+                if isinstance(node, ast.ImportFrom)
+                else next((alias.name for alias in node.names), None)
+                if isinstance(node, ast.Import)
+                else None
+            )
+            assert module is None or "case_runner" not in module, f"{path.name} imports {module!r}"
+
+
+def test_the_scenario_suite_reaches_the_package_only_through_its_one_export() -> None:
+    """The package's own tests drive the operation, never a module behind it.
+
+    Compilation, judgement, and grouping are internal seams: a test that imported
+    one would pin the layout rather than the behaviour, and would recreate — one
+    directory over — the private-import surface this package exists to remove.
+    """
+    suite = sorted((Path(__file__).parent / "unit_work_scenario").glob("test_*.py"))
+    assert suite, "the Scenario suite was not found, so this pin would hold vacuously"
+    for path in suite:
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.ImportFrom) or node.module is None:
+                continue
+            if not node.module.startswith("reference_harness.unit_work_scenario"):
+                continue
+            assert node.module == "reference_harness.unit_work_scenario", (
+                f"{path.name} imports the package internal {node.module!r}"
+            )
+            assert [alias.name for alias in node.names] == ["assert_unit_work_scenario"], (
+                f"{path.name} imports more than the package's one export"
+            )
 
 
 def test_the_harness_retains_no_synthetic_physical_table_entity() -> None:

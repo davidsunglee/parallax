@@ -360,6 +360,22 @@ class Entity:
         return [_compile_attribute(attribute) for attribute in self.runtime_facts["attributes"]]
 
     @property
+    def identity_column(self) -> str:
+        """The physical Column an object of this entity is identified by.
+
+        The declared primary key, falling back to the first Attribute for a
+        descriptor that marks none. Every place identity is compared asks here —
+        a read step's ``sameObjectAs`` claim, a coherence step's cross-node
+        identity, and the key a settled write's golden must address — so a
+        family's key has one spelling across the harness rather than one per
+        lane.
+        """
+        for attribute in self.attributes:
+            if attribute.get("primaryKey"):
+                return attribute["column"]
+        return self.attributes[0]["column"]
+
+    @property
     def relationships(self) -> list[dict[str, Any]]:
         """Canonical accepted local defining/reverse Relationship Declarations."""
         return self.definition.get("relationships", [])

@@ -215,6 +215,14 @@ harness-test-contract-tools:
 harness-test-oracle:
     cd {{harness}} && uv run pytest tests/oracle
 
+# A focused selector for iterating on Unit Work Scenario grading, no gate's
+# dependency for the same reason as the one above: every test it selects is
+# `dbfree`.
+[metadata("runtime:fast")]
+[doc("Focused: the Unit Work Scenario package's own tests.")]
+harness-test-unit-work-scenario:
+    cd {{harness}} && uv run pytest tests/unit_work_scenario
+
 # A scheduling class is only as honest as the restriction on the resource that
 # defines it: an item acquiring a provider outside the designated fixture would
 # be classified `dbfree` and would still pass on a host with Docker.
