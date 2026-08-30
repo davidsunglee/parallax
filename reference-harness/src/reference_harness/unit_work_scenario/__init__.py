@@ -2,8 +2,11 @@
 
 One Scenario is one operation: a caller states a case and a provider and nothing
 else. It either returns without a value or raises
-:class:`..case_assertions.CaseFailure` naming the case path and the authored step
-position exactly once — there is no partial pass and no result to inspect. A
+:class:`..case_assertions.CaseFailure` naming the case path — there is no partial
+pass and no result to inspect. A failure a step is answerable for names that
+step's authored position exactly once; a defect of the Scenario as a whole — a
+case declaring no steps at all, a case-level round-trip total disagreeing with
+its steps' — names the case alone, because there is no one step it belongs to. A
 native database-driver exception is not an authored failure and arrives
 unchanged.
 
@@ -24,8 +27,15 @@ first one to refuse is the one reported:
 
 1. the caller's own shared checks — case shape, serialization, equivalent
    encodings — before this operation is reached at all;
-2. compilation, which is dialect-free and therefore runs on every dialect: a
-   malformed topology is refused here, at zero database calls;
+2. compilation, which is dialect-free and therefore runs on every dialect: what
+   kind each step is, which earlier steps it names, which group it joins, and
+   which golden entries it lists are read here, and the rules the document alone
+   settles — a Scenario with no steps, a settling write's reference to a find of
+   its own group, a boundary action claiming a row observable, an ``on`` naming
+   something other than an earlier step, per-step golden-SQL bookkeeping —
+   refuse here, at zero database calls. Which steps a read may reference, and
+   whether one is a read at all, are still adjudicated by the read oracle during
+   execution;
 3. judgement, which reads golden SQL and therefore runs only where the executing
    dialect carries one;
 4. execution, which is the first phase to touch a database.

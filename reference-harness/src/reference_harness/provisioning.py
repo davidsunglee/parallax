@@ -21,6 +21,13 @@ __all__ = ["apply_given", "provision", "provision_empty"]
 
 
 def provision(case: Case, db: DatabaseProvider) -> None:
+    """Put *db* into *case*'s declared starting state, discarding whatever it held.
+
+    Destructive and complete: the database is reset, the model's derived DDL is
+    applied to the empty schema, and the model's fixtures are loaded. A lane whose
+    case builds its own history from its own ordered DML wants
+    :func:`provision_empty` instead.
+    """
     db.reset()
     db.apply_ddl(ddl_for(case.model, db.dialect))
     load_model(case.model, db)
