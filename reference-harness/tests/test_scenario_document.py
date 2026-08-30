@@ -59,7 +59,6 @@ def _reference_sql(step: dict[str, Any]) -> list[str]:
 
 
 def _anchored(step: dict[str, Any], index: int) -> list[str]:
-    """The problems reported for *step*, authored at position *index*."""
     errors: list[str] = []
     _validate_identity_anchor(step, index, "probe", errors)
     return errors
