@@ -10,6 +10,7 @@ from collections.abc import Callable
 import pytest
 
 from parallax.core import base
+from parallax.core.base._neutral import ManagedValueExclusion, utc_instant
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -443,11 +444,55 @@ def test_coerce_neutral_input_leaves_an_already_native_value_unchanged() -> None
 
 
 def test_coerce_neutral_input_is_total_and_nonthrowing_on_a_huge_integer() -> None:
-    # Mirrors `decode_neutral_literal`'s own overflow-safety proof above: a
-    # magnitude no float can carry is left unchanged rather than raising.
+    # A developer integer outside the declared float's finite range remains the
+    # caller's integer so the membership predicate can refuse it without raising.
     coerced = base.coerce_neutral_input(10**1000, base.FLOAT64)
     assert coerced == 10**1000
     assert base.matches_neutral_type(coerced, base.FLOAT64) is False
+
+
+def test_managed_value_exclusions_survive_developer_coercion_unchanged() -> None:
+    class ExcludedInteger(int, ManagedValueExclusion):
+        pass
+
+    class ExcludedFloat(float, ManagedValueExclusion):
+        pass
+
+    class ExcludedText(str, ManagedValueExclusion):
+        pass
+
+    class ExcludedInstant(dt.datetime, ManagedValueExclusion):
+        pass
+
+    values = (
+        (ExcludedInteger(0), base.Decimal(1, 0)),
+        (ExcludedInteger(0), base.FLOAT64),
+        (ExcludedFloat(0.0), base.FLOAT64),
+        (ExcludedText("123e4567-e89b-12d3-a456-426614174000"), base.UUID),
+        (ExcludedInstant(2026, 1, 1, tzinfo=dt.UTC), base.TIMESTAMP),
+    )
+
+    for value, declared in values:
+        assert base.coerce_neutral_input(value, declared) is value
+        assert base.matches_neutral_type(value, declared) is False
+
+
+def test_managed_value_exclusions_are_not_projected_to_floats_or_instants() -> None:
+    class ExcludedInteger(int, ManagedValueExclusion):
+        pass
+
+    class ExcludedFloat(float, ManagedValueExclusion):
+        pass
+
+    class ExcludedDecimal(decimal.Decimal, ManagedValueExclusion):
+        pass
+
+    class ExcludedInstant(dt.datetime, ManagedValueExclusion):
+        pass
+
+    for value in (ExcludedInteger(0), ExcludedFloat(0.0), ExcludedDecimal("0")):
+        assert base.nearest_float_at_width(value, base.FLOAT64) is None
+    assert utc_instant(ExcludedInstant(2026, 1, 1, tzinfo=dt.UTC)) is None
 
 
 # --------------------------------------------------------------------------- #

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -10,8 +11,15 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance.case_format import Case, SelectionFilter
-from parallax.core.base import FLOAT32, FLOAT64
-from parallax.core.wire import decode_wire
+from parallax.core.base import FLOAT32, FLOAT64, INT32, INT64, ManagedValue, matches_neutral_type
+from parallax.core.wire import (
+    WireDecodingError,
+    WireEncodingError,
+    WireValue,
+    decode_canonical_wire,
+    decode_wire,
+    encode_wire,
+)
 
 
 def _case(
@@ -244,7 +252,7 @@ def test_a_number_carries_the_digits_it_was_authored_with() -> None:
     # Which float a number names depends on the declared width. The observable
     # proof is direct-from-token decoding, never the private provenance carrier.
     loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: 1.0000000596046448\n"))
-    authored = loaded["ratio"]
+    authored = cast("WireValue", loaded["ratio"])
     assert authored == float("1.0000000596046448")
     assert decode_wire(FLOAT32, authored) == 1.0 + 2.0**-23
 
@@ -255,7 +263,32 @@ def test_a_float32_rounds_from_the_authored_digits_not_from_the_carrier() -> Non
     # IS that midpoint, so a consumer that narrows the carrier ties to even and answers
     # `1.0` — two roundings, both round-to-nearest-even, and a different value.
     loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: 1.0000000596046448\n"))
-    authored = loaded["ratio"]
+    authored = cast("WireValue", loaded["ratio"])
     assert decode_wire(FLOAT32, authored) == 1.0 + 2.0**-23
     assert decode_wire(FLOAT32, float(cast("float", authored))) == 1.0
     assert decode_wire(FLOAT64, authored) == float("1.0000000596046448")
+
+
+def test_a_yaml_integer_keeps_source_negative_zero_for_canonical_float_decoding() -> None:
+    loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: -0\n"))
+    authored = cast("int", loaded["ratio"])
+    assert decode_wire(FLOAT64, authored) == 0.0
+    with pytest.raises(WireDecodingError) as exc_info:
+        decode_canonical_wire(FLOAT64, authored)
+    assert exc_info.value.reason == "noncanonical"
+
+
+def test_out_of_space_yaml_numbers_are_not_managed_scalar_members() -> None:
+    limit = sys.get_int_max_str_digits()
+    if limit == 0:
+        pytest.skip("the interpreter has no integer string-conversion limit")
+    for source, scalar_types in (
+        ("9" * (limit + 1), (INT32, INT64)),
+        ("1e9999", (FLOAT32, FLOAT64)),
+    ):
+        loaded = cast("dict[str, object]", case_format.safe_load_yaml(f"value: {source}\n"))
+        value = loaded["value"]
+        for neutral_type in scalar_types:
+            assert matches_neutral_type(value, neutral_type) is False
+            with pytest.raises(WireEncodingError):
+                encode_wire(neutral_type, cast("ManagedValue", value))

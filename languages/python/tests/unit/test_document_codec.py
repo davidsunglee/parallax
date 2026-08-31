@@ -72,7 +72,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.wire import WireDecodingError, decode_wire, loads
+from parallax.core.wire import WireDecodingError, WireValue, decode_wire, loads
 
 _INSTANT = dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)
 _TOKEN = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
@@ -163,12 +163,15 @@ def test_a_float_encoding_decodes_back_at_the_width_that_chose_it() -> None:
     # DECLARED WIDTH, so the width has to be on both legs: 1048576.2 is a `float32`
     # encoding of 1048576.25 and a binary64 number in its own right, and reading it
     # back at binary64 would answer a value no `float32` holds.
-    assert decode_wire(FLOAT32, encode_leaf(FLOAT32, 1048576.25)) == 1048576.25
+    assert decode_wire(FLOAT32, cast("WireValue", encode_leaf(FLOAT32, 1048576.25))) == 1048576.25
     assert decode_wire(FLOAT64, 1048576.2) == 1048576.2
     for binary32_value in (1048576.25, 1.5, -2.5, 0.0, 3.4028234663852886e38):
-        assert decode_wire(FLOAT32, encode_leaf(FLOAT32, binary32_value)) == binary32_value
-    # A magnitude binary32 cannot hold names no member and is left for membership to
-    # refuse rather than overflowed to infinity here.
+        assert (
+            decode_wire(FLOAT32, cast("WireValue", encode_leaf(FLOAT32, binary32_value)))
+            == binary32_value
+        )
+    # A magnitude that rounds past binary32's finite range is refused by Wire
+    # decoding instead of producing an infinite carrier.
     with pytest.raises(WireDecodingError):
         decode_wire(FLOAT32, 3.5e38)
 

@@ -14,9 +14,12 @@ decision with it rather than travel alone.
 
 from __future__ import annotations
 
+from typing import cast
+
 from parallax.core.base import (
     Bytes,
     Date,
+    ManagedValue,
     NeutralType,
     String,
     Time,
@@ -26,6 +29,7 @@ from parallax.core.base import (
 from parallax.core.wire import (
     WireDecodingError,
     WireEncodingError,
+    WireValue,
     decode_canonical_wire,
     encode_wire,
 )
@@ -82,7 +86,7 @@ def encode_leaf(neutral_type: NeutralType, value: object) -> object:
     rendered text, or a provider-native document handle.
     """
     try:
-        return encode_wire(neutral_type, value)
+        return encode_wire(neutral_type, cast("ManagedValue", value))
     except WireEncodingError as exc:
         raise LeafEncodingError(str(exc)) from exc
 
@@ -97,6 +101,6 @@ def decode_leaf(neutral_type: NeutralType, value: object) -> object:
     canonicality obligation (`m-document-codec` "Portable leaf encodings").
     """
     try:
-        return decode_canonical_wire(neutral_type, value)
+        return decode_canonical_wire(neutral_type, cast("WireValue", value))
     except WireDecodingError as exc:
         raise LeafEncodingError(str(exc)) from exc
