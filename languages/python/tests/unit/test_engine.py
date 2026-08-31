@@ -725,7 +725,7 @@ def test_a_document_member_reconciles_through_the_statement_wire_projection() ->
 
 def test_an_unannotated_non_wire_carrier_cannot_be_reconciled() -> None:
     statement = _lowered("insert into shift(span) values (?)", dt.timedelta(hours=1))
-    with pytest.raises(SqlGenError, match="has no declared neutral type"):
+    with pytest.raises(SqlGenError, match="is not an ordinary Wire value"):
         engine._delivered((statement,), (statement,), "a unit")  # pyright: ignore[reportPrivateUsage]
 
 

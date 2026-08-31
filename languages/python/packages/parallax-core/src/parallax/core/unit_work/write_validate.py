@@ -80,7 +80,7 @@ that document happens to be shaped like a marker).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 from parallax.core import inheritance
 from parallax.core.base import coerce_neutral_input, matches_neutral_type
@@ -123,6 +123,9 @@ def validate_write(
     model: Metamodel,
     *,
     mutation: str = "insert",
+    known_vo_violations: Mapping[str, VoDocumentViolation | None] | None = None,
+    known_attribute_validity: Mapping[str, bool] | None = None,
+    subtype_validated: bool = False,
 ) -> None:
     """Validate ``row`` (a neutral write row targeting ``entity``) pre-SQL.
 
@@ -146,10 +149,11 @@ def validate_write(
     inherited bound because the applicable-member set carries the root's own
     Attributes, and root-owned axis metadata is exactly what designated them.
     """
-    try:
-        inheritance.validate_subtype_write(model, entity, row)
-    except inheritance.InheritanceError as exc:
-        raise WriteRejectedError(exc.rule, str(exc)) from exc
+    if not subtype_validated:
+        try:
+            inheritance.validate_subtype_write(model, entity, row)
+        except inheritance.InheritanceError as exc:
+            raise WriteRejectedError(exc.rule, str(exc)) from exc
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
@@ -158,9 +162,28 @@ def validate_write(
     for attribute in view.applicable_attributes:
         if attribute.framework_owned:
             continue
-        _check_entity_attribute(row, attribute, required=full_document, owner=owner)
+        _check_entity_attribute(
+            row,
+            attribute,
+            required=full_document,
+            owner=owner,
+            known_valid=(
+                None
+                if known_attribute_validity is None
+                else known_attribute_validity.get(attribute.identity.name)
+            ),
+        )
     for value_object in view.applicable_value_objects:
-        _check_value_object_member(row, value_object, required=full_document, owner=owner)
+        name = value_object.identity.path[-1]
+        _check_value_object_member(
+            row,
+            value_object,
+            required=full_document,
+            owner=owner,
+            known_violation=(
+                False if known_vo_violations is None else known_vo_violations.get(name)
+            ),
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -169,7 +192,12 @@ def validate_write(
 # level (`m-value-object` "Writing").                                          #
 # --------------------------------------------------------------------------- #
 def _check_entity_attribute(
-    row: Mapping[str, object], attribute: AttributeMetadata, *, required: bool, owner: str
+    row: Mapping[str, object],
+    attribute: AttributeMetadata,
+    *,
+    required: bool,
+    owner: str,
+    known_valid: bool | None,
 ) -> None:
     name = attribute.identity.name
     value = row.get(name)
@@ -182,7 +210,12 @@ def _check_entity_attribute(
         return
     if _is_scalar_write_marker(value):
         return
-    if not matches_neutral_type(coerce_neutral_input(value, attribute.type), attribute.type):
+    valid = (
+        matches_neutral_type(coerce_neutral_input(value, attribute.type), attribute.type)
+        if known_valid is None
+        else known_valid
+    )
+    if not valid:
         raise WriteRejectedError(
             "write-value-type-mismatch",
             f"{owner}.{name}: value {value!r} does not match the declared type {attribute.type!r}",
@@ -200,7 +233,12 @@ def _check_entity_attribute(
 # NULL Column or patch JSON null at the occurrence's Document Path.            #
 # --------------------------------------------------------------------------- #
 def _check_value_object_member(
-    row: Mapping[str, object], vo: ValueObjectMetadata, *, required: bool, owner: str
+    row: Mapping[str, object],
+    vo: ValueObjectMetadata,
+    *,
+    required: bool,
+    owner: str,
+    known_violation: VoDocumentViolation | Literal[False] | None,
 ) -> None:
     name = vo.identity.path[-1]
     value = row.get(name)
@@ -218,7 +256,7 @@ def _check_value_object_member(
                 f"{owner}.{name}: required value object is absent (or null)",
             )
         return
-    violation = vo_document_violation(vo, value)
+    violation = vo_document_violation(vo, value) if known_violation is False else known_violation
     if violation is not None:
         raise _rejected_error(violation, base=f"{owner}.{name}")
 

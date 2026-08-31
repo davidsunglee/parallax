@@ -251,7 +251,10 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Low
     if not any(isinstance(value, MaxPlusOne) for _, value, _ in rows[0]):
         ctx.bind_typed_rows(
             tuple(tuple(value for _column, value, _type in row) for row in rows),
-            tuple(neutral_type for _column, _value, neutral_type in rows[0]),
+            tuple(
+                None if neutral_type is None else (neutral_type, "MANAGED")
+                for _column, _value, neutral_type in rows[0]
+            ),
         )
         tuples = ", ".join(f"({', '.join('?' for _ in row)})" for row in rows)
         return ctx.finish(f"insert into {table}({columns}) values {tuples}")
@@ -480,7 +483,10 @@ def _key_predicate(
     keys_sql = f"({', '.join(dialect.quote(column) for column in columns)})"
     row_hole = f"({', '.join('?' for _ in columns)})"
     holes = ", ".join(row_hole for _ in target.key_values)
-    ctx.bind_typed_rows(target.key_values, types)
+    ctx.bind_typed_rows(
+        target.key_values,
+        tuple((neutral_type, "MANAGED") for neutral_type in types),
+    )
     return f"{keys_sql} in ({holes})"
 
 

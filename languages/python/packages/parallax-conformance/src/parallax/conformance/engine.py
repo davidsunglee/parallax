@@ -6752,6 +6752,7 @@ def run_rejected_case(case: case_format.Case) -> str:
             query = deserialize_query(when["objectQuery"])
         except CanonicalDocumentError as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
+        query = _case_ingress.normalize_case_query(query, model)
         root = case_entity(model, query.target.canonical)
         try:
             validate_object_query(root, query, model)

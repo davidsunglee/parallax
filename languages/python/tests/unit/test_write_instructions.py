@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any, cast
 
 import jsonschema
@@ -58,6 +58,26 @@ def _validate(doc: object, schema: dict[str, Any]) -> None:
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
+
+
+class _OnePassMapping(Mapping[str, object]):
+    def __init__(self, values: Mapping[str, object]) -> None:
+        self._values = dict(values)
+        self.iterations = 0
+
+    def __getitem__(self, key: str) -> object:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        self.iterations += 1
+        if self.iterations > 1:
+            raise AssertionError("nested write input was traversed more than once")
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+
 _PAYMENT = _MODELS["payment"]
 _BALANCE = _MODELS["balance"]
 _POSITION = _MODELS["position"]
@@ -494,6 +514,20 @@ def test_preparation_owns_nested_values_once_and_derivation_retains_them() -> No
     derived = wi.derive_keyed_write(prepared, prepared.rows)
     assert derived.rows[0] is prepared.rows[0]
     assert derived.rows[0]["address"] is retained
+
+
+def test_preparation_transforms_freezes_and_validates_a_nested_document_in_one_pass() -> None:
+    address = _OnePassMapping({"street": "Main", "city": "Berlin"})
+    prepared = wi.prepare_typed_write(
+        wi.KeyedWrite(
+            "insert",
+            "Customer",
+            ({"id": 9, "name": "Ada", "address": address},),
+        ),
+        _MODELS["customer"],
+    )
+    assert isinstance(prepared, wi.PreparedKeyedWrite)
+    assert address.iterations == 1
 
 
 def test_wire_preparation_owns_recursive_value_object_decoding() -> None:

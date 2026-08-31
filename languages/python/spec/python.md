@@ -5042,8 +5042,10 @@ parallax.postgres --> parallax.core.dialect
   same validated execution token as production. The engine's private `m-sql`
   compiler reaches are enumerated separately in the carrier-neutral block above,
   and the case loader's `wire._json.authored_number` reach is the production YAML
-  token-preservation seam. Each remains keyed by its exact importing module and
-  imported names in the source inventory.
+  token-preservation seam, while the case ingress's sibling `authored_token` reach
+  consumes that preserved spelling only after declared Decimal resolution. Each
+  remains keyed by its exact importing module and imported names in the source
+  inventory.
   Widening
   `parallax.core.entity`'s shipped surface to serve a development-only consumer
   of a documented first-party seam would be the wrong repair.

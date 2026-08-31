@@ -17,6 +17,8 @@ family-effectively against a model.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from parallax.core.base import coerce_neutral_input, matches_neutral_type
 from parallax.core.metamodel._states import ValueObjectMetadata
 from parallax.core.metamodel._values import AttributeMetadata, PrimaryKey
@@ -38,7 +40,13 @@ class WriteAssignmentError(ValueError):
         self.rule = rule
 
 
-def judge_assignment(member: AttributeMetadata | ValueObjectMetadata, value: object) -> None:
+def judge_assignment(
+    member: AttributeMetadata | ValueObjectMetadata,
+    value: object,
+    *,
+    known_vo_violation: VoDocumentViolation | Literal[False] | None = False,
+    known_value_valid: bool | None = None,
+) -> None:
     """Judge writing ``value`` to the already-resolved ``member``, or raise.
 
     A scalar Attribute refuses a primary-key, read-only, or framework-owned
@@ -53,12 +61,14 @@ def judge_assignment(member: AttributeMetadata | ValueObjectMetadata, value: obj
     knows a wider position prefixes rather than re-renders.
     """
     if isinstance(member, AttributeMetadata):
-        _judge_attribute(member, value)
+        _judge_attribute(member, value, known_valid=known_value_valid)
         return
-    _judge_value_object(member, value)
+    _judge_value_object(member, value, known_violation=known_vo_violation)
 
 
-def _judge_attribute(attribute: AttributeMetadata, value: object) -> None:
+def _judge_attribute(
+    attribute: AttributeMetadata, value: object, *, known_valid: bool | None
+) -> None:
     name = attribute.identity.name
     if isinstance(attribute.primary_key, PrimaryKey):
         raise WriteAssignmentError("primary-key", f"{name}: primary-key fields may not be assigned")
@@ -74,20 +84,32 @@ def _judge_attribute(attribute: AttributeMetadata, value: object) -> None:
                 "value-type-mismatch", f"{name}: required attribute is absent (or null)"
             )
         return
-    if not matches_neutral_type(coerce_neutral_input(value, attribute.type), attribute.type):
+    valid = (
+        matches_neutral_type(coerce_neutral_input(value, attribute.type), attribute.type)
+        if known_valid is None
+        else known_valid
+    )
+    if not valid:
         raise WriteAssignmentError(
             "value-type-mismatch",
             f"{name}: value {value!r} does not match the declared type {attribute.type!r}",
         )
 
 
-def _judge_value_object(occurrence: ValueObjectMetadata, value: object) -> None:
+def _judge_value_object(
+    occurrence: ValueObjectMetadata,
+    value: object,
+    *,
+    known_violation: VoDocumentViolation | Literal[False] | None,
+) -> None:
     name = occurrence.identity.path[-1]
     if value is None:
         if not occurrence.nullable:
             raise _vo_error(name, VoDocumentViolation("", "value-object-missing"))
         return
-    violation = vo_document_violation(occurrence, value)
+    violation = (
+        vo_document_violation(occurrence, value) if known_violation is False else known_violation
+    )
     if violation is not None:
         raise _vo_error(name, violation)
 

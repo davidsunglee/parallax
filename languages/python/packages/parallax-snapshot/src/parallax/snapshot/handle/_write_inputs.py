@@ -122,7 +122,6 @@ from parallax.core.unit_work import (
     instructions,
     keyed_intent,
     observed_state_key,
-    validate_write,
 )
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
@@ -478,34 +477,7 @@ class BufferedInserts:
 
 
 def validate_keyed_instruction(meta: Metamodel, instruction: KeyedWrite) -> PreparedKeyedWrite:
-    """The whole judgment a keyed write instruction is measured by, in the one
-    order every ingress runs it in.
-
-    The model-aware :func:`~parallax.core.unit_work.validate_write` per row
-    FIRST: its inheritance payload-shape rules
-    (``subtype-write-metadata-field`` / ``-sibling-attribute`` /
-    ``-set-based-unsupported``, `m-inheritance`) classify a framework-owned
-    metadata key or a cross-branch field MORE SPECIFICALLY than the generic
-    member-name honesty gate ever could. Then
-    :func:`~parallax.core.unit_work.instructions.prepare_typed_write`, which
-    catches any OTHERWISE-unknown member the row walk left unexamined and
-    returns the managed immutable product this function retains.
-
-    Stated once rather than at each ingress because the ORDER is the rule: two
-    ingresses that classified one defect differently would make the ingress,
-    not the model, decide what a write violated.
-
-    A spelling naming no single declared Entity is left entirely to
-    preparation, which owns that classification and refuses it one
-    step later: a row judgment presupposes the target whose members it is
-    measured against, so an unresolvable target has no row question to answer,
-    and answering it here would report a member complaint about an Entity the
-    model does not have.
-    """
-    entity = entity_by_name(meta, instruction.entity)
-    if entity is not None:
-        for row in instruction.rows:
-            validate_write(entity, row, meta, mutation=instruction.mutation)
+    """Prepare one typed keyed instruction through Unit Work's sole judgment."""
     prepared = instructions.prepare_typed_write(instruction, meta)
     assert isinstance(prepared, PreparedKeyedWrite)
     return prepared

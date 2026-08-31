@@ -31,12 +31,14 @@ The module carries the privacy; callers use the descriptive builder name directl
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, cast
 
 from parallax.core.base import (
     INFINITY_LITERAL,
+    JSON,
+    TIMESTAMP,
     ManagedValue,
     NeutralType,
     TemporalBound,
@@ -47,9 +49,16 @@ from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
-from parallax.core.wire import WireValue, decode_canonical_wire, encode_wire
+from parallax.core.wire import (
+    WireDecodingError,
+    WireEncodingError,
+    WireValue,
+    decode_wire,
+    encode_wire,
+)
 
 type _BindForm = Literal["MANAGED", "COMPARISON_TEXT"]
+type _TypedBindSlot = tuple[NeutralType, _BindForm]
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,8 +142,7 @@ class LoweredStatement:
                 if span.form == "MANAGED":
                     projected[index] = encode_wire(span.neutral_type, cast("ManagedValue", value))
                 else:
-                    managed = decode_canonical_wire(span.neutral_type, cast("WireValue", value))
-                    projected[index] = encode_wire(span.neutral_type, managed)
+                    projected[index] = cast("str", value)
         for override in self._wire_bind_overrides:
             projected[override.index] = override.value
         for index, value in enumerate(projected):
@@ -145,19 +153,16 @@ class LoweredStatement:
 
 def _wire_bind(value: object) -> WireValue:
     if isinstance(value, JsonDocument):
-        return _wire_bind(value.value)
-    if value is None or isinstance(value, bool | int | float | str):
-        return value
-    if isinstance(value, list):
-        return [_wire_bind(item) for item in cast("list[object]", value)]
-    if isinstance(value, Mapping):
-        mapping = cast("Mapping[object, object]", value)
-        if not all(isinstance(name, str) for name in mapping):
-            raise SqlGenError("an unannotated document bind has a non-string member name")
-        return {cast("str", name): _wire_bind(item) for name, item in mapping.items()}
-    raise SqlGenError(
-        f"bind carrier {type(value).__name__} has no declared neutral type or Wire override"
-    )
+        value = value.value
+    if value is None:
+        return None
+    try:
+        managed = decode_wire(JSON, cast("WireValue", value))
+        return encode_wire(JSON, managed)
+    except (WireDecodingError, WireEncodingError) as error:
+        raise SqlGenError(
+            f"bind carrier {type(value).__name__} is not an ordinary Wire value: {error}"
+        ) from error
 
 
 class SqlGenError(ValueError):
@@ -321,17 +326,17 @@ class StatementBuilder:
     def bind_typed_rows(
         self,
         rows: Sequence[Sequence[object]],
-        pattern: Sequence[NeutralType | None],
+        pattern: Sequence[_TypedBindSlot | None],
     ) -> None:
-        """Append rows and compact their actual non-null managed-type runs."""
+        """Append rows and compact their actual non-null type/form runs."""
         if not rows:
             return
         width = len(pattern)
         if any(len(row) != width for row in rows):
             raise SqlGenError("a repeated bind pattern has inconsistent row widths")
         if len(rows) == 1:
-            for value, neutral_type in zip(rows[0], pattern, strict=True):
-                self._bind_row_value(value, neutral_type)
+            for value, slot in zip(rows[0], pattern, strict=True):
+                self._bind_row_value(value, slot)
             return
         start = len(self._binds)
         for row in rows:
@@ -341,10 +346,7 @@ class StatementBuilder:
                     self._wire_overrides[len(self._binds) - 1] = INFINITY_LITERAL
         signatures = tuple(
             tuple(
-                neutral_type
-                if neutral_type is not None and matches_neutral_type(value, neutral_type)
-                else None
-                for value, neutral_type in zip(row, pattern, strict=True)
+                self._typed_row_slot(value, slot) for value, slot in zip(row, pattern, strict=True)
             )
             for row in rows
         )
@@ -354,11 +356,12 @@ class StatementBuilder:
                 continue
             signature = signatures[group_start]
             run_start: int | None = None
-            run_type: NeutralType | None = None
-            for offset, neutral_type in enumerate((*signature, None)):
-                if neutral_type == run_type:
+            run_slot: _TypedBindSlot | None = None
+            for offset, slot in enumerate((*signature, None)):
+                if slot == run_slot:
                     continue
-                if run_type is not None and run_start is not None:
+                if run_slot is not None and run_start is not None:
+                    run_type, run_form = run_slot
                     repetitions = group_stop - group_start
                     span_start = start + group_start * width + run_start
                     if repetitions == 1:
@@ -367,7 +370,7 @@ class StatementBuilder:
                                 span_start,
                                 span_start + offset - run_start,
                                 run_type,
-                                "MANAGED",
+                                run_form,
                             )
                         )
                     else:
@@ -378,11 +381,11 @@ class StatementBuilder:
                                 width,
                                 repetitions,
                                 run_type,
-                                "MANAGED",
+                                run_form,
                             )
                         )
-                run_start = offset if neutral_type is not None else None
-                run_type = neutral_type
+                run_start = offset if slot is not None else None
+                run_slot = slot
             group_start = group_stop
 
     def append_fragment(self, statement: LoweredStatement) -> None:
@@ -404,6 +407,17 @@ class StatementBuilder:
         occupied: set[int] = set()
         spans = tuple(sorted(self._typed_spans, key=lambda span: span.start))
         for span in spans:
+            if isinstance(span, _TypedBindSpan):
+                valid_shape = span.start >= 0 and span.stop > span.start
+            else:
+                valid_shape = (
+                    span.start >= 0
+                    and span.width > 0
+                    and span.stride >= span.width
+                    and span.repetitions > 0
+                )
+            if not valid_shape:
+                raise SqlGenError("typed bind metadata has invalid dimensions or stride")
             for index in span.indexes():
                 if not 0 <= index < len(self._binds) or index in occupied:
                     raise SqlGenError("typed bind metadata is out of range or overlaps")
@@ -419,15 +433,37 @@ class StatementBuilder:
         self._binds.append(value)
         self._classified += 1
 
-    def _bind_row_value(self, value: object, neutral_type: NeutralType | None) -> None:
-        if isinstance(value, TemporalBound):
+    def _bind_row_value(self, value: object, slot: _TypedBindSlot | None) -> None:
+        typed_slot = self._typed_row_slot(value, slot)
+        if typed_slot is not None:
+            neutral_type, form = typed_slot
+            self._bind_typed(value, neutral_type, form)
+        elif isinstance(value, TemporalBound):
             self.bind_framework(value, wire_value=INFINITY_LITERAL)
-        elif neutral_type is not None and matches_neutral_type(value, neutral_type):
-            self.bind_managed(value, neutral_type)
         elif isinstance(value, JsonDocument):
             self.bind_document(value)
         else:
             self.bind_structural(value)
+
+    def _typed_row_slot(self, value: object, slot: _TypedBindSlot | None) -> _TypedBindSlot | None:
+        if slot is None or value is None:
+            return None
+        neutral_type, form = slot
+        if isinstance(value, TemporalBound) or (
+            neutral_type == TIMESTAMP and value == INFINITY_LITERAL
+        ):
+            return None
+        valid = (
+            matches_neutral_type(value, neutral_type)
+            if form == "MANAGED"
+            else isinstance(value, str)
+        )
+        if not valid:
+            raise SqlGenError(
+                f"repeated bind carrier {type(value).__name__} does not match "
+                f"{form} slot {neutral_type!r}"
+            )
+        return slot
 
     def _bind_typed(self, value: object, neutral_type: NeutralType, form: _BindForm) -> None:
         index = len(self._binds)
