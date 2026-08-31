@@ -172,6 +172,17 @@ SQL lowering, or canonical encoding. Failures stay in the owning developer
 surface's vocabulary. They never become `neutral-literal-*` failures and never
 leak `m-wire` decoding errors.
 
+`m-core` also owns one internal, token-free **Managed Value Exclusion**
+contract for an ingress carrier whose ordinary host payload is needed for
+transport but MUST NOT become authoritative managed state. The exclusion is
+not a managed value and carries no source text, serialized grammar, failure
+reason, or conversion behavior. A producing module owns its concrete private
+carrier and every producer-specific fact it retains. Managed membership rejects
+an exclusion before inspecting its host payload; developer coercion returns the
+original excluded carrier unchanged; and projection, base-carrier extraction,
+container dispatch, and object-member-name normalization MUST preserve or
+reject the exclusion before they can materialize its payload as managed state.
+
 ## Float projection at a declared width
 
 `nearestFloatAtWidth(value, declaredFloatType)` is the provenance-neutral

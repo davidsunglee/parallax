@@ -86,7 +86,7 @@ def _construct_core_int(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> int:
     text = str(loader.construct_scalar(node))
     if text[:2].lower() in ("0o", "0x") or text[:3].lower() in ("-0o", "-0x", "+0o", "+0x"):
         return int(text, 0)
-    return int(text, 10)
+    return cast("int", authored_number(text))
 
 
 def _construct_core_float(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> float:
