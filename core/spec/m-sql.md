@@ -1727,12 +1727,13 @@ what: a member of the **numeric family** — `int32`, `int64`, `float32`, `float
 `decimal(p,s)` — and a `boolean` member cast through the typed-cast form before
 comparing, exactly as a numeric `nestedGt` does today; each of the six
 **text-compared** types — `string`, `bytes`, `date`, `time`, `timestamp`, `uuid` —
-compares the extracted text directly, with no cast, because `m-document-codec`'s
-canonical spelling for it already equates and orders correctly as text. Which
-family a type falls in is a comparison-behavior question, not a document-form one:
-`decimal(p, s)` encodes as a JSON string and casts with the numeric family
-regardless. Those two tables are closed over the declarable types, so no
-document-resident member is left without a comparison form.
+compares the extracted text directly, with no cast, because the canonical Wire
+spelling `m-wire` defines and `m-document-codec` stores already equates and
+orders correctly as text. Which family a type falls in is a comparison-behavior
+question, not a document-form one: `decimal(p, s)` encodes as a JSON string and
+casts with the numeric family regardless. Those two tables are closed over the
+declarable types, so no document-resident member is left without a comparison
+form.
 
 **Which literal is bound follows the same split, and the two are not
 interchangeable.** A text comparison binds the type's **comparison text**

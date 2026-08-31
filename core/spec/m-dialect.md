@@ -75,7 +75,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **optimizer-fence form** (`m-sql`) | append `offset 0` to each tag-filtered branch; no bind | append `limit ?` to each tag-filtered branch; bind unsigned maximum `18446744073709551615` immediately after the tag bind |
 | **read-lock application** (`m-read-lock`) | locking-mode object find: `for share of t0` | locking-mode object find: **`lock in share mode`** (no `for share`; MDEV-17514) |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
-| typed bind normalization | managed values render to canonical `m-core` wire values | timestamp binds remain typed `Instant`/`infinity` so the adapter can render `datetime(6)`/max-sentinel; other values render to canonical `m-core` wire values |
+| typed bind normalization | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind adapted to the max sentinel |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
 | error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062` duplicate, `1213` deadlock, `1205` lock timeout |
 
@@ -182,20 +182,20 @@ managed `m-core` value in the member's declared Neutral Type, rendered by the ty
 bind normalization above — exactly what an ordinary Column comparison of that type
 binds. A `decimal(p, s)` therefore binds the **exact decimal**: its document form
 is a digit string precisely because no JSON number carries the type's contract
-(`m-document-codec`), and binding a JSON number instead compares a binary float,
+(`m-wire`), and binding a JSON number instead compares a binary float,
 which matches stored decimals that are merely near the literal. A `boolean` binds
 the boolean, which each dialect renders for its own cast target.
 
 **Six types compare as the extracted text, with no cast on either dialect**,
-because the canonical spelling `m-document-codec` writes already equates and
-orders correctly as text — which is why that module states those spellings to be
-comparison-significant rather than a serialization convenience. Membership is
-fixed by comparison behavior, not by document form: `decimal(p, s)`'s document
-form is a JSON string as well and it casts with the rest of the numeric family,
-because its integer part has no fixed width, so `10.00` sorts below `9.00` as
-text.
+because the canonical Wire spelling `m-wire` defines and `m-document-codec`
+stores already equates and orders correctly as text. `m-document-codec` owns the
+comparison-text projection from those stored leaves, not their spelling.
+Membership is fixed by comparison behavior, not by document form:
+`decimal(p, s)`'s document form is a JSON string as well and it casts with the
+rest of the numeric family, because its integer part has no fixed width, so
+`10.00` sorts below `9.00` as text.
 
-| Neutral type | Document spelling (`m-document-codec`) | Why no cast |
+| Neutral type | Canonical leaf spelling (`m-wire`) | Why no cast |
 |---|---|---|
 | `string` | JSON string | the extraction already **is** the text the predicate compares |
 | `bytes` | lowercase hex, two digits per byte | equal texts are equal octet sequences, and text order is octet order |
@@ -538,13 +538,19 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
   `timestamp` type without an additional adapter or degraded optional profile.
 - **Typed bind normalization.** Above-seam runtime code supplies the dialect with
   the target `m-core` neutral type when binding a managed value. The dialect MUST
-  return the value shape expected by its concrete adapter without changing the
-  emitted SQL. Postgres renders managed scalars to canonical `m-core` wire values
-  because the driver can coerce those directly; MariaDB keeps `timestamp` values
-  as typed instants (and the neutral `infinity` sentinel) so its adapter can bind
-  `datetime(6)` and the max-sentinel without guessing whether an arbitrary string
-  is text or time. Non-timestamp values render to canonical `m-core` wire values
-  unless a future dialect documents a different typed carrier.
+  preserve that declared Neutral Type's managed carrier in the lowered bind
+  without changing the emitted SQL, reinterpreting the value, converting it to
+  Wire form, or wrapping it in a driver carrier. Postgres therefore retains every
+  managed scalar unchanged. MariaDB likewise retains `timestamp` values as typed
+  instants so its adapter can later bind `datetime(6)` without guessing whether
+  an arbitrary string is text or time; every other managed scalar is unchanged
+  too. The temporal `infinity` sentinel is not a `Timestamp` value: it remains an
+  unannotated framework bind outside every typed span, with its canonical
+  observation supplied by a sparse override before the adapter maps it to native
+  Postgres infinity or MariaDB's max sentinel. Concrete driver adaptation occurs
+  below `LoweredStatement` and cannot alter a managed value retained for
+  metadata-driven canonical Wire projection. A future dialect obeys the same
+  boundary.
 - **Document-read parsing.** The adapter supplies one SQL boolean presence cell
   and its adjacent raw structured-document cell together. The dialect parses
   them as exactly one `m-core` `DocumentRead`: false produces `SqlNull`; true

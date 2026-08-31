@@ -180,12 +180,13 @@ managed types and none re-parses driver text.
 
 The compatibility harness (`m-case-format`) grades in a **different** domain and
 must not be conflated with the runtime path. It takes the adapter's **managed** rows
-and **serializes them to the canonical wire form** (`m-core`) for its result
-envelope, then grades in **wire space** (decimals compared in decimal space,
-instants as canonical UTC strings, and so on) so grading is cross-language-consistent
-and independent of any one language's managed representation. **The wire rendering
-is a grader concern, never an adapter concern:** a concrete adapter emits managed
-types only and contains **no** wire or grading logic.
+and projects them through explicit Metadata to canonical Wire values
+(`m-conformance-adapter`, `m-wire`) for its result envelope, then grades by exact
+Wire structural equality except where the case authors an explicit tolerance
+(`m-case-format`). Grading is therefore cross-language-consistent and independent
+of any one language's managed representation. **The Wire rendering is a
+conformance concern, never an adapter concern:** a concrete adapter emits managed
+types only and contains **no** Wire or grading logic.
 
 `DocumentRead` is likewise a managed transport value, but never a developer or
 grader result cell. The compiled row transform consumes it to preserve or
