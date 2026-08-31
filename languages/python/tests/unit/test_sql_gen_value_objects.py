@@ -21,6 +21,7 @@ from _corpus_model_support import formed, model, target
 from _support.sql import compile_read
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
+from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen import SqlGenError
 
 CUSTOMER = model("customer")
@@ -248,21 +249,21 @@ def test_nested_string_predicates_lower_in_both_to_many_scopes() -> None:
 
 
 def test_malformed_value_object_paths() -> None:
-    with pytest.raises(SqlGenError, match=r"needs Class\.valueObject\.attribute"):
+    with pytest.raises(ModelRejectedError):
         compile_read(
             oa.NestedComparison(op="nestedEq", path="Customer.address", value="x"),
             CUSTOMER,
             POSTGRES,
             target(CUSTOMER, "Customer"),
         )
-    with pytest.raises(SqlGenError, match="not a declared value object"):
+    with pytest.raises(ModelRejectedError):
         compile_read(
             oa.NestedComparison(op="nestedEq", path="Customer.mystery.city", value="x"),
             CUSTOMER,
             POSTGRES,
             target(CUSTOMER, "Customer"),
         )
-    with pytest.raises(SqlGenError, match="undeclared"):
+    with pytest.raises(ModelRejectedError):
         compile_read(
             oa.NestedComparison(op="nestedEq", path="Customer.address.mystery", value="x"),
             CUSTOMER,
@@ -272,7 +273,7 @@ def test_malformed_value_object_paths() -> None:
 
 
 def test_nested_path_continuing_past_a_scalar_is_refused() -> None:
-    with pytest.raises(SqlGenError, match="continues past scalar"):
+    with pytest.raises(ModelRejectedError):
         compile_read(
             oa.NestedComparison(op="nestedEq", path="Customer.address.city.extra", value="x"),
             CUSTOMER,
@@ -282,7 +283,7 @@ def test_nested_path_continuing_past_a_scalar_is_refused() -> None:
 
 
 def test_nested_path_ending_on_a_value_object_is_refused() -> None:
-    with pytest.raises(SqlGenError, match="does not reach a scalar leaf"):
+    with pytest.raises(ModelRejectedError):
         compile_read(
             oa.NestedComparison(op="nestedEq", path="Customer.address.geo", value="x"),
             CUSTOMER,
@@ -528,7 +529,7 @@ def test_entity_vocabulary_inside_an_element_where_is_refused_as_one_grammar(
     # node therefore refuses with `elementPredicate`'s single message —
     # `m-predicate`'s `elementPredicate` is one named production, so what an
     # element `where` gets wrong is always the same thing.
-    with pytest.raises(SqlGenError, match=r"is not a legal nestedExists/nestedNotExists element"):
+    with pytest.raises(ValueError, match=r"is not a legal nestedExists/nestedNotExists element"):
         compile_read(
             oa.NestedExists(path="Customer.address.phones", where=node),
             CUSTOMER,
@@ -540,7 +541,7 @@ def test_entity_vocabulary_inside_an_element_where_is_refused_as_one_grammar(
 def test_element_where_refusal_names_the_offending_node_not_its_parent() -> None:
     # Reached through the shared combinators: the refusal reports the INNER node,
     # which is what makes the boundary readable when a `where` is a compound.
-    with pytest.raises(SqlGenError, match=r"^Comparison\(op='eq', attr='Customer\.name'"):
+    with pytest.raises(ValueError, match=r"^Comparison\(op='eq', attr='Customer\.name'"):
         compile_read(
             oa.NestedExists(
                 path="Customer.address.phones",
@@ -638,7 +639,7 @@ def test_nested_exists_over_a_one_multiplicity_value_object_has_no_lowering_yet(
 def test_flat_any_element_ending_on_the_array_itself_is_refused() -> None:
     # `Customer.address.phones` names the array itself, not a field within an
     # element — a flat comparator needs a leaf inside the element.
-    with pytest.raises(SqlGenError, match="ends on the `many` array itself"):
+    with pytest.raises(ModelRejectedError):
         compile_read(
             oa.NestedComparison(op="nestedEq", path="Customer.address.phones", value="x"),
             CUSTOMER,
@@ -652,14 +653,14 @@ def test_nested_exists_where_element_relative_unknown_member_is_refused() -> Non
         path="Customer.address.phones",
         where=oa.NestedComparison(op="nestedEq", path="mystery", value="x"),
     )
-    with pytest.raises(SqlGenError, match="undeclared"):
+    with pytest.raises(ModelRejectedError):
         compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
 
 
 def test_nested_exists_path_naming_a_scalar_segment_is_refused() -> None:
     # `city` is a scalar leaf, not a nested value object — a nestedExists path
     # must stay value-object-terminated at every segment.
-    with pytest.raises(SqlGenError, match="does not name a nested value object"):
+    with pytest.raises(ModelRejectedError):
         compile_read(
             oa.NestedExists(path="Customer.address.city"),
             CUSTOMER,

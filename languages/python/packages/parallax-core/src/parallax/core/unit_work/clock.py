@@ -7,23 +7,20 @@ system UTC time; a :class:`FixedClock` pins a chosen instant for deterministic
 conformance runs and unit tests.
 
 The clock yields a normalized ``timestamp`` (aware UTC, microsecond) via
-:meth:`Clock.now`; :func:`instant_literal` renders it to the canonical neutral
-instant string the Planning Request carries as context (the write-instruction
-``instant`` wire form, matching the ISO instants the corpus authors and the read
-path binds). :class:`TransactionInstant` is the attempt-owned lazy holder of that
-string — the value the Planning Request carries, so that whether the clock is
-read at all follows from the work that survives planning. ``m-unit-work`` depends
-only on ``m-predicate`` / ``m-db-port`` / ``m-temporal-read`` and, transitively,
-``m-core`` — from which the normalization rule comes.
+:meth:`Clock.now`. :class:`TransactionInstant` is the attempt-owned lazy holder
+of that managed value, so whether the clock is read at all follows from the work
+that survives planning. :func:`instant_literal` remains the canonical Wire
+adapter for caller-facing instruction fields.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
-from parallax.core.base import normalize_instant
+from parallax.core.base import TIMESTAMP, normalize_instant
+from parallax.core.wire import encode_wire
 
 __all__ = ["Clock", "FixedClock", "SystemClock", "TransactionInstant", "instant_literal"]
 
@@ -64,14 +61,8 @@ class FixedClock:
 
 
 def instant_literal(value: _dt.datetime) -> str:
-    """Render a Transaction-Time instant to the canonical neutral instant string.
-
-    The Planning Request carries the Transaction-Time instant as context (never
-    as an instruction field, and never retained in the settled Write Plan); this
-    is its wire form — the same ISO-8601 UTC spelling the corpus authors
-    (`2024-06-01T00:00:00+00:00`) and the read path binds.
-    """
-    return normalize_instant(value).isoformat()
+    """Render a Transaction-Time instant as a canonical Wire timestamp."""
+    return cast("str", encode_wire(TIMESTAMP, normalize_instant(value)))
 
 
 @dataclass(slots=True)
@@ -85,7 +76,7 @@ class TransactionInstant:
     surviving writes need no Transaction-Time boundary all leave the clock
     untouched. Every timestamp-requiring write in one attempt — across a forced
     read-your-own-writes flush and the commit flush alike — shares the one
-    captured literal, because the attempt's unit of work owns one instance. A
+    captured managed instant, because the attempt's unit of work owns one instance. A
     retry is a new attempt with a new instance and captures afresh, but only if
     it independently reaches timestamp-requiring work.
 
@@ -95,10 +86,10 @@ class TransactionInstant:
     """
 
     clock: Clock
-    _captured: str | None = field(default=None, init=False, repr=False, compare=False)
+    _captured: _dt.datetime | None = field(default=None, init=False, repr=False, compare=False)
 
-    def value(self) -> str:
-        """This attempt's Transaction Instant literal, capturing it on first call."""
+    def value(self) -> _dt.datetime:
+        """This attempt's managed Transaction Instant, capturing it on first call."""
         if self._captured is None:
-            self._captured = instant_literal(self.clock.now())
+            self._captured = normalize_instant(self.clock.now())
         return self._captured

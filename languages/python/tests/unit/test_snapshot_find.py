@@ -54,6 +54,7 @@ from parallax.snapshot import (
     handle,
 )
 from parallax.snapshot.handle import _database, _read
+from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import (
     InvalidRootInput,
     RelationshipViewKey,
@@ -164,6 +165,16 @@ def _cataloged(model: Metamodel) -> CatalogedModel:
     return CatalogedModel(model)
 
 
+def _find(query: ObjectQueryNode, model: Metamodel, port: DbPort) -> handle.FindResult:
+    return handle.find(preflight(query, model=model, form="graph"), _cataloged(model), port)
+
+
+def _find_history(
+    query: ObjectQueryNode, model: Metamodel, port: DbPort
+) -> handle.HistoryFindResult:
+    return handle.find_history(preflight(query, model=model, form="graph"), _cataloged(model), port)
+
+
 class QueuePort:
     """A fake `m-db-port` returning one canned response per `execute()` call,
     in call order — enough to drive the executor's own per-level loop without
@@ -217,7 +228,7 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
             "includes": [{"segments": [{"rel": "Order.items"}]}],
         }
     )
-    result = handle.find(query, _cataloged(ORDERS), port)
+    result = _find(query, ORDERS, port)
     assert len(port.executed) == 2
     rows = _rows(result.graph)
     items = _refs(_view(rows, _root(result), "items"))
@@ -233,7 +244,7 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
         }
     )
-    result = handle.find(query, _cataloged(ORDERS), port)
+    result = _find(query, ORDERS, port)
     assert len(port.executed) == 1
     assert _rows(result.graph).roots == ()
     assert len(port.executed) == 1
@@ -272,7 +283,7 @@ def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement(
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
         }
     )
-    result = handle.find(query, _cataloged(ORDERS), port)
+    result = _find(query, ORDERS, port)
     assert len(port.executed) == 2
     assert _view(_rows(result.graph), _root(result), "items") == ()
 
@@ -301,7 +312,7 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
         }
     )
-    result = handle.find(query, _cataloged(ORDERS), port)
+    result = _find(query, ORDERS, port)
     assert len(port.executed) == 2  # the back-reference costs nothing
     rows = _rows(result.graph)
     (item,) = _refs(_view(rows, _root(result), "items"))
@@ -345,7 +356,7 @@ def test_find_carries_a_declared_null_placement_into_child_level_sql(
             "includes": [{"segments": [{"rel": f"Order.{relationship}"}]}],
         }
     )
-    handle.find(query, _cataloged(ORDERS), port)
+    _find(query, ORDERS, port)
     child_sql, _binds = port.executed[1]
     assert child_sql.endswith(f" order by {term}")
 
@@ -375,7 +386,7 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
             "includes": [{"segments": [{"rel": "Person.animals"}]}],
         }
     )
-    result = handle.find(query, _cataloged(ANIMAL), port)
+    result = _find(query, ANIMAL, port)
     rows = _rows(result.graph)
     (animal,) = _refs(_view(rows, _root(result), "animals"))
     assert rows.layouts[animal].concrete == EntityIdentity("parallax.compatibility", "Dog")
@@ -406,7 +417,7 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     query = deserialize_query(
         {"target": "Document", "predicate": {"all": {}}, "narrowTo": ["Invoice"]}
     )
-    result = handle.find(query, _cataloged(DOCUMENT), port)
+    result = _find(query, DOCUMENT, port)
     rows = _rows(result.graph)
     assert rows.layouts[_root(result)].concrete == EntityIdentity(
         "parallax.compatibility", "Invoice"
@@ -441,7 +452,7 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
-    result = handle.find_history(query, _cataloged(INVOICE), port)
+    result = _find_history(query, INVOICE, port)
     assert len(port.executed) == 1
     assert [g.pin.tx_time for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
@@ -488,7 +499,7 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
-    result = handle.find_history(query, _cataloged(INVOICE), port)
+    result = _find_history(query, INVOICE, port)
     assert len(result.graphs) == 1
     rows = _rows(result.graphs[0])
     assert [_value(rows, _valid_root(rows, index), "InvoiceLine", "id") for index in range(2)] == [
@@ -519,7 +530,7 @@ def test_find_history_classifies_an_invalid_milestone_before_partitioning() -> N
         }
     )
     with pytest.raises(SnapshotDecodingError) as refusal:
-        handle.find_history(query, _cataloged(INVOICE), port)
+        _find_history(query, INVOICE, port)
     assert refusal.value.member == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "InvoiceLine"), "txStart"
     )
@@ -550,7 +561,7 @@ def test_find_history_refuses_a_root_whose_own_key_never_decoded() -> None:
         }
     )
     with pytest.raises(SnapshotDecodingError) as refusal:
-        handle.find_history(query, _cataloged(INVOICE), port)
+        _find_history(query, INVOICE, port)
     assert refusal.value.code == "snapshot-decoding-failed"
 
 
@@ -590,7 +601,7 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
             "temporal": {"transaction-time": {"history": {}}, "valid-time": {"asOf": "latest"}},
         }
     )
-    result = handle.find_history(query, _cataloged(RATE), port)
+    result = _find_history(query, RATE, port)
     assert [g.pin.tx_time for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 2, 1, tzinfo=_UTC),
@@ -616,8 +627,8 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
             "includes": [{"segments": [{"rel": "Policy.coverages"}]}],
         }
     )
-    with pytest.raises(ValueError, match="no deep-fetch levels"):
-        handle.find_history(query, _cataloged(policy), port)
+    with pytest.raises(DeferredFeatureError, match="snapshot-history-includes"):
+        _find_history(query, policy, port)
 
 
 # --------------------------------------------------------------------------- #
@@ -1021,7 +1032,7 @@ def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> N
             "includes": [{"segments": [{"rel": "Animal.owner"}]}],
         }
     )
-    result = handle.find(query, _cataloged(ANIMAL), port)
+    result = _find(query, ANIMAL, port)
     assert len(port.executed) == 1
     assert _view(_rows(result.graph), _root(result), "owner") is None
 
@@ -1046,7 +1057,7 @@ def test_a_parent_the_child_level_returned_no_row_for_is_loaded_empty() -> None:
             "includes": [{"segments": [{"rel": "Order.items"}]}],
         }
     )
-    result = handle.find(query, _cataloged(ORDERS), port)
+    result = _find(query, ORDERS, port)
     rows = _rows(result.graph)
     assert len(port.executed) == 2
     assert [_view(rows, root, "items") for root in (0, 1)] == [(2,), ()]
@@ -1078,7 +1089,7 @@ def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
         }
     )
-    result = handle.find(query, _cataloged(ORDERS), port)
+    result = _find(query, ORDERS, port)
     rows = _rows(result.graph)
     item = next(
         projection
@@ -1102,8 +1113,9 @@ def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[Ch
     query = deserialize_query(document)
     entity = entity_by_name(model, cast("str", document["target"]))
     assert entity is not None
+    validated = preflight(query, model=model, form="graph")
     return _read._slot_table(  # pyright: ignore[reportPrivateUsage] - the seam under test
-        deep_fetch.plan(entity, query, model)
+        deep_fetch.plan(validated, model)
     )
 
 
@@ -1201,7 +1213,7 @@ def test_a_guarded_out_parent_holds_no_slot_for_the_level_it_was_excluded_from()
             "includes": [{"segments": [{"rel": "Animal.owner"}], "appliesTo": ["Dog"]}],
         }
     )
-    result = handle.find(query, _cataloged(ANIMAL), port)
+    result = _find(query, ANIMAL, port)
     rows = _rows(result.graph)
     dog, cat = (
         next(
@@ -1238,7 +1250,7 @@ def test_two_levels_filling_one_view_leave_the_last_fetch_plan_result_in_its_slo
             ],
         }
     )
-    result = handle.find(query, _cataloged(ANIMAL), port)
+    result = _find(query, ANIMAL, port)
     assert len(port.executed) == 3
     rows = _rows(result.graph)
     people = [
@@ -1281,7 +1293,7 @@ def test_every_milestone_graph_of_one_read_is_laid_out_by_the_one_schema() -> No
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
-    result = handle.find_history(query, _cataloged(INVOICE), port)
+    result = _find_history(query, INVOICE, port)
     schemas = {id(_rows(graph).schema) for graph in result.graphs}
     assert len(result.graphs) == 2
     assert len(schemas) == 1

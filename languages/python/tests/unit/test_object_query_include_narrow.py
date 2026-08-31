@@ -15,7 +15,7 @@ facts it erases; here a multi-hop include is exercised only as far as it needs.
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -29,6 +29,7 @@ from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
 from parallax.core import (
     LATEST,
     MANY_TO_ONE,
+    TIMESTAMP,
     TX_TIME,
     AbstractRoot,
     Attr,
@@ -54,8 +55,9 @@ from parallax.core.object_query import (
 )
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.predicate import All, Exists, ModelRejectedError, Narrow, NotExists, Or
+from parallax.core.wire import encode_wire
 from parallax.snapshot import DeferredFeatureError
-from parallax.snapshot.handle import preflight
+from parallax.snapshot.handle._preflight import preflight
 
 # The animal family's model composes its own polymorphic owner alongside it, so
 # it is the composition every case here is measured against at the gate below.
@@ -584,7 +586,10 @@ def test_as_of_range_with_includes_builds_in_either_order(query: ObjectQuery[Any
     node = canonical_query(query)
     assert node.temporal == {
         "transaction-time": AsOf("latest"),
-        "valid-time": AsOfRange(start=start.isoformat(), end=end.isoformat()),
+        "valid-time": AsOfRange(
+            start=cast("str", encode_wire(TIMESTAMP, start)),
+            end=cast("str", encode_wire(TIMESTAMP, end)),
+        ),
     }
     assert node.includes == _COVERAGES
 

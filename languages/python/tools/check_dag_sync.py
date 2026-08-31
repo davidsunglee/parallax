@@ -102,13 +102,13 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-conformance-adapter": "parallax.conformance.cli",
 }
 
-# The write-lowering child cluster (`_family`, `_write_types`, `_keyed_sql`,
-# `_write_lowering`, `_step_lowering`) is enforced as ONE group: the five
+# The write-execution child cluster (`_family`, `_keyed_sql`, `_write_lowering`)
+# is enforced as ONE group: the three
 # modules share this grant row rather than each declaring its own. Grouping
 # is deliberate — helpers move between the cluster's modules as the lowering
 # pipeline evolves, and a per-module row would turn every such internal move
 # into a spec edit. The group boundary is what carries the enforcement value:
-# none of the five may reach the read side (`m-snapshot-read`, `m-deep-fetch`,
+# none of the three may reach the read side (`m-snapshot-read`, `m-deep-fetch`,
 # `m-navigate`, `parallax.core.entity`).
 _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
     {
@@ -368,10 +368,8 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.core.execution_lifecycle.testing": frozenset({"parallax.core.execution_lifecycle"}),
     "parallax.snapshot.handle._errors": frozenset(),
     "parallax.snapshot.handle._family": _LOWERING_GROUP_DEPS,
-    "parallax.snapshot.handle._write_types": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._keyed_sql": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._write_lowering": _LOWERING_GROUP_DEPS,
-    "parallax.snapshot.handle._step_lowering": _LOWERING_GROUP_DEPS,
     "parallax.postgres": frozenset(
         {
             "parallax.core.base",
@@ -414,10 +412,8 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
     "parallax.snapshot.handle._errors": "parallax.snapshot.handle",
     "parallax.snapshot.handle._family": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._write_types": "parallax.snapshot.handle",
     "parallax.snapshot.handle._keyed_sql": "parallax.snapshot.handle",
     "parallax.snapshot.handle._write_lowering": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._step_lowering": "parallax.snapshot.handle",
 }
 
 # Child scopes a grant on the PARENT does not carry. A forbidden row is the

@@ -247,7 +247,7 @@ def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
         tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00")))
         tx.update(current.edit(balance=Decimal("20.00")))
         tx.delete(deleted)
-        return list(tx.find(Account.where(Account.balance < 50.00)).results())
+        return list(tx.find(Account.where(Account.balance < Decimal("50.00"))).results())
 
     return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find
 
@@ -375,8 +375,8 @@ def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
     # correctness at write time, the default preference resolves Wallet to the
     # Locking fallback.
     def fn(tx: Transaction) -> list[Entity]:
-        tx.delete_where(Wallet.where(Wallet.balance < 200.00))
-        return list(tx.find(Wallet.where(Wallet.balance < 200.00)).results())
+        tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
+        return list(tx.find(Wallet.where(Wallet.balance < Decimal("200.00"))).results())
 
     return db.transact(fn)
 

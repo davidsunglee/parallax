@@ -140,7 +140,7 @@ the private `sql_gen._compile.compile_read` accepts only that product and return
 Typed and Wire write adapters call separate `prepare_typed_write` and
 `prepare_wire_write` producers and converge on `PreparedWrite`. Buffering and
 the Write Planner retain managed values and produce closed `PlannedWrite` steps;
-the private `sql_gen._write.compile_write_step` accepts only one such step and
+the private `sql_gen._write.compile_write` accepts only one such step and
 returns `LoweredStatement`. Continuation, temporal, navigation, and child-key
 generation request producer-owned Predicate/Object Query derivation operations
 rather than constructing phase products or re-decoding values themselves.
@@ -1663,7 +1663,7 @@ Features; neither path reaches SQL, a Database Port, or connection
 acquisition.
 
 One private Snapshot seam centralizes the complete read preflight:
-`preflight(query: ObjectQueryNode, *, model, form) -> None`. It resolves the
+`preflight(query: ObjectQueryNode, *, model, form) -> ValidatedObjectQuery`. It resolves the
 query's target in the connected model, validates the canonical Object Query from
 that resolved root, classifies it against `_DEFERRED_EXECUTION_FEATURES`, and
 last refuses a row-form request that names Include Paths — in that order, which
@@ -4782,7 +4782,7 @@ scopes ordinarily do.
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
-| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
+| Snapshot handle write execution (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._keyed_sql`, `._write_lowering` | those three scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
@@ -4926,20 +4926,6 @@ parallax.snapshot.handle._family --> parallax.core.unit_work
 parallax.snapshot.handle._family --> parallax.core.opt_lock
 parallax.snapshot.handle._family --> parallax.core.txtime_write
 parallax.snapshot.handle._family --> parallax.core.bitemp_write
-parallax.snapshot.handle._write_types --> parallax.core.base
-parallax.snapshot.handle._write_types --> parallax.core.wire
-parallax.snapshot.handle._write_types --> parallax.core.metamodel
-parallax.snapshot.handle._write_types --> parallax.core.inheritance
-parallax.snapshot.handle._write_types --> parallax.core.storage_layout
-parallax.snapshot.handle._write_types --> parallax.core.document_codec
-parallax.snapshot.handle._write_types --> parallax.core.temporal_read
-parallax.snapshot.handle._write_types --> parallax.core.dialect
-parallax.snapshot.handle._write_types --> parallax.core.db_port
-parallax.snapshot.handle._write_types --> parallax.core.sql_gen
-parallax.snapshot.handle._write_types --> parallax.core.unit_work
-parallax.snapshot.handle._write_types --> parallax.core.opt_lock
-parallax.snapshot.handle._write_types --> parallax.core.txtime_write
-parallax.snapshot.handle._write_types --> parallax.core.bitemp_write
 parallax.snapshot.handle._keyed_sql --> parallax.core.base
 parallax.snapshot.handle._keyed_sql --> parallax.core.wire
 parallax.snapshot.handle._keyed_sql --> parallax.core.metamodel
@@ -4968,20 +4954,6 @@ parallax.snapshot.handle._write_lowering --> parallax.core.unit_work
 parallax.snapshot.handle._write_lowering --> parallax.core.opt_lock
 parallax.snapshot.handle._write_lowering --> parallax.core.txtime_write
 parallax.snapshot.handle._write_lowering --> parallax.core.bitemp_write
-parallax.snapshot.handle._step_lowering --> parallax.core.base
-parallax.snapshot.handle._step_lowering --> parallax.core.wire
-parallax.snapshot.handle._step_lowering --> parallax.core.metamodel
-parallax.snapshot.handle._step_lowering --> parallax.core.inheritance
-parallax.snapshot.handle._step_lowering --> parallax.core.storage_layout
-parallax.snapshot.handle._step_lowering --> parallax.core.document_codec
-parallax.snapshot.handle._step_lowering --> parallax.core.temporal_read
-parallax.snapshot.handle._step_lowering --> parallax.core.dialect
-parallax.snapshot.handle._step_lowering --> parallax.core.db_port
-parallax.snapshot.handle._step_lowering --> parallax.core.sql_gen
-parallax.snapshot.handle._step_lowering --> parallax.core.unit_work
-parallax.snapshot.handle._step_lowering --> parallax.core.opt_lock
-parallax.snapshot.handle._step_lowering --> parallax.core.txtime_write
-parallax.snapshot.handle._step_lowering --> parallax.core.bitemp_write
 parallax.postgres --> parallax.core.base
 parallax.postgres --> parallax.core.wire
 parallax.postgres --> parallax.core.db_port
@@ -5027,8 +4999,9 @@ parallax.postgres --> parallax.core.dialect
   a new topology decision, not an incidental use of an existing scope grant.
 
   ```carrier-neutral-private-reaches
-  parallax.core.sql_gen._compile | compile_read, CompiledRead, AttributeReadContract, MaterializedReadRow | parallax.snapshot.handle._read; parallax.snapshot.handle._predicate_writes; parallax.conformance.engine; parallax.conformance._actual_wire
-  parallax.core.sql_gen._write | compile_write_step | parallax.snapshot.handle._write_lowering; parallax.conformance.engine
+  parallax.core.sql_gen._compile | CompiledRead, MaterializedReadRow, compile_read | parallax.snapshot.handle._read
+  parallax.core.sql_gen._compile | CompiledRead, compile_read | parallax.snapshot.handle._predicate_writes; parallax.conformance.engine
+  parallax.core.sql_gen._write | compile_write | parallax.snapshot.handle._write_lowering; parallax.conformance.engine
   ```
 
   Snapshot's imports are first-party private implementation reaches;
@@ -5064,6 +5037,13 @@ parallax.postgres --> parallax.core.dialect
   crosses `populate` as the merge laid it out, against the same model-owned
   member layout the writer reads it against, so the fixture hands a row over the
   one way production hands one over and no rule is restated in a second place.
+  The adapter engine and second-source fixture also import the private Snapshot
+  `preflight` operation so compile-only and alternate-source reads consume the
+  same validated execution token as production. The engine's private `m-sql`
+  compiler reaches are enumerated separately in the carrier-neutral block above,
+  and the case loader's `wire._json.authored_number` reach is the production YAML
+  token-preservation seam. Each remains keyed by its exact importing module and
+  imported names in the source inventory.
   Widening
   `parallax.core.entity`'s shipped surface to serve a development-only consumer
   of a documented first-party seam would be the wrong repair.

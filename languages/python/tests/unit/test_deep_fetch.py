@@ -32,8 +32,17 @@ from parallax.core.object_query import (
     TemporalSelection,
     canonical_includes,
     object_query,
+    validate_object_query,
 )
-from parallax.core.predicate import All, And, Comparison, Membership, Narrow, PredicateNode
+from parallax.core.predicate import (
+    All,
+    And,
+    Comparison,
+    Membership,
+    ModelRejectedError,
+    Narrow,
+    PredicateNode,
+)
 from parallax.descriptor._serde import deserialize
 
 ORDERS = accepted_model("orders")
@@ -76,7 +85,7 @@ def _plan(
         includes=paths,
         **clauses,  # pyright: ignore[reportArgumentType] - the caller names real clauses
     )
-    return deep_fetch.plan(entity, query, model)
+    return deep_fetch.plan(validate_object_query(entity, query, model), model)
 
 
 # --------------------------------------------------------------------------- #
@@ -195,8 +204,9 @@ def test_a_narrow_naming_an_undeclared_subtype_is_rejected() -> None:
     # A narrow denotes ONE position, so a member the model does not declare (or
     # one belonging to another family) resolves to no position at all rather
     # than silently contributing nothing to the union.
-    with pytest.raises(deep_fetch.DeepFetchError, match="does not declare"):
+    with pytest.raises(ModelRejectedError) as excinfo:
         _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Ghost",))),))
+    assert excinfo.value.rule == "narrow-empty-effective-set"
 
 
 # --------------------------------------------------------------------------- #
@@ -394,8 +404,9 @@ def test_a_root_guard_naming_an_undeclared_subtype_is_rejected() -> None:
     # A guard denotes ONE position, exactly as a segment narrow does, so a member
     # the model does not declare resolves to no position rather than silently
     # contributing nothing to the union.
-    with pytest.raises(deep_fetch.DeepFetchError, match="does not declare"):
+    with pytest.raises(ModelRejectedError) as excinfo:
         _plan(ANIMAL, "Animal", (_path(_seg("Animal.owner"), narrow=_guard("Ghost")),))
+    assert excinfo.value.rule == "narrow-empty-effective-set"
 
 
 def test_a_root_guard_qualifies_only_the_first_level_of_its_path() -> None:
@@ -686,16 +697,17 @@ def test_plan_resolves_result_narrowing_and_leaves_a_predicate_narrow_alone() ->
         ORDERS,
         "Order",
         (),
-        predicate=Narrow(to=("OrderItem",), operand=All()),
+        predicate=Narrow(to=("Order",), operand=All()),
         narrow_to=("Order",),
     )
     assert plan.root.narrow_to == (entity_of(ORDERS, "Order").identity,)
-    assert plan.root.predicate == Narrow(to=("OrderItem",), operand=All())
+    assert plan.root.predicate == Narrow(to=("Order",), operand=All())
 
 
 def test_plan_rejects_an_unknown_result_narrowing_target() -> None:
-    with pytest.raises(deep_fetch.DeepFetchError, match="names no single Entity"):
+    with pytest.raises(ModelRejectedError) as excinfo:
         _plan(ORDERS, "Order", (), narrow_to=("Ghost",))
+    assert excinfo.value.rule == "narrow-empty-effective-set"
 
 
 # --------------------------------------------------------------------------- #
@@ -719,7 +731,7 @@ def test_concrete_target_root_query_injects_explicit_latest_on_every_axis() -> N
 
 def test_concrete_target_root_query_injects_a_pinned_axis() -> None:
     pinned: dict[TemporalDimension, TemporalSelection] = {
-        "transaction-time": AsOf("2024-01-15T00:00:00+00:00"),
+        "transaction-time": AsOf("2024-01-15T00:00:00.000000Z"),
         "valid-time": AsOf("latest"),
     }
     plan = _plan(RATE, "DepositRate", (), pinned)
@@ -731,12 +743,12 @@ def test_concrete_target_root_query_injects_a_pinned_axis() -> None:
             Comparison(
                 op="lessThanEquals",
                 attr="parallax.compatibility.Rate.txStart",
-                value="2024-01-15T00:00:00+00:00",
+                value="2024-01-15T00:00:00.000000Z",
             ),
             Comparison(
                 op="greaterThan",
                 attr="parallax.compatibility.Rate.txEnd",
-                value="2024-01-15T00:00:00+00:00",
+                value="2024-01-15T00:00:00.000000Z",
             ),
         )
     )

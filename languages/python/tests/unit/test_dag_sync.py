@@ -261,16 +261,14 @@ def test_parse_support_scope_table_reads_the_prose_rows() -> None:
 
 
 def test_parse_support_scope_table_expands_the_child_group_row() -> None:
-    # The write-lowering row names five scopes in the *owner* cell, four of
-    # them abbreviated (`._write_types`), because its enforcement-scope cell
-    # says "those five scopes". All five must resolve, sharing one grant row.
+    # The write-execution row names three scopes in the *owner* cell, two of
+    # them abbreviated, because its enforcement-scope cell says "those three
+    # scopes". All three must resolve, sharing one grant row.
     prose = dag.parse_support_scope_table(dag.PYTHON_MD.read_text())
     group = [
         "parallax.snapshot.handle._family",
-        "parallax.snapshot.handle._write_types",
         "parallax.snapshot.handle._keyed_sql",
         "parallax.snapshot.handle._write_lowering",
-        "parallax.snapshot.handle._step_lowering",
     ]
     assert set(group) <= set(prose)
     assert len({prose[scope] for scope in group}) == 1
@@ -594,10 +592,8 @@ def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
             "parallax.snapshot.handle._materializer",
             "parallax.snapshot.handle._preflight",
             "parallax.snapshot.handle._family",
-            "parallax.snapshot.handle._write_types",
             "parallax.snapshot.handle._keyed_sql",
             "parallax.snapshot.handle._write_lowering",
-            "parallax.snapshot.handle._step_lowering",
         }
     )
     # A scope's own name is never among its siblings, an only child has none,
@@ -610,12 +606,12 @@ def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
 def test_only_a_zero_grant_row_takes_its_siblings_as_targets() -> None:
     # A scope with grants has a closure to complement; widening every child row
     # to name its siblings would forbid intra-package edges §7 permits — the
-    # write-lowering cluster's five modules import one another.
+    # write-execution cluster's three modules import one another.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     assert adjacency["parallax.snapshot.handle._family"]
     assert (
-        "parallax.snapshot.handle._write_types" not in forbidden["parallax.snapshot.handle._family"]
+        "parallax.snapshot.handle._keyed_sql" not in forbidden["parallax.snapshot.handle._family"]
     )
 
 
@@ -660,10 +656,8 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
             "parallax.snapshot.handle._preflight",
             "parallax.snapshot.handle._errors",
             "parallax.snapshot.handle._family",
-            "parallax.snapshot.handle._write_types",
             "parallax.snapshot.handle._keyed_sql",
             "parallax.snapshot.handle._write_lowering",
-            "parallax.snapshot.handle._step_lowering",
         }
     )
     assert dag.scope_descendants("parallax.core.base") == frozenset()
@@ -760,7 +754,7 @@ def test_a_zero_grant_row_also_forbids_every_sibling_child_scope() -> None:
     scope = "parallax.snapshot.handle._errors"
     blocked = set(forbidden[scope])
     assert dag.scope_siblings(scope) <= blocked
-    assert "parallax.snapshot.handle._write_types" in blocked
+    assert "parallax.snapshot.handle._keyed_sql" in blocked
     # The parent itself stays out, because a package-scoped row cannot forbid
     # the package it sits inside.
     assert "parallax.snapshot.handle" not in blocked
@@ -1004,14 +998,13 @@ def test_a_sibling_import_in_the_refusal_leaf_fails_lint_imports() -> None:
     lint_imports = shutil.which("lint-imports")
     assert lint_imports is not None, "lint-imports must be installed in the dev env"
 
-    # `_write_types` imports nothing first-party at all, so there is no chain out
-    # of the package to report: only the sibling entry in the zero-grant row can
-    # catch this. Both consumer scopes may import `_write_types` freely, so
-    # neither consumer's row reports it either.
+    # The zero-grant row names the preflight child directly, so an import inside
+    # the shared parent package is rejected rather than escaping package-scoped
+    # enforcement.
     target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_errors.py"
     original = target.read_text()
     target.write_text(
-        f"{original}import parallax.snapshot.handle._write_types  # deliberate sibling violation\n"
+        f"{original}import parallax.snapshot.handle._preflight  # deliberate sibling violation\n"
     )
     try:
         result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
@@ -1024,7 +1017,7 @@ def test_a_sibling_import_in_the_refusal_leaf_fails_lint_imports() -> None:
         in result.stdout
     )
     assert (
-        "parallax.snapshot.handle._errors -> parallax.snapshot.handle._write_types" in result.stdout
+        "parallax.snapshot.handle._errors -> parallax.snapshot.handle._preflight" in result.stdout
     )
 
 

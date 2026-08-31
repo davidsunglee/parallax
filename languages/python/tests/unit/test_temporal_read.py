@@ -23,7 +23,8 @@ from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, TemporalDimension
 from parallax.core.object_query import LATEST
-from parallax.core.sql_gen import compile_read
+from parallax.core.predicate import ModelRejectedError
+from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import (
     TemporalReadError,
     inject_as_of,
@@ -46,9 +47,13 @@ POSITION = target(_ACCEPTED["Position"], "Position")
 LEDGER = target(_ACCEPTED["Ledger"], "Ledger")
 ORDERS = target(_ACCEPTED["Order"], "Order")
 
-_D = "2024-04-01T00:00:00+00:00"
-_B = "2024-03-01T00:00:00+00:00"
-_P = "2024-02-01T00:00:00+00:00"
+_D = "2024-04-01T00:00:00.000000Z"
+_B = "2024-03-01T00:00:00.000000Z"
+_P = "2024-02-01T00:00:00.000000Z"
+
+
+def _instant(value: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(value)
 
 
 def _query(
@@ -72,7 +77,8 @@ def _where(
 ) -> tuple[str, tuple[object, ...]]:
     """Inject the as-of predicate, compile through m-sql, return the WHERE + binds."""
     model = _ACCEPTED[entity.identity.name]
-    root = deep_fetch.plan(entity, _query(entity, temporal, predicate), model).root
+    query = oq.validate_object_query(entity, _query(entity, temporal, predicate), model)
+    root = deep_fetch.plan(query, model).root
     statement = compile_read(root, model, POSTGRES).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
@@ -89,11 +95,13 @@ def test_explicit_latest_injects_the_current_row_predicate() -> None:
 def test_result_narrowing_survives_temporal_selection_lowering() -> None:
     # Result narrowing is a sibling clause of Temporal Selection, so injection
     # can neither reorder nor demote it into a conjunctive predicate term.
-    plan = deep_fetch.plan(
+    model = _ACCEPTED["Balance"]
+    query = oq.validate_object_query(
         BALANCE,
         _query(BALANCE, {"transaction-time": oq.AsOf("latest")}, narrow_to=("Balance",)),
-        _ACCEPTED["Balance"],
+        model,
     )
+    plan = deep_fetch.plan(query, model)
     assert plan.root.narrow_to == (BALANCE.identity,)
     assert plan.root.predicate == oa.Comparison(
         op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
@@ -103,12 +111,14 @@ def test_result_narrowing_survives_temporal_selection_lowering() -> None:
 def test_past_instant_is_half_open_containment() -> None:
     where, binds = _where(BALANCE, {"transaction-time": oq.AsOf(_D)})
     assert where == "t0.in_z <= ? and t0.out_z > ?"
-    assert binds == (_D, _D)
+    assert binds == (_instant(_D), _instant(_D))
 
 
 def test_temporal_upper_bound_is_exclusive() -> None:
     # AsOfAxis intervals are uniformly half-open: start inclusive, end exclusive.
-    where, _ = _where(LEDGER, {"transaction-time": oq.AsOf("2024-06-01T00:00:00+00:00")})
+    where, _ = _where(
+        LEDGER, {"transaction-time": oq.AsOf("2024-06-01T00:00:00.000000Z")}
+    )
     assert where == "t0.in_z <= ? and t0.out_z > ?"
 
 
@@ -117,12 +127,16 @@ def test_as_of_range_overlap_predicate_binds_window_end_first() -> None:
         BALANCE,
         {
             "transaction-time": oq.AsOfRange(
-                start="2024-06-15T00:00:00+00:00", end="2024-07-01T00:00:00+00:00"
+                start="2024-06-15T00:00:00.000000Z",
+                end="2024-07-01T00:00:00.000000Z",
             )
         },
     )
     assert where == "t0.in_z < ? and t0.out_z > ?"
-    assert binds == ("2024-07-01T00:00:00+00:00", "2024-06-15T00:00:00+00:00")
+    assert binds == (
+        dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
+        dt.datetime(2024, 6, 15, tzinfo=dt.UTC),
+    )
 
 
 def test_history_injects_no_term() -> None:
@@ -168,18 +182,19 @@ def test_bitemporal_both_latest() -> None:
 def test_bitemporal_valid_time_past_tx_time_latest() -> None:
     where, binds = _where(POSITION, _bitemporal(_B, "latest"))
     assert where == "t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?"
-    assert binds == (_B, _B, "infinity")
+    assert binds == (_instant(_B), _instant(_B), "infinity")
 
 
 def test_bitemporal_both_past_reads_valid_time_first() -> None:
     where, binds = _where(POSITION, _bitemporal(_B, _P))
     assert where == "t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?"
-    assert binds == (_B, _B, _P, _P)
+    assert binds == (_instant(_B), _instant(_B), _instant(_P), _instant(_P))
 
 
-def test_injection_rejects_a_missing_declared_selection_as_an_internal_error() -> None:
-    with pytest.raises(TemporalReadError, match="received no selection"):
+def test_preflight_rejects_a_missing_declared_selection_before_injection() -> None:
+    with pytest.raises(ModelRejectedError) as excinfo:
         _where(POSITION, _bitemporal(_B, None))
+    assert excinfo.value.rule == "temporal-read-dimension-selection-cardinality"
 
 
 def test_bitemporal_history_scans_both_axes() -> None:
@@ -212,7 +227,8 @@ def test_result_directives_survive_injection() -> None:
         order_by=(oq.OrderKey(attr="Balance.id"),),
         limit=2,
     )
-    root = deep_fetch.plan(BALANCE, query, _ACCEPTED["Balance"]).root
+    model = _ACCEPTED["Balance"]
+    root = deep_fetch.plan(oq.validate_object_query(BALANCE, query, model), model).root
     assert root.limit == 2
     assert root.order_by == (oq.OrderKey(attr="Balance.id"),)
     assert root.predicate == oa.Comparison(

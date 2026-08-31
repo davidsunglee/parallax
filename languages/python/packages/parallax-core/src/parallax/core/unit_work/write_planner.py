@@ -44,13 +44,14 @@ an assignment an earlier verb buffered at the same scope.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, cast
 
 from parallax.core import inheritance
-from parallax.core.base import INFINITY_LITERAL
+from parallax.core.base import INFINITY_LITERAL, TemporalBound
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -74,9 +75,9 @@ from parallax.core.unit_work.columns import (
 )
 from parallax.core.unit_work.instructions import (
     INSERT_MUTATIONS,
-    KeyedWrite,
-    PredicateWrite,
-    WriteInstruction,
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    PreparedWrite,
     non_temporal_milestone_refusal,
 )
 from parallax.core.unit_work.materialized import (
@@ -162,7 +163,7 @@ __all__ = [
 
 type BufferedWrites = Sequence[BufferItem]
 
-type _CoalescedItem = WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup
+type _CoalescedItem = PreparedWrite | ObservedKeyedWrite | MaterializedWriteGroup
 """A buffer item once stage 1 has read every claim it carries.
 
 An object-claimed write is absent by construction rather than by convention:
@@ -387,7 +388,7 @@ class WritePlanner:
                 continue
             instruction = buffered_instruction(item)
             key = resolve_object_key(instruction, resolved)
-            if not isinstance(instruction, KeyedWrite) or key is None:
+            if not isinstance(instruction, PreparedKeyedWrite) or key is None:
                 result.append(item)
                 continue
             verb = instruction.mutation
@@ -400,7 +401,7 @@ class WritePlanner:
                 # Neither carrier wraps an insert, so a pending-insert slot is
                 # always a bare instruction — and folding an update into it
                 # yields an insert, which is why the merged item stays bare.
-                assert isinstance(base, KeyedWrite)
+                assert isinstance(base, PreparedKeyedWrite)
                 result[index] = _merge_update_into_insert(base, instruction, resolved)
             elif verb in _DELETE_VERBS and key in pending_insert:
                 result[pending_insert.pop(key)] = None
@@ -426,10 +427,10 @@ class WritePlanner:
         self, buffer: Sequence[_CoalescedItem], resolved: Targets
     ) -> list[_CoalescedItem]:
         result: list[_CoalescedItem] = []
-        run: list[KeyedWrite] = []
+        run: list[PreparedKeyedWrite] = []
         run_group: object = None
 
-        def group_key(item: KeyedWrite) -> object:
+        def group_key(item: PreparedKeyedWrite) -> object:
             entity = resolved.entity(item.entity)
             if entity is None:
                 return None
@@ -462,7 +463,7 @@ class WritePlanner:
         # construction, so the run this skips is the only way its row could
         # have joined a multi-row statement.
         for item in _decomposed_updates(buffer, resolved):
-            if isinstance(item, KeyedWrite) and len(item.rows) == 1:
+            if isinstance(item, PreparedKeyedWrite) and len(item.rows) == 1:
                 item_group = group_key(item)
                 if (
                     run
@@ -509,7 +510,7 @@ class WritePlanner:
         ordered: list[_CoalescedItem] = []
         region: list[_CoalescedItem] = []
         for item in items:
-            if isinstance(item, PredicateWrite):
+            if isinstance(item, PreparedPredicateWrite):
                 ordered.extend(order_region(region))
                 ordered.append(item)
                 region = []
@@ -531,13 +532,13 @@ class WritePlanner:
     # ----------------------------------------------------------------- #
     def _settle(
         self,
-        instruction: WriteInstruction,
+        instruction: PreparedWrite,
         resolved: Targets,
         observation: WriteObservation | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
     ) -> tuple[PlannedStep, ...]:
-        if isinstance(instruction, PredicateWrite):
+        if isinstance(instruction, PreparedPredicateWrite):
             return self._settle_predicate(instruction, resolved)
         entity = _require_entity(resolved, instruction.entity)
         declaring_entity = resolved.declaring(entity)
@@ -589,7 +590,7 @@ class WritePlanner:
         )
 
     def _settle_predicate(
-        self, instruction: PredicateWrite, resolved: Targets
+        self, instruction: PreparedPredicateWrite, resolved: Targets
     ) -> tuple[PlannedStep, ...]:
         """One readless predicate-selected write as its single step.
 
@@ -621,7 +622,7 @@ class WritePlanner:
                 "writes before planning (m-batch-write 'Predicate-selected readless forms')"
             )
         reject_readless_document_many(entity, instruction)
-        target = PredicateTarget(predicate=instruction.target.predicate)
+        target = PredicateTarget(predicate=instruction.validated_predicate)
         if instruction.mutation == "delete":
             return (
                 PlannedDelete(
@@ -634,7 +635,7 @@ class WritePlanner:
         members = resolved.applicable_members(entity)
         assignment_row = {
             _assignment_member(assignment.attr): assignment.value
-            for assignment in instruction.assignments
+            for assignment in instruction.managed_assignments
         }
         return (
             PlannedUpdate(
@@ -650,7 +651,7 @@ class WritePlanner:
         self,
         entity: EntityMetadata,
         members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
-        instruction: KeyedWrite,
+        instruction: PreparedKeyedWrite,
         version_attr: AttributeIdentity | None,
     ) -> PlannedInsert:
         version = (
@@ -666,7 +667,7 @@ class WritePlanner:
         self,
         entity: EntityMetadata,
         declaring_entity: EntityMetadata,
-        instruction: KeyedWrite,
+        instruction: PreparedKeyedWrite,
         resolved: Targets,
         observation: WriteObservation | None,
         concurrency: Concurrency,
@@ -746,8 +747,8 @@ class WritePlanner:
                 axes,
                 transaction_instant=instant,
                 authored=instruction.rows[0],
-                valid_from=instruction.valid_from,
-                until=instruction.until,
+                valid_from=_managed_valid_from(instruction),
+                until=_managed_until(instruction),
                 predecessor=None if observed is None else observed.predecessor,
             )
         )
@@ -756,7 +757,7 @@ class WritePlanner:
     def _observed_version(
         self,
         entity: EntityMetadata,
-        instruction: KeyedWrite,
+        instruction: PreparedKeyedWrite,
         version_attr: AttributeIdentity | None,
         observation: WriteObservation | None,
     ) -> int | None:
@@ -795,7 +796,7 @@ class WritePlanner:
         self,
         entity: EntityMetadata,
         members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
-        instruction: KeyedWrite,
+        instruction: PreparedKeyedWrite,
         key_attributes: tuple[AttributeIdentity, ...],
         version_attr: AttributeIdentity | None,
         observed_version: int | None,
@@ -899,7 +900,7 @@ class WritePlanner:
         if mutation != "delete":
             assignment_row = {
                 _assignment_member(assignment.attr): assignment.value
-                for assignment in group.mutation.assignments
+                for assignment in group.mutation.managed_assignments
             }
             if version_attr is not None and version_attr.name in assignment_row:
                 self._concurrency.reject_authored_version(entity.identity, version_attr)
@@ -958,7 +959,7 @@ class WritePlanner:
         )
         assignment_row = {
             _assignment_member(assignment.attr): assignment.value
-            for assignment in group.mutation.assignments
+            for assignment in group.mutation.managed_assignments
         }
         close_cause: CloseCause | None = None
         gate_start_attribute: AttributeIdentity | None = None
@@ -969,8 +970,8 @@ class WritePlanner:
             ).start_attribute
         resolved_successors = resolve_successors(
             topology.successors,
-            valid_from=group.mutation.valid_from,
-            until=group.mutation.until,
+            valid_from=_managed_valid_from(group.mutation),
+            until=_managed_until(group.mutation),
         )
         return _MaterializedTemporalSegment(
             entity=entity,
@@ -1087,7 +1088,7 @@ class _MaterializedTemporalSegment:
     close_cause: CloseCause | None
     gate_start_attribute: AttributeIdentity | None
     axes: TemporalAxes
-    instant: str
+    instant: dt.datetime
     gated: bool
     assignment_row: Mapping[str, object]
     steps_per_row: int
@@ -1347,7 +1348,7 @@ def _close(
     observed_valid_end: object | None,
     cause: CloseCause,
     gate: TemporalConcurrency,
-    instant: str,
+    instant: dt.datetime,
 ) -> PlannedClose:
     """One settled close of the current milestone ``identity`` addresses.
 
@@ -1396,7 +1397,7 @@ def _end_values(
                 "supplied — a Bitemporal milestone address needs one exclusive upper bound "
                 "per As-Of Axis (m-bitemp-write 'Address and gate are separate')"
             )
-        elif observed_valid_end == INFINITY_LITERAL:
+        elif observed_valid_end == INFINITY_LITERAL or observed_valid_end is TemporalBound.INFINITY:
             values.append(INFINITY)
         else:
             values.append(Finite(instant=observed_valid_end))
@@ -1422,14 +1423,16 @@ def _tx_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
     return axis
 
 
-def reject_readless_document_many(entity: EntityMetadata, instruction: PredicateWrite) -> None:
+def reject_readless_document_many(
+    entity: EntityMetadata, instruction: PreparedPredicateWrite
+) -> None:
     """Refuse the readless document-array assignment shape before planning."""
     if not isinstance(entity.declared_layout, Document):
         return
     occurrences = {
         occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
     }
-    for assignment in instruction.assignments:
+    for assignment in instruction.managed_assignments:
         member = _assignment_member(assignment.attr)
         occurrence = occurrences.get(member)
         if occurrence is None:
@@ -1549,8 +1552,8 @@ def _assignment_member(attr: str) -> str:
 
 
 def _merge_update_into_insert(
-    insert: KeyedWrite, update: KeyedWrite, resolved: Targets
-) -> KeyedWrite:
+    insert: PreparedKeyedWrite, update: PreparedKeyedWrite, resolved: Targets
+) -> PreparedKeyedWrite:
     """Overlay ``update``'s non-key row fields onto ``insert``'s row.
 
     The coalesced write keeps the insert's mutation verb and Valid-Time bounds
@@ -1566,13 +1569,7 @@ def _merge_update_into_insert(
     for name, value in update.rows[0].items():
         if name not in pk_names:
             merged[name] = value
-    return KeyedWrite(
-        mutation=insert.mutation,
-        entity=insert.entity,
-        rows=(merged,),
-        valid_from=insert.valid_from,
-        until=insert.until,
-    )
+    return _prepared_keyed(insert, (merged,))
 
 
 @dataclass(slots=True)
@@ -1668,13 +1665,7 @@ def _rewritten(
     The one place a carrier is rebuilt, so merging and restoration-dropping state
     what changes rather than each restating which fields a carrier keeps.
     """
-    instruction = KeyedWrite(
-        mutation=item.instruction.mutation,
-        entity=item.instruction.entity,
-        rows=(row,),
-        valid_from=item.instruction.valid_from,
-        until=item.instruction.until,
-    )
+    instruction = _prepared_keyed(item.instruction, (row,))
     if isinstance(item, ObservedKeyedWrite):
         return ObservedKeyedWrite(
             instruction=instruction,
@@ -1750,19 +1741,10 @@ def _decomposed_updates(
     """
     decomposed: list[_CoalescedItem] = []
     for item in buffer:
-        if not isinstance(item, KeyedWrite) or not _splits_into_rows(item, resolved):
+        if not isinstance(item, PreparedKeyedWrite) or not _splits_into_rows(item, resolved):
             decomposed.append(item)
             continue
-        decomposed.extend(
-            KeyedWrite(
-                mutation=item.mutation,
-                entity=item.entity,
-                rows=(row,),
-                valid_from=item.valid_from,
-                until=item.until,
-            )
-            for row in item.rows
-        )
+        decomposed.extend(_prepared_keyed(item, (row,)) for row in item.rows)
     return decomposed
 
 
@@ -1822,25 +1804,19 @@ def _require_unobserved(entity: EntityMetadata, mutation: str, observation: obje
     )
 
 
-def _splits_into_rows(item: KeyedWrite, resolved: Targets) -> bool:
+def _splits_into_rows(item: PreparedKeyedWrite, resolved: Targets) -> bool:
     if len(item.rows) < 2 or item.mutation not in _UPDATE_VERBS:
         return False
     entity = resolved.entity(item.entity)
     return entity is not None and not resolved.declaring(entity).declared_as_of_axes
 
 
-def _merge_rows(run: Sequence[KeyedWrite]) -> KeyedWrite:
+def _merge_rows(run: Sequence[PreparedKeyedWrite]) -> PreparedKeyedWrite:
     """One multi-row :class:`KeyedWrite` carrying every row of ``run``'s
     single-row instructions, in run (buffer) order — the same
     entity/mutation/Valid-Time bounds every member of the run already shares."""
     first = run[0]
-    return KeyedWrite(
-        mutation=first.mutation,
-        entity=first.entity,
-        rows=tuple(row for w in run for row in w.rows),
-        valid_from=first.valid_from,
-        until=first.until,
-    )
+    return _prepared_keyed(first, tuple(row for w in run for row in w.rows))
 
 
 def _fk_ranks(model: Metamodel) -> dict[EntityIdentity, int]:
@@ -1887,8 +1863,8 @@ def _fk_ranks(model: Metamodel) -> dict[EntityIdentity, int]:
     return {identity: rank for rank, identity in enumerate(order)}
 
 
-def _instruction_entity(instruction: WriteInstruction) -> str:
-    if isinstance(instruction, KeyedWrite):
+def _instruction_entity(instruction: PreparedWrite) -> str:
+    if isinstance(instruction, PreparedKeyedWrite):
         return instruction.entity
     # A readless predicate write is always a barrier in `_order`, never a
     # region member `rank`/`mutation` resolves against — but a Materialized
@@ -1928,7 +1904,7 @@ def _without_noop_rows(item: _CoalescedItem, resolved: Targets) -> _CoalescedIte
     narrower instruction.
     """
     instruction = buffered_instruction(item)
-    if not isinstance(instruction, KeyedWrite) or instruction.mutation not in _UPDATE_VERBS:
+    if not isinstance(instruction, PreparedKeyedWrite) or instruction.mutation not in _UPDATE_VERBS:
         return item
     entity = resolved.entity(instruction.entity)
     if entity is None:
@@ -1941,13 +1917,7 @@ def _without_noop_rows(item: _CoalescedItem, resolved: Targets) -> _CoalescedIte
         return None
     if len(kept) == len(instruction.rows):
         return item
-    return KeyedWrite(
-        mutation=instruction.mutation,
-        entity=instruction.entity,
-        rows=kept,
-        valid_from=instruction.valid_from,
-        until=instruction.until,
-    )
+    return _prepared_keyed(instruction, kept)
 
 
 def _canonical_item(item: _CoalescedItem, resolved: Targets) -> _CoalescedItem:
@@ -1969,7 +1939,7 @@ def _canonical_item(item: _CoalescedItem, resolved: Targets) -> _CoalescedItem:
     ``ObservedKeyedWrite`` refuses to wrap an insert, so every carrier is a
     revising write by construction.
     """
-    if not isinstance(item, KeyedWrite) or item.mutation not in INSERT_MUTATIONS:
+    if not isinstance(item, PreparedKeyedWrite) or item.mutation not in INSERT_MUTATIONS:
         return item
     entity = resolved.entity(item.entity)
     if entity is None:
@@ -1978,13 +1948,29 @@ def _canonical_item(item: _CoalescedItem, resolved: Targets) -> _CoalescedItem:
     if not zero_state:
         return item
     rows = tuple(_with_zero_states(row, zero_state) for row in item.rows)
-    return KeyedWrite(
-        mutation=item.mutation,
-        entity=item.entity,
+    return _prepared_keyed(item, rows)
+
+
+def _prepared_keyed(
+    template: PreparedKeyedWrite, rows: tuple[Mapping[str, object], ...]
+) -> PreparedKeyedWrite:
+    return PreparedKeyedWrite(
+        mutation=template.mutation,
+        entity=template.entity,
         rows=rows,
-        valid_from=item.valid_from,
-        until=item.until,
+        valid_from=template.valid_from,
+        until=template.until,
+        managed_valid_from=template.managed_valid_from,
+        managed_until=template.managed_until,
     )
+
+
+def _managed_valid_from(instruction: PreparedWrite) -> object | None:
+    return instruction.managed_valid_from
+
+
+def _managed_until(instruction: PreparedWrite) -> object | None:
+    return instruction.managed_until
 
 
 def _with_zero_states(row: Mapping[str, object], zero_state: Sequence[str]) -> Mapping[str, object]:

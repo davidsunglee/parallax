@@ -5,8 +5,8 @@ SQL generation: the read compiler that lowers one flat ``EntityQuery`` into a ca
 injected ``Dialect`` strategy. ``m-sql`` depends on ``m-object-query`` (the query
 value), ``m-predicate`` (the selection it carries), and ``m-dialect``.
 
-The seven names below are the whole supported seam; everything else in this
-package is private implementation. ``compile_read`` returns a self-contained
+The two names below are the whole supported seam; everything else in this
+package is private implementation. The private ``compile_read`` operation returns a self-contained
 :class:`CompiledRead` — statement, root narrow, and row transform together — so
 a caller executes and transforms without re-deriving anything from the
 query it just compiled. The projection this package emits follows the
@@ -59,24 +59,9 @@ module from importing this package root.
 
 from __future__ import annotations
 
-from parallax.core.sql_gen._compile import (
-    AttributeReadContract,
-    CompiledPredicate,
-    CompiledRead,
-    LoweredStatement,
-    MaterializedReadRow,
-    SqlGenError,
-    compile_read,
-    compile_write_predicate,
-)
+from parallax.core.sql_gen._context import LoweredStatement, SqlGenError
 
 __all__ = [
-    "AttributeReadContract",
-    "CompiledPredicate",
-    "CompiledRead",
     "LoweredStatement",
-    "MaterializedReadRow",
     "SqlGenError",
-    "compile_read",
-    "compile_write_predicate",
 ]

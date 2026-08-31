@@ -30,8 +30,8 @@ that decides them: ``DeferredFeatureError`` by the Feature inventory it reports
 ``TransactionOwnershipError`` by the demarcation rules they state
 (:mod:`parallax.snapshot.handle._database`), ``KeyedWriteValueError`` and
 ``TransactionTimePinReadOnlyError`` by the write-input checks that run them
-(:mod:`parallax.snapshot.handle._write_inputs`), and ``WriteLoweringError`` by
-the lowering types (:mod:`parallax.snapshot.handle._write_types`).
+(:mod:`parallax.snapshot.handle._write_inputs`). Physical lowering failures are
+``m-sql``'s :class:`~parallax.core.sql_gen.SqlGenError`.
 
 The leaf's emptiness is load-bearing rather than incidental, so ``spec/python.md`` §7
 gives this module its own child scope with a grant row of ``(none)``. Two gates

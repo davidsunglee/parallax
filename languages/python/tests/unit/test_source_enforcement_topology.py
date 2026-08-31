@@ -65,35 +65,23 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.snapshot.handle._read",
         "parallax.core.sql_gen._compile",
-    ): frozenset(
-        {"compile_read", "CompiledRead", "AttributeReadContract", "MaterializedReadRow"}
-    ),
+    ): frozenset({"compile_read", "CompiledRead", "MaterializedReadRow"}),
     (
         "parallax.snapshot.handle._predicate_writes",
         "parallax.core.sql_gen._compile",
-    ): frozenset(
-        {"compile_read", "CompiledRead", "AttributeReadContract", "MaterializedReadRow"}
-    ),
+    ): frozenset({"compile_read", "CompiledRead"}),
     (
         "parallax.conformance.engine",
         "parallax.core.sql_gen._compile",
-    ): frozenset(
-        {"compile_read", "CompiledRead", "AttributeReadContract", "MaterializedReadRow"}
-    ),
-    (
-        "parallax.conformance._actual_wire",
-        "parallax.core.sql_gen._compile",
-    ): frozenset(
-        {"compile_read", "CompiledRead", "AttributeReadContract", "MaterializedReadRow"}
-    ),
+    ): frozenset({"compile_read", "CompiledRead"}),
     (
         "parallax.snapshot.handle._write_lowering",
         "parallax.core.sql_gen._write",
-    ): frozenset({"compile_write_step"}),
+    ): frozenset({"compile_write"}),
     (
         "parallax.conformance.engine",
         "parallax.core.sql_gen._write",
-    ): frozenset({"compile_write_step"}),
+    ): frozenset({"compile_write"}),
 }
 
 
@@ -252,6 +240,19 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
 #
 # Keyed by REACHING module for the same reason the snapshot inventory is.
 ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
+    ("parallax.conformance.case_format", "parallax.core.wire._json"): frozenset(
+        {"authored_number"}
+    ),
+    ("parallax.conformance.engine", "parallax.core.sql_gen._compile"): frozenset(
+        {"CompiledRead", "compile_read"}
+    ),
+    ("parallax.conformance.engine", "parallax.core.sql_gen._write"): frozenset({"compile_write"}),
+    ("parallax.conformance.another_source", "parallax.snapshot.handle._preflight"): frozenset(
+        {"preflight"}
+    ),
+    ("parallax.conformance.engine", "parallax.snapshot.handle._preflight"): frozenset(
+        {"preflight"}
+    ),
     ("parallax.conformance.another_source", "parallax.core.entity._model"): frozenset(
         {"cataloged_model"}
     ),

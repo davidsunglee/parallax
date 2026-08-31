@@ -30,23 +30,35 @@ framework-honest and are enforced here:
 
 Construction is value-only (mirroring ``m-predicate`` nodes): structural shape is
 validated by :func:`deserialize`; member-name honesty against a metamodel is
-:func:`validate_instruction`.
+part of :func:`prepare_typed_write` and :func:`prepare_wire_write`, which return
+the immutable managed products buffering retains.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, cast
 
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
-from parallax.core.metamodel import EntityMetadata, entity_by_name
+from parallax.core.base import TIMESTAMP, coerce_neutral_input
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    EntityMetadata,
+    Multiplicity,
+    NestedValueObjectMetadata,
+    ValueObjectMetadata,
+    entity_by_name,
+)
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.predicate import PredicateNode
+from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.unit_work.columns import freeze_retained_value
+from parallax.core.wire import WireValue, decode_wire
 
 __all__ = [
     "BOUNDED_MUTATIONS",
@@ -59,14 +71,18 @@ __all__ = [
     "PredicateMutation",
     "PredicateSelection",
     "PredicateWrite",
+    "PreparedKeyedWrite",
+    "PreparedPredicateWrite",
+    "PreparedWrite",
     "WriteAssignment",
     "WriteInstruction",
     "WriteInstructionError",
     "deserialize",
     "non_temporal_milestone_refusal",
+    "prepare_typed_write",
+    "prepare_wire_write",
     "resolve_target",
     "serialize",
-    "validate_instruction",
 ]
 
 # The keyed write mutation surface: the MVP non-temporal / audit-only verbs plus
@@ -226,6 +242,50 @@ class PredicateWrite:
 
 
 WriteInstruction = KeyedWrite | PredicateWrite
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PreparedKeyedWrite(KeyedWrite):
+    """A validated keyed write whose values and temporal bounds are managed."""
+
+    managed_valid_from: object | None
+    managed_until: object | None
+
+    def __post_init__(self) -> None:
+        KeyedWrite.__post_init__(self)
+        object.__setattr__(
+            self,
+            "rows",
+            tuple(
+                MappingProxyType(
+                    {name: freeze_retained_value(value) for name, value in row.items()}
+                )
+                for row in self.rows
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PreparedPredicateWrite(PredicateWrite):
+    """A validated predicate write carrying its occurrence-local semantic tree."""
+
+    validated_predicate: ValidatedPredicate
+    managed_assignments: tuple[WriteAssignment, ...]
+    managed_valid_from: object | None
+    managed_until: object | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "managed_assignments",
+            tuple(
+                WriteAssignment(item.attr, freeze_retained_value(item.value))
+                for item in self.managed_assignments
+            ),
+        )
+
+
+PreparedWrite = PreparedKeyedWrite | PreparedPredicateWrite
 
 # The reference pattern a predicate-write assignment `attr` must match, mirroring
 # identity.schema.json's `attributeRef` by way of write-instruction.schema.json
@@ -560,7 +620,53 @@ def _derives_as_of_axes(model: AcceptedMetamodel, entity: EntityMetadata) -> boo
 # --------------------------------------------------------------------------- #
 # Member-name honesty (metamodel-aware build-time validator).                  #
 # --------------------------------------------------------------------------- #
-def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel) -> None:
+def prepare_typed_write(instruction: WriteInstruction, model: AcceptedMetamodel) -> PreparedWrite:
+    """Coerce developer values once, then validate and freeze the write."""
+    if isinstance(instruction, KeyedWrite):
+        entity = resolve_target(model, instruction.entity)
+        prepared_input: WriteInstruction = KeyedWrite(
+            mutation=instruction.mutation,
+            entity=instruction.entity,
+            rows=tuple(
+                _coerce_typed_row(
+                    model,
+                    entity,
+                    row,
+                    fill_missing_many=instruction.mutation == "insert",
+                )
+                for row in instruction.rows
+            ),
+            valid_from=instruction.valid_from,
+            until=instruction.until,
+        )
+    else:
+        entity = resolve_target(model, instruction.target.entity)
+        members = _declared_member_map(model, entity)
+        managed_assignments: list[WriteAssignment] = []
+        for assignment in instruction.assignments:
+            _owner, _separator, name = assignment.attr.rpartition(".")
+            member = members.get(name)
+            managed_assignments.append(
+                WriteAssignment(
+                    assignment.attr,
+                    assignment.value
+                    if member is None
+                    else _coerce_typed_member(member, assignment.value),
+                )
+            )
+        prepared_input = PredicateWrite(
+            mutation=instruction.mutation,
+            target=instruction.target,
+            assignments=tuple(managed_assignments),
+            valid_from=instruction.valid_from,
+            until=instruction.until,
+        )
+    return _prepare_managed_write(prepared_input, model)
+
+
+def _prepare_managed_write(
+    instruction: WriteInstruction, model: AcceptedMetamodel
+) -> PreparedWrite:
     """Validate an instruction against the metamodel: its selecting predicate,
     then its member names.
 
@@ -643,6 +749,7 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     Transaction-Time-Only target passes, and so does a Bitemporal write that
     omits the one it requires.
     """
+    validated_predicate: ValidatedPredicate | None = None
     if isinstance(instruction, KeyedWrite):
         entity = resolve_target(model, instruction.entity)
         members = _declared_members(model, entity)
@@ -654,7 +761,9 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
                 )
     else:
         entity = resolve_target(model, instruction.target.entity)
-        predicate_algebra.validate_predicate(entity, instruction.target.predicate, model)
+        validated_predicate = predicate_algebra.validate_predicate(
+            entity, instruction.target.predicate, model
+        )
         inheritance.reject_predicate_write(entity)
         members = _declared_members(model, entity)
         seen: set[str] = set()
@@ -687,6 +796,211 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
         refusal = non_temporal_milestone_refusal(entity.identity.name, instruction.mutation)
         if refusal is not None:
             raise WriteInstructionError(refusal)
+    managed_valid_from = _managed_bound(instruction.valid_from)
+    managed_until = _managed_bound(instruction.until)
+    if isinstance(instruction, KeyedWrite):
+        return PreparedKeyedWrite(
+            mutation=instruction.mutation,
+            entity=instruction.entity,
+            rows=instruction.rows,
+            valid_from=instruction.valid_from,
+            until=instruction.until,
+            managed_valid_from=managed_valid_from,
+            managed_until=managed_until,
+        )
+    assert validated_predicate is not None
+    return PreparedPredicateWrite(
+        mutation=instruction.mutation,
+        target=instruction.target,
+        assignments=instruction.assignments,
+        valid_from=instruction.valid_from,
+        until=instruction.until,
+        validated_predicate=validated_predicate,
+        managed_assignments=instruction.assignments,
+        managed_valid_from=managed_valid_from,
+        managed_until=managed_until,
+    )
+
+
+def prepare_wire_write(instruction: WriteInstruction, model: AcceptedMetamodel) -> PreparedWrite:
+    """Decode one serialized instruction and return the managed write product."""
+    if isinstance(instruction, KeyedWrite):
+        entity = resolve_target(model, instruction.entity)
+        decoded: WriteInstruction = KeyedWrite(
+            mutation=instruction.mutation,
+            entity=instruction.entity,
+            rows=tuple(
+                _decode_wire_row(
+                    model,
+                    entity,
+                    row,
+                    fill_missing_many=instruction.mutation == "insert",
+                )
+                for row in instruction.rows
+            ),
+            valid_from=instruction.valid_from,
+            until=instruction.until,
+        )
+    else:
+        entity = resolve_target(model, instruction.target.entity)
+        members = _declared_member_map(model, entity)
+        decoded_assignments: list[WriteAssignment] = []
+        for assignment in instruction.assignments:
+            _owner, _separator, name = assignment.attr.rpartition(".")
+            member = members.get(name)
+            decoded_assignments.append(
+                WriteAssignment(
+                    assignment.attr,
+                    assignment.value
+                    if member is None
+                    else _decode_wire_member(member, assignment.value),
+                )
+            )
+        decoded = PredicateWrite(
+            mutation=instruction.mutation,
+            target=instruction.target,
+            assignments=tuple(decoded_assignments),
+            valid_from=instruction.valid_from,
+            until=instruction.until,
+        )
+    return _prepare_managed_write(decoded, model)
+
+
+def _managed_bound(value: str | None) -> object | None:
+    return None if value is None else decode_wire(TIMESTAMP, value)
+
+
+type _DeclaredMember = AttributeMetadata | ValueObjectMetadata
+type _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
+
+
+def _declared_member_map(
+    model: AcceptedMetamodel, entity: EntityMetadata
+) -> Mapping[str, _DeclaredMember]:
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers accepted entities
+        return {}
+    return {
+        **{member.identity.name: member for member in position.applicable_attributes},
+        **{member.identity.path[-1]: member for member in position.applicable_value_objects},
+    }
+
+
+def _decode_wire_row(
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    row: Mapping[str, object],
+    *,
+    fill_missing_many: bool,
+) -> Mapping[str, object]:
+    members = _declared_member_map(model, entity)
+    decoded = {
+        name: value if (member := members.get(name)) is None else _decode_wire_member(member, value)
+        for name, value in row.items()
+    }
+    for member in members.values():
+        if fill_missing_many and not isinstance(member, AttributeMetadata):
+            name = member.identity.path[-1]
+            if member.multiplicity is Multiplicity.MANY and name not in decoded:
+                decoded[name] = ()
+    return decoded
+
+
+def _coerce_typed_row(
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    row: Mapping[str, object],
+    *,
+    fill_missing_many: bool,
+) -> Mapping[str, object]:
+    members = _declared_member_map(model, entity)
+    coerced = {
+        name: value
+        if (member := members.get(name)) is None
+        else _coerce_typed_member(member, value)
+        for name, value in row.items()
+    }
+    for member in members.values():
+        if fill_missing_many and not isinstance(member, AttributeMetadata):
+            name = member.identity.path[-1]
+            if member.multiplicity is Multiplicity.MANY and name not in coerced:
+                coerced[name] = ()
+    return coerced
+
+
+def _coerce_typed_member(member: _DeclaredMember, value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(member, AttributeMetadata):
+        return coerce_neutral_input(value, member.type)
+    return _coerce_typed_occurrence(member, value)
+
+
+def _coerce_typed_occurrence(occurrence: _VoContainer, value: object) -> object:
+    if occurrence.multiplicity is Multiplicity.MANY:
+        if not isinstance(value, Sequence) or isinstance(value, str | bytes):
+            return value
+        return tuple(
+            _coerce_typed_document(occurrence, item) for item in cast("Sequence[object]", value)
+        )
+    return _coerce_typed_document(occurrence, value)
+
+
+def _coerce_typed_document(container: _VoContainer, value: object) -> object:
+    if not isinstance(value, Mapping):
+        return value
+    attributes = {member.identity.name: member for member in container.attributes}
+    occurrences = {member.identity.path[-1]: member for member in container.value_objects}
+    coerced: dict[str, object] = {}
+    for name, nested in cast("Mapping[str, object]", value).items():
+        if (attribute := attributes.get(name)) is not None:
+            coerced[name] = None if nested is None else coerce_neutral_input(nested, attribute.type)
+        elif (occurrence := occurrences.get(name)) is not None:
+            coerced[name] = None if nested is None else _coerce_typed_occurrence(occurrence, nested)
+        else:
+            coerced[name] = nested
+    for name, occurrence in occurrences.items():
+        if occurrence.multiplicity is Multiplicity.MANY and name not in coerced:
+            coerced[name] = ()
+    return coerced
+
+
+def _decode_wire_member(member: _DeclaredMember, value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(member, AttributeMetadata):
+        return decode_wire(member.type, cast("WireValue", value))
+    return _decode_wire_occurrence(member, value)
+
+
+def _decode_wire_occurrence(occurrence: _VoContainer, value: object) -> object:
+    if occurrence.multiplicity is Multiplicity.MANY:
+        if not isinstance(value, Sequence) or isinstance(value, str | bytes):
+            return value
+        items = cast("Sequence[object]", value)
+        return tuple(_decode_wire_document(occurrence, item) for item in items)
+    return _decode_wire_document(occurrence, value)
+
+
+def _decode_wire_document(container: _VoContainer, value: object) -> object:
+    if not isinstance(value, Mapping):
+        return value
+    attributes = {member.identity.name: member for member in container.attributes}
+    occurrences = {member.identity.path[-1]: member for member in container.value_objects}
+    decoded: dict[str, object] = {}
+    for name, nested in cast("Mapping[str, object]", value).items():
+        if (attribute := attributes.get(name)) is not None:
+            decoded[name] = (
+                None if nested is None else decode_wire(attribute.type, cast("WireValue", nested))
+            )
+        elif (occurrence := occurrences.get(name)) is not None:
+            decoded[name] = None if nested is None else _decode_wire_occurrence(occurrence, nested)
+        else:
+            decoded[name] = nested
+    for name, occurrence in occurrences.items():
+        if occurrence.multiplicity is Multiplicity.MANY and name not in decoded:
+            decoded[name] = ()
+    return decoded
 
 
 def resolve_target(model: AcceptedMetamodel, name: str) -> EntityMetadata:

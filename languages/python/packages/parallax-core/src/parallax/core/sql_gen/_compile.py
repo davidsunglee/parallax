@@ -37,14 +37,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal, assert_never
+from typing import Literal, assert_never, cast
 
 from parallax.core.base import (
     DocumentReadOrdinals,
     NeutralType,
     admits_stored_scalar,
-    decode_neutral_literal,
 )
+from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
 from parallax.core.document_codec import DocumentFinding
 from parallax.core.inheritance import InheritanceFacet
@@ -57,10 +57,11 @@ from parallax.core.metamodel import (
     Metamodel,
     ValueObjectMetadata,
 )
-from parallax.core.object_query import EntityQuery, OrderKey
-from parallax.core.predicate import PredicateNode
-from parallax.core.sql_gen._context import Ctx as _Ctx
-from parallax.core.sql_gen._context import SqlGenError
+from parallax.core.object_query import OrderKey
+from parallax.core.predicate import Narrow
+from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.sql_gen._context import LoweredStatement, SqlGenError
+from parallax.core.sql_gen._context import StatementBuilder as _Ctx
 from parallax.core.sql_gen._context import table_layout as _table_layout
 
 # The family LANE of this compiler — distinct from `parallax.core.inheritance`
@@ -98,6 +99,7 @@ from parallax.core.storage_layout import DocumentPath as _DocumentPath
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
 from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
+from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 
 __all__ = [
     "AttributeReadContract",
@@ -123,14 +125,6 @@ _ResultForm = Literal["row", "instance"]
 
 
 @dataclass(frozen=True, slots=True)
-class LoweredStatement:
-    """One compiled SQL statement in canonical form and its ordered binds."""
-
-    sql: str
-    binds: tuple[object, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
 class CompiledPredicate:
     """A compiled write predicate: an UNALIASED `where`-clause fragment
     (`balance < ?`, never `t0.balance < ?`) and its ordered binds.
@@ -143,6 +137,7 @@ class CompiledPredicate:
 
     sql: str
     binds: tuple[object, ...] = ()
+    lowered: LoweredStatement | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,9 +271,13 @@ class CompiledRead:
             ):
                 continue
             value = row.values[contract.result_key]
-            decoded = decode_neutral_literal(value, contract.type)
+            if contract.encoded:
+                try:
+                    value = decode_canonical_wire(contract.type, cast("WireValue", value))
+                except WireDecodingError:
+                    return True
             if not admits_stored_scalar(
-                decoded,
+                value,
                 contract.type,
                 nullable=contract.nullable,
                 temporal_end=contract.temporal_end,
@@ -451,7 +450,7 @@ def _scalar_read_contracts(
 # compile_read = lower -> normalize.                                          #
 # --------------------------------------------------------------------------- #
 def compile_read(
-    query: EntityQuery,
+    query: ValidatedEntityQuery,
     model: Metamodel,
     dialect: Dialect,
     *,
@@ -504,12 +503,10 @@ def compile_read(
     statement materializes, so one deep fetch's levels may disagree. This
     compiler is the renderer and makes no part of that decision.
     """
-    target = model.entity(query.target)
-    if target is None:
-        raise SqlGenError(f"{query.target.canonical!r} names no Entity in the accepted model")
+    target = query.entity
     facet = _inheritance_view(model)
     storage = _storage_view(model)
-    predicate = query.predicate
+    predicate = query.validated_predicate
     order_keys = query.order_by
     limit = query.limit
     narrow_to = query.narrow_to
@@ -562,7 +559,7 @@ def compile_read(
         parts.append(f"where {where_sql}")
     _append_result_shape(parts, scope, order_keys, limit, lock)
 
-    statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
+    statement = _normalize(ctx.statement(" ".join(parts)))
     # A non-family read projects no tag and no variant literal, so the only
     # transform it can carry is the document fan-out its own projection decided.
     position = (target.identity,)
@@ -581,7 +578,7 @@ def compile_read(
 
 
 def compile_write_predicate(
-    op: PredicateNode, model: Metamodel, dialect: Dialect, target: EntityMetadata
+    op: ValidatedPredicate, model: Metamodel, dialect: Dialect, target: EntityMetadata
 ) -> CompiledPredicate:
     """Render a BARE write predicate (`m-batch-write.md` "Predicate-selected
     readless forms"): the UNALIASED where-clause SQL and its ordered binds —
@@ -604,7 +601,12 @@ def compile_write_predicate(
         ctx, target, _table_layout(storage, facet, target.identity), unaliased=True
     )
     where_sql = _lower_predicate(op, scope)
-    return CompiledPredicate(where_sql, tuple(ctx.binds))
+    statement = ctx.statement(where_sql)
+    return CompiledPredicate(
+        statement.sql,
+        statement.binds,
+        statement,
+    )
 
 
 def _append_result_shape(
@@ -668,7 +670,7 @@ def _order_term(scope: _EntityScope, key: OrderKey) -> str:
 # --------------------------------------------------------------------------- #
 def _compile_inheritance_read(
     entity: EntityMetadata,
-    predicate: PredicateNode,
+    predicate: ValidatedPredicate,
     narrow_to: tuple[EntityIdentity, ...] | None,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
@@ -692,7 +694,7 @@ def _compile_inheritance_read(
     """
     plan = _plan_inheritance_read(
         entity,
-        predicate,
+        predicate.authored,
         narrow_to,
         model,
         facet,
@@ -704,6 +706,7 @@ def _compile_inheritance_read(
         case _TphPlan():
             statement, document_reads, transform = _compile_tph_read(
                 plan,
+                predicate,
                 entity,
                 order_keys,
                 limit,
@@ -717,6 +720,7 @@ def _compile_inheritance_read(
         case _TpcsSinglePlan():
             statement, document_reads, transform = _compile_tpcs_single(
                 plan,
+                predicate,
                 entity,
                 order_keys,
                 limit,
@@ -729,7 +733,7 @@ def _compile_inheritance_read(
             return statement, plan.position, document_reads, transform
         case _TpcsUnionPlan():
             statement, document_reads, transform = _compile_tpcs_read(
-                plan, entity, order_keys, limit, model, facet, storage, dialect
+                plan, predicate, entity, order_keys, limit, model, facet, storage, dialect
             )
             return statement, plan.position, document_reads, transform
         case _:  # pragma: no cover - exhaustiveness guard
@@ -738,6 +742,7 @@ def _compile_inheritance_read(
 
 def _compile_tph_read(
     plan: _TphPlan,
+    predicate: ValidatedPredicate,
     entity: EntityMetadata,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
@@ -767,7 +772,7 @@ def _compile_tph_read(
     select = f"select {proj_sql}"
     parts = [select, f"from {plan.table} {scope.alias}"]
 
-    inner_sql = _lower_predicate(plan.inner, scope)
+    inner_sql = _lower_predicate(_planned_inner(predicate, plan.inner), scope)
     where_terms = [inner_sql] if inner_sql else []
     if plan.tag is not None:
         # Planned, then bound HERE — after the user predicate above has pushed its
@@ -784,6 +789,7 @@ def _compile_tph_read(
         return (
             *_compile_tph_partitioned(
                 plan,
+                predicate,
                 entity,
                 order_keys,
                 limit,
@@ -795,12 +801,13 @@ def _compile_tph_read(
             ),
             plan.transform,
         )
-    statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
+    statement = _normalize(ctx.statement(" ".join(parts)))
     return statement, document_reads, plan.transform
 
 
 def _compile_tph_partitioned(
     plan: _TphPlan,
+    predicate: ValidatedPredicate,
     entity: EntityMetadata,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
@@ -812,7 +819,7 @@ def _compile_tph_partitioned(
 ) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...]]:
     """Assemble one tag-disjoint branch per selected TPH document variant."""
     branch_sqls: list[str] = []
-    binds: list[object] = []
+    branches: list[LoweredStatement] = []
     layout = _table_layout(storage, facet, entity.identity)
     key_columns = tuple(slot.column.name for slot in layout.physical_primary_key)
     for branch_index, concrete in enumerate(plan.position):
@@ -854,12 +861,13 @@ def _compile_tph_partitioned(
             branch_ctx.binds.extend(projection_binds)
         branch_ctx.binds.extend(tag_binds)
         branch_ctx.binds.extend(fence_binds)
-        inner = _lower_predicate(plan.inner, branch_scope)
+        inner = _lower_predicate(_planned_inner(predicate, plan.inner), branch_scope)
         parts = [f"select {projection}", f"from ({tagged}) {tagged_alias}"]
         if inner:
             parts.append(f"where {inner}")
-        branch_sqls.append(" ".join(parts))
-        binds.extend(branch_ctx.binds)
+        branch_sql = " ".join(parts)
+        branch_sqls.append(branch_sql)
+        branches.append(branch_ctx.statement(branch_sql))
 
     union = " union all ".join(branch_sqls)
     if lock is not None:
@@ -882,13 +890,21 @@ def _compile_tph_partitioned(
             f"join ({union}) u on {join_terms}",
         ]
         _append_result_shape(parts, outer_scope, order_keys, limit, lock)
-        tail_binds = outer_ctx.binds[len(projection_binds) :]
-        ordered_binds = (*projection_binds, *binds, *tail_binds)
-        return _normalize(LoweredStatement(" ".join(parts), ordered_binds)), document_reads
+        statement_ctx = _Ctx(model, facet, storage, dialect)
+        for bind in projection_binds:
+            statement_ctx.bind(bind)
+        for branch in branches:
+            statement_ctx.extend(branch)
+        for bind in outer_ctx.binds[len(projection_binds) :]:
+            statement_ctx.bind(bind)
+        return _normalize(statement_ctx.statement(" ".join(parts))), document_reads
 
     if not order_keys and limit is None:
         _projection, _projection_binds, document_reads = plan.projection(dialect, "t0")
-        return _normalize(LoweredStatement(union, tuple(binds))), document_reads
+        statement_ctx = _Ctx(model, facet, storage, dialect)
+        for branch in branches:
+            statement_ctx.extend(branch)
+        return _normalize(statement_ctx.statement(union)), document_reads
 
     outer_ctx = _Ctx(model, facet, storage, dialect)
     outer_scope = _EntityScope(
@@ -905,12 +921,16 @@ def _compile_tph_partitioned(
         f"from ({union}) {outer_scope.alias}",
     ]
     _append_result_shape(parts, outer_scope, order_keys, limit, None)
-    binds.extend(outer_ctx.binds)
-    return _normalize(LoweredStatement(" ".join(parts), tuple(binds))), document_reads
+    statement_ctx = _Ctx(model, facet, storage, dialect)
+    for branch in branches:
+        statement_ctx.extend(branch)
+    statement_ctx.extend(outer_ctx.statement(""))
+    return _normalize(statement_ctx.statement(" ".join(parts))), document_reads
 
 
 def _compile_tpcs_read(
     plan: _TpcsUnionPlan,
+    predicate: ValidatedPredicate,
     entity: EntityMetadata,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
@@ -935,7 +955,7 @@ def _compile_tpcs_read(
     """
     wrapped = bool(order_keys) or limit is not None
     branch_sqls: list[str] = []
-    all_binds: list[object] = []
+    branch_statements: list[LoweredStatement] = []
     document_reads: tuple[DocumentReadOrdinals, ...] | None = None
     for branch in plan.branches:
         branch_ctx = _Ctx(model, facet, storage, dialect)
@@ -955,15 +975,19 @@ def _compile_tpcs_read(
             raise SqlGenError("table-per-concrete-subtype branches disagree on document ordinals")
         branch_ctx.binds.extend(proj_binds)
         parts = [f"select {proj_sql}", f"from {branch.table} {branch_scope.alias}"]
-        where_sql = _lower_predicate(plan.inner, branch_scope)
+        where_sql = _lower_predicate(_planned_inner(predicate, plan.inner), branch_scope)
         if where_sql:
             parts.append(f"where {where_sql}")
-        branch_sqls.append(" ".join(parts))
-        all_binds.extend(branch_ctx.binds)
+        branch_sql = " ".join(parts)
+        branch_sqls.append(branch_sql)
+        branch_statements.append(branch_ctx.statement(branch_sql))
 
     union = " union all ".join(branch_sqls)
     if not wrapped:
-        statement = _normalize(LoweredStatement(union, tuple(all_binds)))
+        statement_ctx = _Ctx(model, facet, storage, dialect)
+        for branch in branch_statements:
+            statement_ctx.extend(branch)
+        statement = _normalize(statement_ctx.statement(union))
         return statement, document_reads or (), plan.transform
 
     outer_ctx = _Ctx(model, facet, storage, dialect)
@@ -984,7 +1008,11 @@ def _compile_tpcs_read(
     if limit is not None:
         outer_parts.append(dialect.limit_clause())
         outer_ctx.bind(limit)
-    statement = _normalize(LoweredStatement(" ".join(outer_parts), (*all_binds, *outer_ctx.binds)))
+    statement_ctx = _Ctx(model, facet, storage, dialect)
+    for branch in branch_statements:
+        statement_ctx.extend(branch)
+    statement_ctx.extend(outer_ctx.statement(""))
+    statement = _normalize(statement_ctx.statement(" ".join(outer_parts)))
     return statement, outer_document_reads, plan.transform
 
 
@@ -1034,6 +1062,7 @@ def _tpcs_order_subject(
 
 def _compile_tpcs_single(
     plan: _TpcsSinglePlan,
+    predicate: ValidatedPredicate,
     entity: EntityMetadata,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
@@ -1062,12 +1091,21 @@ def _compile_tpcs_single(
     ctx.binds.extend(proj_binds)
     select = f"select {proj_sql}"
     parts = [select, f"from {plan.table} {scope.alias}"]
-    where_sql = _lower_predicate(plan.inner, scope)
+    where_sql = _lower_predicate(_planned_inner(predicate, plan.inner), scope)
     if where_sql:
         parts.append(f"where {where_sql}")
     _append_result_shape(parts, scope, order_keys, limit, lock)
-    statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
+    statement = _normalize(ctx.statement(" ".join(parts)))
     return statement, document_reads, plan.transform
+
+
+def _planned_inner(predicate: ValidatedPredicate, planned: object) -> ValidatedPredicate:
+    """Map a plan's top-level narrow interception back to its occurrence product."""
+    if planned is predicate.authored:
+        return predicate
+    if isinstance(predicate.authored, Narrow) and planned is predicate.authored.operand:
+        return predicate.only_child()
+    raise SqlGenError("an inheritance plan replaced rather than selected its validated predicate")
 
 
 # --------------------------------------------------------------------------- #

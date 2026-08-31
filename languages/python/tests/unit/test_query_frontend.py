@@ -400,7 +400,7 @@ def test_omitted_transaction_time_normalizes_to_explicit_latest() -> None:
 def test_as_of_past_instant_normalizes_to_utc_iso() -> None:
     d = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     assert _temporal(Balance.where(Balance.all).as_of(tx_time=d)) == {
-        "transaction-time": {"asOf": "2024-04-01T00:00:00+00:00"}
+        "transaction-time": {"asOf": "2024-04-01T00:00:00.000000Z"}
     }
 
 
@@ -418,8 +418,8 @@ def test_as_of_range_scans_the_window() -> None:
     assert _temporal(Balance.where(Balance.all).as_of_range(tx_time=(frm, to))) == {
         "transaction-time": {
             "asOfRange": {
-                "start": "2024-06-15T00:00:00+00:00",
-                "end": "2024-07-01T00:00:00+00:00",
+                "start": "2024-06-15T00:00:00.000000Z",
+                "end": "2024-07-01T00:00:00.000000Z",
             }
         }
     }
@@ -432,8 +432,8 @@ def test_as_of_range_on_valid_time() -> None:
         "transaction-time": {"asOf": "latest"},
         "valid-time": {
             "asOfRange": {
-                "start": "2024-01-01T00:00:00+00:00",
-                "end": "2024-06-01T00:00:00+00:00",
+                "start": "2024-01-01T00:00:00.000000Z",
+                "end": "2024-06-01T00:00:00.000000Z",
             }
         },
     }

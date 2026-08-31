@@ -12,11 +12,18 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     BufferItem,
     KeyedWrite,
+    MaterializedWriteGroup,
+    ObjectClaimedWrite,
     ObjectKey,
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    PredicateWrite,
+    ObservedKeyedWrite,
     SubjectIdentity,
     WriteObservation,
     buffered_write,
     object_key,
+    prepare_typed_write,
 )
 
 __all__ = ["TEST_SUBJECT_IDENTITY", "observed_buffer"]
@@ -28,7 +35,7 @@ TEST_SUBJECT_IDENTITY: Final[SubjectIdentity] = SubjectIdentity("test-subject")
 
 
 def observed_buffer(
-    buffer: Sequence[BufferItem],
+    buffer: Sequence[BufferItem | KeyedWrite | PredicateWrite],
     model: Metamodel,
     observations: Mapping[ObjectKey, WriteObservation] | None,
 ) -> list[BufferItem]:
@@ -42,13 +49,46 @@ def observed_buffer(
     that names an object an insert also writes is refused here exactly as a verb
     would refuse it.
     """
+    prepared = [_prepared_item(item, model) for item in buffer]
     if not observations:
-        return list(buffer)
+        return prepared
     resolved: list[BufferItem] = []
-    for item in buffer:
-        if not isinstance(item, KeyedWrite):
+    for item in prepared:
+        if not isinstance(item, PreparedKeyedWrite):
             resolved.append(item)
             continue
         key = object_key(item, model)
         resolved.append(buffered_write(item, None if key is None else observations.get(key)))
     return resolved
+
+
+def _prepared_item(
+    item: BufferItem | KeyedWrite | PredicateWrite, model: Metamodel
+) -> BufferItem:
+    if isinstance(item, ObservedKeyedWrite):
+        instruction = prepare_typed_write(item.instruction, model)
+        assert isinstance(instruction, PreparedKeyedWrite)
+        return ObservedKeyedWrite(
+            instruction,
+            item.observation,
+            claim=item.claim,
+            restorations=item.restorations,
+        )
+    if isinstance(item, ObjectClaimedWrite):
+        instruction = prepare_typed_write(item.instruction, model)
+        assert isinstance(instruction, PreparedKeyedWrite)
+        return ObjectClaimedWrite(instruction, restorations=item.restorations)
+    if isinstance(item, MaterializedWriteGroup):
+        prepared = prepare_typed_write(item.mutation, model)
+        assert not isinstance(prepared, PreparedKeyedWrite)
+        return MaterializedWriteGroup(
+            mutation=prepared,
+            key_attributes=item.key_attributes,
+            key_columns=item.key_columns,
+            observations=item.observations,
+        )
+    if isinstance(item, KeyedWrite | PredicateWrite) and not isinstance(
+        item, PreparedKeyedWrite | PreparedPredicateWrite
+    ):
+        return prepare_typed_write(item, model)
+    return item

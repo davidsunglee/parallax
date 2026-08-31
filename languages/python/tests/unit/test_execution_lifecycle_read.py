@@ -57,7 +57,8 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.sql_gen import CompiledRead, LoweredStatement, compile_read
+from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, QueryTargetError, SnapshotMaterializationError

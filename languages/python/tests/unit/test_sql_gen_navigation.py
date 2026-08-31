@@ -18,7 +18,6 @@ from _corpus_model_support import formed, model, target
 from _support.sql import compile_read
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.sql_gen import SqlGenError
 
 ORDERS = model("orders")
 ANIMAL = model("animal")
@@ -27,7 +26,7 @@ PERSON = model("person")
 
 
 def test_unvalidated_unknown_relationship_is_rejected() -> None:
-    with pytest.raises(SqlGenError, match="names no declared relationship"):
+    with pytest.raises(ValueError, match="names no declared relationship"):
         compile_read(oa.Exists(rel="Order.missing"), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
 

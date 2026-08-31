@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final, Self, SupportsIndex, cast
 
-from parallax.core.base import INFINITY_LITERAL, TemporalBound
+from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
 from parallax.core.inheritance import family_variant_name
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -474,12 +474,12 @@ def _leaf(attribute: AttributeMetadata, value: object) -> WireValue:
     return _wire_scalar(attribute.type, value)
 
 
-def _wire_scalar(neutral_type: object, value: object) -> WireValue:
+def _wire_scalar(neutral_type: NeutralType, value: object) -> WireValue:
     if value is None:
         return None
     if isinstance(value, TemporalBound):
         return INFINITY_LITERAL
-    return cast("WireValue", encode_wire(cast("Any", neutral_type), value))
+    return cast("WireValue", encode_wire(neutral_type, cast("ManagedValue", value)))
 
 
 @dataclass(frozen=True, slots=True)

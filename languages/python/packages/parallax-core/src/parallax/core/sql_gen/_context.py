@@ -34,12 +34,76 @@ here reaches it. Importers alias to the module-private spelling
 
 from __future__ import annotations
 
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Literal, Protocol, cast
 
+from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
+from parallax.core.wire import WireValue, decode_canonical_wire, encode_wire
+
+type _BindForm = Literal["MANAGED", "COMPARISON_TEXT"]
+
+
+@dataclass(frozen=True, slots=True)
+class _TypedBindSpan:
+    start: int
+    stop: int
+    neutral_type: NeutralType
+    form: _BindForm
+
+
+@dataclass(frozen=True, slots=True)
+class _RepeatedTypedBindSpan:
+    start: int
+    width: int
+    stride: int
+    repetitions: int
+    neutral_type: NeutralType
+    form: _BindForm
+
+
+@dataclass(frozen=True, slots=True)
+class _WireBindOverride:
+    index: int
+    value: WireValue
+
+
+@dataclass(frozen=True, slots=True)
+class LoweredStatement:
+    """Canonical SQL, driver binds, and compact canonical-Wire bind metadata."""
+
+    sql: str
+    binds: tuple[object, ...] = ()
+    typed_bind_spans: tuple[_TypedBindSpan | _RepeatedTypedBindSpan, ...] = field(
+        default=(), repr=False
+    )
+    wire_bind_overrides: tuple[_WireBindOverride, ...] = field(default=(), repr=False)
+
+    def wire_binds(self) -> tuple[WireValue, ...]:
+        projected = list(cast("tuple[WireValue, ...]", self.binds))
+        for span in self.typed_bind_spans:
+            indexes = (
+                range(span.start, span.stop)
+                if isinstance(span, _TypedBindSpan)
+                else (
+                    span.start + repetition * span.stride + offset
+                    for repetition in range(span.repetitions)
+                    for offset in range(span.width)
+                )
+            )
+            for index in indexes:
+                value = self.binds[index]
+                if span.form == "MANAGED":
+                    projected[index] = encode_wire(span.neutral_type, cast("ManagedValue", value))
+                else:
+                    managed = decode_canonical_wire(span.neutral_type, cast("WireValue", value))
+                    projected[index] = encode_wire(span.neutral_type, managed)
+        for override in self.wire_bind_overrides:
+            projected[override.index] = override.value
+        return tuple(projected)
 
 
 class SqlGenError(ValueError):
@@ -133,7 +197,7 @@ class PlanScope(ColumnScope, Protocol):
     def child(self, entity: EntityMetadata, alias: str) -> PlanScope: ...
 
 
-class Ctx:
+class StatementBuilder:
     """One statement's shared lowering state: ordered binds and the alias counter.
 
     Constructing a ``Ctx`` declares a new statement scope — a plain read, a
@@ -152,6 +216,9 @@ class Ctx:
 
     __slots__ = (
         "_next_alias_index",
+        "_repeated_typed_spans",
+        "_typed_binds",
+        "_wire_overrides",
         "binds",
         "dialect",
         "facet",
@@ -172,6 +239,9 @@ class Ctx:
         self.storage = storage
         self.dialect = dialect
         self.binds: list[object] = []
+        self._typed_binds: dict[int, tuple[NeutralType, _BindForm]] = {}
+        self._repeated_typed_spans: list[_RepeatedTypedBindSpan] = []
+        self._wire_overrides: dict[int, WireValue] = {}
         self.requires_variant_partition = False
         # The next alias INDEX after this statement's own `t0`, which is never
         # allocated here — it is the base scope's default alias (m-sql rule 1).
@@ -185,3 +255,117 @@ class Ctx:
 
     def bind(self, value: object) -> None:
         self.binds.append(value)
+
+    def bind_typed(
+        self, value: object, neutral_type: NeutralType, form: _BindForm = "MANAGED"
+    ) -> None:
+        index = len(self.binds)
+        self.binds.append(value)
+        self._typed_binds[index] = (neutral_type, form)
+
+    def bind_override(self, value: object, wire_value: WireValue) -> None:
+        index = len(self.binds)
+        self.binds.append(value)
+        self._wire_overrides[index] = wire_value
+
+    def repeat_typed_pattern(self, *, start: int, width: int, repetitions: int) -> None:
+        """Compact a repeated fixed-width bind pattern into per-run descriptors."""
+        if repetitions < 2:
+            return
+        stop = start + width
+        first_row = {
+            index: metadata
+            for index, metadata in self._typed_binds.items()
+            if start <= index < stop
+        }
+        for repetition in range(1, repetitions):
+            row_start = start + repetition * width
+            pattern = {
+                index - row_start: metadata
+                for index, metadata in self._typed_binds.items()
+                if row_start <= index < row_start + width
+            }
+            expected = {index - start: metadata for index, metadata in first_row.items()}
+            if pattern != expected:
+                return
+        runs: list[tuple[int, int, NeutralType, _BindForm]] = []
+        for index, (neutral_type, form) in sorted(first_row.items()):
+            if (
+                runs
+                and runs[-1][1] == index
+                and runs[-1][2] == neutral_type
+                and runs[-1][3] == form
+            ):
+                run_start, _run_stop, run_type, run_form = runs[-1]
+                runs[-1] = (run_start, index + 1, run_type, run_form)
+            else:
+                runs.append((index, index + 1, neutral_type, form))
+        for run_start, run_stop, neutral_type, form in runs:
+            run_width = run_stop - run_start
+            self._repeated_typed_spans.append(
+                _RepeatedTypedBindSpan(
+                    run_start,
+                    run_width,
+                    width,
+                    repetitions,
+                    neutral_type,
+                    form,
+                )
+            )
+            for repetition in range(repetitions):
+                for offset in range(run_width):
+                    self._typed_binds.pop(run_start + repetition * width + offset, None)
+
+    def extend(self, statement: LoweredStatement) -> None:
+        """Append a compiled fragment without discarding its bind provenance."""
+        offset = len(self.binds)
+        self.binds.extend(statement.binds)
+        for span in statement.typed_bind_spans:
+            if isinstance(span, _RepeatedTypedBindSpan):
+                self._repeated_typed_spans.append(
+                    _RepeatedTypedBindSpan(
+                        offset + span.start,
+                        span.width,
+                        span.stride,
+                        span.repetitions,
+                        span.neutral_type,
+                        span.form,
+                    )
+                )
+                continue
+            indexes = range(span.start, span.stop)
+            for index in indexes:
+                self._typed_binds[offset + index] = (span.neutral_type, span.form)
+        for override in statement.wire_bind_overrides:
+            self._wire_overrides[offset + override.index] = override.value
+
+    def statement(self, sql: str) -> LoweredStatement:
+        return LoweredStatement(
+            sql,
+            tuple(self.binds),
+            tuple(
+                sorted(
+                    (*self._typed_spans(), *self._repeated_typed_spans),
+                    key=lambda span: span.start,
+                )
+            ),
+            tuple(
+                _WireBindOverride(index, value)
+                for index, value in sorted(self._wire_overrides.items())
+            ),
+        )
+
+    def _typed_spans(self) -> tuple[_TypedBindSpan, ...]:
+        spans: list[_TypedBindSpan] = []
+        for index, (neutral_type, form) in sorted(self._typed_binds.items()):
+            if (
+                spans
+                and spans[-1].stop == index
+                and spans[-1].neutral_type == neutral_type
+                and spans[-1].form == form
+            ):
+                previous = spans[-1]
+                spans[-1] = _TypedBindSpan(previous.start, index + 1, neutral_type, form)
+            else:
+                spans.append(_TypedBindSpan(index, index + 1, neutral_type, form))
+        return tuple(spans)

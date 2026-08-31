@@ -79,6 +79,7 @@ narrowing produces through the gate.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -127,9 +128,9 @@ from parallax.core.unit_work import (
     PredicateWrite,
     WriteAssignment,
     WriteInstructionError,
-    validate_instruction,
+    prepare_typed_write,
 )
-from parallax.snapshot.handle import preflight
+from parallax.snapshot.handle._preflight import preflight
 
 _ANIMALS = snapshot_models.ANIMAL_MODEL
 _ORDERS = snapshot_models.SNAP_ORDERS_MODEL
@@ -503,28 +504,31 @@ def test_a_narrowing_reached_through_a_boolean_stays_a_filter() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_comparison_literal_is_the_wire_value_rather_than_the_members_python_type() -> None:
-    # `price` is declared `Attr[Decimal]` and the neutral contract spells its
-    # comparison literal as a number, so a value parameter narrowed to the
-    # member's Python type would refuse the canonical spelling. The value stays
-    # the wire's, and no suppression belongs here.
-    assert predicate_document(preflighted(SnapOrder.where(SnapOrder.price >= 600.00), _ORDERS)) == {
-        "greaterThanEquals": {"attr": "parallax.compatibility.SnapOrder.price", "value": 600.00}
+def test_a_comparison_literal_is_encoded_to_canonical_wire_at_authoring() -> None:
+    # A typed expression accepts the member's managed value and stores its
+    # canonical serialized literal, so model-aware preflight decodes exactly
+    # that value once rather than interpreting a Python float later.
+    assert predicate_document(
+        preflighted(SnapOrder.where(SnapOrder.price >= Decimal("600.00")), _ORDERS)
+    ) == {
+        "greaterThanEquals": {
+            "attr": "parallax.compatibility.SnapOrder.price",
+            "value": "600.00",
+        }
     }
 
 
-def test_an_equality_literal_is_judged_by_the_model_rather_than_by_the_signature() -> None:
-    # `__eq__` keeps `object` — narrowing it is a Liskov violation against
-    # `object.__eq__` — so a mismatched literal is neither a static error nor an
-    # authoring-time one on a flat attribute. Where the neutral contract states a
-    # literal-type rule, the model-aware validator is what states it: the same
-    # mismatch one value-object hop deeper is refused by name.
-    assert predicate_document(preflighted(SnapOrder.where(SnapOrder.price == "abc"), _ORDERS)) == {
-        "eq": {"attr": "parallax.compatibility.SnapOrder.price", "value": "abc"}
-    }
-    with pytest.raises(ModelRejectedError) as caught:
-        preflighted(SnapOrderStatus.where(SnapOrderStatus.primary_tag.label == 42), _ORDERS)
-    assert caught.value.rule == "nested-literal-type-mismatch"
+def test_an_equality_literal_is_judged_at_typed_authoring() -> None:
+    # `__eq__` keeps `object` for Python's protocol, but the expression still
+    # resolves its member metadata and rejects a value outside that managed
+    # value space before constructing a serialized Predicate literal.
+    with pytest.raises(QueryDefinitionError) as flat:
+        _ = SnapOrder.price == "abc"
+    assert flat.value.code == "query-expression-invalid"
+
+    with pytest.raises(QueryDefinitionError) as nested:
+        _ = SnapOrderStatus.primary_tag.label == 42
+    assert nested.value.code == "query-expression-invalid"
 
 
 def test_the_variance_phantom_exists_for_the_checker_alone() -> None:
@@ -725,7 +729,7 @@ def test_a_foreign_assignment_never_targets_the_queried_position() -> None:
         assignments=(WriteAssignment(attr=str(assignment.attr), value=assignment.value),),
     )
     with pytest.raises(WriteInstructionError, match="does not name a declared member"):
-        validate_instruction(write, model_of(_ORDERS))
+        prepare_typed_write(write, model_of(_ORDERS))
 
 
 def test_an_assignment_value_is_the_members_own_declared_type() -> None:

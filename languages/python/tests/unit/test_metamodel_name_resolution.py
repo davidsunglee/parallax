@@ -14,18 +14,13 @@ what makes "preflight accepted this reference" imply "lowering resolves it".
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import cast
-
 import pytest
 
 from _support.sql import compile_read
 from parallax.core import deep_fetch, navigate
 from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.db_port import DbPort
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._layout import CatalogedModel
+from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.object_query import (
     IncludePath,
@@ -37,8 +32,8 @@ from parallax.core.predicate import All, ModelRejectedError, Narrow, validate_pr
 from parallax.core.unit_work import instructions
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.snapshot import handle
 from parallax.snapshot.handle import QueryTargetError
+from parallax.snapshot.handle._preflight import preflight
 
 
 def _entity(name: str, namespace: str) -> records.Entity:
@@ -104,13 +99,13 @@ def test_the_write_boundary_classifies_an_ambiguous_bare_name_by_the_same_rule()
         {"mutation": "delete", "entity": "Person", "rows": [{"id": 1}]}
     )
     with pytest.raises(instructions.InstructionRejectedError) as excinfo:
-        instructions.validate_instruction(keyed, model)
+        instructions.prepare_typed_write(keyed, model)
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
     canonical = instructions.deserialize(
         {"mutation": "delete", "entity": "a.Person", "rows": [{"id": 1}]}
     )
-    instructions.validate_instruction(canonical, model)
+    instructions.prepare_typed_write(canonical, model)
 
 
 def _query(target: str, includes: tuple[IncludePath, ...] = ()) -> ObjectQueryNode:
@@ -121,51 +116,23 @@ def _query(target: str, includes: tuple[IncludePath, ...] = ()) -> ObjectQueryNo
     )
 
 
-class _RefusingPort:
-    """Every adapter call is a failure — a read refused for its spelling reaches
-    none of them."""
-
-    dialect: Dialect = POSTGRES
-
-    def execute(
-        self, sql: str, binds: object, document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[dict[str, object]]:
-        raise AssertionError(f"the read reached the adapter: {sql!r}")
-
-    def execute_write(self, sql: str, binds: object) -> int:
-        raise AssertionError(f"the read reached the adapter: {sql!r}")
-
-    def transaction(self, body: object) -> object:
-        raise AssertionError("the read opened a transaction")
-
-
-def test_the_read_executor_classifies_an_ambiguous_bare_name_by_the_same_rule() -> None:
-    # The read side: the find executor resolves its target spelling through the
+def test_read_preflight_classifies_an_ambiguous_bare_name_by_the_same_rule() -> None:
+    # The read side: preflight resolves its target spelling through the
     # same helper, and reports the same rule through `predicate`'s own rejected
     # carrier — so one rule and one class answer an ambiguous spelling whether
     # preflight or lowering resolves it.
     with pytest.raises(ModelRejectedError) as excinfo:
         model = _model()
-        handle.find(
-            _query("Person"),
-            CatalogedModel(model),
-            cast("DbPort", _RefusingPort()),
-        )
+        preflight(_query("Person"), model=model, form="graph")
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
 
-def test_the_read_executor_refuses_a_target_the_model_does_not_declare() -> None:
-    # The other half of the executor's own classification: `find` / `find_history`
-    # are exported and take a bare target spelling, so an undeclared one reaches
-    # this seam and earns the same `query-target-not-in-model` refusal the read
-    # preflight answers with — never a bare `KeyError` from a lookup miss.
+def test_read_preflight_refuses_a_target_the_model_does_not_declare() -> None:
+    # An undeclared target earns `query-target-not-in-model` before the validated
+    # execution token exists and therefore before any executor or I/O can run.
     with pytest.raises(QueryTargetError) as excinfo:
         model = _model()
-        handle.find(
-            _query("Nope"),
-            CatalogedModel(model),
-            cast("DbPort", _RefusingPort()),
-        )
+        preflight(_query("Nope"), model=model, form="graph")
     assert excinfo.value.code == "query-target-not-in-model"
 
 
@@ -333,8 +300,8 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
         "den.Den",
         includes=(IncludePath(segments=(IncludeSegment(rel="Den.beasts", narrow_to=("Wolf",)),)),),
     )
-    validate_object_query(den, segment_narrow, model)
-    assert [level.attach_key for level in deep_fetch.plan(den, segment_narrow, model).levels] == [
+    validated_segment = validate_object_query(den, segment_narrow, model)
+    assert [level.attach_key for level in deep_fetch.plan(validated_segment, model).levels] == [
         "beasts[Wolf]"
     ]
 
@@ -342,13 +309,13 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
         "zoo.Beast",
         includes=(IncludePath(applies_to=("Wolf",), segments=(IncludeSegment(rel="Beast.den"),)),),
     )
-    validate_object_query(beast, root_guard, model)
-    guarded = deep_fetch.plan(beast, root_guard, model).levels
+    validated_guard = validate_object_query(beast, root_guard, model)
+    guarded = deep_fetch.plan(validated_guard, model).levels
     assert [level.source_position for level in guarded] == [(wolf.identity,)]
 
     from_subtype = _query("Wolf", (IncludePath(segments=(IncludeSegment(rel="Beast.den"),)),))
-    validate_object_query(wolf, from_subtype, model)
-    assert [level.attach_key for level in deep_fetch.plan(wolf, from_subtype, model).levels] == [
+    validated_subtype = validate_object_query(wolf, from_subtype, model)
+    assert [level.attach_key for level in deep_fetch.plan(validated_subtype, model).levels] == [
         "den"
     ]
 
@@ -391,8 +358,8 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
         "zoo.Beast",
         (IncludePath(applies_to=("Wolf",), segments=(IncludeSegment(rel="zoo.Beast.den"),)),),
     )
-    validate_object_query(beast, root_guard, model)
-    guarded = deep_fetch.plan(beast, root_guard, model).levels
+    validated_guard = validate_object_query(beast, root_guard, model)
+    guarded = deep_fetch.plan(validated_guard, model).levels
     assert [level.source_position for level in guarded] == [(wolf.identity,)]
 
     navigation = oa.Exists(rel="zoo.Beast.den")

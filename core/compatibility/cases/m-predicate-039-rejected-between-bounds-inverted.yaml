@@ -6,9 +6,9 @@
 # polymorphic `literal`s — and it lowers to a perfectly legal
 # `t0.price between ? and ?` that simply returns no rows, so only a resolver
 # enforcing the bound-ordering rule catches it rather than emitting a silently
-# empty predicate. Bounds are compared by LITERAL KIND (both numbers here), and
-# only a STRICTLY greater lower bound is rejected: equal bounds name the
-# single-value range and stay legal.
+# empty predicate. Both serialized Decimal bounds are decoded against the
+# resolved `price` value space before their managed values are compared; only a
+# STRICTLY greater lower bound is rejected.
 model: models/orders.yaml
 tags: [m-predicate, rejected, negative, between, slice-snapshot-1, slice-managed-1]
 shape: rejected
@@ -18,7 +18,7 @@ when:
     predicate:
       between:
         attr: parallax.compatibility.Order.price
-        lower: 50.75
-        upper: 20.00
+        lower: "50.75"
+        upper: "20.00"
 then:
   rejectedRule: between-bounds-inverted

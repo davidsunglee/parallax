@@ -289,11 +289,13 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
     all, keyed or otherwise), so this needs no row inspection and never
     synthesizes a fake keyless row just to trigger
     :func:`validate_subtype_write`'s own branch. The build-time caller is
-    :func:`~parallax.core.unit_work.instructions.validate_instruction`, which
-    the developer-facing ``_where`` verb family (`python.md` §5) and the
-    conformance engine's predicate-write translation both run before they
-    buffer, so no ingress can classify an inheritance-family predicate write
-    differently. Two callers stand behind it, each covering a route that call
+    shared managed-write preparation reached by both
+    :func:`~parallax.core.unit_work.instructions.prepare_typed_write` and
+    :func:`~parallax.core.unit_work.instructions.prepare_wire_write`. The
+    developer-facing ``_where`` verb family (`python.md` §5) and the conformance
+    engine's predicate-write translation therefore run it before they buffer,
+    so no ingress can classify an inheritance-family predicate write differently.
+    Two callers stand behind it, each covering a route that call
     cannot: ``parallax.snapshot.handle``'s directly reachable buffering seam,
     before it can resolve a materializing family target against a real
     connection, and :mod:`~parallax.core.unit_work.write_planner` at flush, as
@@ -337,7 +339,7 @@ def validate_write_assignment(
     violation was found.
 
     A ``name`` this family declares NEITHER a scalar attribute NOR a value object
-    for (one `validate_instruction`'s own member-name-honesty gate already
+    for (the prepared write's own member-name-honesty gate already
     rejects as wholly undeclared) is out of this function's scope — it returns
     silently, leaving that classification to its own owning check.
     """

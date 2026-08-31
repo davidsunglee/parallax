@@ -65,7 +65,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.sql_gen import AttributeReadContract
+from parallax.core.sql_gen._compile import AttributeReadContract
 from parallax.core.temporal_read import Pin
 from parallax.descriptor._records import (
     Attribute,

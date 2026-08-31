@@ -88,7 +88,7 @@ from parallax.core import (
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import LATEST
 from parallax.core.object_query._fluent import object_query_node
-from parallax.snapshot.handle import preflight
+from parallax.snapshot.handle._preflight import preflight
 
 # case id -> the idiomatic query that must canonicalize to the case's own document.
 BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {

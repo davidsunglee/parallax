@@ -46,6 +46,7 @@ from parallax.core.metamodel import (
     TemporalDimension as AxisKind,
 )
 from parallax.core.object_query._nodes import IncludePath, ObjectQueryNode
+from parallax.core.object_query._validated import ValidatedObjectQuery, ValidatedOrderTerm
 from parallax.core.predicate import (
     ModelRejectedError,
     PositionScope,
@@ -62,7 +63,9 @@ from parallax.core.predicate import (
 __all__ = ["query_entities", "validate_object_query"]
 
 
-def validate_object_query(root: EntityMetadata, query: ObjectQueryNode, model: Metamodel) -> None:
+def validate_object_query(
+    root: EntityMetadata, query: ObjectQueryNode, model: Metamodel
+) -> ValidatedObjectQuery:
     """Validate ``query`` against ``model``, raising :class:`ModelRejectedError`.
 
     ``root`` is the queried position, already resolved to accepted Metadata by
@@ -74,11 +77,26 @@ def validate_object_query(root: EntityMetadata, query: ObjectQueryNode, model: M
     _validate_temporal_selections(root, query, model)
     queried = root_position(model, root)
     result = _narrowed_position(query, queried, model)
-    validate_predicate(root, query.predicate, model, position=result)
+    predicate = validate_predicate(root, query.predicate, model, position=result)
+    order_terms: list[ValidatedOrderTerm] = []
     for key in query.order_by:
-        check_attribute_reference(key.attr, model, result)
+        member = check_attribute_reference(key.attr, model, result)
+        if member is None:
+            raise ValueError(f"{key.attr!r} names no declared ordering attribute")
+        order_terms.append(ValidatedOrderTerm(key, member))
     for path in query.includes:
         _validate_include_path(path, model, queried)
+    return ValidatedObjectQuery(
+        query,
+        root,
+        predicate,
+        tuple(
+            entity.identity
+            for entity in model.entities
+            if entity.identity.canonical in result.effective
+        ),
+        tuple(order_terms),
+    )
 
 
 def query_entities(query: ObjectQueryNode) -> frozenset[str]:

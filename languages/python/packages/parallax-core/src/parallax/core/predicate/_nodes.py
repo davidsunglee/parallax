@@ -63,8 +63,8 @@ __all__ = [
     "canonical_subtype_selection",
 ]
 
-# A scalar literal usable as a bind (json/yaml primitive).
-Scalar = str | int | float | bool | None
+# A non-null serialized typed literal. Null tests use dedicated nodes.
+Scalar = str | int | float | bool
 SubtypeSelection = tuple[str, ...]
 
 

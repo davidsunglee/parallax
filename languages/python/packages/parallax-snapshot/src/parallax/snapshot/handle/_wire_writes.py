@@ -58,7 +58,7 @@ copy is the traversal that would otherwise fail on it.
 Wire input is stated in the ACCEPTED wire spellings its serde seam admits
 (`m-wire`: one canonical output spelling per Neutral Type, accepted input
 spellings as specified at each seam), so every value crosses
-:func:`~parallax.core.base.decode_neutral_literal` once here and reaches the
+:func:`~parallax.core.wire.decode_wire` once here and reaches the
 instruction IR as the native carrier every other ingress hands it.
 """
 
@@ -72,7 +72,7 @@ from typing import Any, cast
 
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
-from parallax.core.base import NeutralType, decode_neutral_literal
+from parallax.core.base import NeutralType
 from parallax.core.db_port import DbPort
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
@@ -92,12 +92,14 @@ from parallax.core.unit_work import (
     KeyedMutation,
     PredicateMutation,
     PredicateWrite,
+    PreparedPredicateWrite,
     SettledEvidence,
     SourceHint,
     UnitOfWork,
     instructions,
     object_key,
 )
+from parallax.core.wire import WireValue, decode_wire
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
 from parallax.snapshot.handle._write_inputs import (
@@ -224,7 +226,7 @@ def wire_insert(
     instruction = keyed_instruction(
         mutation, entity.identity, row, valid_from=valid_from_literal, until=until_literal
     )
-    validate_keyed_instruction(lane.model.meta, instruction)
+    instruction = validate_keyed_instruction(lane.model.meta, instruction)
     admit_and_buffer(lane.uow, lane.model.meta, instruction, None)
     lane.inserts.record(written_object_of_row(entity, declaring, row))
     opened = object_key(instruction, lane.model.meta)
@@ -290,7 +292,7 @@ def wire_keyed_write(
     instruction = keyed_instruction(
         mutation, record.identity, row, valid_from=valid_from_literal, until=until_literal
     )
-    validate_keyed_instruction(lane.model.meta, instruction)
+    instruction = validate_keyed_instruction(lane.model.meta, instruction)
     written = written_object_of_row(record, declaring, identity_row)
     evidence: SettledEvidence | None = (
         None
@@ -360,8 +362,9 @@ def wire_predicate_write(
         doc["until"] = until_literal
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # a `target` document always builds this shape
-    instructions.validate_instruction(instruction, lane.model.meta)
-    buffer_predicate_instruction(lane.uow, lane.model, lane.conn, instruction, lane.attempt)
+    prepared = instructions.prepare_typed_write(instruction, lane.model.meta)
+    assert isinstance(prepared, PreparedPredicateWrite)
+    buffer_predicate_instruction(lane.uow, lane.model, lane.conn, prepared, lane.attempt)
 
 
 def _authored_row(
@@ -654,7 +657,7 @@ def _position_decoder(member: _DeclaredMember | None) -> _Decoder | None:
 
 
 def _decoded_leaf(neutral_type: NeutralType, value: object) -> object:
-    return decode_neutral_literal(value, neutral_type)
+    return decode_wire(neutral_type, cast("WireValue", value))
 
 
 def _decoded_occurrence(occurrence: _VoContainer, value: object) -> object:

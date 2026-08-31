@@ -39,7 +39,6 @@ from parallax.core.base import (
     PresentDocument,
     SqlNull,
     admits_stored_scalar,
-    decode_neutral_literal,
     unwrap_document_read,
 )
 from parallax.core.db_port import Row
@@ -64,6 +63,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
+from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.snapshot.materialize._graph import (
     ABSENT,
     GraphBuilder,
@@ -194,7 +194,7 @@ def convert_row(
             continue
         raw = row[result_key]
         value = (
-            decode_neutral_literal(raw, attribute.type)
+            decode_canonical_wire(attribute.type, cast("WireValue", raw))
             if contract is not None and contract.encoded
             else raw
         )
@@ -272,7 +272,9 @@ def observable_columns(
             continue
         raw = row[contract.result_key]
         columns[contract.column] = (
-            decode_neutral_literal(raw, contract.type) if contract.encoded else raw
+            decode_canonical_wire(contract.type, cast("WireValue", raw))
+            if contract.encoded
+            else raw
         )
     for occurrence in level.documents:
         raw = row.get(occurrence.storage.name)
