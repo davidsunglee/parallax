@@ -64,6 +64,7 @@ from parallax.core.unit_work import (
     SettledEvidence,
     UnitOfWork,
 )
+from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -74,6 +75,7 @@ from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
+    buffer_predicate_instruction,
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
@@ -89,7 +91,7 @@ from parallax.snapshot.handle._read import (
 )
 from parallax.snapshot.handle._stream import SnapshotStream, check_batch_size
 from parallax.snapshot.handle._wire import WireTransactionView
-from parallax.snapshot.handle._wire_writes import WireWriteLane
+from parallax.snapshot.handle._wire_writes import WireWriteLane, buffer_prepared_keyed_write
 from parallax.snapshot.handle._write_inputs import (
     BufferedInserts,
     admit_and_buffer,
@@ -403,7 +405,7 @@ class Transaction:
         mutation: KeyedMutation,
         valid_from: dt.datetime | None,
         until: dt.datetime | None = None,
-    ) -> tuple[EntityMetadata, EntityMetadata, str | None, str | None]:
+    ) -> tuple[EntityMetadata, EntityMetadata, dt.datetime | None, dt.datetime | None]:
         """The keyed-verb prep every verb above (``delete`` excepted — it takes
         no Valid-Time bound) opens with: resolve the written instance's own
         accepted Metadata and its family's DECLARING entity (the entity that
@@ -425,7 +427,7 @@ class Transaction:
         what let an absent half be reported as something other than the missing
         bound it is. Returns the record (``_buffer``'s own entity-name
         argument), the declaring entity (the evidence resolution below needs
-        it), and the two rendered instant literals (``None`` where the target
+        it), and the two managed normalized instants (``None`` where the target
         or the verb states no such bound)."""
         record = metadata_of_instance(self._model.meta, node_or_instance)
         declaring = declaring_of(self._model.meta, record)
@@ -793,8 +795,8 @@ class Transaction:
         entity: EntityIdentity,
         row: Mapping[str, object],
         *,
-        valid_from: str | None = None,
-        until: str | None = None,
+        valid_from: dt.datetime | None = None,
+        until: dt.datetime | None = None,
         claim: SettledEvidence | None = None,
         restorations: frozenset[str] = frozenset(),
     ) -> None:
@@ -813,11 +815,8 @@ class Transaction:
         # so it rides beside the instruction rather than inside it, exactly as a
         # Materialized Write Group's own observation columns do.
         #
-        # The document route buys the IR's structural validation (no `at` alias,
-        # no observation keys) first (`keyed_instruction`), and the instruction
-        # it yields is then measured by `validate_keyed_instruction`, the SAME
-        # judgment in the SAME order every other ingress runs on a keyed
-        # instruction it holds.
+        # The authored instruction is measured by `validate_keyed_instruction`,
+        # the SAME judgment in the SAME order every typed keyed ingress runs.
         #
         # `valid_from` / `until` extend this neutral seam for a TEMPORAL keyed
         # write: a non-temporal or Transaction-Time-Only
@@ -940,6 +939,65 @@ class Transaction:
             until=until,
             attempt=self._attempt,
         )
+
+    def _buffer_prepared_predicate_write(self, instruction: PreparedPredicateWrite) -> None:
+        refuse_reentry(self._lifecycle)
+        buffer_predicate_instruction(
+            self._uow,
+            self._model,
+            self._conn,
+            instruction,
+            self._attempt,
+        )
+
+    def _buffer_prepared_wire_keyed_write(
+        self,
+        instruction: PreparedKeyedWrite,
+        observed: object,
+        assigned_members: frozenset[str],
+    ) -> None:
+        buffer_prepared_keyed_write(
+            WireWriteLane(
+                self._model,
+                self._uow,
+                self._conn,
+                self._attempt,
+                self._inserted_objects,
+                self._lifecycle,
+            ),
+            observed,
+            instruction,
+            assigned_members,
+        )
+
+
+def buffer_prepared_predicate_write(
+    transaction: Transaction, instruction: PreparedPredicateWrite
+) -> None:
+    """Buffer an already-prepared predicate instruction on ``transaction``.
+
+    The conformance translation owns a case-format carrier adapter before this
+    seam. Production still owns dispatch, materialization, lifecycle, and the
+    unit-of-work buffer; accepting only ``PreparedPredicateWrite`` prevents this
+    execution bridge from becoming another instruction producer.
+    """
+    transaction._buffer_prepared_predicate_write(  # pyright: ignore[reportPrivateUsage]
+        instruction
+    )
+
+
+def buffer_prepared_wire_keyed_write(
+    transaction: Transaction,
+    instruction: PreparedKeyedWrite,
+    observed: object,
+    assigned_members: frozenset[str],
+) -> None:
+    """Buffer an already-prepared keyed instruction against a Wire source."""
+    transaction._buffer_prepared_wire_keyed_write(  # pyright: ignore[reportPrivateUsage]
+        instruction,
+        observed,
+        assigned_members,
+    )
 
 
 def _materializing(

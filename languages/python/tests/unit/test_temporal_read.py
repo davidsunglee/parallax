@@ -139,6 +139,17 @@ def test_as_of_range_overlap_predicate_binds_window_end_first() -> None:
     )
 
 
+@pytest.mark.parametrize("end", [_B, _P], ids=["equal", "reversed"])
+def test_serialized_as_of_range_requires_decoded_start_before_end(end: str) -> None:
+    query = _query(
+        BALANCE,
+        {"transaction-time": oq.AsOfRange(start=_B, end=end)},
+    )
+    with pytest.raises(ModelRejectedError, match="start < end") as caught:
+        oq.validate_object_query(BALANCE, query, _ACCEPTED["Balance"])
+    assert caught.value.rule == "query-clause-invalid"
+
+
 def test_history_injects_no_term() -> None:
     where, binds = _where(
         BALANCE,

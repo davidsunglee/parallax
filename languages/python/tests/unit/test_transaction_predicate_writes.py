@@ -46,7 +46,6 @@ from _support.db_port import (
     WriteCall,
 )
 from parallax.conformance import case_format, engine
-from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
 from parallax.core import (
@@ -70,7 +69,6 @@ from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.predicate import ModelRejectedError
-from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
@@ -1826,7 +1824,7 @@ def _bounded_write(
 # clause now, so a write target carrying one is a malformed document rather     #
 # than a rule a validator applies.                                              #
 # --------------------------------------------------------------------------- #
-_READLESS_ENGINE_MODEL = engine.load_case_domain_model(
+_READLESS_ENGINE_META = engine.load_case_metamodel(
     next(case for case in case_format.load_cases() if case.case_id == "m-batch-write-005")
 )
 _MATERIALIZING_ENGINE_META = engine.load_case_metamodel(
@@ -1855,26 +1853,14 @@ _MATERIALIZING_REFUSALS = _refused_predicates("Account")
     [(message, predicate) for _id, message, predicate in _READLESS_REFUSALS],
     ids=[case_id for case_id, _message, _predicate in _READLESS_REFUSALS],
 )
-def test_the_engines_readless_predicate_ingress_refuses_before_any_statement(
+def test_the_engines_readless_case_adapter_refuses_before_execution(
     message: str, predicate: dict[str, object]
 ) -> None:
-    # The verb the lane states its write through judges the selection at its own
-    # target-shape gate, so the refusal happens inside the transaction the lane
-    # opened and nothing but demarcation reaches the wire. Unjudged, the
-    # instruction would merely buffer and the call would return.
-    port = ScriptedPort(Transact())
     with pytest.raises(ValueError, match=re.escape(message)):
-        engine._run_readless_predicate_write(  # pyright: ignore[reportPrivateUsage] - the conformance engine's own readless predicate-write ingress
-            port,
-            _READLESS_ENGINE_MODEL,
-            "optimistic",
+        engine._prepared_case_predicate_write(  # pyright: ignore[reportPrivateUsage] - the conformance engine's case-format preparation ingress
             {"mutation": "delete", "target": {"entity": "Wallet", "predicate": predicate}},
-            LoweredStatement("delete from wallet", ()),
-            _ENGINE_TX_INSTANT,
-            LifecycleRun(),
-            rollback=False,
+            _READLESS_ENGINE_META,
         )
-    assert port.calls == [BeginCall(), RollbackCall()]
 
 
 @pytest.mark.parametrize(

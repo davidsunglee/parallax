@@ -255,6 +255,9 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.engine", "parallax.snapshot.handle._preflight"): frozenset(
         {"preflight"}
     ),
+    ("parallax.conformance.engine", "parallax.snapshot.handle._transaction"): frozenset(
+        {"buffer_prepared_predicate_write", "buffer_prepared_wire_keyed_write"}
+    ),
     ("parallax.conformance.another_source", "parallax.core.entity._model"): frozenset(
         {"cataloged_model"}
     ),

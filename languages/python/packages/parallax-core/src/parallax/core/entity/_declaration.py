@@ -145,7 +145,8 @@ FRAMEWORK_NAME_PREFIX: Final = "__parallax_"
 """The prefix carried by the framework's own private bindings, which no
 declaration of any kind may author: the class markers the engine puts on a
 declared class, the private slots it puts on an instance, and the
-``__parallax_document__`` renderer every Value Object serializes itself through.
+``__parallax_document__`` and ``__parallax_managed_document__`` renderers every
+Value Object serializes itself through.
 
 The framework's public bindings sit outside this prefix, and each is reserved by
 the rule that owns it rather than by this one: the copy verb ``edit``, the pickle

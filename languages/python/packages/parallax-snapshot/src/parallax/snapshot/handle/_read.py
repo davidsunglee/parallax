@@ -469,7 +469,7 @@ def find(
             _attach_back_reference(builder, meta, level, parents)
             level_refs.append(())
             continue
-        keys = _distinct_keys(builder, parents, _correlation_member(meta, level.owner.identity))
+        keys = _gather_keys(builder, parents, _correlation_member(meta, level.owner.identity))
         if not keys:
             _attach_empty(builder, level, parents)
             level_refs.append(())
@@ -1056,14 +1056,10 @@ def _guarded_parents(
     return tuple(parent for parent in parents if builder.concrete_of(parent) in admitted)
 
 
-def _distinct_keys(
+def _gather_keys(
     builder: GraphBuilder, parents: tuple[int, ...], member: AttributeIdentity
 ) -> list[predicate_algebra.Scalar]:
-    """The distinct values of ``member`` across ``parents`` that name something,
-    in first-encountered order (m-deep-fetch: the gathered set is unordered for
-    grading purposes — an implementation MUST NOT sort at runtime to match a
-    fixture — so encounter order is as good as any, and deterministic run to
-    run).
+    """The values of ``member`` across ``parents`` that name something.
 
     A member this level's parents did not carry and one stored null are distinct
     answers now and both drop out here: neither names a child row, so gathering
@@ -1076,8 +1072,10 @@ def _distinct_keys(
     contract.
     """
     gathered = (builder.member_value(parent, member) for parent in parents)
-    values = dict.fromkeys(value for value in gathered if value is not None and value is not ABSENT)
-    return cast("list[predicate_algebra.Scalar]", list(values))
+    return cast(
+        "list[predicate_algebra.Scalar]",
+        [value for value in gathered if value is not None and value is not ABSENT],
+    )
 
 
 def declaring_metadata(model: Metamodel, target: EntityIdentity) -> EntityMetadata:

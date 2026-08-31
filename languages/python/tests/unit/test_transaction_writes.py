@@ -73,6 +73,7 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteInstructionError,
     WriteRejectedError,
+    instructions,
     validate_write,
 )
 from parallax.snapshot import InvalidData
@@ -451,24 +452,18 @@ def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
 # --------------------------------------------------------------------------- #
 # validate_write (m-value-object write validation                             #
 # x m-inheritance concrete-subtype write protocol): the SAME model-aware      #
-# validator the conformance engine's rejected lane calls for the corpus's     #
-# `when.write` cases (m-value-object-039..044 / m-inheritance-086..089) — one #
-# validator, two callers (design 37 "Patterns to follow"), pinned per rule at #
-# this seam. It runs BEFORE prepared-write production (see `_buffer`'s own   #
+# validator the prepared-write producers call for the corpus's `when.write`  #
+# cases (m-value-object-039..044 / m-inheritance-086..089) — one producer,    #
+# several ingresses, pinned per rule at this seam.                            #
 # comment): its inheritance payload-shape rules classify a framework-owned    #
 # metadata key or a cross-branch field more specifically than the generic     #
 # member-name-honesty gate ever could.                                       #
 # --------------------------------------------------------------------------- #
-def test_engine_and_transaction_buffer_share_the_identical_write_validator() -> None:
-    # Neither caller forks its own copy of the shared validator, so a rule
-    # dropped from the ONE implementation fails both lanes identically. The
-    # transaction's own side of it is `_write_inputs.validate_keyed_instruction`,
-    # the one keyed judgement every ingress — Typed verb, Wire verb, and the
-    # neutral bridge — runs in one order.
+def test_engine_and_transaction_buffer_share_the_prepared_write_producer() -> None:
     from parallax.conformance import engine as engine_module
     from parallax.snapshot.handle import _write_inputs as write_inputs_module
 
-    assert engine_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage] - asserts both lanes reference the one private write validator
+    assert engine_module.instructions.prepare_wire_write is instructions.prepare_wire_write  # pyright: ignore[reportPrivateImportUsage]
     assert write_inputs_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage] - asserts both lanes reference the one private write validator
 
 

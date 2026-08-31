@@ -11,18 +11,23 @@ and the metamodel-aware member-name honesty validator.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from collections.abc import Mapping
 from typing import Any, cast
 
 import jsonschema
 import pytest
+from _metamodel_support import Declaration, attribute, identity, key, source
 from referencing import Registry, Resource
 
 from _support.repo import REPO_ROOT
 from parallax.conformance import models
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import JSON
+from parallax.core.metamodel import Table
 from parallax.core.unit_work import instructions as wi
 
 _SCHEMAS = REPO_ROOT / "core" / "schemas"
@@ -59,6 +64,17 @@ _POSITION = _MODELS["position"]
 # Two Entities sharing one local name across namespaces — the corpus model the
 # ambiguity rule is authored against (`m-predicate-048` / `-051`).
 _SHARED_LOCAL_NAME = _MODELS["shared-local-name"]
+
+_DOCUMENT_ROW = identity("DocumentRow")
+_DOCUMENT_MODEL = form_metamodel(
+    source(
+        Declaration(
+            identity=_DOCUMENT_ROW,
+            container=Table("document_row"),
+            attributes=(key(_DOCUMENT_ROW), attribute(_DOCUMENT_ROW, "payload", type=JSON)),
+        )
+    )
+)
 
 _B1 = "2024-01-01T00:00:00.000000Z"
 _B2 = "2024-06-01T00:00:00.000000Z"
@@ -480,6 +496,75 @@ def test_preparation_owns_nested_values_once_and_derivation_retains_them() -> No
     assert derived.rows[0]["address"] is retained
 
 
+def test_wire_preparation_owns_recursive_value_object_decoding() -> None:
+    instruction = wi.KeyedWrite(
+        "insert",
+        "Customer",
+        (
+            {
+                "id": 9,
+                "name": "Ada",
+                "address": {
+                    "street": "Main",
+                    "city": "Berlin",
+                    "geo": {"country": "DE", "elevation": 5},
+                    "phones": [{"type": "home", "number": "1"}],
+                },
+            },
+        ),
+    )
+    prepared = wi.prepare_wire_write(instruction, _MODELS["customer"])
+    assert isinstance(prepared, wi.PreparedKeyedWrite)
+    address = cast("Mapping[str, object]", prepared.rows[0]["address"])
+    geo = cast("Mapping[str, object]", address["geo"])
+    assert geo["elevation"] == 5.0
+    assert isinstance(address["phones"], tuple)
+
+
+@pytest.mark.parametrize("prepare", [wi.prepare_typed_write, wi.prepare_wire_write])
+def test_prepared_json_leaves_are_deeply_frozen_before_retention(prepare: Any) -> None:
+    payload: dict[str, object] = {"items": [{"value": 1}]}
+    prepared = prepare(
+        wi.KeyedWrite("insert", _DOCUMENT_ROW.canonical, ({"id": 1, "payload": payload},)),
+        _DOCUMENT_MODEL,
+    )
+    assert isinstance(prepared, wi.PreparedKeyedWrite)
+    retained = cast("Mapping[str, object]", prepared.rows[0]["payload"])
+    items = cast("tuple[object, ...]", retained["items"])
+    first = cast("Mapping[str, object]", items[0])
+    cast("dict[str, object]", cast("list[object]", payload["items"])[0])["value"] = 2
+    assert first["value"] == 1
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", first)["value"] = 3
+
+
+def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
+    stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    instruction = wi.KeyedWrite(
+        "update",
+        "Position",
+        ({"id": 1, "value": 5},),
+        valid_from=stated,
+    )
+    prepared = wi.prepare_typed_write(instruction, _POSITION)
+    assert isinstance(prepared, wi.PreparedKeyedWrite)
+    assert prepared.bounds.valid_from == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert isinstance(instruction.valid_from, dt.datetime)
+
+    serialized = wi.serialize(instruction)
+    assert serialized["validFrom"] == "2024-01-01T00:00:00.000000Z"
+    wire_prepared = wi.prepare_wire_write(
+        wi.KeyedWrite(
+            "update",
+            "Position",
+            ({"id": 1, "value": "5.00"},),
+            valid_from=cast("str", serialized["validFrom"]),
+        ),
+        _POSITION,
+    )
+    assert wire_prepared.bounds == prepared.bounds
+
+
 def test_member_name_honesty_rejects_undeclared_row_member() -> None:
     keyed = wi.deserialize(
         {
@@ -628,7 +713,7 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
     # connection first, and settles as an ordinary versioned write that consumes
     # the row's version while dropping the bounds the caller wrote.
     with pytest.raises(wi.WriteInstructionError, match="temporal milestone verb"):
-        wi.prepare_typed_write(wi.deserialize(instruction), _ACCOUNT)
+        wi.prepare_wire_write(wi.deserialize(instruction), _ACCOUNT)
 
 
 @pytest.mark.parametrize(
@@ -637,7 +722,7 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
         {
             "mutation": "updateUntil",
             "entity": "Position",
-            "rows": [{"id": 1, "value": 5}],
+            "rows": [{"id": 1, "value": "5.00"}],
             "validFrom": _B1,
             "until": _B2,
         },
@@ -647,7 +732,7 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
 )
 def test_a_milestone_verb_is_accepted_on_a_temporal_target(instruction: dict[str, Any]) -> None:
     model = _POSITION if instruction["entity"] == "Position" else _BALANCE
-    wi.prepare_typed_write(wi.deserialize(instruction), model)
+    wi.prepare_wire_write(wi.deserialize(instruction), model)
 
 
 def test_a_plural_keyed_instruction_is_rejected_on_a_temporal_target() -> None:
@@ -696,7 +781,7 @@ def test_a_milestone_verb_is_accepted_on_a_temporal_family_descendant() -> None:
             "validFrom": _B1,
         }
     )
-    wi.prepare_typed_write(keyed, rate)
+    wi.prepare_wire_write(keyed, rate)
 
 
 def test_member_name_honesty_covers_value_object_members() -> None:

@@ -35,7 +35,13 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, cast
 
-from parallax.core.base import ManagedValue, NeutralType
+from parallax.core.base import (
+    INFINITY_LITERAL,
+    ManagedValue,
+    NeutralType,
+    TemporalBound,
+    matches_neutral_type,
+)
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
@@ -317,7 +323,7 @@ class StatementBuilder:
         rows: Sequence[Sequence[object]],
         pattern: Sequence[NeutralType | None],
     ) -> None:
-        """Append row values using one fixed width-sized managed-type pattern."""
+        """Append rows and compact their actual non-null managed-type runs."""
         if not rows:
             return
         width = len(pattern)
@@ -331,24 +337,53 @@ class StatementBuilder:
         for row in rows:
             for value in row:
                 self._append(value)
-        run_start: int | None = None
-        run_type: NeutralType | None = None
-        for offset, neutral_type in enumerate((*pattern, None)):
-            if neutral_type == run_type:
+                if isinstance(value, TemporalBound):
+                    self._wire_overrides[len(self._binds) - 1] = INFINITY_LITERAL
+        signatures = tuple(
+            tuple(
+                neutral_type
+                if neutral_type is not None and matches_neutral_type(value, neutral_type)
+                else None
+                for value, neutral_type in zip(row, pattern, strict=True)
+            )
+            for row in rows
+        )
+        group_start = 0
+        for group_stop in range(1, len(rows) + 1):
+            if group_stop < len(rows) and signatures[group_stop] == signatures[group_start]:
                 continue
-            if run_type is not None and run_start is not None:
-                self._typed_spans.append(
-                    _RepeatedTypedBindSpan(
-                        start + run_start,
-                        offset - run_start,
-                        width,
-                        len(rows),
-                        run_type,
-                        "MANAGED",
-                    )
-                )
-            run_start = offset if neutral_type is not None else None
-            run_type = neutral_type
+            signature = signatures[group_start]
+            run_start: int | None = None
+            run_type: NeutralType | None = None
+            for offset, neutral_type in enumerate((*signature, None)):
+                if neutral_type == run_type:
+                    continue
+                if run_type is not None and run_start is not None:
+                    repetitions = group_stop - group_start
+                    span_start = start + group_start * width + run_start
+                    if repetitions == 1:
+                        self._append_typed_span(
+                            _TypedBindSpan(
+                                span_start,
+                                span_start + offset - run_start,
+                                run_type,
+                                "MANAGED",
+                            )
+                        )
+                    else:
+                        self._typed_spans.append(
+                            _RepeatedTypedBindSpan(
+                                span_start,
+                                offset - run_start,
+                                width,
+                                repetitions,
+                                run_type,
+                                "MANAGED",
+                            )
+                        )
+                run_start = offset if neutral_type is not None else None
+                run_type = neutral_type
+            group_start = group_stop
 
     def append_fragment(self, statement: LoweredStatement) -> None:
         """Append a compiler-proven fragment without discarding bind provenance."""
@@ -357,7 +392,8 @@ class StatementBuilder:
         offset = len(self._binds)
         self._binds.extend(statement.binds)
         self._classified += len(statement.binds)
-        self._typed_spans.extend(span.shifted(offset) for span in statement.typed_bind_spans)
+        for span in statement.typed_bind_spans:
+            self._append_typed_span(span.shifted(offset))
         for override in statement.wire_bind_overrides:
             self._wire_overrides[offset + override.index] = override.value
 
@@ -384,7 +420,9 @@ class StatementBuilder:
         self._classified += 1
 
     def _bind_row_value(self, value: object, neutral_type: NeutralType | None) -> None:
-        if neutral_type is not None and value is not None:
+        if isinstance(value, TemporalBound):
+            self.bind_framework(value, wire_value=INFINITY_LITERAL)
+        elif neutral_type is not None and matches_neutral_type(value, neutral_type):
             self.bind_managed(value, neutral_type)
         elif isinstance(value, JsonDocument):
             self.bind_document(value)
@@ -394,14 +432,20 @@ class StatementBuilder:
     def _bind_typed(self, value: object, neutral_type: NeutralType, form: _BindForm) -> None:
         index = len(self._binds)
         self._append(value)
+        self._append_typed_span(_TypedBindSpan(index, index + 1, neutral_type, form))
+
+    def _append_typed_span(self, span: _BindSpan) -> None:
         if (
-            self._typed_spans
+            isinstance(span, _TypedBindSpan)
+            and self._typed_spans
             and isinstance(self._typed_spans[-1], _TypedBindSpan)
-            and self._typed_spans[-1].stop == index
-            and self._typed_spans[-1].neutral_type == neutral_type
-            and self._typed_spans[-1].form == form
+            and self._typed_spans[-1].stop == span.start
+            and self._typed_spans[-1].neutral_type == span.neutral_type
+            and self._typed_spans[-1].form == span.form
         ):
             previous = self._typed_spans[-1]
-            self._typed_spans[-1] = _TypedBindSpan(previous.start, index + 1, neutral_type, form)
+            self._typed_spans[-1] = _TypedBindSpan(
+                previous.start, span.stop, span.neutral_type, span.form
+            )
         else:
-            self._typed_spans.append(_TypedBindSpan(index, index + 1, neutral_type, form))
+            self._typed_spans.append(span)

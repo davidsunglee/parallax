@@ -106,3 +106,36 @@ def test_multirow_write_uses_one_repeated_descriptor_per_typed_row_run() -> None
         "C",
         "30.00",
     )
+
+
+def test_repeated_typed_rows_leave_nullable_none_positions_unannotated() -> None:
+    builder = _builder()
+    builder.bind_typed_rows(
+        (("a", None, "c"), ("d", None, "f"), ("g", "h", "i"), ("j", "k", "l")),
+        (STRING, STRING, STRING),
+    )
+
+    statement = builder.finish("values (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?)")
+    repeated = [
+        span for span in statement.typed_bind_spans if isinstance(span, _RepeatedTypedBindSpan)
+    ]
+    assert [(span.start, span.width, span.stride, span.repetitions) for span in repeated] == [
+        (0, 1, 3, 2),
+        (2, 1, 3, 2),
+        (6, 3, 3, 2),
+    ]
+    assert 1 not in {index for span in statement.typed_bind_spans for index in span.indexes()}
+    assert 4 not in {index for span in statement.typed_bind_spans for index in span.indexes()}
+
+
+def test_append_fragment_coalesces_touching_ordinary_spans_with_equal_type_and_form() -> None:
+    statement = _builder()
+    statement.bind_managed("a", STRING)
+    fragment = _builder()
+    fragment.bind_managed("b", STRING)
+
+    statement.append_fragment(fragment.finish(""))
+
+    assert statement.finish("select ?, ?").typed_bind_spans == (
+        _TypedBindSpan(0, 2, STRING, "MANAGED"),
+    )

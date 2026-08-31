@@ -132,7 +132,6 @@ __all__ = [
     "PositionScope",
     "check_attribute_reference",
     "effective_set",
-    "elaborate_predicate",
     "referenced_entities",
     "relationship_target",
     "resolve_subtype_selection",
@@ -229,17 +228,6 @@ def validate_predicate(
         position if position is not None else PositionScope(effective=effective_set(model, root))
     )
     return _walk(op, model, scope)
-
-
-def elaborate_predicate(
-    root: EntityMetadata,
-    op: PredicateNode,
-    model: Metamodel,
-    *,
-    position: PositionScope | None = None,
-) -> ValidatedPredicate:
-    """Elaborate one authored predicate into its mandatory semantic product."""
-    return validate_predicate(root, op, model, position=position)
 
 
 def root_position(model: Metamodel, root: EntityMetadata) -> PositionScope:

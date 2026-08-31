@@ -1,12 +1,15 @@
 """``parallax.core.sql_gen`` enforcement scope (m-sql).
 
-SQL generation: the read compiler that lowers one flat ``ValidatedEntityQuery`` into a canonical
-``LoweredStatement`` per dialect. Dialect variation enters only through the
-injected ``Dialect`` strategy. ``m-sql`` depends on ``m-object-query`` (the query
-value), ``m-predicate`` (the selection it carries), and ``m-dialect``.
+SQL generation owns private read and write compilers. The read compiler lowers one
+flat ``ValidatedEntityQuery`` and the write compiler lowers finalized DML; both
+produce canonical ``LoweredStatement`` values per dialect. Dialect variation enters
+only through the injected ``Dialect`` strategy. ``m-sql`` depends on
+``m-object-query`` (the query value), ``m-predicate`` (the selection it carries),
+and ``m-dialect``.
 
-The two names below are the whole supported seam; everything else in this
-package is private implementation. The private ``compile_read`` operation returns a self-contained
+The two exported data/error names below are the whole supported facade; compiler
+operations remain private implementation. The private ``compile_read`` operation
+returns a self-contained
 :class:`CompiledRead` — statement, root narrow, and row transform together — so
 a caller executes and transforms without re-deriving anything from the
 query it just compiled. The projection this package emits follows the
